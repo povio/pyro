@@ -574,6 +574,37 @@ build): a 2 MB thread lays out about 770 levels instead of 430. Nothing else cha
 the same (lp-layout and lp-render tests). Covered by lp-layout `text_clip_facts_deep_nesting_without_recursion`
 (400 levels on a test thread's 2 MB) and `deep_nesting_lays_out_on_a_browser_thread_stack` (2,000 on 8 MB).
 
+## Deep trees grow the stack on demand
+
+`util.rs` (`ensure_stack`, `STACK_RED_ZONE`, `STACK_GROW_BY`), `Cargo.toml` (the `stacker` crate, which rustc
+uses for the same purpose): the small frames above only move the depth at which a thread's stack overflows,
+and an overflow aborts the whole process (every page of a `serve`). Every walk that recurses once per tree
+level now makes its recursive call through `ensure_stack`, which moves to a new 4 MB stack segment (mapped, committed
+as touched, unmapped on return) when less than 256 KB is left, so a tree of any depth lays out, paints and
+prints whatever stack its caller left (a 2 MB spawned thread, or JS recursion near JavaScriptCore's limit
+followed by a layout read). With room left it costs a thread-local read and one stack-pointer compare per
+level. The red zone covers what one level runs between two checkpoints: a level of the layout dispatch
+(about 3 KB) plus a leaf's own non-recursive work (shaping, table and grid sizing).
+
+- Layout: `LayoutPassState::compute_child_layout_internal` (`layout/mod.rs`), which every algorithm's child
+  layout goes through (Taffy's `compute_child_layout`, Blitz's block contexts, tables, orthogonal flows).
+- Box construction and damage: `resolve_layout_children_recursive`, `classify_flow_children`,
+  `flush_inline_pseudos_recursive`, `find_inline_layout_embedded_boxes_recursive`,
+  `collect_list_item_children`, `build_inline_layout_recursive`, `propagate_damage_flags`,
+  `refresh_anonymous_block_styles`, `clear_damage_and_dirty_flags`.
+- After layout: `resolve_transforms` (overflow), `physicalise_and_round_inner` (rounding) and its debug check
+  `assert_rounding_is_current`, `build_paint_tree_impl` (paint tree), `hit_inner` (hit testing).
+- `layout/writing_mode.rs` (`placer_geometry`): the position of a box in a vertical tree recursed up its
+  containing-block chain; it is a loop over the chain, outermost first, with the same arithmetic.
+- Tree upkeep: `iter_subtree_mut_inner`, `collect_all_inline_roots_in_subtree`, `is_or_contains_block`,
+  `write_text_content`, `drop_node_ignoring_parent_with`, `deallocate_anonymous_block`, `leave_layout_tree`,
+  `remove_pe_ignoring_parent`.
+
+blitz-paint's `render_node` and lp-render's hit-test, PDF structure-tree walks use the same function. The HTML
+parser is not capped (Chrome caps parser depth at 512; a cap would change DOM results). Covered by lp-layout
+`deep_nesting_of_each_algorithm_lays_out_on_any_stack` (5,000 levels of ten kinds on a 256 KB thread) and
+lp-render `deep_trees_lay_out_paint_and_print_on_a_small_stack`.
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were

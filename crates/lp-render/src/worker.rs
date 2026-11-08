@@ -180,8 +180,9 @@ impl RenderWorker {
     pub fn spawn() -> std::io::Result<RenderWorker> {
         let (tx, rx) = channel::<Job>();
         // The browser thread's stack (lp-cdp `BROWSER_STACK_BYTES`): the render lays the page out
-        // again, once per tree level as there, and paints it recursively. A spawned thread's default
-        // 2 MB aborted the whole server on a screenshot past about 430 nested blocks.
+        // again, once per tree level as there, and paints it recursively. Those recursions grow the
+        // stack on demand (blitz-dom `util::ensure_stack`), so no depth overflows it; 8 MB keeps
+        // pages up to about 3,000 levels on the thread's own stack, without mapping segments.
         std::thread::Builder::new().name("lp-render".into()).stack_size(RENDER_STACK_BYTES).spawn(move || {
             let mut renderer = None;
             // A job ran since the idle hook did.

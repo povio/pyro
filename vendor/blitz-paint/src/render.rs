@@ -895,9 +895,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let node = &self.dom.as_ref().tree()[node_id];
 
         match &node.data {
-            NodeData::Element(_) | NodeData::AnonymousBlock(_) => {
+            // lightningpanda: once per tree level; a tree of any depth paints on a stack grown on
+            // demand (blitz-dom `util::ensure_stack`).
+            NodeData::Element(_) | NodeData::AnonymousBlock(_) => blitz_dom::util::ensure_stack(|| {
                 self.render_element(scene, node_id, parent_style_transform, clip_rect)
-            }
+            }),
             NodeData::Text(TextNodeData { .. }) => {
                 // Text nodes should never be rendered directly
                 // (they should always be rendered as part of an inline layout)

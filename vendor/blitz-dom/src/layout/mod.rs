@@ -184,14 +184,19 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
-        #[cfg(feature = "writing-mode")]
-        {
-            self.compute_child_layout_in_own_wm(node_id, inputs, block_ctx)
-        }
-        #[cfg(not(feature = "writing-mode"))]
-        {
-            self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
-        }
+        // lightningpanda: every algorithm lays out its children through here (Taffy's
+        // `compute_child_layout` and Blitz's block contexts alike), once per tree level, so a tree
+        // of any depth lays out on a stack grown on demand instead of overflowing the thread's.
+        crate::util::ensure_stack(|| {
+            #[cfg(feature = "writing-mode")]
+            {
+                self.compute_child_layout_in_own_wm(node_id, inputs, block_ctx)
+            }
+            #[cfg(not(feature = "writing-mode"))]
+            {
+                self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
+            }
+        })
     }
 
     /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)

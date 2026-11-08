@@ -590,7 +590,7 @@ impl Node {
                     self.children
                         .iter()
                         .copied()
-                        .any(|child_id| self.tree()[child_id].is_or_contains_block())
+                        .any(|child_id| crate::util::ensure_stack(|| self.tree()[child_id].is_or_contains_block()))
                 } else {
                     false
                 }
@@ -1500,7 +1500,7 @@ impl Node {
             }
             NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                 for child_id in self.children.iter() {
-                    self.with(*child_id).write_text_content(out);
+                    crate::util::ensure_stack(|| self.with(*child_id).write_text_content(out));
                 }
             }
             _ => {}
@@ -1769,7 +1769,7 @@ impl Node {
                     let pos = hoisted_child.position(self.tree(), self.id);
                     let x = x - pos.x;
                     let y = y - pos.y;
-                    if let Some(hit) = child.hit_inner(x, y, scale, scrollbar) {
+                    if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
                         return Some(hit);
                     }
                 }
@@ -1800,7 +1800,7 @@ impl Node {
                 child_x -= offset.x;
                 child_y -= offset.y;
             }
-            if let Some(hit) = child.hit_inner(child_x, child_y, scale, scrollbar) {
+            if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar)) {
                 return Some(hit);
             }
         }
@@ -1815,7 +1815,7 @@ impl Node {
                     let pos = hoisted_child.position(self.tree(), self.id);
                     let x = x - pos.x;
                     let y = y - pos.y;
-                    if let Some(hit) = child.hit_inner(x, y, scale, scrollbar) {
+                    if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
                         return Some(hit);
                     }
                 }

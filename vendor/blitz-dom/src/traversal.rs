@@ -164,7 +164,7 @@ impl BaseDocument {
             let children = std::mem::take(&mut doc.nodes[node_id].children);
             for child_id in children.iter().cloned() {
                 cb(child_id, doc);
-                iter_subtree_mut_inner(doc, child_id, cb);
+                crate::util::ensure_stack(|| iter_subtree_mut_inner(doc, child_id, cb));
             }
             doc.nodes[node_id].children = children;
         }
@@ -538,7 +538,7 @@ impl BaseDocument {
                 result.push(child_id);
             } else {
                 // Recurse into block children
-                self.collect_all_inline_roots_in_subtree(child_id, result);
+                crate::util::ensure_stack(|| self.collect_all_inline_roots_in_subtree(child_id, result));
             }
         }
     }

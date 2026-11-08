@@ -38,7 +38,7 @@ pub(super) fn collect_list_item_children(
                 marker_changed(node);
             }
             *index += 1;
-            collect_list_item_children(doc, index, reversed, child);
+            crate::util::ensure_stack(|| collect_list_item_children(doc, index, reversed, child));
         } else {
             // Unset marker in case it was previously set
             let node = &mut doc.nodes[child];

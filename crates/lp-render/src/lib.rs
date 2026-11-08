@@ -2398,10 +2398,9 @@ fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dp
                 return Some(s);
             }
             if let Some(mut kind) = kind_of(c) {
-                let parent = doc
-                    .get_node(c)
-                    .and_then(|n| n.parent)
-                    .and_then(|p| structure(p, doc, ex, structs, kind_of, link_target, dpr));
+                let parent = doc.get_node(c).and_then(|n| n.parent).and_then(|p| {
+                    blitz_dom::util::ensure_stack(|| structure(p, doc, ex, structs, kind_of, link_target, dpr))
+                });
                 let index = ex.structs.len() as u32;
                 if let pdf::StructKind::Link(_) = kind {
                     let node = doc.get_node(c)?;

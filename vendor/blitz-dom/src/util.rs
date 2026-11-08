@@ -11,6 +11,26 @@ pub(crate) const ACTION_MOD: Modifiers = Modifiers::CONTROL;
 
 pub type Color = AlphaColor<Srgb>;
 
+/// lightningpanda: stack left below which [`ensure_stack`] moves to a new stack segment. It covers
+/// everything one tree level runs between two checkpoints: a level of Taffy's and Blitz's layout
+/// dispatch (about 3 KB), plus a leaf's own work (inline layout and shaping, table and grid
+/// sizing, a paint of text), which is not recursive.
+pub const STACK_RED_ZONE: usize = 256 * 1024;
+/// lightningpanda: size of each stack segment [`ensure_stack`] maps (lazily committed): about
+/// 1,500 more levels of nested blocks per segment.
+pub const STACK_GROW_BY: usize = 4 * 1024 * 1024;
+
+/// lightningpanda: run `f`, first moving to a new stack segment when less than
+/// [`STACK_RED_ZONE`] is left. Recursive tree walks (layout, paint, the paint tree, damage,
+/// rounding, box construction) run each level through this, so a deep tree never overflows the
+/// thread's stack and aborts the process, whatever stack the caller left (JS recursion near
+/// JavaScriptCore's limit, a 2 MB spawned thread). With room left it costs a thread-local read and
+/// one stack-pointer compare.
+#[inline(always)]
+pub fn ensure_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_BY, f)
+}
+
 /// Decode raw font bytes, decompressing WOFF/WOFF2 if the `woff` feature is enabled.
 /// Returns the original slice unchanged for TTF/OTF input, and also on decompression
 /// failure. With the `woff` feature disabled, all input passes through unchanged.

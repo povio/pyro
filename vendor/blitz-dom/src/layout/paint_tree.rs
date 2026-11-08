@@ -480,13 +480,13 @@ impl BaseDocument {
                 if owned_here(self, child_id) {
                     let is_sc_root = self.is_paint_stacking_context_root(child_id, is_flex_or_grid);
                     let first_entry = entries.len();
-                    self.build_paint_tree_impl(
+                    crate::util::ensure_stack(|| self.build_paint_tree_impl(
                         child_id,
                         match is_sc_root {
                             true => None,
                             false => Some(&mut entries),
                         },
-                    );
+                    ));
 
                     // Only stacking contexts with a non-zero z-index are lifted
                     // out of tree order into the enclosing stacking context's

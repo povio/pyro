@@ -372,7 +372,7 @@ impl BaseDocument {
                 if self.nodes[child_id].is_out_of_flow() {
                     continue;
                 }
-                let (child_rect_in_self, child_hit) = self.resolve_transforms(child_id);
+                let (child_rect_in_self, child_hit) = crate::util::ensure_stack(|| self.resolve_transforms(child_id));
                 overflow = unite_overflow(overflow, child_rect_in_self);
                 hit = unite_hit(hit, child_hit);
             }
@@ -383,7 +383,7 @@ impl BaseDocument {
             if !self.nodes.contains_key(child_id) {
                 continue;
             }
-            let (child_rect_in_self, child_hit) = self.resolve_transforms(child_id);
+            let (child_rect_in_self, child_hit) = crate::util::ensure_stack(|| self.resolve_transforms(child_id));
             // lightningpanda: a box fixed to the viewport is not in the
             // document's scrollable overflow, whatever it reaches.
             let fixed = self.nodes[child_id]
@@ -401,7 +401,7 @@ impl BaseDocument {
             if self.nodes[pseudo].is_out_of_flow() {
                 continue;
             }
-            let (child_rect_in_self, child_hit) = self.resolve_transforms(pseudo);
+            let (child_rect_in_self, child_hit) = crate::util::ensure_stack(|| self.resolve_transforms(pseudo));
             overflow = unite_overflow(overflow, child_rect_in_self);
             hit = unite_hit(hit, child_hit);
         }
@@ -603,7 +603,7 @@ impl BaseDocument {
                     {
                         continue;
                     }
-                    resolve_layout_children_recursive(doc, child_id);
+                    crate::util::ensure_stack(|| resolve_layout_children_recursive(doc, child_id));
                     doc.nodes[child_id].layout_parent.set(Some(node_id));
                     if let Some(mut data) = doc.nodes[child_id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
                         data.damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
@@ -652,7 +652,7 @@ impl BaseDocument {
 
                 // Recurse into newly collected layout children
                 for child_id in layout_children.iter().copied() {
-                    resolve_layout_children_recursive(doc, child_id);
+                    crate::util::ensure_stack(|| resolve_layout_children_recursive(doc, child_id));
                     doc.nodes[child_id].layout_parent.set(Some(node_id));
                     doc.nodes[child_id].layout_child_of.set(Some(node_id));
                     if let Some(mut data) = doc.nodes[child_id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
@@ -684,7 +684,7 @@ impl BaseDocument {
                         if !doc.nodes.contains_key(child_id) {
                             continue;
                         }
-                        resolve_layout_children_recursive(doc, child_id);
+                        crate::util::ensure_stack(|| resolve_layout_children_recursive(doc, child_id));
                         doc.nodes[child_id].layout_parent.set(Some(node_id));
                     }
 

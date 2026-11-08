@@ -130,9 +130,12 @@ const PREBOOT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 /// renderer main thread and our worker threads have. Layout recurses once
 /// per tree level (Taffy's algorithms), about 2.7 KB per nested block in a
 /// release build: a spawned thread's default 2 MB aborted the whole server
-/// past about 770 nested blocks, 8 MB lays out about 3,000. JSC bounds its
-/// own recursion by the stack it finds (`maxPerThreadStackUsage`, 5 MB), as
-/// on those threads. Untouched stack pages cost no memory.
+/// past about 770 nested blocks. Layout and paint now grow the stack on
+/// demand (blitz-dom `util::ensure_stack`), so no depth aborts; 8 MB keeps
+/// about 3,000 levels on the thread's own stack. JSC bounds its own
+/// recursion by the stack it finds (`maxPerThreadStackUsage`, 5 MB), as on
+/// those threads, and a layout read made near that limit grows the stack
+/// too. Untouched stack pages cost no memory.
 const BROWSER_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// No command for this long after a prepared page was taken: boot the next.
 const REFILL_QUIET: std::time::Duration = std::time::Duration::from_millis(15);

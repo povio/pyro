@@ -4707,3 +4707,45 @@ fn review_misc2_deep_nesting_of_each_algorithm_on_a_browser_thread_stack() {
         .join()
         .expect("no stack overflow");
 }
+
+#[test]
+fn deep_nesting_of_each_algorithm_lays_out_on_any_stack() {
+    // Layout grows its stack on demand (blitz-dom `util::ensure_stack`): 5,000 levels of each
+    // algorithm lay out on a 256 KB thread, which holds about 100 levels of nested blocks.
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            for kind in [
+                "display:block",
+                "display:flex",
+                "display:flex;flex-direction:column",
+                "display:grid",
+                "display:inline-block",
+                "display:table",
+                "display:flow-root",
+                "position:relative",
+                "writing-mode:vertical-lr",
+                "writing-mode:vertical-rl",
+            ] {
+                let depth = 5000;
+                let vertical = kind.starts_with("writing-mode");
+                let pad = if vertical { "padding-top" } else { "padding-left" };
+                let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"{kind};{pad}:1px\">")).collect();
+                let html = format!(
+                    "<body style=\"margin:8px\">{open}<span id=leaf style=\"white-space:nowrap\">deep</span>{}",
+                    "</div>".repeat(depth)
+                );
+                let p = page(&html);
+                // Each level moves the leaf 1px along its padding (widths run out long before).
+                let leaf = p.layout.bounding_client_rect(&p.dom, p.id("leaf"));
+                // (`display: table` boxes nested in each other place their content differently, as on
+                // 267ac8c5 at any depth: only that they lay out is checked for them.)
+                if kind != "display:table" {
+                    assert_eq!(if vertical { leaf.y } else { leaf.x }, depth as f64 + 8.0, "{kind}");
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
+}

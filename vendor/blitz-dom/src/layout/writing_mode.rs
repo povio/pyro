@@ -308,24 +308,24 @@ impl LayoutPassState<'_> {
             for child in cells.into_iter().chain(pseudos.into_iter().flatten()) {
                 let child = crate::taffy_node_id(child);
                 if !self.is_out_of_flow(child) {
-                    self.physicalise_and_round_inner(child, wm, size, frac);
+                    crate::util::ensure_stack(|| self.physicalise_and_round_inner(child, wm, size, frac));
                 }
             }
             for index in 0..self.hoisted_child_count(node_id) {
                 let child = self.get_hoisted_child_id(node_id, index);
-                self.physicalise_and_round_inner(child, wm, size, frac);
+                crate::util::ensure_stack(|| self.physicalise_and_round_inner(child, wm, size, frac));
             }
             return;
         }
         for index in 0..self.child_count(node_id) {
             let child = self.get_child_id(node_id, index);
             if !self.is_out_of_flow(child) {
-                self.physicalise_and_round_inner(child, wm, size, frac);
+                crate::util::ensure_stack(|| self.physicalise_and_round_inner(child, wm, size, frac));
             }
         }
         for index in 0..self.hoisted_child_count(node_id) {
             let child = self.get_hoisted_child_id(node_id, index);
-            self.physicalise_and_round_inner(child, wm, size, frac);
+            crate::util::ensure_stack(|| self.physicalise_and_round_inner(child, wm, size, frac));
         }
     }
 
@@ -359,12 +359,12 @@ impl LayoutPassState<'_> {
         for index in 0..self.child_count(node_id) {
             let child = self.get_child_id(node_id, index);
             if !self.is_out_of_flow(child) {
-                self.assert_rounding_is_current(child, wm, unrounded.size, frac);
+                crate::util::ensure_stack(|| self.assert_rounding_is_current(child, wm, unrounded.size, frac));
             }
         }
         for index in 0..self.hoisted_child_count(node_id) {
             let child = self.get_hoisted_child_id(node_id, index);
-            self.assert_rounding_is_current(child, wm, unrounded.size, frac);
+            crate::util::ensure_stack(|| self.assert_rounding_is_current(child, wm, unrounded.size, frac));
         }
     }
 }
@@ -695,40 +695,46 @@ impl BaseDocument {
     }
 
     /// Document-relative position, writing mode and physical size of the box that places `node`.
+    ///
+    /// lightningpanda: a loop over the containing-block chain, outermost first, instead of a
+    /// recursion per level (which overflowed the stack on deep vertical trees).
     fn placer_geometry(
         &self,
         node: &Node,
         node_id: crate::NodeId,
         root_id: Option<crate::NodeId>,
     ) -> (crate::util::Point<f32>, WritingMode, Size<f32>) {
-        let Some(placer_id) = node.containing_block().filter(|_| Some(node_id) != root_id) else {
-            let viewport = self.stylist.device().au_viewport_size();
-            let viewport = Size {
-                width: viewport.width.to_f32_px(),
-                height: viewport.height.to_f32_px(),
-            };
-            let wm = root_id.map_or(WritingMode::empty(), |root| {
-                self.nodes[root].layout_data().writing_mode
-            });
-            return (crate::util::Point { x: 0.0, y: 0.0 }, wm, viewport);
-        };
+        // `node`'s placers, innermost first.
+        let mut placers = Vec::new();
+        let (mut current, mut current_id) = (node, node_id);
+        while let Some(placer_id) = current.containing_block().filter(|_| Some(current_id) != root_id) {
+            placers.push(placer_id);
+            (current, current_id) = (&self.nodes[placer_id], placer_id);
+        }
 
-        let placer = &self.nodes[placer_id];
-        let (mut pos, grand_wm, grand_size) = self.placer_geometry(placer, placer_id, root_id);
-        let logical = placer.unrounded_layout();
-        let (location, size) = if grand_wm.is_vertical() {
-            let physical = physical_layout(
-                *logical,
-                grand_wm,
-                grand_size,
-                is_styled_scroll_container(placer),
-            );
-            (physical.location, physical.size)
-        } else {
-            (logical.location, logical.size)
+        let viewport = self.stylist.device().au_viewport_size();
+        let mut size = Size {
+            width: viewport.width.to_f32_px(),
+            height: viewport.height.to_f32_px(),
         };
-        pos.x += location.x - placer.scroll_offset().x as f32;
-        pos.y += location.y - placer.scroll_offset().y as f32;
-        (pos, placer.layout_data().writing_mode, size)
+        let mut wm = root_id.map_or(WritingMode::empty(), |root| {
+            self.nodes[root].layout_data().writing_mode
+        });
+        let mut pos = crate::util::Point { x: 0.0, y: 0.0 };
+        for &placer_id in placers.iter().rev() {
+            let placer = &self.nodes[placer_id];
+            let logical = placer.unrounded_layout();
+            let (location, placer_size) = if wm.is_vertical() {
+                let physical = physical_layout(*logical, wm, size, is_styled_scroll_container(placer));
+                (physical.location, physical.size)
+            } else {
+                (logical.location, logical.size)
+            };
+            pos.x += location.x - placer.scroll_offset().x as f32;
+            pos.y += location.y - placer.scroll_offset().y as f32;
+            wm = placer.layout_data().writing_mode;
+            size = placer_size;
+        }
+        (pos, wm, size)
     }
 }
