@@ -1139,4 +1139,12 @@ fn assert_kept_inline_layout_is_current(doc: &mut BaseDocument, node_id: NodeId,
         kept.layout.inline_boxes().len(),
         "inline root {node_id:?} kept a stale inline layout (inline boxes)"
     );
+    // The content widths kept with the shaped text (`TextLayout::text_content_widths`) go with
+    // the kept layout: they must be what a build of the same content measures now.
+    let widths = |t: &TextLayout| t.text_content_widths.map(|w| (w.min.to_bits(), w.max.to_bits()));
+    assert_eq!(
+        widths(&fresh),
+        widths(kept),
+        "inline root {node_id:?} kept stale content widths with its inline layout"
+    );
 }

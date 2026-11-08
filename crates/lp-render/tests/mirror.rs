@@ -4623,3 +4623,77 @@ fn review_relayout_inside_a_cell_measures_it_again() {
     let (failures, _) = review_steps(html, steps);
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
+
+// ---------------- integration (layint x paint): kept inline layouts and kept content widths ----------------
+
+/// An inline root kept for a box-only change (a cell's padding, border width, collapsed border
+/// colour, its colour) keeps its shaped text and the content widths measured with it
+/// (`TextLayout::text_content_widths`). Each step pairs such a change with one the widths or their
+/// use depend on: the available width (the table's width), a text indent, an in-flow inline box
+/// coming, changing size and going, `white-space`, letter spacing, min/max-content sizing. Synced
+/// as deltas and compared with fresh builds; the kept layouts are checked in debug builds
+/// (`assert_kept_inline_layout_is_current` compares the kept content widths with a new build's).
+#[test]
+fn kept_inline_layouts_keep_matching_content_widths() {
+    let html = r#"<!doctype html><html><head><style>body { margin: 0; font: 12px sans-serif }
+  #t, #t td { border: 1px solid #888 } #t { border-collapse: collapse; width: 320px } td { padding: 2px }
+  #s { width: 260px } #s td { border: 1px solid #444 }</style></head><body>
+<table id=t><tr><td id=a>alpha beta gamma delta epsilon</td><td id=b>x <span id=ib style="display: inline-block; width: 20px">i</span> tail words</td></tr>
+<tr><td id=c>third cell text</td><td id=d>y</td></tr></table>
+<table id=s><tr><td id=e>separate border cell with words</td><td id=f>z</td></tr></table>
+<div id=w style="width: min-content"><p id=p style="border: 1px solid">paragraph words for min content</p></div>
+</body></html>"#;
+    let two = |what: &'static str, a: &'static str, sa: &'static str, b: &'static str, sb: &'static str| {
+        edit(what, move |p| {
+            let (x, y) = (p.find(a), p.find(b));
+            p.dom.borrow_mut().set_attribute(x, "style", sa).unwrap();
+            p.dom.borrow_mut().set_attribute(y, "style", sb).unwrap();
+        })
+    };
+    let steps = vec![
+        // Box-only changes alone: the cells keep their shaped text.
+        style("#a", "padding: 6px"),
+        style("#e", "padding: 5px; border-width: 3px"),
+        style("#a", "padding: 6px; border-color: red"),
+        // With the available width changed.
+        two("#a padding + #t width", "#a", "padding: 9px", "#t", "width: 180px"),
+        two("#e padding + #s width", "#e", "padding: 1px", "#s", "width: 90px"),
+        two("#a colour + #t width", "#a", "color: blue", "#t", "width: 520px"),
+        // With a text indent (measured, not read from the kept widths) and back to none.
+        two("#a padding + #c indent", "#a", "padding: 3px", "#c", "text-indent: 12.5px"),
+        style("#c", "padding: 7px; text-indent: 12.5px"),
+        style("#c", "padding: 7px; text-indent: -4px"),
+        style("#c", "padding: 1px"),
+        two("#c indent + #t width", "#c", "text-indent: 30%", "#t", "width: 140px"),
+        two("#c no indent + #t width", "#c", "padding: 4px", "#t", "width: 333px"),
+        // An in-flow inline box: no kept widths while it is there, kept ones once it goes.
+        two("#b padding + #ib width", "#b", "padding: 5px", "#ib", "display: inline-block; width: 90px"),
+        two("#b padding + #ib gone", "#b", "padding: 2px", "#ib", "display: none"),
+        two("#b border + #t width", "#b", "border-width: 4px", "#t", "width: 210px"),
+        two("#b padding + #ib back", "#b", "padding: 6px", "#ib", "display: inline-block; width: 40px"),
+        two("#b padding + #ib absolute", "#b", "padding: 3px", "#ib", "position: absolute; width: 40px"),
+        two("#b padding + #ib in flow", "#b", "padding: 8px", "#ib", "display: inline-block; width: 15px"),
+        // Text styles the widths depend on, with a box change on the same cell.
+        style("#a", "padding: 5px; white-space: nowrap"),
+        style("#a", "padding: 2px; white-space: normal"),
+        style("#a", "padding: 4px; letter-spacing: 2.5px"),
+        style("#a", "padding: 4px; word-break: break-all"),
+        style("#a", "padding: 1px"),
+        // Intrinsic sizing of a kept paragraph.
+        style("#p", "border: 4px solid"),
+        two("#p border + #w max-content", "#p", "border: 2px solid", "#w", "width: max-content"),
+        two("#p padding + #w fit-content", "#p", "padding: 0 9px", "#w", "width: fit-content; max-width: 70px"),
+        two("#p colour + #w min-content", "#p", "color: red", "#w", "width: min-content"),
+    ];
+    let (failures, counts) = review_steps(html, steps);
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+    // The keep path ran: a box-only change on a cell shapes no text.
+    for (what, shaped, _) in &counts {
+        if what == "#a { padding: 6px }" || what == "#e { padding: 5px; border-width: 3px }" {
+            assert_eq!(*shaped, 0, "{what} shaped text again");
+        }
+        if std::env::var_os("REVIEW_COUNTS").is_some() {
+            eprintln!("{what}: shaped {shaped}");
+        }
+    }
+}
