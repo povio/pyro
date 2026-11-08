@@ -2656,7 +2656,10 @@ fn emulated_media_flips_match_media_and_fires_change() {
 #[test]
 fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
     let mut h = Harness::new();
-    h.page("Emulation.setDeviceMetricsOverride", json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}));
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
     let wide = r#"<div style="width:2000px;height:50px"></div>"#;
     let tall = r#"<div style="width:50px;height:1000px"></div>"#;
     let far = "left:1900px;top:2000px";
@@ -2665,21 +2668,41 @@ fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
         (format!(r#"<body style="margin:0;overflow:hidden;width:300px">{wide}"#), [2000, 600]),
         (format!(r#"<body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 1000]),
         // Stays on `body`: the root has its own.
-        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#), [800, 600]),
-        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 600]),
+        (
+            format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#),
+            [800, 600],
+        ),
+        (
+            format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#),
+            [800, 600],
+        ),
         // Empty boxes count for nothing, wherever they are.
         (r#"<body style="margin:0"><div style="width:2000px;height:0"></div>"#.into(), [800, 600]),
-        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#), [800, 600]),
+        (
+            format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#),
+            [800, 600],
+        ),
         // Fixed does not count, absolute does.
-        (format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#), [800, 600]),
-        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#), [1950, 2010]),
+        (
+            format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#),
+            [800, 600],
+        ),
+        (
+            format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#),
+            [1950, 2010],
+        ),
     ] {
         load_html(&mut h, &format!("<!doctype html>{doc}"));
-        let scroll = eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
+        let scroll =
+            eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
         assert_eq!(scroll, json!(chrome), "{doc}");
         let metrics = h.page("Page.getLayoutMetrics", json!({}));
         let content = &metrics["result"]["cssContentSize"];
-        assert_eq!([content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()], chrome.map(f64::from), "{doc}");
+        assert_eq!(
+            [content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()],
+            chrome.map(f64::from),
+            "{doc}"
+        );
     }
     // `body` keeps its own scroll sizes, 2000 px wide inside 300 px, either way.
     load_html(&mut h, &format!(r#"<!doctype html><body style="margin:0;overflow:hidden;width:300px">{wide}"#));
@@ -3351,6 +3374,12 @@ mod tier3_g1;
 
 #[path = "engine_cdp/websocket.rs"]
 mod websocket;
+
+#[path = "engine_cdp/aria_snapshot.rs"]
+mod aria_snapshot;
+
+#[path = "engine_cdp/coverage.rs"]
+mod coverage;
 
 #[test]
 fn links_and_window_open_targeting_blank_open_paused_popups() {
@@ -4497,6 +4526,131 @@ fn driver_run_routes_presses_and_checks_requests() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
 }
 
+/// `eval` with `call`: the expression is a function, called with the JSON
+/// `arg`; with a `locator` it gets the element (waiting for exactly one) or,
+/// with `all`, the array of matches. Playwright's `evaluate(fn, arg)` and
+/// `locator.evaluate(fn, arg)`.
+#[test]
+fn driver_run_eval_calls_functions_with_elements() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "(n) => n * 2", "call": true, "arg": 21, "as": "doubled"}},
+        {"eval": {"expression": "() => document.title.length >= 0", "call": true, "as": "noArg"}},
+        {"eval": {"expression": "(el, suffix) => el.id + suffix", "locator": {"role": "button", "name": "Settings", "exact": true}, "arg": "!", "as": "one"}},
+        {"eval": {"expression": "(els) => els.map((e) => e.tagName)", "locator": {"css": "button"}, "all": true, "as": "all"}},
+        {"eval": {"expression": "(els) => els.length", "locator": {"css": "#missing"}, "all": true, "as": "none"}},
+        {"eval": {"expression": "async (el) => { await new Promise((r) => setTimeout(r, 5)); return el.tagName; }", "locator": {"css": "#out"}, "as": "later"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["doubled"], 42, "{r}");
+    assert_eq!(reads["noArg"], true, "{r}");
+    assert_eq!(reads["one"], "settings!", "{r}");
+    assert!(reads["all"].as_array().is_some_and(|a| !a.is_empty() && a.iter().all(|t| t == "BUTTON")), "{r}");
+    assert_eq!(reads["none"], 0, "{r}");
+    assert_eq!(reads["later"], "DIV", "{r}");
+
+    // Waits for the element, then times out naming the locator.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"eval": {"expression": "(el) => el.id", "locator": {"css": "#missing"}, "timeout": 50}}]}),
+    );
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("timed out after 50 ms") && message.contains("matched no element"), "{r}");
+    let r =
+        h.page("LP.run", json!({"steps": [{"eval": {"expression": "(el) => el.id", "locator": {"css": "button"}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("strict mode violation"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "42", "call": true}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a function"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "(x) => x.y.z", "call": true, "arg": {}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "(e) => e", "all": true}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("needs a locator"), "{r}");
+}
+
+/// Locator kinds for Playwright's API: `xpath`, `of` (filter or nth after
+/// an nth), `or` (union in document order), `and` (intersection) and the
+/// `getByRole` state options.
+#[test]
+fn driver_locators_xpath_of_or_and_role_states() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let html = r#"<h1>Top</h1><h2>Sub</h2><div aria-level="3" role="heading">Aria</div>
+<ul><li>Apple <b>red</b></li><li>Banana</li><li>Cherry <b>red</b></li></ul>
+<input type="checkbox" id="a" checked aria-label="A"><input type="checkbox" id="b" aria-label="B">
+<button aria-pressed="true">Bold</button><button aria-pressed="false">Italic</button><button disabled>Off</button>
+<button aria-expanded="true">Menu</button><button hidden>Ghost</button>
+<select aria-label="S"><option>x</option><option selected>y</option></select>"#;
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "(h) => { document.body.innerHTML = h; }", "arg": html}},
+        {"read": {"locator": {"xpath": "//li[b]"}, "read": "count", "as": "xpath"}},
+        {"read": {"locator": {"of": {"css": "li", "nth": 0}, "filter": {"hasText": "Apple"}}, "read": "count", "as": "ofKeep"}},
+        {"read": {"locator": {"of": {"css": "li", "nth": 0}, "filter": {"hasText": "Banana"}}, "read": "count", "as": "ofDrop"}},
+        {"read": {"locator": {"of": {"css": "h2"}, "or": [{"css": "h1"}], "nth": 0}, "read": "text", "as": "orFirst"}},
+        {"read": {"locator": {"of": {"css": "li"}, "and": [{"xpath": "//li[b]"}]}, "read": "count", "as": "and"}},
+        {"read": {"locator": {"of": {"css": "li"}, "and": [{"text": "red"}]}, "read": "count", "as": "andText"}},
+        {"read": {"locator": {"role": "heading", "level": 2}, "read": "text", "as": "level2"}},
+        {"read": {"locator": {"role": "heading", "level": 3}, "read": "text", "as": "level3"}},
+        {"read": {"locator": {"role": "checkbox", "checked": true}, "read": "name", "as": "checked"}},
+        {"read": {"locator": {"role": "button", "pressed": true}, "read": "name", "as": "pressed"}},
+        {"read": {"locator": {"role": "button", "disabled": true}, "read": "name", "as": "disabled"}},
+        {"read": {"locator": {"role": "button", "expanded": true}, "read": "name", "as": "expanded"}},
+        {"read": {"locator": {"role": "option"}, "read": "count", "as": "options"}},
+        {"read": {"locator": {"role": "option", "selected": true}, "read": "text", "as": "selected"}},
+        {"read": {"locator": {"role": "button", "includeHidden": true}, "read": "count", "as": "hidden"}},
+        {"read": {"locator": {"role": "button"}, "read": "count", "as": "notHidden"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["xpath"], 2, "{r}");
+    assert_eq!(reads["ofKeep"], 1, "{r}");
+    assert_eq!(reads["ofDrop"], 0, "{r}");
+    assert_eq!(reads["orFirst"], "Top", "document order: {r}");
+    assert_eq!(reads["and"], 2, "{r}");
+    // As Playwright: the text locator names the <b>, not the <li>.
+    assert_eq!(reads["andText"], 0, "{r}");
+    assert_eq!(reads["options"], 2, "options of a visible select: {r}");
+    assert_eq!(reads["level2"], "Sub", "{r}");
+    assert_eq!(reads["level3"], "Aria", "{r}");
+    assert_eq!(reads["checked"], "A", "{r}");
+    assert_eq!(reads["pressed"], "Bold", "{r}");
+    assert_eq!(reads["disabled"], "Off", "{r}");
+    assert_eq!(reads["expanded"], "Menu", "{r}");
+    assert_eq!(reads["selected"], "y", "{r}");
+    assert_eq!(reads["hidden"], 5, "{r}");
+    assert_eq!(reads["notHidden"], 4, "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"read": {"locator": {"css": "li", "level": 1}, "read": "count"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("need a role"), "{r}");
+}
+
+/// `modifiers` on pointer actions set the events' modifier flags (Playwright's
+/// `click({ modifiers })`).
+#[test]
+fn driver_click_modifiers_reach_the_events() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "() => { document.body.innerHTML = '<button id=m>M</button>'; window.seen = []; m.addEventListener('click', (e) => seen.push([e.shiftKey, e.ctrlKey, e.altKey, e.metaKey].join())); }", "call": true}},
+        {"act": {"locator": {"css": "#m"}, "action": "click", "modifiers": ["Shift", "Alt"]}},
+        {"act": {"locator": {"css": "#m"}, "action": "click"}},
+        {"mouse": {"action": "click", "x": 5, "y": 5, "modifiers": ["Control"]}},
+        {"eval": {"expression": "seen", "as": "seen"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let seen = r["result"]["reads"]["seen"].as_array().cloned().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(seen[0], "true,false,true,false", "{r}");
+    assert_eq!(seen[1], "false,false,false,false", "{r}");
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"act": {"locator": {"css": "#m"}, "action": "click", "modifiers": ["Hyper"]}}]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("unknown modifier"), "{r}");
+}
+
 const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
 <style>#tip{display:none} #cell:hover + #tip{display:block} #box{color:rgb(1, 2, 3);width:120px;height:40px}</style>
 <div id="cell">Cell</div><div id="tip">Tooltip</div>
@@ -5441,7 +5595,7 @@ fn driver_accessible_name_labelledby_uses_aria_label_and_dedupes() {
 /// Elements in an `inert` or `aria-hidden` subtree are hidden for ARIA: role
 /// locators skip them and names from content do not read them.
 #[test]
-fn driver_role_locators_skip_inert_and_aria_hidden_subtrees() {
+fn driver_role_locators_skip_aria_hidden_but_not_inert_subtrees() {
     let mut h = Harness::new();
     load_html(
         &mut h,
@@ -5457,15 +5611,15 @@ fn driver_role_locators_skip_inert_and_aria_hidden_subtrees() {
         &[
             ("headers", "count", json!({"role": "columnheader", "name": "Name", "exact": true})),
             ("buttons", "count", json!({"role": "button"})),
-            ("goName", "name", json!({"role": "button"})),
         ],
     );
-    assert_eq!(reads, json!({"headers": 1, "buttons": 1, "goName": "Go"}));
-    let r = h.page(
-        "LP.run",
-        json!({"steps": [{"check": {"locator": {"role": "columnheader", "name": "Name", "exact": true}, "assert": "text", "expected": "Name"}}]}),
-    );
-    assert!(r.get("error").is_none(), "{r}");
+    // Playwright's isElementHiddenForAria has no inert rule (and
+    // checkVisibility() ignores inert): inert content keeps its role and
+    // its text stays in names; aria-hidden content does not.
+    assert_eq!(reads["headers"], 2, "{reads}");
+    assert_eq!(reads["buttons"], 2, "{reads}");
+    let r = h.page("LP.query", json!({"locator": {"role": "button", "name": "Go (y)", "exact": true}, "read": "name"}));
+    assert_eq!(r["result"]["value"], "Go (y)", "{r}");
 }
 
 /// `checked` honours `aria-checked` on checkbox-like roles (and `mixed`);

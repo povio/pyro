@@ -898,7 +898,9 @@ impl Io {
                                     let _ = write_frame(&mut io, 0x8, false, &close_payload(echo, "")).await;
                                     close_sent = true;
                                 }
-                                close_received = Some((code, reason));
+                                // The first Close frame is the one reported (a
+                                // peer answering our echo sends another).
+                                close_received.get_or_insert((code, reason));
                                 deadline = Some(tokio::time::Instant::now() + CONNECTION_CLOSE_TIMEOUT);
                                 None
                             }

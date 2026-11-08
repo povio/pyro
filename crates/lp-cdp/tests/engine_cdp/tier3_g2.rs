@@ -338,6 +338,26 @@ fn driver_steps_keep_dialogs_non_blocking() {
     assert!(r.to_string().contains("\"false\""), "{r}");
 }
 
+/// `LP.dialogs {block: true}`: a dialog a driver step opens waits for the
+/// client's answer, as Playwright's `page.on('dialog')` expects.
+#[test]
+fn driver_steps_block_on_dialogs_when_the_page_asks() {
+    let mut h = Harness::new();
+    let pump = ScriptedPump::install(&mut h);
+    h.page("Page.enable", json!({}));
+    assert_eq!(h.page("LP.dialogs", json!({"block": true}))["result"], json!({}));
+    pump.push(&h, 910, "Page.handleJavaScriptDialog", json!({"accept": true}));
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "String(confirm('x'))", "as": "c"}}]}));
+    assert_eq!(r["result"]["reads"]["c"], "true", "{r}");
+    pump.push(&h, 911, "Page.handleJavaScriptDialog", json!({"accept": true, "promptText": "typed"}));
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "prompt('q')", "as": "p"}}]}));
+    assert_eq!(r["result"]["reads"]["p"], "typed", "{r}");
+
+    h.page("LP.dialogs", json!({"block": false}));
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "String(confirm('x'))", "as": "c"}}]}));
+    assert_eq!(r["result"]["reads"]["c"], "false", "back to non-blocking: {r}");
+}
+
 #[test]
 fn set_document_content_replaces_the_frame_document() {
     let mut h = Harness::new();

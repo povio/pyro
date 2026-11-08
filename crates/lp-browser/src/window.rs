@@ -284,7 +284,12 @@ impl JsClass for Window {
             "NavigationTransition",
             "NavigationCurrentEntryChangeEvent"
         );
-        def.getter("performance", |s, w| Ok(performance_object(s, w)?.value()));
+        // [Replaceable], as in Chrome: assignment shadows it on the window.
+        def.accessor(
+            "performance",
+            |s, w| Ok(performance_object(s, w)?.value()),
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "performance", v),
+        );
         // Performance Timeline observers, made on the realm's first use.
         def.accessor(
             "PerformanceObserver",

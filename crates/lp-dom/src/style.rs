@@ -21,6 +21,11 @@
 //! `:focus`, `:focus-within`, `:focus-visible`, `:visited`, `:target`) or a
 //! pseudo-element are skipped (StyleManager.zig:1198-1235).
 //!
+//! In lightningpanda the cascade itself is the layout engine's (Stylo in
+//! Blitz, [`StyleEngine::stylo_style`]): pseudo-element rules apply, and
+//! [`StyleEngine::pseudo_style`] reads `::before` / `::after` styles
+//! ([`StyleEngine::css_content`] for their generated text).
+//!
 //! The UA stylesheet subset (`display: none` for unrendered tags, `[hidden]`,
 //! `input[type=hidden i]`, closed `<dialog>`, closed popovers, closed
 //! `<details>` content) is applied only when no author rule set `display`
@@ -63,6 +68,28 @@ pub enum Display {
     Grid,
     #[default]
     Other,
+}
+
+/// The tree-abiding pseudo-elements the style engine computes styles for.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PseudoElement {
+    Before,
+    After,
+}
+
+impl PseudoElement {
+    /// `getComputedStyle`'s `pseudoElt` argument: `::before` / `::after`
+    /// (and the legacy `:before` / `:after`), ASCII case-insensitively.
+    pub fn parse(text: &str) -> Option<PseudoElement> {
+        let name = text.strip_prefix("::").or_else(|| text.strip_prefix(':'))?;
+        if name.eq_ignore_ascii_case("before") {
+            Some(PseudoElement::Before)
+        } else if name.eq_ignore_ascii_case("after") {
+            Some(PseudoElement::After)
+        } else {
+            None
+        }
+    }
 }
 
 /// The case-changing part of `text-transform` (StyleManager.zig:1321-1376).
@@ -801,6 +828,11 @@ pub struct StyleEngine {
     gecko_rules: RefCell<Option<(AuthorSheetsKey, Rc<Vec<crate::gecko_only::Rule>>)>>,
     /// Sheet revisions handed out so far.
     revisions: u64,
+    /// Called before the layout engine computes styles anew (CSS rule
+    /// usage tracking, `CSS.startRuleUsageTracking`), with the stamp it last
+    /// ran for.
+    recalc_hook: RefCell<Option<RecalcHook>>,
+    recalc_hooked_at: Cell<Option<ObservationStamp>>,
     /// [`Self::set_track_style_changes`].
     track_style_changes: Cell<bool>,
     /// Debug builds: the last [`StyleEngine::author_sheets_key`] and a hash
@@ -842,6 +874,9 @@ pub struct AuthorSheetsKey {
     connected_rest: Vec<u64>,
 }
 
+/// [`StyleEngine::set_recalc_hook`].
+pub type RecalcHook = Rc<dyn Fn(&Dom, &StyleEngine)>;
+
 /// [`StyleEngine::observation_stamp`]: DOM version, sheet generation,
 /// focused and hovered elements.
 type ObservationStamp = (u64, u64, u32, u32);
@@ -875,6 +910,28 @@ impl StyleEngine {
             registered_properties: Vec::new(),
             adopted: Default::default(),
             constructed: Default::default(),
+            recalc_hook: RefCell::new(None),
+            recalc_hooked_at: Cell::new(None),
+        }
+    }
+
+    /// Calls `hook` before each style recalculation of the layout engine
+    /// (a style or layout query after the document changed); `None`: no more.
+    pub fn set_recalc_hook(&self, hook: Option<RecalcHook>) {
+        *self.recalc_hook.borrow_mut() = hook;
+        self.recalc_hooked_at.set(None);
+    }
+
+    pub fn has_recalc_hook(&self) -> bool {
+        self.recalc_hook.borrow().is_some()
+    }
+
+    /// Runs the recalc hook, once per observation stamp.
+    pub(crate) fn before_recalc(&self, dom: &Dom) {
+        let Some(hook) = self.recalc_hook.borrow().clone() else { return };
+        let stamp = self.observation_stamp(dom);
+        if self.recalc_hooked_at.replace(Some(stamp)) != Some(stamp) {
+            hook(dom, self);
         }
     }
 
@@ -904,7 +961,10 @@ impl StyleEngine {
     /// replaced since the last call (while tracked), with the style before
     /// and after: a transition's before-change and after-change styles.
     /// Elements gone from `dom` are left out.
-    pub fn take_style_changes(&self, dom: &Dom) -> Vec<(NodeId, crate::timing::StyleSnapshot, crate::timing::StyleSnapshot)> {
+    pub fn take_style_changes(
+        &self,
+        dom: &Dom,
+    ) -> Vec<(NodeId, crate::timing::StyleSnapshot, crate::timing::StyleSnapshot)> {
         let external = self.external.borrow();
         let Some((source, _)) = &*external else { return Vec::new() };
         source
@@ -1017,6 +1077,7 @@ impl StyleEngine {
             }
             source.clone()
         };
+        self.before_recalc(dom);
         self.external_syncing.set(true);
         source.sync_styles(dom, self);
         self.external_syncing.set(false);
@@ -1029,6 +1090,63 @@ impl StyleEngine {
     pub fn stylo_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
         let style = self.stylo_style(dom, el)?;
         crate::stylo::serialize(&style, name)
+    }
+
+    /// The computed style of `el`'s `::before` / `::after` from the layout
+    /// engine: `None` when it generates no box of a rendered element, unless
+    /// `synthesize`, which then answers as `getComputedStyle(el, '::before')`
+    /// does ([`Self::stylo_pseudo_style`]).
+    pub fn pseudo_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: PseudoElement,
+        synthesize: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let pseudo = match pseudo {
+            PseudoElement::Before => style::selector_parser::PseudoElement::Before,
+            PseudoElement::After => style::selector_parser::PseudoElement::After,
+        };
+        self.stylo_pseudo_style(dom, el, &pseudo, !synthesize)
+    }
+
+    /// Playwright's `getCSSContent`: the text CSS `content` puts in
+    /// `pseudo` (`None`: the element's own `content`, which counts only
+    /// for its alternative text after `/`). `None` when there is none:
+    /// `content: none | normal`, a `display: none` or `visibility: hidden`
+    /// box, or content that is not all strings and `attr()` (counters,
+    /// quotes and images give nothing, as Playwright's parser rejects
+    /// them). A `::before` / `::after` that is not `display: inline` is
+    /// padded with a space on each side.
+    pub fn css_content(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>) -> Option<String> {
+        use style::values::generics::counters::{Content, ContentItem};
+        use style::values::specified::box_::Display as D;
+        let style = match pseudo {
+            Some(p) => self.pseudo_style(dom, el, p, false)?,
+            None => self.stylo_style(dom, el)?,
+        };
+        let Content::Items(items) = &style.get_counters().content else { return None };
+        let b = style.get_box();
+        if b.display == D::None || style.get_inherited_box().visibility == style::computed_values::visibility::T::Hidden
+        {
+            return None;
+        }
+        let (main, alt) = items.items.split_at(items.alt_start.min(items.items.len()));
+        let chosen = if !alt.is_empty() {
+            alt
+        } else if pseudo.is_some() {
+            main
+        } else {
+            return None;
+        };
+        let mut text = String::new();
+        for item in chosen {
+            match item {
+                ContentItem::String(s) => text.push_str(s),
+                _ => return None,
+            }
+        }
+        Some(if pseudo.is_some() && b.display != D::Inline { format!(" {text} ") } else { text })
     }
 
     /// [`ComputedStyle`] from Stylo's computed values, memoized per style
@@ -1048,6 +1166,11 @@ impl StyleEngine {
         let above = parent.and_then(|p| self.computed_stylo(dom, p)).unwrap_or_default();
         let e = dom.n(idx).element().expect("element");
         let mut c = derive_computed(&style, e, &above);
+        // A drop-down select's children (its options) keep their computed
+        // `display` but generate no box, as in Chromium's menu list.
+        if parent.is_some_and(|p| dom.element(p).is_ok_and(is_menu_list)) {
+            c.in_display_none = true;
+        }
         // A modal dialog blocks its document: the root is inert and the
         // topmost modal dialog's subtree is not (HTML "blocked by a modal
         // dialog"). One empty-set check when there is no modal dialog.
@@ -1720,6 +1843,15 @@ impl StyleMemo {
         self.sparse[slot] = self.dense.len() as u32;
         self.dense.push((el, c));
     }
+}
+
+/// Whether `e` is a drop-down `<select>` (Chromium's menu list: neither
+/// `multiple` nor a `size` above 1), whose children generate no boxes.
+pub fn is_menu_list(e: &crate::node::ElementData) -> bool {
+    e.is_html()
+        && &*e.name.local == "select"
+        && e.attr("multiple").is_none()
+        && !e.attr("size").and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1)
 }
 
 /// flatTreeParentElement (webapi/Node.zig:1756-1775): shadow content takes

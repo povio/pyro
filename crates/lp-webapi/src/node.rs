@@ -1336,7 +1336,7 @@ impl JsClass for Element {
                     return Err(JsError::dom(
                         "SyntaxError",
                         "The value provided is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.",
-                    ))
+                    ));
                 }
             };
             let frag = lp_dom::parse::parse_fragment(&mut dom, ctx, &html).js()?;
@@ -1381,7 +1381,7 @@ impl JsClass for Element {
                 _ => {
                     return Err(JsError::Type(format!(
                         "The provided value '{mode}' is not a valid enum value of type ShadowRootMode."
-                    )))
+                    )));
                 }
             };
             if o.get_atom("serializable")?.to_bool() {
@@ -1395,7 +1395,7 @@ impl JsClass for Element {
                     other => {
                         return Err(JsError::Type(format!(
                             "The provided value '{other}' is not a valid enum value of type SlotAssignmentMode."
-                        )))
+                        )));
                     }
                 }
             }

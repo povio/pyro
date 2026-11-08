@@ -65,17 +65,23 @@ pub struct MatchOptions {
     /// Largest per-channel difference a pixel may have and still match.
     pub tolerance: u8,
     /// Differing pixels allowed.
-    pub max_diff_pixels: u64,
-    /// Differing pixels allowed as a fraction of the image (the larger of
-    /// the two limits applies).
-    pub max_diff_ratio: f64,
+    pub max_diff_pixels: Option<u64>,
+    /// Differing pixels allowed as a fraction of the image. With both set,
+    /// the smaller limit applies (Playwright's comparators.js); with
+    /// neither, no pixel may differ.
+    pub max_diff_ratio: Option<f64>,
     pub backend: Backend,
 }
 
 impl MatchOptions {
-    fn allowed(&self, width: u32, height: u32) -> u64 {
-        let by_ratio = (self.max_diff_ratio.clamp(0.0, 1.0) * width as f64 * height as f64).floor() as u64;
-        self.max_diff_pixels.max(by_ratio)
+    /// Playwright fails when `count > limit` with an unfloored ratio limit;
+    /// for an integer count that is `count > floor(limit)`.
+    pub fn allowed(&self, width: u32, height: u32) -> u64 {
+        let by_ratio = self.max_diff_ratio.map(|r| (r.clamp(0.0, 1.0) * width as f64 * height as f64).floor() as u64);
+        match (self.max_diff_pixels, by_ratio) {
+            (Some(p), Some(r)) => p.min(r),
+            (p, r) => p.or(r).unwrap_or(0),
+        }
     }
 }
 

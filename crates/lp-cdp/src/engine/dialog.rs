@@ -12,7 +12,9 @@
 //! disabling Page, its target closing, or the connection ending dismisses
 //! the dialog. Without such a session, without a pump (in-process
 //! embedders), or while an `LP.*` driver command is running, dialogs do not
-//! block: they are reported and return what a dismissed dialog gives.
+//! block: they are reported and return what a dismissed dialog gives. A
+//! page that asked with `LP.dialogs {block: true}` (a client listening for
+//! dialogs) blocks during driver commands too.
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -57,6 +59,8 @@ pub(crate) struct DialogGate {
     pub(super) driver_busy: Cell<bool>,
     /// A dialog is showing (the nested loop is running).
     open: Cell<bool>,
+    /// Pages whose dialogs block even while a driver command runs.
+    driver_blocking: RefCell<std::collections::HashSet<PageId>>,
 }
 
 #[derive(Deserialize)]
@@ -94,11 +98,21 @@ impl DialogGate {
 
     pub(super) fn forget(&self, page: PageId) {
         self.sessions.borrow_mut().remove(&page);
+        self.driver_blocking.borrow_mut().remove(&page);
+    }
+
+    pub(super) fn set_driver_blocking(&self, page: PageId, block: bool) {
+        let mut set = self.driver_blocking.borrow_mut();
+        if block {
+            set.insert(page);
+        } else {
+            set.remove(&page);
+        }
     }
 
     /// Whether a dialog of `page` would block now.
     pub(super) fn would_block(&self, page: PageId) -> bool {
-        !self.driver_busy.get()
+        (!self.driver_busy.get() || self.driver_blocking.borrow().contains(&page))
             && !self.open.get()
             && self.pump.borrow().is_some()
             && self.sessions.borrow().contains_key(&page)

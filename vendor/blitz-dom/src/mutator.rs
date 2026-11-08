@@ -329,6 +329,20 @@ impl DocumentMutator<'_> {
         }
     }
 
+    /// lightningpanda: `multiple` / `size` switch a select between a
+    /// drop-down (no boxes for its options) and a list box (options laid
+    /// out): its boxes are built again.
+    fn rebuild_select_for_attribute(&mut self, node_id: NodeId, name: &QualName) {
+        if !matches!(name.local.as_ref() as &str, "multiple" | "size") {
+            return;
+        }
+        let node = &mut self.doc.nodes[node_id];
+        if node.data.downcast_element().is_some_and(|el| el.name.local == local_name!("select")) {
+            node.insert_damage(ALL_DAMAGE);
+            node.mark_ancestors_dirty();
+        }
+    }
+
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
         if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
             self.doc.note_lp_state(node_id, Some(value));
@@ -337,6 +351,7 @@ impl DocumentMutator<'_> {
         // the change (`has_invalidation`); `None` (one flag test) when no
         // `:has()` search visited it.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
+        self.rebuild_select_for_attribute(node_id, &name);
         self.set_attribute_impl(node_id, name, value);
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);
@@ -497,6 +512,7 @@ impl DocumentMutator<'_> {
         }
         // lightningpanda: as in `set_attribute`.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
+        self.rebuild_select_for_attribute(node_id, &name);
         self.clear_attribute_impl(node_id, name);
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);

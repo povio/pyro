@@ -701,9 +701,8 @@ impl Replay<'_, '_> {
     fn glyphs_shown(&self, c: &anyrender::recording::GlyphRunCommand) -> Vec<usize> {
         let size = c.font_size as f64;
         let clip = self.layers.last().map(|l| l.clip);
-        let (left, right) = clip.map_or((self.page.x0, self.page.x1), |l| {
-            (self.page.x0.max(l.x0), self.page.x1.min(l.x1))
-        });
+        let (left, right) =
+            clip.map_or((self.page.x0, self.page.x1), |l| (self.page.x0.max(l.x0), self.page.x1.min(l.x1)));
         let (top, bottom) = clip.map_or((f64::MIN, f64::MAX), |l| (l.y0, l.y1));
         let inside = |glyph: Rect| glyph.x0 < right && left < glyph.x1 && glyph.y0 < bottom && top < glyph.y1;
         let edges = |i: usize| {
@@ -873,11 +872,8 @@ impl Replay<'_, '_> {
         }
         // Only a paper-cut page: `.pz-page` documents keep what they had.
         let paper_cut = self.extras.is_some();
-        let shown: Vec<usize> = if paper_cut && !self.run_all_shown(c) {
-            self.glyphs_shown(c)
-        } else {
-            (0..c.glyphs.len()).collect()
-        };
+        let shown: Vec<usize> =
+            if paper_cut && !self.run_all_shown(c) { self.glyphs_shown(c) } else { (0..c.glyphs.len()).collect() };
         let Some(&first) = shown.first() else { return };
         let Some((paint, opacity)) = self.paint(&c.brush, None) else { return };
         let opacity = norm(opacity.get() * c.brush_alpha);
