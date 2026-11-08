@@ -213,12 +213,8 @@ unsafe fn lean_getter_h(slot: usize, h: *mut Header, this: sys::JSObjectRef) -> 
         // SAFETY: stored from an `InvokeHFn` by `slot_for`.
         let invoke = std::mem::transmute::<usize, InvokeHFn>(invoke);
         let f = GETTER_CALLS[slot].f.load(Ordering::Relaxed) as *const ();
-        let realm = (*h).realm_ref.upgrade()?;
-        let ctx = realm.ctx.get() as sys::JSContextRef;
-        if ctx.is_null() {
-            return None;
-        }
-        let scope = crate::realm::Scope::new(ctx, &realm);
+        let (ctx, realm) = (*h).core.live()?;
+        let scope = crate::realm::Scope::new(ctx, realm);
         match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, this, f))) {
             Ok(Ok(v)) if !v.is_null() => Some(v),
             _ => None,

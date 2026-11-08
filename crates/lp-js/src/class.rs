@@ -1074,6 +1074,9 @@ pub(crate) struct Header {
     /// dispatch its candidate realm (`guard_in`), cross-realm calls their
     /// receiver's realm and finalization the identity map to prune.
     pub realm_ref: std::rc::Weak<crate::realm::RealmInner>,
+    /// The same realm for the lean member dispatch: its context and the
+    /// realm itself in two loads, with no reference count touched.
+    pub core: Rc<crate::realm::RealmCore>,
     /// An owned wrapper (`IdentityKey::OWNED`): nonzero while its owner wants
     /// the object kept. The collector reads it while marking, possibly from
     /// another thread (`JSWeakCreateKeptWhile`).
@@ -1143,6 +1146,7 @@ pub(crate) fn new_payload<T: 'static>(
             class,
             info,
             realm_ref,
+            core: realm.core.clone(),
             keep_alive: std::sync::atomic::AtomicU8::new(0),
             weak: std::cell::Cell::new(ptr::null_mut()),
             owned_prev: std::cell::Cell::new(ptr::null_mut()),
@@ -2282,12 +2286,8 @@ unsafe extern "C" fn get_by_index_hook(
 unsafe fn get_by_index_lean(h: *mut Header, index: u32) -> Option<sys::JSValueRef> {
     unsafe {
         let f = (*(*h).info).def.hooks.indexed?;
-        let realm = (*h).realm_ref.upgrade()?;
-        let ctx = realm.ctx.get() as sys::JSContextRef;
-        if ctx.is_null() {
-            return None;
-        }
-        let scope = Scope::new(ctx, &realm);
+        let (ctx, realm) = (*h).core.live()?;
+        let scope = Scope::new(ctx, realm);
         match catch_unwind(AssertUnwindSafe(|| f(&scope, h, index))) {
             Ok(Ok(v)) => Some(v.unwrap_or(ptr::null())),
             _ => None,
@@ -2387,12 +2387,8 @@ unsafe fn pure_member_call(
         if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
             return None;
         }
-        let realm = (*h).realm_ref.upgrade()?;
-        let ctx = realm.ctx.get() as sys::JSContextRef;
-        if ctx.is_null() {
-            return None;
-        }
-        let scope = Scope::new(ctx, &realm);
+        let (ctx, realm) = (*h).core.live()?;
+        let scope = Scope::new(ctx, realm);
         let call = payload.call;
         match catch_unwind(AssertUnwindSafe(|| (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f))) {
             Ok(Ok(v)) if !v.is_null() => Some(v),

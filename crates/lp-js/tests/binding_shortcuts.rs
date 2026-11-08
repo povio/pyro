@@ -148,3 +148,108 @@ fn rehome_refuses_values_of_another_engine() {
         let _ = sa.rehome(v);
     }
 }
+
+/// A class whose data embeds its parent's: members of `Base` reach it
+/// through an upcast, members of `Wide` directly.
+struct WideData {
+    base: BaseData,
+    extra: u32,
+}
+
+struct Wide;
+impl JsClass for Wide {
+    const NAME: &'static str = "Wide";
+    type Data = WideData;
+    type Parent = Derived;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|w: &WideData| &w.base);
+        def.pure_getter_typed("extra", GetterResult::Number, |s, w| Ok(s.number(f64::from(w.extra))));
+    }
+}
+
+/// Lean members of every kind: a pure getter, a pure method and an indexed
+/// getter.
+struct Lean;
+impl JsClass for Lean {
+    const NAME: &'static str = "Lean";
+    type Data = BaseData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.pure_getter_typed("leanId", GetterResult::Number, |s, d| Ok(s.number(f64::from(d.id))));
+        def.pure_method("twice", 0, |s, d, _a| Ok(s.number(f64::from(d.id * 2))));
+        def.indexed(|s, d, i| Ok((i < 2).then(|| s.number(f64::from(d.id + i)))));
+    }
+}
+
+#[test]
+fn brands_hold_through_depth_and_upcasts() {
+    let engine = Engine::new().unwrap();
+    engine.register::<Wide>();
+    engine.register::<Lean>();
+    let realm = engine.create_realm(RealmOptions::default()).unwrap();
+    let s = realm.scope().unwrap();
+    let w = s.wrap::<Wide>(WideData { base: data(4), extra: 11 }, None).unwrap();
+    let d = s.wrap::<Derived>(data(5), None).unwrap();
+    let l = s.wrap::<Lean>(data(6), None).unwrap();
+    s.global().set_atom("w", w.value()).unwrap();
+    s.global().set_atom("d", d.value()).unwrap();
+    s.global().set_atom("l", l.value()).unwrap();
+    // Through the JIT tiers too: members of the root class on a grandchild
+    // whose data is a projection, members of the class itself, and refusals
+    // of an unrelated class at the same depth and of a shallower one.
+    let r = s
+        .eval(
+            "const extra = Object.getOwnPropertyDescriptor(Wide.prototype, 'extra').get;
+             const id = Object.getOwnPropertyDescriptor(Base.prototype, 'id').get;
+             const leanId = Object.getOwnPropertyDescriptor(Lean.prototype, 'leanId').get;
+             let ok = true;
+             for (let i = 0; i < 20000; i++) {
+               ok = ok && w.id === 4 && w.extra === 11 && w.me() === w && d.id === 5 && l.leanId === 6;
+             }
+             const refused = f => { try { f(); return false } catch (e) { return e instanceof TypeError } };
+             ok && refused(() => extra.call(d)) && refused(() => leanId.call(w)) && refused(() => id.call(l))
+               && refused(() => Lean.prototype.twice.call(d))",
+            None,
+            1,
+        )
+        .unwrap();
+    assert!(r.to_bool());
+    assert_eq!(s.unwrap::<Base>(w.value()).map(|d| d.id), Some(4));
+    assert_eq!(s.unwrap::<Wide>(w.value()).map(|w| w.extra), Some(11));
+    assert!(s.unwrap::<Wide>(d.value()).is_none());
+    assert!(s.unwrap::<Lean>(w.value()).is_none());
+}
+
+#[test]
+fn lean_members_of_a_disposed_or_dropped_realm_refuse_safely() {
+    let engine = Engine::new().unwrap();
+    engine.register::<Lean>();
+    let main = engine.create_realm(RealmOptions::default()).unwrap();
+    let s = main.scope().unwrap();
+    let read = "(() => { try { return [o.leanId, o.twice(), o[1]].join() } catch (e) { return e.message } })()";
+    for round in 0..2 {
+        let other = engine.create_realm(RealmOptions { name: "other".into(), ..Default::default() }).unwrap();
+        {
+            let o = other.scope().unwrap();
+            let w = o.wrap::<Lean>(data(20), None).unwrap();
+            s.global().set_atom("o", s.rehome_object(w).value()).unwrap();
+        }
+        // Warm every lean entry (inline caches and JIT) while the realm lives.
+        let warm = s
+            .eval(&format!("var r; for (let i = 0; i < 20000; i++) r = {read}; r"), None, 1)
+            .unwrap();
+        assert_eq!(warm.to_string().unwrap(), "20,40,21");
+        if round == 0 {
+            other.dispose();
+        } else {
+            // The last handle: the realm itself is freed, its wrapper lives on.
+            drop(other);
+        }
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+        for _ in 0..3 {
+            let after = s.eval(&format!("var r2; for (let i = 0; i < 2000; i++) r2 = {read}; r2"), None, 1).unwrap();
+            assert_ne!(after.to_string().unwrap(), "20,40,21", "round {round}: a disposed realm's member answered");
+        }
+    }
+}

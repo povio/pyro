@@ -265,12 +265,46 @@ const NO_SHAPE: sys::spi::JSWrapperShapeRef = ptr::dangling_mut::<c_void>();
 /// handled and the engine hooks are not told.
 pub type ExceptionReporter = for<'s> fn(&Scope<'s>, &JsException) -> bool;
 
+/// What the lean member dispatch needs of a realm, behind one pointer that
+/// every wrapper payload of the realm holds ([`Header::core`]): the context
+/// (null once the realm is disposed) and the realm. It outlives the realm
+/// (the payloads share it), so a payload whose realm is gone still reads a
+/// null context here instead of a freed realm.
+pub(crate) struct RealmCore {
+    ctx: Cell<sys::JSContextRef>,
+    /// The realm's own `Rc`, aliased without a count of its own (never
+    /// dropped): handed out as `&Rc<RealmInner>` only while `ctx` is set,
+    /// i.e. before `RealmInner::dispose`, which every drop of the realm runs
+    /// first.
+    realm: std::cell::OnceCell<std::mem::ManuallyDrop<Rc<RealmInner>>>,
+}
+
+impl RealmCore {
+    fn new() -> RealmCore {
+        RealmCore { ctx: Cell::new(ptr::null()), realm: std::cell::OnceCell::new() }
+    }
+
+    /// The live realm's context and the realm, with no reference count
+    /// changed. The realm stays alive for as long as a lean callback (which
+    /// runs no script, so drops no realm handle) uses it.
+    #[inline]
+    pub(crate) fn live(&self) -> Option<(sys::JSContextRef, &Rc<RealmInner>)> {
+        let ctx = self.ctx.get();
+        if ctx.is_null() {
+            return None;
+        }
+        Some((ctx, self.realm.get()?))
+    }
+}
+
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
     origin: RefCell<Option<String>>,
     pub(crate) engine: Rc<EngineInner>,
     pub(crate) ctx: Cell<sys::JSGlobalContextRef>,
+    /// The lean dispatch's view of this realm (see [`RealmCore`]).
+    pub(crate) core: Rc<RealmCore>,
     /// Interface prototype objects by class id, null until the class is
     /// first populated (`materialize`) and past the classes this realm was
     /// created with. Kept alive by `interfaces[0]`, which only `materialize`
@@ -449,6 +483,8 @@ impl RealmInner {
     }
 
     pub(crate) fn dispose(&self) {
+        // First: no lean callback may reach the realm from here on.
+        self.core.ctx.set(ptr::null());
         let ctx = self.ctx.replace(ptr::null_mut());
         if ctx.is_null() {
             return;
@@ -1923,6 +1959,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         origin: RefCell::new(options.origin),
         engine: engine.clone(),
         ctx: Cell::new(ctx),
+        core: Rc::new(RealmCore::new()),
         protos: RefCell::new(Vec::new()),
         shapes: RefCell::new(Vec::new()),
         interfaces: RefCell::new(None),
@@ -1965,6 +2002,11 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         inner.global_target.set(t as sys::JSObjectRef);
     }
     engine.realms.borrow_mut().insert(ctx as usize, Rc::downgrade(&inner));
+    // SAFETY: an alias of `inner` that is never dropped (no count of its
+    // own); `RealmCore::live` hands it out only until `dispose`.
+    let alias = std::mem::ManuallyDrop::new(unsafe { Rc::from_raw(Rc::as_ptr(&inner)) });
+    let _ = inner.core.realm.set(alias);
+    inner.core.ctx.set(ctx as sys::JSContextRef);
     let realm = Realm { inner };
     {
         let _watchdog = crate::engine::WatchdogPause::new(engine);
