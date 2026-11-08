@@ -483,7 +483,8 @@ again and shape its text again. Three causes, each fixed where it is:
   from `box_tree_needs_rebuild`, which shaped the cell's text again) and `process_preorder` a collapsed border's
   colour change. An inline root collected again whose damage, read after
   `flush_pseudo_elements`, has no `INLINE_CONTENT` keeps its `TextLayout` instead of queueing a rebuild; debug
-  builds shape it again and assert the text, text nodes and inline boxes are the same
+  builds shape it again and assert the text, text nodes and inline boxes are the same, and that the
+  content widths kept with the shaped text (`TextLayout::text_content_widths`) are what the new build measures
   (`assert_kept_inline_layout_is_current`). `white-space: nowrap` (`text-wrap-mode`) and a span's `vertical-align`
   (the `baseline-*` longhands) are shaped into the parley layout and gave `RELAYOUT` only, so the layout kept the old
   value: `text_shaping_needs_recollect` rebuilds for them too.
