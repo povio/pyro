@@ -26,7 +26,7 @@ pub use engine::{
     configure_process, entry_realm, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
     WrapperPropertyHook,
 };
-pub use engine::set_allocator_release;
+pub use engine::{set_allocator_release, set_allocator_trim};
 pub use error::{JsError, JsException, JsResult};
 pub use interned::InternedId;
 pub use persistent::{Persistent, RootedVec};

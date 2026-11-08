@@ -732,6 +732,12 @@ impl Engine {
         let footprint = process_footprint();
         if gate.should_collect(footprint) && gate.past_ceiling(footprint) {
             self.settle();
+        } else {
+            // The allocator's cheap pass only: the thread's delayed frees
+            // and empty pages, no purge of retained memory (the idle
+            // `settle` does that), so the page closed just now does not
+            // keep its Rust-side pages until then.
+            trim_memory();
         }
         gate.pending.set(true);
         gate.code_pending.set(true);
@@ -1143,6 +1149,24 @@ static ALLOCATOR_RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new()
 /// it at the start of `main`.
 pub fn set_allocator_release(release: fn()) {
     let _ = ALLOCATOR_RELEASE.set(release);
+}
+
+/// What frees the process allocator's empty pages without purging its
+/// retained memory ([`set_allocator_trim`]).
+static ALLOCATOR_TRIM: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Registers the executable's global allocator's cheap collection
+/// (mimalloc's `mi_collect(false)`): what [`Engine::release_closed`] runs
+/// when it leaves the full release to an idle moment.
+pub fn set_allocator_trim(trim: fn()) {
+    let _ = ALLOCATOR_TRIM.set(trim);
+}
+
+/// The allocator's cheap collection, if the executable registered one.
+fn trim_memory() {
+    if let Some(trim) = ALLOCATOR_TRIM.get() {
+        trim();
+    }
 }
 
 /// Returns the allocator's free pages to the operating system (what
