@@ -792,6 +792,9 @@ pub struct StyleEngine {
     external: RefCell<Option<Engine>>,
     /// Set while the engine syncs (it reads the sheets here, not styles).
     external_syncing: Cell<bool>,
+    /// The engine was asked to journal the styles it replaces
+    /// ([`StyleEngine::record_style_changes`]).
+    recording_style_changes: Cell<bool>,
     /// Whether a style rule of the engine's sheets depends on `:active`, as
     /// of its last sync (true until one tells otherwise).
     active_styled: Cell<bool>,
@@ -864,6 +867,7 @@ impl StyleEngine {
             memo_at: Cell::new(None),
             external: RefCell::new(None),
             external_syncing: Cell::new(false),
+            recording_style_changes: Cell::new(false),
             active_styled: Cell::new(true),
             gecko_rules: RefCell::new(None),
             revisions: 0,
@@ -943,6 +947,41 @@ impl StyleEngine {
     /// styles; `None`: elements have none.
     pub fn set_style_engine(&self, source: Option<std::rc::Rc<dyn crate::geometry::GeometrySource>>) {
         *self.external.borrow_mut() = source.map(|s| (s, None));
+        self.recording_style_changes.set(false);
+    }
+
+    /// Asks the layout engine to note, from its next sync on, the elements
+    /// whose computed style it replaces ([`Self::take_style_changes`]); one
+    /// flag check once it does.
+    pub fn record_style_changes(&self) {
+        if self.recording_style_changes.replace(true) {
+            return;
+        }
+        if let Some((source, _)) = self.external.borrow().as_ref() {
+            source.record_style_changes(true);
+        }
+    }
+
+    /// The elements whose computed style the layout engine replaced or
+    /// first computed since the last call, each with whether the element
+    /// had a style before (`false`: it was not rendered before, as an
+    /// element just inserted or whose ancestor stopped being
+    /// `display: none`), and whether it is styled `display: none` now.
+    /// `None`: unknown, every element may have (no engine,
+    /// [`Self::record_style_changes`] not called, or the engine's document
+    /// was built anew since).
+    pub fn take_style_changes(&self, dom: &Dom) -> Option<Vec<(NodeId, bool, bool)>> {
+        let external = self.external.borrow();
+        let (source, _) = external.as_ref()?;
+        let changes = source.take_style_changes()?;
+        Some(
+            changes
+                .into_iter()
+                .filter_map(|(key, had_style, display_none)| {
+                    Some((crate::snapshot::node_of_render_key(dom, key)?, had_style, display_none))
+                })
+                .collect(),
+        )
     }
 
     /// The layout engine synced `dom` (styles and layout).
@@ -1331,12 +1370,24 @@ impl StyleEngine {
 
     /// Whether the layout engine has `el` outside every `display: none`
     /// subtree of the rendered (flat) tree, as of its styles brought up to
-    /// `dom`; `None` when there is no engine or it cannot tell.
-    fn engine_displayed(&self, dom: &Dom, el: NodeId) -> Option<bool> {
+    /// `dom`; `None` when there is no engine or it cannot tell. A walk up
+    /// the ancestors' stored styles, no computed style derived.
+    pub fn engine_displayed(&self, dom: &Dom, el: NodeId) -> Option<bool> {
         self.owns(dom, el)?;
         self.engine_styled(dom)?;
         let external = self.external.borrow();
         external.as_ref()?.0.element_displayed(crate::snapshot::render_key(el))
+    }
+
+    /// [`Self::engine_displayed`], telling apart the content Chrome hides with
+    /// `content-visibility: hidden` (closed `<details>`, `hidden=until-found`;
+    /// see [`crate::geometry::ElementDisplay`]). An element with a stored
+    /// style of its own answers without a walk up its ancestors.
+    pub fn engine_display(&self, dom: &Dom, el: NodeId) -> Option<crate::geometry::ElementDisplay> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_display(crate::snapshot::render_key(el))
     }
 
     /// StyleManager.zig:638-644.

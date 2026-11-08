@@ -1592,6 +1592,13 @@ impl Dom {
         n.is_connected() && self.doc_data(n.owner_doc).active
     }
 
+    /// Connected, in the document's own tree (not in a shadow tree): two
+    /// bits `tree_scope` keeps, no walk.
+    pub fn in_document_tree(&self, id: NodeId) -> bool {
+        let Ok((i, n)) = self.live(id) else { return false };
+        n.is_connected() && !self.in_shadow_tree(i)
+    }
+
     /// `Node.isConnected` (shadow-including).
     pub fn is_connected(&self, id: NodeId) -> DomResult<bool> {
         let (i, n) = self.live(id)?;

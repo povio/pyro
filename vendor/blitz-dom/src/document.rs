@@ -471,6 +471,18 @@ pub struct BaseDocument {
     /// `BaseDocument::may_have_generated_before_after`).
     pub(crate) generated_before_after: bool,
 
+    /// lightningpanda: the elements whose primary style the style traversals
+    /// replaced or first computed since `take_style_changes`, each with
+    /// whether it had one before (`false`: it was not rendered before), kept
+    /// only while `record_style_changes` (see
+    /// `BaseDocument::set_record_style_changes`).
+    pub(crate) style_changes: Vec<(NodeId, bool)>,
+    pub(crate) record_style_changes: bool,
+    /// lightningpanda: `style_changes` does not cover every style since the
+    /// last `take_style_changes`: the document is new, or the journal
+    /// overflowed. The next take answers `None`.
+    pub(crate) style_changes_lost: bool,
+
     /// lightningpanda: the top layer (modal dialogs, showing popovers) as
     /// the embedder marks it, by rank (bottom first): elements whose
     /// `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N`
@@ -645,6 +657,9 @@ impl BaseDocument {
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
             generated_before_after: false,
+            style_changes: Vec::new(),
+            record_style_changes: false,
+            style_changes_lost: true,
             top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),

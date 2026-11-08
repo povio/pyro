@@ -140,6 +140,7 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
             fetcher: fetcher.clone(),
+            style_changes_wanted: std::cell::Cell::new(false),
         }) as Rc<dyn GeometrySource>
     })));
 }
@@ -176,6 +177,10 @@ pub struct BlitzGeometry {
     /// revision (`StyleEngine::sheet_revision`), as last synced (see
     /// [`BlitzGeometry::changed_style_sheets`]).
     sheets: RefCell<Vec<(NodeId, bool, u64)>>,
+    /// The document journals the styles its syncs replace
+    /// ([`GeometrySource::record_style_changes`]); asked of it again after
+    /// every sync, since a sync may build the document anew.
+    style_changes_wanted: std::cell::Cell<bool>,
 }
 
 impl Drop for BlitzGeometry {
@@ -339,6 +344,23 @@ impl BlitzGeometry {
         );
         let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));
+        if last == Some(now) && !style_only {
+            // The styles were synced at this very state (a computed-style
+            // read after a change): only the layout is left. No node list
+            // or delta, and no sync counted: nothing changed since.
+            let dpr = v.device_scale_factor;
+            let done = self.with_renderer(|r| {
+                guarded(r, self.page, |r| {
+                    r.sync_delta(self.page, &[], (viewport.0, viewport.1, dpr, viewport.3, viewport.4), false).ok()
+                })
+            });
+            if let Some(Some(t)) = done {
+                if lp_render::profiling::on() {
+                    LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+                }
+                return;
+            }
+        }
         // The changes since the last sync, when the journal covers them and
         // neither sheets nor viewport changed: no whole-tree snapshot or diff.
         if let Some((version, generation, vp, invalidations)) = last {
@@ -489,6 +511,15 @@ impl BlitzGeometry {
             profile::add(1, t.elapsed());
         }
         self.sync_interaction(dom, style, style_only);
+        if self.style_changes_wanted.get() {
+            // The sync may have built the document anew: one flag set.
+            self.with_renderer(|r| r.record_style_changes(self.page, true));
+        }
+    }
+
+    /// Runs `f` on this thread's renderer (`None` while it is in use).
+    fn with_renderer<T>(&self, f: impl FnOnce(&mut Renderer) -> T) -> Option<T> {
+        RENDERER.with(|r| Some(f(r.try_borrow_mut().ok()?.as_mut()?)))
     }
 
     fn element_box_inner(&self, key: u64) -> Option<ExternalBox> {
@@ -611,8 +642,26 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_style(self.page, key))
     }
 
+    fn record_style_changes(&self, on: bool) {
+        self.style_changes_wanted.set(on);
+        self.with_renderer(|r| r.record_style_changes(self.page, on));
+    }
+
+    fn take_style_changes(&self) -> Option<Vec<(u64, bool, bool)>> {
+        self.with_renderer(|r| r.take_style_changes(self.page)).flatten()
+    }
+
     fn element_displayed(&self, key: u64) -> Option<bool> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
+    }
+
+    fn element_display(&self, key: u64) -> Option<lp_dom::geometry::ElementDisplay> {
+        use lp_dom::geometry::ElementDisplay;
+        Some(match RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_display(self.page, key))? {
+            lp_render::ElementDisplay::Displayed => ElementDisplay::Displayed,
+            lp_render::ElementDisplay::ContentHidden => ElementDisplay::ContentHidden,
+            lp_render::ElementDisplay::Hidden => ElementDisplay::Hidden,
+        })
     }
 
     fn element_pseudo_style(
@@ -726,6 +775,7 @@ mod tests {
             resources: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
             fetcher: std::sync::Arc::new(NoFetch),
+            style_changes_wanted: Default::default(),
         };
         assert_eq!(g.base_url.borrow().text, "about:blank");
         assert_eq!(g.base_url.borrow().parsed.as_ref().map(|u| u.as_str()), Some("about:blank"));

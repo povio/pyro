@@ -144,3 +144,26 @@ fn transition_listeners_are_noted_apart_from_animation_ones() {
     dm.add_listener(a, "webkitTransitionEnd", ListenerHandle(2), options);
     assert!(dm.has_transition_listeners());
 }
+
+#[test]
+fn may_transition_names_the_transition_candidates_one_element_at_a_time() {
+    let (dom, d) = doc(
+        "<div id=a class=base></div><div id=b class=other></div><p id=c style='transition: color 30ms'></p>\
+         <span id=d class=zero></span><div id=e class=anim></div>",
+    );
+    let sheet = "@keyframes spin {} .base { transition: width 1ms } .zero { transition-duration: 0s }
+        .anim { animation: spin 1s } @media (min-width: 100000px) { .other { transition: width 1s } }";
+    let rules = TimingRules::parse([sheet].into_iter(), &Viewport::default());
+    let dm = dom.borrow();
+    let el = |id: &str| dm.get_element_by_id(d, id).unwrap().unwrap();
+    let candidates = rules.transition_candidates(&dm, d);
+    for id in ["a", "b", "c", "d", "e"] {
+        assert_eq!(rules.may_transition(&dm, el(id)), candidates.contains(&el(id)), "#{id}");
+    }
+    // A rule declaring a duration, even 0s, and a style attribute naming a
+    // transition make a candidate; an animation rule and a rule in a
+    // non-matching media query do not.
+    assert!(rules.may_transition(&dm, el("a")) && rules.may_transition(&dm, el("c")) && rules.may_transition(&dm, el("d")));
+    assert!(!rules.may_transition(&dm, el("b")) && !rules.may_transition(&dm, el("e")));
+    assert!(!rules.may_transition(&dm, d), "not an element");
+}

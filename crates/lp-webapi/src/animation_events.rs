@@ -37,6 +37,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
+use lp_dom::geometry::ElementDisplay;
 use lp_dom::timing::{ElementTiming, StyleSnapshot, TimingRules};
 use lp_dom::NodeId;
 use rustc_hash::FxHashMap;
@@ -89,12 +90,18 @@ pub(crate) struct State {
     animations: RefCell<Vec<Timeline>>,
     transitions: RefCell<Vec<Timeline>>,
     /// Elements that may transition (and those script read the computed
-    /// style of): their style at the last style change, and the stamp it was
-    /// taken at.
-    observed: RefCell<FxHashMap<NodeId, (StyleSnapshot, Stamp)>>,
+    /// style of): their style at the last style change, the stamp it was
+    /// taken at, and whether the element was hidden content then (a closed
+    /// `<details>`'s, `hidden=until-found`: see `style_change`).
+    observed: RefCell<FxHashMap<NodeId, (StyleSnapshot, Stamp, bool)>>,
     /// The style stamp of the last style change event of every element that
     /// may transition.
     flushed: Cell<Option<Stamp>>,
+    /// Every element that may transition had its style change event, and
+    /// the layout engine journals the styles it replaces from then on
+    /// (`StyleEngine::take_style_changes`): a flush looks at the journal
+    /// alone. Cleared with `observed`.
+    journaled: Cell<bool>,
     /// Script called `getAnimations()`: timelines are kept without listeners.
     listed: Cell<bool>,
     /// The last timeline id handed out.
@@ -134,7 +141,16 @@ impl State {
         }
         self.observed.borrow_mut().clear();
         self.flushed.set(None);
+        self.journaled.set(false);
         self.rules.borrow_mut().take();
+    }
+
+    /// Before a style sync while transitions are tracked: the engine journals
+    /// the styles the sync replaces (one flag check once it does).
+    fn record_style_changes(&self, dom: &lp_dom::Dom, style: &lp_dom::style::StyleEngine) {
+        if self.transitions_tracked(dom) {
+            style.record_style_changes();
+        }
     }
 
     /// The rules of the document's sheets, read again only when the sheets changed.
@@ -155,6 +171,10 @@ impl State {
         style.for_each_author_sheet(dom, &mut |text| texts.push(text.to_owned()));
         let rules = Rc::new(TimingRules::parse(texts.iter().map(String::as_str), style.viewport()));
         *self.rules.borrow_mut() = Some((key, rules.clone()));
+        // Other rules, other elements that may transition: the next flush
+        // looks at every one of them (the engine may have applied a new
+        // `<style>` at a sync before the sheet reached these rules).
+        self.journaled.set(false);
         rules
     }
 }
@@ -219,6 +239,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         let layout = page.layout();
         let style = layout.style();
         // Styles first: syncing them registers new `<style>` sheets.
+        state.record_style_changes(&dom, style);
         style.engine_styled(&dom);
         let rules = state.rules(&dom, style);
         state.stamp.set(Some(style.observation_stamp(&dom)));
@@ -324,6 +345,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
         let Ok(dom) = page.dom.try_borrow() else { return Vec::new() };
         let Some(layout) = page.try_layout() else { return Vec::new() };
         let style = layout.style();
+        state.record_style_changes(&dom, style);
         style.engine_styled(&dom);
         state.stamp.get() == Some(style.observation_stamp(&dom))
     };
@@ -363,9 +385,10 @@ pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
         }
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
+        state.record_style_changes(&dom, style);
         style.engine_styled(&dom);
         let stamp = style.observation_stamp(&dom);
-        let seen = state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp);
+        let seen = state.observed.borrow().get(&el).is_some_and(|(_, at, _)| *at == stamp);
         let flushed = state.flushed.get() == Some(stamp) || !state.transitions_tracked(&dom);
         if seen && flushed {
             return;
@@ -399,6 +422,7 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
         // The flush itself: syncing styles registers new `<style>` sheets.
+        style.record_style_changes();
         style.engine_styled(&dom);
         if state.flushed.get() == Some(style.observation_stamp(&dom)) {
             return;
@@ -411,7 +435,17 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
 }
 
 /// A style change event of every connected element of `doc` that may
-/// transition, once per style stamp.
+/// transition and whose style the layout engine replaced since the last
+/// one, once per style stamp. The engine's journal of replaced styles says
+/// which (the rest kept their style, so their event would change nothing);
+/// the first time, whenever the journal cannot tell (the engine built its
+/// document anew) and after the timing rules changed, every element that
+/// may transition has its event.
+///
+/// An element styled afresh (inserted, or its ancestor stopped being
+/// `display: none`) was not rendered at the last event: it has no
+/// before-change style, so it only gets its snapshot, as an element first
+/// read does.
 fn transition_candidates_changed(
     state: &State,
     dom: &lp_dom::Dom,
@@ -425,20 +459,87 @@ fn transition_candidates_changed(
     if state.flushed.replace(Some(stamp)) == Some(stamp) {
         return;
     }
-    for el in rules.transition_candidates(dom, doc) {
-        if state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp) {
+    let changes = if state.journaled.get() { style.take_style_changes(dom) } else { None };
+    let Some(changes) = changes else {
+        // The journal starts here (`record_style_changes` preceded the
+        // sync): a snapshot of every element that may transition.
+        for el in rules.transition_candidates(dom, doc) {
+            if state.observed.borrow().get(&el).is_some_and(|(_, at, _)| *at == stamp) {
+                continue;
+            }
+            if dom.is_connected(el).unwrap_or(false) {
+                style_change(state, dom, style, Some(rules), el, now_ms, planned);
+            }
+        }
+        // Discards what the journal held before this snapshot (a first take
+        // of an engine's document says only that it cannot tell: once more).
+        let journal = style.take_style_changes(dom).or_else(|| style.take_style_changes(dom));
+        state.journaled.set(journal.is_some());
+        return;
+    };
+    for (el, had_style, display_none) in changes {
+        if !had_style {
+            // Not rendered before: no before-change style, unless the
+            // element was hidden content (Chrome keeps its style then).
+            let mut observed = state.observed.borrow_mut();
+            if observed.get(&el).is_some_and(|(.., hidden_content)| !*hidden_content) {
+                observed.remove(&el);
+            }
+        }
+        // The document's own tree only: the rules are the document's, and
+        // shadow-tree elements had no style change events before the
+        // journal either (`TimingRules::transition_candidates`).
+        if !dom.in_document_tree(el) {
             continue;
         }
-        if dom.is_connected(el).unwrap_or(false) {
+        if !state.observed.borrow().get(&el).is_some_and(|(_, at, _)| *at == stamp) && rules.may_transition(dom, el) {
             style_change(state, dom, style, Some(rules), el, now_ms, planned);
         }
+        if display_none && hides_content(dom, el) {
+            // Blitz styles this element `display: none` and nothing under
+            // it, so the journal never lists its descendants; Chrome keeps
+            // their styles (`content-visibility: hidden`). Those that may
+            // transition get their event (a snapshot kept as hidden
+            // content) from here.
+            let Ok(descendants) = dom.descendants(el) else { continue };
+            for d in descendants.filter(|d| *d != el) {
+                if !state.observed.borrow().get(&d).is_some_and(|(_, at, _)| *at == stamp)
+                    && rules.may_transition(dom, d)
+                {
+                    style_change(state, dom, style, Some(rules), d, now_ms, planned);
+                }
+            }
+        }
     }
+}
+
+/// Whether Blitz has `el` `display: none` where Chrome has
+/// `content-visibility: hidden`: a child of a closed `<details>` other than
+/// its first `<summary>`, or a `hidden=until-found` element. Two attribute
+/// reads, asked only of journal entries styled `display: none` (the
+/// engine's `ElementDisplay::ContentHidden` reads the same).
+fn hides_content(dom: &lp_dom::Dom, el: NodeId) -> bool {
+    use markup5ever::local_name;
+    let Ok(e) = dom.element(el) else { return false };
+    if e.attr_local(&local_name!("hidden")).is_some_and(|v| v.eq_ignore_ascii_case("until-found")) {
+        return true;
+    }
+    let Some(parent) = dom.parent_element(el).ok().flatten() else { return false };
+    let Ok(p) = dom.element(parent) else { return false };
+    if !p.is_html() || p.name.local != local_name!("details") || p.attr_local(&local_name!("open")).is_some() {
+        return false;
+    }
+    let is_summary =
+        |id: &NodeId| dom.element(*id).is_ok_and(|c| c.is_html() && c.name.local == local_name!("summary"));
+    let first_summary = dom.children(parent).ok().and_then(|mut c| c.find(is_summary));
+    first_summary != Some(el)
 }
 
 /// A style change event of `el`: the properties of its transition list whose
 /// computed value differs from the before-change style start transitions,
 /// and the current style becomes the before-change style. `rules` is read
-/// from the sheets when not given, and only if the style changed.
+/// from the sheets when not given, and only if the style changed. An
+/// element the engine does not render has no style change events.
 fn style_change(
     state: &State,
     dom: &lp_dom::Dom,
@@ -448,6 +549,18 @@ fn style_change(
     now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
+    // Not rendered (under `display: none`): no transitions, and no
+    // before-change style once shown (Chrome starts none then either).
+    // Content Chrome hides with `content-visibility: hidden` (a closed
+    // `<details>`'s, `hidden=until-found`) keeps its style there, and has
+    // its events as if displayed (as before the journal).
+    let hidden_content = match style.engine_display(dom, el) {
+        Some(ElementDisplay::Hidden) => {
+            state.observed.borrow_mut().remove(&el);
+            return;
+        }
+        display => display == Some(ElementDisplay::ContentHidden),
+    };
     let Some(now) = style.stylo_style(dom, el) else { return };
     let stamp = style.observation_stamp(dom);
     let before = {
@@ -458,7 +571,7 @@ fn style_change(
                 return;
             }
         }
-        observed.insert(el, (now.clone(), stamp)).map(|(before, _)| before)
+        observed.insert(el, (now.clone(), stamp, hidden_content)).map(|(before, ..)| before)
     };
     let Some(before) = before.filter(|before| !StyleSnapshot::ptr_eq(before, &now)) else { return };
     let read;
