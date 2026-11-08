@@ -253,3 +253,106 @@ fn lean_members_of_a_disposed_or_dropped_realm_refuse_safely() {
         }
     }
 }
+
+// ---- review/bind: adversarial cases -------------------------------------
+
+thread_local! {
+    static DOOMED: std::cell::RefCell<Option<Realm>> = const { std::cell::RefCell::new(None) };
+    static CONVERSIONS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// A pure method whose argument conversion can run page script (as
+/// `dom_string` does on an object argument), then uses its scope's realm
+/// (as every member returning a new wrapper does).
+struct Coerce;
+impl JsClass for Coerce {
+    const NAME: &'static str = "Coerce";
+    type Data = BaseData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.pure_method("make", 1, |s, d, a| {
+            let n = a.get(0).to_string()?;
+            // Uses the scope's realm after the conversion: a clone of its Rc,
+            // and a new wrapper in it.
+            let r = s.realm();
+            drop(r);
+            let w = s.wrap::<Lean>(data(d.id + n.len() as u32), None)?;
+            Ok(w.value())
+        });
+        def.pure_method("echo", 1, |s, _d, a| {
+            let n = a.get(0).to_string()?;
+            Ok(s.string(&n))
+        });
+    }
+}
+
+/// B2 x C1: the lean dispatch borrows the receiver's realm without a
+/// count, on the premise that a pure member runs no script. Argument
+/// conversion does run script; when that script drops the receiver realm's
+/// last handle, the member continues on a freed realm (base held a strong
+/// count for the whole call).
+#[test]
+fn review_realm_dropped_by_argument_conversion_inside_a_pure_call() {
+    let engine = Engine::new().unwrap();
+    engine.register::<Lean>();
+    engine.register::<Coerce>();
+    let main = engine.create_realm(RealmOptions::default()).unwrap();
+    let s = main.scope().unwrap();
+    let kill = s
+        .function("killOther", |s, _, _| {
+            DOOMED.with(|d| d.borrow_mut().take());
+            Ok(s.undefined())
+        })
+        .unwrap();
+    s.global().set_atom("killOther", kill.value()).unwrap();
+    for round in 0..4 {
+        let other = engine.create_realm(RealmOptions { name: format!("other{round}"), ..Default::default() }).unwrap();
+        {
+            let o = other.scope().unwrap();
+            let w = o.wrap::<Coerce>(data(1), None).unwrap();
+            s.global().set_atom("c", s.rehome_object(w).value()).unwrap();
+        }
+        DOOMED.with(|d| *d.borrow_mut() = Some(other));
+        // Warm (JIT) with a harmless argument, then drop the realm from
+        // inside the conversion.
+        let r = s
+            .eval(
+                "(() => { let k = 0; for (let i = 0; i < 20000; i++) k += c.make('ab') ? 1 : 0;
+                 let out;
+                 try { out = c.make({ toString() { killOther(); return 'xyz' } }); out = typeof out }
+                 catch (e) { out = 'threw ' + e.message }
+                 return k + ':' + out })()",
+                None,
+                1,
+            )
+            .unwrap();
+        // Base keeps the realm alive for the call (a strong count) and
+        // answers; the branch must not touch the freed realm.
+        assert_eq!(r.to_string().unwrap(), "20000:object", "round {round}");
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+}
+
+/// C1 "double toString": a conversion that throws is rerun by the full
+/// dispatch. Count how many times page script ran for one call.
+#[test]
+fn review_throwing_conversion_runs_once() {
+    let engine = Engine::new().unwrap();
+    engine.register::<Coerce>();
+    let realm = engine.create_realm(RealmOptions::default()).unwrap();
+    let s = realm.scope().unwrap();
+    let w = s.wrap::<Coerce>(data(1), None).unwrap();
+    s.global().set_atom("c", w.value()).unwrap();
+    let r = s
+        .eval(
+            "let n = 0, m = 0;
+             try { c.echo({ toString() { n++; throw new Error('boom') } }) } catch (e) {}
+             const v = c.echo({ toString() { m++; return 'ok' } });
+             n + ',' + m + ',' + v",
+            None,
+            1,
+        )
+        .unwrap();
+    assert_eq!(r.to_string().unwrap(), "1,1,ok", "toString calls for one throwing / one plain call");
+}
