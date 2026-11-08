@@ -1,6 +1,6 @@
 diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
---- a/invalidation/element/invalidation_map.rs	2026-11-07 15:21:43
-+++ b/invalidation/element/invalidation_map.rs	2026-11-07 15:22:13
+--- a/invalidation/element/invalidation_map.rs	2026-11-08 11:10:45
++++ b/invalidation/element/invalidation_map.rs	2026-11-08 11:10:45
 @@ -399,6 +399,11 @@
      pub used: bool,
      /// Flag indicating if invalidating a relative selector requires ancestor traversal.
@@ -76,8 +76,8 @@ diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/inva
  
      fn attribute_map(&mut self) -> &mut LocalNameDependencyMap {
 diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
---- a/properties/counted_unknown_properties.py	2026-11-07 15:21:43
-+++ b/properties/counted_unknown_properties.py	2026-11-07 15:22:13
+--- a/properties/counted_unknown_properties.py	2026-11-08 11:10:45
++++ b/properties/counted_unknown_properties.py	2026-11-08 11:10:45
 @@ -7,8 +7,6 @@
      "speak",
      "text-size-adjust",
@@ -87,9 +87,33 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-user-modify",
      "-webkit-margin-before",
      "-webkit-margin-after",
+diff -ruN a/properties/data.py b/properties/data.py
+--- a/properties/data.py	2026-11-08 11:10:45
++++ b/properties/data.py	2026-11-08 11:10:45
+@@ -343,9 +343,19 @@
+         allow_quirks=False,
+         ignored_when_colors_disabled=False,
+         vector=None,
+-        servo_restyle_damage="rebuild_box",
++        servo_restyle_damage=None,
+         affects=None,
+     ):
++        # lightningpanda: a property that names no restyle damage gets the one its `affects`
++        # implies (upstream: `rebuild_box` for every one, so a change of `border-top-color`,
++        # `visibility` or `box-shadow` relaid out). `affects` is required and checked below.
++        if servo_restyle_damage is None:
++            servo_restyle_damage = {
++                "layout": "rebuild_box",
++                "overflow": "recalculate_overflow",
++                "paint": "repaint",
++                "": "repaint",
++            }.get(affects, "rebuild_box")
+         Property.__init__(
+             self,
+             name=name,
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
---- a/properties/helpers.mako.rs	2026-11-07 15:21:43
-+++ b/properties/helpers.mako.rs	2026-11-07 15:22:13
+--- a/properties/helpers.mako.rs	2026-11-08 11:10:45
++++ b/properties/helpers.mako.rs	2026-11-08 11:10:45
 @@ -64,7 +64,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
@@ -109,8 +133,8 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml	2026-11-07 15:21:43
-+++ b/properties/longhands.toml	2026-11-07 15:22:13
+--- a/properties/longhands.toml	2026-11-08 11:10:45
++++ b/properties/longhands.toml	2026-11-08 11:10:45
 @@ -474,7 +474,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -156,8 +180,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [caption-side]
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
---- a/properties/shorthands.rs	2026-11-07 15:21:43
-+++ b/properties/shorthands.rs	2026-11-07 15:22:13
+--- a/properties/shorthands.rs	2026-11-08 11:10:45
++++ b/properties/shorthands.rs	2026-11-08 11:10:45
 @@ -542,7 +542,6 @@
      }
  }
@@ -167,8 +191,8 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml	2026-11-07 15:21:43
-+++ b/properties/shorthands.toml	2026-11-07 15:22:13
+--- a/properties/shorthands.toml	2026-11-08 11:10:45
++++ b/properties/shorthands.toml	2026-11-08 11:10:45
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -199,8 +223,8 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
 diff -ruN a/rule_cache.rs b/rule_cache.rs
---- a/rule_cache.rs	2026-11-07 15:21:43
-+++ b/rule_cache.rs	2026-11-07 15:22:13
+--- a/rule_cache.rs	2026-11-08 11:10:45
++++ b/rule_cache.rs	2026-11-08 11:10:45
 @@ -26,9 +26,53 @@
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
@@ -282,9 +306,41 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
          };
          self.map
              .entry(rules)
+diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
+--- a/servo/restyle_damage.rs	2026-11-08 11:10:45
++++ b/servo/restyle_damage.rs	2026-11-08 11:10:45
+@@ -161,6 +161,9 @@
+         || old_box.original_display != new_box.original_display
+         || old_box.has_transform_or_perspective() != new_box.has_transform_or_perspective()
+         || old.get_effects().filter.0.is_empty() != new.get_effects().filter.0.is_empty()
++        // lightningpanda: a `backdrop-filter` makes a containing block for fixed boxes, as a
++        // `filter` does; otherwise it is `recalculate_overflow` damage (it affects overflow).
++        || old.get_effects().backdrop_filter.0.is_empty() != new.get_effects().backdrop_filter.0.is_empty()
+ }
+ 
+ fn augmented_restyle_damage_rebuild_stacking_context(
+@@ -169,6 +172,18 @@
+ ) -> bool {
+     restyle_damage_rebuild_stacking_context(old, new)
+         || old.guarantees_stacking_context() != new.guarantees_stacking_context()
++        // lightningpanda: a mask makes a stacking context in Blitz's paint tree
++        // (`applies_atomic_paint_effect`); `mask-image` is otherwise `repaint` damage.
++        || has_mask_image(old) != has_mask_image(new)
++}
++
++fn has_mask_image(style: &ComputedValues) -> bool {
++    style
++        .get_svg()
++        .mask_image
++        .0
++        .iter()
++        .any(|image| !matches!(image, crate::values::generics::image::GenericImage::None))
+ }
+ 
+ fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
---- a/servo/selector_parser.rs	2026-11-07 15:21:43
-+++ b/servo/selector_parser.rs	2026-11-07 15:22:13
+--- a/servo/selector_parser.rs	2026-11-08 11:10:45
++++ b/servo/selector_parser.rs	2026-11-08 11:10:45
 @@ -629,6 +629,7 @@
              "focus-within" => NonTSPseudoClass::FocusWithin,
              "fullscreen" => NonTSPseudoClass::Fullscreen,
@@ -294,8 +350,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "invalid" => NonTSPseudoClass::Invalid,
              "link" => NonTSPseudoClass::Link,
 diff -ruN a/style_resolver.rs b/style_resolver.rs
---- a/style_resolver.rs	2026-11-07 14:59:56
-+++ b/style_resolver.rs	2026-11-07 15:22:13
+--- a/style_resolver.rs	2026-11-08 11:10:45
++++ b/style_resolver.rs	2026-11-08 11:10:45
 @@ -586,6 +586,47 @@
          );
          matching_context.extra_data.originating_element_style = Some(originating_element_style);
@@ -345,8 +401,8 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          // traversing them.
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
---- a/stylesheets/rule_parser.rs	2026-11-07 15:21:43
-+++ b/stylesheets/rule_parser.rs	2026-11-07 15:22:13
+--- a/stylesheets/rule_parser.rs	2026-11-08 11:10:45
++++ b/stylesheets/rule_parser.rs	2026-11-08 11:10:45
 @@ -282,7 +282,7 @@
              "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
              "media" => Self::Media,
@@ -357,8 +413,8 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
              "keyframes" => Self::Keyframes(None),
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
 diff -ruN a/stylist.rs b/stylist.rs
---- a/stylist.rs	2026-11-07 15:21:43
-+++ b/stylist.rs	2026-11-07 15:22:13
+--- a/stylist.rs	2026-11-08 11:10:45
++++ b/stylist.rs	2026-11-08 11:10:45
 @@ -32,8 +32,8 @@
  #[cfg(feature = "gecko")]
  use crate::properties::StyleBuilder;
@@ -619,8 +675,8 @@ diff -ruN a/stylist.rs b/stylist.rs
              slotted_rules.clear();
          }
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
---- a/values/generics/mod.rs	2026-11-07 15:21:43
-+++ b/values/generics/mod.rs	2026-11-07 15:22:13
+--- a/values/generics/mod.rs	2026-11-08 11:10:45
++++ b/values/generics/mod.rs	2026-11-08 11:10:45
 @@ -110,6 +110,7 @@
      ToCss,
      ToResolvedValue,
@@ -630,8 +686,8 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
---- a/values/specified/box.rs	2026-11-07 15:21:43
-+++ b/values/specified/box.rs	2026-11-07 15:22:13
+--- a/values/specified/box.rs	2026-11-08 11:10:45
++++ b/values/specified/box.rs	2026-11-08 11:10:45
 @@ -2013,6 +2013,8 @@
      Auto,
      Page,

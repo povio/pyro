@@ -19,7 +19,7 @@ use thin_vec::ThinVec;
 use crate::{
     BaseDocument, ElementData, Node, NodeData,
     layout::damage::{
-        CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC, sort_layout_children_by_order,
+        CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC, INLINE_CONTENT, sort_layout_children_by_order,
     },
     node::{NodeFlags, NodeKind, SpecialElementData, TextInputData, TextLayout},
     qual_name, stylo_to_parley,
@@ -638,14 +638,32 @@ fn collect_layout_children_with_wrap(
 
             // TODO: fix display:contents
             if classification.all_inline {
-                let layout = previous_inline_layout.unwrap_or_else(|| Box::new(TextLayout::new()));
+                // lightningpanda: an inline root built again for a change to its box alone (a
+                // cell's padding or collapsed border, its parent's children) keeps the inline
+                // layout its content built: its text, the styles the text is shaped with, its
+                // children and the boxes among them are as they were (no `INLINE_CONTENT` on it
+                // or below it; read after `flush_pseudo_elements`, which damages the owner of a
+                // pseudo-element that came, went or changed its text).
+                let content_changed = doc.nodes[container_node_id]
+                    .damage()
+                    .is_none_or(|damage| damage.contains(INLINE_CONTENT));
+                match previous_inline_layout {
+                    Some(layout) if !content_changed => {
+                        #[cfg(debug_assertions)]
+                        assert_kept_inline_layout_is_current(doc, container_node_id, &layout);
+                        doc.nodes[container_node_id].element_data_mut().unwrap().inline_layout_data = Some(layout);
+                    }
+                    previous => {
+                        let layout = previous.unwrap_or_else(|| Box::new(TextLayout::new()));
 
-                // Queue node for inline layout construction. Deferring construction of inline layouts to a
-                // dedicated phase allows us to multithread the expensive text shaping step.
-                doc.deferred_construction_nodes.push(ConstructionTask {
-                    node_id: container_node_id,
-                    data: ConstructionTaskData::InlineLayout(layout),
-                });
+                        // Queue node for inline layout construction. Deferring construction of inline layouts to a
+                        // dedicated phase allows us to multithread the expensive text shaping step.
+                        doc.deferred_construction_nodes.push(ConstructionTask {
+                            node_id: container_node_id,
+                            data: ConstructionTaskData::InlineLayout(layout),
+                        });
+                    }
+                }
                 doc.nodes[container_node_id]
                     .flags
                     .insert(NodeFlags::IS_INLINE_ROOT);
@@ -1104,4 +1122,21 @@ pub(crate) fn find_inline_layout_embedded_boxes(
             NodeData::Document(_) => unreachable!(),
         }
     }
+}
+
+/// Debug builds: an inline root that kept its inline layout (no `INLINE_CONTENT` on it or below
+/// it) would build the same text, from the same text nodes, with the same inline boxes.
+#[cfg(debug_assertions)]
+fn assert_kept_inline_layout_is_current(doc: &mut BaseDocument, node_id: NodeId, kept: &TextLayout) {
+    let mut fresh = TextLayout::new();
+    let BaseDocument { nodes, layout_ctx, font_ctx, viewport, .. } = doc;
+    let mut font_ctx = font_ctx.lock().unwrap();
+    super::inline::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, &mut fresh, viewport.scale(), node_id);
+    assert_eq!(fresh.text, kept.text, "inline root {node_id:?} kept a stale inline layout (text)");
+    assert_eq!(fresh.text_nodes, kept.text_nodes, "inline root {node_id:?} kept a stale inline layout (text nodes)");
+    assert_eq!(
+        fresh.layout.inline_boxes().len(),
+        kept.layout.inline_boxes().len(),
+        "inline root {node_id:?} kept a stale inline layout (inline boxes)"
+    );
 }

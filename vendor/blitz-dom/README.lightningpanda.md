@@ -457,6 +457,51 @@ inline boxes, whose sizes each measurement sets, keep measuring. Debug builds ch
 measurement at every read. Covered by `content_widths_kept_with_the_shaped_text_match_fresh_builds` in
 `crates/lp-render/tests/mirror.rs`.
 
+## Paint-only restyles run no layout and shape no text
+
+`src/layout/damage.rs`, `src/stylo.rs`, `src/layout/construct.rs`, `src/layout/table.rs`, `src/node/node.rs`: a restyle
+that changes only what paints (colour, background, outline, `visibility`, opacity, text decorations, box shadows, a
+border's colour, `:hover`, a class on `body` that recolours a table) used to run a Taffy pass, collect the cell's row
+again and shape its text again. Three causes, each fixed where it is:
+
+- Stylo's property table gave every longhand without an explicit `servo_restyle_damage` the `rebuild_box` (relayout)
+  damage: `border-*-color`, `visibility`, `box-shadow`, the border radii, `mask-*`, `appearance`, `scrollbar-color`,
+  ... The vendored stylo derives the default from each property's `affects` (see
+  `vendor/stylo/README.lightningpanda.md`), so a paint property's change is `REPAINT` and never reaches
+  `compute_layout_damage`. `compute_layout_damage` no longer rebuilds the box for `visibility` (nothing in layout
+  reads it: hit testing and paint read the style).
+- A collapsed table resolves the colours of its borders into `CollapsedEdges` when it collects a row, so
+  `RecalcStyle::process_preorder` gave a table part whose border struct or `color` changed full damage: `color` on a
+  cell with `border: 1px solid #ddd` collected its row and shaped its text again. It now compares the four borders'
+  resolved colours (`resolved_border_colors`: `currentColor` resolved, invisible borders ignored) and gives
+  `BOX_DAMAGE` only when one changed.
+- `RestyleDamage` has a new bit, `INLINE_CONTENT`: the node's text, the styles it is shaped with, its children or a
+  box among them changed. It is part of `ALL_DAMAGE` and `CHILDREN_CHANGED` (so mutations, new nodes, font and
+  text-style changes carry it) and propagates to every ancestor. `BOX_DAMAGE` is `ALL_DAMAGE` without it: a box
+  built again with its inline content as it was, which `compute_layout_damage` gives a table part (or table) whose
+  layout style changed (the table keeps the part's layout style in its `TableContext`; it used to give `ALL_DAMAGE`
+  from `box_tree_needs_rebuild`, which shaped the cell's text again) and `process_preorder` a collapsed border's
+  colour change. An inline root collected again whose damage, read after
+  `flush_pseudo_elements`, has no `INLINE_CONTENT` keeps its `TextLayout` instead of queueing a rebuild; debug
+  builds shape it again and assert the text, text nodes and inline boxes are the same
+  (`assert_kept_inline_layout_is_current`). `white-space: nowrap` (`text-wrap-mode`) and a span's `vertical-align`
+  (the `baseline-*` longhands) are shaped into the parley layout and gave `RELAYOUT` only, so the layout kept the old
+  value: `text_shaping_needs_recollect` rebuilds for them too.
+- `NodeFlags::OWN_LAYOUT_DAMAGE`: `OWN_DAMAGE` whose damage reaches layout (`damage::reaches_layout`: relayout,
+  construction, reordering), set and cleared with it. Tables read it in place of `OWN_DAMAGE` (`row_changed`,
+  `group_changes`, `update_table_context`, `update_rows`): a cell or a table whose colour, background or opacity
+  changed is no changed row and no reason to build the table again. `note_changed_table_cell` notes such a cell for
+  the transform pass and the paint tree (`PlacedCells::damaged`) but not as a cell to measure and lay out again. Whether
+  the damage reaches layout is read before `ONLY_RELAYOUT` is dropped from the stored damage: a cell relaid out
+  for a change inside it (a block's width, an inline-block's width) is a changed cell.
+
+On a 1,200-row collapsed table, a `color` toggle on a cell no longer runs layout (0.45 ms to the restyle's cost),
+`.dark td { color }` on `body` no longer shapes 2,400 inline layouts, and a `padding` change on every cell shapes
+none. `crates/lp-render/tests/mirror.rs`: `paint_only_restyles_run_no_layout_and_match_fresh_builds` (every paint
+property on cells, inline roots, flex and grid items, floats and absolutely positioned boxes, synced as deltas:
+boxes, document size and paint against a fresh build, no layout algorithm run, no text shaped, the paint changed)
+and `text_style_changes_shape_again_and_match_fresh_builds`.
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were

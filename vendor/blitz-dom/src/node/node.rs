@@ -62,7 +62,8 @@ bitflags! {
         const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
         /// lightningpanda: the node had damage of its own (a mutation or a restyle), not only its
         /// descendants', when this pass propagated damage. Set by `propagate_damage_flags`, cleared
-        /// with the damage; tables read it to rebuild only the rows and cells that changed.
+        /// with the damage; the paint tree reads it (`PAINT_TREE_OWN_DAMAGE`), tables read
+        /// `OWN_LAYOUT_DAMAGE`.
         const OWN_DAMAGE = 0b00010000;
         /// The node's `paint_children`, `stacking_context` or
         /// `sc_contribution_cache` may be out of date: some resolve since the
@@ -75,6 +76,11 @@ bitflags! {
         /// reads it where it used to read `OWN_DAMAGE`, which each resolve clears
         /// (`table_paint_children_kept`). Set and cleared with `PAINT_TREE_DIRTY`.
         const PAINT_TREE_OWN_DAMAGE = 0b01000000;
+        /// lightningpanda: `OWN_DAMAGE` whose damage reaches layout (`damage::reaches_layout`:
+        /// relayout, construction, reordering), not only paint. Tables read it to tell a cell or
+        /// row that is to be collected again from one whose colour, background or opacity
+        /// changed. Set and cleared with `OWN_DAMAGE`.
+        const OWN_LAYOUT_DAMAGE = 0b10000000;
     }
 }
 

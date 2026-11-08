@@ -52,13 +52,38 @@ pub(crate) const CONSTRUCT_FC: RestyleDamage =
 pub(crate) const CONSTRUCT_DESCENDENT: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_1000_0000);
 
+/// The node's inline content changed: its text, the styles its text is shaped
+/// with (`compute_layout_damage`), its children, or a box among them. An
+/// inline root built again shapes its text again only when it or something
+/// below it carries this bit (`collect_layout_children`); a box built again
+/// for a change to its own box alone (`BOX_DAMAGE`: a table cell's padding,
+/// a collapsed border's colour) keeps its inline layout. Part of `ALL_DAMAGE`
+/// and `CHILDREN_CHANGED`; propagates to every ancestor with the rest.
+pub(crate) const INLINE_CONTENT: RestyleDamage =
+    RestyleDamage::from_bits_retain(0b_0000_0010_0000_0000);
+
 /// What the mutator marks a parent with when its child list or a child's
 /// text changes: re-collect this node's layout children, nothing above.
 /// `propagate_damage_flags` adds the relayout it implies.
-pub(crate) const CHILDREN_CHANGED: RestyleDamage = CONSTRUCT_FC;
+pub(crate) const CHILDREN_CHANGED: RestyleDamage =
+    RestyleDamage::from_bits_retain(CONSTRUCT_FC.bits() | INLINE_CONTENT.bits());
 
 pub(crate) const ALL_DAMAGE: RestyleDamage =
+    RestyleDamage::from_bits_retain(0b_0000_0010_1110_1111);
+
+/// `ALL_DAMAGE` without `INLINE_CONTENT`: the node's box is built again, its
+/// inline content as it was.
+pub(crate) const BOX_DAMAGE: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_1110_1111);
+
+/// Whether `damage` reaches layout: relayout, construction or reordering, as
+/// opposed to Stylo's paint bits alone (`REPAINT`, `REBUILD_STACKING_CONTEXT`,
+/// `RECALCULATE_OVERFLOW`), which change what paints and where the paint tree
+/// is built, but no box.
+#[inline]
+pub(crate) fn reaches_layout(damage: RestyleDamage) -> bool {
+    damage.intersects(ONLY_RELAYOUT | REORDER_CHILDREN | CONSTRUCT_BOX | CONSTRUCT_FC | CONSTRUCT_DESCENDENT)
+}
 
 /// An out-of-flow box below the node needs relayout, but nothing the node's
 /// own layout reads changed: the box's static position (computed by its
@@ -100,6 +125,7 @@ impl BaseDocument {
         };
         let mut damage = own_damage;
         self.nodes[node_id].flags.set(NodeFlags::OWN_DAMAGE, !own_damage.is_empty());
+        self.nodes[node_id].flags.set(NodeFlags::OWN_LAYOUT_DAMAGE, reaches_layout(own_damage));
 
         // Skip subtrees which contain no damage. Anonymous nodes are never
         // skipped themselves because damage marking walks the DOM parent
@@ -212,6 +238,9 @@ impl BaseDocument {
 
         // If the node or any of it's children have been mutated or their layout styles
         // have changed, then we should clear it's layout cache.
+        // (Read before `ONLY_RELAYOUT` is dropped below: a cell relaid out for a change inside
+        // it, with no construction, is a changed cell too.)
+        let damage_reaches_layout = reaches_layout(damage);
         let mut invalidate_anonymous_ancestors = false;
         if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX | CONSTRUCT_FC) {
             node.clear_layout_cache();
@@ -223,9 +252,10 @@ impl BaseDocument {
         node.set_damage(damage);
 
         // lightningpanda: a table cell whose subtree changed is measured and laid out again
-        // (`TableContext::changed_cells`).
+        // (`TableContext::changed_cells`); one whose paint alone changed is transformed and
+        // visited in the paint tree again.
         if !damage.is_empty() {
-            self.note_changed_table_cell(node_id);
+            self.note_changed_table_cell(node_id, damage_reaches_layout);
         }
 
         // Anonymous boxes between this node and its nearest element ancestor
@@ -273,8 +303,10 @@ impl BaseDocument {
         damage_for_parent
     }
 
-    /// Adds `node_id` to its table's changed cells if it is a table cell.
-    fn note_changed_table_cell(&self, node_id: NodeId) {
+    /// Notes `node_id` in its table if it is a table cell: to transform and visit in the paint
+    /// tree again, and, when its damage reaches `layout`, as a changed cell to measure and lay
+    /// out again.
+    fn note_changed_table_cell(&self, node_id: NodeId, layout: bool) {
         let node = &self.nodes[node_id];
         let index = node.layout_data().table_cell_index;
         if index == u32::MAX {
@@ -284,15 +316,17 @@ impl BaseDocument {
         let Some(element) = table.data.downcast_element() else { return };
         if let crate::node::SpecialElementData::TableRoot(ctx) = &element.special_data {
             if ctx.cells.get(index as usize).is_some_and(|cell| cell.node_id == node_id) {
-                let mut changed = ctx.changed_cells.borrow_mut();
-                changed.push(index as usize);
-                // (A table that is not laid out keeps them: no more than one per cell.)
-                if changed.len() > 2 * ctx.cells.len() {
-                    changed.sort_unstable();
-                    changed.dedup();
+                if layout {
+                    let mut changed = ctx.changed_cells.borrow_mut();
+                    changed.push(index as usize);
+                    // (A table that is not laid out keeps them: no more than one per cell.)
+                    if changed.len() > 2 * ctx.cells.len() {
+                        changed.sort_unstable();
+                        changed.dedup();
+                    }
+                    drop(changed);
+                    ctx.widths.borrow_mut().changed(index as usize);
                 }
-                drop(changed);
-                ctx.widths.borrow_mut().changed(index as usize);
                 ctx.placed.borrow_mut().damaged(index as usize, ctx.cells.len());
             }
         }
@@ -486,7 +520,7 @@ impl BaseDocument {
             }
         }
         node.clear_damage_mut();
-        node.flags.remove(NodeFlags::OWN_DAMAGE);
+        node.flags.remove(NodeFlags::OWN_DAMAGE | NodeFlags::OWN_LAYOUT_DAMAGE);
         node.unset_damaged_descendants();
         node.unset_dirty_descendants();
     }
@@ -595,11 +629,12 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
         let old_box = old.get_box();
         let new_box = new.get_box();
 
+        // (`visibility` is paint: hit testing and paint read it from the style. Servo's box
+        // tree needed it; Blitz's does not, and Stylo gives it `REPAINT` damage.)
         if old_box.display != new_box.display
             || old_box.float != new_box.float
             || old_box.position != new_box.position
             || old_box.contain != new_box.contain
-            || old.clone_visibility() != new.clone_visibility()
         {
             return true;
         }
@@ -643,17 +678,11 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
             return true;
         }
 
-        // lightningpanda: a table keeps the layout styles of its parts in its `TableContext`, built
-        // with its box: a part's (or the table's) layout change builds it again, as a mutation does.
-        if new_box.display.outside() == DisplayOutside::InternalTable
-            || new_box.display.inside() == DisplayInside::Table
-        {
-            return true;
-        }
-
         false
     };
 
+    // Everything `stylo_to_parley::style` and the inline build read besides the font struct
+    // (checked above): parley shapes the text with them.
     let text_shaping_needs_recollect = || {
         if old.clone_direction() != new.clone_direction()
             || old.clone_unicode_bidi() != new.clone_unicode_bidi()
@@ -665,6 +694,7 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
         let new_text = new.get_inherited_text();
         if !std::ptr::eq(old_text, new_text)
             && (old_text.white_space_collapse != new_text.white_space_collapse
+                || old_text.text_wrap_mode != new_text.text_wrap_mode
                 || old_text.text_transform != new_text.text_transform
                 || old_text.word_break != new_text.word_break
                 || old_text.line_break != new_text.line_break
@@ -676,25 +706,26 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
             return true;
         }
 
+        // `vertical-align` (its longhands) is a span's vertical alignment in parley.
+        let old_box = old.get_box();
+        let new_box = new.get_box();
+        if !std::ptr::eq(old_box, new_box)
+            && (old_box.alignment_baseline != new_box.alignment_baseline
+                || old_box.baseline_shift != new_box.baseline_shift
+                || old_box.baseline_source != new_box.baseline_source)
+        {
+            return true;
+        }
+
         false
     };
 
-    // Table layout bakes the sizes of the table and its internal boxes into the table
-    // context when the table is constructed.
+    // lightningpanda: a table keeps the layout styles of its parts in its `TableContext`, built
+    // with its box: a part's (or the table's) layout change builds it again, as a mutation does
+    // (with the text in it shaped as it was: `BOX_DAMAGE`).
     let table_needs_rebuild = || {
-        matches!(
-            new.get_box().display.inside(),
-            DisplayInside::Table
-                | DisplayInside::TableRowGroup
-                | DisplayInside::TableColumn
-                | DisplayInside::TableColumnGroup
-                | DisplayInside::TableHeaderGroup
-                | DisplayInside::TableFooterGroup
-                | DisplayInside::TableRow
-                | DisplayInside::TableCell
-        ) && (old.get_position() != new.get_position()
-            || old.get_padding() != new.get_padding()
-            || old.get_border() != new.get_border())
+        let display = new.get_box().display;
+        display.outside() == DisplayOutside::InternalTable || display.inside() == DisplayInside::Table
     };
 
     #[allow(
@@ -706,7 +737,7 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
     } else if text_shaping_needs_recollect() {
         ALL_DAMAGE
     } else if table_needs_rebuild() {
-        ALL_DAMAGE
+        BOX_DAMAGE
     } else if old.get_position().order != new.get_position().order
         // `position` is unchanged here (else the box tree would be rebuilt), so
         // checking the new style suffices. Out-of-flow children are not flex/grid
