@@ -173,17 +173,17 @@ impl JsClass for Headers {
             list.sorted = None;
             Ok(s.undefined())
         });
-        def.method("has", 1, |s, data, args| {
+        def.pure_method("has", 1, |s, data, args| {
             args.require(1, "Headers.has")?;
             let name = header_name(args.get(0))?;
             Ok(s.boolean(data.0.borrow().values.contains_key(&name)))
         });
-        def.method("get", 1, |s, data, args| {
+        def.pure_method("get", 1, |s, data, args| {
             args.require(1, "Headers.get")?;
             let name = header_name(args.get(0))?;
             Ok(data.0.borrow().values.get(&name).map_or(s.null(), |values| s.string(&values.join(", "))))
         });
-        def.method("getSetCookie", 0, |s, data, _args| {
+        def.pure_method("getSetCookie", 0, |s, data, _args| {
             let mut values = lp_js::RootedVec::new();
             if let Some(cookies) = data.0.borrow().values.get("set-cookie") {
                 for cookie in cookies {

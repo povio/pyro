@@ -384,12 +384,12 @@ impl JsClass for Storage {
 
     fn define(def: &mut ClassDef<Self>) {
         def.getter("length", |s, data| Ok(s.number(data.0.borrow().entries.len() as f64)));
-        def.method("key", 1, |s, data, args| {
+        def.pure_method("key", 1, |s, data, args| {
             args.require(1, "Storage.key")?;
             let index = to_u32(args.get(0))? as usize;
             Ok(data.0.borrow().entries.get(index).map_or(s.null(), |(key, _)| js_wtf16(s, key)))
         });
-        def.method("getItem", 1, |s, data, args| {
+        def.pure_method("getItem", 1, |s, data, args| {
             args.require(1, "Storage.getItem")?;
             let key = dom_wtf16(args.get(0))?;
             Ok(data.0.borrow().get(&key).map_or(s.null(), |v| js_wtf16(s, v)))

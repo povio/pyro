@@ -754,11 +754,11 @@ impl JsClass for CustomElementRegistry {
             }
             Ok(s.undefined())
         });
-        def.method("get", 1, |s, page, a| {
+        def.pure_method("get", 1, |s, page, a| {
             let name = with_arg_str(&a, 0, "CustomElementRegistry.get", |name| Ok(LocalName::from(name)))?;
             Ok(with_registry(page, |r| r.ctor(s, s.realm_id(), &name)).unwrap_or(s.undefined()))
         });
-        def.method("getName", 1, |s, page, a| {
+        def.pure_method("getName", 1, |s, page, a| {
             let ctor = a.get(0);
             let name = with_registry(page, |r| {
                 r.defs

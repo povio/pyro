@@ -168,7 +168,7 @@ impl JsClass for TextEncoder {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, _a| s.wrap_new::<TextEncoder>((), nt, None));
         def.getter("encoding", |s, _d| Ok(s.string("utf-8")));
-        def.method("encode", 0, |s, _d, a| {
+        def.pure_method("encode", 0, |s, _d, a| {
             let text = if a.get(0).is_undefined() { String::new() } else { dom_string(a.get(0))? };
             uint8_array(s, text.as_bytes())
         });

@@ -171,7 +171,7 @@ impl JsClass for XPathResult {
             }
             r.item(s, i)
         });
-        def.method("snapshotItem", 1, |s, r, a| {
+        def.pure_method("snapshotItem", 1, |s, r, a| {
             a.require(1, "XPathResult.snapshotItem")?;
             if !r.is_snapshot() {
                 return Err(mismatch("a snapshot"));

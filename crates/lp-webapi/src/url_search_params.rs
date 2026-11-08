@@ -102,7 +102,7 @@ impl JsClass for URLSearchParams {
             data.update_url();
             Ok(s.undefined())
         });
-        def.method("has", 1, |s, data, args| {
+        def.pure_method("has", 1, |s, data, args| {
             args.require(1, "URLSearchParams.has")?;
             let name = dom_string(args.get(0))?;
             let value = (!args.get(1).is_undefined()).then(|| dom_string(args.get(1))).transpose()?;
@@ -110,12 +110,12 @@ impl JsClass for URLSearchParams {
                 data.0.pairs.borrow().iter().any(|(n, v)| *n == name && value.as_ref().is_none_or(|value| value == v)),
             ))
         });
-        def.method("get", 1, |s, data, args| {
+        def.pure_method("get", 1, |s, data, args| {
             args.require(1, "URLSearchParams.get")?;
             let name = dom_string(args.get(0))?;
             Ok(data.0.pairs.borrow().iter().find(|(n, _)| *n == name).map_or(s.null(), |(_, v)| s.string(v)))
         });
-        def.method("getAll", 1, |s, data, args| {
+        def.pure_method("getAll", 1, |s, data, args| {
             args.require(1, "URLSearchParams.getAll")?;
             let name = dom_string(args.get(0))?;
             let mut values = lp_js::RootedVec::new();
@@ -130,7 +130,7 @@ impl JsClass for URLSearchParams {
             data.update_url();
             Ok(s.undefined())
         });
-        def.method("toString", 0, |s, data, _| Ok(s.string(&data.serialize())));
+        def.pure_method("toString", 0, |s, data, _| Ok(s.string(&data.serialize())));
         def.method("entries", 0, |s, data, _| iterator(s, data, IterKind::Entries));
         def.method("keys", 0, |s, data, _| iterator(s, data, IterKind::Keys));
         def.method("values", 0, |s, data, _| iterator(s, data, IterKind::Values));

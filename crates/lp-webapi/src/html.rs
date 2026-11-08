@@ -875,7 +875,7 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     });
     def.method("setPointerCapture", 1, crate::pointer_capture::set_pointer_capture);
     def.method("releasePointerCapture", 1, crate::pointer_capture::release_pointer_capture);
-    def.method("hasPointerCapture", 1, crate::pointer_capture::has_pointer_capture);
+    def.pure_method("hasPointerCapture", 1, crate::pointer_capture::has_pointer_capture);
     def.method("animate", 1, |s, n, a| {
         let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
         crate::animations::animate(s, n.page(), el, &a)
@@ -1302,7 +1302,7 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_str!(def, "ping", "ping");
     reflect_tokens!(def, "relList", "rel");
-    def.method("toString", 0, |s, n, _a| {
+    def.pure_method("toString", 0, |s, n, _a| {
         let dom = n.page().dom.borrow();
         Ok(s.string(&dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(&dom, n.id, h)).unwrap_or_default()))
     });
@@ -1810,7 +1810,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
             n.page().dom.borrow_mut().set_value(n.id, &arg0).js()
         },
     );
-    def.method("item", 1, |s, n, a| {
+    def.pure_method("item", 1, |s, n, a| {
         let i = to_u32(a.get(0))? as usize;
         let o = n.page().dom.borrow().select_options(n.id).js()?.get(i).copied();
         node_value(s, n.page(), o)
@@ -1822,7 +1822,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
             None => Ok(None),
         }
     });
-    def.method("namedItem", 1, |s, n, a| {
+    def.pure_method("namedItem", 1, |s, n, a| {
         let name = dom_string(a.get(0))?;
         let dom = n.page().dom.borrow();
         let found = dom.select_options(n.id).js()?.into_iter().find(|&o| {
@@ -3294,7 +3294,7 @@ impl JsClass for DomImplementation {
             drop(dom);
             Ok(wrap_node(s, &h.page, dt)?.value())
         });
-        def.method("hasFeature", 0, |s, _h, _a| Ok(s.boolean(true)));
+        def.pure_method("hasFeature", 0, |s, _h, _a| Ok(s.boolean(true)));
     }
 }
 

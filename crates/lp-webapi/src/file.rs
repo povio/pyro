@@ -72,7 +72,7 @@ impl JsClass for Blob {
         });
         def.getter("size", |s, b| Ok(s.number(b.bytes.len() as f64)));
         def.getter("type", |s, b| Ok(s.string(&b.mime)));
-        def.method("slice", 0, |s, b, a| {
+        def.pure_method("slice", 0, |s, b, a| {
             let len = b.bytes.len() as i64;
             let clamp = |v: Value<'_>, default: i64| -> JsResult<usize> {
                 if v.is_undefined() {
@@ -194,7 +194,7 @@ impl JsClass for FileList {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("length", |s, l| Ok(s.number(l.len as f64)));
-        def.method("item", 1, |s, l, a| {
+        def.pure_method("item", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
             Ok(l.get(s, i)?.unwrap_or(s.null()))
         });

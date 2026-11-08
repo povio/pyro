@@ -694,7 +694,7 @@ impl JsClass for WorkerPerformance {
 
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|p: &WorkerPerformanceData| &p.target);
-        def.method("now", 0, |s, p, _a| Ok(s.number(p.now_ms())));
+        def.pure_method("now", 0, |s, p, _a| Ok(s.number(p.now_ms())));
         def.getter("timeOrigin", |s, p| Ok(s.number(p.origin_wall_ms)));
         def.method("mark", 1, |s, p, a| {
             let mark = p.user.mark(s, &a, p.now_ms())?;
@@ -708,14 +708,14 @@ impl JsClass for WorkerPerformance {
         });
         def.method("clearMarks", 0, |s, p, a| p.user.clear(true, &a).map(|()| s.undefined()));
         def.method("clearMeasures", 0, |s, p, a| p.user.clear(false, &a).map(|()| s.undefined()));
-        def.method("getEntries", 0, |s, p, _a| worker_entries(s, p, None, None));
-        def.method("getEntriesByName", 1, |s, p, a| {
+        def.pure_method("getEntries", 0, |s, p, _a| worker_entries(s, p, None, None));
+        def.pure_method("getEntriesByName", 1, |s, p, a| {
             a.require(1, "Performance.getEntriesByName")?;
             let name = a.get(0).to_string()?;
             let ty = a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
             worker_entries(s, p, Some(&name), ty.as_deref())
         });
-        def.method("getEntriesByType", 1, |s, p, a| {
+        def.pure_method("getEntriesByType", 1, |s, p, a| {
             a.require(1, "Performance.getEntriesByType")?;
             let ty = a.get(0).to_string()?;
             worker_entries(s, p, None, Some(&ty))

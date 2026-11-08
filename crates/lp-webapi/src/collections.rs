@@ -145,7 +145,7 @@ impl JsClass for NodeList {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, l| Ok(s.number(l.len() as f64)));
-        def.method("item", 1, |s, l, a| {
+        def.pure_method("item", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
             match l.get(i) {
                 Some((p, id)) => Ok(wrap_node(s, &p, id)?.value()),
@@ -539,7 +539,7 @@ impl JsClass for HtmlCollection {
         def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, c| {
             Ok(s.number(c.with_items(|v| v.len()) as f64))
         });
-        def.method("item", 1, |s, c, a| {
+        def.pure_method("item", 1, |s, c, a| {
             let i = to_u32(a.get(0))? as usize;
             let id = c.with_items(|v| v.get(i).copied());
             match id {
@@ -547,7 +547,7 @@ impl JsClass for HtmlCollection {
                 None => Ok(s.null()),
             }
         });
-        def.method("namedItem", 1, |s, c, a| {
+        def.pure_method("namedItem", 1, |s, c, a| {
             let name = dom_string(a.get(0))?;
             match c.named(&name) {
                 Some(id) => Ok(wrap_node(s, &c.root.page, id)?.value()),
@@ -876,15 +876,15 @@ impl JsClass for DomTokenList {
             |s, t| t.value(s),
             |_s, t, v| with_str(v, |value| t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, value).js()),
         );
-        def.method("toString", 0, |s, t, _a| t.value(s));
-        def.method("item", 1, |s, t, a| {
+        def.pure_method("toString", 0, |s, t, _a| t.value(s));
+        def.pure_method("item", 1, |s, t, a| {
             let i = to_u32(a.get(0))? as usize;
             Ok(t.token(s, &t.el.page.dom.borrow(), i).unwrap_or_else(|| s.null()))
         });
         def.legacy_platform_object();
         def.indexed(|s, t, i| Ok(t.token(s, &t.el.page.dom.borrow(), i as usize)));
 
-        def.method("contains", 1, |s, t, a| {
+        def.pure_method("contains", 1, |s, t, a| {
             let v = a.get(0);
             Ok(s.boolean(t.contains(&str_of(&v)?)))
         });
@@ -953,7 +953,7 @@ impl JsClass for DomTokenList {
             })?;
             Ok(s.boolean(true))
         });
-        def.method("supports", 1, |s, t, a| {
+        def.pure_method("supports", 1, |s, t, a| {
             let tok = dom_string(a.get(0))?;
             let supported: &[&str] = match t.attr {
                 "rel" => &[
@@ -1089,7 +1089,7 @@ impl JsClass for NamedNodeMap {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("length", |s, m| Ok(s.number(m.el.page.dom.borrow().attributes(m.el.id).js()?.len() as f64)));
-        def.method("item", 1, |s, m, a| {
+        def.pure_method("item", 1, |s, m, a| {
             let i = to_u32(a.get(0))? as usize;
             attr_at(s, m, i).map(|o| o.unwrap_or(s.null()))
         });

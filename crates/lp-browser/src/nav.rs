@@ -1005,7 +1005,7 @@ impl JsClass for Location {
 
     fn define(def: &mut ClassDef<Self>) {
         def.accessor("href", |s, n| Ok(s.string(&n.url())), |_s, n, v| assign(n, v, false));
-        def.method("toString", 0, |s, n, _a| Ok(s.string(&n.url())));
+        def.pure_method("toString", 0, |s, n, _a| Ok(s.string(&n.url())));
         def.method("assign", 1, |s, n, a| {
             a.require(1, "assign")?;
             assign(n, a.get(0), false)?;
@@ -1451,7 +1451,7 @@ impl JsClass for Performance {
 
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|p: &PerformanceData| &p.target);
-        def.method("now", 0, |s, p, _a| Ok(s.number(p.nav.now_ms())));
+        def.pure_method("now", 0, |s, p, _a| Ok(s.number(p.nav.now_ms())));
         def.getter("timeOrigin", |s, p| Ok(s.number(p.origin_wall_ms)));
         def.method("mark", 1, |s, p, a| {
             let object = p.user.mark(s, &a, p.nav.now_ms())?;
@@ -1465,14 +1465,14 @@ impl JsClass for Performance {
         });
         def.method("clearMarks", 0, |s, p, a| p.user.clear(true, &a).map(|()| s.undefined()));
         def.method("clearMeasures", 0, |s, p, a| p.user.clear(false, &a).map(|()| s.undefined()));
-        def.method("getEntries", 0, |s, p, _a| timeline_entries(s, p, None, None));
-        def.method("getEntriesByName", 1, |s, p, a| {
+        def.pure_method("getEntries", 0, |s, p, _a| timeline_entries(s, p, None, None));
+        def.pure_method("getEntriesByName", 1, |s, p, a| {
             a.require(1, "Performance.getEntriesByName")?;
             let name = a.get(0).to_string()?;
             let ty = a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
             timeline_entries(s, p, Some(&name), ty.as_deref())
         });
-        def.method("getEntriesByType", 1, |s, p, a| {
+        def.pure_method("getEntriesByType", 1, |s, p, a| {
             a.require(1, "Performance.getEntriesByType")?;
             let ty = a.get(0).to_string()?;
             timeline_entries(s, p, None, Some(&ty))

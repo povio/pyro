@@ -945,7 +945,7 @@ impl JsClass for Event {
             e.state.borrow_mut().prevent_default();
             Ok(s.undefined())
         });
-        def.method("composedPath", 0, |s, e, _a| {
+        def.pure_method("composedPath", 0, |s, e, _a| {
             let path = e.page.dom.borrow().composed_path(&e.state.borrow());
             let mut vals = lp_js::RootedVec::new();
             for k in path {
@@ -1234,7 +1234,7 @@ impl JsClass for MouseEvent {
             let k = e.fields.borrow().related_target;
             target_value(s, &e.page, k)
         });
-        def.method("getModifierState", 1, |s, e, a| {
+        def.pure_method("getModifierState", 1, |s, e, a| {
             let k = dom_string(a.get(0))?;
             Ok(s.boolean(modifier_state(&e.fields.borrow(), &k)))
         });
@@ -1286,11 +1286,11 @@ impl JsClass for PointerEvent {
         def.getter("persistentDeviceId", |s, e| Ok(s.number(e.fields.borrow().persistent_device_id)));
         def.getter("pointerType", |s, e| Ok(s.string(&e.fields.borrow().pointer_type)));
         def.getter("isPrimary", |s, e| Ok(s.boolean(e.fields.borrow().is_primary)));
-        def.method("getCoalescedEvents", 0, |s, e, _a| {
+        def.pure_method("getCoalescedEvents", 0, |s, e, _a| {
             let events: Vec<Value<'_>> = e.fields.borrow().coalesced_events.iter().map(|p| p.get(s)).collect();
             Ok(s.array(&events)?.value())
         });
-        def.method("getPredictedEvents", 0, |s, e, _a| {
+        def.pure_method("getPredictedEvents", 0, |s, e, _a| {
             let events: Vec<Value<'_>> = e.fields.borrow().predicted_events.iter().map(|p| p.get(s)).collect();
             Ok(s.array(&events)?.value())
         });
@@ -1378,7 +1378,7 @@ impl JsClass for KeyboardEvent {
         def.getter("shiftKey", |s, e| Ok(s.boolean(e.fields.borrow().shift_key)));
         def.getter("altKey", |s, e| Ok(s.boolean(e.fields.borrow().alt_key)));
         def.getter("metaKey", |s, e| Ok(s.boolean(e.fields.borrow().meta_key)));
-        def.method("getModifierState", 1, |s, e, a| {
+        def.pure_method("getModifierState", 1, |s, e, a| {
             let k = dom_string(a.get(0))?;
             Ok(s.boolean(modifier_state(&e.fields.borrow(), &k)))
         });
@@ -1425,7 +1425,7 @@ impl JsClass for InputEvent {
                 None => s.null(),
             })
         });
-        def.method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
+        def.pure_method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
     }
 }
 

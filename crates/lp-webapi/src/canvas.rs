@@ -1321,7 +1321,7 @@ impl JsClass for CanvasRenderingContext2D {
             o.set_atom("willReadFrequently", s.boolean(false))?;
             Ok(o.value())
         });
-        def.method("isContextLost", 0, |s, _c, _a| Ok(s.boolean(false)));
+        def.pure_method("isContextLost", 0, |s, _c, _a| Ok(s.boolean(false)));
         def.method("reset", 0, |s, c, _a| {
             c.reset();
             let mut surface = c.surface.borrow_mut();
@@ -1613,8 +1613,8 @@ impl JsClass for CanvasRenderingContext2D {
             Builder { path: &mut c.path.borrow_mut(), t }.round_rect(v[0], v[1], v[2], v[3], r);
             Ok(s.undefined())
         });
-        def.method("isPointInPath", 2, |s, c, a| is_point_in(s, c, a, false));
-        def.method("isPointInStroke", 2, |s, c, a| is_point_in(s, c, a, true));
+        def.pure_method("isPointInPath", 2, |s, c, a| is_point_in(s, c, a, false));
+        def.pure_method("isPointInStroke", 2, |s, c, a| is_point_in(s, c, a, true));
 
         // Drawing.
         def.method("fill", 0, |s, c, a| {
@@ -1714,7 +1714,7 @@ impl JsClass for CanvasRenderingContext2D {
             c.state.borrow_mut().line_dash = dash;
             Ok(s.undefined())
         });
-        def.method("getLineDash", 0, |s, c, _a| {
+        def.pure_method("getLineDash", 0, |s, c, _a| {
             let values: Vec<Value<'_>> = c.state.borrow().line_dash.iter().map(|v| s.number(*v)).collect();
             Ok(s.array(&values)?.value())
         });
