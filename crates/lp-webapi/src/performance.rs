@@ -333,7 +333,7 @@ pub fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) ->
                 return Err(JsError::Type("startTime is not a finite number.".into()));
             }
             if t < 0.0 {
-                return Err(JsError::Type(format!("'{name}' cannot have a negative start time.")));
+                return Err(JsError::Type(format!("'{name}' cannot have a negative start time.").into()));
             }
             t
         }
@@ -597,7 +597,7 @@ pub fn observer_module<'s>(
     })?;
     natives.set_atom("watch", watch.value())?;
     let report = s.function("reportException", |s, _this, a| {
-        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
+        s.report_exception(&JsError::thrown(Persistent::new(s, a.get(0))));
         Ok(s.undefined())
     })?;
     natives.set_atom("reportException", report.value())?;
@@ -681,7 +681,7 @@ fn worker_entries<'s>(
 /// In a worker, a `PerformanceTiming` attribute name is no timestamp.
 fn worker_name_timestamp(name: &str) -> Option<JsResult<f64>> {
     TIMING_ATTRIBUTES.contains(&name).then(|| {
-        Err(JsError::Type(format!("Failed to execute 'measure' on 'Performance': '{name}' is not a mark in a worker.")))
+        Err(JsError::Type(format!("Failed to execute 'measure' on 'Performance': '{name}' is not a mark in a worker.").into()))
     })
 }
 

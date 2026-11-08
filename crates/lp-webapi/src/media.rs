@@ -1149,7 +1149,7 @@ fn finite(v: Value<'_>, what: &str) -> JsResult<f64> {
     if !n.is_finite() {
         return Err(JsError::Type(format!(
             "Failed to set the '{what}' property on 'HTMLMediaElement': The provided double value is non-finite."
-        )));
+        ).into()));
     }
     Ok(n)
 }

@@ -45,7 +45,7 @@ fn check_exc(s: &Scope<'_>, exc: sys::JSValueRef) -> JsResult<()> {
     // SAFETY: `exc` is a live exception value JSC just returned on this thread
     // for this context; wrapping it roots it for the scope's lifetime.
     let v = unsafe { Value::from_raw(s.ctx(), exc) };
-    Err(JsError::Thrown(lp_js::Persistent::new(s, v)))
+    Err(JsError::thrown(lp_js::Persistent::new(s, v)))
 }
 
 /// Copies the bytes viewed by an ArrayBuffer, TypedArray or DataView.
@@ -215,7 +215,7 @@ impl JsClass for TextDecoder {
         def.constructor(0, |s, nt, a| {
             let label = if a.get(0).is_undefined() { "utf-8".to_owned() } else { dom_string(a.get(0))? };
             let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
-                .ok_or_else(|| JsError::Range(format!("The encoding label provided ('{label}') is invalid.")))?;
+                .ok_or_else(|| JsError::Range(format!("The encoding label provided ('{label}') is invalid.").into()))?;
             let (fatal, ignore_bom) = match a.get(1).as_object() {
                 Some(o) => (o.get_atom("fatal")?.to_bool(), o.get_atom("ignoreBOM")?.to_bool()),
                 None => (false, false),

@@ -208,7 +208,7 @@ impl ModuleRequest {
             } else {
                 unsafe { JsString::from_raw_owned(err) }.to_string()
             };
-            let e = JsError::Type(msg).to_value(scope);
+            let e = JsError::Type(msg.into()).to_value(scope);
             return self.reject.get(scope).as_object().expect("reject fn").call(None, &[e]).map(|_| ());
         }
         let script = unsafe { Value::from_raw(scope.ctx, script) };
@@ -232,7 +232,7 @@ impl Drop for ModuleRequest {
         let Some(realm) = self.realm.upgrade() else { return };
         let Ok(ctx) = realm.global_ctx() else { return };
         let scope = Scope::new(ctx as sys::JSContextRef, &realm);
-        let e = JsError::Type(format!("Failed to fetch dynamically imported module: {}", self.url)).to_value(&scope);
+        let e = JsError::Type(format!("Failed to fetch dynamically imported module: {}", self.url).into()).to_value(&scope);
         if let Some(f) = self.reject.get(&scope).as_object() {
             let _ = f.call(None, &[e]);
         }
@@ -647,9 +647,9 @@ impl Realm {
             .classes
             .borrow()
             .id_of::<C>()
-            .ok_or_else(|| JsError::Type(format!("{} not registered", C::NAME)))?;
+            .ok_or_else(|| JsError::Type(format!("{} not registered", C::NAME).into()))?;
         if self.inner.global_class != Some(id) {
-            return Err(JsError::Type(format!("realm global is not a {}", C::NAME)));
+            return Err(JsError::Type(format!("realm global is not a {}", C::NAME).into()));
         }
         if !self.inner.global_payload.get().is_null() {
             return Err(JsError::Type("global data already set".into()));
@@ -881,7 +881,7 @@ impl<'s> Scope<'s> {
     /// never add one resolve specifiers without consulting a map.
     pub fn add_import_map(&self, source: &str, base: &str) -> JsResult<Vec<String>> {
         if !self.realm.engine.caps.import_maps {
-            return Err(JsError::Unsupported("import maps (patched JavaScriptCore)"));
+            return Err(JsError::Unsupported(&"import maps (patched JavaScriptCore)"));
         }
         let mut messages: sys::JSStringRef = ptr::null();
         // SAFETY: the slices outlive the call, which copies them; `messages` comes back owned.
@@ -898,7 +898,7 @@ impl<'s> Scope<'s> {
         let messages =
             if messages.is_null() { String::new() } else { unsafe { JsString::from_raw_owned(messages) }.to_string() };
         if !merged {
-            return Err(JsError::Type(format!("Invalid import map: {messages}")));
+            return Err(JsError::Type(format!("Invalid import map: {messages}").into()));
         }
         Ok(messages.lines().map(str::to_owned).collect())
     }
@@ -918,7 +918,7 @@ impl<'s> Scope<'s> {
     /// browser layer appends a fragment, which leaves relative resolution intact).
     pub fn eval_module(&self, source: &str, url: &str) -> JsResult<Value<'s>> {
         if !self.realm.engine.caps.modules {
-            return Err(JsError::Unsupported("ES modules (JSScript module SPI)"));
+            return Err(JsError::Unsupported(&"ES modules (JSScript module SPI)"));
         }
         self.realm.inline_modules.borrow_mut().insert(url.to_string(), source.to_string());
         // Module top-level code runs with this realm as the entry realm (as
@@ -942,7 +942,7 @@ impl<'s> Scope<'s> {
             } else {
                 unsafe { JsString::from_raw_owned(err) }.to_string()
             };
-            return Err(JsError::Type(msg));
+            return Err(JsError::Type(msg.into()));
         }
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
@@ -1263,7 +1263,7 @@ impl<'s> Scope<'s> {
         let key = key.filter(|k| !k.is_owned());
         let spi = sys::spi::get();
         let kept_while = match owned {
-            Some(_) => Some(spi.weak_create_kept_while.ok_or(JsError::Unsupported("JSWeakCreateKeptWhile"))?),
+            Some(_) => Some(spi.weak_create_kept_while.ok_or(JsError::Unsupported(&"JSWeakCreateKeptWhile"))?),
             None => None,
         };
         let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, key, data);
@@ -1323,7 +1323,7 @@ impl<'s> Scope<'s> {
             }
         }
         if let Some(k) = key {
-            let (create, release, _) = sys::spi::get().weak().ok_or(JsError::Unsupported("JSWeak"))?;
+            let (create, release, _) = sys::spi::get().weak().ok_or(JsError::Unsupported(&"JSWeak"))?;
             let weak = unsafe { create(self.realm.engine.group(), obj.raw) };
             if let Some(old) = self.realm.identity.borrow_mut().insert(k, weak) {
                 unsafe { release(self.realm.engine.group(), old) };
@@ -1485,7 +1485,7 @@ impl<'s> Scope<'s> {
         }
         let get_context = sys::spi::get()
             .get_object_global_context
-            .ok_or(JsError::Unsupported("object global-context inspection"))?;
+            .ok_or(JsError::Unsupported(&"object global-context inspection"))?;
         // SAFETY: object is live in this VM. Its native realm remains reachable
         // through the object, independently of the Rust Realm handle. Reading
         // the global identity does not execute script or retain another realm.
@@ -1647,7 +1647,7 @@ impl<'s> Scope<'s> {
             .classes
             .borrow()
             .id_of::<C>()
-            .ok_or_else(|| JsError::Type(format!("class {} is not registered", C::NAME)))
+            .ok_or_else(|| JsError::Type(format!("class {} is not registered", C::NAME).into()))
     }
 
     fn proto(&self, id: ClassId) -> JsResult<Value<'s>> {
@@ -1685,7 +1685,7 @@ impl<'s> Scope<'s> {
     }
 
     fn set_hidden_raw(&self, object: Object<'_>, key: sys::JSStringRef, value: Value<'_>) -> JsResult<()> {
-        let f = sys::spi::get().set_private_property.ok_or(JsError::Unsupported("JSObjectSetPrivateProperty"))?;
+        let f = sys::spi::get().set_private_property.ok_or(JsError::Unsupported(&"JSObjectSetPrivateProperty"))?;
         let ok = unsafe { f(self.ctx, object.raw, key, value.raw) };
         if ok {
             Ok(())
@@ -1695,7 +1695,7 @@ impl<'s> Scope<'s> {
     }
 
     fn get_hidden_raw(&self, object: Object<'_>, key: sys::JSStringRef) -> JsResult<Option<Value<'s>>> {
-        let f = sys::spi::get().get_private_property.ok_or(JsError::Unsupported("JSObjectGetPrivateProperty"))?;
+        let f = sys::spi::get().get_private_property.ok_or(JsError::Unsupported(&"JSObjectGetPrivateProperty"))?;
         let v = unsafe { f(self.ctx, object.raw, key) };
         Ok((!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) }))
     }

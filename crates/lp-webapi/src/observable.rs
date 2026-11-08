@@ -86,7 +86,7 @@ pub(crate) fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
     // The `error` event at the Window first; the console unless a listener
     // canceled it.
     if !crate::lifecycle::report_exception(s, &details) {
-        crate::lifecycle::report_diagnostic(s, &JsError::Thrown(Persistent::new(s, value)));
+        crate::lifecycle::report_diagnostic(s, &JsError::thrown(Persistent::new(s, value)));
     }
 }
 

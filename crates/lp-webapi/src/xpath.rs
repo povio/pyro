@@ -50,7 +50,7 @@ fn xpath_err(e: XPathError) -> JsError {
     match e {
         XPathError::Syntax(m) => JsError::dom("SyntaxError", m),
         XPathError::Namespace(m) => JsError::dom("NamespaceError", m),
-        XPathError::Type(m) => JsError::Type(m),
+        XPathError::Type(m) => JsError::Type(m.into()),
         XPathError::StaleNode => JsError::dom("InvalidStateError", "The node is no longer available."),
     }
 }
@@ -106,7 +106,7 @@ impl XPathResultData {
 }
 
 fn mismatch(what: &str) -> JsError {
-    JsError::Type(format!("The result type is not {what}."))
+    JsError::Type(format!("The result type is not {what}.").into())
 }
 
 pub struct XPathResult;
@@ -267,12 +267,12 @@ fn context_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<(Rc<P
     if v.is_nullish() {
         return Ok(None);
     }
-    Err(JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))
+    Err(JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.").into()))
 }
 
 fn required_context(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<(Rc<PageDom>, XPathNode)> {
     context_arg(s, v, what)?
-        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))
+        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.").into()))
 }
 
 /// `unsigned short type` (undefined: ANY_TYPE).

@@ -629,7 +629,7 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
             if s.unwrap::<PointerEvent>(event).is_none() {
                 return Err(JsError::Type(format!(
                     "Failed to construct 'PointerEvent': {name} must hold PointerEvents."
-                )));
+                ).into()));
             }
             into.push(Persistent::new(s, event));
         }
@@ -1575,7 +1575,7 @@ fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>,
         }
         None => Err(JsError::Type(format!(
             "Failed to construct '{iface}': Failed to read the 'source' property from '{iface}Init': Failed to convert value to 'Element'."
-        ))),
+        ).into())),
     }
 }
 
@@ -1939,7 +1939,7 @@ fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &'static str)
     for i in 0..list.get_atom("length")?.to_number()? as u32 {
         let v = list.get_index(i)?;
         let touch = s.unwrap::<Touch>(v).ok_or_else(|| {
-            JsError::Type(format!("Failed to construct 'TouchEvent': Failed to read the '{name}' property from 'TouchEventInit': Failed to convert value to 'Touch'."))
+            JsError::Type(format!("Failed to construct 'TouchEvent': Failed to read the '{name}' property from 'TouchEventInit': Failed to convert value to 'Touch'.").into())
         })?;
         out.push(touch.point.clone());
     }

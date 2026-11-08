@@ -589,7 +589,7 @@ pub(crate) fn options_add<'s>(
     if !is_html(&dom, el, &["option", "optgroup"]) {
         return Err(JsError::Type(format!(
             "Failed to execute 'add' on '{iface}': The provided value is not of type '(HTMLOptGroupElement or HTMLOptionElement)'."
-        )));
+        ).into()));
     }
     if dom.contains(el, select).js()? {
         return Err(JsError::dom("HierarchyRequestError", "The new child element contains the parent."));
@@ -1005,7 +1005,7 @@ impl JsClass for DomTokenList {
                     return Err(JsError::Type(format!(
                         "DOMTokenList has no supported tokens for the '{}' attribute.",
                         t.attr
-                    )))
+                    ).into()))
                 }
             };
             Ok(s.boolean(supported.iter().any(|k| k.eq_ignore_ascii_case(&tok))))

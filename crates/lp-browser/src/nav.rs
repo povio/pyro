@@ -1670,7 +1670,7 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         Ok(s.undefined())
     });
     let report = s.function("reportException", |s, _this, a| {
-        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
+        s.report_exception(&JsError::thrown(Persistent::new(s, a.get(0))));
         Ok(s.undefined())
     })?;
     natives.set_atom("reportException", report.value())?;

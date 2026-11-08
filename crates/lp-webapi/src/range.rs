@@ -121,7 +121,7 @@ pub(crate) fn compare_boundary_points_dom(dom: &Dom, a: Point, b: Point) -> i8 {
 fn local_node(s: &Scope<'_>, page: &PageDom, v: Value<'_>, what: &str) -> JsResult<Option<NodeId>> {
     let n = s
         .unwrap::<Node>(v)
-        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))?;
+        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.").into()))?;
     Ok(Rc::ptr_eq(&n.page().dom, &page.dom).then_some(n.id))
 }
 
@@ -670,7 +670,7 @@ fn static_point(
     if off.is_undefined() {
         return Err(JsError::Type(format!(
             "Failed to construct 'StaticRange': required member {offset} is undefined."
-        )));
+        ).into()));
     }
     if matches!(page.dom.borrow().node_type(id).js()?, NodeType::DocumentType | NodeType::Attribute) {
         return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a doctype or an attribute."));

@@ -1548,7 +1548,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                     other => {
                         return Err(JsError::Type(format!(
                             "Failed to execute 'setRangeText': The provided value '{other}' is not a valid enum value of type SelectionMode."
-                        )))
+                        ).into()))
                     }
                 },
             };
@@ -3209,7 +3209,7 @@ pub(crate) fn written_script_fetched(page: &Rc<PageDom>, node: NodeId, url: &str
                 if let Ok(scope) = realm.scope() {
                     crate::lifecycle::report_diagnostic(
                         &scope,
-                        &JsError::Type(format!("Failed to load script: {error}")),
+                        &JsError::Type(format!("Failed to load script: {error}").into()),
                     );
                 }
             }

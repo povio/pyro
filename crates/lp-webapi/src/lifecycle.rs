@@ -156,7 +156,7 @@ pub fn report_exception(s: &Scope<'_>, exception: &JsException) -> bool {
         hooks.post_task(Box::new(move || {
             let Some(realm) = realm.upgrade() else { return };
             let Ok(s) = realm.scope() else { return };
-            s.report_exception(&JsError::Thrown(value));
+            s.report_exception(&JsError::thrown(value));
         }));
         return true;
     }

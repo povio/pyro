@@ -256,7 +256,7 @@ impl JsClass for ResizeObserver {
                         _ => {
                             return Err(JsError::Type(format!(
                                 "The provided value '{b}' is not a valid ResizeObserverBoxOptions"
-                            )))
+                            ).into()))
                         }
                     };
                 }

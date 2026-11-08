@@ -1463,7 +1463,7 @@ fn in_receiver_realm<R: CallbackResult>(
     }
     result.map_err(|e| match e {
         JsError::Thrown(_) | JsError::Terminated | JsError::ContextDestroyed => e,
-        e => JsError::Thrown(crate::Persistent::new(&receiver, e.to_value(&receiver))),
+        e => JsError::thrown(crate::Persistent::new(&receiver, e.to_value(&receiver))),
     })
 }
 
@@ -1782,7 +1782,7 @@ unsafe fn put_forwards_invoke<C: JsClass>(
             forwards.name,
             C::NAME,
             forwards.name
-        )));
+        ).into()));
     };
     // A missing argument is `undefined` (Args::get), like any attribute setter.
     target.set(forwards.target, args.get(0))?;

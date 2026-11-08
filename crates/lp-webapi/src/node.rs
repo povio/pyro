@@ -195,7 +195,7 @@ pub fn node_value<'s>(s: &Scope<'s>, page: &PageDom, id: Option<NodeId>) -> JsRe
 /// Extracts a Node argument (WebIDL `Node`), with a TypeError otherwise.
 pub fn node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<NodeId> {
     node_id_of(s, v)
-        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))
+        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.").into()))
 }
 
 /// The node of a Node wrapper value: its id is read at once, so no
@@ -1381,7 +1381,7 @@ impl JsClass for Element {
                 _ => {
                     return Err(JsError::Type(format!(
                         "The provided value '{mode}' is not a valid enum value of type ShadowRootMode."
-                    )))
+                    ).into()))
                 }
             };
             if o.get_atom("serializable")?.to_bool() {
@@ -1395,7 +1395,7 @@ impl JsClass for Element {
                     other => {
                         return Err(JsError::Type(format!(
                             "The provided value '{other}' is not a valid enum value of type SlotAssignmentMode."
-                        )))
+                        ).into()))
                     }
                 }
             }

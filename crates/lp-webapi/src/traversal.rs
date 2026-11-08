@@ -162,7 +162,7 @@ fn call_filter(s: &Scope<'_>, filter: Object<'_>, node: Value<'_>) -> JsResult<u
 
 /// A TypeError of `s`'s realm, whichever realm the native caller runs in.
 fn type_error_of(s: &Scope<'_>, message: &str) -> JsError {
-    JsError::Thrown(lp_js::Persistent::new(s, JsError::Type(message.into()).to_value(s)))
+    JsError::thrown(lp_js::Persistent::new(s, JsError::Type(message.into()).to_value(s)))
 }
 
 /// Whether `o` is a revoked Proxy. Calling one throws a TypeError of the

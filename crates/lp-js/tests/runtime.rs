@@ -530,7 +530,7 @@ fn es_modules_through_fetcher() {
                 "http://site.test/lib/b.js" => "export let b = 1; export function inc() { b++ }",
                 "http://site.test/c.js" => "export const c = 42; export const meta = import.meta.url;",
                 _ => {
-                    request.reject(&s, &JsError::Type(format!("404 {url}"))).unwrap();
+                    request.reject(&s, &JsError::Type(format!("404 {url}").into())).unwrap();
                     return;
                 }
             };
@@ -590,7 +590,7 @@ fn typed_module_requests_reach_the_fetcher() {
                 }
                 // A CSS request resolved with source text is refused.
                 ("http://site.test/wrong.css", ModuleType::Css) => request.resolve(&s, "export default 1"),
-                _ => request.reject(&s, &JsError::Type(format!("not a {ty:?} module: {url}"))),
+                _ => request.reject(&s, &JsError::Type(format!("not a {ty:?} module: {url}").into())),
             }
             .unwrap();
         }
@@ -660,7 +660,7 @@ fn import_meta_url_is_set_for_entry_and_fetched_modules() {
             if url == "http://site.test/dep.js" {
                 request.resolve(&s, "export const url = import.meta.url;").unwrap();
             } else {
-                request.reject(&s, &JsError::Type(format!("unexpected module {url}"))).unwrap();
+                request.reject(&s, &JsError::Type(format!("unexpected module {url}").into())).unwrap();
             }
         }
     }
@@ -696,7 +696,7 @@ fn imports_without_a_script_url_resolve_against_the_document_base() {
                 "http://site.test/app/c.js" | "http://site.test/c.js" => request
                     .resolve(&s, "globalThis.evals = (globalThis.evals || 0) + 1; export const url = import.meta.url;")
                     .unwrap(),
-                _ => request.reject(&s, &JsError::Type(format!("unexpected module {url}"))).unwrap(),
+                _ => request.reject(&s, &JsError::Type(format!("unexpected module {url}").into())).unwrap(),
             }
         }
         fn document_base_url(&self, _realm: &Realm) -> Option<String> {

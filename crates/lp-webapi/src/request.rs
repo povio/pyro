@@ -273,7 +273,7 @@ fn construct<'s>(
             let input = crate::util::dom_string(input)?;
             let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
             let mut url = lp_net::Url::parse(&resolved)
-                .map_err(|_| JsError::Type(format!("Failed to construct 'Request': Invalid URL '{input}'")))?;
+                .map_err(|_| JsError::Type(format!("Failed to construct 'Request': Invalid URL '{input}'").into()))?;
             if !url.username().is_empty() || url.password().is_some() {
                 return Err(JsError::Type("Failed to construct 'Request': Request cannot be constructed from a URL that includes credentials.".into()));
             }
@@ -308,10 +308,10 @@ fn construct<'s>(
     }
     if let Some(referrer) = string_option(s, init, "referrer")? {
         fields.referrer = parse_referrer(&page, &referrer)
-            .map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}")))?;
+            .map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}").into()))?;
     }
     if let Some(policy) = string_option(s, init, "referrerPolicy")? {
-        check_referrer_policy(&policy).map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}")))?;
+        check_referrer_policy(&policy).map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}").into()))?;
         fields.referrer_policy = policy;
     }
     if let Some(mode) = string_option(s, init, "mode")? {
@@ -321,7 +321,7 @@ fn construct<'s>(
         if !matches!(mode.as_str(), "same-origin" | "no-cors" | "cors") {
             return Err(JsError::Type(format!(
                 "Failed to construct 'Request': The provided value '{mode}' is not a valid enum value of type RequestMode."
-            )));
+            ).into()));
         }
         fields.mode = mode;
     }
@@ -329,7 +329,7 @@ fn construct<'s>(
         if !matches!(credentials.as_str(), "omit" | "same-origin" | "include") {
             return Err(JsError::Type(format!(
                 "Failed to construct 'Request': The provided value '{credentials}' is not a valid enum value of type RequestCredentials."
-            )));
+            ).into()));
         }
         fields.credentials = credentials;
     }
@@ -338,7 +338,7 @@ fn construct<'s>(
         {
             return Err(JsError::Type(format!(
                 "Failed to construct 'Request': The provided value '{cache}' is not a valid enum value of type RequestCache."
-            )));
+            ).into()));
         }
         fields.cache = cache;
     }
@@ -351,7 +351,7 @@ fn construct<'s>(
         if !matches!(redirect.as_str(), "follow" | "error" | "manual") {
             return Err(JsError::Type(format!(
                 "Failed to construct 'Request': The provided value '{redirect}' is not a valid enum value of type RequestRedirect."
-            )));
+            ).into()));
         }
         fields.redirect = redirect;
     }
@@ -366,13 +366,13 @@ fn construct<'s>(
         if !is_token(&method) {
             return Err(JsError::Type(format!(
                 "Failed to construct 'Request': '{method}' is not a valid HTTP method."
-            )));
+            ).into()));
         }
         let upper = method.to_ascii_uppercase();
         if matches!(upper.as_str(), "CONNECT" | "TRACE" | "TRACK") {
             return Err(JsError::Type(format!(
                 "Failed to construct 'Request': '{method}' HTTP method is unsupported."
-            )));
+            ).into()));
         }
         fields.method = if METHODS.contains(&upper.as_str()) { upper } else { method };
     }

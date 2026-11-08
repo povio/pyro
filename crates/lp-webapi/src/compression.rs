@@ -30,7 +30,7 @@ impl Format {
 }
 
 fn corrupt(message: &str) -> JsError {
-    JsError::Type(format!("Failed to decompress: {message}"))
+    JsError::Type(format!("Failed to decompress: {message}").into())
 }
 
 /// Output grows in steps of this size while a call has more to write.
@@ -62,7 +62,7 @@ impl Compressor {
             let status = self
                 .inner
                 .compress_vec(input, out, flush)
-                .map_err(|e| JsError::Type(format!("Failed to compress: {e}")))?;
+                .map_err(|e| JsError::Type(format!("Failed to compress: {e}").into()))?;
             let consumed = (self.inner.total_in() - before_in) as usize;
             input = &input[consumed..];
             match status {

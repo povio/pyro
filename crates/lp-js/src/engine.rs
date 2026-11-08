@@ -553,7 +553,7 @@ impl Engine {
         // referenced keeps running until they go; it is no longer "current".
         let caps = Capabilities::detect();
         if !caps.weak_refs {
-            return Err(JsError::Unsupported("JSWeak (wrapper identity maps)"));
+            return Err(JsError::Unsupported(&"JSWeak (wrapper identity maps)"));
         }
         // SAFETY: plain object creation; ownership tracked by EngineInner.
         let (group, root) = unsafe {
@@ -632,7 +632,7 @@ impl Engine {
     /// Thread-safe handle to request termination of running JavaScript.
     pub fn terminate_handle(&self) -> Result<TerminateHandle, JsError> {
         if !self.inner.caps.termination {
-            return Err(JsError::Unsupported("JSContextGroupSetExecutionTimeLimit"));
+            return Err(JsError::Unsupported(&"JSContextGroupSetExecutionTimeLimit"));
         }
         Ok(TerminateHandle(self.inner.terminate.clone()))
     }
@@ -809,7 +809,7 @@ impl Engine {
     /// copy-on-write with the parent.
     pub fn prepare_for_fork(&self) -> Result<(), JsError> {
         let Some((prepare, _, _)) = sys::spi::get().fork() else {
-            return Err(JsError::Unsupported("fork (patched JavaScriptCore)"));
+            return Err(JsError::Unsupported(&"fork (patched JavaScriptCore)"));
         };
         self.drain_finalized();
         // SAFETY: the group is alive and used by this thread only.
@@ -861,7 +861,7 @@ impl Engine {
             return if id.is_none() {
                 Ok(true)
             } else {
-                Err(JsError::Unsupported("time zone override (patched JavaScriptCore)"))
+                Err(JsError::Unsupported(&"time zone override (patched JavaScriptCore)"))
             };
         };
         let id = match id.map(std::ffi::CString::new) {

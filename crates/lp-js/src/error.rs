@@ -14,41 +14,145 @@ pub type JsResult<T> = Result<T, JsError>;
 ///
 /// Binding callbacks return `JsResult`; the runtime converts `Err` into a thrown
 /// JavaScript exception of the matching type (`DOMException` for `Dom`).
+///
+/// Two words: every payload is one word (messages and the thrown value are
+/// boxed), so `JsResult<JSValueRef>` and `JsResult<Value>` fit two registers
+/// and the several dispatch layers of a DOM call hand results back without
+/// copying them through the stack. Errors are the cold path; the box costs
+/// nothing on the way to a result.
 #[derive(Debug, Clone)]
 pub enum JsError {
-    Type(String),
-    Range(String),
-    Syntax(String),
-    Reference(String),
-    /// A `DOMException` with the given WebIDL error name (e.g. `NotFoundError`).
-    Dom {
-        name: Cow<'static, str>,
-        message: String,
-    },
+    Type(Message),
+    Range(Message),
+    Syntax(Message),
+    Reference(Message),
+    /// A `DOMException` with a WebIDL error name (e.g. `NotFoundError`).
+    Dom(Box<DomError>),
     /// A JavaScript value that was thrown and must be rethrown unchanged.
-    Thrown(Persistent),
+    Thrown(Box<Persistent>),
     /// Execution was terminated (watchdog / `Runtime.terminateExecution`).
     Terminated,
     /// The realm that owns the callee was disposed (e.g. navigated away).
     ContextDestroyed,
-    /// A capability the running JavaScriptCore does not provide.
-    Unsupported(&'static str),
+    /// A capability the running JavaScriptCore does not provide (a reference
+    /// to the name, which keeps the variant one word).
+    Unsupported(&'static &'static str),
 }
+
+/// The name and message of a `DOMException` ([`JsError::Dom`]).
+#[derive(Debug, Clone)]
+pub struct DomError {
+    pub name: Cow<'static, str>,
+    pub message: String,
+}
+
+/// The message of a [`JsError`]: a string behind one pointer. Made from a
+/// `&str` or a `String` with `into()`, read as a `&str`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Message(Box<String>);
+
+impl Message {
+    pub fn into_string(self) -> String {
+        *self.0
+    }
+}
+
+impl From<String> for Message {
+    fn from(s: String) -> Message {
+        Message(Box::new(s))
+    }
+}
+
+impl From<&str> for Message {
+    fn from(s: &str) -> Message {
+        Message(Box::new(s.to_owned()))
+    }
+}
+
+impl From<Cow<'_, str>> for Message {
+    fn from(s: Cow<'_, str>) -> Message {
+        Message(Box::new(s.into_owned()))
+    }
+}
+
+impl From<Message> for String {
+    fn from(m: Message) -> String {
+        m.into_string()
+    }
+}
+
+impl std::ops::Deref for Message {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for Message {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<str> for Message {
+    fn eq(&self, other: &str) -> bool {
+        **self == *other
+    }
+}
+
+impl PartialEq<&str> for Message {
+    fn eq(&self, other: &&str) -> bool {
+        **self == **other
+    }
+}
+
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::fmt::Debug for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self.0, f)
+    }
+}
+
+// Two registers: see the type's documentation.
+const _: () = assert!(std::mem::size_of::<JsResult<sys::JSValueRef>>() == 16);
 
 impl JsError {
     pub fn dom(name: &'static str, message: impl Into<String>) -> JsError {
-        JsError::Dom { name: Cow::Borrowed(name), message: message.into() }
+        JsError::Dom(Box::new(DomError { name: Cow::Borrowed(name), message: message.into() }))
+    }
+
+    /// A `DOMException` whose name is decided at run time.
+    pub fn dom_named(name: impl Into<Cow<'static, str>>, message: impl Into<String>) -> JsError {
+        JsError::Dom(Box::new(DomError { name: name.into(), message: message.into() }))
+    }
+
+    /// Wraps a thrown JavaScript value ([`JsError::Thrown`]).
+    pub fn thrown(value: Persistent) -> JsError {
+        JsError::Thrown(Box::new(value))
+    }
+
+    /// The `DOMException` name and message of a [`JsError::Dom`].
+    pub fn dom_error(&self) -> Option<&DomError> {
+        match self {
+            JsError::Dom(e) => Some(e),
+            _ => None,
+        }
     }
 
     pub fn type_error(message: impl Into<String>) -> JsError {
-        JsError::Type(message.into())
+        JsError::Type(Message::from(message.into()))
     }
 
     pub(crate) fn thrown_raw(ctx: sys::JSContextRef, exc: sys::JSValueRef) -> JsError {
         // SAFETY: exc is the live exception value JSC just produced on this thread.
         let p = unsafe { Persistent::from_raw(ctx, exc) };
         match p {
-            Some(p) => JsError::Thrown(p),
+            Some(p) => JsError::thrown(p),
             None => JsError::Type("exception thrown without a live engine".into()),
         }
     }
@@ -70,7 +174,8 @@ impl JsError {
             JsError::Range(m) => make("RangeError", m),
             JsError::Syntax(m) => make("SyntaxError", m),
             JsError::Reference(m) => make("ReferenceError", m),
-            JsError::Dom { name, message } => {
+            JsError::Dom(e) => {
+                let DomError { name, message } = &**e;
                 let dom_exception = scope.realm_inner().dom_exception_ctor(scope);
                 let quota = dom_exception.as_ref().filter(|_| name == "QuotaExceededError");
                 quota
@@ -112,7 +217,7 @@ impl std::fmt::Display for JsError {
             JsError::Range(m) => write!(f, "RangeError: {m}"),
             JsError::Syntax(m) => write!(f, "SyntaxError: {m}"),
             JsError::Reference(m) => write!(f, "ReferenceError: {m}"),
-            JsError::Dom { name, message } => write!(f, "{name}: {message}"),
+            JsError::Dom(e) => write!(f, "{}: {}", e.name, e.message),
             JsError::Thrown(_) => write!(f, "JavaScript exception"),
             JsError::Terminated => write!(f, "execution terminated"),
             JsError::ContextDestroyed => write!(f, "execution context was destroyed"),

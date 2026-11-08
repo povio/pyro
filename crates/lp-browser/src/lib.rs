@@ -1100,14 +1100,14 @@ impl Browser {
             .as_ref()
             .map(lp_webapi::UserAgentOverride::request_defaults)
             .transpose()
-            .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?
+            .map_err(|e| JsError::type_error(format!("invalid user agent request defaults: {e}")))?
             .unwrap_or_default();
         // The user agent override owns none of the page's other request options.
         state.apply_request_options(&mut defaults);
         if let Some(bindings) = &state.main_frame.page_dom {
             bindings
                 .set_user_agent_override(value.clone())
-                .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?;
+                .map_err(|e| JsError::type_error(format!("invalid user agent request defaults: {e}")))?;
         }
         state.user_agent_override = value;
         state.request_defaults = defaults;
@@ -1320,7 +1320,7 @@ impl Browser {
         if opts.url != "about:blank" {
             let error = "net::ERR_NOT_IMPLEMENTED (no resource loader configured)".to_string();
             self.navigation_failed(page, &opts, loader_id, error);
-            return Err(JsError::Unsupported("navigation to non-blank URLs"));
+            return Err(JsError::Unsupported(&"navigation to non-blank URLs"));
         }
         self.commit_document(page, &opts, loader_id.clone(), "null", history)?;
         self.finish_blank_document(page);
