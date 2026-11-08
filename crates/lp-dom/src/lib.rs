@@ -22,6 +22,7 @@ mod internals;
 mod moving;
 mod nonce;
 pub mod picture;
+pub mod prescan;
 mod details;
 mod top_layer;
 pub mod inner_text;

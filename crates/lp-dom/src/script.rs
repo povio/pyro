@@ -53,6 +53,12 @@ const JS_MIME: &[&str] = &[
     "text/x-javascript",
 ];
 
+/// Whether a lowercased, trimmed `type` is a JavaScript MIME type essence
+/// (HTML "JavaScript MIME type essence match").
+pub fn is_javascript_mime(essence: &str) -> bool {
+    JS_MIME.contains(&essence)
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ResourceKind {
     Script,

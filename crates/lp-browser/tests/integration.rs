@@ -38,6 +38,7 @@ mod network_idle;
 mod node_realms;
 mod performance_timeline;
 mod popups;
+mod preload_scanner;
 mod referrer;
 mod remote_ordering;
 mod resource_timing;

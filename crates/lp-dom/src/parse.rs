@@ -523,6 +523,11 @@ pub struct DocumentParser {
     sniff: Vec<u8>,
     /// Outer input set aside by `open_insertion_point` (innermost last).
     saved: Vec<BufferQueue>,
+    /// Bytes appended to the back of the network input (`feed`,
+    /// `push_input` outside an insertion point) since creation: with
+    /// `unconsumed_input`, a preload scan tells apart input it has not
+    /// seen at the front (written) from input at the back.
+    appended: usize,
     /// An XML document: the response is parsed whole at end of input, then
     /// its scripts are yielded one by one.
     xml: Option<XmlLoad>,
@@ -604,6 +609,7 @@ impl DocumentParser {
             decoded: String::new(),
             sniff: Vec::new(),
             saved: Vec::new(),
+            appended: 0,
             xml: None,
         })
     }
@@ -734,9 +740,39 @@ impl DocumentParser {
             return ParseStep::NeedInput;
         }
         if !chunk.is_empty() {
+            if self.saved.is_empty() {
+                self.appended += chunk.len();
+            }
             self.input.push_back(StrTendril::from_slice(chunk));
         }
         self.resume()
+    }
+
+    /// Bytes ever appended to the back of the network input (not the
+    /// markup scripts wrote, which goes in front of what remains).
+    pub fn appended_input(&self) -> usize {
+        self.appended
+    }
+
+    /// The input the tokenizer has not consumed, front to back, as `f` sees
+    /// it; `None` inside an insertion point (a script is writing). Nothing
+    /// is consumed. The total length is the first value.
+    pub fn unconsumed_input<R>(&self, f: impl FnOnce(usize, &[&str]) -> R) -> Option<R> {
+        if !self.saved.is_empty() || self.xml.is_some() {
+            return None;
+        }
+        let mut chunks = Vec::new();
+        while let Some(chunk) = self.input.pop_front() {
+            chunks.push(chunk);
+        }
+        let views: Vec<&str> = chunks.iter().map(|c| &**c).collect();
+        let total = views.iter().map(|c| c.len()).sum();
+        let r = f(total, &views);
+        drop(views);
+        for chunk in chunks.into_iter().rev() {
+            self.input.push_front(chunk);
+        }
+        Some(r)
     }
 
     /// A script this parser yielded for is about to run: its
@@ -766,6 +802,9 @@ impl DocumentParser {
     /// Queues input without tokenizing: a written blocking script is pending.
     pub fn push_input(&mut self, chunk: &str) {
         if !self.ended && !chunk.is_empty() {
+            if self.saved.is_empty() {
+                self.appended += chunk.len();
+            }
             self.input.push_back(StrTendril::from_slice(chunk));
         }
     }

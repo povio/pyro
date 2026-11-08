@@ -197,7 +197,7 @@ impl Browser {
             module: None,
             part: None,
         };
-        let cancel = resource_loader.fetch_cancellable(self, request, Box::new(finish));
+        let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
         if let Some(mut sheet) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.stylesheets.entries.get_mut(&node)))
         {
             sheet.cancel = cancel;
