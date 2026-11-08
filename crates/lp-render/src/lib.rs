@@ -1083,6 +1083,27 @@ impl Renderer {
         changed
     }
 
+    /// From now on (or no longer) `page`'s persistent document notes the
+    /// elements whose computed style a sync replaces, for
+    /// [`Renderer::take_style_changes`]. Nothing without a document: the
+    /// caller asks again after the sync that builds one.
+    pub fn record_style_changes(&mut self, page: u64, on: bool) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.doc.set_record_style_changes(on);
+        }
+    }
+
+    /// The elements (by key) whose computed style the syncs of `page`'s
+    /// persistent document replaced or first computed since the last call,
+    /// each with whether the element had a style before (`false`: it was
+    /// not rendered before). `None`: unknown, every element may have (no
+    /// document, not recording, or the document was built anew since).
+    pub fn take_style_changes(&mut self, page: u64) -> Option<Vec<(u64, bool)>> {
+        let m = self.mirrors.get_mut(&page)?;
+        let changes = m.doc.take_style_changes()?;
+        Some(changes.into_iter().filter_map(|(id, had_style)| Some((m.key_of(id)?, had_style))).collect())
+    }
+
     /// The computed style of the element keyed `key` in `page`'s persistent
     /// document as of the last sync; one under `display: none` (which the
     /// traversal does not style) is resolved now. `None`: not mirrored.
@@ -2709,6 +2730,52 @@ mod settle_resolution_tests {
             (60.0, 20.0),
             "newly handled image bytes need their final layout even with prior passes"
         );
+    }
+
+    #[test]
+    fn style_changes_journal_lists_replaced_and_fresh_styles() {
+        let source = "<!doctype html><style>body{margin:0}</style><div id=box style='width:50px;height:20px;color:blue'>text</div>";
+        let (snap, key) = fixture(source);
+        let (red, _) = fixture(&source.replace("color:blue", "color:red"));
+        let (grown, _) = fixture(&source.replace("</div>", "</div><div id=new>new</div>"));
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        // No document yet: nothing records, nothing to take.
+        renderer.record_style_changes(1, true);
+        assert_eq!(renderer.take_style_changes(1), None);
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        assert_eq!(renderer.take_style_changes(1), None, "not recording");
+        renderer.record_style_changes(1, true);
+        // Styles existed before recording: the first take cannot tell.
+        assert_eq!(renderer.take_style_changes(1), None);
+        assert_eq!(renderer.take_style_changes(1), Some(Vec::new()));
+        // A replaced style.
+        let kind = red.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false, false), true).unwrap();
+        assert_eq!(renderer.take_style_changes(1), Some(vec![(key, true)]));
+        renderer.sync_delta(1, &[], (200, 100, 1.0, false, false), false).unwrap();
+        assert_eq!(renderer.take_style_changes(1), Some(Vec::new()), "nothing changed");
+        // An inserted element: a first style.
+        let new_key = grown
+            .live
+            .as_ref()
+            .unwrap()
+            .tree
+            .nodes
+            .iter()
+            .find(|n| matches!(&n.kind, TreeKind::Element { attrs, .. } if attrs.iter().any(|(a, v)| &*a.local == "id" && v == "new")))
+            .unwrap()
+            .key;
+        renderer.sync_layout(&grown, &fetcher).unwrap();
+        let changes = renderer.take_style_changes(1).unwrap();
+        assert!(changes.contains(&(new_key, false)), "{changes:?}");
+        assert!(!changes.contains(&(key, true)) || changes.len() <= 3, "{changes:?}");
+        // Turned off: nothing is journaled, and turning it on again starts over.
+        renderer.record_style_changes(1, false);
+        assert_eq!(renderer.take_style_changes(1), None);
+        renderer.record_style_changes(1, true);
+        assert_eq!(renderer.take_style_changes(1), None);
+        assert_eq!(renderer.take_style_changes(1), Some(Vec::new()));
     }
 
     #[test]

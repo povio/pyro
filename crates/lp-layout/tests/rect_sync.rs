@@ -69,6 +69,12 @@ impl GeometrySource for Counted {
     fn element_displayed(&self, key: u64) -> Option<bool> {
         self.inner.element_displayed(key)
     }
+    fn record_style_changes(&self, on: bool) {
+        self.inner.record_style_changes(on)
+    }
+    fn take_style_changes(&self) -> Option<Vec<(u64, bool)>> {
+        self.inner.take_style_changes()
+    }
 }
 
 struct Page {
@@ -191,4 +197,40 @@ fn a_container_query_that_toggles_display_reads_consistently() {
     let r = p.layout.bounding_client_rect(&p.dom, cq);
     assert_eq!((r.width, r.height), (100.0, 20.0));
     assert_eq!(p.take(), (1, 0));
+}
+
+#[test]
+fn the_engine_journals_the_elements_whose_style_a_sync_replaced() {
+    let mut p = page();
+    assert_eq!(p.layout.style().take_style_changes(&p.dom), None, "not recording");
+    p.layout.style().record_style_changes();
+    // Turned on after the document was styled: the first take cannot tell.
+    assert_eq!(p.layout.style().take_style_changes(&p.dom), None);
+    assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(Vec::new()));
+    // An inserted element: styled afresh.
+    let el = p.append("box");
+    p.layout.bounding_client_rect(&p.dom, el);
+    let changes = p.layout.style().take_style_changes(&p.dom).unwrap();
+    assert!(changes.contains(&(el, false)), "{changes:?}");
+    assert!(changes.iter().all(|(id, _)| p.dom.is_alive(*id)), "{changes:?}");
+    // A changed element: its style replaced.
+    p.dom.set_attribute(el, "style", "color: red").unwrap();
+    p.layout.bounding_client_rect(&p.dom, el);
+    assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(vec![(el, true)]));
+    // A style-only sync journals too; nothing changed journals nothing.
+    p.dom.set_attribute(el, "style", "color: blue").unwrap();
+    assert_eq!(p.layout.style().stylo_value(&p.dom, el, "color").as_deref(), Some("rgb(0, 0, 255)"));
+    assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(vec![(el, true)]));
+    p.layout.bounding_client_rect(&p.dom, el);
+    assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(Vec::new()));
+    // Shown again after `display: none` on its parent: styled afresh.
+    let host = p.find("#host");
+    p.dom.set_attribute(host, "style", "display: none").unwrap();
+    p.layout.bounding_client_rect(&p.dom, el);
+    let hidden = p.layout.style().take_style_changes(&p.dom).unwrap();
+    assert!(hidden.contains(&(host, true)) && !hidden.iter().any(|(id, _)| *id == el), "{hidden:?}");
+    p.dom.set_attribute(host, "style", "").unwrap();
+    p.layout.bounding_client_rect(&p.dom, el);
+    let shown = p.layout.style().take_style_changes(&p.dom).unwrap();
+    assert!(shown.contains(&(host, true)) && shown.contains(&(el, false)), "{shown:?}");
 }

@@ -95,6 +95,11 @@ pub(crate) struct State {
     /// The style stamp of the last style change event of every element that
     /// may transition.
     flushed: Cell<Option<Stamp>>,
+    /// Every element that may transition had its style change event, and
+    /// the layout engine journals the styles it replaces from then on
+    /// (`StyleEngine::take_style_changes`): a flush looks at the journal
+    /// alone. Cleared with `observed`.
+    journaled: Cell<bool>,
     /// Script called `getAnimations()`: timelines are kept without listeners.
     listed: Cell<bool>,
     /// The last timeline id handed out.
@@ -134,7 +139,16 @@ impl State {
         }
         self.observed.borrow_mut().clear();
         self.flushed.set(None);
+        self.journaled.set(false);
         self.rules.borrow_mut().take();
+    }
+
+    /// Before a style sync while transitions are tracked: the engine journals
+    /// the styles the sync replaces (one flag check once it does).
+    fn record_style_changes(&self, dom: &lp_dom::Dom, style: &lp_dom::style::StyleEngine) {
+        if self.transitions_tracked(dom) {
+            style.record_style_changes();
+        }
     }
 
     /// The rules of the document's sheets, read again only when the sheets changed.
@@ -155,6 +169,10 @@ impl State {
         style.for_each_author_sheet(dom, &mut |text| texts.push(text.to_owned()));
         let rules = Rc::new(TimingRules::parse(texts.iter().map(String::as_str), style.viewport()));
         *self.rules.borrow_mut() = Some((key, rules.clone()));
+        // Other rules, other elements that may transition: the next flush
+        // looks at every one of them (the engine may have applied a new
+        // `<style>` at a sync before the sheet reached these rules).
+        self.journaled.set(false);
         rules
     }
 }
@@ -219,6 +237,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         let layout = page.layout();
         let style = layout.style();
         // Styles first: syncing them registers new `<style>` sheets.
+        state.record_style_changes(&dom, style);
         style.engine_styled(&dom);
         let rules = state.rules(&dom, style);
         state.stamp.set(Some(style.observation_stamp(&dom)));
@@ -324,6 +343,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
         let Ok(dom) = page.dom.try_borrow() else { return Vec::new() };
         let Some(layout) = page.try_layout() else { return Vec::new() };
         let style = layout.style();
+        state.record_style_changes(&dom, style);
         style.engine_styled(&dom);
         state.stamp.get() == Some(style.observation_stamp(&dom))
     };
@@ -363,6 +383,7 @@ pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
         }
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
+        state.record_style_changes(&dom, style);
         style.engine_styled(&dom);
         let stamp = style.observation_stamp(&dom);
         let seen = state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp);
@@ -399,6 +420,7 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
         // The flush itself: syncing styles registers new `<style>` sheets.
+        style.record_style_changes();
         style.engine_styled(&dom);
         if state.flushed.get() == Some(style.observation_stamp(&dom)) {
             return;
@@ -411,7 +433,17 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
 }
 
 /// A style change event of every connected element of `doc` that may
-/// transition, once per style stamp.
+/// transition and whose style the layout engine replaced since the last
+/// one, once per style stamp. The engine's journal of replaced styles says
+/// which (the rest kept their style, so their event would change nothing);
+/// the first time, whenever the journal cannot tell (the engine built its
+/// document anew) and after the timing rules changed, every element that
+/// may transition has its event.
+///
+/// An element styled afresh (inserted, or its ancestor stopped being
+/// `display: none`) was not rendered at the last event: it has no
+/// before-change style, so it only gets its snapshot, as an element first
+/// read does.
 fn transition_candidates_changed(
     state: &State,
     dom: &lp_dom::Dom,
@@ -425,11 +457,32 @@ fn transition_candidates_changed(
     if state.flushed.replace(Some(stamp)) == Some(stamp) {
         return;
     }
-    for el in rules.transition_candidates(dom, doc) {
+    let changes = if state.journaled.get() { style.take_style_changes(dom) } else { None };
+    let Some(changes) = changes else {
+        // The journal starts here (`record_style_changes` preceded the
+        // sync): a snapshot of every element that may transition.
+        for el in rules.transition_candidates(dom, doc) {
+            if state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp) {
+                continue;
+            }
+            if dom.is_connected(el).unwrap_or(false) {
+                style_change(state, dom, style, Some(rules), el, now_ms, planned);
+            }
+        }
+        // Discards what the journal held before this snapshot (a first take
+        // of an engine's document says only that it cannot tell: once more).
+        let journal = style.take_style_changes(dom).or_else(|| style.take_style_changes(dom));
+        state.journaled.set(journal.is_some());
+        return;
+    };
+    for (el, had_style) in changes {
+        if !had_style {
+            state.observed.borrow_mut().remove(&el);
+        }
         if state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp) {
             continue;
         }
-        if dom.is_connected(el).unwrap_or(false) {
+        if dom.is_connected(el).unwrap_or(false) && rules.may_transition(dom, el) {
             style_change(state, dom, style, Some(rules), el, now_ms, planned);
         }
     }
@@ -438,7 +491,8 @@ fn transition_candidates_changed(
 /// A style change event of `el`: the properties of its transition list whose
 /// computed value differs from the before-change style start transitions,
 /// and the current style becomes the before-change style. `rules` is read
-/// from the sheets when not given, and only if the style changed.
+/// from the sheets when not given, and only if the style changed. An
+/// element the engine does not render has no style change events.
 fn style_change(
     state: &State,
     dom: &lp_dom::Dom,
@@ -448,6 +502,12 @@ fn style_change(
     now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
+    // Not rendered (under `display: none`): no transitions, and no
+    // before-change style once shown (Chrome starts none then either).
+    if style.engine_displayed(dom, el) == Some(false) {
+        state.observed.borrow_mut().remove(&el);
+        return;
+    }
     let Some(now) = style.stylo_style(dom, el) else { return };
     let stamp = style.observation_stamp(dom);
     let before = {

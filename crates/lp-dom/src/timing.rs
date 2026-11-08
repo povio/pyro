@@ -72,6 +72,13 @@ pub struct ElementTiming {
 pub struct TimingRules {
     rules: Vec<Rule>,
     keyframes: FxHashSet<String>,
+    /// The selectors of every rule declaring a transition duration as one
+    /// list, for [`TimingRules::may_transition`]; `None` when there are
+    /// none, or they did not parse as one list (the rules are tried one by
+    /// one then).
+    transition_selectors: Option<List>,
+    /// The selector texts the list is built from.
+    transition_selector_texts: Vec<String>,
 }
 
 impl TimingRules {
@@ -82,6 +89,9 @@ impl TimingRules {
             if mentions(text) || text.contains("keyframes") {
                 rule_list(&mut Parser::new(text), text, viewport, &mut out);
             }
+        }
+        if !out.transition_selector_texts.is_empty() {
+            out.transition_selectors = crate::stylo::select::parse(&out.transition_selector_texts.join(", "));
         }
         out
     }
@@ -105,6 +115,26 @@ impl TimingRules {
     /// whose `style` attribute declares a transition.
     pub fn transition_candidates(&self, dom: &Dom, doc: NodeId) -> Vec<NodeId> {
         self.candidates(dom, doc, Longhand::TransitionDuration, "transition")
+    }
+
+    /// Whether `el` is one of [`Self::transition_candidates`]: a rule
+    /// declaring a transition duration matches it, or its `style` attribute
+    /// declares a transition. One selector-list match against the rules'
+    /// selectors (no document walk).
+    pub fn may_transition(&self, dom: &Dom, el: NodeId) -> bool {
+        let Ok(idx) = dom.check(el) else { return false };
+        let Some(e) = dom.n(idx).element() else { return false };
+        if e.attr_local(&markup5ever::local_name!("style")).is_some_and(|s| s.contains("transition")) {
+            return true;
+        }
+        match &self.transition_selectors {
+            Some(selectors) => crate::stylo::select::matches(dom, idx, selectors),
+            None => self
+                .rules
+                .iter()
+                .filter(|rule| rule.declarations.iter().any(|d| d.0 == Longhand::TransitionDuration))
+                .any(|rule| crate::stylo::select::matches(dom, idx, &rule.selectors)),
+        }
     }
 
     fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
@@ -340,6 +370,9 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                         let declarations = declarations(body);
                         if !declarations.is_empty() {
                             if let Some(selectors) = crate::stylo::select::parse(prelude) {
+                                if declarations.iter().any(|d| d.0 == Longhand::TransitionDuration) {
+                                    out.transition_selector_texts.push(prelude.to_owned());
+                                }
                                 out.rules.push(Rule { selectors, declarations });
                             }
                         }

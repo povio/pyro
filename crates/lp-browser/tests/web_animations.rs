@@ -285,3 +285,133 @@ fn get_animations_lists_css_animations_and_transitions() {
     t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
     assert_eq!(eval(&root, "document.getAnimations().map(a => a.constructor.name).join()"), "CSSTransition");
 }
+
+/// A page with the sheet `css`, listening for the transition events
+/// (`log`), with helpers to add a sheet and an element: `sheet(text)`,
+/// `el(id, class, parent)`. The sheet is registered in a task of its own:
+/// a `<style>` appended and read in one task is not in the cascade yet.
+fn transition_page(css: &str) -> (BrowserThread, Realm) {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        &format!(
+            "globalThis.log = [];
+             for (const type of ['transitionrun', 'transitionstart', 'transitionend', 'transitioncancel'])
+               addEventListener(type, e => log.push(e.type + ':' + e.propertyName + ':' + e.target.id));
+             globalThis.sheet = text => {{ const s = document.createElement('style'); s.textContent = text; document.head.appendChild(s); return s; }};
+             globalThis.el = (id, cls, parent = document.body) => {{ const d = document.createElement('div'); d.id = id; if (cls) d.className = cls; parent.appendChild(d); return d; }};
+             sheet('{css}'); 0"
+        ),
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    (t, root)
+}
+
+/// `run_until` the log holds `until`, then a quiet 60 ms for any stray event.
+fn settle(t: &mut BrowserThread, root: &Realm, until: &str) -> String {
+    run_until(t, root, &format!("log.includes('{until}')"));
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    eval(root, "log.join(' ')")
+}
+
+#[test]
+fn a_rule_change_that_makes_an_element_a_candidate_starts_no_transition_but_tracks_it() {
+    // Chrome: a sheet that brings an element its transition together with a
+    // new width starts nothing (and so does a class doing both at once);
+    // the element's style then is its before-change style, so a later
+    // change transitions.
+    let (mut t, root) = transition_page("#a { width: 100px; height: 10px } .w { width: 300px } .t { transition: width 20ms }");
+    eval(
+        &root,
+        "globalThis.a = el('a'); a.offsetHeight;
+         sheet('#a { transition: width 20ms; width: 200px }');
+         globalThis.b = el('b'); b.offsetHeight;
+         b.className = 't w';
+         setTimeout(() => { a.style.width = '300px'; b.classList.remove('w'); }, 30); 0",
+    );
+    let mut log: Vec<String> = settle(&mut t, &root, "transitionend:width:b").split(' ').map(str::to_owned).collect();
+    log.sort();
+    assert_eq!(
+        log,
+        [
+            "transitionend:width:a",
+            "transitionend:width:b",
+            "transitionrun:width:a",
+            "transitionrun:width:b",
+            "transitionstart:width:a",
+            "transitionstart:width:b"
+        ]
+    );
+}
+
+#[test]
+fn an_element_inserted_with_a_transition_transitions_only_after_a_style_change_event() {
+    // Inserted and changed in one task: nothing (no before-change style).
+    // Inserted, read (a style change event), changed: a transition; so does
+    // a change in a later task, the frame after the insertion being its
+    // style change event.
+    let (mut t, root) = transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px }");
+    eval(
+        &root,
+        "const b1 = el('b1', 't'); b1.classList.add('w');
+         const b2 = el('b2', 't'); b2.offsetHeight; b2.classList.add('w');
+         const b3 = el('b3', 't');
+         setTimeout(() => b3.classList.add('w'), 30); 0",
+    );
+    let mut log: Vec<String> = settle(&mut t, &root, "transitionend:width:b3").split(' ').map(str::to_owned).collect();
+    log.sort();
+    assert_eq!(
+        log,
+        [
+            "transitionend:width:b2",
+            "transitionend:width:b3",
+            "transitionrun:width:b2",
+            "transitionrun:width:b3",
+            "transitionstart:width:b2",
+            "transitionstart:width:b3"
+        ]
+    );
+}
+
+#[test]
+fn a_style_change_on_an_element_without_a_transition_fires_nothing_until_it_gets_one() {
+    // The non-candidate's change is journaled by the engine and skipped by
+    // the flush; a sibling that may transition but did not change fires
+    // nothing. Once a class gives it a transition (a snapshot, no event), the
+    // next change transitions.
+    let (mut t, root) = transition_page(".n { width: 100px; height: 10px } .w { width: 200px } .t { transition: width 20ms }");
+    eval(
+        &root,
+        "globalThis.c = el('c', 'n'); el('ct', 't'); c.offsetHeight;
+         c.classList.add('w');
+         setTimeout(() => { c.offsetHeight; c.classList.add('t'); }, 30);
+         setTimeout(() => { c.offsetHeight; c.classList.remove('w'); }, 60); 0",
+    );
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:c"),
+        "transitionrun:width:c transitionstart:width:c transitionend:width:c"
+    );
+}
+
+#[test]
+fn a_candidate_under_display_none_does_not_transition() {
+    // Not rendered: a change while hidden starts nothing, being shown with
+    // the new width starts nothing (the engine does not style the element
+    // while hidden, and styles it afresh when shown), and neither does
+    // hiding together with a change; Chrome starts none of these. Once
+    // shown, the next change transitions.
+    let (mut t, root) =
+        transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .h { display: none }");
+    eval(
+        &root,
+        "const p1 = el('p1', 'h'); const d1 = el('d1', 't', p1); d1.offsetHeight; d1.classList.add('w');
+         const p2 = el('p2', 'h'); globalThis.d2 = el('d2', 't', p2); d2.offsetHeight; d2.classList.add('w'); d2.offsetHeight;
+         const p3 = el('p3'); const d3 = el('d3', 't', p3); d3.offsetHeight; p3.classList.add('h'); d3.classList.add('w');
+         setTimeout(() => { p2.classList.remove('h'); }, 30);
+         setTimeout(() => { d2.offsetHeight; d2.classList.remove('w'); }, 60); 0",
+    );
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:d2"),
+        "transitionrun:width:d2 transitionstart:width:d2 transitionend:width:d2"
+    );
+}

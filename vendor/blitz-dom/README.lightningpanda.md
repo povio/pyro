@@ -494,3 +494,17 @@ parent's subtree and damaged the element:
   `border-collapse: collapse` table that changes its borders or `color` is damage on it: the collapsed
   edges (`CollapsedEdges`) hold resolved colours, collected again with the part's row. Covered by
   `tables_lay_out_from_the_styles_written_at_restyle` (lp-render).
+
+## A journal of the elements whose style a traversal replaced
+
+`document.rs`, `stylo.rs`: `BaseDocument::set_record_style_changes(on)` makes every style traversal
+note, in `BaseDocument::style_changes`, the elements whose primary style it replaced or first computed
+(`process_preorder` already holds the old and the new primary style), each with whether the element had
+a style before. `BaseDocument::take_style_changes()` hands the journal out and empties it; it answers
+`None` once when the journal cannot cover every style since the last take (the document is new,
+recording was turned on after styles existed, or more than 65,536 entries piled up without a take), so
+the reader looks at every element instead. `RecalcStyle::new` takes the flag. Pseudo-element styles and
+the styles `resolve_undisplayed_style` computes on demand under `display: none` are not journaled.
+The embedder's CSS transition events read the journal (`lp-webapi`'s `animation_events`) instead of
+scanning the document for the elements that may transition after every DOM change. Covered by
+`crates/lp-render/src/lib.rs` (`style_changes_journal_*`) and `crates/lp-layout/tests/rect_sync.rs`.

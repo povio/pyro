@@ -160,6 +160,18 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// From now on (or no longer) the engine notes the elements whose
+    /// computed style a sync replaces, for
+    /// [`GeometrySource::take_style_changes`].
+    fn record_style_changes(&self, _on: bool) {}
+    /// The elements (by key) whose computed style the syncs replaced or
+    /// first computed since the last call, each with whether the element
+    /// had a style before (`false`: it was not rendered before). `None`:
+    /// unknown, every element may have (not recording, or the engine's
+    /// document was built anew since).
+    fn take_style_changes(&self) -> Option<Vec<(u64, bool)>> {
+        None
+    }
     /// Whether the element is outside every `display: none` subtree of the
     /// rendered tree, from the styles the engine keeps as of the last style
     /// sync (`None`: the engine cannot tell, and the derived
