@@ -17,17 +17,20 @@
 //! `infinite` animation fires `animationstart` only.
 //!
 //! Transitions need a before-change style. Once a transition listener
-//! exists, every style flush script forces (`getComputedStyle`, `offset*`,
-//! `client*`, `scroll*`, `getBoundingClientRect`, `getClientRects`) and each
-//! frame after a change is a style change event of the elements that may
-//! transition (a rule or their `style` attribute declares a transition, see
-//! `TimingRules::transition_candidates`): their style then becomes their
-//! before-change style. A property of an element's transition list whose
-//! computed value differs from the one at its previous style change
+//! exists, the layout engine records the elements whose computed style a
+//! restyle replaces, with the style before and after
+//! (`StyleEngine::take_style_changes`: the traversal sees both, so this
+//! costs the restyled elements, not a scan of the document). Every style
+//! flush script forces (`getComputedStyle`, `offset*`, `client*`, `scroll*`,
+//! `getBoundingClientRect`, `getClientRects`) and each frame after a change
+//! is a style change event of those elements: a property of an element's
+//! transition list whose computed value differs between the two styles
 //! transitions: `transitionrun`, then `transitionstart` after the delay and
 //! `transitionend` after the duration. So the usual
 //! `el.offsetHeight; el.classList.add('open')` starts a transition, as does
-//! a change made in a task after the element was first rendered.
+//! a change made in a task after the element was first rendered. An element
+//! styled for the first time has no before-change style and transitions
+//! nothing.
 //!
 //! Once script called `getAnimations()` the timelines are kept the same way
 //! without listeners, and `getAnimations()` lists them as `CSSAnimation` and
@@ -37,9 +40,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use lp_dom::timing::{ElementTiming, StyleSnapshot, TimingRules};
+use lp_dom::timing::{displays_none, ElementTiming, StyleSnapshot, TimingRules};
 use lp_dom::NodeId;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
@@ -48,8 +51,6 @@ use crate::page::PageDom;
 const FRAME: Duration = Duration::from_millis(16);
 /// Iteration events one animation may schedule.
 const MAX_ITERATIONS: usize = 1024;
-/// Elements whose before-change style is kept.
-const MAX_OBSERVED: usize = 1024;
 
 type Stamp = (u64, u64, u32, u32);
 
@@ -88,17 +89,18 @@ pub(crate) struct State {
     queued: Cell<bool>,
     animations: RefCell<Vec<Timeline>>,
     transitions: RefCell<Vec<Timeline>>,
-    /// Elements that may transition (and those script read the computed
-    /// style of): their style at the last style change, and the stamp it was
-    /// taken at.
-    observed: RefCell<FxHashMap<NodeId, (StyleSnapshot, Stamp)>>,
-    /// The style stamp of the last style change event of every element that
-    /// may transition.
-    flushed: Cell<Option<Stamp>>,
     /// Script called `getAnimations()`: timelines are kept without listeners.
     listed: Cell<bool>,
     /// The last timeline id handed out.
     ids: Cell<u64>,
+    /// Content roots seen styled `display: none` where Chrome has
+    /// `content-visibility: hidden` (see [`hides_content`]): their content
+    /// keeps a before-change style while hidden.
+    hidden_roots: RefCell<FxHashSet<NodeId>>,
+    /// The before-change styles of the elements under such a root that may
+    /// transition, by element, with their root: the engine styles none of
+    /// them while the root is hidden, and styles them afresh once shown.
+    hidden_content: RefCell<FxHashMap<NodeId, (NodeId, StyleSnapshot)>>,
 }
 
 /// A CSS animation or transition `getAnimations()` lists.
@@ -132,9 +134,9 @@ impl State {
         for timeline in self.animations.take().into_iter().chain(self.transitions.take()) {
             timeline.live.set(false);
         }
-        self.observed.borrow_mut().clear();
-        self.flushed.set(None);
         self.rules.borrow_mut().take();
+        self.hidden_roots.borrow_mut().clear();
+        self.hidden_content.borrow_mut().clear();
     }
 
     /// The rules of the document's sheets, read again only when the sheets changed.
@@ -206,7 +208,7 @@ pub(crate) fn after_task(page: &Rc<PageDom>) {
     );
 }
 
-/// A frame: the document's animations and the observed elements' transitions.
+/// A frame: the document's animations and the transitions its style changes start.
 /// `defer`: events due now fire in a task of their own.
 fn update(page: &Rc<PageDom>, defer: bool) {
     if page.is_disposed() || page.scripting_disabled() {
@@ -218,6 +220,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         let dom = page.dom.borrow();
         let layout = page.layout();
         let style = layout.style();
+        track_style_changes(state, &dom, style);
         // Styles first: syncing them registers new `<style>` sheets.
         style.engine_styled(&dom);
         let rules = state.rules(&dom, style);
@@ -292,18 +295,9 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             animations.push(timeline);
         }
         drop(animations);
-        // Style change events of the observed elements, and of the others
-        // that may transition now.
-        let observed: Vec<NodeId> = state.observed.borrow().keys().copied().collect();
-        for el in observed {
-            if !dom.is_alive(el) || !dom.is_connected(el).unwrap_or(false) {
-                state.observed.borrow_mut().remove(&el);
-                continue;
-            }
-            style_change(state, &dom, style, Some(&rules), el, now_ms, &mut planned);
-        }
+        // Style change events of the elements whose style changed.
         if state.transitions_tracked(&dom) {
-            transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
+            transitions_from_changes(state, &dom, style, now_ms, &mut planned);
         }
         state.transitions.borrow_mut().retain(|t| t.live.get() && !t.ended.get() && dom.is_alive(t.el));
     }
@@ -351,43 +345,14 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
         .collect()
 }
 
-/// Script read `el`'s computed style: a style change event of the element
-/// (and, as for any style flush, of the elements that may transition).
-pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
-    let state = &page.animation_events;
-    let mut planned = Vec::new();
-    {
-        let Ok(dom) = page.dom.try_borrow() else { return };
-        if !state.tracking(&dom) || page.is_disposed() || page.scripting_disabled() {
-            return;
-        }
-        let Some(layout) = page.try_layout() else { return };
-        let style = layout.style();
-        style.engine_styled(&dom);
-        let stamp = style.observation_stamp(&dom);
-        let seen = state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp);
-        let flushed = state.flushed.get() == Some(stamp) || !state.transitions_tracked(&dom);
-        if seen && flushed {
-            return;
-        }
-        let now_ms = crate::event::page_now_ms(page);
-        if !seen && dom.is_connected(el).unwrap_or(false) {
-            // The rules are read only once the element's style is known to have
-            // changed: a first observation never needs them.
-            style_change(state, &dom, style, None, el, now_ms, &mut planned);
-        }
-        if !flushed {
-            let rules = state.rules(&dom, style);
-            transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
-        }
-    }
-    // Events never fire inside the read itself.
-    schedule(page, planned, true);
+/// Script read `el`'s computed style: a style flush, as any layout read.
+pub(crate) fn observe(page: &Rc<PageDom>, _el: NodeId) {
+    style_flush(page);
 }
 
-/// Script forced a style flush (a layout read): a style change event of
-/// the elements that may transition. Costs one flag check without a
-/// transition listener, and one stamp check while the style is unchanged.
+/// Script forced a style flush (a style or layout read): a style change
+/// event of the elements whose style changed. Costs one flag check without
+/// a transition listener, and one stamp check while the style is unchanged.
 pub(crate) fn style_flush(page: &Rc<PageDom>) {
     let state = &page.animation_events;
     let mut planned = Vec::new();
@@ -398,81 +363,207 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
         }
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
+        track_style_changes(state, &dom, style);
         // The flush itself: syncing styles registers new `<style>` sheets.
         style.engine_styled(&dom);
-        if state.flushed.get() == Some(style.observation_stamp(&dom)) {
-            return;
-        }
-        let rules = state.rules(&dom, style);
         let now_ms = crate::event::page_now_ms(page);
-        transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
+        transitions_from_changes(state, &dom, style, now_ms, &mut planned);
     }
     schedule(page, planned, true);
 }
 
-/// A style change event of every connected element of `doc` that may
-/// transition, once per style stamp.
-fn transition_candidates_changed(
+/// Script read layout (a box, an offset, a scroll position): the read lays
+/// the document out anyway, so the engine is synced whole first and the
+/// style flush finds its styles current, instead of a style-only sync right
+/// before the read's full one (two syncs per read of a changed document).
+pub(crate) fn layout_flush(page: &Rc<PageDom>) {
+    if let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) {
+        if !page.is_disposed() && !page.scripting_disabled() {
+            track_style_changes(&page.animation_events, &dom, layout.style());
+        }
+        layout.synced_geometry_source(&dom);
+    }
+    style_flush(page);
+}
+
+/// Once transitions are tracked, the engine keeps the elements whose style a
+/// restyle replaces ([`lp_dom::style::StyleEngine::take_style_changes`]).
+/// Set before every style sync, so that the first sync after a transition
+/// listener appeared records its changes.
+fn track_style_changes(state: &State, dom: &lp_dom::Dom, style: &lp_dom::style::StyleEngine) {
+    if state.transitions_tracked(dom) {
+        style.set_track_style_changes(true);
+    }
+}
+
+/// A style change event of the elements whose computed style the engine
+/// replaced since the last one: the transitions their before-change and
+/// after-change styles start. Nothing to read when nothing changed.
+fn transitions_from_changes(
     state: &State,
     dom: &lp_dom::Dom,
     style: &lp_dom::style::StyleEngine,
-    rules: &TimingRules,
-    doc: NodeId,
     now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
-    let stamp = style.observation_stamp(dom);
-    if state.flushed.replace(Some(stamp)) == Some(stamp) {
+    let changes = style.take_style_changes(dom);
+    if changes.is_empty() {
         return;
     }
-    for el in rules.transition_candidates(dom, doc) {
-        if state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp) {
+    let rules = state.rules(dom, style);
+    for (el, before, now) in changes {
+        // The document's own tree only: the rules are the document's (a
+        // document rule does not style a shadow tree's elements).
+        if !dom.in_document_tree(el) {
             continue;
         }
-        if dom.is_connected(el).unwrap_or(false) {
-            style_change(state, dom, style, Some(rules), el, now_ms, planned);
+        let (was_none, is_none) = (displays_none(&before), displays_none(&now));
+        if !was_none && !is_none {
+            start_transitions(state, dom, &rules, el, &before, &now, now_ms, planned);
+            continue;
+        }
+        // `display: none` at either style change event: not rendered then, so
+        // no transitions (and no before-change style once shown), unless the
+        // engine's `display: none` is Chrome's `content-visibility: hidden`
+        // (a closed `<details>`'s content, `hidden=until-found`), which keeps
+        // the style.
+        let content = is_none && hides_content(dom, el);
+        let was_content = was_none && !is_none && state.hidden_roots.borrow_mut().remove(&el);
+        if content {
+            keep_hidden_content(state, dom, style, &rules, el);
+        } else if is_none {
+            drop_hidden_content(state, dom, el);
+        }
+        if was_content {
+            reveal_hidden_content(state, dom, style, &rules, el, now_ms, planned);
+        }
+        if (content || !is_none) && (was_content || content || !was_none) {
+            start_transitions(state, dom, &rules, el, &before, &now, now_ms, planned);
         }
     }
 }
 
-/// A style change event of `el`: the properties of its transition list whose
-/// computed value differs from the before-change style start transitions,
-/// and the current style becomes the before-change style. `rules` is read
-/// from the sheets when not given, and only if the style changed.
-fn style_change(
+/// Whether the engine's `display: none` of `el` is where Chrome has
+/// `content-visibility: hidden`: a child of a closed `<details>` other than
+/// its first `<summary>`, or a `hidden=until-found` element. Two attribute
+/// reads, asked only of elements styled `display: none`.
+fn hides_content(dom: &lp_dom::Dom, el: NodeId) -> bool {
+    use markup5ever::local_name;
+    let Ok(e) = dom.element(el) else { return false };
+    if e.attr_local(&local_name!("hidden")).is_some_and(|v| v.eq_ignore_ascii_case("until-found")) {
+        return true;
+    }
+    let Some(parent) = dom.parent_element(el).ok().flatten() else { return false };
+    let Ok(p) = dom.element(parent) else { return false };
+    if !p.is_html() || p.name.local != local_name!("details") || p.attr_local(&local_name!("open")).is_some() {
+        return false;
+    }
+    let is_summary =
+        |id: &NodeId| dom.element(*id).is_ok_and(|c| c.is_html() && c.name.local == local_name!("summary"));
+    let first_summary = dom.children(parent).ok().and_then(|mut c| c.find(is_summary));
+    first_summary != Some(el)
+}
+
+/// `root` became hidden content: the elements under it that may transition
+/// keep their style as it is now as their before-change style (the engine
+/// computes it on demand; it styles none of them while `root` is hidden).
+/// An element already kept keeps its older style.
+fn keep_hidden_content(
     state: &State,
     dom: &lp_dom::Dom,
     style: &lp_dom::style::StyleEngine,
-    rules: Option<&TimingRules>,
-    el: NodeId,
+    rules: &TimingRules,
+    root: NodeId,
+) {
+    state.hidden_roots.borrow_mut().insert(root);
+    let Ok(descendants) = dom.descendants(root) else { return };
+    let mut kept = state.hidden_content.borrow_mut();
+    for d in descendants.filter(|d| *d != root) {
+        if kept.contains_key(&d) || dom.element(d).is_err() || rules.element(dom, d).transitions.is_empty() {
+            continue;
+        }
+        if let Some(snapshot) = style.stylo_style(dom, d) {
+            kept.insert(d, (root, snapshot));
+        }
+    }
+}
+
+/// `el` is now really `display: none`: the hidden content it holds (or is)
+/// is no longer rendered and loses its before-change styles.
+fn drop_hidden_content(state: &State, dom: &lp_dom::Dom, el: NodeId) {
+    state.hidden_roots.borrow_mut().remove(&el);
+    let mut kept = state.hidden_content.borrow_mut();
+    if !kept.is_empty() {
+        kept.retain(|d, (root, _)| dom.is_alive(*d) && *root != el && !is_ancestor(dom, el, *root));
+    }
+}
+
+/// The hidden content root `root` is shown: its elements' kept styles meet
+/// the styles the engine gave them afresh.
+fn reveal_hidden_content(
+    state: &State,
+    dom: &lp_dom::Dom,
+    style: &lp_dom::style::StyleEngine,
+    rules: &TimingRules,
+    root: NodeId,
     now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
-    let Some(now) = style.stylo_style(dom, el) else { return };
-    let stamp = style.observation_stamp(dom);
-    let before = {
-        let mut observed = state.observed.borrow_mut();
-        if observed.len() >= MAX_OBSERVED && !observed.contains_key(&el) {
-            observed.retain(|id, _| dom.is_alive(*id) && dom.is_connected(*id).unwrap_or(false));
-            if observed.len() >= MAX_OBSERVED {
-                return;
+    let revealed: Vec<(NodeId, StyleSnapshot)> = {
+        let mut kept = state.hidden_content.borrow_mut();
+        let mut out = Vec::new();
+        kept.retain(|d, (r, snapshot)| {
+            if *r != root {
+                return dom.is_alive(*d);
             }
-        }
-        observed.insert(el, (now.clone(), stamp)).map(|(before, _)| before)
+            out.push((*d, snapshot.clone()));
+            false
+        });
+        out
     };
-    let Some(before) = before.filter(|before| !StyleSnapshot::ptr_eq(before, &now)) else { return };
-    let read;
-    let rules = match rules {
-        Some(rules) => rules,
-        None => {
-            read = state.rules(dom, style);
-            &*read
+    for (d, before) in revealed {
+        if !dom.in_document_tree(d) || !is_ancestor(dom, root, d) {
+            continue;
         }
-    };
+        if let Some(now) = style.stylo_style(dom, d).filter(|now| !displays_none(now)) {
+            start_transitions(state, dom, rules, d, &before, &now, now_ms, planned);
+        }
+    }
+}
+
+/// Whether `ancestor` is a proper ancestor of `node`.
+fn is_ancestor(dom: &lp_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
+    let mut at = dom.parent(node).ok().flatten();
+    while let Some(p) = at {
+        if p == ancestor {
+            return true;
+        }
+        at = dom.parent(p).ok().flatten();
+    }
+    false
+}
+
+/// The transitions a style change of `el` from `before` to `now` starts: the
+/// properties of its transition list whose computed value differs. A
+/// transition of the property still under way is replaced.
+#[allow(clippy::too_many_arguments)]
+fn start_transitions(
+    state: &State,
+    dom: &lp_dom::Dom,
+    rules: &TimingRules,
+    el: NodeId,
+    before: &StyleSnapshot,
+    now: &StyleSnapshot,
+    now_ms: f64,
+    planned: &mut Vec<Planned>,
+) {
+    if StyleSnapshot::ptr_eq(before, now) {
+        return;
+    }
     let ElementTiming { transitions, .. } = rules.element(dom, el);
     let mut started: Vec<&'static str> = Vec::new();
     for transition in &transitions {
-        for longhand in lp_dom::timing::changed_longhands(&before, &now, &transition.property) {
+        for longhand in lp_dom::timing::changed_longhands(before, now, &transition.property) {
             if started.contains(&longhand) {
                 continue;
             }

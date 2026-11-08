@@ -43,6 +43,8 @@
 a[href] {
     color: rgb(0, 0, 238);
     text-decoration: underline;
+    /* lightningpanda: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
+    cursor: pointer;
 }
 
 /* https://html.spec.whatwg.org/#bidi-rendering */
@@ -112,6 +114,12 @@ select {
     box-sizing: border-box;
     border: 1px solid #767676;
     line-height: normal !important;
+}
+
+/* Chromium: `select:-internal-list-box { vertical-align: text-bottom }`. */
+select[multiple],
+select[size]:not([size="0"], [size="1"], [size=""]) {
+    vertical-align: text-bottom;
 }
 
 textarea {
@@ -213,16 +221,40 @@ legend {
     padding-inline-end: 2px;
 }
 
-/* lightningpanda: only a select's options are painted by the control; an
-   option or optgroup elsewhere is a block (Chromium). */
-option,
-optgroup {
+/* lightningpanda: Chromium's computed style for options and groups. A
+   drop-down select's children generate no boxes (layout/construct.rs); a
+   list box's and loose ones do. */
+option {
     display: block;
+    padding-block: 0 1px;
+    padding-inline: 2px;
+    white-space: nowrap;
+    min-block-size: 1.2em;
+    /* Chromium: not the bolder weight of an enclosing optgroup. */
+    font-weight: normal;
 }
 
-select option,
-select optgroup {
-    display: none;
+optgroup {
+    display: block;
+    font-weight: bolder;
+}
+
+/* lightningpanda: an optgroup's label row (Chromium's
+   -internal-optgroup-label in its shadow root), built in its ::before slot
+   (layout/construct.rs). The text-control pseudo-element's name is reused:
+   Blitz does not use it, and only the UA sheet can select it. */
+optgroup::-servo-text-control-inner-container {
+    display: block;
+    padding-block: 0 1px;
+    padding-inline: 2px;
+    white-space: nowrap;
+    min-block-size: 1.2em;
+}
+
+/* Chromium: `select:-internal-list-box optgroup option`. */
+select[multiple] optgroup option,
+select[size]:not([size="0"], [size="1"], [size=""]) optgroup option {
+    padding-inline-start: 20px;
 }
 
 source {

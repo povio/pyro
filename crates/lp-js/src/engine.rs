@@ -168,6 +168,46 @@ pub(crate) struct EngineInner {
     pub(crate) hook_state: class::HookState,
     /// The values [`crate::HeldValue`]s keep alive.
     pub(crate) held: RefCell<crate::persistent::HeldValues>,
+    /// Block coverage: enables not yet matched by a disable, and while on,
+    /// every realm by its global context address, dead ones too, so that
+    /// a source can be traced to its realm after a navigation.
+    coverage_users: Cell<u32>,
+    coverage_cursor: Cell<usize>,
+    pub(crate) coverage_realms: RefCell<Option<rustc_hash::FxHashMap<usize, RealmId>>>,
+}
+
+/// A script compiled while coverage was on ([`Engine::new_scripts`],
+/// [`Engine::take_coverage`]).
+#[derive(Debug, Clone)]
+pub struct ScriptCoverage {
+    /// Unique in the process.
+    pub source_id: isize,
+    /// The realm the script first ran in, when it was created while coverage
+    /// was on (or was live when it was turned on).
+    pub realm: Option<RealmId>,
+    /// The script's URL (a `//# sourceURL=` comment wins); empty for an
+    /// anonymous one.
+    pub url: String,
+    /// For eval and `new Function`: the URL of the code that made it.
+    pub origin_url: String,
+    pub is_module: bool,
+    /// Its text ([`Engine::new_scripts`] only).
+    pub source: String,
+    /// (start, end inclusive, execution count) of each basic block, in UTF-16
+    /// offsets of the text ([`Engine::take_coverage`] only).
+    pub blocks: Vec<(i32, i32, u64)>,
+    /// [`Engine::take_coverage`] only.
+    pub functions: Vec<FunctionCoverage>,
+}
+
+/// A function declared by code compiled while coverage was on.
+#[derive(Debug, Clone)]
+pub struct FunctionCoverage {
+    pub start: u32,
+    /// Its closing brace (inclusive).
+    pub end: u32,
+    pub executed: bool,
+    pub name: String,
 }
 
 /// Decides when a closed page's garbage is worth a full collection: once the
@@ -674,6 +714,9 @@ impl Engine {
             collections: crate::interned::Collections::new(),
             hook_state: class::HookState::default(),
             held: RefCell::new(crate::persistent::HeldValues::default()),
+            coverage_users: Cell::new(0),
+            coverage_cursor: Cell::new(0),
+            coverage_realms: RefCell::new(None),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -1017,9 +1060,113 @@ impl Engine {
         Ok(unsafe { set(self.inner.group, id.as_ref().map_or(std::ptr::null(), |id| id.as_ptr())) })
     }
 
+    /// Whether this JavaScriptCore has block coverage (patch 0019).
+    pub fn has_coverage() -> bool {
+        sys::spi::get().coverage().is_some()
+    }
+
+    /// Turns block coverage on (counted: on while enables outnumber
+    /// disables) or off. The first enable and the last disable drop all
+    /// compiled code, which recompiles with or without per-block counters;
+    /// with no enable, code runs as it does without this. Takes effect once
+    /// no JavaScript runs. The last disable forgets what was counted.
+    pub fn set_coverage(&self, enabled: bool) -> Result<(), JsError> {
+        let Some((set, _, _)) = sys::spi::get().coverage() else {
+            return Err(JsError::Unsupported(&"block coverage (patched JavaScriptCore)"));
+        };
+        let users = self.inner.coverage_users.get();
+        if !enabled && users == 0 {
+            return Ok(());
+        }
+        let users = if enabled { users + 1 } else { users - 1 };
+        self.inner.coverage_users.set(users);
+        if users == 0 {
+            *self.inner.coverage_realms.borrow_mut() = None;
+        } else if users == 1 && enabled {
+            let live = self.inner.live_realms().iter().map(|r| (r.ctx.get() as usize, r.id)).collect();
+            *self.inner.coverage_realms.borrow_mut() = Some(live);
+            self.inner.coverage_cursor.set(0);
+        }
+        // SAFETY: the group is alive and used by this thread only.
+        unsafe { set(self.inner.group, enabled) };
+        Ok(())
+    }
+
+    /// Whether [`Engine::set_coverage`] has it on.
+    pub fn coverage_enabled(&self) -> bool {
+        self.inner.coverage_users.get() > 0
+    }
+
+    /// The scripts first compiled since the last call (or since coverage was
+    /// turned on), with their text, in that order.
+    pub fn new_scripts(&self) -> Vec<ScriptCoverage> {
+        let Some((_, new_sources, _)) = sys::spi::get().coverage() else { return Vec::new() };
+        if self.inner.coverage_users.get() == 0 {
+            return Vec::new();
+        }
+        let mut cursor = self.inner.coverage_cursor.get();
+        let mut data = (Vec::new(), self.inner.coverage_realms.borrow().clone());
+        // SAFETY: the group is alive and used by this thread only;
+        // `collect_coverage` only touches `data`, which outlives the call.
+        unsafe { new_sources(self.inner.group, &mut cursor, collect_coverage, &mut data as *mut _ as *mut c_void) };
+        self.inner.coverage_cursor.set(cursor);
+        data.0
+    }
+
+    /// What ran since coverage was turned on, per script that has code
+    /// compiled since then (without text). Empty when coverage is off. Must
+    /// not be called while JavaScript runs.
+    pub fn take_coverage(&self) -> Vec<ScriptCoverage> {
+        let Some((_, _, take)) = sys::spi::get().coverage() else { return Vec::new() };
+        if self.inner.coverage_users.get() == 0 {
+            return Vec::new();
+        }
+        let mut data = (Vec::new(), self.inner.coverage_realms.borrow().clone());
+        // SAFETY: as in `new_scripts`.
+        unsafe { take(self.inner.group, collect_coverage, &mut data as *mut _ as *mut c_void) };
+        data.0
+    }
+
     /// Live realms of this engine.
     pub fn realms(&self) -> Vec<Realm> {
         self.inner.live_realms().into_iter().map(|inner| Realm { inner }).collect()
+    }
+}
+
+type CoverageData = (Vec<ScriptCoverage>, Option<rustc_hash::FxHashMap<usize, RealmId>>);
+
+/// `JSCoverageSourceCallback` of [`Engine::new_scripts`] and
+/// [`Engine::take_coverage`]: `data` is a [`CoverageData`].
+unsafe extern "C" fn collect_coverage(
+    data: *mut c_void,
+    source: *const sys::spi::JSCoverageSource,
+    blocks: *const sys::spi::JSCoverageBlock,
+    block_count: usize,
+    functions: *const sys::spi::JSCoverageFunction,
+    function_count: usize,
+) {
+    // SAFETY: `data` is the caller's `CoverageData`, borrowed for the call;
+    // the source, strings and arrays are valid for this call.
+    unsafe {
+        let (out, realms) = &mut *(data as *mut CoverageData);
+        let source = &*source;
+        let text = |s: sys::JSStringRef| if s.is_null() { String::new() } else { crate::string::to_rust_string(s) };
+        let blocks = if block_count == 0 { &[][..] } else { std::slice::from_raw_parts(blocks, block_count) };
+        let functions =
+            if function_count == 0 { &[][..] } else { std::slice::from_raw_parts(functions, function_count) };
+        out.push(ScriptCoverage {
+            source_id: source.source_id,
+            realm: realms.as_ref().and_then(|r| r.get(&(source.global as usize)).copied()),
+            url: text(source.url),
+            origin_url: text(source.origin_url),
+            is_module: source.is_module,
+            source: text(source.source),
+            blocks: blocks.iter().map(|b| (b.start, b.end, b.count)).collect(),
+            functions: functions
+                .iter()
+                .map(|f| FunctionCoverage { start: f.start, end: f.end, executed: f.executed, name: text(f.name) })
+                .collect(),
+        });
     }
 }
 

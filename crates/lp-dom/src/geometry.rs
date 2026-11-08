@@ -222,6 +222,15 @@ pub trait GeometrySource {
     fn element_displayed(&self, _key: u64) -> Option<bool> {
         None
     }
+    /// The elements whose style was replaced since the last call, by key,
+    /// with the style before and after; recorded while the engine's
+    /// [`crate::style::StyleEngine::track_style_changes`] is on.
+    fn take_style_changes(
+        &self,
+    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    {
+        Vec::new()
+    }
     /// The computed style of one element's pseudo-element `pseudo`
     /// (`getComputedStyle(el, pseudo)`) as of the last sync; with
     /// `generated_only`, only a stored style of a pseudo-element its rules

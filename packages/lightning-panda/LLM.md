@@ -3,6 +3,12 @@
 Read this before writing or porting a test. It is the whole contract; the
 source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 
+Porting an existing Playwright suite? Do not rewrite it: replace the imports
+of `playwright` and `@playwright/test` with `@povio/lightning-panda/playwright`,
+keep the Playwright code and run it with `bun test` (README, "Playwright
+tests, unchanged"). Rewrite a test into one `page.run([...])` only where its
+last milliseconds matter.
+
 ## The model
 
 - A test is **seeding, then one `page.run([...steps])`**. The browser runs every

@@ -267,6 +267,7 @@ impl Layout {
         let source = self.external.as_ref().filter(|s| s.active())?;
         let key = self.sync_key(dom);
         if self.external_synced.get() != Some(key) || source.stale() {
+            self.style.before_recalc(dom);
             source.sync(dom, self);
             self.external_synced.set(Some(key));
             self.syncs.set(self.syncs.get() + 1);
@@ -2278,24 +2279,16 @@ impl Layout {
     // ----- getComputedStyle --------------------------------------------------
 
     /// The text a generated `::before` / `::after` of `el` adds to its
-    /// accessible name (Playwright's `getPseudoContent`): the string of a
-    /// `content` that is one string, padded with spaces unless the box is
-    /// inline; "" when nothing is generated, or it is `display: none` /
-    /// `visibility: hidden`. Pseudo-elements no rule generates cost a lookup.
+    /// accessible name (Playwright's `getPseudoContent`): see
+    /// [`crate::style::StyleEngine::css_content`]; "" when there is none.
     pub fn pseudo_name_content(&self, dom: &Dom, el: NodeId, pseudo: &style::selector_parser::PseudoElement) -> String {
-        let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, true) else { return String::new() };
-        let display = crate::stylo::serialize(&style, "display").unwrap_or_default();
-        let visibility = crate::stylo::serialize(&style, "visibility").unwrap_or_default();
-        if display == "none" || visibility == "hidden" {
-            return String::new();
-        }
-        let content = crate::stylo::serialize(&style, "content").unwrap_or_default();
-        let Some(text) = parse_css_string(&content) else { return String::new() };
-        if display.is_empty() || display == "inline" {
-            text
-        } else {
-            format!(" {text} ")
-        }
+        // Playwright's `getCSSContent`: alternative text after `/` wins.
+        let pseudo = match pseudo {
+            style::selector_parser::PseudoElement::Before => crate::style::PseudoElement::Before,
+            style::selector_parser::PseudoElement::After => crate::style::PseudoElement::After,
+            _ => return String::new(),
+        };
+        self.style.css_content(dom, el, Some(pseudo)).unwrap_or_default()
     }
 
     /// `getComputedStyle(el, pseudo).getPropertyValue(name)`: the computed
@@ -3032,14 +3025,4 @@ mod scroll_to_origin {
         assert_eq!(layout.scroll_y(), 0);
         assert_eq!(source.0.get(), 1);
     }
-}
-
-/// The value of `text` when it is exactly one CSS string token.
-fn parse_css_string(text: &str) -> Option<String> {
-    let mut parser = cssparser::Parser::new(text);
-    let value = match parser.next() {
-        Ok(cssparser::Token::QuotedString(s)) => s.to_string(),
-        _ => return None,
-    };
-    parser.is_exhausted().then_some(value)
 }

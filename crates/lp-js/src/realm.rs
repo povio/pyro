@@ -2136,6 +2136,9 @@ fn make_context(realm: &Realm) -> JsResult<()> {
     let alias = std::mem::ManuallyDrop::new(unsafe { Rc::from_raw(Rc::as_ptr(inner)) });
     let _ = inner.core.realm.set(alias);
     inner.core.ctx.set(ctx as sys::JSContextRef);
+    if let Some(history) = engine.coverage_realms.borrow_mut().as_mut() {
+        history.insert(ctx as usize, inner.id);
+    }
     {
         let _watchdog = crate::engine::WatchdogPause::new(engine);
         let scope = realm.scope()?;
@@ -2774,7 +2777,14 @@ impl<'h> MemberBatch<'h> {
         let mut exc = ptr::null();
         // SAFETY: `args[..len]` are live values of `ctx` (see the type).
         unsafe {
-            sys::JSObjectCallAsFunction(self.ctx, self.helper.raw, ptr::null_mut(), self.len, self.args.as_ptr(), &mut exc)
+            sys::JSObjectCallAsFunction(
+                self.ctx,
+                self.helper.raw,
+                ptr::null_mut(),
+                self.len,
+                self.args.as_ptr(),
+                &mut exc,
+            )
         };
         self.len = self.lead;
         check(self.ctx, exc)

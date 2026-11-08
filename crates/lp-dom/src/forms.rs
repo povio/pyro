@@ -416,7 +416,7 @@ impl Dom {
             "textarea" => true,
             "input" => matches!(self.input_type_idx(idx).value_mode(), ValueMode::Value),
             _ => {
-                return e.attr_local(&local_name!("contenteditable")).is_some_and(|v| !v.eq_ignore_ascii_case("false"))
+                return e.attr_local(&local_name!("contenteditable")).is_some_and(|v| !v.eq_ignore_ascii_case("false"));
             }
         };
         textual && e.attr_local(&local_name!("readonly")).is_none() && !self.is_disabled_idx(idx)
@@ -1291,13 +1291,13 @@ impl Dom {
     /// `DocumentOrShadowRoot.activeElement` for `root` (a document or a
     /// shadow root): the focused element retargeted against `root`, null
     /// when that lands outside `root`'s tree; a document falls back to its
-    /// body when nothing in it is focused.
+    /// body when nothing in it is focused, else its document element.
     pub fn active_element(&self, root: NodeId) -> DomResult<Option<NodeId>> {
         let doc = self.node_document(root)?;
         let candidate = self.focused(doc)?.and_then(|f| self.retarget_node(f, root));
         let in_tree = candidate.filter(|&c| self.root_node(c, false).is_ok_and(|r| r == root));
         if root == doc {
-            return Ok(in_tree.or(self.body(doc)?));
+            return Ok(in_tree.or(self.body(doc)?).or(self.document_element(doc)?));
         }
         Ok(in_tree)
     }

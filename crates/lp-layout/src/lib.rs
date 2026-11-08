@@ -483,6 +483,16 @@ impl BlitzGeometry {
             });
             self.synced.set(None);
         }
+        // Told before every sync, so the first restyle after the engine
+        // learns to track (and the first sync, which creates the document)
+        // records what it replaces.
+        if style.track_style_changes() {
+            RENDERER.with(|r| {
+                if let Some(r) = r.try_borrow_mut().ok().as_deref_mut().and_then(Option::as_mut) {
+                    r.set_track_style_changes(self.page, true);
+                }
+            });
+        }
         let t = (rebuild && profile::on()).then(Instant::now);
         self.sync_document(dom, style, style_only);
         if let Some(t) = t {
@@ -689,6 +699,20 @@ impl GeometrySource for BlitzGeometry {
 
     fn element_displayed(&self, key: u64) -> Option<bool> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
+    }
+
+    fn take_style_changes(
+        &self,
+    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    {
+        RENDERER.with(|r| {
+            r.try_borrow_mut()
+                .ok()
+                .as_deref_mut()
+                .and_then(Option::as_mut)
+                .map(|r| r.take_style_changes(self.page))
+                .unwrap_or_default()
+        })
     }
 
     fn element_pseudo_style(

@@ -3,3 +3,4 @@ native/
 LICENSE
 NOTICE
 *.tgz
+test-results/

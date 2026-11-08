@@ -100,13 +100,6 @@ impl TimingRules {
         self.candidates(dom, doc, Longhand::AnimationName, "animation")
     }
 
-    /// The elements of `doc` that may transition: those a rule declaring a
-    /// transition duration matches (no other has a positive one), and those
-    /// whose `style` attribute declares a transition.
-    pub fn transition_candidates(&self, dom: &Dom, doc: NodeId) -> Vec<NodeId> {
-        self.candidates(dom, doc, Longhand::TransitionDuration, "transition")
-    }
-
     fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
         let mut seen = FxHashSet::default();
         let mut out = Vec::new();
@@ -237,14 +230,34 @@ impl TimingRules {
 /// properties a later one changed.
 pub type StyleSnapshot = style::servo_arc::Arc<style::properties::ComputedValues>;
 
+/// Whether `style` is `display: none` (the element is not rendered).
+pub fn displays_none(style: &StyleSnapshot) -> bool {
+    style.get_box().display.is_none()
+}
+
 /// The longhands `property` (a longhand, a shorthand or `all`) covers whose
 /// computed value differs between `before` and `after`: the ones a
 /// transition of `property` starts for.
 pub fn changed_longhands(before: &StyleSnapshot, after: &StyleSnapshot, property: &str) -> Vec<&'static str> {
+    use style::properties::animated_properties::AnimationValue;
     use style::properties::{PropertyDeclarationId, ShorthandId};
+    use style::values::animated::{Animate, Procedure};
+    // Different, and values Stylo can animate between (`width: auto` to a
+    // length starts none; properties Stylo animates discretely, `float` or
+    // `display`, still do). Animated values exist for physical longhands
+    // only: a logical one (`inline-size`) is mapped through the after-change
+    // style's writing mode.
     let differs = |longhand: style::properties::LonghandId| {
         let id = PropertyDeclarationId::Longhand(longhand);
+        let physical = PropertyDeclarationId::Longhand(longhand.to_physical(after.writing_mode));
         before.computed_value_to_string(id) != after.computed_value_to_string(id)
+            && match (
+                AnimationValue::from_computed_values(physical, before),
+                AnimationValue::from_computed_values(physical, after),
+            ) {
+                (Some(a), Some(b)) => a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok(),
+                _ => false,
+            }
     };
     let shorthand = if property == "all" {
         Some(ShorthandId::All)

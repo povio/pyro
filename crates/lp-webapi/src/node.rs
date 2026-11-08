@@ -1357,7 +1357,7 @@ impl JsClass for Element {
                     return Err(JsError::dom(
                         "SyntaxError",
                         "The value provided is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.",
-                    ))
+                    ));
                 }
             };
             let frag = lp_dom::parse::parse_fragment(&mut dom, ctx, &html).js()?;

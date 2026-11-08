@@ -8,15 +8,31 @@
     "url": "git+https://github.com/povio/lightningpanda.git",
     "directory": "packages/lightning-panda"
   },
-  "engines": { "node": ">=22" },
-  "publishConfig": { "access": "public" },
-  "bin": { "lightningpanda": "./dist/cli.js" },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "lightningpanda": "./dist/cli.js"
+  },
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "bun": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./test": {
+      "types": "./dist/playwright/test.d.ts",
+      "bun": "./src/playwright/test.ts",
+      "default": "./dist/playwright/test.js"
+    },
+    "./playwright": {
+      "types": "./dist/playwright/index.d.ts",
+      "bun": "./src/playwright/index.ts",
+      "default": "./dist/playwright/index.js"
     }
   },
   "files": [
@@ -29,13 +45,17 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "bun build src/index.ts src/cli.ts --outdir dist --target node --format esm && tsc -p tsconfig.json",
+    "build": "bun build src/index.ts src/cli.ts src/playwright/test.ts src/playwright/index.ts src/playwright/cli.ts --root src --outdir dist --target node --format esm --external bun:test --splitting && tsc -p tsconfig.json",
     "prepack": "bun run build && node ../../scripts/npm/prepare-package.mjs",
     "test:package": "bun test test/binary.test.ts && node --test ../../scripts/npm/release.test.mjs",
-    "test": "bun test ./test"
+    "test": "bun test ./test",
+    "test:playwright": "bun src/cli.ts test -c test/playwright/playwright.config.ts",
+    "test:parity": "PW_ENGINE=chromium-cdp playwright test -c test/playwright",
+    "test:types": "tsc -p tsconfig.types.json"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "playwright": "1.59.1",
     "typescript": "^5.6.0"
   }
 }

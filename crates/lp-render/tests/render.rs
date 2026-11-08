@@ -864,3 +864,19 @@ fn fallback_page_after_one_other_page() {
     assert!(bad.is_empty(), "{bad:#?}");
 }
 
+#[test]
+fn diff_limits_take_the_smaller_one() {
+    // Playwright's comparators.js: min(maxDiffPixels, ratio * area) when both are set.
+    let o = |p: Option<u64>, r: Option<f64>| MatchOptions {
+        max_diff_pixels: p,
+        max_diff_ratio: r,
+        ..MatchOptions::default()
+    };
+    assert_eq!(o(None, None).allowed(100, 100), 0);
+    assert_eq!(o(Some(100), None).allowed(100, 100), 100);
+    assert_eq!(o(None, Some(0.001)).allowed(100, 100), 10);
+    assert_eq!(o(Some(100), Some(0.001)).allowed(100, 100), 10);
+    assert_eq!(o(Some(5), Some(0.001)).allowed(100, 100), 5);
+    // 0.0015 * 10000 = 15: 15 differing pixels pass, 16 fail (count > limit).
+    assert_eq!(o(None, Some(0.00155)).allowed(100, 100), 15);
+}

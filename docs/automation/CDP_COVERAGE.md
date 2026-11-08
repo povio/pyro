@@ -33,10 +33,10 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Browser.setDockTile` | **no** | pending |  |
 | `Browser.setDownloadBehavior` | yes | engine | per browser context; under allow/allowAndName, `<a download>` links to blob:, data: or same-origin URLs (blob bytes captured at click, so an immediate revokeObjectURL is fine; HTTP fetched) are written to downloadPath (guid-named for allowAndName) with Chrome's Browser.downloadWillBegin and downloadProgress inProgress/completed (filePath) events on the browser session when eventsEnabled; failures report canceled; deny/default deliver nothing. A navigation answered with Content-Disposition: attachment becomes a download as in Chrome: nothing commits (Page.navigate gets net::ERR_ABORTED; the document request reports Network.loadingFailed net::ERR_ABORTED, canceled; a requested navigation is cleared). Name: Content-Disposition filename* then filename, else the download attribute, else the URL's last segment, else "download" |
 | `Browser.setWindowBounds` | yes | accepted, recorded only | stores the bounds, which getWindowForTarget reports back; no page API (outerWidth, screen) observes them yet (upstream: no-op) |
-| `CSS.disable` | **no** | pending |  |
-| `CSS.enable` | yes | pending |  |
-| `CSS.startRuleUsageTracking` | **no** | pending |  |
-| `CSS.stopRuleUsageTracking` | **no** | pending |  |
+| `CSS.disable` | **no** | engine | stops the sheet events |
+| `CSS.enable` | yes | engine | `styleSheetAdded` for the page's `<link>`/`<style>` sheets (a sheet whose text changes is reported anew); `getStyleSheetText` serves their text (coverage.rs) |
+| `CSS.startRuleUsageTracking` | **no** | engine | rule usage for `page.coverage` CSS: a style rule (also inside `@media`, `@supports`, `@layer`, `@container`) counts as used once any of its selectors matches an element; recorded at every style recalc the page forces, so briefly present elements count |
+| `CSS.stopRuleUsageTracking` | **no** | engine | returns the rules used since start (`ruleUsage` with UTF-16 offsets into the sheet text) |
 | `DOM.describeNode` | yes | engine | native Node wrappers/backend IDs; bounded depth and node count; no frontend mirror IDs or pierced traversal |
 | `DOM.disable` | **no** | engine | stops documentUpdated notifications |
 | `DOM.enable` | yes | engine | documentUpdated notifications; frontend mirror/mutation tracking unsupported |
@@ -47,10 +47,10 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `DOM.resolveNode` | yes | engine | wraps the node in the requested execution context of its frame (or its main world) |
 | `DOM.scrollIntoViewIfNeeded` | yes | engine | in a child frame, also reveals each owning iframe in its parent; connected visible elements over native synthetic layout; `rect` (node-relative area, sent by Playwright for positional clicks) scrolls the window to the nearest edge after revealing the node |
 | `DOM.setFileInputFiles` | yes | engine | `files` are paths read from disk (64 MiB each; name from the last path component, type from the extension, `lastModified` from the file's modification time), then trusted `input` and `change` as when a user picks them; a node that is not an `<input type=file>` fails with Chrome's "Node is not a file input element"; `[]` clears the selection |
-| `Debugger.disable` | yes | pending |  |
-| `Debugger.enable` | yes | pending |  |
-| `Debugger.resume` | yes | pending |  |
-| `Debugger.setSkipAllPauses` | yes | pending |  |
+| `Debugger.disable` | yes | engine | stops `scriptParsed` |
+| `Debugger.enable` | yes | engine | only while precise coverage is on: `scriptParsed` for the page's scripts (classic, module, eval), with `getScriptSource`; no breakpoints or pausing |
+| `Debugger.resume` | yes | engine | no-op: the engine never pauses |
+| `Debugger.setSkipAllPauses` | yes | engine | no-op: the engine never pauses |
 | `Emulation.setDefaultBackgroundColorOverride` | yes | engine (`render` feature) | screenshots paint `color` (RGBA, `a` defaults to 1) instead of white under the document; `a: 0` gives transparent PNG pixels (straight alpha; JPEG drops alpha); absent color resets |
 | `Emulation.setDeviceMetricsOverride` | yes | engine | persistent native width/height/DPR/screen and resize; `mobile: true` is accepted but `<meta name=viewport>` has no effect: pages always lay out at `width`, as with `width=device-width` (Chrome uses 980 px without the tag); transforms and non-native orientation explicitly unsupported |
 | `Emulation.setEmulatedMedia` | yes | engine | each call replaces the emulation: `print` media type and `prefers-color-scheme`/`prefers-reduced-motion` drive matchMedia, @media in the style engine, Blitz layout and screenshots/PDFs; other features are accepted and not evaluated |
@@ -115,11 +115,11 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Page.startScreencast` | **no** | pending |  |
 | `Performance.enable` | **no** | accepted, recorded only | no performance timeline events; see `Performance.getMetrics` |
 | `Performance.getMetrics` | yes | engine | Timestamp, Documents, Frames, Nodes, LayoutCount and RecalcStyleCount (both the process's Blitz layout syncs, which restyle and lay out what changed), LayoutDuration and RecalcStyleDuration (Blitz layout and style phases, seconds); no JS heap metrics; does not reset LP.geometryStats (`render` feature) |
-| `Profiler.disable` | **no** | pending |  |
-| `Profiler.enable` | **no** | pending |  |
-| `Profiler.startPreciseCoverage` | **no** | pending |  |
-| `Profiler.stopPreciseCoverage` | **no** | pending |  |
-| `Profiler.takePreciseCoverage` | **no** | pending |  |
+| `Profiler.disable` | **no** | engine | stops precise coverage if on |
+| `Profiler.enable` | **no** | engine | accepted; coverage starts with startPreciseCoverage |
+| `Profiler.startPreciseCoverage` | **no** | engine | JSC ControlFlowProfiler (patch 0019), switched on at run time (compiled code is dropped and recompiles); attributed per page by realm; no cost when off |
+| `Profiler.stopPreciseCoverage` | **no** | engine | switches the profiler off again |
+| `Profiler.takePreciseCoverage` | **no** | engine | V8's block-coverage shape (counts since start, functions that did not run since start left out as V8 does, UTF-16 offsets, module prefix stripped) for c8 / v8-to-istanbul |
 | `Runtime.addBinding` | yes | engine | defines a non-enumerable global taking one string in the page's realms (every world, or `executionContextName`'s; `executionContextId` covers that context only), now and in every later realm before init scripts run, so it survives navigation; calls emit `Runtime.bindingCalled` {name, payload, executionContextId} to the sessions that added it (Playwright `exposeFunction`/`exposeBinding`) |
 | `Runtime.callFunctionOn` | yes | engine | `generatePreview` adds `Runtime.ObjectPreview` (see `Runtime.evaluate`) |
 | `Runtime.enable` | yes | engine |  |

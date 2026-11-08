@@ -447,6 +447,22 @@ fn collect_layout_children_with_wrap(
 
     flush_pseudo_elements(doc, container_node_id);
 
+    // lightningpanda: a select that was a drop-down had its options'
+    // construct damage cleared (below); as a list box they must build their
+    // boxes again.
+    let listbox_select = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
+        el.name.local == local_name!("select")
+            && (el.attr(local_name!("multiple")).is_some()
+                || el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1))
+    });
+    if listbox_select {
+        doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
+            if id != container_node_id {
+                doc.nodes[id].insert_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+            }
+        });
+    }
+
     if let Some(el) = doc.nodes[container_node_id].data.downcast_element() {
         // Handle text inputs
         let tag_name = el.name.local.as_ref();
@@ -468,6 +484,25 @@ fn collect_layout_children_with_wrap(
                 create_checkbox_input(doc, container_node_id);
                 return;
             }
+        }
+
+        // lightningpanda: a drop-down select is an atomic box sized from its
+        // options (layout/mod.rs); as in Chromium's menu list, its children
+        // generate no boxes (their computed `display` stays `block`). A list
+        // box (`multiple`, or `size` above 1) lays its options out.
+        if tag_name == "select" {
+            let listbox = el.attr(local_name!("multiple")).is_some()
+                || el
+                    .attr(local_name!("size"))
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .is_some_and(|s| s > 1);
+            if !listbox {
+                doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
+                    doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+                });
+                return;
+            }
+
         }
 
         #[cfg(feature = "svg")]
@@ -741,6 +776,14 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
 
         (before_style, after_style, before_node_id, after_node_id)
     };
+    // lightningpanda: an optgroup's label row, as Chromium's
+    // `-internal-optgroup-label` box, in the `::before` slot when the
+    // optgroup has no `::before` of its own.
+    let label = before_style.is_none().then(|| optgroup_label(doc, node_id)).flatten();
+    let (before_style, label_text) = match label {
+        Some((style, text)) => (Some(style), Some(text)),
+        None => (before_style, None),
+    };
 
     // Sync pseudo element
     // TODO: Make incremental
@@ -769,7 +812,8 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                     .insert(NodeFlags::IS_IN_DOCUMENT);
             }
 
-            if let Some(text) = pe_content_text(pe_style) {
+            let text = if idx == 1 && label_text.is_some() { label_text.clone() } else { pe_content_text(pe_style) };
+            if let Some(text) = text {
                 let text_node_id = doc.create_text_node(&text);
                 doc.nodes[text_node_id].parent = Some(new_node_id);
                 doc.nodes[new_node_id].children.push(text_node_id);
@@ -801,7 +845,7 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             // the style-pointer comparison below, as the pseudo-element's style may
             // already have been updated by `sync_pseudo_element_styles` during the
             // style traversal without the text having been updated.
-            let new_text = pe_content_text(&pe_style);
+            let new_text = if idx == 1 && label_text.is_some() { label_text.clone() } else { pe_content_text(&pe_style) };
             let existing_text_node_id = doc.nodes[pe_node_id]
                 .children
                 .first()
@@ -853,6 +897,42 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             }
         }
     }
+}
+
+/// lightningpanda: the style (UA `optgroup::-servo-text-control-inner-container`,
+/// a pseudo-element pages cannot select) and text (its `label`) of an
+/// optgroup's label row.
+fn optgroup_label(
+    doc: &BaseDocument,
+    node_id: NodeId,
+) -> Option<(style::servo_arc::Arc<style::properties::ComputedValues>, String)> {
+    use style::selector_parser::PseudoElement;
+    use style::stylist::RuleInclusion;
+    let node = &doc.nodes[node_id];
+    let el = node.data.downcast_element()?;
+    if el.name.local != local_name!("optgroup") {
+        return None;
+    }
+    // An empty label still has a line, as Chromium's row is a line tall
+    // (its `min-height: 1.2em` is a fraction of a pixel short of it); a
+    // no-break space, as it comes from the label's own font.
+    let text = match el.attr(local_name!("label")).unwrap_or("") {
+        "" => "\u{A0}".to_string(),
+        label => label.to_string(),
+    };
+    let parent_style = node.primary_styles()?;
+    let read_guard = doc.guard.read();
+    let guards = StylesheetGuards::same(&read_guard);
+    let style = doc.stylist.lazily_compute_pseudo_element_style::<&Node>(
+        &guards,
+        node,
+        &PseudoElement::ServoTextControlInnerContainer,
+        RuleInclusion::All,
+        &parent_style,
+        false,
+        None,
+    )?;
+    Some((style, text))
 }
 
 /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node

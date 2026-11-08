@@ -31,11 +31,11 @@ pub mod pdf;
 mod svg_use;
 pub mod worker;
 
-use stylo_taffy::CopyStyleGetters;
 use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::Mutex;
+use stylo_taffy::CopyStyleGetters;
 
 use std::time::{Duration, Instant};
 
@@ -623,6 +623,10 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 
 /// UA rule that settles transitions and animations at their end values.
 const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation: none !important; }";
+/// Chrome's `<input type=file>` box ("Choose File · No file chosen"): Blitz
+/// lays the control out with no content to size it by, so it would be
+/// zero-sized and never visible or clickable.
+const FILE_INPUT: &str = r#"input[type="file" i] { box-sizing: border-box; width: 253px; height: 21px; }"#;
 
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
@@ -735,6 +739,7 @@ impl Renderer {
         // would stay at its first frame (a drawer sliding in stays off
         // screen). Layout queries, screenshots and PDFs take the end state.
         config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
         config
     }
 
@@ -1116,6 +1121,7 @@ impl Renderer {
         let m = self.mirrors.get(&page)?;
         let mut id = m.node(key)?;
         let mut unstyled = false;
+        let start = id;
         loop {
             let node = m.doc.get_node(id)?;
             if !node.is_element() {
@@ -1123,6 +1129,20 @@ impl Renderer {
             }
             if !node.flags.is_in_document() {
                 return None;
+            }
+            // A drop-down select's descendants (its options) generate no
+            // boxes, as in Chromium's menu list (their `display` stays).
+            if id != start
+                && node.data.downcast_element().is_some_and(|el| {
+                    &*el.name.local == "select"
+                        && el.attr(blitz_dom::local_name!("multiple")).is_none()
+                        && !el
+                            .attr(blitz_dom::local_name!("size"))
+                            .and_then(|s| s.trim().parse::<u32>().ok())
+                            .is_some_and(|s| s > 1)
+                })
+            {
+                return Some(false);
             }
             match node.primary_styles() {
                 Some(s) if s.clone_display().is_none() => return Some(false),
@@ -1135,6 +1155,32 @@ impl Renderer {
             }
         }
         (!unstyled).then_some(true)
+    }
+
+    /// lightningpanda: whether `page`'s document records the elements whose
+    /// primary style a restyle replaces
+    /// (`BaseDocument::set_track_style_changes`); no page, nothing.
+    pub fn set_track_style_changes(&mut self, page: u64, on: bool) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.doc.set_track_style_changes(on);
+        }
+    }
+
+    /// The mirrored elements of `page` whose primary style was replaced since
+    /// the last call (while tracked), by render key, with the styles before
+    /// and after (`BaseDocument::take_style_changes`); elements no longer
+    /// mirrored are left out.
+    pub fn take_style_changes(
+        &mut self,
+        page: u64,
+    ) -> Vec<(
+        u64,
+        style::servo_arc::Arc<style::properties::ComputedValues>,
+        style::servo_arc::Arc<style::properties::ComputedValues>,
+    )> {
+        let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
+        let changes = m.doc.take_style_changes();
+        changes.into_iter().filter_map(|c| Some((m.key_of(c.node)?, c.before, c.after))).collect()
     }
 
     /// The computed style of pseudo-element `pseudo` of the element keyed
@@ -1517,15 +1563,7 @@ fn paint_document(
     let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
     blitz_paint::paint_scene_for_print(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     timings.scene = t.elapsed();
-    Ok(PdfPaint {
-        scene,
-        pages,
-        by_selector: true,
-        scale: pdf::PX_TO_PT / dpr,
-        extras: None,
-        relaid: false,
-        timings,
-    })
+    Ok(PdfPaint { scene, pages, by_selector: true, scale: pdf::PX_TO_PT / dpr, extras: None, relaid: false, timings })
 }
 
 /// The CSS text with `@page` rules of the document's `<style>` elements and `<link>` sheets, in
@@ -2926,7 +2964,8 @@ mod settle_resolution_tests {
         renderer.mirrors.get_mut(&page).unwrap().doc.resolve(0.0);
     }
 
-    const STACKED: &str = "<!doctype html><style>body{margin:0}div{position:absolute;left:0;top:0;width:50px;height:50px}</style>\
+    const STACKED: &str =
+        "<!doctype html><style>body{margin:0}div{position:absolute;left:0;top:0;width:50px;height:50px}</style>\
         <div id=box style=z-index:1></div><div id=other style=z-index:2></div><p id=far style=margin-top:80px>x</p>";
 
     #[test]
