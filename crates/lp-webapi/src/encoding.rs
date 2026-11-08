@@ -111,24 +111,10 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
     }
 }
 
-/// Capture builtins before page scripts can replace them. Each reader accepts
-/// only a native DataView and produces a genuine Uint8Array over the same view.
-pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
-    let reader = s.eval(
-        r#"(() => {
-        const get = Object.getOwnPropertyDescriptor, apply = Reflect.apply, U8 = Uint8Array;
-        const buffer = get(DataView.prototype, 'buffer').get;
-        const offset = get(DataView.prototype, 'byteOffset').get;
-        const length = get(DataView.prototype, 'byteLength').get;
-        return value => {
-            let backing;
-            try { backing = apply(buffer, value, []); } catch (_) { return null; }
-            return new U8(backing, apply(offset, value, []), apply(length, value, []));
-        };
-    })()"#,
-        Some("lightningpanda://internal/dataview.js"),
-        1,
-    )?;
+/// Keeps the realm's DataView reader (install.js `dataView`, made before
+/// page scripts can replace the builtins it captures): it accepts only a
+/// native DataView and produces a genuine Uint8Array over the same view.
+pub(crate) fn install(s: &Scope<'_>, reader: lp_js::Value<'_>) -> JsResult<()> {
     crate::target::page_of(s)?.data_view_readers.borrow_mut().insert(s.realm_id(), lp_js::Persistent::new(s, reader));
     Ok(())
 }

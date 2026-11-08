@@ -778,6 +778,59 @@ fn run_immediately_creates_the_isolated_world() {
 }
 
 #[test]
+fn playwright_utility_world_is_announced_at_commit_and_made_by_its_first_evaluation() {
+    // Playwright: an init script with no source names the utility world for
+    // every document, `Page.createIsolatedWorld` makes it for the first one,
+    // and after each navigation the world's `executionContextCreated` is
+    // what its actions wait for. The realm behind the announced id is made
+    // when first evaluated in.
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.page("Page.enable", json!({}));
+    h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source":"","worldName":"__pw_utility"}));
+    let frame = h.frame_id.clone();
+    let first = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"__pw_utility"}))["result"]
+        ["executionContextId"]
+        .clone();
+    let events = h.page_with_events("Page.navigate", json!({ "url": html_url("<p>committed</p>") }));
+    let mut events = events;
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        events.extend(h.run_for(100));
+    }
+    let created: Vec<&Value> =
+        events.iter().filter(|m| m["method"] == "Runtime.executionContextCreated").collect();
+    let utility = created
+        .iter()
+        .find(|m| m["params"]["context"]["name"] == "__pw_utility")
+        .unwrap_or_else(|| panic!("utility world announced for the new document: {events:#?}"));
+    let context = utility["params"]["context"]["id"].clone();
+    assert_ne!(context, first, "a new context per document");
+    assert_eq!(utility["params"]["context"]["auxData"]["isDefault"], false);
+    assert!(created.iter().any(|m| m["params"]["context"]["auxData"]["isDefault"] == true), "{events:#?}");
+    let destroyed = events.iter().position(|m| m["method"] == "Runtime.executionContextsCleared").unwrap();
+    let announced = events
+        .iter()
+        .position(|m| m["method"] == "Runtime.executionContextCreated" && m["params"]["context"]["id"] == context)
+        .unwrap();
+    assert!(announced > destroyed, "{events:#?}");
+    let frame = h.frame_id.clone();
+    let r = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"__pw_utility"}));
+    assert_eq!(r["result"]["executionContextId"], context, "the same world for this document");
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"document.querySelector('p').textContent + ':' + (globalThis.mark = 1)","contextId": context,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "committed:1", "{r}");
+    let r = h.page("Runtime.evaluate", json!({"expression":"typeof mark","returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], "undefined", "main world untouched");
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"functionDeclaration":"function() { return mark + 1 }","executionContextId": context,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], 2, "{r}");
+}
+
+#[test]
 fn console_without_runtime_is_not_retained_and_floods_close_the_connection() {
     let mut h = Harness::new();
     h.page("Runtime.evaluate", json!({"expression":"for (let i = 0; i < 200000; i++) console.log(i, {i})"}));
@@ -8348,4 +8401,122 @@ fn dom_set_file_input_files_reads_paths_and_fires_input_and_change() {
     assert_eq!(r["result"], json!({}), "{r}");
     assert_eq!(eval_value(&mut h, "f.files.length"), 0, "no files clears the selection");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- Review (perf/realms): every protocol path as the first entry of a deferred world ----
+
+#[test]
+fn review_each_protocol_path_can_be_the_first_entry_of_a_deferred_world() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    load_html(&mut h, "<!doctype html><p id=p>para</p><iframe srcdoc='<span>in</span>'></iframe>");
+    let frame = h.frame_id.clone();
+    let mut n = 0;
+    fn make(h: &mut Harness, frame: &str, n: &mut u32) -> Value {
+        *n += 1;
+        let r = h.page("Page.createIsolatedWorld", json!({"frameId": frame, "worldName": format!("fresh{n}")}));
+        r["result"]["executionContextId"].clone()
+    }
+    macro_rules! fresh {
+        ($h:expr) => {
+            make($h, &frame, &mut n)
+        };
+    }
+    // Runtime.callFunctionOn with an executionContextId.
+    let id = fresh!(&mut h);
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"functionDeclaration": "function() { return document.getElementById('p').textContent + window.length }", "executionContextId": id, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "para1", "{r}");
+    // Runtime.evaluate returning the global, then Runtime.getProperties on it.
+    let id = fresh!(&mut h);
+    let r = h.page("Runtime.evaluate", json!({"expression": "window", "contextId": id}));
+    let object = r["result"]["result"]["objectId"].clone();
+    assert!(object.is_string(), "{r}");
+    let props = h.page("Runtime.getProperties", json!({"objectId": object, "ownProperties": true}));
+    let names: Vec<&str> =
+        props["result"]["result"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
+    assert!(names.contains(&"document") && names.contains(&"Node") && names.contains(&"0"), "{names:?}");
+    // DOM.resolveNode into a world that was never entered.
+    let object = h.page("Runtime.evaluate", json!({"expression": "document.getElementById('p')"}))["result"]["result"]["objectId"].clone();
+    let backend = h.page("DOM.describeNode", json!({"objectId": object}))["result"]["node"]["backendNodeId"].clone();
+    let id = fresh!(&mut h);
+    let resolved = h.page("DOM.resolveNode", json!({"backendNodeId": backend, "executionContextId": id}));
+    let adopted = resolved["result"]["object"]["objectId"].clone();
+    assert!(adopted.is_string(), "{resolved}");
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"objectId": adopted, "functionDeclaration": "function() { return this.textContent + (this.ownerDocument === document) }", "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "paratrue", "{r}");
+    // Console messages carry the world's context id.
+    let id = fresh!(&mut h);
+    let events = h.page_with_events("Runtime.evaluate", json!({"expression": "console.log('from-world'); 1", "contextId": id}));
+    let mut events = events;
+    if !events.iter().any(|m| m["method"] == "Runtime.consoleAPICalled") {
+        events.extend(h.run_for(100));
+    }
+    let console = events.iter().find(|m| m["method"] == "Runtime.consoleAPICalled").expect("consoleAPICalled");
+    assert_eq!(console["params"]["executionContextId"], id, "{console}");
+    // Runtime.addBinding naming a world that exists but was never entered.
+    let id = fresh!(&mut h);
+    let name = format!("fresh{n}");
+    let r = h.page("Runtime.addBinding", json!({"name": "hostCall", "executionContextName": name}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    let events = h.page_with_events("Runtime.evaluate", json!({"expression": "hostCall('w'); typeof hostCall", "contextId": id, "returnByValue": true}));
+    let mut events = events;
+    if !events.iter().any(|m| m["method"] == "Runtime.bindingCalled") {
+        events.extend(h.run_for(100));
+    }
+    let called = events.iter().find(|m| m["method"] == "Runtime.bindingCalled").expect("bindingCalled");
+    assert_eq!(called["params"]["executionContextId"], id, "{called}");
+    assert_eq!(called["params"]["payload"], "w");
+    assert_eq!(eval_value(&mut h, "typeof hostCall"), "undefined", "not in the main world");
+    // A second session's Runtime.enable announces the deferred worlds without making them.
+    let id = fresh!(&mut h);
+    let second = h.attach_second_session();
+    let events = {
+        let sent = h.send(Some(&second), "Runtime.enable", json!({}));
+        h.until_response(sent)
+    };
+    let announced: Vec<&Value> = events
+        .iter()
+        .filter(|m| m["method"] == "Runtime.executionContextCreated")
+        .map(|m| &m["params"]["context"]["id"])
+        .collect();
+    assert!(announced.contains(&&id), "{events:#?}");
+    let r = h.call(Some(&second), "Runtime.evaluate", json!({"expression": "location.href.startsWith('data:') || location.href", "contextId": id, "returnByValue": true}));
+    assert!(r["result"].get("exceptionDetails").is_none(), "{r}");
+    // Navigating away destroys never-entered worlds as it does entered ones.
+    let id = fresh!(&mut h);
+    let events = h.page_with_events("Page.navigate", json!({ "url": html_url("<p>next</p>") }));
+    let mut events = events;
+    events.extend(h.run_for(100));
+    let r = h.page("Runtime.evaluate", json!({"expression": "1", "contextId": id}));
+    assert!(r.get("error").is_some(), "the old document's world is gone: {r}");
+}
+
+#[test]
+fn review_closing_a_target_while_its_deferred_world_waits() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source": "", "worldName": "__pw_utility"}));
+    load_html(&mut h, "<!doctype html><p>x</p>");
+    let frame = h.frame_id.clone();
+    let id = h.page("Page.createIsolatedWorld", json!({"frameId": frame, "worldName": "__pw_utility"}))["result"]["executionContextId"].clone();
+    // A pending evaluation in the world (its first entry), then the close.
+    let session = h.session.clone();
+    let pending = h.send(Some(&session), "Runtime.evaluate", json!({"expression": "new Promise(() => {})", "awaitPromise": true, "contextId": id}));
+    h.run_for(50);
+    let target = h.frame_id.clone();
+    let r = h.call(None, "Target.closeTarget", json!({"targetId": target}));
+    assert_eq!(r["result"]["success"], true, "{r}");
+    let seen = h.until_reply(pending, 1000);
+    // Whether the closed session still answers is the base's behaviour (not
+    // changed here); what matters is that nothing waits on the world.
+    if let Some(reply) = seen.iter().find(|m| m["id"] == pending) {
+        assert!(reply.get("error").is_some() || reply["result"].get("exceptionDetails").is_some(), "{reply}");
+    }
+    assert_eq!(h.pending_replies(), 0, "no reply is left waiting on the closed page's world");
 }

@@ -63,6 +63,14 @@ fn release_allocator() {
     unsafe { mi_collect(true) }
 }
 
+/// mimalloc's cheap collection: the calling thread's delayed frees and
+/// empty pages, without purging what it retains
+/// ([`lp_js::Engine::release_closed`] when the full release waits for idle).
+fn trim_allocator() {
+    // SAFETY: mimalloc's public API, callable from any thread at any time.
+    unsafe { mi_collect(false) }
+}
+
 const USAGE: &str = "\
 usage: lightningpanda <command> [options]
 
@@ -77,6 +85,7 @@ commands:
 
 fn main() -> ExitCode {
     lp_js::set_allocator_release(release_allocator);
+    lp_js::set_allocator_trim(trim_allocator);
     lp_net::set_idle_release(release_allocator);
     #[cfg(feature = "render")]
     lp_render::worker::set_idle_release(release_allocator);

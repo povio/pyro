@@ -708,6 +708,9 @@ fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value
 
 /// Cancels every pending timer of a realm's window (navigation/teardown).
 pub(crate) fn cancel_timers(realm: &Realm) {
+    if realm.is_deferred() {
+        return;
+    }
     let Ok(scope) = realm.scope() else { return };
     if let Some(w) = scope.global_data::<Window>() {
         for (_, (id, _)) in w.timers.borrow_mut().drain() {
@@ -726,12 +729,12 @@ pub(crate) fn cancel_timers(realm: &Realm) {
     }
 }
 
-/// Capture the descriptor intrinsic before page init scripts can replace it.
-pub(crate) fn init_frame_indices(realm: &Realm) -> JsResult<()> {
-    let scope = realm.scope()?;
-    let define=scope.eval("(()=>{const define=Object.defineProperty;return(g,k,get)=>define(g,k,{get,enumerable:true,configurable:true})})()",Some("lightpanda://frame-indices"),1)?;
+/// Keeps `define`, the step defining a frame index getter on the global
+/// (lp-webapi's install.js `accessor`, which captured the descriptor
+/// intrinsic before page init scripts can replace it).
+pub(crate) fn init_frame_indices(scope: &lp_js::Scope<'_>, define: lp_js::Value<'_>) -> JsResult<()> {
     let w = scope.global_data::<Window>().ok_or(JsError::ContextDestroyed)?;
-    *w.frame_definer.borrow_mut() = Some(Persistent::new(&scope, define));
+    *w.frame_definer.borrow_mut() = Some(Persistent::new(scope, define));
     Ok(())
 }
 pub(crate) fn refresh_frame_indices(

@@ -732,7 +732,8 @@ impl Browser {
             for page in &self.pages {
                 for info in self.frames(page.id) {
                     if let Some(frame) = self.frame(page.id, &info.id) {
-                        for realm in &frame.realms {
+                        // A deferred realm's setup reads the clock's state when it is made.
+                        for realm in frame.realms.iter().filter(|r| !r.realm.is_deferred()) {
                             realm.realm.scope()?.eval(
                                 clock::DATE_SCRIPT,
                                 Some("lightningpanda://internal/clock.js"),
@@ -1227,7 +1228,9 @@ impl Browser {
             return false;
         }
         p.frames.settings.borrow_mut().bindings = p.bindings.clone();
-        for realm in self.page_realms(page) {
+        // A deferred realm defines nothing yet (`add_binding` makes it to
+        // define one): nothing to delete, and not worth making it for.
+        for realm in self.page_realms(page).iter().filter(|r| !r.realm.is_deferred()) {
             if let Ok(scope) = realm.realm.scope() {
                 let _ = scope.global().delete(name);
             }
