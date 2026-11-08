@@ -354,7 +354,9 @@ fn indexed_properties_answer_every_index_key_form() {
     let checks = [
         ("leaf[0] + ',' + leaf['1'] + ',' + leaf[2] + ',' + leaf['01'] + ',' + leaf[-1]", "0,10,undefined,undefined,undefined"),
         ("[('0' in leaf), (1 in leaf), ('2' in leaf), leaf.hasOwnProperty('1'), leaf.hasOwnProperty(2)].join()", "true,true,false,true,false"),
-        ("JSON.stringify(Object.getOwnPropertyDescriptor(leaf, '1'))", r#"{"value":10,"writable":false,"enumerable":false,"configurable":true}"#),
+        // Enumerable, as WebIDL's indexed properties are (patch 0024).
+        ("JSON.stringify(Object.getOwnPropertyDescriptor(leaf, '1'))", r#"{"value":10,"writable":false,"enumerable":true,"configurable":true}"#),
+        ("Object.keys({ ...leaf }).join()", "0,1"),
         ("Object.getOwnPropertyDescriptor(leaf, '5')", "undefined"),
         ("Object.keys(leaf).join() + '|' + Object.getOwnPropertyNames(leaf).join()", "0,1|0,1"),
         ("[...leaf].join('+') + '|' + Array.from(leaf).length + '|' + leaf.length", "0+10|2|2"),

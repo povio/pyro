@@ -670,6 +670,16 @@ pub mod spi {
         get: Option<JSObjectGetPropertyByIndexCallback>,
         set: Option<JSObjectSetPropertyByIndexCallback>,
     );
+    /// Names a class's wrappers have as own properties, valued by the
+    /// prototype's accessors (`JSClassSetOwnPropertyNames`, patch 0024).
+    pub const kJSOwnPropertyNameListed: u8 = 1;
+    pub const kJSOwnPropertyNameDontEnum: u8 = 2;
+    pub const kJSOwnPropertyNameAnswered: u8 = 4;
+    pub type JSClassSetOwnPropertyNamesFn =
+        unsafe extern "C" fn(class: JSClassRef, names: *const *const c_char, flags: *const u8, count: usize);
+    /// A string holding the calling thread's atom (`JSStringCreateAtom`,
+    /// patch 0025): property-name calls skip the atom-table probe.
+    pub type JSStringCreateAtomFn = unsafe extern "C" fn(string: JSStringRef) -> JSStringRef;
     /// A function object with embedder data (`JSObjectMakeFunctionWithCallbackAndData`).
     pub type JSObjectCallAsFunctionWithDataCallback = unsafe extern "C" fn(
         ctx: JSContextRef,
@@ -817,6 +827,8 @@ pub mod spi {
         pub clear_constant_accessors: Option<JSObjectClearConstantAccessorsFn>,
         pub throw_exception: Option<JSContextThrowExceptionFn>,
         pub class_set_indexed_callbacks: Option<JSClassSetIndexedCallbacksFn>,
+        pub class_set_own_property_names: Option<JSClassSetOwnPropertyNamesFn>,
+        pub string_create_atom: Option<JSStringCreateAtomFn>,
         pub make_function_with_data: Option<JSObjectMakeFunctionWithCallbackAndDataFn>,
         pub get_function_data: Option<JSObjectGetFunctionDataFn>,
         pub release_free_memory: Option<JSContextGroupReleaseFreeMemoryFn>,
@@ -946,6 +958,8 @@ pub mod spi {
             clear_constant_accessors: resolve!("JSObjectClearConstantAccessors"),
             throw_exception: resolve!("JSContextThrowException"),
             class_set_indexed_callbacks: resolve!("JSClassSetIndexedCallbacks"),
+            class_set_own_property_names: resolve!("JSClassSetOwnPropertyNames"),
+            string_create_atom: resolve!("JSStringCreateAtom"),
             make_function_with_data: resolve!("JSObjectMakeFunctionWithCallbackAndData"),
             get_function_data: resolve!("JSObjectGetFunctionData"),
             release_free_memory: resolve!("JSContextGroupReleaseFreeMemory"),
