@@ -142,35 +142,34 @@ impl FontMetrics {
 /// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
 /// (16px Helvetica: 2px, a 18px normal line instead of 16px). These are the
 /// macOS default `serif`, `sans-serif` and `monospace` fonts.
+///
+/// Decided from the font's own family name every time. There is deliberately no
+/// per-font memo: one keyed by the font data's address gave a font allocated
+/// where a freed one used to live the freed font's answer, so line heights
+/// depended on what the thread had laid out before. The callers already run once
+/// per font, size and variation location ([`RunMetrics`] lives in the glyph
+/// cache), and the name lookup allocates nothing.
 fn chromium_ascent_adjustment(font_ref: &skrifa::FontRef<'_>, metrics: &skrifa::metrics::Metrics) -> f32 {
-    use skrifa::MetadataProvider;
-    use std::cell::RefCell;
-    std::thread_local! {
-        /// Whether a font (data address, index) is one of the three.
-        static ADJUSTED: RefCell<Vec<((usize, u32), bool)>> = const { RefCell::new(Vec::new()) };
-    }
-    let key = (font_ref.data().as_bytes().as_ptr() as usize, font_ref.ttc_index().unwrap_or(0));
-    let adjusted = ADJUSTED.with(|cache| {
-        if let Some(&(_, v)) = cache.borrow().iter().find(|(k, _)| *k == key) {
-            return v;
-        }
-        let family = font_ref
-            .localized_strings(skrifa::string::StringId::FAMILY_NAME)
-            .english_or_first()
-            .map(|s| s.chars().collect::<std::string::String>());
-        let v = matches!(family.as_deref(), Some("Times" | "Helvetica" | "Courier"));
-        let mut cache = cache.borrow_mut();
-        if cache.len() > 256 {
-            cache.clear();
-        }
-        cache.push((key, v));
-        v
-    });
-    if !adjusted {
+    if !is_chromium_adjusted_family(font_ref) {
         return 0.0;
     }
     let height = metrics.ascent.round() + (-metrics.descent).round();
     (height * 0.15 + 0.5).floor()
+}
+
+/// Whether the font's (English, else first) family name is exactly Times,
+/// Helvetica or Courier.
+fn is_chromium_adjusted_family(font_ref: &skrifa::FontRef<'_>) -> bool {
+    use skrifa::MetadataProvider;
+    let Some(family) = font_ref
+        .localized_strings(skrifa::string::StringId::FAMILY_NAME)
+        .english_or_first()
+    else {
+        return false;
+    };
+    ["Times", "Helvetica", "Courier"]
+        .iter()
+        .any(|name| family.chars().eq(name.chars()))
 }
 
 /// lightningpanda: the font metrics of a shaped run, which depend on the font instance, the font

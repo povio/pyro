@@ -710,7 +710,6 @@ fn render_full(r: &mut Renderer, html: &str) -> (RgbaImage, u64) {
 }
 
 #[test]
-#[ignore = "pre-existing on 34f0f2ba: parley_engine chromium_ascent_adjustment caches per font data address, a reused address gets a stale answer"]
 fn font_matching_pages_render_alike_on_fresh_and_warm_threads() {
     let pages = [FALLBACK_PAGE, VARIATION_PAGE, SYNTHESIS_PAGE, TEXT_PAGE];
     let fresh: Vec<(RgbaImage, u64)> = pages
@@ -838,11 +837,11 @@ fn jpeg_quality_extremes_and_limits() {
     assert!(encode_jpeg(&one, 80).is_ok());
 }
 
-/// The fallback page after exactly one other page on the same thread (or itself): its layout
-/// changes with what the thread laid out before, on 34f0f2ba too. Passes with the address-keyed
-/// `ADJUSTED` list in `chromium_ascent_adjustment` bypassed.
+/// The fallback page after exactly one other page on the same thread (or itself) lays out as on a
+/// fresh thread. On 34f0f2ba it did not: `chromium_ascent_adjustment` remembered its answer per
+/// font data address, and a font allocated where a freed one had lived got the freed font's
+/// Times/Helvetica/Courier extra ascent (or lost its own).
 #[test]
-#[ignore = "pre-existing on 34f0f2ba: parley_engine chromium_ascent_adjustment caches per font data address, a reused address gets a stale answer"]
 fn fallback_page_after_one_other_page() {
     let fresh = std::thread::spawn(|| render_full(&mut Renderer::new(), FALLBACK_PAGE)).join().unwrap();
     let mut bad = Vec::new();

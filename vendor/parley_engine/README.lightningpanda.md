@@ -15,6 +15,16 @@ These are macOS's default `serif`, `sans-serif` and `monospace` fonts, so every 
 explicit font family had shorter lines than in Chrome (`line-height: normal` at 16px: 16px instead
 of 18px), and taller documents paginated differently.
 
+The font is recognised by its own family name (English, else first `name` record), read every time
+the metrics are computed, with no memo. These metrics are computed once per font, size and
+variation location: `RunMetrics` is kept with the run's glyphs in the glyph cache, and
+`FontMetrics::from_font_instance` only runs, once per style and layout, when no shaped run used the style's first available font at its size and variations.
+An earlier version kept a thread-local list keyed by the font data's address and ttc index; once a
+font's data was freed and another font was allocated at the same address, the new font got the old
+font's answer (an extra ascent of about 15% given or withheld), so line heights, document heights
+and paint hashes depended on what the thread had laid out before. Do not reintroduce a per-font
+memo keyed by an address; if one is ever needed, key it by the blob id, which is never reused.
+
 `shape/shaper.rs` and `shape/cache.rs`: a glyph cache. Each shaped run is kept with its shaping
 inputs (font instance, size, variations, features, direction, script, language, the run's text and
 up to five characters of context on each side, harfrust's context length), and a run with the same
