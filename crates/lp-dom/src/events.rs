@@ -36,6 +36,10 @@ struct Listener {
     passive: bool,
 }
 
+/// See [`Dom::set_listener_connected_hook`]: the node's index, whether it is
+/// marked [`Dom::mark_pin_on_connect`], and its listeners' callbacks.
+pub type ListenerConnectedHook = std::rc::Rc<dyn Fn(u32, bool, &[ListenerHandle])>;
+
 #[derive(Default)]
 pub struct ListenerStore {
     map: FxHashMap<TargetKey, Vec<Listener>>,
@@ -47,6 +51,9 @@ pub struct ListenerStore {
     reconnected: Vec<u32>,
     /// Nodes whose wrapper script added properties to, also reported when (re)connected.
     pin_on_connect: FxHashSet<u32>,
+    /// Told of each node [`ListenerStore::reconnected`] records, as it is
+    /// recorded (`Dom::set_listener_connected_hook`).
+    connected_hook: Option<ListenerConnectedHook>,
     /// Document -> Window key for event paths.
     windows: FxHashMap<u32, u64>,
     /// A listener for a CSS animation or transition event was ever added.
@@ -330,13 +337,37 @@ impl Dom {
         if self.events.map.is_empty() && self.events.pin_on_connect.is_empty() {
             return;
         }
+        let hook = self.events.connected_hook.clone();
+        let mut callbacks = Vec::new();
         let mut i = root;
         while i != NIL {
-            if self.events.map.contains_key(&TargetKey::Node(i)) || self.events.pin_on_connect.contains(&i) {
+            let listeners = self.events.map.get(&TargetKey::Node(i));
+            let pin = self.events.pin_on_connect.contains(&i);
+            if listeners.is_some() || pin {
                 self.events.reconnected.push(i);
+                if let Some(hook) = &hook {
+                    callbacks.clear();
+                    callbacks.extend(listeners.into_iter().flatten().map(|l| l.callback));
+                    hook(i, pin, &callbacks);
+                }
             }
             i = self.next_shadow_including_rev(i, root);
         }
+    }
+
+    /// Sets what is told of each node that holds listeners (or is marked
+    /// [`Dom::mark_pin_on_connect`]) as an insertion connects it, before the
+    /// insertion returns: the bindings keep its wrapper from then on, not
+    /// from the next safe point ([`Dom::take_reconnected_listener_nodes`]
+    /// still reports it there), so a collection later in the same task
+    /// cannot take the wrapper and its listeners. Called with the DOM
+    /// borrowed: the hook may not use it.
+    pub fn set_listener_connected_hook(&mut self, hook: Option<ListenerConnectedHook>) {
+        self.events.connected_hook = hook;
+    }
+
+    pub fn has_listener_connected_hook(&self) -> bool {
+        self.events.connected_hook.is_some()
     }
 
     pub fn has_listeners(&self, target: TargetKey) -> bool {

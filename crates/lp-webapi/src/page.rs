@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use lp_dom::events::TargetKey;
+use lp_dom::events::{ListenerHandle, TargetKey};
 pub use lp_dom::iframe::IframeAttribute;
 use lp_dom::parse::DomRef;
 use lp_dom::select::SelectorCache;
@@ -1963,6 +1963,25 @@ impl PageDom {
             for (_, raw) in entry {
                 // SAFETY: a live table entry.
                 if let Some(w) = unsafe { lp_js::WrapperRef::from_raw(*raw) } {
+                    unsafe { w.set_kept(true) };
+                }
+            }
+        }
+    }
+
+    /// Keeps the wrappers of node `idx` that hold its listeners (the worlds
+    /// of `callbacks`, which `target::handle_for` gave their realm), or all
+    /// of them when `all` (script added properties to it): the node was
+    /// just connected (`Dom::set_listener_connected_hook`). The next safe
+    /// point checks the same again (`target::reconcile_pins`), with the
+    /// worlds that keep wrappers elsewhere than in the node's slot.
+    pub(crate) fn keep_connected_listener_node(&self, idx: u32, all: bool, callbacks: &[ListenerHandle]) {
+        let Ok(table) = self.node_wrappers.try_borrow() else { return };
+        let Some(entry) = table.get(idx as usize) else { return };
+        for &(realm, raw) in entry {
+            if all || callbacks.iter().any(|c| (c.0 >> 32) as u32 == realm) {
+                // SAFETY: a live table entry.
+                if let Some(w) = unsafe { lp_js::WrapperRef::from_raw(raw) } {
                     unsafe { w.set_kept(true) };
                 }
             }

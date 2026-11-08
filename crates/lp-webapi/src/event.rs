@@ -202,6 +202,10 @@ pub struct EventCore {
     /// leaves the keys as they were (nearly all) then has nothing to
     /// rewrite: the edges only depend on the keys.
     synced: Cell<Option<TargetKeys>>,
+    /// Realms with a wrapper of this event that are not its page's (a
+    /// sibling page's listener wrapped it first): [`EventCore::refresh_wrappers`]
+    /// brings theirs in line too, or `synced` would skip them.
+    foreign_realms: RefCell<Vec<lp_js::WeakRealm>>,
 }
 
 /// An event's target, relatedTarget and submitter keys: what its hidden
@@ -246,6 +250,7 @@ impl EventCore {
             fields: RefCell::new(EventFields::default()),
             held_nodes: RefCell::new(Vec::new()),
             synced: Cell::new(None),
+            foreign_realms: RefCell::new(Vec::new()),
         })
     }
 
@@ -350,7 +355,12 @@ impl EventCore {
         }
         self.synced.set(None);
         self.retain_targets(&keys);
-        let realms: Vec<_> = self.page.realms.borrow().values().filter_map(|r| r.upgrade()).collect();
+        let mut realms: Vec<_> = self.page.realms.borrow().values().filter_map(|r| r.upgrade()).collect();
+        {
+            let mut foreign = self.foreign_realms.borrow_mut();
+            foreign.retain(|r| r.upgrade().is_some());
+            realms.extend(foreign.iter().filter_map(|r| r.upgrade()));
+        }
         let mut traced = true;
         for realm in realms {
             let Ok(s) = realm.scope() else { continue };
@@ -426,6 +436,9 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
+    if !core.page.realms.borrow().contains_key(&s.realm_id()) {
+        core.foreign_realms.borrow_mut().push(s.realm().downgrade());
+    }
     core.trace_new_wrapper(s, wrapper)?;
     Ok(wrapper)
 }

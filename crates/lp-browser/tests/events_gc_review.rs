@@ -177,12 +177,11 @@ fn listeners_added_inside_listeners_and_handlers_survive_collections() {
     settle(&mut t);
 }
 
-/// Pre-existing on 34f0f2ba (fails there too, worse): a listener added while
-/// its node is detached does not pin the wrapper; connecting the node pins it
-/// only at the next `after_task`, so a collection earlier in the same task
-/// drops the wrapper and its listener array, and the listeners never fire.
+/// Pre-existing on 34f0f2ba: a listener added while its node is detached
+/// did not pin the wrapper; connecting the node pinned it only at the next
+/// `after_task`, so a collection earlier in the same task dropped the
+/// wrapper and its listener array. The insertion keeps it now.
 #[test]
-#[ignore]
 fn listener_functions_held_only_by_targets_survive_collections() {
     let (mut t, _page, root) = page();
     eval(
@@ -495,31 +494,65 @@ fn custom_element_reactions_survive_a_long_task_drain() {
     assert_eq!(eval(&root, "conn + ':' + disc"), "300:300");
 }
 
-/// Chrome's shape of a computed style, as measured on Chrome 14x (review of
-/// C5). Ignored: documents the divergences the branch introduces or keeps;
-/// run with `--ignored` to see them.
+/// Chrome's shape of a computed style (Chrome 157), except for one thing:
+/// Chrome answers the CSS properties as own properties of the object (a
+/// named-property interceptor), here they are attributes of the prototype,
+/// read through the inline cache; making them own properties without losing
+/// that needs a JavaScriptCore change. So `hasOwnProperty`, `Object.keys`,
+/// `getOwnPropertyNames`, spread and `JSON.stringify` see only the indexed
+/// longhands (as Firefox, and the CSSOM IDL, have it). `for..in`, `in` and
+/// every read match.
 #[test]
-#[ignore]
 fn computed_style_shape_matches_chrome() {
     let (_t, _page, root) = page();
     assert_eq!(
         eval(
             &root,
             "(() => { const d = document.createElement('div'); document.body.append(d); const cs = getComputedStyle(d);
-               return [cs.hasOwnProperty('color'), String(cs.parentRule), typeof cs.removeProperty, 'mozTransform' in cs, '-moz-transform' in cs,
-                       typeof cs.scrollPaddingInline, typeof cs.transformBox, typeof cs.webkitBorderStart, 'fooBar' in cs].join(); })()"
+               return [String(cs.parentRule), typeof cs.removeProperty, 'mozTransform' in cs, '-moz-transform' in cs,
+                       typeof cs.scrollPaddingInline, typeof cs.transformBox, typeof cs.webkitBorderStart, 'fooBar' in cs,
+                       'WebkitTransform' in cs, 'epubWritingMode' in cs, cs['background-color'] === cs.backgroundColor,
+                       cs.cssFloat === cs.float, 'lineClamp' in cs].join(); })()"
         ),
-        "true,null,function,false,false,string,string,string,false"
+        "null,function,false,false,string,string,string,false,true,true,true,true,false"
     );
+    // Writes and removals throw as in Chrome, in sloppy code too.
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const cs = getComputedStyle(document.body); const out = [];
+               for (const f of [() => { cs.color = 'red'; }, () => cs.removeProperty('color'), () => cs.setProperty('color', 'red')]) {
+                 try { f(); out.push('none'); } catch (e) { out.push(e.name); } }
+               return out.join(); })()"
+        ),
+        "NoModificationAllowedError,NoModificationAllowedError,NoModificationAllowedError"
+    );
+    // `for..in`: the indices, Chrome's camel-cased and `webkit` names, then the
+    // interface's members; no dashed, `Webkit` or `epub` names.
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const cs = getComputedStyle(document.body); const names = [];
+               for (const k in cs) if (isNaN(+k)) names.push(k);
+               const set = new Set(names);
+               return [names.length, set.size, set.has('backgroundColor'), set.has('webkitTransform'), set.has('float'),
+                       set.has('cssFloat'), set.has('cssText'), set.has('getPropertyValue'), set.has('removeProperty'),
+                       names.some(n => n.includes('-') || /^(Webkit|epub|moz|Moz)/.test(n))].join(); })()"
+        ),
+        "750,750,true,true,true,true,true,true,true,false"
+    );
+    // The one difference (see above).
+    assert_eq!(eval(&root, "getComputedStyle(document.body).hasOwnProperty('color')"), "false");
 }
 
-/// Pre-existing on 34f0f2ba (fails there too, worse): a listener added while
-/// its node is detached does not pin the wrapper; connecting the node pins it
-/// only at the next `after_task`, so a collection earlier in the same task
-/// drops the wrapper and its listener array, and the listeners never fire.
+/// A listener added to a detached node that is then connected: the
+/// insertion keeps the wrapper (and so the listener functions it holds), not
+/// the next safe point, so a collection in the same task loses nothing. The
+/// same for a node whose wrapper got an expando while detached.
+/// The same as `listener_functions_held_only_by_targets_survive_collections`,
+/// checked after each kind of collection point.
 #[test]
-#[ignore]
-fn diag_listener_functions_held_only_by_targets() {
+fn listeners_survive_each_collection_point_after_connecting() {
     let (mut t, _page, root) = page();
     eval(
         &root,
@@ -546,4 +579,63 @@ fn diag_listener_functions_held_only_by_targets() {
     settle(&mut t);
     out.push(eval(&root, fire));
     assert_eq!(out.join(","), "200,200,200,200,200,200,200,200");
+}
+
+/// A wrapper given an expando while its node was detached, past a safe
+/// point (which stops keeping it, the node being detached), is kept again
+/// from the insertion that connects it, not from the next safe point.
+#[test]
+fn expandos_set_while_detached_survive_a_collection_after_connecting() {
+    let (mut t, _page, root) = page();
+    eval(
+        &root,
+        "globalThis.xbox = document.createElement('section'); globalThis.hold = [];
+         for (let i = 0; i < 200; i++) { const d = document.createElement('div'); d.mark = i; xbox.append(d); hold.push(d); } 0",
+    );
+    t.browser.checkpoint();
+    eval(&root, "document.body.append(xbox); hold = null; xbox = null; 0");
+    eval(&root, "gc(); (() => { const j = []; for (let k = 0; k < 100000; k++) j.push({ k }); })(); gc(); 0");
+    assert_eq!(eval(&root, "[...document.body.lastChild.children].filter((d, i) => d.mark === i).length"), "200");
+    settle(&mut t);
+}
+
+/// C2 (`EventCore::synced`): an event's wrapper can live in a realm that is
+/// not its page's (a native event of an iframe's page, first wrapped by a
+/// listener of the parent page). Its hidden edges must follow a re-dispatch
+/// there too, or the new target's wrapper (and its expandos) can be
+/// collected while `event.target` still names the node.
+#[test]
+fn event_wrapper_in_another_pages_realm_follows_a_redispatch() {
+    // Each `b` is the iframe's (its wrapper and page): its `click()` makes an
+    // event of that page, which this page's listener wraps first.
+    let (mut t, _page, root) = page();
+    eval(&root, "globalThis.f = document.createElement('iframe'); document.body.appendChild(f); 0");
+    settle(&mut t);
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const W = f.contentWindow; globalThis.saved = []; let current = null; let seen = 0;
+               document.body.addEventListener('click', e => { current = e; });
+               for (let i = 0; i < 50; i++) {
+                 const x = W.document.createElement('b'); document.body.append(x); x.click(); x.remove();
+                 const e = current; saved.push(e);
+                 const t2 = document.createElement('p'); t2.mark = i;
+                 t2.addEventListener('click', ev => { if (ev === e && ev.target === t2) seen++; });
+                 t2.dispatchEvent(e);
+               }
+               return [Object.getPrototypeOf(saved[0]) === Event.prototype, seen].join(); })()"
+        ),
+        "false,50"
+    );
+    // The detached `p`s are no longer kept for their expandos (the safe
+    // point sees them detached): only each event's edge keeps its wrapper.
+    t.browser.checkpoint();
+    for _ in 0..2 {
+        eval(&root, "gc(); (() => { const j = []; for (let k = 0; k < 100000; k++) j.push({ k }); })(); gc(); 0");
+        t.browser.engine.collect_garbage_now();
+        t.browser.engine.drain_finalized();
+        t.browser.checkpoint();
+    }
+    assert_eq!(eval(&root, "saved.filter((e, i) => e.target.nodeName === 'P' && e.target.mark === i).length"), "50");
+    settle(&mut t);
 }
