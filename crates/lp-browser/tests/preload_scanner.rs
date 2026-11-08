@@ -632,8 +632,13 @@ fn review_duplicate_image_urls_while_speculation_pending() {
         m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
     }
     assert!(m.try_wait_load(3), "load event: requested {:?}, log {:?}", m.loader.requests.borrow(), m.rec.log.borrow());
+    // Each image completes once (an `image/png` body whose header does not
+    // parse still fires `load`, as without speculation).
     let console = m.console();
-    assert!(console.contains(&"a error".to_string()) && console.contains(&"b error".to_string()), "{console:?}");
+    for id in ["a", "b"] {
+        let n = console.iter().filter(|l| *l == &format!("{id} load") || *l == &format!("{id} error")).count();
+        assert_eq!(n, 1, "{id}: {console:?}");
+    }
 }
 
 /// Two `<link rel=stylesheet>` with the same URL after a blocking script,
@@ -901,10 +906,8 @@ fn serve_with(
                 heads.lock().unwrap().push((path.clone(), req));
                 let (status, extra, body, delay) = handler(&path);
                 std::thread::sleep(Duration::from_millis(delay));
-                let mut head = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nCache-Control: no-store\r\n",
-                    body.len()
-                );
+                let mut head =
+                    format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nCache-Control: no-store\r\n", body.len());
                 for (k, v) in extra {
                     head.push_str(&format!("{k}: {v}\r\n"));
                 }
@@ -978,16 +981,18 @@ fn review_http_errors_and_redirects_of_speculated_scripts() {
     let origin = serve_with(handler, heads.clone());
     let (loaded, console) = http_load(&origin, 20);
     assert!(loaded, "{console:?}");
-    let console: Vec<String> = console.into_iter().filter(|l| !l.starts_with("exception: TypeError: Failed to load script")).collect();
+    let console: Vec<String> =
+        console.into_iter().filter(|l| !l.starts_with("exception: TypeError: Failed to load script")).collect();
     let target = format!("target {origin}/redir.js");
-    assert_eq!(
-        console,
-        ["s1", "404 error", "500 error", target.as_str(), "inline rgb(4, 5, 6)"],
-        "{console:?}"
-    );
+    assert_eq!(console, ["s1", "404 error", "500 error", target.as_str(), "inline rgb(4, 5, 6)"], "{console:?}");
     let heads = heads.lock().unwrap();
     for p in ["/s1.js", "/missing.js", "/boom.js", "/redir.js", "/target.js", "/redir.css", "/target.css"] {
-        assert_eq!(heads.iter().filter(|(h, _)| h == p).count(), 1, "{p}: {:?}", heads.iter().map(|h| &h.0).collect::<Vec<_>>());
+        assert_eq!(
+            heads.iter().filter(|(h, _)| h == p).count(),
+            1,
+            "{p}: {:?}",
+            heads.iter().map(|h| &h.0).collect::<Vec<_>>()
+        );
     }
 }
 

@@ -20,6 +20,21 @@
 //! another policy. Nonces (CSP is not enforced) and `integrity` do not
 //! change a request; `crossorigin` (CORS mode and credentials) is part of
 //! the key.
+//!
+//! A speculative request is made when the scan finds the element, so it
+//! carries the cookies of that time: a cookie a script before the element
+//! sets (`document.cookie`, or a response the script fetches) is not sent
+//! with it, nor is a referrer policy a script changes applied. Chrome's
+//! preload scanner behaves the same (a script setting a cookie the server
+//! reads for the next request of the document sees the difference).
+//!
+//! Each speculative fetch serves one element. The first element whose
+//! request matches takes it; while it is pending, its slot leaves the map,
+//! so a second element with the same URL (an image repeated in a list, a
+//! stylesheet included twice) makes its own request, as without
+//! speculation, and an element that drops its claim (its `src` changed, it
+//! was removed) cancels that fetch without leaving anything behind for a
+//! later element to wait on.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -58,6 +73,11 @@ pub(crate) struct Speculation {
     entries: HashMap<String, Entry>,
     /// Requests not started yet, in document order.
     queue: VecDeque<FetchRequest>,
+    /// Pending fetches an element claimed (out of `entries`): kept here so
+    /// the document owns them (dropping it cancels their transport) until
+    /// they complete; one its element cancelled stays (inert, at most
+    /// `MAX_SPECULATED`) until the document goes.
+    claimed: Vec<Rc<RefCell<Slot>>>,
     /// Started and not claimed by an element.
     in_flight: usize,
     speculated: usize,
@@ -100,6 +120,8 @@ struct Slot {
     /// The element's completion, once its request claimed a pending fetch.
     waiter: Option<FetchDone>,
     cancel: Option<ResourceCancellation>,
+    /// An element took it while pending: it is in `claimed`, not `entries`,
+    /// and not counted in `in_flight`.
     claimed: bool,
 }
 
@@ -115,7 +137,14 @@ impl Speculation {
     /// request is cancelled); claimed fetches complete for their elements.
     pub(crate) fn end_of_parsing(&mut self) {
         self.queue.clear();
-        self.entries.retain(|_, e| matches!(e, Entry::Started(_, slot) if slot.borrow().claimed));
+        self.entries.clear();
+        self.in_flight = 0;
+    }
+
+    /// An unclaimed fetch completed or was claimed.
+    fn release_in_flight(&mut self) {
+        debug_assert!(self.in_flight > 0, "speculative in-flight count underflow");
+        self.in_flight = self.in_flight.saturating_sub(1);
     }
 
     fn add(&mut self, request: FetchRequest) {
@@ -180,14 +209,27 @@ impl Browser {
             if spec.scanner.stopped() || spec.speculated >= MAX_SPECULATED {
                 return;
             }
-            let Some(parser) = load.parser.as_ref() else { return };
+            let Some(parser) = load.parser.as_mut() else { return };
+            if parser.in_insertion_point() {
+                return;
+            }
             let appended = parser.appended_input();
             let back_new = appended.saturating_sub(spec.seen_appended);
-            let (tail_scanned, seen) = (spec.tail_scanned, &mut spec.seen_appended);
+            // What remains of the input the last scan covered: at most what
+            // it was, and at most what was behind each write since (the
+            // parser consumes written input before it).
+            let mut scanned_left = spec.tail_scanned;
+            if let Some(mark) = parser.take_written_low_mark() {
+                let behind = (mark + spec.seen_appended as isize).max(0) as usize;
+                scanned_left = scanned_left.min(behind);
+            }
+            let seen = &mut spec.seen_appended;
+            let parser = &*parser;
             let texts = parser.unconsumed_input(|total, chunks| {
                 *seen = appended;
+                // Front to back: [written since][scanned][appended since].
                 let old = total.saturating_sub(back_new);
-                let front_new = old.saturating_sub(tail_scanned);
+                let front_new = old.saturating_sub(scanned_left);
                 (copy_range(chunks, 0, front_new), copy_range(chunks, old, total), total)
             });
             let Some((front, back, total)) = texts else { return };
@@ -287,6 +329,11 @@ impl Browser {
             let Some(load) = self.doc(page).and_then(|p| p.filter_map(|p| p.load.as_ref())) else { return };
             let dom = load.dom.borrow();
             let Ok(info) = dom.script_info(node) else { return };
+            // As `prepare_script` classifies it: only a classic script that
+            // is not `nomodule` is fetched.
+            if info.kind != lp_dom::script::ScriptKind::Classic || info.nomodule || info.already_started {
+                return;
+            }
             let Some(src) = info.src.as_deref() else { return };
             let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| requester.base_url.clone());
             let Some(url) = crate::loader::resolve_url(&base, src) else { return };
@@ -383,9 +430,10 @@ impl Browser {
             if let Some(mut load) = self.load_mut(page) {
                 let spec = &mut load.speculation;
                 if claimed {
-                    spec.entries.remove(&url);
-                } else {
-                    spec.in_flight -= 1;
+                    spec.claimed.retain(|s| !Rc::ptr_eq(s, &slot));
+                } else if matches!(spec.entries.get(&url), Some(Entry::Started(_, s)) if Rc::ptr_eq(s, &slot)) {
+                    // Still unclaimed in the map (parsing has not ended).
+                    spec.release_in_flight();
                 }
             }
         }
@@ -424,8 +472,12 @@ impl Browser {
                         Claim::Done(result)
                     }
                     None => {
+                        // Out of the map: a later request for the URL
+                        // fetches on its own.
+                        spec.entries.remove(&request.url);
                         slot.borrow_mut().claimed = true;
-                        spec.in_flight -= 1;
+                        spec.claimed.push(slot.clone());
+                        spec.release_in_flight();
                         Claim::Pending(slot)
                     }
                 }
@@ -454,11 +506,16 @@ impl Browser {
                 slot.borrow_mut().waiter = Some(done);
                 self.pump_speculation(page);
                 let weak = Rc::downgrade(&slot);
+                // Dropping the handle cancels the transport (the slot stays in
+                // `claimed`, unreachable by URL, until the document goes).
                 Some(ResourceCancellation::new(move || {
                     if let Some(slot) = weak.upgrade() {
-                        let mut s = slot.borrow_mut();
-                        s.waiter = None;
-                        s.cancel = None;
+                        let cancel = {
+                            let mut s = slot.borrow_mut();
+                            s.waiter = None;
+                            s.cancel.take()
+                        };
+                        drop(cancel);
                     }
                 }))
             }

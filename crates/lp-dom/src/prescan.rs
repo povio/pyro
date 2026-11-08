@@ -11,8 +11,11 @@
 //! bogus comments, the contents of raw text elements (`script`, `style`,
 //! `textarea`, `title`, `xmp`, `iframe`, `noembed`, `noframes`, and
 //! `noscript`, since the scan only runs with scripting on), `<template>`
-//! contents (inert), foreign content (`<svg>`, `<math>`) until a tag that
-//! breaks out of it, and everything after `<plaintext>`. An `<img>` inside
+//! contents (inert), foreign content (`<svg>`, `<math>`, with CDATA
+//! sections) except inside its integration points (`foreignObject`,
+//! `mtext`, ...) and until a tag that breaks out of it, script text in its
+//! escaped states (`<!--<script>...</script>-->`), and everything after
+//! `<plaintext>`. An `<img>` inside
 //! `<picture>` or with a `srcset` is left to the element (its source
 //! depends on the viewport). A tag the chunk cuts off is dropped.
 
@@ -46,10 +49,40 @@ pub enum Prescanned {
 pub struct Prescan {
     template_depth: usize,
     picture_depth: usize,
-    foreign_depth: usize,
+    /// The open elements from the outermost `<svg>`/`<math>` in: empty in
+    /// HTML content. HTML elements inside an integration point are kept
+    /// too, so their end tags do not close foreign ones.
+    foreign: Vec<Open>,
     base_seen: bool,
     stopped: bool,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Ns {
+    Html,
+    Svg,
+    MathMl,
+}
+
+/// An element open in (or inside) foreign content.
+struct Open {
+    /// Lowercase.
+    name: Box<str>,
+    ns: Ns,
+    /// A MathML text integration point (`mi`, `mo`, `mn`, `ms`, `mtext`):
+    /// start tags but `mglyph`/`malignmark` are HTML inside it.
+    text_point: bool,
+    /// An HTML integration point (SVG `foreignObject`, `desc`, `title`;
+    /// MathML `annotation-xml` with an HTML `encoding`): start tags are
+    /// HTML inside it.
+    html_point: bool,
+}
+
+/// HTML elements without end tags (nothing to pop).
+const VOID: &[&str] = &[
+    "area", "base", "basefont", "bgsound", "br", "col", "embed", "frame", "hr", "image", "img", "input", "keygen",
+    "link", "meta", "param", "source", "track", "wbr",
+];
 
 /// Elements whose content is text up to their end tag (RAWTEXT, RCDATA,
 /// script data; `noscript` with scripting enabled).
@@ -124,6 +157,11 @@ impl Prescan {
         self.stopped
     }
 
+    /// Whether the current node is an SVG or MathML element.
+    fn in_foreign_element(&self) -> bool {
+        self.foreign.last().is_some_and(|o| o.ns != Ns::Html)
+    }
+
     /// Scans one chunk of markup, reporting what it finds in document order.
     pub fn scan(&mut self, input: &str, mut emit: impl FnMut(Prescanned)) {
         let b = input.as_bytes();
@@ -145,6 +183,12 @@ impl Prescan {
                         };
                         match end {
                             Some(e) => pos = e,
+                            None => return,
+                        }
+                    } else if self.in_foreign_element() && b[i + 1..].starts_with(b"![CDATA[") {
+                        // A CDATA section (the current node is not HTML).
+                        match b[i + 9..].windows(3).position(|w| w == b"]]>") {
+                            Some(e) => pos = i + 9 + e + 3,
                             None => return,
                         }
                     } else {
@@ -198,17 +242,76 @@ impl Prescan {
         emit: &mut impl FnMut(Prescanned),
     ) -> Option<&'static str> {
         let is = |tag: &str| name.eq_ignore_ascii_case(tag);
-        if self.foreign_depth > 0 {
+        // HTML "tree construction dispatcher" and "in foreign content".
+        loop {
+            let Some(top) = self.foreign.last() else { break };
+            let as_html = top.ns == Ns::Html
+                || top.html_point
+                || (top.text_point && !is("mglyph") && !is("malignmark"))
+                || (top.ns == Ns::MathMl && &*top.name == "annotation-xml" && is("svg"));
+            if as_html {
+                if is("svg") || is("math") {
+                    break;
+                }
+                let raw = self.html_start_tag(name, attrs, self_closing, emit);
+                if raw.is_none() && !VOID.iter().any(|t| is(t)) {
+                    self.foreign.push(Open {
+                        name: name.to_ascii_lowercase().into(),
+                        ns: Ns::Html,
+                        text_point: false,
+                        html_point: false,
+                    });
+                }
+                return raw;
+            }
             let breakout = BREAKOUT.iter().any(|t| is(t))
                 || (is("font") && ["color", "face", "size"].iter().any(|a| attr(attrs, a).is_some()));
-            if !breakout {
-                if !self_closing {
-                    self.foreign_depth += 1;
-                }
-                return None;
+            if breakout {
+                // Pop to an integration point or HTML element; reprocess.
+                self.pop_to_html_context();
+                continue;
             }
-            self.foreign_depth = 0;
+            // A foreign element, in the current node's namespace.
+            let ns = top.ns;
+            if !self_closing {
+                let lower = name.to_ascii_lowercase();
+                let text_point = ns == Ns::MathMl && matches!(&*lower, "mi" | "mo" | "mn" | "ms" | "mtext");
+                let html_point = match ns {
+                    Ns::Svg => matches!(&*lower, "foreignobject" | "desc" | "title"),
+                    _ => {
+                        lower == "annotation-xml"
+                            && attr(attrs, "encoding").is_some_and(|e| {
+                                e.eq_ignore_ascii_case("text/html") || e.eq_ignore_ascii_case("application/xhtml+xml")
+                            })
+                    }
+                };
+                self.foreign.push(Open { name: lower.into(), ns, text_point, html_point });
+            }
+            return None;
         }
+        self.html_start_tag(name, attrs, self_closing, emit)
+    }
+
+    /// Pops foreign elements up to an HTML integration point, a MathML text
+    /// integration point or an HTML element (or out of foreign content).
+    fn pop_to_html_context(&mut self) {
+        while let Some(top) = self.foreign.last() {
+            if top.ns == Ns::Html || top.html_point || top.text_point {
+                break;
+            }
+            self.foreign.pop();
+        }
+    }
+
+    /// A start tag in HTML content.
+    fn html_start_tag(
+        &mut self,
+        name: &str,
+        attrs: &Attrs<'_>,
+        self_closing: bool,
+        emit: &mut impl FnMut(Prescanned),
+    ) -> Option<&'static str> {
+        let is = |tag: &str| name.eq_ignore_ascii_case(tag);
         if let Some(raw) = RAW_TEXT.iter().find(|r| is(r)) {
             if is("script") && self.template_depth == 0 {
                 self.script(attrs, emit);
@@ -221,7 +324,13 @@ impl Prescan {
             self.template_depth += 1;
         } else if is("svg") || is("math") {
             if !self_closing {
-                self.foreign_depth = 1;
+                let ns = if is("svg") { Ns::Svg } else { Ns::MathMl };
+                self.foreign.push(Open {
+                    name: name.to_ascii_lowercase().into(),
+                    ns,
+                    text_point: false,
+                    html_point: false,
+                });
             }
         } else if is("picture") {
             self.picture_depth += 1;
@@ -251,9 +360,16 @@ impl Prescan {
     }
 
     fn end_tag(&mut self, name: &str) {
-        if self.foreign_depth > 0 {
-            self.foreign_depth -= 1;
-            return;
+        if !self.foreign.is_empty() {
+            // The innermost open element of that name closes, with what is
+            // inside it (an approximation of both insertion modes' rules).
+            let lower = name.to_ascii_lowercase();
+            let Some(at) = self.foreign.iter().rposition(|o| *o.name == *lower) else { return };
+            let html = self.foreign[at].ns == Ns::Html;
+            self.foreign.truncate(at);
+            if !html {
+                return;
+            }
         }
         if name.eq_ignore_ascii_case("template") {
             self.template_depth = self.template_depth.saturating_sub(1);
@@ -328,10 +444,22 @@ fn comment_end(b: &[u8], from: usize) -> Option<usize> {
     None
 }
 
+/// Whether `b[at..]` is `prefix` + `name` (any case) followed by
+/// whitespace, `/` or `>` (or the end of input when `open_end`).
+fn tag_at(b: &[u8], at: usize, prefix: &[u8], name: &str, open_end: bool) -> bool {
+    let n = at + prefix.len();
+    b[at..].starts_with(prefix)
+        && b.get(n..n + name.len()).is_some_and(|t| t.eq_ignore_ascii_case(name.as_bytes()))
+        && b.get(n + name.len()).map_or(open_end, |&c| is_space(c) || c == b'/' || c == b'>')
+}
+
 /// The position after `</name` (any case) followed by whitespace, `/` or
 /// `>`, and then its `>`; `None` when the rest of the input is the element's
 /// text.
 fn raw_text_end(b: &[u8], from: usize, name: &str) -> Option<usize> {
+    if name == "script" {
+        return script_data_end(b, from);
+    }
     let mut i = from;
     loop {
         let off = b[i..].windows(2).position(|w| w == b"</")?;
@@ -342,6 +470,55 @@ fn raw_text_end(b: &[u8], from: usize, name: &str) -> Option<usize> {
             return b[at..].iter().position(|&c| c == b'>').map(|e| at + e + 1);
         }
         i = at;
+    }
+}
+
+/// `raw_text_end` for script data, through its escaped (`<!--`) and
+/// double-escaped (`<!--<script>`) states: in the latter, `</script>`
+/// returns to escaped text instead of ending the element, and `-->` returns
+/// to plain script data from either.
+fn script_data_end(b: &[u8], from: usize) -> Option<usize> {
+    #[derive(PartialEq)]
+    enum State {
+        Data,
+        Escaped,
+        DoubleEscaped,
+    }
+    let mut state = State::Data;
+    let mut i = from;
+    loop {
+        // Only `<` (and in escaped text `-`) can change the state.
+        let escaped = state != State::Data;
+        i += b[i..].iter().position(|&c| c == b'<' || (escaped && c == b'-'))?;
+        if escaped && b[i..].starts_with(b"-->") {
+            state = State::Data;
+            i += 3;
+            continue;
+        }
+        if b[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        match state {
+            State::Data if b[i..].starts_with(b"<!--") => {
+                // At the `--`: `<!-->` and `<!--->` return at once.
+                state = State::Escaped;
+                i += 2;
+            }
+            State::Data | State::Escaped if tag_at(b, i, b"</", "script", true) => {
+                let at = i + 2;
+                return b[at..].iter().position(|&c| c == b'>').map(|e| at + e + 1);
+            }
+            State::Escaped if tag_at(b, i, b"<", "script", false) => {
+                state = State::DoubleEscaped;
+                i += 7;
+            }
+            State::DoubleEscaped if tag_at(b, i, b"</", "script", false) => {
+                state = State::Escaped;
+                i += 8;
+            }
+            _ => i += 1,
+        }
     }
 }
 
@@ -589,6 +766,56 @@ mod tests {
         assert_eq!(scan(r#"<script src="/a.js"></script><script src="/b"#), [script("/a.js")]);
         assert_eq!(scan(r#"<script src="/a.js"></script><!-- open"#), [script("/a.js")]);
         assert_eq!(scan(r#"<script src="/a.js"></script><script>no end"#), [script("/a.js")]);
+    }
+
+    #[test]
+    fn escaped_script_data_ends_where_the_tokenizer_ends_it() {
+        // Double-escaped: the inner `</script>` does not end the element.
+        let items = scan(
+            r#"<script><!--<script></script><img src="/esc.png">--></script><img src="/after.png">
+            <script><!--</script><img src="/escaped-end.png">
+            <script><!-- x --><script src="/notnested.js"></script></script>
+            <script><!--<script>--></script><img src="/dd.png">
+            <script><!--><img src="/no.png"></script><img src="/short.png">"#,
+        );
+        let img = |s: &str| Prescanned::Image { src: s.into() };
+        assert_eq!(items, [img("/after.png"), img("/escaped-end.png"), img("/dd.png"), img("/short.png")]);
+    }
+
+    #[test]
+    fn integration_points_keep_foreign_content() {
+        let img = |s: &str| Prescanned::Image { src: s.into() };
+        // HTML inside a text integration point does not end the <math>.
+        assert_eq!(
+            scan(
+                r#"<math><mtext><b>x</b></mtext><annotation-xml><script src="/mathx.js"></script></annotation-xml></math>
+                <svg><foreignObject><div>x</div></foreignObject><script src="/svgx.js"></script></svg><img src="/out.png">"#
+            ),
+            [img("/out.png")]
+        );
+        // Inside an integration point, start tags are HTML elements.
+        assert_eq!(
+            scan(
+                r#"<svg><foreignObject><img src="/fo.png"><script src="/fo.js"></script></foreignObject><image href="/x.png"/></svg>
+                <math><mi><img src="/mi.png"></mi><annotation-xml encoding="text/html"><script src="/ax.js"></script></annotation-xml></math>"#
+            ),
+            [img("/fo.png"), script("/fo.js"), img("/mi.png"), script("/ax.js")]
+        );
+        // A breakout tag in plain foreign content ends it.
+        assert_eq!(
+            scan(r#"<svg><g><p><img src="/p.png"></svg><script src="/s.js"></script>"#),
+            [img("/p.png"), script("/s.js")]
+        );
+    }
+
+    #[test]
+    fn cdata_in_foreign_content_is_skipped_to_its_end() {
+        assert_eq!(
+            scan(r#"<svg><![CDATA[ a > b <script src="/cd.js"></script> ]]></svg><script src="/after.js"></script>"#),
+            [script("/after.js")]
+        );
+        // In HTML, a bogus comment up to the first `>`.
+        assert_eq!(scan(r#"<![CDATA[ x ><script src="/html.js"></script>"#), [script("/html.js")]);
     }
 
     #[test]

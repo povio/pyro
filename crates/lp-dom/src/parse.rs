@@ -528,6 +528,12 @@ pub struct DocumentParser {
     /// `unconsumed_input`, a preload scan tells apart input it has not
     /// seen at the front (written) from input at the back.
     appended: usize,
+    /// The least `outer input length - appended` at the times written
+    /// input was put in front of the network input (`close_insertion_point`
+    /// with input left over), since `take_written_low_mark`: the network
+    /// input consumed meanwhile is only measurable then, as written input
+    /// is consumed before it.
+    written_low_mark: Option<isize>,
     /// An XML document: the response is parsed whole at end of input, then
     /// its scripts are yielded one by one.
     xml: Option<XmlLoad>,
@@ -610,6 +616,7 @@ impl DocumentParser {
             sniff: Vec::new(),
             saved: Vec::new(),
             appended: 0,
+            written_low_mark: None,
             xml: None,
         })
     }
@@ -754,6 +761,23 @@ impl DocumentParser {
         self.appended
     }
 
+    /// Whether a script's insertion point is open (its writes are being
+    /// parsed; the network input is set aside).
+    pub fn in_insertion_point(&self) -> bool {
+        !self.saved.is_empty()
+    }
+
+    /// What the input held behind written markup, as the least
+    /// `length - appended_input()` seen each time a script's written input
+    /// was left in front of it since the last call (`None`: no such time).
+    /// A preload scan adds the appended count of its previous scan to tell
+    /// how much of what it scanned then is still unconsumed: the parser
+    /// consumes written input first, so only at those times is the input
+    /// behind it all network input.
+    pub fn take_written_low_mark(&mut self) -> Option<isize> {
+        self.written_low_mark.take()
+    }
+
     /// The input the tokenizer has not consumed, front to back, as `f` sees
     /// it; `None` inside an insertion point (a script is writing). Nothing
     /// is consumed. The total length is the first value.
@@ -794,6 +818,19 @@ impl DocumentParser {
             rest.push(chunk);
         }
         self.input.swap_with(&outer);
+        if self.saved.is_empty() && !rest.is_empty() {
+            let mut outer_len = 0;
+            let mut chunks = Vec::new();
+            while let Some(chunk) = self.input.pop_front() {
+                outer_len += chunk.len();
+                chunks.push(chunk);
+            }
+            for chunk in chunks.into_iter().rev() {
+                self.input.push_front(chunk);
+            }
+            let mark = outer_len as isize - self.appended as isize;
+            self.written_low_mark = Some(self.written_low_mark.map_or(mark, |m| m.min(mark)));
+        }
         for chunk in rest.into_iter().rev() {
             self.input.push_front(chunk);
         }
