@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use lp_dom::events::{dispatch_with, AddOptions, ListenerHandle, ListenerInvoker, PathItem, TargetKey};
+use lp_dom::events::{dispatch_on_path, AddOptions, ListenerHandle, ListenerInvoker, PathItem, TargetKey};
 use lp_dom::{Dom, NodeId};
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Realm, RealmId, Scope, Value};
 
@@ -712,9 +712,10 @@ pub(crate) fn fire_with(
         state.related_target = event.fields.borrow().related_target;
     }
     event.refresh_wrappers();
-    // A callback can detach ancestors and run GC during dispatch.
+    // A callback can detach ancestors and run GC during dispatch. The path
+    // is built once, here, and dispatched on below.
     let path = page.dom.borrow().event_path(target, &event.state.borrow());
-    let ids: Vec<_> = {
+    let ids: Box<[NodeId]> = {
         let dom = page.dom.borrow();
         path.iter().filter_map(|(key, _)| dom.key_node(*key)).collect()
     };
@@ -735,7 +736,7 @@ pub(crate) fn fire_with(
         }
     };
     let mut inv = Invoker { page, event, in_shadow };
-    let result = dispatch_with(&page.dom, target, &event.state, &mut inv, before_listeners);
+    let result = dispatch_on_path(&page.dom, target, &path, &event.state, &mut inv, before_listeners);
     // The relatedTarget stays as the outermost invocation target saw it, or
     // is reset with the target ("clearTargets").
     event.fields.borrow_mut().related_target = event.state.borrow().related_target;

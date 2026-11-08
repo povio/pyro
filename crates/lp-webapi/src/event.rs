@@ -1,11 +1,12 @@
 //! Event interfaces. One native `EventCore` per event; each realm that sees
 //! it gets its own wrapper (isolated worlds), all sharing the state.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
 use lp_dom::events::{EventState, TargetKey};
+use lp_dom::NodeId;
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope, Value};
 
 use crate::page::PageDom;
@@ -195,7 +196,17 @@ pub struct EventCore {
     pub state: RefCell<EventState>,
     pub fields: RefCell<EventFields>,
     held_nodes: RefCell<Vec<crate::collections::NodeHold>>,
+    /// The target keys ([`EventCore::target_keys`]) the held nodes and the
+    /// hidden edges of every live wrapper of this event were last brought in
+    /// line with; `None` when some wrapper may be behind. A dispatch that
+    /// leaves the keys as they were (nearly all) then has nothing to
+    /// rewrite: the edges only depend on the keys.
+    synced: Cell<Option<TargetKeys>>,
 }
+
+/// An event's target, relatedTarget and submitter keys: what its hidden
+/// edges and held nodes mirror.
+type TargetKeys = [Option<TargetKey>; 3];
 
 pub type EventData = Rc<EventCore>;
 
@@ -234,6 +245,7 @@ impl EventCore {
             state: RefCell::new(st),
             fields: RefCell::new(EventFields::default()),
             held_nodes: RefCell::new(Vec::new()),
+            synced: Cell::new(None),
         })
     }
 
@@ -262,18 +274,24 @@ impl EventCore {
         e
     }
 
-    /// Keep native identities alive as long as the event exposes them.
-    pub(crate) fn retain_targets(&self) {
+    /// The keys the event's hidden edges and held nodes mirror.
+    fn target_keys(&self) -> TargetKeys {
         let fields = self.fields.borrow();
-        let keys = [self.state.borrow().target, fields.related_target, fields.submitter];
-        let ids: Vec<_> = {
+        [self.state.borrow().target, fields.related_target, fields.submitter]
+    }
+
+    /// Keep native identities alive as long as the event exposes them.
+    fn retain_targets(&self, keys: &TargetKeys) {
+        let mut ids: [Option<NodeId>; 3] = [None; 3];
+        {
             let dom = self.page.dom.borrow();
-            keys.into_iter().flatten().filter_map(|k| dom.key_node(k)).collect()
-        };
-        drop(fields);
+            for (id, key) in ids.iter_mut().zip(keys) {
+                *id = key.and_then(|k| dom.key_node(k));
+            }
+        }
         let mut held = self.held_nodes.borrow_mut();
-        held.retain(|h| ids.contains(&h.id));
-        for id in ids {
+        held.retain(|h| ids.contains(&Some(h.id)));
+        for id in ids.into_iter().flatten() {
             if !held.iter().any(|h| h.id == id) {
                 if let Ok(h) = crate::collections::NodeHold::new(&self.page, id) {
                     held.push(h);
@@ -282,31 +300,69 @@ impl EventCore {
         }
     }
 
-    fn trace_targets(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
-        let fields = self.fields.borrow();
-        let keys = [self.state.borrow().target, fields.related_target, fields.submitter];
-        let data_transfer = fields.data_transfer.clone();
-        drop(fields);
+    fn trace_targets(&self, s: &Scope<'_>, wrapper: Object<'_>, keys: &TargetKeys) -> JsResult<()> {
+        let data_transfer = self.fields.borrow().data_transfer.clone();
         if let Some(data_transfer) = data_transfer {
             s.set_hidden(wrapper, "__lpEventDataTransfer", data_transfer.get(s)?.value())?;
         }
         for (name, key) in ["__lpEventTarget", "__lpRelatedTarget", "__lpSubmitter"].into_iter().zip(keys) {
             // Hidden edges preserve wrapper identity/expandos without native GC cycles.
-            s.set_hidden(wrapper, name, target_value(s, &self.page, key)?)?;
+            s.set_hidden(wrapper, name, target_value(s, &self.page, *key)?)?;
         }
         Ok(())
     }
 
+    /// Brings the hidden edges of an existing wrapper of this event in line
+    /// with its keys, unless every wrapper's already are.
+    fn sync_wrapper(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
+        let keys = self.target_keys();
+        if self.synced.get() == Some(keys) {
+            return Ok(());
+        }
+        // Other wrappers (other realms) stay behind until `refresh_wrappers`.
+        self.synced.set(None);
+        self.retain_targets(&keys);
+        self.trace_targets(s, wrapper, &keys)
+    }
+
+    /// Traces a wrapper just made for this event: it had no edges yet. The
+    /// other wrappers' standing is unchanged by it.
+    fn trace_new_wrapper(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
+        let keys = self.target_keys();
+        let others = self.synced.replace(None);
+        self.retain_targets(&keys);
+        self.trace_targets(s, wrapper, &keys)?;
+        if others == Some(keys) {
+            self.synced.set(others);
+        }
+        Ok(())
+    }
+
+    /// Brings the hidden edges of every wrapper of this event (and its held
+    /// nodes) in line with its keys after they may have changed (a dispatch,
+    /// an `init*Event` call). Nothing to do while they are in line already:
+    /// the edges are a function of the keys, and every wrapper made since
+    /// was traced with them.
     pub(crate) fn refresh_wrappers(&self) {
-        self.retain_targets();
+        let keys = self.target_keys();
+        if self.synced.get() == Some(keys) {
+            return;
+        }
+        self.synced.set(None);
+        self.retain_targets(&keys);
         let realms: Vec<_> = self.page.realms.borrow().values().filter_map(|r| r.upgrade()).collect();
+        let mut traced = true;
         for realm in realms {
             let Ok(s) = realm.scope() else { continue };
             if let Some(wrapper) = s.lookup_identity(self.page.event_identity(self.id)) {
-                if let Err(err) = self.trace_targets(&s, wrapper) {
+                if let Err(err) = self.trace_targets(&s, wrapper, &keys) {
+                    traced = false;
                     s.report_exception(&err);
                 }
             }
+        }
+        if traced {
+            self.synced.set(Some(keys));
         }
     }
 
@@ -317,10 +373,9 @@ impl EventCore {
 
 /// Wraps `core` in `s`'s realm using the class matching its interface.
 pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
-    core.retain_targets();
     let key = core.page.event_identity(core.id);
     if let Some(o) = s.lookup_identity(key) {
-        core.trace_targets(s, o)?;
+        core.sync_wrapper(s, o)?;
         return Ok(o);
     }
     // An event keeps its object when dispatched into a sibling document.
@@ -328,7 +383,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         for realm in page.sibling_realms(s) {
             let Ok(owner) = realm.scope() else { continue };
             if let Some(o) = owner.lookup_identity(key) {
-                core.trace_targets(&owner, o)?;
+                core.sync_wrapper(&owner, o)?;
                 if let Some(o) = lp_js::Persistent::new(&owner, o.value()).get(s).as_object() {
                     return Ok(o);
                 }
@@ -371,7 +426,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
-    core.trace_targets(s, wrapper)?;
+    core.trace_new_wrapper(s, wrapper)?;
     Ok(wrapper)
 }
 
@@ -497,10 +552,13 @@ fn construct<'s, C: JsClass<Data = EventData>>(
         core.fields.borrow_mut().view = view_init(s, init)?;
     }
     let key = page.event_identity(core.id);
-    core.retain_targets();
     let wrapper = s.wrap_new::<C>(core.clone(), new_target, Some(key))?;
     define_unforgeables(s, &page, wrapper)?;
-    core.trace_targets(s, wrapper)?;
+    // The event's first and only wrapper: traced, every wrapper is in line.
+    let keys = core.target_keys();
+    core.retain_targets(&keys);
+    core.trace_targets(s, wrapper, &keys)?;
+    core.synced.set(Some(keys));
     Ok(wrapper)
 }
 
