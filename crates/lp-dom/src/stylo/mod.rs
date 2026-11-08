@@ -177,22 +177,6 @@ pub fn longhand_names() -> &'static [&'static str] {
     &NAMES
 }
 
-/// Every CSS property the engine parses (longhands, shorthands and their
-/// aliases, such as `-webkit-transform`), in alphabetical order: the
-/// attributes of `CSSStyleDeclaration`.
-pub fn property_names() -> &'static [&'static str] {
-    static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-        let mut names: Vec<&'static str> = style::properties::NonCustomPropertyId::iter()
-            .map(|id| id.name())
-            .filter(|name| property_id(name).is_some())
-            .collect();
-        names.sort_unstable();
-        names.dedup();
-        names
-    });
-    &NAMES
-}
-
 /// Whether `name` is a CSS property (longhand or shorthand) the engine knows.
 pub fn is_property(name: &str) -> bool {
     property_id(name).is_some()

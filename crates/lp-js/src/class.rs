@@ -89,6 +89,9 @@ pub(crate) struct AccessorSpec {
     /// Custom accessor slot ([`crate::accessors`]); `None` installs an
     /// ordinary accessor (no patched JSC, or the slots are used up).
     pub slot: Option<u16>,
+    /// Listed by `for..in` (WebIDL attributes are); see
+    /// [`ClassDef::unenumerable_last_accessor`].
+    pub enumerable: bool,
 }
 
 /// A member's Rust callback, type-erased, plus the invoker that knows its
@@ -317,6 +320,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -346,6 +350,7 @@ impl<C: JsClass> ClassDef<C> {
             result,
             get_h: Some(getter_invoke_h::<C>),
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -389,6 +394,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -415,6 +421,7 @@ impl<C: JsClass> ClassDef<C> {
             result,
             get_h: Some(getter_this_invoke_h::<C>),
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -432,6 +439,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: Some(setter_invoke_h::<C>),
+            enumerable: true,
         });
         self
     }
@@ -455,6 +463,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: Some(setter_invoke_h::<C>),
+            enumerable: true,
         });
         self
     }
@@ -480,7 +489,19 @@ impl<C: JsClass> ClassDef<C> {
             result,
             get_h: Some(getter_invoke_h::<C>),
             set_h: Some(setter_invoke_h::<C>),
+            enumerable: true,
         });
+        self
+    }
+
+    /// Leaves the attribute added last out of `for..in` and `Object.keys` of
+    /// the prototype (the property is still found by name): for aliases a
+    /// browser answers without listing them, such as the dashed and
+    /// `Webkit`-cased names of a CSS property in `CSSStyleDeclaration`.
+    pub fn unenumerable_last_accessor(&mut self) -> &mut Self {
+        if let Some(a) = self.accessors.last_mut() {
+            a.enumerable = false;
+        }
         self
     }
 
@@ -502,6 +523,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: None,
+            enumerable: true,
         });
         self
     }

@@ -27,6 +27,7 @@ mod compression;
 pub mod crypto;
 mod crypto_subtle;
 pub mod css;
+mod computed_properties;
 pub mod custom;
 pub mod data_transfer;
 pub mod dom_parser;

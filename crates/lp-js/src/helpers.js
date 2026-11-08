@@ -105,10 +105,10 @@
   // Interfaces are populated when a page first uses them, after its scripts
   // may have put `get`, `set` or `value` on Object.prototype: the member
   // installation's descriptors have no prototype.
-  function defineAccessor(proto, name, get, set) {
+  function defineAccessor(proto, name, get, set, enumerable) {
     try { defineProperty(get, 'name', { __proto__: null, value: 'get ' + name }); } catch (_) {}
     if (set) { try { defineProperty(set, 'name', { __proto__: null, value: 'set ' + name }); } catch (_) {} }
-    defineProperty(proto, name, { __proto__: null, get, set, enumerable: true, configurable: true });
+    defineProperty(proto, name, { __proto__: null, get, set, enumerable: enumerable !== false, configurable: true });
   }
 
   // DOMException (https://webidl.spec.whatwg.org/#idl-DOMException): a

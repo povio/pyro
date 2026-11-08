@@ -268,11 +268,6 @@ const UNPARSED: &[&str] = &[
     "zoom",
 ];
 
-/// The [`UNPARSED`] properties: Chrome has them, Stylo does not parse them.
-pub(crate) fn unparsed_names() -> impl Iterator<Item = &'static str> {
-    UNPARSED.iter().copied().filter(|name| !lp_dom::stylo::is_property(name))
-}
-
 /// A property Chrome has and Stylo does not parse (kept as written).
 fn unparsed(name: &str) -> bool {
     UNPARSED.binary_search(&name).is_ok() && !lp_dom::stylo::is_property(name)

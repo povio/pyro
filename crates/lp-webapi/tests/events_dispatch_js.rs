@@ -164,12 +164,12 @@ fn computed_style_longhands_are_prototype_attributes() {
             "(() => { const a = document.getElementById('a'), cs = getComputedStyle(a), proto = Object.getPrototypeOf(cs); \
                const d = Object.getOwnPropertyDescriptor(proto, 'backgroundColor'); \
                return [cs.display, cs['background-color'], cs.backgroundColor, cs.cssFloat, cs.float, cs.getPropertyValue('float'), \
-                       typeof d.get, d.set, 'display' in cs, cs.hasOwnProperty('display'), Object.getOwnPropertyDescriptor(proto, 'display') !== undefined, \
+                       typeof d.get, typeof d.set, 'display' in cs, cs.hasOwnProperty('display'), Object.getOwnPropertyDescriptor(proto, 'display') !== undefined, \
                        cs.length > 200, cs.item(0) === cs[0], getComputedStyle(document.createElement('p')).display === '', \
                        cs.display === getComputedStyle(a).display, \
                        typeof cs.margin, typeof cs.webkitLineClamp, typeof cs.WebkitTextSecurity, cs.fooBar === undefined, cs['--x'] === undefined].join(); })()"
         ),
-        "block,rgb(1, 2, 3),rgb(1, 2, 3),left,left,left,function,,true,false,true,true,true,true,true,string,string,string,true,true"
+        "block,rgb(1, 2, 3),rgb(1, 2, 3),left,left,left,function,function,true,false,true,true,true,true,true,string,string,string,true,true"
     );
 }
 

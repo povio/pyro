@@ -2467,7 +2467,7 @@ fn install_members_raw(
         }
         (
             d.methods.iter().map(|m| (m.name, m.length, m.call, m.pure)).collect::<Vec<_>>(),
-            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot)).collect::<Vec<_>>(),
+            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot, a.enumerable)).collect::<Vec<_>>(),
             d.constants.clone(),
             d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
             if d.indexed_iterable {
@@ -2524,7 +2524,8 @@ fn install_members_raw(
     batch.flush()?;
     let accessor = helper("accessor")?;
     let custom = sys::spi::get().set_custom_accessor;
-    for (name, get, set, slot) in accessors {
+    for (name, get, set, slot, enumerable) in accessors {
+        let attributes = if enumerable { sys::kJSPropertyAttributeNone } else { sys::kJSPropertyAttributeDontEnum };
         if let (Some(install), Some(slot)) = (custom, slot) {
             // A custom accessor: inline caches call the getter directly
             // (`crate::accessors`); enumerable and configurable like the
@@ -2544,14 +2545,14 @@ fn install_members_raw(
                         n.as_raw(),
                         getter,
                         setter,
-                        sys::kJSPropertyAttributeNone,
+                        attributes,
                         Some(crate::accessors::fast_getter_dispatch),
                         usize::from(slot) as *mut c_void,
                         result,
                         true,
                     )
                 },
-                _ => unsafe { install(ctx, holder, n.as_raw(), getter, setter, sys::kJSPropertyAttributeNone) },
+                _ => unsafe { install(ctx, holder, n.as_raw(), getter, setter, attributes) },
             };
             if ok {
                 continue;
@@ -2563,7 +2564,12 @@ fn install_members_raw(
             Some(f) => native(name, 0, f)?.value(),
             None => undefined,
         };
-        accessor.call(None, &[proto.value(), string(name), g.value(), st])?;
+        let mut args = vec![proto.value(), string(name), g.value(), st];
+        if !enumerable {
+            // SAFETY: as `undefined` above.
+            args.push(unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, false)) });
+        }
+        accessor.call(None, &args)?;
     }
     if !interface {
         return Ok(());
