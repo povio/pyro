@@ -1376,6 +1376,17 @@ impl StyleEngine {
         external.as_ref()?.0.element_displayed(crate::snapshot::render_key(el))
     }
 
+    /// [`Self::engine_displayed`], telling apart the content Chrome hides with
+    /// `content-visibility: hidden` (closed `<details>`, `hidden=until-found`;
+    /// see [`crate::geometry::ElementDisplay`]). An element with a stored
+    /// style of its own answers without a walk up its ancestors.
+    pub fn engine_display(&self, dom: &Dom, el: NodeId) -> Option<crate::geometry::ElementDisplay> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_display(crate::snapshot::render_key(el))
+    }
+
     /// StyleManager.zig:638-644.
     pub fn rendering(&self, dom: &Dom, el: NodeId) -> Rendering {
         match self.computed(dom, el) {

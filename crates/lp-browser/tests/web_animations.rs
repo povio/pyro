@@ -644,5 +644,49 @@ fn review_a_sheet_added_after_the_journal_started_transitions_its_targets() {
     t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
     eval(&root, "b.offsetHeight; b.style.width = '150px'; 0");
     run_until(&mut t, &root, "log.includes('transitionend:width:b')");
-    assert_eq!(eval(&root, "log.filter(e => e.endsWith(':b')).join(' ')"), "transitionrun:width:b transitionstart:width:b transitionend:width:b");
+    assert_eq!(
+        eval(&root, "log.filter(e => e.endsWith(':b')).join(' ')"),
+        "transitionrun:width:b transitionstart:width:b transitionend:width:b"
+    );
+}
+
+#[test]
+fn content_of_a_details_closed_after_its_first_style_keeps_it() {
+    // Chrome: a nested element styled while open, changed while closed,
+    // transitions once opened again (the closed content keeps its style).
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        "globalThis.d = document.createElement('details'); d.open = true; document.body.appendChild(d);
+         globalThis.w = el('w', '', d); globalThis.a = el('a', 't', w); a.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "d.open = false; a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "d.open = true; 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+#[test]
+fn closed_details_content_under_display_none_does_not_transition() {
+    // Chrome: the `display: none` ancestor at a flush drops the style, even
+    // for content a closed `<details>` hides.
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        "globalThis.q = el('q'); globalThis.d = document.createElement('details'); q.appendChild(d);
+         globalThis.a = el('a', 't', d); a.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "q.style.display = 'none'; a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "q.style.display = ''; d.open = true; 0");
+    assert_eq!(quiet(&mut t, &root, 150), "");
 }

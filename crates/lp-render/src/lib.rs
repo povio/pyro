@@ -48,6 +48,20 @@ use parley::fontique::Blob;
 use parley::FontContext;
 use peniko::{Color, Fill};
 
+/// Where an element stands in the rendered (flat) tree, from the styles the
+/// persistent document keeps ([`Renderer::element_display`]; lp-dom's
+/// `geometry::ElementDisplay`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ElementDisplay {
+    /// Outside every `display: none` subtree.
+    Displayed,
+    /// Hidden only by a closed `<details>`'s content or a
+    /// `hidden=until-found` element (Chrome: `content-visibility: hidden`).
+    ContentHidden,
+    /// In a `display: none` subtree.
+    Hidden,
+}
+
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
 pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
@@ -1134,9 +1148,39 @@ impl Renderer {
     /// `None`, as it does for elements that are not mirrored or not in the
     /// document.
     pub fn element_displayed(&self, page: u64, key: u64) -> Option<bool> {
+        self.display_walk(page, key, false).map(|d| d == ElementDisplay::Displayed)
+    }
+
+    /// [`Renderer::element_displayed`], telling apart the content Chrome
+    /// hides with `content-visibility: hidden` where Blitz has `display:
+    /// none`: a closed `<details>`'s content and a `hidden=until-found`
+    /// element ([`ElementDisplay::ContentHidden`] when
+    /// nothing else hides it).
+    ///
+    /// An element with styles of its own that are not `display: none` is
+    /// displayed without a walk: Stylo styles an element only through
+    /// displayed ancestors, clears the styles under an element it styles
+    /// `display: none` (`clear_descendant_data`), and the mutator clears
+    /// those of an element moved under one (`is_under_display_none` relies
+    /// on the same).
+    pub fn element_display(&self, page: u64, key: u64) -> Option<ElementDisplay> {
+        self.display_walk(page, key, true)
+    }
+
+    fn display_walk(&self, page: u64, key: u64, content_hidden: bool) -> Option<ElementDisplay> {
         let m = self.mirrors.get(&page)?;
         let mut id = m.node(key)?;
+        if content_hidden {
+            let node = m.doc.get_node(id)?;
+            if node.is_element()
+                && node.flags.is_in_document()
+                && node.primary_styles().is_some_and(|s| !s.clone_display().is_none())
+            {
+                return Some(ElementDisplay::Displayed);
+            }
+        }
         let mut unstyled = false;
+        let mut hidden_content = false;
         loop {
             let node = m.doc.get_node(id)?;
             if !node.is_element() {
@@ -1146,7 +1190,12 @@ impl Renderer {
                 return None;
             }
             match node.primary_styles() {
-                Some(s) if s.clone_display().is_none() => return Some(false),
+                Some(s) if s.clone_display().is_none() => {
+                    if !content_hidden || !Self::hides_content(&m.doc, node) {
+                        return Some(ElementDisplay::Hidden);
+                    }
+                    hidden_content = true;
+                }
                 Some(_) => {}
                 None => unstyled = true,
             }
@@ -1155,7 +1204,33 @@ impl Renderer {
                 None => break,
             }
         }
-        (!unstyled).then_some(true)
+        if hidden_content {
+            Some(ElementDisplay::ContentHidden)
+        } else {
+            (!unstyled).then_some(ElementDisplay::Displayed)
+        }
+    }
+
+    /// Whether `node`'s `display: none` is one Chrome has as
+    /// `content-visibility: hidden`: a child of a closed `<details>` other
+    /// than its first `<summary>`, or a `hidden=until-found` element. (An
+    /// author `display: none` on one of those is taken for it too.)
+    fn hides_content(doc: &blitz_dom::BaseDocument, node: &blitz_dom::Node) -> bool {
+        use blitz_dom::local_name;
+        if node.attr(local_name!("hidden")).is_some_and(|v| v.eq_ignore_ascii_case("until-found")) {
+            return true;
+        }
+        let Some(parent) = node.parent.and_then(|p| doc.get_node(p)) else { return false };
+        if !parent.data.is_element_with_tag_name(&local_name!("details")) || parent.attr(local_name!("open")).is_some()
+        {
+            return false;
+        }
+        let summary = parent
+            .children
+            .iter()
+            .copied()
+            .find(|c| doc.get_node(*c).is_some_and(|c| c.data.is_element_with_tag_name(&local_name!("summary"))));
+        summary != Some(node.id)
     }
 
     /// The computed style of pseudo-element `pseudo` of the element keyed
@@ -2730,6 +2805,51 @@ mod settle_resolution_tests {
             (60.0, 20.0),
             "newly handled image bytes need their final layout even with prior passes"
         );
+    }
+
+    #[test]
+    fn element_display_tells_hidden_content_from_display_none() {
+        use ElementDisplay::{ContentHidden, Displayed, Hidden};
+        let source = "<!doctype html><div id=box>x</div>\
+            <details id=d><summary id=s>s</summary><summary id=s2>t</summary><div id=c><span id=cc>x</span></div></details>\
+            <details open><div id=oc>x</div></details>\
+            <div hidden=until-found id=u><span id=uc>x</span></div>\
+            <div hidden id=h><span id=hc>x</span></div>\
+            <div style='display:none' id=n><details><div id=nc>x</div></details></div>";
+        let (snap, key) = fixture(source);
+        let key_of = |id: &str| {
+            snap.live
+                .as_ref()
+                .unwrap()
+                .tree
+                .nodes
+                .iter()
+                .find(|n| matches!(&n.kind, TreeKind::Element { attrs, .. } if attrs.iter().any(|(a, v)| &*a.local == "id" && v == id)))
+                .unwrap()
+                .key
+        };
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        assert_eq!(renderer.element_display(1, key), Some(Displayed));
+        for (id, want) in [
+            ("d", Displayed),
+            ("s", Displayed),
+            ("s2", ContentHidden),
+            ("c", ContentHidden),
+            ("cc", ContentHidden),
+            ("oc", Displayed),
+            ("u", ContentHidden),
+            ("uc", ContentHidden),
+            ("h", Hidden),
+            ("hc", Hidden),
+            ("nc", Hidden),
+        ] {
+            assert_eq!(renderer.element_display(1, key_of(id)), Some(want), "#{id}");
+            // `element_displayed` (checkVisibility and the like) still has
+            // hidden content as not displayed.
+            assert_eq!(renderer.element_displayed(1, key_of(id)), Some(want == Displayed), "#{id}");
+        }
     }
 
     #[test]

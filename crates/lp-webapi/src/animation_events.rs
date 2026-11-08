@@ -37,6 +37,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
+use lp_dom::geometry::ElementDisplay;
 use lp_dom::timing::{ElementTiming, StyleSnapshot, TimingRules};
 use lp_dom::NodeId;
 use rustc_hash::FxHashMap;
@@ -89,9 +90,10 @@ pub(crate) struct State {
     animations: RefCell<Vec<Timeline>>,
     transitions: RefCell<Vec<Timeline>>,
     /// Elements that may transition (and those script read the computed
-    /// style of): their style at the last style change, and the stamp it was
-    /// taken at.
-    observed: RefCell<FxHashMap<NodeId, (StyleSnapshot, Stamp)>>,
+    /// style of): their style at the last style change, the stamp it was
+    /// taken at, and whether the element was hidden content then (a closed
+    /// `<details>`'s, `hidden=until-found`: see `style_change`).
+    observed: RefCell<FxHashMap<NodeId, (StyleSnapshot, Stamp, bool)>>,
     /// The style stamp of the last style change event of every element that
     /// may transition.
     flushed: Cell<Option<Stamp>>,
@@ -386,7 +388,7 @@ pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
         state.record_style_changes(&dom, style);
         style.engine_styled(&dom);
         let stamp = style.observation_stamp(&dom);
-        let seen = state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp);
+        let seen = state.observed.borrow().get(&el).is_some_and(|(_, at, _)| *at == stamp);
         let flushed = state.flushed.get() == Some(stamp) || !state.transitions_tracked(&dom);
         if seen && flushed {
             return;
@@ -462,7 +464,7 @@ fn transition_candidates_changed(
         // The journal starts here (`record_style_changes` preceded the
         // sync): a snapshot of every element that may transition.
         for el in rules.transition_candidates(dom, doc) {
-            if state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp) {
+            if state.observed.borrow().get(&el).is_some_and(|(_, at, _)| *at == stamp) {
                 continue;
             }
             if dom.is_connected(el).unwrap_or(false) {
@@ -477,15 +479,59 @@ fn transition_candidates_changed(
     };
     for (el, had_style) in changes {
         if !had_style {
-            state.observed.borrow_mut().remove(&el);
+            // Not rendered before: no before-change style, unless the
+            // element was hidden content (Chrome keeps its style then).
+            let mut observed = state.observed.borrow_mut();
+            if observed.get(&el).is_some_and(|(.., hidden_content)| !*hidden_content) {
+                observed.remove(&el);
+            }
         }
-        if state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp) {
+        // The document's own tree only: the rules are the document's, and
+        // shadow-tree elements had no style change events before the
+        // journal either (`TimingRules::transition_candidates`).
+        if !dom.in_document_tree(el) {
             continue;
         }
-        if dom.is_connected(el).unwrap_or(false) && rules.may_transition(dom, el) {
+        if !state.observed.borrow().get(&el).is_some_and(|(_, at, _)| *at == stamp) && rules.may_transition(dom, el) {
             style_change(state, dom, style, Some(rules), el, now_ms, planned);
         }
+        if hides_content(dom, el) {
+            // Blitz styles this element `display: none` and nothing under
+            // it, so the journal never lists its descendants; Chrome keeps
+            // their styles (`content-visibility: hidden`). Those that may
+            // transition get their event (a snapshot kept as hidden
+            // content) from here.
+            let Ok(descendants) = dom.descendants(el) else { continue };
+            for d in descendants.filter(|d| *d != el) {
+                if !state.observed.borrow().get(&d).is_some_and(|(_, at, _)| *at == stamp)
+                    && rules.may_transition(dom, d)
+                {
+                    style_change(state, dom, style, Some(rules), d, now_ms, planned);
+                }
+            }
+        }
     }
+}
+
+/// Whether Blitz has `el` `display: none` where Chrome has
+/// `content-visibility: hidden`: a child of a closed `<details>` other than
+/// its first `<summary>`, or a `hidden=until-found` element. Two attribute
+/// reads (the engine's `ElementDisplay::ContentHidden` reads the same).
+fn hides_content(dom: &lp_dom::Dom, el: NodeId) -> bool {
+    use markup5ever::local_name;
+    let Ok(e) = dom.element(el) else { return false };
+    if e.attr_local(&local_name!("hidden")).is_some_and(|v| v.eq_ignore_ascii_case("until-found")) {
+        return true;
+    }
+    let Some(parent) = dom.parent_element(el).ok().flatten() else { return false };
+    let Ok(p) = dom.element(parent) else { return false };
+    if !p.is_html() || p.name.local != local_name!("details") || p.attr_local(&local_name!("open")).is_some() {
+        return false;
+    }
+    let is_summary =
+        |id: &NodeId| dom.element(*id).is_ok_and(|c| c.is_html() && c.name.local == local_name!("summary"));
+    let first_summary = dom.children(parent).ok().and_then(|mut c| c.find(is_summary));
+    first_summary != Some(el)
 }
 
 /// A style change event of `el`: the properties of its transition list whose
@@ -504,10 +550,16 @@ fn style_change(
 ) {
     // Not rendered (under `display: none`): no transitions, and no
     // before-change style once shown (Chrome starts none then either).
-    if style.engine_displayed(dom, el) == Some(false) {
-        state.observed.borrow_mut().remove(&el);
-        return;
-    }
+    // Content Chrome hides with `content-visibility: hidden` (a closed
+    // `<details>`'s, `hidden=until-found`) keeps its style there, and has
+    // its events as if displayed (as before the journal).
+    let hidden_content = match style.engine_display(dom, el) {
+        Some(ElementDisplay::Hidden) => {
+            state.observed.borrow_mut().remove(&el);
+            return;
+        }
+        display => display == Some(ElementDisplay::ContentHidden),
+    };
     let Some(now) = style.stylo_style(dom, el) else { return };
     let stamp = style.observation_stamp(dom);
     let before = {
@@ -518,7 +570,7 @@ fn style_change(
                 return;
             }
         }
-        observed.insert(el, (now.clone(), stamp)).map(|(before, _)| before)
+        observed.insert(el, (now.clone(), stamp, hidden_content)).map(|(before, ..)| before)
     };
     let Some(before) = before.filter(|before| !StyleSnapshot::ptr_eq(before, &now)) else { return };
     let read;

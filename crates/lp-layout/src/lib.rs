@@ -655,6 +655,15 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
     }
 
+    fn element_display(&self, key: u64) -> Option<lp_dom::geometry::ElementDisplay> {
+        use lp_dom::geometry::ElementDisplay;
+        Some(match RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_display(self.page, key))? {
+            lp_render::ElementDisplay::Displayed => ElementDisplay::Displayed,
+            lp_render::ElementDisplay::ContentHidden => ElementDisplay::ContentHidden,
+            lp_render::ElementDisplay::Hidden => ElementDisplay::Hidden,
+        })
+    }
+
     fn element_pseudo_style(
         &self,
         key: u64,
