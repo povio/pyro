@@ -1878,6 +1878,7 @@ dependencies = [
 name = "lightningpanda"
 version = "0.0.17"
 dependencies = [
+ "libc",
  "lp-browser",
  "lp-cdp",
  "lp-js",
