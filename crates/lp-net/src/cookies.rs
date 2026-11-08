@@ -6,6 +6,7 @@
 //! Domain cookies and schemeful sites use the embedded Public Suffix List
 //! (including private suffixes), pinned through the psl dependency lockfile.
 
+use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustc_hash::FxHashMap;
@@ -77,12 +78,20 @@ pub fn now_secs() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-fn host_str(url: &Url) -> Option<String> {
-    match url.host()? {
-        Host::Domain(d) => Some(d.trim_end_matches('.').to_ascii_lowercase()),
-        Host::Ipv4(ip) => Some(ip.to_string()),
-        Host::Ipv6(ip) => Some(format!("[{ip}]")),
-    }
+fn host_str(url: &Url) -> Option<Cow<'_, str>> {
+    Some(match url.host()? {
+        // A parsed domain is already ASCII lowercase; borrowed unless not.
+        Host::Domain(d) => {
+            let d = d.trim_end_matches('.');
+            if d.bytes().any(|b| b.is_ascii_uppercase()) {
+                Cow::Owned(d.to_ascii_lowercase())
+            } else {
+                Cow::Borrowed(d)
+            }
+        }
+        Host::Ipv4(ip) => Cow::Owned(ip.to_string()),
+        Host::Ipv6(ip) => Cow::Owned(format!("[{ip}]")),
+    })
 }
 
 fn is_ip(host: &str) -> bool {
@@ -385,7 +394,7 @@ impl CookieJar {
                 }
                 (d, public_suffix)
             }
-            None => (host.clone(), true),
+            None => (host.clone().into_owned(), true),
         };
         let path = match parsed.path {
             Some(p) if p.starts_with('/') => p.to_owned(),
@@ -494,31 +503,35 @@ impl CookieJar {
     /// Cookies applicable to `url`, sorted per RFC 6265 (longer paths first,
     /// then earlier creation). Expired cookies encountered are purged.
     pub fn matching(&mut self, url: &Url, access: Access, site: SiteContext, now: f64) -> Vec<&Cookie> {
+        // An empty jar (most contexts) matches nothing: no host or domain work.
+        if self.by_domain.is_empty() {
+            return Vec::new();
+        }
         let Some(host) = host_str(url) else { return Vec::new() };
         let secure_ok = is_trustworthy(url);
         let path = url.path();
         // Purge expired cookies in the candidate domains first.
-        let mut domains: Vec<String> = vec![host.clone()];
+        let mut domains: Vec<&str> = vec![&host];
         if !is_ip(&host) {
-            let mut rest = host.as_str();
+            let mut rest: &str = &host;
             while let Some(i) = rest.find('.') {
                 rest = &rest[i + 1..];
-                domains.push(rest.to_owned());
+                domains.push(rest);
             }
         }
         for d in &domains {
-            if let Some(l) = self.by_domain.get_mut(d) {
+            if let Some(l) = self.by_domain.get_mut(*d) {
                 let before = l.len();
                 l.retain(|c| c.expires.is_none_or(|e| e > now));
                 self.count -= before - l.len();
                 if l.is_empty() {
-                    self.by_domain.remove(d);
+                    self.by_domain.remove(*d);
                 }
             }
         }
         let mut out: Vec<&Cookie> = domains
             .iter()
-            .filter_map(|d| self.by_domain.get(d))
+            .filter_map(|d| self.by_domain.get(*d))
             .flat_map(|l| l.iter())
             .filter(|c| domain_match(&host, c))
             .filter(|c| path_match(path, &c.path))
@@ -862,5 +875,41 @@ mod tests {
         assert_eq!(doc_cookie_after(&["q=1; Path=/other"]), "");
         assert_eq!(doc_cookie_after(&["d=1; domain=.parser.test"]), "");
         assert_eq!(doc_cookie_after(&["e=1; Domain="]), "e=1");
+    }
+
+    /// Review (perf/network C4): the empty-jar early exit and the borrowed
+    /// host keep matching and expiry purging as before.
+    #[test]
+    fn review_matching_on_empty_and_trailing_dot_hosts_and_expiry() {
+        let mut jar = CookieJar::new();
+        let url = Url::parse("https://www.example.com./p").unwrap();
+        assert!(jar.matching(&url, Access::Http, SiteContext::SameSite, 10.0).is_empty());
+        assert_eq!(jar.header_for(&url, SiteContext::SameSite, 10.0), None);
+        // A trailing-dot host shares the dotless host's cookies (and domain cookies).
+        let plain = Url::parse("https://www.example.com/").unwrap();
+        assert!(jar.set_from_header(&plain, "a=1", Access::Http, 10.0));
+        assert!(jar.set_from_header(&plain, "d=2; Domain=example.com", Access::Http, 10.0));
+        assert!(jar.set_from_header(&plain, "e=3; Max-Age=5", Access::Http, 10.0));
+        assert_eq!(jar.header_for(&url, SiteContext::SameSite, 11.0).as_deref(), Some("a=1; d=2; e=3"));
+        // Upper case in the input is lowercased by the URL parser; the bucket is found.
+        let upper = Url::parse("https://WWW.Example.COM/").unwrap();
+        assert_eq!(jar.header_for(&upper, SiteContext::SameSite, 11.0).as_deref(), Some("a=1; d=2; e=3"));
+        // Expiry is still enforced and purged on lookup, also via the parent domain bucket.
+        assert_eq!(jar.header_for(&plain, SiteContext::SameSite, 20.0).as_deref(), Some("a=1; d=2"));
+        assert_eq!(jar.len(), 2);
+        // A jar emptied by expiry takes the early exit and stays consistent.
+        let mut jar = CookieJar::new();
+        assert!(jar.set_from_header(&plain, "x=1; Max-Age=1", Access::Http, 1.0));
+        assert_eq!(jar.header_for(&plain, SiteContext::SameSite, 5.0), None);
+        assert!(jar.by_domain.is_empty());
+        assert_eq!(jar.count, 0);
+        assert!(jar.matching(&plain, Access::Http, SiteContext::SameSite, 5.0).is_empty());
+        // IP hosts.
+        let ip = Url::parse("http://127.0.0.1:8080/").unwrap();
+        assert!(jar.set_from_header(&ip, "i=1", Access::Http, 5.0));
+        assert_eq!(jar.header_for(&ip, SiteContext::SameSite, 6.0).as_deref(), Some("i=1"));
+        let v6 = Url::parse("http://[::1]:8080/").unwrap();
+        assert!(jar.set_from_header(&v6, "j=1", Access::Http, 5.0));
+        assert_eq!(jar.header_for(&v6, SiteContext::SameSite, 6.0).as_deref(), Some("j=1"));
     }
 }

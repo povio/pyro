@@ -2081,6 +2081,7 @@ dependencies = [
  "tower-service",
  "url",
  "webpki-roots",
+ "zlib-rs",
 ]
 
 [[package]]

@@ -288,9 +288,9 @@ impl ResourceLoader for NetLoader {
             req.origin = Some(
                 request
                     .frame_id
-                    .as_ref()
-                    .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
-                    .map_or_else(|| "null".into(), |f| f.origin),
+                    .as_deref()
+                    .and_then(|id| frame_origin(browser, request.page, id))
+                    .unwrap_or_else(|| "null".into()),
             );
         }
         if request.kind == ResourceKind::Stylesheet {
@@ -311,11 +311,7 @@ impl ResourceLoader for NetLoader {
             if let Ok(value) = lp_net::http::HeaderValue::from_str(&content_type) {
                 req.headers.insert(lp_net::http::header::CONTENT_TYPE, value);
             }
-            req.origin = request
-                .frame_id
-                .as_ref()
-                .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
-                .map(|f| f.origin);
+            req.origin = request.frame_id.as_deref().and_then(|id| frame_origin(browser, request.page, id));
         }
         // Resource Timing: an iframe navigation's entry goes to the parent,
         // so its TAO check runs against the parent's origin, not `origin`
@@ -547,7 +543,15 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<l
 fn parent_origin(browser: &Browser, page: PageId, frame_id: Option<&str>) -> Option<String> {
     let key = browser.page(page)?.frames.key_of(frame_id?)?;
     let parent = browser.doc(key)?.main_frame.parent.clone()?;
-    browser.frame(page, &parent).map(|f| f.origin)
+    frame_origin(browser, page, &parent.0)
+}
+
+/// The serialized origin of frame `id`'s document, read in place (the
+/// loader asks for it on every subresource; `Browser::frame` would clone
+/// the whole frame, realms included, to answer).
+fn frame_origin(browser: &Browser, page: PageId, id: &str) -> Option<String> {
+    let key = browser.page(page)?.frames.key_of(id)?;
+    Some(browser.doc(key)?.main_frame.origin.clone())
 }
 
 /// (MIME, body, response delay) per URL.
@@ -775,7 +779,8 @@ pub(crate) fn origin_of(url: &str) -> String {
 }
 
 pub(crate) fn resolve_url(base: &str, href: &str) -> Option<String> {
-    url::Url::parse(base).ok()?.join(href).ok().map(|u| u.to_string())
+    // `String::from` takes the serialization; `to_string` would copy it.
+    url::Url::parse(base).ok()?.join(href).ok().map(String::from)
 }
 
 /// The object a `blob:` URL names, from the blob URL store of a document of
@@ -794,8 +799,13 @@ fn blob_body(browser: &Browser, page: PageId, url: &str) -> Option<lp_net::BlobB
 /// The base URL `node`'s document resolves its URLs against: its first
 /// `<base href>`, else the document's fallback base URL.
 pub(crate) fn node_base_url(dom: &lp_dom::Dom, node: NodeId) -> Option<String> {
+    node_base_str(dom, node).map(str::to_owned)
+}
+
+/// [`node_base_url`] borrowed from the DOM.
+fn node_base_str(dom: &lp_dom::Dom, node: NodeId) -> Option<&str> {
     let doc = dom.node_document(node).ok()?;
-    dom.document_base_url(doc).ok().map(str::to_owned)
+    dom.document_base_url(doc).ok()
 }
 
 /// The `integrity` and `crossorigin` attributes a script fetch honours.
@@ -1273,8 +1283,11 @@ impl Browser {
         let src_url = match info.src.as_deref() {
             Some(s) => {
                 // `<base href>` aware; the inline-script URL stays `base`.
-                let src_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
-                match resolve_url(&src_base, s) {
+                let resolved = {
+                    let dom = element.dom.borrow();
+                    resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
+                };
+                match resolved {
                     Some(u) => Some(u),
                     None => return, // spec: error event (needs lp-webapi)
                 }
@@ -1592,8 +1605,11 @@ impl Browser {
                 return;
             }
             Some(s) => {
-                let src_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
-                match resolve_url(&src_base, s) {
+                let resolved = {
+                    let dom = element.dom.borrow();
+                    resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
+                };
+                match resolved {
                     Some(u) => Some(u),
                     None => {
                         self.script_loaded(page, &element, false);
@@ -1980,10 +1996,8 @@ impl Browser {
             info
         };
         let base = self.doc(page).map(|p| p.main_frame.base_url.clone()).unwrap_or_default();
-        let src_url = info.src.as_deref().and_then(|s| {
-            let src_base = node_base_url(&dom.borrow(), node).unwrap_or_else(|| base.clone());
-            resolve_url(&src_base, s)
-        });
+        let src_url =
+            info.src.as_deref().and_then(|s| resolve_url(node_base_str(&dom.borrow(), node).unwrap_or(&base), s));
         let blocking = bindings.written_script_pending() == Some(node);
         let Some(url) = src_url else {
             if blocking {

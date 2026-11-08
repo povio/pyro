@@ -12,6 +12,9 @@ base64 = "0.23.1"
 brotli-decompressor = "6.1.0"
 bytes = "1"
 encoding_rs = "0.8.42"
+# WebSocket permessage-deflate. Keep it on its default backend (miniz_oxide):
+# a flate2 feature unifies across the build and would change the bytes of
+# every flate2 compressor (PDF streams, CompressionStream).
 flate2 = "1.1.10"
 # WebSocket masking keys and handshake nonces.
 getrandom = "0.3"
@@ -32,6 +35,9 @@ sha1 = "0.10"
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "io-util", "fs", "macros"] }
 tower-service = "0.3"
 url = "2"
+# Response-body inflation (src/inflate.rs), used directly, not as flate2's
+# backend: 942 KB gzip body 2.9 ms against miniz_oxide's 4.0.
+zlib-rs = { version = "0.6.8", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 h2 = "0.4"

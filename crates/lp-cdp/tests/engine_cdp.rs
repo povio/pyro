@@ -996,6 +996,50 @@ fn network_http_redirect_response_and_body() {
     server.join().unwrap();
 }
 
+/// A document fetched over HTTP reports its whole network lifecycle before
+/// the page events its commit causes, as Chrome does: the I/O thread wakes
+/// the engine for the observations before it posts the completion that
+/// commits the document, so they are owner-published when `frameNavigated`
+/// is queued behind them.
+#[test]
+fn document_network_events_precede_its_frame_navigated() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0; 1024];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut chunk).unwrap();
+            assert!(n > 0 && request.len() + n <= 8192);
+            request.extend_from_slice(&chunk[..n]);
+        }
+        let body = b"<!doctype html><title>net order</title><p>hello";
+        let head = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        stream.write_all(head.as_bytes()).unwrap();
+        stream.write_all(body).unwrap();
+    });
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Network.enable", json!({}));
+    let session = h.session.clone();
+    h.send(Some(&session), "Page.navigate", json!({"url":format!("http://{address}/doc")}));
+    let events = until_event(&mut h, "Page.loadEventFired");
+    server.join().unwrap();
+    let methods: Vec<&str> = events.iter().filter_map(|e| e["method"].as_str()).collect();
+    let at = |method: &str| methods.iter().position(|m| *m == method).unwrap_or_else(|| panic!("missing {method}: {methods:?}"));
+    assert!(at("Network.requestWillBeSent") < at("Network.responseReceived"), "{methods:?}");
+    assert!(at("Network.responseReceived") < at("Network.dataReceived"), "{methods:?}");
+    assert!(at("Network.dataReceived") < at("Network.loadingFinished"), "{methods:?}");
+    assert!(at("Network.loadingFinished") < at("Page.frameNavigated"), "{methods:?}");
+    assert!(at("Page.frameNavigated") < at("Page.loadEventFired"), "{methods:?}");
+    let request = events.iter().find(|e| e["method"] == "Network.requestWillBeSent").unwrap();
+    let navigated = events.iter().find(|e| e["method"] == "Page.frameNavigated").unwrap();
+    assert_eq!(request["params"]["loaderId"], navigated["params"]["frame"]["loaderId"]);
+}
+
 fn until_event(h: &mut Harness, method: &str) -> Vec<Value> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut events = Vec::new();

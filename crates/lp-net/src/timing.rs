@@ -8,14 +8,17 @@
 //! The cost per request is a few `Instant::now()` calls; per new connection
 //! one small allocation.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::io;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Instant;
 
-use hyper_util::client::legacy::connect::dns::{GaiAddrs, GaiResolver, Name};
+use hyper_util::client::legacy::connect::dns::{GaiResolver, Name};
+use tokio::sync::watch;
 use tower_service::Service;
 
 /// The phases of one fetch (all hops), as `Instant`s on this process's
@@ -144,36 +147,139 @@ pub(crate) fn served_locally() {
     });
 }
 
-/// `getaddrinfo` (hyper's resolver), noting the lookup's times on the
-/// connection being opened.
+/// Host name resolution for the connector: `getaddrinfo` (hyper's resolver)
+/// with one lookup per name in flight at a time, so concurrent connects to
+/// one host (a page's six parallel connections to a fresh origin, each of
+/// which hyper resolves on its own) share a single `getaddrinfo` instead of
+/// each running one on a blocking-pool thread; `localhost` is loopback
+/// without a lookup (RFC 6761), in `getaddrinfo`'s order. Nothing is kept
+/// once a lookup ends (no cache): every later connect resolves again. Each
+/// connect notes the lookup's times on the connection it opens.
 #[derive(Clone)]
-pub(crate) struct TimedResolver(GaiResolver);
+pub(crate) struct TimedResolver<R = GaiResolver> {
+    inner: R,
+    inflight: Inflight,
+}
+
+/// Addresses of one lookup, shared by the connects that waited for it.
+type Resolved = Result<Arc<[SocketAddr]>, Arc<io::Error>>;
+
+/// Lookups in flight by host name: followers wait on the leader's channel.
+type Inflight = Arc<Mutex<HashMap<Box<str>, watch::Receiver<Option<Resolved>>>>>;
+
+type Addrs = std::vec::IntoIter<SocketAddr>;
 
 impl TimedResolver {
     pub(crate) fn new() -> Self {
-        TimedResolver(GaiResolver::new())
+        Self::over(GaiResolver::new())
     }
 }
 
-impl Service<Name> for TimedResolver {
-    type Response = GaiAddrs;
+impl<R> TimedResolver<R> {
+    pub(crate) fn over(inner: R) -> Self {
+        TimedResolver { inner, inflight: Inflight::default() }
+    }
+}
+
+/// `localhost` (with or without the root dot) as `getaddrinfo` answers it
+/// on macOS and glibc: `::1` first, then `127.0.0.1`. Other names, including
+/// `*.localhost`, still go to the system resolver as before.
+fn loopback(name: &str) -> Option<Vec<SocketAddr>> {
+    let host = name.strip_suffix('.').unwrap_or(name);
+    host.eq_ignore_ascii_case("localhost").then(|| {
+        vec![SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0), SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)]
+    })
+}
+
+/// The lookup a connect leads for its name: it publishes the result to the
+/// followers and takes the name out of the in-flight map, also when the
+/// connect is dropped before the lookup ends (the followers then look up on
+/// their own).
+struct Leader {
+    inflight: Inflight,
+    name: Box<str>,
+    tx: watch::Sender<Option<Resolved>>,
+}
+
+impl Leader {
+    fn finish(self, result: &Result<Vec<SocketAddr>, io::Error>) {
+        let shared: Resolved = match result {
+            Ok(addrs) => Ok(Arc::from(addrs.as_slice())),
+            Err(e) => Err(Arc::new(io::Error::new(e.kind(), e.to_string()))),
+        };
+        let _ = self.tx.send(Some(shared));
+        // The entry goes with the sender (`Drop`).
+    }
+}
+
+impl Drop for Leader {
+    fn drop(&mut self) {
+        let mut inflight = self.inflight.lock().unwrap();
+        // Only this lookup's entry: a later leader of the same name keeps its own.
+        if inflight.get(&*self.name).is_some_and(|rx| rx.same_channel(&self.tx.subscribe())) {
+            inflight.remove(&*self.name);
+        }
+    }
+}
+
+/// A follower's copy of what the leader resolved.
+fn shared_result(shared: &Resolved) -> Result<Addrs, io::Error> {
+    match shared {
+        Ok(addrs) => Ok(addrs.to_vec().into_iter()),
+        Err(e) => Err(io::Error::new(e.kind(), e.to_string())),
+    }
+}
+
+impl<R> Service<Name> for TimedResolver<R>
+where
+    R: Service<Name, Error = io::Error> + Clone + Send + 'static,
+    R::Response: Iterator<Item = SocketAddr>,
+    R::Future: Send,
+{
+    type Response = Addrs;
     type Error = io::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<GaiAddrs, io::Error>> + Send>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Addrs, io::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        self.0.poll_ready(cx)
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
         let times = CONNECTING.try_with(Arc::clone).ok();
         let start = Instant::now();
-        let resolving = self.0.call(name);
-        Box::pin(async move {
-            let result = resolving.await;
+        let noted = move |result: Result<Addrs, io::Error>| {
             if let Some(times) = times {
                 let _ = times.dns.set((start, Instant::now()));
             }
             result
+        };
+        if let Some(addrs) = loopback(name.as_str()) {
+            return Box::pin(std::future::ready(noted(Ok(addrs.into_iter()))));
+        }
+        let mut inflight = self.inflight.lock().unwrap();
+        if let Some(rx) = inflight.get(name.as_str()) {
+            let mut rx = rx.clone();
+            drop(inflight);
+            let mut inner = self.inner.clone();
+            return Box::pin(async move {
+                let shared = rx.wait_for(|r| r.is_some()).await.ok().map(|r| r.clone().expect("waited for Some"));
+                let result = match shared {
+                    Some(shared) => shared_result(&shared),
+                    // The leading connect was dropped before its lookup ended.
+                    None => inner.call(name).await.map(|addrs| addrs.collect::<Vec<_>>().into_iter()),
+                };
+                noted(result)
+            });
+        }
+        let (tx, rx) = watch::channel(None);
+        inflight.insert(name.as_str().into(), rx);
+        drop(inflight);
+        let leader = Leader { inflight: self.inflight.clone(), name: name.as_str().into(), tx };
+        let resolving = self.inner.call(name);
+        Box::pin(async move {
+            let result = resolving.await.map(|addrs| addrs.collect::<Vec<_>>());
+            leader.finish(&result);
+            noted(result.map(Vec::into_iter))
         })
     }
 }
@@ -220,5 +326,222 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("timing-allow-origin", "a.test".parse().unwrap());
         assert!(!timing_allowed(&url, &headers, "https://a.test"));
+    }
+
+    /// A resolver that answers every name with one address once released,
+    /// counting its lookups.
+    #[derive(Clone)]
+    struct Fake {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        gate: Arc<tokio::sync::Notify>,
+        fail: bool,
+    }
+
+    impl Fake {
+        fn new(fail: bool) -> Self {
+            Fake { calls: Default::default(), gate: Default::default(), fail }
+        }
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)), 0);
+
+    impl Service<Name> for Fake {
+        type Response = Addrs;
+        type Error = io::Error;
+        type Future = Pin<Box<dyn Future<Output = Result<Addrs, io::Error>> + Send>>;
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, _name: Name) -> Self::Future {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (gate, fail) = (self.gate.clone(), self.fail);
+            Box::pin(async move {
+                gate.notified().await;
+                if fail {
+                    Err(io::Error::new(io::ErrorKind::NotFound, "failed to lookup address information"))
+                } else {
+                    Ok(vec![ADDR].into_iter())
+                }
+            })
+        }
+    }
+
+    fn name(host: &str) -> Name {
+        host.parse().unwrap()
+    }
+
+    async fn settle() {
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_lookups_of_one_name_share_a_single_getaddrinfo() {
+        let fake = Fake::new(false);
+        let resolver = TimedResolver::over(fake.clone());
+        let tasks: Vec<_> = (0..5)
+            .map(|_| {
+                let mut r = resolver.clone();
+                tokio::spawn(async move { r.call(name("example.test")).await.map(|a| a.collect::<Vec<_>>()) })
+            })
+            .collect();
+        // Another name is its own lookup.
+        let mut other = resolver.clone();
+        let other = tokio::spawn(async move { other.call(name("other.test")).await.map(|a| a.collect::<Vec<_>>()) });
+        settle().await;
+        assert_eq!(fake.calls(), 2, "five connects to one host: one lookup; the other host: one");
+        assert_eq!(resolver.inflight.lock().unwrap().len(), 2);
+        fake.gate.notify_waiters();
+        for task in tasks {
+            assert_eq!(task.await.unwrap().unwrap(), vec![ADDR]);
+        }
+        assert_eq!(other.await.unwrap().unwrap(), vec![ADDR]);
+        assert!(resolver.inflight.lock().unwrap().is_empty(), "nothing is kept after the lookups: no cache");
+        // Later connects look up again.
+        let mut r = resolver.clone();
+        let again = tokio::spawn(async move { r.call(name("example.test")).await.map(|a| a.collect::<Vec<_>>()) });
+        settle().await;
+        assert_eq!(fake.calls(), 3);
+        fake.gate.notify_waiters();
+        assert_eq!(again.await.unwrap().unwrap(), vec![ADDR]);
+    }
+
+    #[tokio::test]
+    async fn followers_share_the_leaders_failure_too() {
+        let fake = Fake::new(true);
+        let resolver = TimedResolver::over(fake.clone());
+        let tasks: Vec<_> = (0..3)
+            .map(|_| {
+                let mut r = resolver.clone();
+                tokio::spawn(async move { r.call(name("missing.test")).await.map(|a| a.collect::<Vec<_>>()) })
+            })
+            .collect();
+        settle().await;
+        fake.gate.notify_waiters();
+        for task in tasks {
+            let err = task.await.unwrap().unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::NotFound);
+            assert!(err.to_string().contains("failed to lookup"), "{err}");
+        }
+        assert_eq!(fake.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_leader_leaves_its_followers_to_look_up_themselves() {
+        let fake = Fake::new(false);
+        let resolver = TimedResolver::over(fake.clone());
+        let mut r = resolver.clone();
+        let leader = tokio::spawn(async move { r.call(name("example.test")).await.map(|a| a.collect::<Vec<_>>()) });
+        settle().await;
+        let mut r = resolver.clone();
+        let follower = tokio::spawn(async move { r.call(name("example.test")).await.map(|a| a.collect::<Vec<_>>()) });
+        settle().await;
+        assert_eq!(fake.calls(), 1);
+        leader.abort();
+        let _ = leader.await;
+        settle().await;
+        assert_eq!(fake.calls(), 2, "the follower resolves on its own");
+        assert!(resolver.inflight.lock().unwrap().is_empty(), "the dropped leader took its entry out");
+        fake.gate.notify_waiters();
+        assert_eq!(follower.await.unwrap().unwrap(), vec![ADDR]);
+    }
+
+    #[tokio::test]
+    async fn localhost_is_loopback_without_a_lookup() {
+        let fake = Fake::new(false);
+        let mut resolver = TimedResolver::over(fake.clone());
+        for host in ["localhost", "localhost.", "LocalHost"] {
+            let addrs: Vec<_> = resolver.call(name(host)).await.unwrap().collect();
+            assert_eq!(
+                addrs,
+                [
+                    SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+                ],
+                "{host}"
+            );
+        }
+        assert_eq!(fake.calls(), 0);
+        assert!(resolver.inflight.lock().unwrap().is_empty());
+        // Subdomains are not (the system resolver decides, as before).
+        let mut r = resolver.clone();
+        let sub = tokio::spawn(async move { r.call(name("app.localhost")).await.map(|a| a.collect::<Vec<_>>()) });
+        settle().await;
+        assert_eq!(fake.calls(), 1);
+        fake.gate.notify_waiters();
+        assert_eq!(sub.await.unwrap().unwrap(), vec![ADDR]);
+    }
+
+    /// Review (perf/network C6): dropping a follower leaves the leader and
+    /// the other followers alone; a leader dropped while two followers wait
+    /// leaves the name free for a fresh leader; every waiter gets the
+    /// failure's kind.
+    #[tokio::test]
+    async fn review_follower_drop_and_releader_after_leader_drop() {
+        let fake = Fake::new(false);
+        let resolver = TimedResolver::over(fake.clone());
+        let spawn = |host: &'static str| {
+            let mut r = resolver.clone();
+            tokio::spawn(async move { r.call(name(host)).await.map(|a| a.collect::<Vec<_>>()) })
+        };
+        let leader = spawn("a.test");
+        settle().await;
+        let f1 = spawn("a.test");
+        let f2 = spawn("a.test");
+        settle().await;
+        f1.abort();
+        let _ = f1.await;
+        settle().await;
+        assert_eq!(fake.calls(), 1, "a dropped follower costs nothing");
+        fake.gate.notify_waiters();
+        assert_eq!(leader.await.unwrap().unwrap(), vec![ADDR]);
+        assert_eq!(f2.await.unwrap().unwrap(), vec![ADDR]);
+        assert!(resolver.inflight.lock().unwrap().is_empty());
+
+        // Leader dropped with two followers: both look up on their own, and a
+        // later caller leads a new shared lookup (the old entry is gone).
+        let leader = spawn("b.test");
+        settle().await;
+        let (g1, g2) = (spawn("b.test"), spawn("b.test"));
+        settle().await;
+        leader.abort();
+        let _ = leader.await;
+        settle().await;
+        assert_eq!(fake.calls(), 4, "1 (a) + 1 (dropped leader) + 2 (followers on their own)");
+        let late = spawn("b.test");
+        let late2 = spawn("b.test");
+        settle().await;
+        assert_eq!(fake.calls(), 5, "the late callers share one new lookup");
+        assert_eq!(resolver.inflight.lock().unwrap().len(), 1);
+        fake.gate.notify_waiters();
+        for t in [g1, g2, late, late2] {
+            assert_eq!(t.await.unwrap().unwrap(), vec![ADDR]);
+        }
+        assert!(resolver.inflight.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn review_localhost_spellings_and_subdomains() {
+        let fake = Fake::new(true);
+        let mut resolver = TimedResolver::over(fake.clone());
+        for host in ["LOCALHOST", "LOCALHOST.", "localhost"] {
+            let addrs: Vec<_> = resolver.call(name(host)).await.unwrap().collect();
+            assert_eq!(addrs.len(), 2, "{host}");
+            assert!(addrs.iter().all(|a| a.ip().is_loopback()), "{host}");
+        }
+        assert_eq!(fake.calls(), 0);
+        // Not localhost: the system resolver (here failing) decides.
+        for host in ["localhost..", "localhostx", "a.localhost", "localhost.test"] {
+            let mut r = resolver.clone();
+            let t = tokio::spawn(async move { r.call(name(host)).await.map(|a| a.collect::<Vec<_>>()) });
+            settle().await;
+            fake.gate.notify_waiters();
+            assert!(t.await.unwrap().is_err(), "{host}");
+        }
+        assert_eq!(fake.calls(), 4);
     }
 }
