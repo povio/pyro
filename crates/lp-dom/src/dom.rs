@@ -2681,8 +2681,9 @@ impl Dom {
         let plain = name.ns == ns!();
         let el = self.n_mut(i).element_mut().expect("element");
         let old_id = (plain && name.local == local_name!("id")).then(|| el.id_atom().cloned());
-        let old_for = (plain && name.local == local_name!("for") && el.is_html() && el.name.local == local_name!("label"))
-            .then(|| el.attr_local(&local_name!("for")).map(Box::<str>::from));
+        let old_for =
+            (plain && name.local == local_name!("for") && el.is_html() && el.name.local == local_name!("label"))
+                .then(|| el.label_for_atom().cloned());
         let r = f(el);
         debug_assert!(el.derived_in_step());
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");

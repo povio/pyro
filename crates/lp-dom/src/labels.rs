@@ -92,7 +92,7 @@ impl Dom {
                     None => {
                         let mut cur = root;
                         while cur != NIL {
-                            if self.n(cur).element().and_then(label_for_of) == Some(id) {
+                            if self.n(cur).element().and_then(label_for_of).map(|f| &**f) == Some(id) {
                                 out.push(cur);
                             }
                             cur = self.following_in(cur, root);

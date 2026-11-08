@@ -252,6 +252,9 @@ pub struct ElementData {
     /// The `class` attribute (no namespace) split on ASCII whitespace,
     /// parsed when written.
     classes: Box<[Atom]>,
+    /// An HTML `<label>`'s non-empty `for` attribute (no namespace) as an
+    /// atom, parsed when written (the key of its tree scope's label index).
+    label_for: Option<Atom>,
     pub(crate) template_contents: u32,
     pub(crate) shadow_root: u32,
     pub(crate) control: Option<Box<ControlState>>,
@@ -289,6 +292,7 @@ impl ElementData {
             attrs: Vec::new(),
             id: None,
             classes: Box::default(),
+            label_for: None,
             template_contents: NIL,
             shadow_root: NIL,
             control: None,
@@ -327,6 +331,11 @@ impl ElementData {
     pub fn id_atom(&self) -> Option<&Atom> {
         self.id.as_ref()
     }
+    /// An HTML `<label>`'s `for` attribute as an atom, when non-empty.
+    #[inline]
+    pub fn label_for_atom(&self) -> Option<&Atom> {
+        self.label_for.as_ref()
+    }
     /// The `class` attribute's tokens as atoms, in order (duplicates kept).
     #[inline]
     pub fn classes(&self) -> &[Atom] {
@@ -362,13 +371,32 @@ impl ElementData {
         self.classes.contains(name)
     }
 
-    // ----- attribute writes (keep `id` and `classes` in step) ----------
+    // ----- attribute writes (keep `id`, `classes` and `label_for` in step)
 
+    fn is_html_label(&self) -> bool {
+        self.is_html() && self.name.local == local_name!("label")
+    }
+    /// Whether attribute `name` feeds `id`, `classes` or `label_for`.
+    #[inline]
+    fn derives(&self, name: &QualName) -> bool {
+        name.ns == markup5ever::ns!()
+            && (name.local == local_name!("id")
+                || name.local == local_name!("class")
+                || name.local == local_name!("for") && self.is_html_label())
+    }
+    fn label_for_from_attrs(&self) -> Option<Atom> {
+        if !self.is_html_label() {
+            return None;
+        }
+        self.attr_local(&local_name!("for")).filter(|f| !f.is_empty()).map(Atom::from)
+    }
     fn refresh(&mut self, local: &LocalName) {
         if *local == local_name!("id") {
             self.id = self.attr_local(&local_name!("id")).map(Atom::from);
         } else if *local == local_name!("class") {
             self.classes = self.attr_local(&local_name!("class")).map(parse_classes).unwrap_or_default();
+        } else if *local == local_name!("for") {
+            self.label_for = self.label_for_from_attrs();
         }
     }
     /// Replaces every attribute (element creation, cloning).
@@ -376,20 +404,22 @@ impl ElementData {
         self.attrs = attrs;
         self.refresh(&local_name!("id"));
         self.refresh(&local_name!("class"));
+        self.refresh(&local_name!("for"));
     }
     /// The attributes with their parsed atoms, for [`ElementData::set_attr_state`]
     /// (cloning: nothing is parsed again).
     pub(crate) fn attr_state(&self) -> AttrState {
-        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone())
+        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone(), self.label_for.clone())
     }
     pub(crate) fn set_attr_state(&mut self, state: AttrState) {
-        let AttrState(attrs, id, classes) = state;
+        let AttrState(attrs, id, classes, label_for) = state;
         self.attrs = attrs;
         self.id = id;
         self.classes = classes;
+        self.label_for = label_for;
     }
     pub(crate) fn push_attr(&mut self, attr: Attr) {
-        let refresh = derives(&attr.name).then(|| attr.name.local.clone());
+        let refresh = self.derives(&attr.name).then(|| attr.name.local.clone());
         self.attrs.push(attr);
         if let Some(local) = refresh {
             self.refresh(&local);
@@ -397,7 +427,7 @@ impl ElementData {
     }
     pub(crate) fn remove_attr(&mut self, k: usize) -> Attr {
         let attr = self.attrs.remove(k);
-        if derives(&attr.name) {
+        if self.derives(&attr.name) {
             self.refresh(&attr.name.local);
         }
         attr
@@ -405,7 +435,7 @@ impl ElementData {
     /// Sets attribute `k`'s value, returning the old one.
     pub(crate) fn replace_attr_value(&mut self, k: usize, value: Box<str>) -> Box<str> {
         let old = std::mem::replace(&mut self.attrs[k].value, value);
-        if derives(&self.attrs[k].name) && *old != *self.attrs[k].value {
+        if self.derives(&self.attrs[k].name) && *old != *self.attrs[k].value {
             let local = self.attrs[k].name.local.clone();
             self.refresh(&local);
         }
@@ -414,32 +444,26 @@ impl ElementData {
     /// Gives attribute `k` another name.
     pub(crate) fn rename_attr(&mut self, k: usize, name: QualName) {
         let old = std::mem::replace(&mut self.attrs[k].name, name);
-        if derives(&old) {
+        if self.derives(&old) {
             self.refresh(&old.local);
         }
-        if derives(&self.attrs[k].name) {
+        if self.derives(&self.attrs[k].name) {
             let local = self.attrs[k].name.local.clone();
             self.refresh(&local);
         }
     }
-    /// Whether `id` and `classes` match the attributes (tests and debug
-    /// assertions).
+    /// Whether `id`, `classes` and `label_for` match the attributes (tests
+    /// and debug assertions).
     #[doc(hidden)]
     pub fn derived_in_step(&self) -> bool {
         let id = self.attr_local(&local_name!("id")).map(Atom::from);
         let classes: Box<[Atom]> = self.attr_local(&local_name!("class")).map(parse_classes).unwrap_or_default();
-        self.id == id && self.classes == classes
+        self.id == id && self.classes == classes && self.label_for == self.label_for_from_attrs()
     }
 }
 
-/// An element's attributes with their parsed id and classes.
-pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>);
-
-/// Whether an attribute of this name feeds `ElementData::id` or `classes`.
-#[inline]
-fn derives(name: &QualName) -> bool {
-    name.ns == markup5ever::ns!() && (name.local == local_name!("id") || name.local == local_name!("class"))
-}
+/// An element's attributes with their parsed id, classes and label `for`.
+pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>, Option<Atom>);
 
 fn parse_classes(value: &str) -> Box<[Atom]> {
     // Sized once: boxing a collected `Vec` reallocates it to its length.

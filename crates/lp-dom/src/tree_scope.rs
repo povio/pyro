@@ -20,7 +20,7 @@ use rustc_hash::FxHashMap;
 use crate::dom::Dom;
 use crate::node::{tree_flags, Atom, NodeKind, NIL};
 
-/// An id as a map key: the atom, hashed and compared as its text so the map
+/// An id (or a label's `for`) as a map key: the atom, hashed and compared as its text so the map
 /// is searched by `&str` without interning it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IdKey(Atom);
@@ -56,8 +56,10 @@ pub(crate) struct ScopeIndex {
     /// The HTML `<label>` elements of the scope with a non-empty `for`, by
     /// its value, in the order they were indexed (few per value: sorted
     /// into tree order when read). Every tree or `for` write goes through
-    /// `label_for_added` / `label_for_removed`.
-    labels_for: FxHashMap<Box<str>, Vec<u32>>,
+    /// `label_for_added` / `label_for_removed`; keyed by the label's
+    /// `for` atom (`ElementData::label_for_atom`), so linking, unlinking
+    /// and `for` writes allocate no key.
+    labels_for: FxHashMap<IdKey, Vec<u32>>,
 }
 
 impl Dom {
@@ -113,7 +115,7 @@ impl Dom {
             if let NodeKind::Element(e) = &n.kind {
                 let sr = e.shadow_root;
                 let id = e.id_atom().filter(|a| !a.is_empty()).cloned();
-                let label_for = label_for_of(e).map(Box::<str>::from);
+                let label_for = label_for_of(e).cloned();
                 base_moved |= doc_tree && e.is_html() && e.name.local == local_name!("base");
                 if let Some(id) = id {
                     if scope == NIL {
@@ -309,13 +311,13 @@ impl Dom {
 
     /// HTML `<label>` `el` with the non-empty `for` value `f` joined `scope`
     /// (linked into it, or its `for` was set).
-    fn label_for_added(&mut self, scope: u32, f: Box<str>, el: u32) {
-        self.scope_index_mut(scope).labels_for.entry(f).or_default().push(el);
+    fn label_for_added(&mut self, scope: u32, f: Atom, el: u32) {
+        self.scope_index_mut(scope).labels_for.entry(IdKey(f)).or_default().push(el);
     }
 
-    fn label_for_removed(&mut self, scope: u32, f: &str, el: u32) {
+    fn label_for_removed(&mut self, scope: u32, f: &Atom, el: u32) {
         let map = &mut self.scope_index_mut(scope).labels_for;
-        let Some(labels) = map.get_mut(f) else {
+        let Some(labels) = map.get_mut(&**f) else {
             debug_assert!(false, "indexed label missing");
             return;
         };
@@ -326,17 +328,16 @@ impl Dom {
             None => debug_assert!(false, "indexed label missing"),
         }
         if labels.is_empty() {
-            map.remove(f);
+            map.remove(&**f);
         }
     }
 
     /// HTML `<label>` `i`'s `for` changed from `old` (attribute write).
-    pub(crate) fn label_for_attr_changed(&mut self, i: u32, old: Option<Box<str>>) {
+    pub(crate) fn label_for_attr_changed(&mut self, i: u32, old: Option<Atom>) {
         if self.n(i).tree_flags() == 0 {
             return;
         }
-        let new = self.n(i).element().and_then(label_for_of).map(Box::<str>::from);
-        let old = old.filter(|f| !f.is_empty());
+        let new = self.n(i).element().and_then(label_for_of).cloned();
         if new == old {
             return;
         }
@@ -396,7 +397,7 @@ impl Dom {
         }
         for scope in scopes {
             let mut want: FxHashMap<Atom, (u32, u32)> = FxHashMap::default();
-            let mut want_labels: FxHashMap<Box<str>, Vec<u32>> = FxHashMap::default();
+            let mut want_labels: FxHashMap<Atom, Vec<u32>> = FxHashMap::default();
             let mut cur = self.n(scope).first_child;
             while cur != NIL {
                 if let Some(e) = self.n(cur).element() {
@@ -404,7 +405,7 @@ impl Dom {
                         want.entry(id.clone()).or_insert((cur, 0)).1 += 1;
                     }
                     if let Some(f) = label_for_of(e) {
-                        want_labels.entry(f.into()).or_default().push(cur);
+                        want_labels.entry(f.clone()).or_default().push(cur);
                     }
                 }
                 cur = self.following_in(cur, scope);
@@ -581,9 +582,6 @@ impl Dom {
 /// The non-empty `for` of an HTML `<label>` element, which the scope index
 /// keys it by.
 #[inline]
-pub(crate) fn label_for_of(e: &crate::node::ElementData) -> Option<&str> {
-    if !(e.is_html() && e.name.local == local_name!("label")) {
-        return None;
-    }
-    e.attr_local(&local_name!("for")).filter(|f| !f.is_empty())
+pub(crate) fn label_for_of(e: &crate::node::ElementData) -> Option<&Atom> {
+    e.label_for_atom()
 }
