@@ -169,7 +169,10 @@ fn computed_style_longhands_are_prototype_attributes() {
                        cs.display === getComputedStyle(a).display, \
                        typeof cs.margin, typeof cs.webkitLineClamp, typeof cs.WebkitTextSecurity, cs.fooBar === undefined, cs['--x'] === undefined].join(); })()"
         ),
-        "block,rgb(1, 2, 3),rgb(1, 2, 3),left,left,left,function,function,true,false,true,true,true,true,true,string,string,string,true,true"
+        // `hasOwnProperty('display')` is true as in Chrome: the patched JSC
+        // answers the names as own properties (`ClassDef::own_property_name`)
+        // while the values stay with the prototype's attributes.
+        "block,rgb(1, 2, 3),rgb(1, 2, 3),left,left,left,function,function,true,true,true,true,true,true,true,string,string,string,true,true"
     );
 }
 
