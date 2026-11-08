@@ -361,6 +361,20 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
     schedule(page, planned, true);
 }
 
+/// Script read layout (a box, an offset, a scroll position): the read lays
+/// the document out anyway, so the engine is synced whole first and the
+/// style flush finds its styles current, instead of a style-only sync right
+/// before the read's full one (two syncs per read of a changed document).
+pub(crate) fn layout_flush(page: &Rc<PageDom>) {
+    if let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) {
+        if !page.is_disposed() && !page.scripting_disabled() {
+            track_style_changes(&page.animation_events, &dom, layout.style());
+        }
+        layout.synced_geometry_source(&dom);
+    }
+    style_flush(page);
+}
+
 /// Once transitions are tracked, the engine keeps the elements whose style a
 /// restyle replaces ([`lp_dom::style::StyleEngine::take_style_changes`]).
 /// Set before every style sync, so that the first sync after a transition
