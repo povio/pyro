@@ -106,7 +106,7 @@ fn make_node_wrapper<'s>(
     connected: bool,
 ) -> JsResult<Object<'s>> {
     let data = NodeData {
-        target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) },
+        target: EventTargetData::for_key(page_rc, TargetKey::Node(id.index())),
         id,
         wrapper: std::cell::Cell::new(0),
     };
@@ -909,7 +909,7 @@ pub fn wrap_new_node<'s, C: JsClass<Data = NodeData>>(
         }
     }
     let data = NodeData {
-        target: EventTargetData { page: page.clone(), key: TargetKey::Node(id.index()) },
+        target: EventTargetData::for_key(page.clone(), TargetKey::Node(id.index())),
         id,
         wrapper: std::cell::Cell::new(0),
     };

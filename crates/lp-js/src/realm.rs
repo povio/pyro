@@ -331,6 +331,12 @@ pub(crate) struct RealmInner {
     /// entry module itself through the fetch hook.
     inline_modules: RefCell<HashMap<String, String>>,
     embedder: RefCell<Option<Rc<dyn Any>>>,
+    /// The realm's current event (`window.event`), set by the embedder
+    /// around each listener call ([`Scope::set_current_event`]); null
+    /// outside one. Held raw: the value is an argument of the running call
+    /// (rooted by its frame), and the embedder restores the previous value,
+    /// rooted the same way one frame up, when the call returns.
+    current_event: Cell<sys::JSValueRef>,
     named_properties: RefCell<Option<Rc<dyn NamedProperties>>>,
     global_class: Option<ClassId>,
     /// Payload of the global object (set once; freed when the realm is dropped,
@@ -531,6 +537,7 @@ impl RealmInner {
         }
         self.interned.borrow_mut().clear(self.engine.group());
         self.embedder.borrow_mut().take();
+        self.current_event.set(ptr::null());
         self.named_properties.borrow_mut().take();
         if self.global_constants.replace(false) {
             if let Some(clear) = sys::spi::get().clear_constant_accessors {
@@ -835,6 +842,27 @@ impl<'s> Scope<'s> {
     /// Embedder state set with [`Realm::set_embedder`].
     pub fn embedder<T: Any>(&self) -> Option<Rc<T>> {
         self.realm.embedder.borrow().clone().and_then(|d| d.downcast::<T>().ok())
+    }
+
+    /// The realm's current event (`window.event`), if a listener call is
+    /// running with one (see [`Scope::set_current_event`]).
+    pub fn current_event(&self) -> Option<Value<'s>> {
+        let v = self.realm.current_event.get();
+        // SAFETY: a value of this VM the embedder keeps rooted while it is
+        // set (the argument of the running listener call).
+        (!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) })
+    }
+
+    /// Makes `event` the realm's current event and returns the previous one,
+    /// which the caller puts back when the listener call it brackets returns
+    /// (DOM "inner invoke"). The realm keeps the value raw and unrooted:
+    /// `event` must be rooted by its caller (an argument of the call being
+    /// made) for as long as it is set, and the previous value is rooted the
+    /// same way by the call one level up.
+    pub fn set_current_event(&self, event: Option<Value<'_>>) -> Option<Value<'s>> {
+        let prev = self.realm.current_event.replace(event.map_or(ptr::null(), |v| v.raw));
+        // SAFETY: as in `current_event`.
+        (!prev.is_null()).then(|| unsafe { Value::from_raw(self.ctx, prev) })
     }
 
     /// Evaluates a classic script.
@@ -1947,6 +1975,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
+        current_event: Cell::new(ptr::null()),
         named_properties: RefCell::new(None),
         global_class: options.global_class,
         global_payload: Cell::new(ptr::null_mut()),

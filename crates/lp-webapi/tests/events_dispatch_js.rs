@@ -98,6 +98,48 @@ fn eval(realm: &Realm, src: &str) -> String {
 }
 
 #[test]
+fn the_current_event_nests_and_is_restored_after_a_throwing_listener() {
+    let e = env("<body><div id=a><span id=b></span></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "(() => { const a = document.getElementById('a'), b = document.getElementById('b'); const seen = []; \
+               const outer = new Event('o', { bubbles: true }), inner = new Event('i'); \
+               b.addEventListener('o', () => { seen.push(window.event === outer); a.dispatchEvent(inner); seen.push(window.event === outer); }); \
+               a.addEventListener('i', () => { seen.push(window.event === inner); throw new Error('boom'); }); \
+               a.addEventListener('i', () => seen.push(window.event === inner)); \
+               a.addEventListener('o', () => seen.push(window.event === outer)); \
+               seen.push(window.event === undefined); b.dispatchEvent(outer); seen.push(window.event === undefined); \
+               return seen.join(); })()"
+        ),
+        "true,true,true,true,true,true,true"
+    );
+    // The listener's exception was reported while its event was current.
+    assert_eq!(e.hooks.exceptions.borrow().len(), 1);
+}
+
+#[test]
+fn listener_slots_follow_adds_removes_once_handlers_and_reuse() {
+    let e = env("<body><div id=a></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "(() => { const a = document.getElementById('a'); const log = []; \
+               const f = () => log.push('f'), g = () => log.push('g'), h = { handleEvent() { log.push('h:' + (this === h)); } }; \
+               const fire = n => { a.dispatchEvent(new Event('t')); log.push('|' + n); }; \
+               a.addEventListener('t', f); a.addEventListener('t', f); a.addEventListener('t', g); fire(1); \
+               a.removeEventListener('t', f); fire(2); \
+               a.addEventListener('t', h); a.addEventListener('t', f, { once: true }); fire(3); fire(4); \
+               a.ontest = null; a.addEventListener('t', () => { a.removeEventListener('t', g); log.push('x'); }, { capture: true }); fire(5); \
+               a.onclick = ev => log.push('on:' + ev.type); a.dispatchEvent(new Event('click')); \
+               a.onclick = null; a.dispatchEvent(new Event('click')); a.onclick = () => log.push('on2'); a.dispatchEvent(new Event('click')); \
+               return log.join(); })()"
+        ),
+        "f,g,|1,g,|2,g,h:true,f,|3,g,h:true,|4,x,h:true,|5,on:click,on2"
+    );
+}
+
+#[test]
 fn an_event_dispatched_again_elsewhere_reports_its_new_target() {
     let e = env("<body><div id=a></div><div id=b></div></body>");
     assert_eq!(
