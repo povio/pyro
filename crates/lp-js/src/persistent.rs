@@ -95,6 +95,98 @@ impl std::fmt::Debug for Persistent {
     }
 }
 
+/// A value kept alive, like a [`Persistent`], for as long as the handle
+/// lives, but without a root of its own: the engine keeps every such value
+/// in one JavaScript array (protected once) at the handle's index, and the
+/// handle holds the value's bits for reads that never enter JSC.
+///
+/// For many small values that live as long as host objects do (a string
+/// beside each of 100k wrappers): a `Persistent` is an entry in JSC's
+/// protect table, which every collection, eden ones included, walks as
+/// roots, and which with its handle costs a few hundred bytes per value.
+/// The array is one old object: an eden collection visits it only after it
+/// was written, and a value costs its 8-byte slot. A freed slot is reused
+/// by the next handle; the array never shrinks.
+///
+/// The values must not refer back to whatever owns the handle (a wrapper's
+/// payload): as with a `Persistent`, the collector cannot see that cycle.
+/// Strings cannot.
+pub struct HeldValue {
+    raw: sys::JSValueRef,
+    index: u32,
+    engine: Weak<EngineInner>,
+}
+
+/// The engine's array of [`HeldValue`]s and its free slots.
+#[derive(Default)]
+pub(crate) struct HeldValues {
+    array: Option<sys::JSObjectRef>,
+    len: u32,
+    free: Vec<u32>,
+}
+
+impl HeldValue {
+    pub fn new(scope: &Scope<'_>, value: Value<'_>) -> HeldValue {
+        let engine = scope.engine_inner();
+        let root = engine.root_ctx();
+        let mut held = engine.held.borrow_mut();
+        // SAFETY: the root context is live; the array is created in it (whose
+        // prototypes no page script can reach, so the store below runs no
+        // script) and protected for the engine's lifetime.
+        let array = *held.array.get_or_insert_with(|| unsafe {
+            let array = sys::JSObjectMakeArray(root, 0, std::ptr::null(), std::ptr::null_mut());
+            sys::JSValueProtect(root, array as sys::JSValueRef);
+            array
+        });
+        let index = held.free.pop().unwrap_or_else(|| {
+            held.len += 1;
+            held.len - 1
+        });
+        // SAFETY: as above; `value` is live in this scope, of the same VM.
+        unsafe { sys::JSObjectSetPropertyAtIndex(root, array, index, value.raw, std::ptr::null_mut()) };
+        HeldValue { raw: value.raw, index, engine: Rc::downgrade(engine) }
+    }
+
+    /// The value, usable within `scope`.
+    #[inline]
+    pub fn get<'s>(&self, scope: &Scope<'s>) -> Value<'s> {
+        debug_assert!(
+            std::ptr::eq(self.engine.as_ptr(), Rc::as_ptr(scope.engine_inner())),
+            "HeldValue used with another engine"
+        );
+        // SAFETY: held by the engine's array, same VM; the scope's ctx is live.
+        unsafe { Value::from_raw(scope.ctx, self.raw) }
+    }
+}
+
+impl Drop for HeldValue {
+    fn drop(&mut self) {
+        // Dropped at safe points, as `Persistent`s are; after engine shutdown
+        // the VM is gone and nothing is held.
+        let Some(engine) = self.engine.upgrade().filter(|e| !e.is_shut_down()) else { return };
+        let Ok(mut held) = engine.held.try_borrow_mut() else { return };
+        let Some(array) = held.array else { return };
+        let root = engine.root_ctx();
+        // SAFETY: the engine's live array; undefined keeps it dense.
+        unsafe {
+            sys::JSObjectSetPropertyAtIndex(
+                root,
+                array,
+                self.index,
+                sys::JSValueMakeUndefined(root),
+                std::ptr::null_mut(),
+            )
+        };
+        held.free.push(self.index);
+    }
+}
+
+impl std::fmt::Debug for HeldValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HeldValue({:p} at {})", self.raw, self.index)
+    }
+}
+
 /// A growable list of rooted values for temporary heap collections.
 #[derive(Default, Clone, Debug)]
 pub struct RootedVec {

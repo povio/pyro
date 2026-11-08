@@ -166,6 +166,8 @@ pub(crate) struct EngineInner {
     pub(crate) collections: crate::interned::Collections,
     /// The property hooks' switches (see [`class::HookState`]).
     pub(crate) hook_state: class::HookState,
+    /// The values [`crate::HeldValue`]s keep alive.
+    pub(crate) held: RefCell<crate::persistent::HeldValues>,
 }
 
 /// Decides when a closed page's garbage is worth a full collection: once the
@@ -446,6 +448,20 @@ impl EngineInner {
         self.shut_down.get()
     }
 
+    /// [`Engine::drain_finalized`]: the finalized payloads dropped, dead
+    /// interned strings swept, dead realms' member payloads freed.
+    pub(crate) fn drain_finalized(&self) -> usize {
+        let n = class::drain_finalized(self);
+        crate::interned::sweep_realms(self, false);
+        self.release_dead_members();
+        n
+    }
+
+    /// Payloads of finalized wrappers waiting for [`Self::drain_finalized`].
+    pub(crate) fn pending_finalizers(&self) -> usize {
+        self.finalized.len()
+    }
+
     /// Finds the realm owning global context `global`.
     pub(crate) fn realm_for_global(&self, global: sys::JSGlobalContextRef) -> Option<Rc<RealmInner>> {
         self.realms.borrow().get(&(global as usize)).and_then(Weak::upgrade)
@@ -657,6 +673,7 @@ impl Engine {
             retired_members: RefCell::new(Vec::new()),
             collections: crate::interned::Collections::new(),
             hook_state: class::HookState::default(),
+            held: RefCell::new(crate::persistent::HeldValues::default()),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -736,10 +753,7 @@ impl Engine {
     /// Releases payloads of wrappers finalized by the GC. Call at safe points
     /// (the event loop does this after each task).
     pub fn drain_finalized(&self) -> usize {
-        let n = class::drain_finalized(&self.inner);
-        crate::interned::sweep_realms(&self.inner, false);
-        self.inner.release_dead_members();
-        n
+        self.inner.drain_finalized()
     }
 
     /// Frees what a closed page (or a navigated-away document) left behind,

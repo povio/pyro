@@ -23,6 +23,10 @@ pub struct NodeData {
     /// (`PageDom::node_wrappers`), raw; zero when the wrapper is in the
     /// realm's identity map instead.
     pub(crate) wrapper: std::cell::Cell<usize>,
+    /// The realm's strings for the node's `id` and one-token `class`
+    /// values, by the atom each mirrors (see [`AtomString`]).
+    pub(crate) id_string: AtomString,
+    pub(crate) class_string: AtomString,
 }
 
 impl NodeData {
@@ -106,9 +110,11 @@ fn make_node_wrapper<'s>(
     connected: bool,
 ) -> JsResult<Object<'s>> {
     let data = NodeData {
-        target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) },
+        target: EventTargetData::for_key(page_rc, TargetKey::Node(id.index())),
         id,
         wrapper: std::cell::Cell::new(0),
+        id_string: AtomString::default(),
+        class_string: AtomString::default(),
     };
     // The node keeps its wrapper (`PageDom::node_wrappers`) when it has a
     // slot for this world; otherwise the realm's identity map does.
@@ -909,9 +915,11 @@ pub fn wrap_new_node<'s, C: JsClass<Data = NodeData>>(
         }
     }
     let data = NodeData {
-        target: EventTargetData { page: page.clone(), key: TargetKey::Node(id.index()) },
+        target: EventTargetData::for_key(page.clone(), TargetKey::Node(id.index())),
         id,
         wrapper: std::cell::Cell::new(0),
+        id_string: AtomString::default(),
+        class_string: AtomString::default(),
     };
     let owned = s.owned_wrappers() && page.wrapper_slot_free(s.realm_id(), id.index());
     let key = if owned { lp_js::IdentityKey::OWNED } else { page.node_identity(id) };
@@ -1100,7 +1108,13 @@ impl JsClass for Element {
         def.pure_accessor_typed(
             "id",
             lp_js::GetterResult::String,
-            |s, n| Ok(atom_or_empty(s, n.page().dom.borrow().element(n.id).js()?.id_atom())),
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(match dom.element(n.id).js()?.id_atom() {
+                    Some(atom) => n.id_string.get(s, atom),
+                    None => atom_or_empty(s, None),
+                })
+            },
             |_s, n, v| {
                 with_str(v, |id| {
                     n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("id"), id).js()
@@ -1110,7 +1124,14 @@ impl JsClass for Element {
         def.pure_accessor_typed(
             "className",
             lp_js::GetterResult::String,
-            |s, n| Ok(class_name(s, n.page().dom.borrow().element(n.id).js()?)),
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(match dom.element(n.id).js()?.class_value() {
+                    Some((_, Some(atom))) => n.class_string.get(s, atom),
+                    Some((value, None)) => attr_value(s, value, None),
+                    None => atom_or_empty(s, None),
+                })
+            },
             |_s, n, v| {
                 with_str(v, |class| {
                     n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("class"), class).js()

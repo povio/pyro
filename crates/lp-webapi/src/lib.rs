@@ -16,14 +16,15 @@
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
-mod cache_storage;
 mod animation_events;
 mod animations;
+mod cache_storage;
 pub mod canvas;
 mod canvas_path;
 mod clipboard;
 pub mod collections;
 mod compression;
+mod computed_properties;
 pub mod crypto;
 mod crypto_subtle;
 pub mod css;
@@ -52,8 +53,8 @@ mod integrity;
 mod internals;
 pub mod intersection_observer;
 pub mod layout_api;
-pub mod lifecycle;
 pub(crate) mod lazy_module;
+pub mod lifecycle;
 pub mod media;
 pub(crate) mod media_format;
 pub mod media_source;
@@ -65,8 +66,8 @@ pub mod node;
 pub mod observable;
 pub mod page;
 pub mod performance;
-mod popover;
 mod pointer_capture;
+mod popover;
 mod popup;
 mod port_link;
 pub mod range;
@@ -110,14 +111,15 @@ pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
 pub use page::{
-    DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
-    BodyPart, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, Partial, PageDom, PageHooks, RemotePoster,
+    BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
+    IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
+    RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
-pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use render_blocking::RenderBlocker;
 pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
+pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use worker::{
@@ -184,6 +186,49 @@ pub(crate) fn install_helpers<'s>(scope: &Scope<'s>) -> JsResult<Object<'s>> {
     helpers.as_object().ok_or_else(|| lp_js::JsError::Type("install.js helpers".into()))
 }
 
+thread_local! {
+    /// The pages of each `Dom` (by address) that keep node wrappers: the
+    /// documents of an iframe share their parent's `Dom`, each page with its
+    /// own wrapper table.
+    static DOM_PAGES: std::cell::RefCell<rustc_hash::FxHashMap<usize, Rc<std::cell::RefCell<Vec<std::rc::Weak<PageDom>>>>>> =
+        Default::default();
+}
+
+/// A node holding listeners keeps its wrapper (and so the listeners) from the
+/// moment an insertion connects it (`Dom::set_listener_connected_hook`), in
+/// every page sharing the `Dom`.
+fn install_listener_connected_hook(page: &Rc<PageDom>) {
+    let key = Rc::as_ptr(&page.dom) as usize;
+    let (pages, new) = DOM_PAGES.with(|map| {
+        let mut map = map.borrow_mut();
+        map.retain(|_, pages| pages.borrow().iter().any(|p| p.strong_count() > 0));
+        match map.get(&key) {
+            Some(pages) => (pages.clone(), false),
+            None => {
+                let pages = Rc::new(std::cell::RefCell::new(Vec::new()));
+                map.insert(key, pages.clone());
+                (pages, true)
+            }
+        }
+    });
+    {
+        let mut list = pages.borrow_mut();
+        list.retain(|p| p.strong_count() > 0);
+        if !list.iter().any(|p| std::ptr::eq(p.as_ptr(), Rc::as_ptr(page))) {
+            list.push(Rc::downgrade(page));
+        }
+    }
+    let mut dom = page.dom.borrow_mut();
+    if new || !dom.has_listener_connected_hook() {
+        dom.set_listener_connected_hook(Some(Rc::new(move |idx, all, callbacks| {
+            let Ok(list) = pages.try_borrow() else { return };
+            for page in list.iter().filter_map(std::rc::Weak::upgrade) {
+                page.keep_connected_listener_node(idx, all, callbacks);
+            }
+        })));
+    }
+}
+
 /// Installs the page's bindings into a freshly created realm.
 pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     install_with_helpers(scope, page).map(drop)
@@ -201,6 +246,7 @@ pub fn install_with_helpers<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResul
     // caches of a name when an element that may be named it appears.
     let names = scope.impure_names();
     page.dom.borrow_mut().set_named_item_hook(Some(Rc::new(move |name: &str| names.announce(name))));
+    install_listener_connected_hook(&page);
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));

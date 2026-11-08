@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use lp_dom::events::{dispatch_with, AddOptions, ListenerHandle, ListenerInvoker, PathItem, TargetKey};
+use lp_dom::events::{dispatch_on_path, AddOptions, ListenerHandle, ListenerInvoker, PathItem, TargetKey};
 use lp_dom::{Dom, NodeId};
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Realm, RealmId, Scope, Value};
 
@@ -23,6 +23,46 @@ const LISTENERS: &str = "__lpListeners";
 pub struct EventTargetData {
     pub page: Rc<PageDom>,
     pub key: TargetKey,
+    /// The functions in this wrapper's listener array, by slot.
+    listeners: ListenerFns,
+}
+
+/// The listener functions of a target wrapper's hidden array ([`LISTENERS`]),
+/// by slot, as raw object pointers: dispatch reads the function of a slot
+/// here, without entering JavaScriptCore for the hidden property and the
+/// element. The array stays the owner: it is traced from the wrapper, so a
+/// function is alive while the wrapper is, and the two are written together
+/// ([`set_listener_slot`]). The payload (and this mirror) dies with the
+/// wrapper, so a wrapper made anew for the same target starts empty, like its
+/// array. Unallocated until the first listener.
+#[derive(Default)]
+struct ListenerFns(std::cell::RefCell<Option<Box<Vec<usize>>>>);
+
+impl ListenerFns {
+    fn get(&self, slot: u32) -> Option<usize> {
+        self.0.borrow().as_ref()?.get(slot as usize).copied().filter(|&raw| raw != 0)
+    }
+    fn set(&self, slot: u32, raw: usize) {
+        let mut fns = self.0.borrow_mut();
+        let fns = fns.get_or_insert_with(Default::default);
+        if fns.len() <= slot as usize {
+            fns.resize(slot as usize + 1, 0);
+        }
+        fns[slot as usize] = raw;
+    }
+}
+
+/// Writes slot `slot` of `holder`'s listener array `array`, and of the
+/// mirror in `holder`'s payload (the Window has no such payload: its array
+/// is read directly). Every write of a listener array goes through here.
+fn set_listener_slot(s: &Scope<'_>, holder: Object<'_>, array: Object<'_>, slot: u32, value: Value<'_>) -> JsResult<()> {
+    array.set_index(slot, value)?;
+    // SAFETY: `holder` is the receiver or a wrapper found live by the
+    // caller, which keeps it for this call.
+    if let Some(t) = unsafe { s.unwrap_rooted::<EventTarget>(holder.value()) } {
+        t.listeners.set(slot, value.as_object().map_or(0, |o| o.as_raw() as usize));
+    }
+    Ok(())
 }
 
 impl EventTargetData {
@@ -37,11 +77,15 @@ impl EventTargetData {
     /// A fresh non-node target (XMLHttpRequest, AbortSignal, `new EventTarget()`).
     pub fn new(page: &Rc<PageDom>) -> EventTargetData {
         let key = page.dom.borrow_mut().new_target_key();
-        EventTargetData { page: page.clone(), key }
+        EventTargetData::for_key(page.clone(), key)
     }
     /// The Window target of `document` (see `PageDom::create_window_target`).
     pub fn window(page: &Rc<PageDom>, key: TargetKey) -> EventTargetData {
-        EventTargetData { page: page.clone(), key }
+        EventTargetData::for_key(page.clone(), key)
+    }
+    /// The data of a wrapper of target `key`.
+    pub(crate) fn for_key(page: Rc<PageDom>, key: TargetKey) -> EventTargetData {
+        EventTargetData { page, key, listeners: ListenerFns::default() }
     }
 }
 
@@ -331,7 +375,7 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: Args
         Some(i) => i,
         None => {
             let slot = vacant.unwrap_or(len);
-            arr.set_index(slot, cb_obj.value())?;
+            set_listener_slot(s, obj, arr, slot, cb_obj.value())?;
             slot
         }
     };
@@ -371,7 +415,7 @@ fn remove_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: A
             let mut dom = t.page.dom.borrow_mut();
             if dom.remove_listener(t.key, &ty, handle, capture).is_some() && !dom.handle_in_use(t.key, handle) {
                 drop(dom);
-                arr.set_index(i, s.undefined())?;
+                set_listener_slot(s, obj, arr, i, s.undefined())?;
             }
             break;
         }
@@ -528,7 +572,7 @@ pub(crate) fn release_listener_slots(page: &PageDom, released: Vec<(TargetKey, L
         let Ok(s) = realm.scope() else { continue };
         let Ok(Some(obj)) = target_object(&s, page, key) else { continue };
         if let Ok(Some(arr)) = listener_array(&s, obj, false) {
-            let _ = arr.set_index(handle.0 as u32 & !HANDLER_SLOT, s.undefined());
+            let _ = set_listener_slot(&s, obj, arr, handle.0 as u32 & !HANDLER_SLOT, s.undefined());
         }
     }
 }
@@ -582,8 +626,7 @@ impl ListenerInvoker for Invoker<'_> {
         // The listener was registered in `s`'s realm, on the target's wrapper there.
         let found = (|| -> JsResult<Option<(Object<'_>, Object<'_>, Object<'_>)>> {
             let Some(this) = target_object(&s, self.page, current)? else { return Ok(None) };
-            let Some(arr) = listener_array(&s, this, false)? else { return Ok(None) };
-            let Some(fo) = arr.get_index(slot)?.as_object() else { return Ok(None) };
+            let Some(fo) = listener_function(&s, this, slot)? else { return Ok(None) };
             // Web IDL "associated realm" of the callback: the realm the
             // function or callback interface object was created in; for an
             // event handler, that of the handler function (HTML leaves the
@@ -610,16 +653,19 @@ impl ListenerInvoker for Invoker<'_> {
         // event as its current event unless the invocation target was in a
         // shadow tree; the previous value is restored afterwards, including on
         // throw. The callback's microtask checkpoint runs before the restore.
+        // The realm holds the event raw. `ev_root` keeps it on this frame
+        // (seen by the conservative scan) until the previous value is put
+        // back, past the call, its microtask checkpoint and the exception
+        // report, which run script; the previous value is rooted the same way
+        // by the listener call one level up.
         let in_shadow = self.in_shadow.contains(&current);
-        let mut saved: Option<Persistent> = None;
-        let mut swapped = false;
+        let mut swapped: Option<Option<Value<'_>>> = None;
+        let mut ev_root: Option<Value<'_>> = None;
         let result = (|| -> JsResult<()> {
             let ev = wrap_event(&s, self.event)?;
+            ev_root = Some(ev.value());
             if !in_shadow {
-                let holder = window_listener_array(cs, true)?.expect("created window holder");
-                saved = Some(Persistent::new(cs, holder.get(CURRENT_EVENT)?));
-                holder.set(CURRENT_EVENT, cs.rehome(ev.value()))?;
-                swapped = true;
+                swapped = Some(cs.set_current_event(Some(ev.value())));
             }
             if is_handler {
                 // The trampoline runs in its own realm and calls the handler.
@@ -656,13 +702,27 @@ impl ListenerInvoker for Invoker<'_> {
             });
             cs.report_exception(&e);
         }
-        if swapped {
-            if let Ok(Some(holder)) = window_listener_array(cs, false) {
-                let prev = saved.as_ref().map_or(cs.undefined(), |p| p.get(cs));
-                let _ = holder.set(CURRENT_EVENT, prev);
-            }
+        if let Some(prev) = swapped {
+            cs.set_current_event(prev);
         }
+        std::hint::black_box(ev_root);
     }
+}
+
+/// The function in slot `slot` of `holder`'s listener array: from the
+/// mirror in `holder`'s payload ([`ListenerFns`]), or, for the Window (whose
+/// array is the realm's holder, with no wrapper payload), from the array.
+fn listener_function<'s>(s: &Scope<'s>, holder: Object<'s>, slot: u32) -> JsResult<Option<Object<'s>>> {
+    // SAFETY: `holder` is a live wrapper the caller keeps for this call.
+    if let Some(t) = unsafe { s.unwrap_rooted::<EventTarget>(holder.value()) } {
+        return Ok(t.listeners.get(slot).map(|raw| {
+            // SAFETY: an element of the live array `holder` owns (see
+            // `ListenerFns`), of this VM.
+            unsafe { Object::from_raw(s.ctx(), raw as lp_js::sys::JSObjectRef) }
+        }));
+    }
+    let Some(arr) = listener_array(s, holder, false)? else { return Ok(None) };
+    Ok(arr.get_index(slot)?.as_object())
 }
 
 thread_local! {
@@ -682,12 +742,9 @@ pub(crate) fn fire_noting_exceptions(page: &PageDom, target: TargetKey, event: &
     (not_canceled, threw)
 }
 
-/// Key of the realm's current event on its traced window holder.
-const CURRENT_EVENT: &str = "__lpCurrentEvent";
-
 /// `window.event`: the realm's current event, or undefined outside dispatch.
 pub(crate) fn current_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
-    Ok(window_listener_array(s, false)?.map(|h| h.get(CURRENT_EVENT)).transpose()?.unwrap_or(s.undefined()))
+    Ok(s.current_event().unwrap_or(s.undefined()))
 }
 
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
@@ -712,9 +769,10 @@ pub(crate) fn fire_with(
         state.related_target = event.fields.borrow().related_target;
     }
     event.refresh_wrappers();
-    // A callback can detach ancestors and run GC during dispatch.
+    // A callback can detach ancestors and run GC during dispatch. The path
+    // is built once, here, and dispatched on below.
     let path = page.dom.borrow().event_path(target, &event.state.borrow());
-    let ids: Vec<_> = {
+    let ids: Box<[NodeId]> = {
         let dom = page.dom.borrow();
         path.iter().filter_map(|(key, _)| dom.key_node(*key)).collect()
     };
@@ -735,7 +793,7 @@ pub(crate) fn fire_with(
         }
     };
     let mut inv = Invoker { page, event, in_shadow };
-    let result = dispatch_with(&page.dom, target, &event.state, &mut inv, before_listeners);
+    let result = dispatch_on_path(&page.dom, target, &path, &event.state, &mut inv, before_listeners);
     // The relatedTarget stays as the outermost invocation target saw it, or
     // is reset with the target ("clearTargets").
     event.fields.borrow_mut().related_target = event.state.borrow().related_target;
@@ -841,7 +899,7 @@ pub(crate) fn set_event_handler(
             let handle = handler_handle_for(s.realm_id(), slot);
             target.page.dom.borrow_mut().remove_listener(target.key, ty, handle, false);
             if let Some(array) = listener_array(s, object, false)? {
-                array.set_index(slot, s.undefined())?;
+                set_listener_slot(s, object, array, slot, s.undefined())?;
             }
             handler_set(s, object, &slot_key, s.undefined())?;
         }
@@ -925,7 +983,7 @@ pub(crate) fn set_event_handler(
             break;
         }
     }
-    array.set_index(slot, callback.value())?;
+    set_listener_slot(s, object, array, slot, callback.value())?;
     handler_set(s, object, &slot_key, s.number(slot as f64))?;
     target.page.dom.borrow_mut().add_listener(
         target.key,

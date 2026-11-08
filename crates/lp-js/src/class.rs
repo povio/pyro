@@ -94,6 +94,9 @@ pub(crate) struct AccessorSpec {
     /// Custom accessor slot ([`crate::accessors`]); `None` installs an
     /// ordinary accessor (no patched JSC, or the slots are used up).
     pub slot: Option<u16>,
+    /// Listed by `for..in` (WebIDL attributes are); see
+    /// [`ClassDef::unenumerable_last_accessor`].
+    pub enumerable: bool,
 }
 
 /// A member's Rust callback, type-erased, plus the invoker that knows its
@@ -205,6 +208,8 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) callback_interface: bool,
     /// See [`ClassDef::named_properties_are_announced`].
     pub(crate) announced_names: bool,
+    /// See [`ClassDef::attributes_without_jit_getters`].
+    pub(crate) jit_getters: bool,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
     pub(crate) indexed_iterable: bool,
@@ -275,6 +280,7 @@ impl<C: JsClass> ClassDef<C> {
             legacy_factories: Vec::new(),
             callback_interface: false,
             announced_names: false,
+            jit_getters: true,
             hooks: PropertyHooks::default(),
             exposed: true,
             indexed_iterable: false,
@@ -322,6 +328,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -351,6 +358,7 @@ impl<C: JsClass> ClassDef<C> {
             result,
             get_h: Some(getter_invoke_h::<C>),
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -394,6 +402,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -420,6 +429,7 @@ impl<C: JsClass> ClassDef<C> {
             result,
             get_h: Some(getter_this_invoke_h::<C>),
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -437,6 +447,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: Some(setter_invoke_h::<C>),
+            enumerable: true,
         });
         self
     }
@@ -460,6 +471,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: Some(setter_invoke_h::<C>),
+            enumerable: true,
         });
         self
     }
@@ -485,7 +497,19 @@ impl<C: JsClass> ClassDef<C> {
             result,
             get_h: Some(getter_invoke_h::<C>),
             set_h: Some(setter_invoke_h::<C>),
+            enumerable: true,
         });
+        self
+    }
+
+    /// Leaves the attribute added last out of `for..in` and `Object.keys` of
+    /// the prototype (the property is still found by name): for aliases a
+    /// browser answers without listing them, such as the dashed and
+    /// `Webkit`-cased names of a CSS property in `CSSStyleDeclaration`.
+    pub fn unenumerable_last_accessor(&mut self) -> &mut Self {
+        if let Some(a) = self.accessors.last_mut() {
+            a.enumerable = false;
+        }
         self
     }
 
@@ -507,6 +531,7 @@ impl<C: JsClass> ClassDef<C> {
             result: GetterResult::Any,
             get_h: None,
             set_h: None,
+            enumerable: true,
         });
         self
     }
@@ -535,6 +560,19 @@ impl<C: JsClass> ClassDef<C> {
     /// running the hook on every read, as WebCore does for HTMLDocument.
     pub fn named_properties_are_announced(&mut self) -> &mut Self {
         self.announced_names = true;
+        self
+    }
+
+    /// Installs this class's pure attributes as plain custom accessors, not
+    /// as DOM attributes the JITs call directly (`JSObjectSetFastGetter`).
+    /// Reads stay inline-cached and dispatch the same way; compiled code
+    /// calls the getter through the custom accessor instead. For a class
+    /// with hundreds of attributes whose getters cost far more than the call
+    /// (`CSSStyleDeclaration` of `getComputedStyle`): JavaScriptCore interns
+    /// each fast getter by a linear search of every one the process made, so
+    /// defining hundreds of them on each realm's first use cost milliseconds.
+    pub fn attributes_without_jit_getters(&mut self) -> &mut Self {
+        self.jit_getters = false;
         self
     }
 
@@ -807,6 +845,7 @@ pub(crate) struct ClassDefErased {
     pub ctor_length: u32,
     pub legacy_factories: Vec<MethodSpec>,
     pub announced_names: bool,
+    pub jit_getters: bool,
     pub hooks: PropertyHooks,
     pub exposed: bool,
     pub indexed_iterable: bool,
@@ -1032,6 +1071,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             ctor_length: def.ctor_length,
             legacy_factories: def.legacy_factories,
             announced_names: def.announced_names,
+            jit_getters: def.jit_getters,
             hooks: def.hooks,
             exposed: def.exposed,
             indexed_iterable: def.indexed_iterable,
@@ -1118,14 +1158,27 @@ pub(crate) struct Header {
 /// Payload headers awaiting destruction on the engine thread. Finalizers may
 /// run on any thread, hence the mutex.
 #[derive(Default)]
-pub(crate) struct FinalizeQueue(std::sync::Mutex<Vec<usize>>);
+pub(crate) struct FinalizeQueue {
+    headers: std::sync::Mutex<Vec<usize>>,
+    /// How many are queued, readable without the lock (an embedder decides
+    /// from it whether to drain at a callback safe point).
+    len: std::sync::atomic::AtomicUsize,
+}
 
 impl FinalizeQueue {
     fn push(&self, h: *mut Header) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(h as usize);
+        let mut headers = self.headers.lock().unwrap_or_else(|e| e.into_inner());
+        headers.push(h as usize);
+        self.len.store(headers.len(), std::sync::atomic::Ordering::Relaxed);
     }
     fn take(&self) -> Vec<usize> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        let mut headers = self.headers.lock().unwrap_or_else(|e| e.into_inner());
+        self.len.store(0, std::sync::atomic::Ordering::Relaxed);
+        std::mem::take(&mut *headers)
+    }
+    /// Payloads queued for [`drain_finalized`].
+    pub(crate) fn len(&self) -> usize {
+        self.len.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 

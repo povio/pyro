@@ -570,6 +570,114 @@ impl ComputedData {
     }
 }
 
+/// A computed value as a JavaScript string: the realm's one string for a
+/// keyword (`block`, `none`, `auto`: the same few dozen texts come back for
+/// every element), a new string for anything else (lengths, colours, lists:
+/// mostly distinct, where a shared string would cost more than it saves).
+fn computed_string<'s>(s: &Scope<'s>, value: &str) -> Value<'s> {
+    if !value.is_empty() && value.len() <= 24 && value.bytes().all(|b| b.is_ascii_lowercase() || b == b'-') {
+        s.text_string(value)
+    } else {
+        s.string(value)
+    }
+}
+
+/// A computed style's CSS properties, one getter each: Chrome's names
+/// ([`crate::computed_properties`]), then its `epub*` aliases. Each entry is
+/// the property whose value the getter reads.
+fn computed_property_names() -> &'static [&'static str] {
+    static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let names = crate::computed_properties::COMPUTED_PROPERTIES.iter().copied();
+        names.chain(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property)).collect()
+    })
+}
+
+/// Getter of the property `computed_property_names()[I]` (under each of its
+/// names): an attribute of `CSSStyleDeclaration.prototype`, read through the
+/// inline cache like any other, with the property chosen when the class is
+/// defined. The getters are made by index, [`MAX_PROPERTIES`] of them.
+fn property_getter<'s, const I: usize>(s: &Scope<'s>, c: &ComputedData) -> JsResult<Value<'s>> {
+    Ok(computed_string(s, &c.value(computed_property_names()[I])))
+}
+
+type ComputedGetter = for<'s> fn(&Scope<'s>, &ComputedData) -> JsResult<Value<'s>>;
+
+macro_rules! property_getters_block {
+    ($b:literal; $($i:literal),*) => { [ $( property_getter::<{ $b * 16 + $i }> as ComputedGetter ),* ] };
+}
+macro_rules! property_getters {
+    ($($b:literal),*) => {
+        [ $( property_getters_block!($b; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15) ),* ]
+    };
+}
+
+/// Room for the property list; the class definition asserts that it fits.
+const MAX_PROPERTIES: usize = 768;
+/// The getters by property index, in blocks of 16.
+static PROPERTY_GETTERS: [[ComputedGetter; 16]; MAX_PROPERTIES / 16] = property_getters!(
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47
+);
+
+/// The attribute names of each entry of [`computed_property_names`], each
+/// with whether `for..in` lists it, as Chrome has them: the camel-cased name
+/// (CSSOM "camel-cased attribute": `background-color` -> `backgroundColor`,
+/// `-webkit-text-security` -> `webkitTextSecurity`) is listed; the dashed
+/// name and, for a `-webkit-` property, the "webkit-cased attribute"
+/// (`WebkitTextSecurity`) are found by name only; `float` is also
+/// `cssFloat`, an attribute of the interface; the `epub*` aliases are found
+/// by name only.
+fn property_attribute_names() -> &'static [Vec<(&'static str, bool)>] {
+    static NAMES: std::sync::OnceLock<Vec<Vec<(&'static str, bool)>>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let camel = |name: &str, upper_first: bool| {
+            let mut out = String::with_capacity(name.len());
+            let mut upper = upper_first;
+            for ch in name.chars() {
+                if ch == '-' {
+                    upper = upper_first || !out.is_empty();
+                } else if upper {
+                    out.push(ch.to_ascii_uppercase());
+                    upper = false;
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        };
+        let leak = |n: String| -> &'static str { Box::leak(n.into_boxed_str()) };
+        let mut all: Vec<Vec<(&'static str, bool)>> = crate::computed_properties::COMPUTED_PROPERTIES
+            .iter()
+            .map(|&name| {
+                let mut names = Vec::with_capacity(3);
+                let lower = camel(name, false);
+                if lower == name {
+                    names.push((name, true));
+                } else {
+                    names.push((leak(lower), true));
+                    names.push((name, false));
+                }
+                if name == "float" {
+                    names.push(("cssFloat", true));
+                }
+                if name.starts_with("-webkit-") {
+                    names.push((leak(camel(name, true)), false));
+                }
+                names
+            })
+            .collect();
+        all.extend(crate::computed_properties::EPUB_ALIASES.iter().map(|&(alias, _)| vec![(alias, false)]));
+        all
+    })
+}
+
+/// Assigning to a computed style's property: Chrome's error, in sloppy code
+/// too.
+fn computed_read_only<'s>(_s: &Scope<'s>, _c: &ComputedData, _v: Value<'s>) -> JsResult<()> {
+    Err(lp_js::JsError::dom("NoModificationAllowedError", "These styles are computed, and therefore read-only."))
+}
+
 pub struct ComputedStyle;
 impl JsClass for ComputedStyle {
     const NAME: &'static str = "CSSStyleDeclaration";
@@ -577,9 +685,29 @@ impl JsClass for ComputedStyle {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.not_exposed();
+        // About 1,600 attributes, defined on the realm's first
+        // `getComputedStyle`: as JIT-called DOM getters (JavaScriptCore
+        // interns each by a linear search) they cost each realm ~1.5 ms;
+        // a read's cost is the style lookup, not the call.
+        def.attributes_without_jit_getters();
+        // Every property, by its dashed name and its IDL attribute names, as
+        // attributes of the prototype (CSSOM `CSSStyleDeclaration`). No named
+        // property hook: a class with one sends every property read through
+        // it, which defeats the inline cache.
+        let names = property_attribute_names();
+        assert!(names.len() <= MAX_PROPERTIES, "CSS properties beyond the getter table: raise MAX_PROPERTIES");
+        for (i, names) in names.iter().enumerate() {
+            let get = PROPERTY_GETTERS[i / 16][i % 16];
+            for &(name, enumerable) in names {
+                def.pure_accessor_typed(name, lp_js::GetterResult::String, get, computed_read_only);
+                if !enumerable {
+                    def.unenumerable_last_accessor();
+                }
+            }
+        }
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
-            Ok(s.string(&c.value(&name)))
+            Ok(computed_string(s, &c.value(&name)))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
         // The longhands, as indexed properties; an element without computed
@@ -592,30 +720,19 @@ impl JsClass for ComputedStyle {
         def.indexed(|s, c, i| Ok(computed_names(c).get(i as usize).map(|name| s.string(name))));
         def.indexed_iterator();
         def.getter("cssText", |s, _c| Ok(s.string("")));
+        def.getter("parentRule", |s, _c| Ok(s.null()));
         def.method("setProperty", 2, |_s, _c, _a| {
             Err::<Value, _>(lp_js::JsError::dom(
                 "NoModificationAllowedError",
                 "These styles are computed, and therefore read-only.",
             ))
         });
-        def.named(false, |s, c, name| {
-            // camelCase IDL attributes (`backgroundColor`) and the dashed
-            // property names themselves (`background-color`).
-            let dashed = name.contains('-');
-            if !name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
-                || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || (dashed && ch == '-'))
-            {
-                return Ok(None);
-            }
-            let prop = if dashed {
-                if !lp_dom::stylo::is_property(name) {
-                    return Ok(None);
-                }
-                name.to_owned()
-            } else {
-                crate::css::camel_to_css(name)
-            };
-            Ok(Some(s.string(&c.value(&prop))))
+        def.method("removeProperty", 1, |_s, _c, a| {
+            let name = arg_string(&a, 0, "CSSStyleDeclaration.removeProperty")?;
+            Err::<Value, _>(lp_js::JsError::dom(
+                "NoModificationAllowedError",
+                format!("These styles are computed, and therefore the '{name}' property is read-only."),
+            ))
         });
     }
 }

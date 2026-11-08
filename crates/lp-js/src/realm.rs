@@ -382,6 +382,12 @@ pub(crate) struct RealmInner {
     /// entry module itself through the fetch hook.
     inline_modules: RefCell<HashMap<String, String>>,
     embedder: RefCell<Option<Rc<dyn Any>>>,
+    /// The realm's current event (`window.event`), set by the embedder
+    /// around each listener call ([`Scope::set_current_event`]); null
+    /// outside one. Held raw: the value is an argument of the running call
+    /// (rooted by its frame), and the embedder restores the previous value,
+    /// rooted the same way one frame up, when the call returns.
+    current_event: Cell<sys::JSValueRef>,
     named_properties: RefCell<Option<Rc<dyn NamedProperties>>>,
     global_class: Option<ClassId>,
     /// Payload of the global object (set once; freed when the realm is dropped,
@@ -587,6 +593,7 @@ impl RealmInner {
         }
         self.interned.borrow_mut().clear(self.engine.group());
         self.embedder.borrow_mut().take();
+        self.current_event.set(ptr::null());
         self.named_properties.borrow_mut().take();
         if self.global_constants.replace(false) {
             if let Some(clear) = sys::spi::get().clear_constant_accessors {
@@ -808,6 +815,12 @@ impl Realm {
     pub fn downgrade(&self) -> WeakRealm {
         WeakRealm(Rc::downgrade(&self.inner))
     }
+
+    /// Payloads of wrappers the collector finalized that wait for the next
+    /// [`crate::Engine::drain_finalized`] (engine-wide).
+    pub fn pending_finalizers(&self) -> usize {
+        self.inner.engine.pending_finalizers()
+    }
 }
 
 /// Non-owning realm handle; see [`Realm::downgrade`].
@@ -919,6 +932,42 @@ impl<'s> Scope<'s> {
     /// Embedder state set with [`Realm::set_embedder`].
     pub fn embedder<T: Any>(&self) -> Option<Rc<T>> {
         self.realm.embedder.borrow().clone().and_then(|d| d.downcast::<T>().ok())
+    }
+
+    /// [`crate::Engine::drain_finalized`] from the post-callback hook of the
+    /// outermost native callback (nesting depth 1): the callback's body has
+    /// returned, no other native frame of this engine is on the stack, so
+    /// the payload destructors run as they would after the task. `None`,
+    /// nothing done, from a nested callback (an outer native body is
+    /// suspended mid-way, with whatever it holds) or from Rust. Lets a long
+    /// task that makes and drops wrappers by the million give their payloads
+    /// (and what those hold) back before it ends.
+    pub fn drain_finalized_in_outermost_callback(&self) -> Option<usize> {
+        if crate::engine::callback_tls().depth.get() != 1 {
+            return None;
+        }
+        Some(self.realm.engine.drain_finalized())
+    }
+
+    /// The realm's current event (`window.event`), if a listener call is
+    /// running with one (see [`Scope::set_current_event`]).
+    pub fn current_event(&self) -> Option<Value<'s>> {
+        let v = self.realm.current_event.get();
+        // SAFETY: a value of this VM the embedder keeps rooted while it is
+        // set (the argument of the running listener call).
+        (!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) })
+    }
+
+    /// Makes `event` the realm's current event and returns the previous one,
+    /// which the caller puts back when the listener call it brackets returns
+    /// (DOM "inner invoke"). The realm keeps the value raw and unrooted:
+    /// `event` must be rooted by its caller (an argument of the call being
+    /// made) for as long as it is set, and the previous value is rooted the
+    /// same way by the call one level up.
+    pub fn set_current_event(&self, event: Option<Value<'_>>) -> Option<Value<'s>> {
+        let prev = self.realm.current_event.replace(event.map_or(ptr::null(), |v| v.raw));
+        // SAFETY: as in `current_event`.
+        (!prev.is_null()).then(|| unsafe { Value::from_raw(self.ctx, prev) })
     }
 
     /// Evaluates a classic script.
@@ -2034,6 +2083,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
+        current_event: Cell::new(ptr::null()),
         named_properties: RefCell::new(None),
         global_class: options.global_class,
         global_payload: Cell::new(ptr::null_mut()),
@@ -2525,7 +2575,7 @@ fn install_members_raw(
     part: MemberPart,
 ) -> JsResult<()> {
     // Copied out so no registry borrow spans calls into JavaScript.
-    let (methods, accessors, constants, statics, iterable, on_global) = {
+    let (methods, accessors, constants, statics, iterable, on_global, jit_getters) = {
         let reg = engine.classes.borrow();
         let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
         // Members of the global's class chain run on the global, which is not
@@ -2541,7 +2591,7 @@ fn install_members_raw(
         }
         (
             d.methods.iter().map(|m| (m.name, m.length, m.call, m.pure)).collect::<Vec<_>>(),
-            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot)).collect::<Vec<_>>(),
+            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot, a.enumerable)).collect::<Vec<_>>(),
             d.constants.clone(),
             d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
             if d.indexed_iterable {
@@ -2552,6 +2602,7 @@ fn install_members_raw(
                 None
             },
             on_global,
+            d.jit_getters,
         )
     };
     // SAFETY (all raw constructors below): ctx is the live callback/scope context.
@@ -2598,34 +2649,39 @@ fn install_members_raw(
     batch.flush()?;
     let accessor = helper("accessor")?;
     let custom = sys::spi::get().set_custom_accessor;
-    for (name, get, set, slot) in accessors {
+    for (name, get, set, slot, enumerable) in accessors {
+        let attributes = if enumerable { sys::kJSPropertyAttributeNone } else { sys::kJSPropertyAttributeDontEnum };
         if let (Some(install), Some(slot)) = (custom, slot) {
             // A custom accessor: inline caches call the getter directly
             // (`crate::accessors`); enumerable and configurable like the
             // ordinary form below.
-            let n = JsString::new(name);
+            // The thread's string for the static name: no string made and
+            // released per member and realm.
+            let n = crate::string::atom_raw(name);
             let setter = set.map(|_| crate::accessors::SETTERS[usize::from(slot)]);
             let getter = Some(crate::accessors::GETTERS[usize::from(slot)]);
             // A pure getter is a DOM attribute to the JITs, which then call
             // it with the receiver proven a wrapper (`fast_getter_dispatch`).
             // A global's pure getter keeps the custom accessor, whose
-            // dispatch takes the lean path for the global's payload.
+            // dispatch takes the lean path for the global's payload, as does
+            // one of a class that asked for that
+            // (`ClassDef::attributes_without_jit_getters`).
             let ok = match (crate::accessors::pure_result(slot), sys::spi::get().set_fast_getter) {
-                (Some(result), Some(fast)) if !on_global => unsafe {
+                (Some(result), Some(fast)) if !on_global && jit_getters => unsafe {
                     fast(
                         ctx,
                         holder,
-                        n.as_raw(),
+                        n,
                         getter,
                         setter,
-                        sys::kJSPropertyAttributeNone,
+                        attributes,
                         Some(crate::accessors::fast_getter_dispatch),
                         usize::from(slot) as *mut c_void,
                         result,
                         true,
                     )
                 },
-                _ => unsafe { install(ctx, holder, n.as_raw(), getter, setter, sys::kJSPropertyAttributeNone) },
+                _ => unsafe { install(ctx, holder, n, getter, setter, attributes) },
             };
             if ok {
                 continue;
@@ -2637,7 +2693,12 @@ fn install_members_raw(
             Some(f) => native(name, 0, f)?.value(),
             None => undefined,
         };
-        accessor.call(None, &[proto.value(), string(name), g.value(), st])?;
+        let mut args = vec![proto.value(), string(name), g.value(), st];
+        if !enumerable {
+            // SAFETY: as `undefined` above.
+            args.push(unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, false)) });
+        }
+        accessor.call(None, &args)?;
     }
     if !interface {
         return Ok(());

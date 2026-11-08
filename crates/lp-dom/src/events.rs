@@ -36,6 +36,10 @@ struct Listener {
     passive: bool,
 }
 
+/// See [`Dom::set_listener_connected_hook`]: the node's index, whether it is
+/// marked [`Dom::mark_pin_on_connect`], and its listeners' callbacks.
+pub type ListenerConnectedHook = std::rc::Rc<dyn Fn(u32, bool, &[ListenerHandle])>;
+
 #[derive(Default)]
 pub struct ListenerStore {
     map: FxHashMap<TargetKey, Vec<Listener>>,
@@ -47,6 +51,9 @@ pub struct ListenerStore {
     reconnected: Vec<u32>,
     /// Nodes whose wrapper script added properties to, also reported when (re)connected.
     pin_on_connect: FxHashSet<u32>,
+    /// Told of each node [`ListenerStore::reconnected`] records, as it is
+    /// recorded (`Dom::set_listener_connected_hook`).
+    connected_hook: Option<ListenerConnectedHook>,
     /// Document -> Window key for event paths.
     windows: FxHashMap<u32, u64>,
     /// A listener for a CSS animation or transition event was ever added.
@@ -330,13 +337,37 @@ impl Dom {
         if self.events.map.is_empty() && self.events.pin_on_connect.is_empty() {
             return;
         }
+        let hook = self.events.connected_hook.clone();
+        let mut callbacks = Vec::new();
         let mut i = root;
         while i != NIL {
-            if self.events.map.contains_key(&TargetKey::Node(i)) || self.events.pin_on_connect.contains(&i) {
+            let listeners = self.events.map.get(&TargetKey::Node(i));
+            let pin = self.events.pin_on_connect.contains(&i);
+            if listeners.is_some() || pin {
                 self.events.reconnected.push(i);
+                if let Some(hook) = &hook {
+                    callbacks.clear();
+                    callbacks.extend(listeners.into_iter().flatten().map(|l| l.callback));
+                    hook(i, pin, &callbacks);
+                }
             }
             i = self.next_shadow_including_rev(i, root);
         }
+    }
+
+    /// Sets what is told of each node that holds listeners (or is marked
+    /// [`Dom::mark_pin_on_connect`]) as an insertion connects it, before the
+    /// insertion returns: the bindings keep its wrapper from then on, not
+    /// from the next safe point ([`Dom::take_reconnected_listener_nodes`]
+    /// still reports it there), so a collection later in the same task
+    /// cannot take the wrapper and its listeners. Called with the DOM
+    /// borrowed: the hook may not use it.
+    pub fn set_listener_connected_hook(&mut self, hook: Option<ListenerConnectedHook>) {
+        self.events.connected_hook = hook;
+    }
+
+    pub fn has_listener_connected_hook(&self) -> bool {
+        self.events.connected_hook.is_some()
     }
 
     pub fn has_listeners(&self, target: TargetKey) -> bool {
@@ -360,10 +391,13 @@ impl Dom {
         std::mem::take(&mut self.events.released)
     }
 
-    fn snapshot(&self, target: TargetKey, ty: &LocalName) -> Vec<Listener> {
-        match self.events.map.get(&target) {
-            Some(list) => list.iter().filter(|l| &l.ty == ty).cloned().collect(),
-            None => Vec::new(),
+    /// The listeners of `target` for `ty` into `out` (cleared first): the
+    /// dispatch's one scratch list, so a path of nodes without listeners
+    /// allocates nothing.
+    fn snapshot_into(&self, target: TargetKey, ty: &LocalName, out: &mut Vec<Listener>) {
+        out.clear();
+        if let Some(list) = self.events.map.get(&target) {
+            out.extend(list.iter().filter(|l| &l.ty == ty).cloned());
         }
     }
     fn listener_live(&self, target: TargetKey, id: u32) -> bool {
@@ -577,6 +611,21 @@ pub fn dispatch_with(
     invoker: &mut dyn ListenerInvoker,
     before_listeners: &mut dyn FnMut(&[PathItem]),
 ) -> bool {
+    let path = dom.borrow().event_path(target, &event.borrow());
+    dispatch_on_path(dom, target, &path, event, invoker, before_listeners)
+}
+
+/// [`dispatch_with`] on `path`, the event's path as [`Dom::event_path`]
+/// built it for `target` just now (a caller that needs the path before
+/// dispatch, to hold its nodes, builds it once).
+pub fn dispatch_on_path(
+    dom: &RefCell<Dom>,
+    target: TargetKey,
+    path: &[(TargetKey, TargetKey)],
+    event: &RefCell<EventState>,
+    invoker: &mut dyn ListenerInvoker,
+    before_listeners: &mut dyn FnMut(&[PathItem]),
+) -> bool {
     let (path, clear_targets) = {
         let mut ev = event.borrow_mut();
         ev.dispatching = true;
@@ -589,34 +638,38 @@ pub fn dispatch_with(
         if related.is_some_and(|r| r != target && d.retarget_live(r, target) == target) {
             (Vec::new(), true)
         } else {
-            let mut path: Vec<PathItem> = Vec::new();
-            for (k, (cur, shadow_target)) in d.event_path(target, &ev).into_iter().enumerate() {
+            let mut items: Vec<PathItem> = Vec::with_capacity(path.len());
+            for (k, &(cur, shadow_target)) in path.iter().enumerate() {
                 let related_target = related.map(|r| d.retarget_live(r, cur));
                 // Step 6.9.7: the path ends below a shadow host that is the
                 // relatedTarget as seen from there.
                 if k > 0 && shadow_target == cur && related_target == Some(cur) {
                     break;
                 }
-                path.push(PathItem { invocation_target: cur, target: shadow_target, related_target });
+                items.push(PathItem { invocation_target: cur, target: shadow_target, related_target });
             }
             // Steps 6.10 and 6.11 ("clearTargets"), decided before listeners
             // can move nodes: the outermost target or relatedTarget the event
             // exposes is a node of a shadow tree.
             let in_shadow = |key: TargetKey| matches!(key, TargetKey::Node(i) if d.slot_live(i) && d.in_shadow_tree(i));
-            let clear = path
+            let clear = items
                 .iter()
                 .rev()
                 .find(|item| item.at_target())
                 .is_some_and(|item| in_shadow(item.target) || item.related_target.is_some_and(in_shadow));
             ev.target = Some(target);
-            ev.path = path.iter().map(|p| p.invocation_target).collect();
-            (path, clear)
+            // The event object keeps its path list between dispatches.
+            ev.path.clear();
+            ev.path.extend(items.iter().map(|p| p.invocation_target));
+            (items, clear)
         }
     };
     if !path.is_empty() {
         before_listeners(&path);
     }
     let ty = event.borrow().ty.clone();
+    // One listener list for the whole dispatch (`Dom::snapshot_into`).
+    let mut listeners = Vec::new();
 
     // Capturing: from the outermost ancestor down to (and including) target.
     for item in path.iter().rev() {
@@ -629,7 +682,7 @@ pub fn dispatch_with(
             ev.target = Some(item.target);
             ev.related_target = item.related_target;
         }
-        invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, true);
+        invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, true, &mut listeners);
     }
     // Bubbling: target, then ancestors when bubbles.
     for item in &path {
@@ -654,7 +707,7 @@ pub fn dispatch_with(
             ev.target = Some(item.target);
             ev.related_target = item.related_target;
         }
-        invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, false);
+        invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, false, &mut listeners);
     }
 
     let mut ev = event.borrow_mut();
@@ -675,6 +728,7 @@ pub fn dispatch_with(
     !ev.canceled
 }
 
+#[allow(clippy::too_many_arguments)]
 fn invoke_listeners(
     dom: &RefCell<Dom>,
     cur: TargetKey,
@@ -683,15 +737,16 @@ fn invoke_listeners(
     event: &RefCell<EventState>,
     invoker: &mut dyn ListenerInvoker,
     capture_pass: bool,
+    listeners: &mut Vec<Listener>,
 ) {
-    let listeners = dom.borrow().snapshot(cur, ty);
+    dom.borrow().snapshot_into(cur, ty, listeners);
     if listeners.is_empty() {
         // DOM "invoke" step 7: a trusted event no listener of the target was
         // registered for is retried under its legacy type (`animationend`
         // as `webkitAnimationEnd`), and reports that type meanwhile.
         let Some(legacy) = legacy_event_type(ty).filter(|_| event.borrow().is_trusted) else { return };
         let legacy = LocalName::from(legacy);
-        let listeners = dom.borrow().snapshot(cur, &legacy);
+        dom.borrow().snapshot_into(cur, &legacy, listeners);
         if listeners.is_empty() {
             return;
         }
@@ -739,7 +794,7 @@ fn run_listeners(
     dom: &RefCell<Dom>,
     cur: TargetKey,
     target: TargetKey,
-    listeners: Vec<Listener>,
+    listeners: &[Listener],
     event: &RefCell<EventState>,
     invoker: &mut dyn ListenerInvoker,
     capture_pass: bool,

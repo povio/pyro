@@ -445,3 +445,68 @@ fn a_throwing_pure_operation_runs_once_and_throws_as_the_full_dispatch_does() {
         .unwrap();
     assert!(r.contains("IndexSizeError: offset out of range"), "{r}");
 }
+
+/// Pure attributes installed as plain custom accessors
+/// (`ClassDef::attributes_without_jit_getters`).
+struct Plain;
+impl JsClass for Plain {
+    const NAME: &'static str = "Plain";
+    type Data = BaseData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.attributes_without_jit_getters();
+        def.pure_accessor_typed(
+            "id",
+            GetterResult::Number,
+            |s, d| Ok(s.number(f64::from(d.id))),
+            |_s, _d, _v| Err(JsError::dom("NoModificationAllowedError", "read-only")),
+        );
+        def.pure_accessor_typed(
+            "alias",
+            GetterResult::Number,
+            |s, d| Ok(s.number(f64::from(d.id) * 2.0)),
+            |_s, _d, _v| Err(JsError::dom("NoModificationAllowedError", "read-only")),
+        );
+        def.unenumerable_last_accessor();
+    }
+}
+
+#[test]
+fn attributes_without_jit_getters_read_check_and_throw_as_jit_getters_do() {
+    let engine = Engine::new().unwrap();
+    engine.register::<Plain>();
+    engine.register::<Base>();
+    let realm = engine.create_realm(RealmOptions::default()).unwrap();
+    let s = realm.scope().unwrap();
+    let a = s.wrap::<Plain>(data(3), None).unwrap();
+    let b = s.wrap::<Plain>(data(5), None).unwrap();
+    let other = s.wrap::<Base>(data(9), None).unwrap();
+    s.global().set_atom("a", a.value()).unwrap();
+    s.global().set_atom("b", b.value()).unwrap();
+    s.global().set_atom("other", other.value()).unwrap();
+    // Enough iterations for every JIT tier, over two receivers.
+    let got = s
+        .eval(
+            "let sum = 0;
+             for (let i = 0; i < 20000; i++) sum += (i & 1 ? a : b).id + (i & 1 ? a : b).alias;
+             const proto = Object.getPrototypeOf(a);
+             const d = Object.getOwnPropertyDescriptor(proto, 'id');
+             const err = f => { try { f(); return 'none'; } catch (e) { return e.name; } };
+             [sum, typeof d.get, typeof d.set, d.enumerable,
+              Object.getOwnPropertyDescriptor(proto, 'alias').enumerable,
+              Object.keys(proto).join('|'),
+              err(() => d.get.call(other)), err(() => d.get.call({})),
+              err(() => Object.create(proto).id),
+              err(() => { 'use strict'; a.id = 1; }), err(() => { a.alias = 1; }), a.id].join()",
+            None,
+            1,
+        )
+        .unwrap()
+        .to_string()
+        .unwrap();
+    assert_eq!(
+        got,
+        "240000,function,function,true,false,id,TypeError,TypeError,TypeError,\
+         NoModificationAllowedError,NoModificationAllowedError,3"
+    );
+}
