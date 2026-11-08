@@ -672,6 +672,21 @@ fn property_attribute_names() -> &'static [Vec<(&'static str, bool)>] {
     })
 }
 
+/// Every name of [`property_attribute_names`], with its property's index (a
+/// name defined twice: the later, as on the prototype).
+fn property_index_by_name() -> &'static rustc_hash::FxHashMap<&'static str, usize> {
+    static INDEX: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, usize>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = rustc_hash::FxHashMap::default();
+        for (i, names) in property_attribute_names().iter().enumerate() {
+            for &(name, _) in names {
+                index.insert(name, i);
+            }
+        }
+        index
+    })
+}
+
 /// Assigning to a computed style's property: Chrome's error, in sloppy code
 /// too.
 fn computed_read_only<'s>(_s: &Scope<'s>, _c: &ComputedData, _v: Value<'s>) -> JsResult<()> {
@@ -722,6 +737,13 @@ impl JsClass for ComputedStyle {
         for (name, how) in own {
             def.own_property_name(name, how);
         }
+        // An own name's value (a descriptor, spread, `Object.entries`) is
+        // the property's, as Chrome's named property is, not whatever the
+        // prototype chain holds after `Object.setPrototypeOf`.
+        def.own_property_value(|s, c, name| {
+            let Some(&i) = property_index_by_name().get(name) else { return Ok(None) };
+            Ok(Some(PROPERTY_GETTERS[i / 16][i % 16](s, c)?))
+        });
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
             Ok(computed_string(s, &c.value(&name)))

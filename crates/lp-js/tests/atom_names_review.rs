@@ -1,8 +1,8 @@
-//! Review tests for patch 0025 (`JSStringCreateAtom`): the thread's static
-//! name strings remember the atom of the VM they were first used with. A
-//! VM's atom table dies with it; the next engine on the thread must still
-//! find its properties by those names, and two live engines on one thread
-//! must each see their own.
+//! Review tests for the thread's static name strings (`lp_js::string::atom_raw`)
+//! across engines, written for patch 0025's remembered atoms (since dropped)
+//! and kept for its lock skip: a VM's atom table dies with it; the next
+//! engine on the thread must still find its properties by those names, and
+//! two live engines on one thread must each see their own.
 
 use lp_js::*;
 

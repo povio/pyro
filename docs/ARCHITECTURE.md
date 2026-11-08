@@ -326,17 +326,21 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
   attributes cost each realm ~1.5 ms, and were installed as plain custom accessors to dodge it. They are JIT getters
   again.
 - Patch `0024` adds `JSClassSetOwnPropertyNames` (`ClassDef::own_property_name`): names a class's wrappers have as
-  own properties while the prototype's accessors keep their values. Chrome has computed-style properties as named
+  own properties while the prototype's accessors serve reads. Chrome has computed-style properties as named
   properties of the object, so `hasOwnProperty('color')`, `Object.keys`, spread, `JSON.stringify` and
-  `getOwnPropertyDescriptor` see them there. JSC lists the names in `getOwnPropertyNames` and answers an
-  own-property lookup (`InternalMethodType::GetOwnProperty`) with a data property valued by a `[[Get]]`; a `[[Get]]`
-  never consults them (a cacheable wrapper skips `getOwnPropertySlot` altogether), so reads stay inline-cached. The
-  same patch makes the indexed callbacks' properties enumerable, as WebIDL's are.
+  `getOwnPropertyDescriptor` see them there. JSC lists the names in `getOwnPropertyNames` (as a realm's identifiers,
+  made once on its first listing) and answers an own-property lookup (`InternalMethodType::GetOwnProperty`) with a
+  custom value: `hasOwnProperty`, `Object.hasOwn` and `propertyIsEnumerable` (patched to read the slot's attributes,
+  not a descriptor) answer without computing it, so they never restyle or lay out; a descriptor or a copy reads it
+  through the class's `getValue` callback (`ClassDef::own_property_value`: the property's value whatever the
+  prototype chain holds now, as in Chrome). The answer is not cached in `HasOwnPropertyCache`, because wrappers of
+  different classes share a structure when they share a prototype. A `[[Get]]` never consults the names (a cacheable
+  wrapper skips `getOwnPropertySlot` altogether), so reads stay inline-cached. The same patch makes the indexed
+  callbacks' properties enumerable, as WebIDL's are.
 - Patch `0025`: `JSObjectMakeWrapper`, `JSObjectGet/SetProperty` and `JSObjectGet/SetPrivateProperty` skip
-  `JSLockHolder` when the thread already holds the VM's lock (every call from inside a callback); and
-  `JSStringCreateAtom` makes an API string that holds the thread's atom, which `OpaqueJSString::identifier` uses as is.
-  `lp_js::string::atom_raw` makes its per-thread static names that way, so hidden-property writes and constant-key
-  gets and sets no longer hash the name and probe the atom table per call.
+  `JSLockHolder` when the thread already holds the VM's lock (every call from inside a callback). An API string that
+  remembered its atom per VM (to skip the atom-table probe for constant names) was tried and dropped: its gain was
+  within noise, and an atom reference outlives its table, which leaked ~270 KB per CDP connection.
 
 Navigating or closing a page no longer always collects: `Engine::release_closed` runs `settle` only once the process's
 physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. That collection runs inside the

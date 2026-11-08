@@ -318,18 +318,7 @@ pub(crate) fn atom_raw(name: &'static str) -> sys::JSStringRef {
         if let Some(s) = a.borrow().get(&key) {
             return s.as_raw();
         }
-        let mut s = JsString::new(name);
-        // The patched JSC's atom string: property-name calls with it skip
-        // hashing the name and probing the atom table (patch 0025). Made and
-        // released on this thread, as the table is thread-local.
-        if let Some(make_atom) = sys::spi::get().string_create_atom {
-            // SAFETY: a live string; the result is a new +1 reference.
-            let atom = unsafe { make_atom(s.as_raw()) };
-            if !atom.is_null() {
-                // SAFETY: owned +1 reference from JSStringCreateAtom.
-                s = unsafe { JsString::from_raw_owned(atom) };
-            }
-        }
+        let s = JsString::new(name);
         let raw = s.as_raw();
         a.borrow_mut().insert(key, s);
         raw

@@ -129,3 +129,30 @@ fn indexed_properties_are_enumerable_for_every_indexed_class() {
     );
     assert_eq!(eval(&root, r#"JSON.stringify(document.querySelectorAll('b'))"#), r#"{"0":{},"1":{}}"#);
 }
+
+/// perf/jsc-r2-fixed: an own name's value is the property's own (the class's
+/// value callback), not a `[[Get]]` through whatever prototype chain the
+/// object has now; `hasOwnProperty` and `propertyIsEnumerable` need no value;
+/// the listed names are the same on every call and in every realm.
+#[test]
+fn computed_style_own_values_and_names_after_prototype_changes() {
+    let (_t, _p, root) = page();
+    let checks: &[(&str, &str)] = &[
+        // Chrome 157: true, "string:rgb(1, 2, 3)" (its [[Get]] also finds the
+        // named property; ours goes to the prototype, which is gone).
+        ("const c = getComputedStyle(a); Object.setPrototypeOf(c, null); const d = Object.getOwnPropertyDescriptor(c, 'color'); [Object.prototype.hasOwnProperty.call(c, 'color'), typeof d.value + ':' + d.value, d.enumerable].join()", "true,string:rgb(1, 2, 3),true"),
+        // A read takes the new prototype's property (as in Chrome); the own
+        // property's value stays the style's (Chrome: undefined).
+        ("const c = getComputedStyle(a); Object.setPrototypeOf(c, { color: 'X' }); [c.color, Object.getOwnPropertyDescriptor(c, 'color').value, Object.hasOwn(c, 'color'), Object.prototype.propertyIsEnumerable.call(c, 'color')].join()", "X,rgb(1, 2, 3),true,true"),
+        ("const c = getComputedStyle(a); Object.setPrototypeOf(c, null); [Object.entries(c).find(x => x[0] === 'float')[1], ({ ...c }).backgroundColor].join()", "left,rgba(0, 0, 0, 0)"),
+        // The dashed and Webkit names answer with their property's value.
+        ("const c = getComputedStyle(a); Object.setPrototypeOf(c, null); ['background-color', 'float', 'webkitTransform', 'WebkitTransform'].map(k => Object.getOwnPropertyDescriptor(c, k).value).join('|')", "rgba(0, 0, 0, 0)|left|none|none"),
+        ("const c = getComputedStyle(a); const k1 = Object.getOwnPropertyNames(c).join(); const k2 = Object.getOwnPropertyNames(getComputedStyle(document.body)).join(); [k1 === k2, Object.keys(c).join() === Object.keys(c).join()].join()", "true,true"),
+        ("const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow; const k = w.Object.getOwnPropertyNames(w.getComputedStyle(w.document.documentElement)); [k.join() === Object.getOwnPropertyNames(getComputedStyle(a)).join(), k.length > 1000].join()", "true,true"),
+        ("['color', 'epubCaptionSide', 'cssFloat', '0', 'length'].map(k => Object.prototype.propertyIsEnumerable.call(getComputedStyle(a), k)).join()", "true,false,false,true,false"),
+    ];
+    for (src, want) in checks {
+        let body = match src.rfind("; ") { Some(i) if src.starts_with("const ") => format!("{}; return {}", &src[..i], &src[i + 2..]), _ => format!("return {src}") };
+        assert_eq!(eval(&root, &format!("(() => {{ {body} }})()")), *want, "{src}");
+    }
+}
