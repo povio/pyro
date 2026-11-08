@@ -40,6 +40,9 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
     /// Style index for each character, parallel to [`Analysis::char_info`].
     pub(crate) char_style_indices: Vec<u16>,
     pub(crate) scx: Shaper,
+    /// Per style of the layout being built, the first available font the shaper's font selector
+    /// found (lightningpanda; see `shape::FontSelector`), for the style metrics.
+    pub(crate) style_first_fonts: Vec<Option<parley_engine::FontInstance>>,
 
     // Unicode analysis data sources (provided by icu)
     pub(crate) analysis_data_sources: AnalysisDataSources,
@@ -70,6 +73,7 @@ impl<B: Brush> LayoutContext<B> {
             char_style_indices: vec![],
             analysis_data_sources: AnalysisDataSources::new(),
             scx: Shaper::default(),
+            style_first_fonts: vec![],
             build_cache: Default::default(),
             previous_layout: Default::default(),
         }

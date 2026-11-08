@@ -68,6 +68,16 @@ word by word is broken from its last lines. On `cmr-overflow` the bytes going th
 went from about 240 to 40 per break, with identical PDFs. Covered by the differential tests in
 `crates/lp-render/tests/line_break_resume.rs`.
 
+`shape/mod.rs`, `FontSelector` and `layout/style_metrics.rs`, `resolve_style_metrics`: the style
+metrics of every style ran a fontique query per layout for the style's first available font, after
+the font selector had queried the same families and attributes while shaping. The selector's
+charmap probe (`query_yields_font`) visits the fonts in the query's order, so the first font it
+visits is the first available font when it comes from the style's own families (not the script
+fallbacks or the emoji family); the selector records it per style (`LayoutContext::style_first_fonts`)
+and `resolve_style_metrics` takes a style's font from there, querying only a style without one
+(its families yield nothing, or it shaped no text). The font is the same `QueryFont` the query would
+yield, so the metrics are unchanged.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply
