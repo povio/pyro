@@ -415,3 +415,234 @@ fn a_candidate_under_display_none_does_not_transition() {
         "transitionrun:width:d2 transitionstart:width:d2 transitionend:width:d2"
     );
 }
+
+// Review (tflush): adversarial cases around the style-change journal and the
+// `display: none` change. Expectations are Chrome's (headless, checked by
+// the review harness).
+
+const TRANSITION_CSS: &str = ".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .h { display: none }";
+
+/// Runs the page for `ms` and answers the log.
+fn quiet(t: &mut BrowserThread, root: &Realm, ms: u64) -> String {
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    while Instant::now() < deadline {
+        t.run_until_idle(Some(Instant::now() + Duration::from_millis(20)));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    eval(root, "log.join(' ')")
+}
+
+#[test]
+fn review_a_hidden_element_changed_and_shown_in_one_task_transitions() {
+    // Displayed at both style change events: the hidden state in between
+    // never reached a style flush.
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(&root, "globalThis.a = el('a', 't'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.style.display = 'none'; a.classList.add('w'); a.style.display = ''; 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+#[test]
+fn review_an_element_hidden_at_a_flush_then_changed_and_shown_does_not_transition() {
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(&root, "globalThis.a = el('a', 't'); globalThis.p = el('p'); globalThis.b = el('b', 't', p); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.style.display = 'none'; p.hidden = true; getComputedStyle(a).width; b.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); b.classList.add('w'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.style.display = ''; p.hidden = false; 0");
+    assert_eq!(quiet(&mut t, &root, 150), "");
+}
+
+#[test]
+fn review_hidden_ancestor_shown_then_read_then_changed_transitions() {
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(&root, "globalThis.p = el('p', 'h'); globalThis.a = el('a', 't', p); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "p.classList.remove('h'); getComputedStyle(a).width; a.classList.add('w'); 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+#[test]
+fn review_inherited_custom_property_and_structural_selectors_reach_the_journal() {
+    // Restyles the traversal reaches through an ancestor or a sibling.
+    let (mut t, root) = transition_page(
+        ".t { transition: width 20ms; width: var(--w, 100px); height: 10px } .on ~ .t { width: 150px } .t:has(.in) { width: 170px }",
+    );
+    eval(
+        &root,
+        "globalThis.a = el('a', 't'); globalThis.s = el('s'); globalThis.b = el('b', 't'); globalThis.c = el('c', 't'); globalThis.k = el('k', '', c); a.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "document.body.style.setProperty('--w', '120px'); s.className = 'on'; k.className = 'in'; 0");
+    let mut log: Vec<String> = settle(&mut t, &root, "transitionend:width:c").split(' ').map(str::to_owned).collect();
+    run_until(&mut t, &root, "log.includes('transitionend:width:a') && log.includes('transitionend:width:b')");
+    log = eval(&root, "log.join(' ')").split(' ').map(str::to_owned).collect();
+    log.sort();
+    assert_eq!(log.len(), 9, "{log:?}");
+    for id in ["a", "b", "c"] {
+        assert!(log.contains(&format!("transitionrun:width:{id}")), "{log:?}");
+    }
+}
+
+#[test]
+fn review_many_style_flushes_in_one_task_keep_the_journal() {
+    // Each flush takes the journal; the element changed at the end still
+    // transitions, and only once.
+    let (mut t, root) = transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .k span { color: red }");
+    eval(&root, "for (let i = 0; i < 300; i++) el('s' + i, ''); globalThis.a = el('a', 't'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(
+        &root,
+        "for (let i = 0; i < 20; i++) { document.body.classList.toggle('k'); document.body.offsetHeight; } a.classList.add('w'); 0",
+    );
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+#[test]
+fn review_a_journal_overflow_falls_back_to_every_candidate() {
+    // One traversal restyles more than 65,536 elements: the journal is
+    // dropped, the flush looks at every candidate, and the next flush is
+    // journaled again.
+    let (mut t, root) =
+        transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .k span { color: red }");
+    eval(
+        &root,
+        "const f = document.createDocumentFragment(); for (let i = 0; i < 66000; i++) f.appendChild(document.createElement('span'));
+         document.body.appendChild(f); globalThis.a = el('a', 't'); a.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "document.body.classList.toggle('k'); a.classList.add('w'); a.offsetHeight; 0");
+    settle(&mut t, &root, "transitionend:width:a");
+    eval(&root, "a.classList.remove('w'); a.offsetHeight; 0");
+    run_until(&mut t, &root, "log.filter(e => e == 'transitionend:width:a').length == 2");
+    assert_eq!(eval(&root, "log.length"), "6");
+}
+
+#[test]
+fn review_an_iframe_candidate_under_display_none_does_not_transition() {
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        &format!(
+            "globalThis.f = el('f'); f.remove(); globalThis.f = document.createElement('iframe');
+             f.srcdoc = '<style>{TRANSITION_CSS}</style><div id=p class=h><div id=i class=t></div></div><div id=j class=t></div>';
+             f.onload = () => {{ for (const type of ['transitionrun', 'transitionstart', 'transitionend', 'transitioncancel'])
+               f.contentWindow.addEventListener(type, e => log.push(e.type + ':' + e.propertyName + ':' + e.target.id));
+               globalThis.loaded = true; }};
+             document.body.appendChild(f); 0"
+        ),
+    );
+    run_until(&mut t, &root, "globalThis.loaded === true");
+    eval(&root, "{ const d = f.contentDocument; d.getElementById('i').offsetHeight; d.getElementById('i').classList.add('w'); d.getElementById('i').offsetHeight; } 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "{ const d = f.contentDocument; d.getElementById('p').classList.remove('h'); d.getElementById('j').classList.add('w'); } 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:j"),
+        "transitionrun:width:j transitionstart:width:j transitionend:width:j"
+    );
+}
+
+#[test]
+fn review_a_document_transition_rule_does_not_reach_into_a_shadow_tree() {
+    // Chrome: a document rule does not style shadow-tree elements, so a
+    // width change of one there never transitions (base: none either).
+    // FAILS on b3bc5b71: the journal lists the shadow element and
+    // `may_transition` / `TimingRules::element` match the document's `.t`
+    // rule against it across the scope boundary.
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        "globalThis.host = el('host'); const r = host.attachShadow({ mode: 'open' });
+         for (const type of ['transitionrun', 'transitionstart', 'transitionend', 'transitioncancel'])
+           r.addEventListener(type, e => log.push(e.type + ':' + e.propertyName + ':' + e.target.id));
+         r.innerHTML = '<style>div { height: 10px; width: 100px } .w { width: 200px }</style><div id=s class=t></div>';
+         globalThis.s = r.getElementById('s'); s.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "s.classList.add('w'); s.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    eval(&root, "s.classList.remove('w'); s.offsetHeight; 0");
+    assert_eq!(quiet(&mut t, &root, 150), "");
+}
+
+#[test]
+fn review_closed_details_content_transitions_when_opened() {
+    // Chrome keeps the style of a closed `<details>`'s content (it is
+    // content-visibility: hidden, not display: none there): a change while
+    // closed transitions once opened (base: the same). FAILS on b3bc5b71:
+    // the engine styles the content `display: none`, so its before-change
+    // style is dropped.
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        "globalThis.d = document.createElement('details'); document.body.appendChild(d); globalThis.a = el('a', 't', d); a.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "d.open = true; 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+#[test]
+fn review_hidden_until_found_content_transitions_when_revealed() {
+    // As closed `<details>`: Chrome (and base) transition. FAILS on b3bc5b71.
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        "globalThis.p = el('p'); p.setAttribute('hidden', 'until-found'); globalThis.a = el('a', 't', p); a.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "p.removeAttribute('hidden'); 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+#[test]
+fn review_a_reversed_transition_cancels_and_runs_again() {
+    let (mut t, root) = transition_page(".t { transition: width 300ms; width: 100px; height: 10px } .w { width: 200px }");
+    eval(&root, "globalThis.a = el('a', 't'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
+    run_until(&mut t, &root, "log.includes('transitionstart:width:a')");
+    eval(&root, "a.classList.remove('w'); a.offsetHeight; 0");
+    run_until(&mut t, &root, "log.filter(e => e == 'transitionstart:width:a').length == 2");
+    assert_eq!(
+        eval(&root, "log.slice(0, 4).join(' ')"),
+        "transitionrun:width:a transitionstart:width:a transitioncancel:width:a transitionrun:width:a"
+    );
+}
+
+#[test]
+fn review_a_sheet_added_after_the_journal_started_transitions_its_targets() {
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(&root, "globalThis.a = el('a', 't'); globalThis.b = el('b'); b.style.cssText = 'width: 100px; height: 10px'; a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
+    settle(&mut t, &root, "transitionend:width:a");
+    // `b` becomes a candidate by a new sheet (a full scan), then changes.
+    eval(&root, "sheet('#b { transition: width 20ms }'); 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "b.offsetHeight; b.style.width = '150px'; 0");
+    run_until(&mut t, &root, "log.includes('transitionend:width:b')");
+    assert_eq!(eval(&root, "log.filter(e => e.endsWith(':b')).join(' ')"), "transitionrun:width:b transitionstart:width:b transitionend:width:b");
+}
