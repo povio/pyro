@@ -1325,6 +1325,8 @@ impl Renderer {
     /// `hit`): what lp-dom hit-tests instead of every element's box.
     /// `shifted`: the keys of the elements lp-dom moves (scrolled
     /// containers, sticky boxes), `offset`: how far it moves any element.
+    /// `None` while the document's hit bounds are stale: call
+    /// [`Self::ensure_hit_bounds`] first.
     pub fn hit_candidates(
         &self,
         page: u64,
@@ -1333,8 +1335,20 @@ impl Renderer {
         shifted: &[u64],
     ) -> Option<Vec<HitVisit>> {
         let m = self.mirrors.get(&page)?;
+        if m.doc.hit_overflow_is_stale() {
+            return None;
+        }
         let g = self.geometry.get(&page)?;
         Some(hit::candidates(g, m, probe, offset, shifted))
+    }
+
+    /// Brings the hit bounds of `page`'s persistent document up to date with
+    /// its last sync (`BaseDocument::ensure_hit_overflow`: a sync only marks
+    /// them stale), for [`Self::hit_candidates`].
+    pub fn ensure_hit_bounds(&mut self, page: u64) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.doc.ensure_hit_overflow();
+        }
     }
 
     /// `page`'s document scroll size (at least the viewport), as last synced.
@@ -2398,10 +2412,9 @@ fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dp
                 return Some(s);
             }
             if let Some(mut kind) = kind_of(c) {
-                let parent = doc
-                    .get_node(c)
-                    .and_then(|n| n.parent)
-                    .and_then(|p| structure(p, doc, ex, structs, kind_of, link_target, dpr));
+                let parent = doc.get_node(c).and_then(|n| n.parent).and_then(|p| {
+                    blitz_dom::util::ensure_stack(|| structure(p, doc, ex, structs, kind_of, link_target, dpr))
+                });
                 let index = ex.structs.len() as u32;
                 if let pdf::StructKind::Link(_) = kind {
                     let node = doc.get_node(c)?;

@@ -332,7 +332,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  use style::values::computed::{BorderCornerRadius, ColorOrAuto};
  use style::{
      dom::TElement,
-@@ -134,6 +135,11 @@
+@@ -140,6 +141,11 @@
      pub(crate) draw_text_context: RefCell<DrawTextContext>,
      /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
      pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
@@ -344,7 +344,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
      // Pre-computed `Scene`s for each CustomWidget
      pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
-@@ -174,6 +180,8 @@
+@@ -186,6 +192,8 @@
              layer_manager,
              draw_text_context: RefCell::new(DrawTextContext::default()),
              selection_ranges,
@@ -353,7 +353,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              custom_widget_scenes,
          }
      }
-@@ -231,7 +239,7 @@
+@@ -243,7 +251,7 @@
              }
          };
  
@@ -362,7 +362,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let bg_color = bg_color.as_srgb_color();
              let rect = Rect::from_origin_size(
                  (self.initial_x, self.initial_y),
-@@ -317,8 +325,10 @@
+@@ -463,8 +471,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
                  || contain_paint
@@ -375,7 +375,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -378,7 +388,9 @@
+@@ -524,7 +534,9 @@
                          brush_override: Some(Color::BLACK),
                      },
                      node.id,
@@ -385,7 +385,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  );
              }
          }
-@@ -643,10 +655,14 @@
+@@ -798,10 +810,14 @@
                      backdrop_filter,
                      |scene| {
                          if paints_own_box {
@@ -402,7 +402,21 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                          cx.draw_table_borders(scene);
                          if paints_own_box {
                              cx.draw_border(scene);
-@@ -976,6 +992,11 @@
+@@ -879,9 +895,11 @@
+         let node = &self.dom.as_ref().tree()[node_id];
+ 
+         match &node.data {
+-            NodeData::Element(_) | NodeData::AnonymousBlock(_) => {
++            // lightningpanda: once per tree level; a tree of any depth paints on a stack grown on
++            // demand (blitz-dom `util::ensure_stack`).
++            NodeData::Element(_) | NodeData::AnonymousBlock(_) => blitz_dom::util::ensure_stack(|| {
+                 self.render_element(scene, node_id, parent_style_transform, clip_rect)
+-            }
++            }),
+             NodeData::Text(TextNodeData { .. }) => {
+                 // Text nodes should never be rendered directly
+                 // (they should always be rendered as part of an inline layout)
+@@ -1131,6 +1149,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -414,7 +428,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -987,20 +1008,23 @@
+@@ -1142,20 +1165,23 @@
  
              // Render inline element backgrounds (e.g. `<span style="background: ...">`)
              // behind the text and selection highlight.
@@ -446,7 +460,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,6 +1032,7 @@
+@@ -1163,6 +1189,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -454,18 +468,18 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  text_layout.layout.lines(),
-@@ -1018,11 +1043,113 @@
+@@ -1173,7 +1200,109 @@
                      brush_override: None,
                  },
                  self.node.id,
 +                Some(&text_layout.text),
                  &mut draw_text_context,
 +                None,
-             );
++            );
 +            draw_text_context.text_shift = 0.0;
-         }
-     }
- 
++        }
++    }
++
 +    /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
 +    fn fractional_text_x_of_node(&self) -> f64 {
 +        if !self.context.fractional_text_x {
@@ -561,14 +575,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(&text_layout.text),
 +                &mut draw_text_context,
 +                vertical,
-+            );
-+        }
-+    }
-+
-     fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
-         // Render the text in text inputs
-         if let Some(input_data) = self.text_input {
-@@ -1088,7 +1215,9 @@
+             );
+         }
+     }
+@@ -1243,7 +1372,9 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -578,7 +588,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1147,7 +1276,9 @@
+@@ -1302,7 +1433,9 @@
                      brush_override: None,
                  },
                  self.node.id,

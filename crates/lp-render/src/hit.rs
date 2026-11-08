@@ -313,7 +313,7 @@ impl Descent<'_> {
             }
             let children: Vec<NodeId> = self.doc.get_node(id).map(|n| n.children.to_vec()).unwrap_or_default();
             for child in children {
-                self.visit(child);
+                blitz_dom::util::ensure_stack(|| self.visit(child));
             }
         }
         let p = self.path.pop().expect("the node's own path entry");

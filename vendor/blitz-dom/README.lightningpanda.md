@@ -50,6 +50,23 @@ against the upstream commit above); they are covered by lp-render's rendering te
 
 - `src/resolve.rs` (`resolve_layout_children`): an undamaged subtree without damaged descendants is not
   walked (its layout children are those of the last pass); anonymous boxes are always visited.
+- `src/resolve.rs` (`resolve_layout_children`), `src/layout/damage.rs` (`propagate_damage_flags`,
+  `clear_damage_and_dirty_flags`), `src/node/node.rs` (`Node::is_clean_layout_child_of`,
+  `Node::has_no_damage_below`): the walks that follow damage skip a child whose `damaged_descendants` flag is
+  clear from the parent's loop (an element, for `resolve_layout_children`; any node but an anonymous box for the
+  DOM walks) instead of entering it to return. This relies on the invariant `mark_damaged` keeps: a node with damage
+  has its flag set, and so do its ancestors. Debug builds assert it at each skip, and assert after every resolve
+  that no node in the document keeps damage (`assert_no_damage_left`). The two places that set a pseudo-element's
+  damage without its flag (`flush_pseudo_elements`, creating and updating one) now call `mark_damaged`.
+- `src/layout/table.rs` (`cells_to_visit`), `src/resolve.rs`: a change inside a table's cells reaches the table as
+  `CONSTRUCT_DESCENDENT` without `RELAYOUT` (`propagate_damage_flags` drops `ONLY_RELAYOUT`), so the table is neither
+  built again nor updated. When the table keeps its cells (`keeps_cells`), `resolve_layout_children` visits only the
+  cells `note_changed_table_cell` listed as changed in layout (`TableContext::changed_cells`, read before the grid
+  takes it) and the pseudo-elements. Any other cell has nothing to build: construction below a cell reaches it as
+  layout damage. Debug builds assert that every unlisted cell is clean or has no layout damage. Before this, a cell
+  edit in a 1,200-row table entered all 4,800 cells to return, about a quarter of the CPU of an edit-and-measure
+  loop. Covered by `a_deep_cell_edit_beside_cells_with_flags_but_no_layout_change_matches_fresh_builds` and the
+  other table mirror tests in lp-render.
 - `src/resolve.rs` (`resolve_transforms`): a node's cached scrollable overflow is reused only when it and
   its subtree are undamaged (a descendant's relayout reaches ancestors as damage, not as
   `RECALCULATE_OVERFLOW`).
@@ -449,34 +466,38 @@ build of every node, tables visited as any box. Covered by lp-render's `settle_r
 
 lp-render answers `elementFromPoint` by descending the tree from the root and skipping the subtrees whose bound
 cannot hold the point (`crates/lp-render/src/hit.rs`), instead of reading every element's box. The bound of a box
-is its border box and its hit overflow, kept by the transform pass next to the scrollable overflow; and two things
+is its border box and its hit overflow, brought up to date by the first hit test after a resolve; and two things
 are exposed:
 
-- `src/resolve.rs` (`resolve_transforms`, `unite_hit`, `glyph_reach`), `src/node/element.rs`
-  (`LayoutData::hit_overflow`), `src/node/text.rs` (`TextLayout::hit_reach`), `src/layout/inline/layout.rs`:
-  `resolve_transforms` returns, besides a box's contribution to its parent's scrollable overflow, its contribution
-  to the parent's hit overflow, and keeps the box's own (`Node::hit_overflow`, device px, like
-  `scrollable_overflow`). It is the scrollable overflow except for two things. First, the contributions of no area
-  that have a width or a height count (`unite_hit`; `unite_overflow` drops them for the scroll size: a 2000 x 0 px
-  box does not make a page scroll, but text overflowing sideways on lines of `line-height: 0`, or a zero-width
-  box, is hit). Second, an inline formatting context's glyph runs reach outside its line boxes (a tight
-  `line-height` puts the whole-pixel ascent and descent past the line box; hanging white space past the line's
-  advance), and layout queries report an inline element's box from those content areas (lp-render's
-  `Geometry::inline_items`): the hit overflow holds the line boxes grown by the largest such reach of the context
-  (`glyph_reach`, plus a layout unit of advance rounding). The reach is measured per line (past the line's start,
-  end and block extent), which aligning does not change, by the first transform pass after the lines were broken
-  (`TextLayout::hit_reach`: breaking resets it, a rebuilt `TextLayout` starts without it, and so does aligning when
-  it justifies now or did before, `TextLayout::justified`), so a pass over a context whose lines did not break again
-  (an anonymous block visited again, a cell relaid at the same width) does not go over its glyph runs. Overflow
-  clips apply to the hit overflow as to the scrollable one (`overflow_contributions` reads the style once for
-  both; a box placed by a translation alone adds its location instead of going through `transform_rect_bbox`,
-  which gives the same values: `placement`).
-- `src/resolve.rs` (`table_cells_overflow`), `src/layout/table.rs` (`PlacedCells::hit`,
-  `PlacedCells::row_overflow`, `TableContext::row_hit_extents`): rows and row groups have no box, and a cell can
-  span later rows, so a row's bound is the union of the hit contributions of the cells originating in it (kept per
-  cell in `PlacedCells::hit`, next to the per-cell overflow the transform pass already keeps), kept per row,
-  recomputed for the rows of the cells transformed again (all rows when the rows changed: `splice` clears it). A table whose cells the pass does not keep
-  (`keeps_cells`) reports none and lp-render computes the contributions from the cells.
+- `src/resolve.rs` (`ensure_hit_overflow`, `resolve_hit_overflow`, `unite_hit`, `glyph_reach`),
+  `src/node/element.rs` (`LayoutData::hit_overflow`, `LayoutData::hit_stale`), `src/document.rs`
+  (`hit_overflow_dirty`), `src/node/text.rs` (`TextLayout::hit_reach`), `src/layout/inline/layout.rs`: the
+  transform pass (`resolve_transforms`) computes only the scrollable overflow, and flags each box it computes again
+  `hit_stale`; a resolve marks the document's hit bounds stale (`hit_overflow_dirty`), as it does its paint tree.
+  `ensure_hit_overflow` (called by lp-render before a hit test) walks the tree the transform pass walks, through the
+  flagged boxes only (a box is flagged only when that pass computed it again, and so were its ancestors), and keeps
+  each box's hit overflow (`Node::hit_overflow`, device px, like `scrollable_overflow`). A run of forced layouts with
+  no hit test in between (a cell edited and measured in a loop) pays nothing for hit bounds. It is the scrollable
+  overflow except for two things. First, the contributions of no area that have a width or a height count
+  (`unite_hit`; `unite_overflow` drops them for the scroll size: a 2000 x 0 px box does not make a page scroll, but
+  text overflowing sideways on lines of `line-height: 0`, or a zero-width box, is hit). Second, an inline formatting
+  context's glyph runs reach outside its line boxes (a tight `line-height` puts the whole-pixel ascent and descent
+  past the line box; hanging white space past the line's advance), and layout queries report an inline element's
+  box from those content areas (lp-render's `Geometry::inline_items`): the hit overflow holds the line boxes grown
+  by the largest such reach of the context (`glyph_reach`, plus a layout unit of advance rounding). The reach is
+  measured per line (past the line's start, end and block extent), which aligning does not change, by the first hit
+  pass after the lines were broken (`TextLayout::hit_reach`: breaking resets it, a rebuilt `TextLayout` starts
+  without it, and so does aligning when it justifies now or did before, `TextLayout::justified`). Overflow clips
+  apply to the hit overflow as to the scrollable one (`overflow_contribution`; a box placed by a translation alone
+  adds its location instead of going through `transform_rect_bbox`, which gives the same values: `placement`).
+- `src/resolve.rs` (`table_cells_overflow`, `table_cells_hit`), `src/layout/table.rs` (`PlacedCells::hit`,
+  `PlacedCells::hit_again`, `PlacedCells::row_overflow`, `TableContext::row_hit_extents`): rows and row groups have
+  no box, and a cell can span later rows, so a row's bound is the union of the hit contributions of the cells
+  originating in it (kept per cell in `PlacedCells::hit`), kept per row. The transform pass notes the cells it
+  transforms again (`PlacedCells::transformed`, kept with `splice` like the other lists); the hit pass computes
+  those cells' contributions and their rows' unions again (all rows when the rows changed: `splice` clears them).
+  A table whose cells the pass does not keep (`keeps_cells`) reports none and lp-render computes the contributions
+  from the cells.
 - `src/document.rs` (`sticky_node_ids`): the sticky set behind `has_sticky`, so lp-dom learns the sticky
   elements without a pass over the document; `BaseDocument::overflow_contribution` is `pub` for the table
   fallback above.
@@ -556,6 +577,58 @@ none. `crates/lp-render/tests/mirror.rs`: `paint_only_restyles_run_no_layout_and
 property on cells, inline roots, flex and grid items, floats and absolutely positioned boxes, synced as deltas:
 boxes, document size and paint against a fresh build, no layout algorithm run, no text shaped, the paint changed)
 and `text_style_changes_shape_again_and_match_fresh_builds`.
+
+## Small stack frames per level of the layout recursion
+
+`layout/mod.rs`, `layout/writing_mode.rs`: Taffy's algorithms lay out a child through
+`compute_child_layout` -> `compute_child_layout_internal` -> `compute_child_layout_in_own_wm` ->
+`compute_child_layout_in_current_wm` -> `dispatch_child_layout` -> the child's algorithm, so every level of a
+nested tree keeps these frames on the stack. `dispatch_child_layout` had the leaf boxes (form controls,
+selects, replaced elements) and the table code inlined, about 2 KB of frame per level. It now only picks the
+algorithm: `leaf_layout_or_algorithm` (not inlined) lays out a leaf box or names the algorithm
+(`ChildLayout`), and tables (`compute_table_root_layout`), inline, flex and grid layout are not inlined into
+it; `compute_child_layout_in_current_wm` keeps its input adjustments (`adjusted_child_inputs`) and the
+out-of-flow pass (`lay_out_out_of_flow_boxes`) out of its frame, and `compute_child_layout_in_own_wm` its
+overflow mirroring (`mirror_child_overflow`) and orthogonal flows. With Taffy's part (its README), a nested
+block costs about 2.7 KB of stack in a release build instead of 4.9 KB (2.4 KB instead of 5.3 KB in a debug
+build): a 2 MB thread lays out about 770 levels instead of 430. Nothing else changes; the layout results are
+the same (lp-layout and lp-render tests). Covered by lp-layout `text_clip_facts_deep_nesting_without_recursion`
+(400 levels on a test thread's 2 MB) and `deep_nesting_lays_out_on_a_browser_thread_stack` (2,000 on 8 MB).
+
+## Deep trees grow the stack on demand
+
+`util.rs` (`ensure_stack`, `STACK_RED_ZONE`, `STACK_GROW_BY`), `Cargo.toml` (the `stacker` crate, which rustc
+uses for the same purpose): the small frames above only move the depth at which a thread's stack overflows,
+and an overflow aborts the whole process (every page of a `serve`). Every walk that recurses once per tree
+level now makes its recursive call through `ensure_stack`, which moves to a new 4 MB stack segment (mapped, committed
+as touched, unmapped on return) when less than 256 KB is left, so a tree of any depth lays out, paints and
+prints whatever stack its caller left (a 2 MB spawned thread, or JS recursion near JavaScriptCore's limit
+followed by a layout read). With room left it costs a thread-local read and one stack-pointer compare per
+level. The red zone covers what one level runs between two checkpoints: a level of the layout dispatch
+(about 3 KB) plus a leaf's own non-recursive work (shaping, table and grid sizing).
+
+- Layout: `LayoutPassState::compute_child_layout_internal` (`layout/mod.rs`), which every algorithm's child
+  layout goes through (Taffy's `compute_child_layout`, Blitz's block contexts, tables, orthogonal flows).
+- Box construction and damage: `resolve_layout_children_recursive`, `classify_flow_children`,
+  `flush_inline_pseudos_recursive`, `find_inline_layout_embedded_boxes_recursive`,
+  `collect_list_item_children`, `build_inline_layout_recursive`, `propagate_damage_flags`,
+  `refresh_anonymous_block_styles`, `clear_damage_and_dirty_flags`.
+- After layout: `resolve_transforms` (overflow, including a kept-cells table's cells in
+  `table_cells_overflow`), `resolve_hit_overflow` (the hit bounds brought up to date at the first hit test,
+  including `table_cells_hit`), `physicalise_and_round_inner` (rounding) and its debug check
+  `assert_rounding_is_current`, `build_paint_tree_impl` (paint tree), `hit_inner` (hit testing). The walks
+  that skip children with no damage below them (`propagate_damage_flags`, `clear_damage_and_dirty_flags`,
+  `resolve_layout_children_recursive`) make the calls they still make through `ensure_stack`.
+- `layout/writing_mode.rs` (`placer_geometry`): the position of a box in a vertical tree recursed up its
+  containing-block chain; it is a loop over the chain, outermost first, with the same arithmetic.
+- Tree upkeep: `iter_subtree_mut_inner`, `collect_all_inline_roots_in_subtree`, `is_or_contains_block`,
+  `write_text_content`, `drop_node_ignoring_parent_with`, `deallocate_anonymous_block`, `leave_layout_tree`,
+  `remove_pe_ignoring_parent`.
+
+blitz-paint's `render_node` and lp-render's hit-test, PDF structure-tree walks use the same function. The HTML
+parser is not capped (Chrome caps parser depth at 512; a cap would change DOM results). Covered by lp-layout
+`deep_nesting_of_each_algorithm_lays_out_on_any_stack` (5,000 levels of ten kinds on a 256 KB thread) and
+lp-render `deep_trees_lay_out_paint_and_print_on_a_small_stack`.
 
 ## Moving from 0.3.0-beta.4 to main
 

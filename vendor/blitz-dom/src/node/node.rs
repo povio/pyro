@@ -590,7 +590,7 @@ impl Node {
                     self.children
                         .iter()
                         .copied()
-                        .any(|child_id| self.tree()[child_id].is_or_contains_block())
+                        .any(|child_id| crate::util::ensure_stack(|| self.tree()[child_id].is_or_contains_block()))
                 } else {
                     false
                 }
@@ -700,6 +700,56 @@ impl Node {
     pub fn has_damaged_descendants(&self) -> bool {
         self.damaged_descendants_flag()
             .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    }
+
+    /// lightningpanda: whether a pass that follows damage down the layout tree has nothing to do
+    /// in this node's subtree: an element (not an anonymous box, whose flag is not maintained)
+    /// whose `damaged_descendants` flag is clear, still listed by `layout_parent`. By the invariant
+    /// [`Self::mark_damaged`] keeps, such a node carries no damage, nor does anything below it.
+    /// The pass skips it from its parent's loop instead of entering it to return: a cell edit in a
+    /// long table visits that cell, not its thousands of siblings.
+    ///
+    /// (A text node is not one: `resolve_layout_children` takes a node with no style data as
+    /// damaged.)
+    #[inline]
+    pub(crate) fn is_clean_layout_child_of(&self, layout_parent: NodeId) -> bool {
+        let clean = matches!(self.data, NodeData::Element(_))
+            && !self.has_damaged_descendants()
+            && self.layout_parent.get() == Some(layout_parent);
+        #[cfg(debug_assertions)]
+        if clean {
+            debug_assert!(
+                self.damage().is_some_and(|damage| damage.is_empty()),
+                "{:?} ({:?}) is an unflagged layout child with damage {:?}",
+                self.id,
+                self.data.downcast_element().map(|el| &el.name.local),
+                self.damage(),
+            );
+        }
+        clean
+    }
+
+    /// lightningpanda: whether the DOM walks that follow damage (`propagate_damage_flags`,
+    /// `clear_damage_and_dirty_flags`) have nothing to do in this node's subtree: it is not an
+    /// anonymous box (whose flag is not maintained) and its `damaged_descendants` flag is clear
+    /// (a text or comment node has none, nor damage). By the invariant [`Self::mark_damaged`]
+    /// keeps, it carries no damage, nor does anything below it, and the walk skips it from its
+    /// parent's loop instead of entering it to return: a cell edit in a long table enters that
+    /// row, not its thousands of siblings.
+    #[inline]
+    pub(crate) fn has_no_damage_below(&self) -> bool {
+        let clean = !self.is_anonymous() && !self.has_damaged_descendants();
+        #[cfg(debug_assertions)]
+        if clean {
+            debug_assert!(
+                !self.damage().is_some_and(|damage| !damage.is_empty()),
+                "{:?} ({:?}) carries damage {:?} without its damaged_descendants flag",
+                self.id,
+                self.data.downcast_element().map(|el| &el.name.local),
+                self.damage(),
+            );
+        }
+        clean
     }
 
     /// Clears the damaged_descendants flag on this node.
@@ -1500,7 +1550,7 @@ impl Node {
             }
             NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                 for child_id in self.children.iter() {
-                    self.with(*child_id).write_text_content(out);
+                    crate::util::ensure_stack(|| self.with(*child_id).write_text_content(out));
                 }
             }
             _ => {}
@@ -1769,7 +1819,7 @@ impl Node {
                     let pos = hoisted_child.position(self.tree(), self.id);
                     let x = x - pos.x;
                     let y = y - pos.y;
-                    if let Some(hit) = child.hit_inner(x, y, scale, scrollbar) {
+                    if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
                         return Some(hit);
                     }
                 }
@@ -1800,7 +1850,7 @@ impl Node {
                 child_x -= offset.x;
                 child_y -= offset.y;
             }
-            if let Some(hit) = child.hit_inner(child_x, child_y, scale, scrollbar) {
+            if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar)) {
                 return Some(hit);
             }
         }
@@ -1815,7 +1865,7 @@ impl Node {
                     let pos = hoisted_child.position(self.tree(), self.id);
                     let x = x - pos.x;
                     let y = y - pos.y;
-                    if let Some(hit) = child.hit_inner(x, y, scale, scrollbar) {
+                    if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
                         return Some(hit);
                     }
                 }

@@ -351,7 +351,7 @@ fn classify_flow_children(
             // Transparent for box generation: the contents node casts
             // no vote itself — its children decide.
             classification.has_contents = true;
-            classify_flow_children(doc, child_id, classification);
+            crate::util::ensure_stack(|| classify_flow_children(doc, child_id, classification));
         } else if matches!(display.inside(), DisplayInside::None) {
             // display:none children generate no boxes and cast no vote.
             continue;
@@ -828,6 +828,9 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 .stylo_element_data_mut()
                 .ensure_init_mut() = element_data;
             doc.nodes[new_node_id].update_layout_styles();
+            // lightningpanda: damage is set with its flag (`Node::mark_damaged`), which the walks
+            // that follow damage rely on to skip a subtree (`Node::has_no_damage_below`).
+            doc.nodes[new_node_id].mark_damaged();
 
             let node = &mut doc.nodes[node_id];
             node.set_pe_by_index(idx, Some(new_node_id));
@@ -891,6 +894,8 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 }
                 replaced
             };
+            // lightningpanda: with its flag, as above.
+            doc.nodes[pe_node_id].mark_damaged();
             if replaced {
                 doc.nodes[pe_node_id].update_layout_styles();
                 doc.pending_style_image_nodes.push(pe_node_id);
@@ -1126,7 +1131,7 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                 (_, _) => false,
             };
             if do_recurse {
-                flush_inline_pseudos_recursive(doc, child_id);
+                crate::util::ensure_stack(|| flush_inline_pseudos_recursive(doc, child_id));
             }
         });
     }
@@ -1165,12 +1170,12 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                     (DisplayOutside::None, DisplayInside::Contents) => {
                         node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                         iter_children!(nodes[node_id], |child_id| {
-                            find_inline_layout_embedded_boxes_recursive(
+                            crate::util::ensure_stack(|| find_inline_layout_embedded_boxes_recursive(
                                 nodes,
                                 parent_id,
                                 child_id,
                                 layout_children,
-                            );
+                            ));
                         });
                     }
                     (DisplayOutside::Inline, DisplayInside::Flow) => {
@@ -1181,12 +1186,12 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                         } else {
                             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             iter_children_and_pseudos!(nodes[node_id], |child_id| {
-                                find_inline_layout_embedded_boxes_recursive(
+                                crate::util::ensure_stack(|| find_inline_layout_embedded_boxes_recursive(
                                     nodes,
                                     node_id,
                                     child_id,
                                     layout_children,
-                                );
+                                ));
                             });
                         }
                     }

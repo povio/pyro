@@ -192,6 +192,23 @@ pub enum GetterResult {
     ObjectOrNull,
 }
 
+/// How a name of [`ClassDef::own_property_name`] shows on the wrappers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OwnName(u8);
+
+impl OwnName {
+    /// Listed by `Object.keys` and the like, and an own enumerable data
+    /// property to `hasOwnProperty`, `getOwnPropertyDescriptor` and spread.
+    pub const ENUMERABLE: OwnName = OwnName(sys::spi::kJSOwnPropertyNameListed | sys::spi::kJSOwnPropertyNameAnswered);
+    /// An own property to those lookups, but not listed (Chrome's dashed
+    /// computed-style names).
+    pub const UNLISTED: OwnName = OwnName(sys::spi::kJSOwnPropertyNameAnswered);
+    /// Listed by `Object.getOwnPropertyNames` only, and no own property to
+    /// lookups (Chrome's `epub*` computed-style aliases).
+    pub const LISTED_HIDDEN: OwnName =
+        OwnName(sys::spi::kJSOwnPropertyNameListed | sys::spi::kJSOwnPropertyNameDontEnum);
+}
+
 /// Builder passed to [`JsClass::define`].
 pub struct ClassDef<C: JsClass> {
     pub(crate) methods: Vec<MethodSpec>,
@@ -210,6 +227,10 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) announced_names: bool,
     /// See [`ClassDef::attributes_without_jit_getters`].
     pub(crate) jit_getters: bool,
+    /// See [`ClassDef::own_property_name`].
+    pub(crate) own_names: Vec<(&'static str, OwnName)>,
+    /// See [`ClassDef::own_property_value`].
+    pub(crate) own_value: Option<NamedFn>,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
     pub(crate) indexed_iterable: bool,
@@ -281,6 +302,8 @@ impl<C: JsClass> ClassDef<C> {
             callback_interface: false,
             announced_names: false,
             jit_getters: true,
+            own_names: Vec::new(),
+            own_value: None,
             hooks: PropertyHooks::default(),
             exposed: true,
             indexed_iterable: false,
@@ -566,13 +589,40 @@ impl<C: JsClass> ClassDef<C> {
     /// Installs this class's pure attributes as plain custom accessors, not
     /// as DOM attributes the JITs call directly (`JSObjectSetFastGetter`).
     /// Reads stay inline-cached and dispatch the same way; compiled code
-    /// calls the getter through the custom accessor instead. For a class
-    /// with hundreds of attributes whose getters cost far more than the call
-    /// (`CSSStyleDeclaration` of `getComputedStyle`): JavaScriptCore interns
-    /// each fast getter by a linear search of every one the process made, so
-    /// defining hundreds of them on each realm's first use cost milliseconds.
+    /// calls the getter through the custom accessor instead. (Once used for
+    /// `CSSStyleDeclaration` of `getComputedStyle`, when JavaScriptCore
+    /// interned each fast getter by a linear search of every one the process
+    /// made; patch 0023 made that a hash lookup.)
     pub fn attributes_without_jit_getters(&mut self) -> &mut Self {
         self.jit_getters = false;
+        self
+    }
+
+    /// Makes `name` an own property of this class's wrappers although an
+    /// accessor of the prototype holds its value, as Chrome's named
+    /// properties are (CSSOM's computed style: `hasOwnProperty('color')`,
+    /// `Object.keys`, spread). Reads, `in` and assignment keep going to the
+    /// prototype's accessor, inline-cached; only own-property lookups and
+    /// key listings see the name (patched JavaScriptCore,
+    /// `JSClassSetOwnPropertyNames`; without it nothing changes). Names are
+    /// listed in the order given, after the indexed ones.
+    pub fn own_property_name(&mut self, name: &'static str, how: OwnName) -> &mut Self {
+        self.own_names.push((name, how));
+        self
+    }
+
+    /// The value of an [`ClassDef::own_property_name`] name, for the
+    /// lookups that read it (`getOwnPropertyDescriptor`, spread,
+    /// `Object.entries`; `hasOwnProperty` never does): the value of the
+    /// object's own named property, whatever its prototype chain holds now
+    /// (Chrome's named properties). `None`, or no such callback: a `[[Get]]`
+    /// of the name.
+    pub fn own_property_value<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data, &str) -> JsResult<Option<Value<'s>>> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.own_value = Some(named_erased::<C, F>);
         self
     }
 
@@ -847,6 +897,8 @@ pub(crate) struct ClassDefErased {
     pub announced_names: bool,
     pub jit_getters: bool,
     pub hooks: PropertyHooks,
+    /// [`ClassDef::own_property_value`].
+    pub own_value: Option<NamedFn>,
     pub exposed: bool,
     pub indexed_iterable: bool,
     pub indexed_iterator: bool,
@@ -1028,6 +1080,16 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         // SAFETY: the class was just created and has no objects yet.
         unsafe { set(instance_class, Some(get_by_index_hook), Some(set_by_index_hook)) };
     }
+    if let (false, Some(set)) = (def.own_names.is_empty(), sys::spi::get().class_set_own_property_names) {
+        let names: Vec<CString> =
+            def.own_names.iter().map(|(n, _)| CString::new(*n).expect("property name without NUL")).collect();
+        let ptrs: Vec<*const std::os::raw::c_char> = names.iter().map(|n| n.as_ptr()).collect();
+        let flags: Vec<u8> = def.own_names.iter().map(|(_, how)| how.0).collect();
+        let get_value: sys::JSObjectGetPropertyCallback = def.own_value.map(|_| own_value_hook as _);
+        // SAFETY: the class was just created and has no objects yet; JSC
+        // copies the names.
+        unsafe { set(instance_class, ptrs.as_ptr(), flags.as_ptr(), ptrs.len(), get_value) };
+    }
     // Last first: a class that defines an attribute twice (shared members,
     // then its own) gets the later definition in the slot both share, as the
     // prototype property it installs last.
@@ -1073,6 +1135,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             announced_names: def.announced_names,
             jit_getters: def.jit_getters,
             hooks: def.hooks,
+            own_value: def.own_value,
             exposed: def.exposed,
             indexed_iterable: def.indexed_iterable,
             indexed_iterator: def.indexed_iterator,
@@ -2372,6 +2435,40 @@ unsafe extern "C" fn get_property_hook(
                 return match in_receiver_realm(realm, get) {
                     // A closed realm's members stay readable; calling them throws.
                     Err(JsError::ContextDestroyed) if on_prototype_chain(ctx, object, name) => Ok(ptr::null()),
+                    result => result,
+                };
+            }
+            get(scope)
+        })
+    }
+}
+
+/// The value of a name the class answers as an own property
+/// ([`ClassDef::own_property_value`], patched JSC): null hands the lookup to
+/// a `[[Get]]`.
+unsafe extern "C" fn own_value_hook(
+    ctx: sys::JSContextRef,
+    object: sys::JSObjectRef,
+    name: sys::JSStringRef,
+    exc: *mut sys::JSValueRef,
+) -> sys::JSValueRef {
+    unsafe {
+        let realm = wrapper_realm(object);
+        guard_in(ctx, realm, exc, ptr::null(), |scope| {
+            let Some(realm) = realm else { return Ok(ptr::null()) };
+            let h = sys::JSObjectGetPrivate(object) as *mut Header;
+            // SAFETY: a wrapper's payload; `info` lives as long as the registry.
+            let info = (*h).info;
+            if info.is_null() {
+                return Ok(ptr::null());
+            }
+            let Some(f) = (*info).def.own_value else { return Ok(ptr::null()) };
+            let units = utf16_of(name);
+            let get = |scope: &Scope<'_>| -> JsResult<sys::JSValueRef> { Ok(f(scope, h, units)?.unwrap_or(ptr::null())) };
+            if !crate::realm::is_scope_realm(realm, scope) {
+                return match in_receiver_realm(realm, get) {
+                    // A closed realm: the [[Get]] decides.
+                    Err(JsError::ContextDestroyed) => Ok(ptr::null()),
                     result => result,
                 };
             }

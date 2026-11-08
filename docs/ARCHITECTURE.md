@@ -320,6 +320,27 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
 - Patch `0006` adds `JSContextGroupSetTimeZone(group, id)`, behind `Emulation.setTimezoneOverride`. `DateCache` is per  VM, and `Intl` and `Temporal` read their default zone from it, so one override field there covers them; setting it  marks the cache stale, and JSC's own host-zone-change path applies it at the next outermost entry (date caches  flushed, cached local times in `Date` objects dropped). The default formats a global object keeps are bypassed while  an override is set. The scope is one VM, so one connection: a per-context zone would mean moving this state from the  VM to the global object, through every `vm.dateCache` user including the DFG.`0004` adds `JSGlobalContextInstallNamedProperties(ctx, filter, getter)`, for named access on the Window object.  The global's prototype is immutable to JavaScript and to `JSObjectSetPrototype`, so a page realm gets the object  when its context is created (`resetPrototype` replaces the global proxy, so nothing may hold it yet). A `JSClass`  object was measured first and made misses and new globals much slower (OpaqueJSString per lookup, dropped locks, a  put hook that sends every new global down the receiver path), so it is a native object like WebCore's  `JSDOMWindowProperties`: the global's own properties never reach it and stay inline cached; a name the global lacks  costs one call to `filter`, which `Dom::window_name_may_exist` answers from a hash set kept current from the change  journal, so a miss does not walk the tree after each mutation.
 - Patch `0008` marks code from `lightpanda://internal/` (`helpers.js`) as never optimized. It runs at realm setup, and
   each realm otherwise compiled `makeInterface`, `lazyInterface` and `accessor` in the DFG again.
+- Patch `0023` interns `JSObjectSetFastGetter`'s shared DOMJIT getters (patch `0013`) in a hash map keyed by
+  (getter, fast callback, context, result type, readsOnly). It was a linear search of every fast getter the process
+  had made, so defining a class's attributes on a realm's first use was quadratic: `CSSStyleDeclaration`'s ~1,600
+  attributes cost each realm ~1.5 ms, and were installed as plain custom accessors to dodge it. They are JIT getters
+  again.
+- Patch `0024` adds `JSClassSetOwnPropertyNames` (`ClassDef::own_property_name`): names a class's wrappers have as
+  own properties while the prototype's accessors serve reads. Chrome has computed-style properties as named
+  properties of the object, so `hasOwnProperty('color')`, `Object.keys`, spread, `JSON.stringify` and
+  `getOwnPropertyDescriptor` see them there. JSC lists the names in `getOwnPropertyNames` (as a realm's identifiers,
+  made once on its first listing) and answers an own-property lookup (`InternalMethodType::GetOwnProperty`) with a
+  custom value: `hasOwnProperty`, `Object.hasOwn` and `propertyIsEnumerable` (patched to read the slot's attributes,
+  not a descriptor) answer without computing it, so they never restyle or lay out; a descriptor or a copy reads it
+  through the class's `getValue` callback (`ClassDef::own_property_value`: the property's value whatever the
+  prototype chain holds now, as in Chrome). The answer is not cached in `HasOwnPropertyCache`, because wrappers of
+  different classes share a structure when they share a prototype. A `[[Get]]` never consults the names (a cacheable
+  wrapper skips `getOwnPropertySlot` altogether), so reads stay inline-cached. The same patch makes the indexed
+  callbacks' properties enumerable, as WebIDL's are.
+- Patch `0025`: `JSObjectMakeWrapper`, `JSObjectGet/SetProperty` and `JSObjectGet/SetPrivateProperty` skip
+  `JSLockHolder` when the thread already holds the VM's lock (every call from inside a callback). An API string that
+  remembered its atom per VM (to skip the atom-table probe for constant names) was tried and dropped: its gain was
+  within noise, and an atom reference outlives its table, which leaked ~270 KB per CDP connection.
 
 Navigating or closing a page no longer always collects: `Engine::release_closed` runs `settle` only once the process's
 physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. That collection runs inside the

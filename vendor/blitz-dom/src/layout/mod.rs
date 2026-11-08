@@ -184,14 +184,19 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
-        #[cfg(feature = "writing-mode")]
-        {
-            self.compute_child_layout_in_own_wm(node_id, inputs, block_ctx)
-        }
-        #[cfg(not(feature = "writing-mode"))]
-        {
-            self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
-        }
+        // lightningpanda: every algorithm lays out its children through here (Taffy's
+        // `compute_child_layout` and Blitz's block contexts alike), once per tree level, so a tree
+        // of any depth lays out on a stack grown on demand instead of overflowing the thread's.
+        crate::util::ensure_stack(|| {
+            #[cfg(feature = "writing-mode")]
+            {
+                self.compute_child_layout_in_own_wm(node_id, inputs, block_ctx)
+            }
+            #[cfg(not(feature = "writing-mode"))]
+            {
+                self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
+            }
+        })
     }
 
     /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
@@ -201,6 +206,24 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
+        // lightningpanda: this runs once per tree level of a recursive layout; what is not part
+        // of the recursion stays out of its frame (see `dispatch_child_layout`).
+        let inputs = self.adjusted_child_inputs(node_id, inputs);
+        let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
+        if inputs.run_mode == RunMode::PerformLayout {
+            self.lay_out_out_of_flow_boxes(node_id, &mut output);
+        }
+        output
+    }
+
+    #[inline(never)]
+    fn lay_out_out_of_flow_boxes(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
+        compute_oof_layout(self, node_id, output);
+    }
+
+    /// The inputs `node_id` is laid out with (see [`Self::compute_child_layout_in_current_wm`]).
+    #[inline(never)]
+    fn adjusted_child_inputs(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutInput {
         let mut inputs = inputs;
         // stylo_taffy cannot represent intrinsic keywords in min_size(), so
         // min-width:max-content reaches Taffy as auto. Its flex minimum-size
@@ -229,11 +252,7 @@ impl LayoutPassState<'_> {
             let is_root = node.parent.is_some_and(|parent| self.nodes[parent].parent.is_none());
             crate::resolve::phase_profile::performed(is_root);
         }
-        let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
-        if inputs.run_mode == RunMode::PerformLayout {
-            compute_oof_layout(self, node_id, &mut output);
-        }
-        output
+        inputs
     }
 
     /// The border-box height of a list-box `<select>` whose height is auto:
@@ -328,12 +347,53 @@ impl LayoutPassState<'_> {
         }
     }
 
+    /// lightningpanda: the layout algorithms recurse through here once per tree level, so this
+    /// frame is kept small: the leaf boxes (form controls, replaced elements) and tables are
+    /// laid out by non-inlined functions whose (large) frames are gone before a container's
+    /// algorithm runs, so a deep tree costs only the algorithms' own frames per level.
     fn dispatch_child_layout(
         &mut self,
         node_id: NodeId,
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
+        match self.leaf_layout_or_algorithm(node_id, inputs) {
+            ChildLayout::Done(output) => output,
+            ChildLayout::Block => compute_block_layout(self, node_id, inputs, block_ctx),
+            ChildLayout::FlowRoot => compute_block_layout(self, node_id, inputs, None),
+            ChildLayout::Inline => self.inline_layout(node_id, inputs, block_ctx),
+            ChildLayout::Flex => self.flexbox_layout(node_id, inputs),
+            ChildLayout::Grid => self.grid_layout(node_id, inputs),
+            ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
+        }
+    }
+
+    // lightningpanda: the algorithms other than block layout, not inlined into
+    // `dispatch_child_layout` (whose frame every tree level pays).
+    #[inline(never)]
+    fn inline_layout(
+        &mut self,
+        node_id: NodeId,
+        inputs: taffy::tree::LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> taffy::tree::LayoutOutput {
+        self.compute_inline_layout(dom_node_id(node_id), inputs, block_ctx)
+    }
+
+    #[inline(never)]
+    fn flexbox_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {
+        compute_flexbox_layout(self, node_id, inputs)
+    }
+
+    #[inline(never)]
+    fn grid_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {
+        compute_grid_layout(self, node_id, inputs)
+    }
+
+    /// The layout of a leaf box (text, form controls, replaced elements, hidden boxes), or the
+    /// algorithm that lays out the container (see [`Self::dispatch_child_layout`]).
+    #[inline(never)]
+    fn leaf_layout_or_algorithm(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> ChildLayout {
         let orthogonal_percent_basis = self.orthogonal_percent_basis_of(dom_node_id(node_id));
         let scale = self.doc.viewport.scale();
         // lightningpanda: the longest option label of a drop-down select (the
@@ -427,7 +487,7 @@ impl LayoutPassState<'_> {
                 #[cfg(not(feature = "tracing"))]
                 let _ = data;
 
-                taffy::LayoutOutput::HIDDEN
+                ChildLayout::Done(taffy::LayoutOutput::HIDDEN)
                 // unreachable!();
 
                 // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
@@ -498,7 +558,7 @@ impl LayoutPassState<'_> {
                             );
                         }
                     }
-                    return output;
+                    return ChildLayout::Done(output);
                 }
 
                 // lightningpanda: a drop-down select is an atomic box: its
@@ -549,17 +609,17 @@ impl LayoutPassState<'_> {
                         let baseline = padding.top + border.top + offset + line.baseline / scale;
                         output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
                     }
-                    return output;
+                    return ChildLayout::Done(output);
                 }
 
                 if *element_data.name.local == *"input" {
                     match element_data.attr(local_name!("type")) {
                         // if the input type is hidden, hide it
                         Some("hidden") => {
-                            return taffy::LayoutOutput::HIDDEN;
+                            return ChildLayout::Done(taffy::LayoutOutput::HIDDEN);
                         }
                         Some("checkbox") => {
-                            return compute_leaf_layout(
+                            return ChildLayout::Done(compute_leaf_layout(
                                 inputs,
                                 &node.layout_style(),
                                 resolve_calc_value,
@@ -579,7 +639,7 @@ impl LayoutPassState<'_> {
                                         height: min_size,
                                     }
                                 },
-                            );
+                            ));
                         }
                         None | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time") => {
                             // Chromium's intrinsic width: `size` (default 20) average
@@ -627,7 +687,7 @@ impl LayoutPassState<'_> {
                                 let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
                                 output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
                             }
-                            return output;
+                            return ChildLayout::Done(output);
                         }
                         _ => {}
                     }
@@ -781,119 +841,138 @@ impl LayoutPassState<'_> {
 
                     let mut style = node.layout_style();
                     style.set_percent_basis(orthogonal_percent_basis);
-                    return compute_replaced_layout(
+                    return ChildLayout::Done(compute_replaced_layout(
                         inputs,
                         &style,
                         resolve_calc_value,
                         &replaced_context,
-                    );
+                    ));
                 }
 
                 if node.flags.is_table_root() {
-                    // The space available to an absolutely positioned table never exceeds
-                    // the size of its containing block (less the table's margins), even
-                    // when negative insets would otherwise add to it
-                    // (https://drafts.csswg.org/css-tables-3/#abspos).
-                    let mut inputs = inputs;
-                    if self.nodes[dom_node_id(node_id)].is_out_of_flow() {
-                        let margin = self.nodes[dom_node_id(node_id)]
-                            .layout_style()
-                            .margin()
-                            .resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
-                        let max_available_space = inputs
-                            .parent_size
-                            .maybe_sub(margin.sum_axes())
-                            .maybe_max(taffy::Size::ZERO);
-                        inputs.available_space =
-                            inputs.available_space.maybe_min(max_available_space);
-                    }
-
-                    let SpecialElementData::TableRoot(context) = &self.nodes[dom_node_id(node_id)]
-                        .data
-                        .downcast_element()
-                        .unwrap()
-                        .special_data
-                    else {
-                        panic!("Node marked as table root but doesn't have TableContext");
-                    };
-                    let context = Arc::clone(context);
-
-                    let mut table_wrapper = TableTreeWrapper {
-                        doc: self,
-                        ctx: context,
-                        style: None,
-                    };
-                    table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
-                    let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
-
-                    // Absolutely positioned children take no part in the table grid. Their
-                    // static position is the top-left of the table's content box.
-                    let context = table_wrapper.ctx;
-                    if inputs.run_mode == RunMode::PerformLayout && !context.oof_children.is_empty()
-                    {
-                        let style = &context.style;
-                        let parent_width = inputs.parent_size.width;
-                        let padding = style
-                            .padding
-                            .resolve_or_zero(parent_width, resolve_calc_value);
-                        let border = style
-                            .border
-                            .resolve_or_zero(parent_width, resolve_calc_value);
-                        let static_position = taffy::Point {
-                            x: padding.left + border.left,
-                            y: padding.top + border.top,
-                        }
-                        .map(|pos| AxisStaticPosition::from_edge(pos, AxisStaticEdge::Start));
-                        let in_flow_count = context.cells.len();
-                        for (idx, (child_id, position)) in context.oof_children.iter().enumerate() {
-                            output.oof_candidates.push(OofCandidate {
-                                node: taffy_node_id(*child_id),
-                                order: (in_flow_count + idx) as u32,
-                                position: *position,
-                                static_position,
-                            });
-                        }
-                    }
-
-                    // HACK: Cap scrollable overflow at node size to prevent scrolling
-                    let overflow = output.scrollable_overflow_rect;
-                    output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
-                        taffy::Rect {
-                            left: 0.0,
-                            top: 0.0,
-                            right: overflow.right().min(output.size.width),
-                            bottom: overflow.bottom().min(output.size.height),
-                        },
-                        output.scrollable_overflow_rect.is_reversed(),
-                    );
-
-                    return output;
+                    return ChildLayout::Table;
                 }
 
                 if node.flags.is_inline_root() {
-                    return self.compute_inline_layout(dom_node_id(node_id), inputs, block_ctx);
+                    return ChildLayout::Inline;
                 }
 
                 // The default CSS file will set
                 match node.taffy_display() {
-                    Display::Block => compute_block_layout(self, node_id, inputs, block_ctx),
-                    Display::FlowRoot => compute_block_layout(self, node_id, inputs, None),
+                    Display::Block => ChildLayout::Block,
+                    Display::FlowRoot => ChildLayout::FlowRoot,
                     Display::Flex => {
                         #[cfg(feature = "writing-mode")]
                         {
                             self.current_align_axis_is_inline = node.is_column_flex_container();
                         }
-                        compute_flexbox_layout(self, node_id, inputs)
+                        ChildLayout::Flex
                     }
-                    Display::Grid => compute_grid_layout(self, node_id, inputs),
-                    Display::None => taffy::LayoutOutput::HIDDEN,
+                    Display::Grid => ChildLayout::Grid,
+                    Display::None => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
                 }
             }
-            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
+            NodeData::Document(_) => ChildLayout::FlowRoot,
 
-            _ => taffy::LayoutOutput::HIDDEN,
+            _ => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
         }
     }
+
+    /// A table root's layout (see [`Self::dispatch_child_layout`]).
+    #[inline(never)]
+    fn compute_table_root_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::LayoutOutput {
+        // The space available to an absolutely positioned table never exceeds
+        // the size of its containing block (less the table's margins), even
+        // when negative insets would otherwise add to it
+        // (https://drafts.csswg.org/css-tables-3/#abspos).
+        let mut inputs = inputs;
+        if self.nodes[dom_node_id(node_id)].is_out_of_flow() {
+            let margin = self.nodes[dom_node_id(node_id)]
+                .layout_style()
+                .margin()
+                .resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
+            let max_available_space = inputs
+                .parent_size
+                .maybe_sub(margin.sum_axes())
+                .maybe_max(taffy::Size::ZERO);
+            inputs.available_space =
+                inputs.available_space.maybe_min(max_available_space);
+        }
+
+        let SpecialElementData::TableRoot(context) = &self.nodes[dom_node_id(node_id)]
+            .data
+            .downcast_element()
+            .unwrap()
+            .special_data
+        else {
+            panic!("Node marked as table root but doesn't have TableContext");
+        };
+        let context = Arc::clone(context);
+
+        let mut table_wrapper = TableTreeWrapper {
+            doc: self,
+            ctx: context,
+            style: None,
+        };
+        table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
+        let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
+
+        // Absolutely positioned children take no part in the table grid. Their
+        // static position is the top-left of the table's content box.
+        let context = table_wrapper.ctx;
+        if inputs.run_mode == RunMode::PerformLayout && !context.oof_children.is_empty()
+        {
+            let style = &context.style;
+            let parent_width = inputs.parent_size.width;
+            let padding = style
+                .padding
+                .resolve_or_zero(parent_width, resolve_calc_value);
+            let border = style
+                .border
+                .resolve_or_zero(parent_width, resolve_calc_value);
+            let static_position = taffy::Point {
+                x: padding.left + border.left,
+                y: padding.top + border.top,
+            }
+            .map(|pos| AxisStaticPosition::from_edge(pos, AxisStaticEdge::Start));
+            let in_flow_count = context.cells.len();
+            for (idx, (child_id, position)) in context.oof_children.iter().enumerate() {
+                output.oof_candidates.push(OofCandidate {
+                    node: taffy_node_id(*child_id),
+                    order: (in_flow_count + idx) as u32,
+                    position: *position,
+                    static_position,
+                });
+            }
+        }
+
+        // HACK: Cap scrollable overflow at node size to prevent scrolling
+        let overflow = output.scrollable_overflow_rect;
+        output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
+            taffy::Rect {
+                left: 0.0,
+                top: 0.0,
+                right: overflow.right().min(output.size.width),
+                bottom: overflow.bottom().min(output.size.height),
+            },
+            output.scrollable_overflow_rect.is_reversed(),
+        );
+
+        output
+    }
+}
+
+/// lightningpanda: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
+enum ChildLayout {
+    /// A leaf box, laid out.
+    Done(taffy::LayoutOutput),
+    Block,
+    /// A block container that establishes its own formatting context (or the document).
+    FlowRoot,
+    Inline,
+    Flex,
+    Grid,
+    Table,
 }
 
 impl TraversePartialTree for LayoutPassState<'_> {

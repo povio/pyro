@@ -141,13 +141,18 @@ impl BaseDocument {
         let mut damage_from_children = RestyleDamage::empty();
         let children = std::mem::take(&mut self.nodes[node_id].children);
         for child in children.iter() {
-            damage_from_children |= self.propagate_damage_flags(*child);
+            // lightningpanda: a child with no damage below it would return empty at the skip above
+            // (`Node::has_no_damage_below`); it is not entered.
+            if self.nodes[*child].has_no_damage_below() {
+                continue;
+            }
+            damage_from_children |= crate::util::ensure_stack(|| self.propagate_damage_flags(*child));
         }
         if let Some(before_id) = self.nodes[node_id].before() {
-            damage_from_children |= self.propagate_damage_flags(before_id);
+            damage_from_children |= crate::util::ensure_stack(|| self.propagate_damage_flags(before_id));
         }
         if let Some(after_id) = self.nodes[node_id].after() {
-            damage_from_children |= self.propagate_damage_flags(after_id);
+            damage_from_children |= crate::util::ensure_stack(|| self.propagate_damage_flags(after_id));
         }
 
         // A child's `order` changed: this container re-collects (and so re-sorts)
@@ -424,7 +429,7 @@ impl BaseDocument {
 
             // Refresh nested owned boxes unless reconstruction will replace them.
             if changed && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
-                damage |= self.refresh_anonymous_block_styles(anonymous_id);
+                damage |= crate::util::ensure_stack(|| self.refresh_anonymous_block_styles(anonymous_id));
             }
 
             // Reconstruction also requires relayout; propagate all damage to the owner.
@@ -488,18 +493,23 @@ impl BaseDocument {
         let (before, after) = (node.before(), node.after());
 
         for anon_id in anonymous_blocks.iter() {
-            self.clear_damage_and_dirty_flags(*anon_id);
+            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(*anon_id));
         }
         if !is_anonymous {
             for child in children.iter() {
-                self.clear_damage_and_dirty_flags(*child);
+                // lightningpanda: a child with no damage below it would return at the skip above
+                // (`Node::has_no_damage_below`); it is not entered.
+                if self.nodes.get(*child).is_none_or(|child| child.has_no_damage_below()) {
+                    continue;
+                }
+                crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(*child));
             }
         }
         if let Some(before_id) = before {
-            self.clear_damage_and_dirty_flags(before_id);
+            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(before_id));
         }
         if let Some(after_id) = after {
-            self.clear_damage_and_dirty_flags(after_id);
+            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(after_id));
         }
 
         let node = &mut self.nodes[node_id];

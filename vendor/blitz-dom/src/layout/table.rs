@@ -553,15 +553,15 @@ pub struct TableContext {
 
 impl TableContext {
     /// lightningpanda: each row's hit-test extent (parallel to `rows`): the union of its cells'
-    /// hit contributions in the table's coordinates at `scale` (`BaseDocument::resolve_transforms`,
-    /// device px), as of the last transform pass; `f` gets an empty slice when the pass has not
+    /// hit contributions in the table's coordinates at `scale` (`BaseDocument::resolve_hit_overflow`,
+    /// device px), as of the last hit pass; `f` gets an empty slice when the pass has not
     /// covered the current rows (the caller then computes from the cells).
     pub fn row_hit_extents<R>(&self, f: impl FnOnce(&[kurbo::Rect], f64) -> R) -> R {
         let placed = self.placed.borrow();
         if placed.row_overflow.len() == self.rows.len() {
-            f(&placed.row_overflow, placed.overflow_scale)
+            f(&placed.row_overflow, placed.hit_scale)
         } else {
-            f(&[], placed.overflow_scale)
+            f(&[], placed.hit_scale)
         }
     }
 }
@@ -577,13 +577,16 @@ pub(crate) struct PlacedCells {
     /// cell's overflow in the table as the last pass computed it, at its scale
     transform: Option<Vec<usize>>,
     pub(crate) overflow: Vec<kurbo::Rect>,
-    /// lightningpanda: each cell's hit contribution in the table (parallel to `overflow`; see
-    /// `LayoutData::hit_overflow`).
-    pub(crate) hit: Vec<kurbo::Rect>,
     pub(crate) overflow_scale: f64,
+    /// lightningpanda: cells the transform passes visited since the last hit pass (all of them
+    /// when `None`: `BaseDocument::table_cells_hit`), each cell's hit contribution in the table as
+    /// that pass computed it (parallel to `cells`; see `LayoutData::hit_overflow`), at its scale.
+    hit_again: Option<Vec<usize>>,
+    pub(crate) hit: Vec<kurbo::Rect>,
+    pub(crate) hit_scale: f64,
     /// lightningpanda: the union of `hit` over the cells originating in each row (parallel to
     /// `TableContext::rows`, `Rect::ZERO` without cells), kept with `hit`; empty when the rows
-    /// changed since (`splice`) until the next transform pass.
+    /// changed since (`splice`) until the next hit pass.
     pub(crate) row_overflow: Vec<kurbo::Rect>,
     /// Cells damaged or appended since the paint tree last visited the table (all of them when
     /// `None`), and, when every cell then was a plain box in it (no stacking context, nothing
@@ -619,7 +622,7 @@ impl PlacedCells {
     /// The cells `removed` replaced by `inserted` others (`update_rows`): the indices after them move,
     /// and the new cells are to be transformed and visited in the paint tree.
     fn splice(&mut self, removed: Range<usize>, inserted: usize, cells: usize) {
-        for list in [&mut self.round, &mut self.transform, &mut self.paint].into_iter().flatten() {
+        for list in [&mut self.round, &mut self.transform, &mut self.paint, &mut self.hit_again].into_iter().flatten() {
             splice_indices(list, removed.clone(), inserted);
         }
         if !self.overflow.is_empty() {
@@ -659,6 +662,35 @@ impl PlacedCells {
     /// The cells to transform again (all of them: `None`), and the next ones.
     pub(crate) fn take_transform(&mut self) -> Option<Vec<usize>> {
         std::mem::replace(&mut self.transform, Some(Vec::new())).map(|mut cells| {
+            cells.sort_unstable();
+            cells.dedup();
+            cells
+        })
+    }
+
+    /// lightningpanda: a transform pass visited these cells (sorted; all of them: `None`), whose
+    /// hit contributions the next hit pass computes again.
+    pub(crate) fn transformed(&mut self, again: Option<&[usize]>, cells: usize) {
+        match (again, &mut self.hit_again) {
+            (Some(again), Some(list)) => {
+                list.extend_from_slice(again);
+                if list.len() > cells {
+                    list.sort_unstable();
+                    list.dedup();
+                    if list.len() > cells / 2 {
+                        self.hit_again = None;
+                    }
+                }
+            }
+            (None, _) => self.hit_again = None,
+            (Some(_), None) => {}
+        }
+    }
+
+    /// lightningpanda: the cells whose hit contributions to compute again (all of them: `None`),
+    /// and the next ones.
+    pub(crate) fn take_hit(&mut self) -> Option<Vec<usize>> {
+        std::mem::replace(&mut self.hit_again, Some(Vec::new())).map(|mut cells| {
             cells.sort_unstable();
             cells.dedup();
             cells
@@ -1914,6 +1946,50 @@ pub(crate) fn table_cells_to_round(
 /// (`table_cells_overflow`): a table whose layout children are its cells and pseudo-elements.
 pub(crate) fn keeps_cells(ctx: &TableContext) -> bool {
     ctx.incremental && ctx.oof_children.is_empty()
+}
+
+/// lightningpanda: the layout children `resolve_layout_children` visits in `table` when the table is
+/// neither built again nor updated (a change inside its cells): the cells damage propagation noted
+/// as changed in layout since the grid's last layout (`TableContext::changed_cells`), and the
+/// pseudo-elements. `None`: `table` does not keep its cells, and all its layout children are visited.
+///
+/// Any other cell has nothing to build below it: construction anywhere in a cell's subtree reaches
+/// the cell as layout damage, and `note_changed_table_cell` lists it. A cell edit in a long table
+/// visits that cell, without a loop over its thousands of siblings.
+pub(crate) fn cells_to_visit(doc: &BaseDocument, table: NodeId) -> Option<Vec<NodeId>> {
+    let node = &doc.nodes[table];
+    if !node.flags.is_table_root() {
+        return None;
+    }
+    let SpecialElementData::TableRoot(ctx) = &node.data.downcast_element()?.special_data else { return None };
+    if !keeps_cells(ctx) {
+        return None;
+    }
+    let mut changed = ctx.changed_cells.borrow().clone();
+    changed.sort_unstable();
+    changed.dedup();
+    #[cfg(debug_assertions)]
+    for (index, cell) in ctx.cells.iter().enumerate() {
+        if changed.binary_search(&index).is_err() {
+            let Some(cell) = doc.nodes.get(cell.node_id) else { continue };
+            debug_assert!(
+                cell.is_clean_layout_child_of(table)
+                    || (cell.layout_parent.get() == Some(table)
+                        && !cell.damage().is_none_or(super::damage::reaches_layout)),
+                "cell {index} ({:?}) of {table:?} is not listed as changed but has damage {:?}",
+                cell.id,
+                cell.damage(),
+            );
+        }
+    }
+    let pseudos = [node.before(), node.after()];
+    Some(
+        changed
+            .into_iter()
+            .filter_map(|index| ctx.cells.get(index).map(|cell| cell.node_id))
+            .chain(pseudos.into_iter().flatten())
+            .collect(),
+    )
 }
 
 /// Whether `table` is a table whose `TableContext` `update_table_context` can update.

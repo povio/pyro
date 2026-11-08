@@ -1868,6 +1868,144 @@ fn rounding_follows_boxes_that_only_moved() {
 /// of the same tree does.
 #[test]
 fn deltas_on_long_tables_and_lists_match_fresh_builds() {
+    long_tables_and_lists(1);
+}
+
+/// The same steps with a hit test only after every third (and the last):
+/// the hit bounds of the boxes several resolves computed again, and the cells
+/// of the rows they appended, moved and removed, are brought up to date at
+/// once by the next hit test (`BaseDocument::ensure_hit_overflow`).
+#[test]
+fn hit_bounds_after_runs_of_deltas_match_fresh_builds() {
+    long_tables_and_lists(3);
+}
+
+/// Cells of a fixed-layout table edited one per sync, with no hit test in
+/// between: the first edit makes a cell's text overflow sideways (its hit
+/// bound grows, its box does not), later ones touch other rows. The hit test
+/// after them sees every edited cell's bound and its row's union, not only
+/// the last sync's (`PlacedCells::transformed` keeps the cells of every pass
+/// until the next hit pass).
+#[test]
+fn hit_bounds_of_cells_edited_over_several_syncs_match_fresh_builds() {
+    let rows: String = (0..12)
+        .map(|i| format!("<tr id=r{i}><td id=a{i} style=\"white-space:nowrap\">a{i}</td><td id=b{i}>b{i}</td><td>c{i}</td></tr>"))
+        .collect();
+    let page = Page::new(&format!(
+        "<!doctype html><html><head><style>body {{ margin: 0; font: 14px sans-serif }} table {{ table-layout: fixed; width: 300px }} td {{ width: 100px; padding: 0 }}</style></head><body>\
+         <table id=t><tbody>{rows}</tbody></table></body></html>"
+    ));
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let edits: [(&str, &str); 4] = [
+        ("#a3", "a long run of text that overflows its cell sideways"),
+        ("#b7", "b"),
+        ("#a9", "another long run of text that overflows sideways too"),
+        ("#b1", "bb"),
+    ];
+    for (round, edits) in [&edits[..2], &edits[2..]].into_iter().enumerate() {
+        for (sel, text) in edits {
+            let since = page.dom.borrow().version();
+            let n = page.find(sel);
+            page.dom.borrow_mut().set_text_content(n, text).unwrap();
+            let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+            r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false).unwrap();
+        }
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        hit_candidates_match(&mut r, &mut fresh, &format!("round {round} of cell edits"));
+    }
+}
+
+/// A deep descendant of one cell changes while other cells' subtrees carry
+/// damage flags that lead to no layout change: a paint-only restyle deep in a
+/// cell, an attribute set to the value it has, a node inserted and removed in
+/// the same delta, a `::after` whose `content` changes, and, in the next
+/// syncs, cells flagged by the previous one. The walks that follow damage
+/// visit only the children on a damaged path (`Node::is_clean_layout_child_of`,
+/// `Node::has_no_damage_below`); the boxes, hit candidates and paint match a
+/// fresh build after each sync.
+#[test]
+fn a_deep_cell_edit_beside_cells_with_flags_but_no_layout_change_matches_fresh_builds() {
+    let rows: String = (0..10)
+        .map(|i| {
+            format!(
+                "<tr id=r{i}>\
+                 <td><div class=f><span class=dot></span><span id=s{i}><b id=b{i}>item {i}</b></span></div></td>\
+                 <td><div style=\"display:contents\"><p id=p{i}>text {i} <i id=i{i}>it</i></p></div></td>\
+                 <td><span id=c{i} class=after data-x=\"{i}\">c</span></td></tr>"
+            )
+        })
+        .collect();
+    let page = Page::new(&format!(
+        "<!doctype html><html><head><style>body {{ margin: 0; font: 14px sans-serif }} td {{ padding: 2px }} \
+         .f {{ display: flex; gap: 4px; align-items: center }} .dot {{ display: inline-block; width: 6px; height: 6px; background: #0a0 }} \
+         .after::after {{ content: attr(data-x) }} p {{ margin: 0 }}</style></head><body>\
+         <table id=t style=\"width:500px\"><tbody id=tb>{rows}</tbody></table></body></html>"
+    ));
+    type Step = (&'static str, Box<dyn Fn(&Page)>);
+    let text = |p: &Page, sel: &str, value: &str| {
+        let n = p.find(sel);
+        p.dom.borrow_mut().set_text_content(n, value).unwrap();
+    };
+    let attr = |p: &Page, sel: &str, name: &str, value: &str| {
+        let n = p.find(sel);
+        p.dom.borrow_mut().set_attribute(n, name, value).unwrap();
+    };
+    let steps: Vec<Step> = vec![
+        (
+            "deep text beside a paint-only restyle, a same-value attribute and a new ::after content",
+            Box::new(move |p| {
+                text(p, "#b3", "a much longer item text that wraps over several lines in its cell");
+                attr(p, "#i5", "style", "color:red");
+                attr(p, "#s6", "id", "s6");
+                attr(p, "#c7", "data-x", "seven and more");
+            }),
+        ),
+        (
+            "a node inserted and removed beside a deep edit",
+            Box::new(move |p| {
+                let host = p.find("#p8");
+                let mut d = p.dom.borrow_mut();
+                let e = d.create_element(p.doc, "em").unwrap();
+                d.append_child(host, e).unwrap();
+                d.remove_child(host, e).unwrap();
+                drop(d);
+                text(p, "#b1", "x");
+            }),
+        ),
+        ("the next deep edit alone", Box::new(move |p| text(p, "#b9", "nine, wider than it was"))),
+        ("a paint-only restyle alone", Box::new(move |p| attr(p, "#i2", "style", "color:blue"))),
+        (
+            "a deep inline-block resized beside a reverted paint restyle",
+            Box::new(move |p| {
+                attr(p, "#i4", "style", "display:inline-block;width:80px");
+                attr(p, "#i5", "style", "");
+            }),
+        ),
+        ("deep text back", Box::new(move |p| text(p, "#b3", "item 3"))),
+    ];
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    for (what, step) in &steps {
+        let since = page.dom.borrow().version();
+        step(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false).unwrap();
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+            assert_eq!(a, b, "box {k:x} after {what}");
+        }
+        hit_candidates_match(&mut r, &mut fresh, what);
+        let tree = page.tree();
+        let mirrored = paint(&mut r, &page.snapshot(1, tree.clone()));
+        let painted = paint(&mut fresh, &page.snapshot(1, tree));
+        assert_eq!(mirrored.hash, painted.hash, "paint after {what}");
+    }
+}
+
+fn long_tables_and_lists(hit_every: usize) {
     let rows: String =
         (0..24).map(|i| format!("<tr id=r{i}><td id=a{i}>a{i}</td><td id=b{i}>cell {i}</td></tr>")).collect();
     let items: String = (0..24).map(|i| format!("<p id=p{i}>para {i} <span id=s{i}>in</span> text</p>")).collect();
@@ -1979,7 +2117,7 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
     let mut r = Renderer::new();
     r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
     let mut deltas = 0;
-    for (what, step) in &steps {
+    for (i, (what, step)) in steps.iter().enumerate() {
         let since = page.dom.borrow().version();
         step(&page);
         let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
@@ -1998,7 +2136,9 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
         }
         let sticky = |r: &Renderer| r.page_layout(1).map(|l| l.sticky.len());
         assert_eq!(sticky(&r), sticky(&fresh), "sticky boxes after {what}");
-        hit_candidates_match(&r, &fresh, what);
+        if (i + 1) % hit_every == 0 || i + 1 == steps.len() {
+            hit_candidates_match(&mut r, &mut fresh, what);
+        }
         subtree_words_match(&r, &page.tree(), what);
     }
     assert!(deltas * 2 > steps.len(), "most steps sync as deltas ({deltas} of {})", steps.len());
@@ -2038,7 +2178,9 @@ fn subtree_words_match(r: &Renderer, tree: &Tree, what: &str) {
 /// a fresh build's does, in the same order and with the same boxes; its
 /// words and sticky elements are the fresh build's too.
 #[track_caller]
-fn hit_candidates_match(r: &Renderer, fresh: &Renderer, what: &str) {
+fn hit_candidates_match(r: &mut Renderer, fresh: &mut Renderer, what: &str) {
+    r.ensure_hit_bounds(1);
+    fresh.ensure_hit_bounds(1);
     let zero = |_: u64| (0.0, 0.0);
     let strip = |v: Vec<HitVisit>| v.into_iter().map(|v| (v.key, v.bounds, v.hit)).collect::<Vec<_>>();
     for y in (2..480).step_by(9) {
@@ -2062,7 +2204,7 @@ fn hit_candidates_match(r: &Renderer, fresh: &Renderer, what: &str) {
             w
         })
     };
-    assert_eq!(words(r), words(fresh), "words after {what}");
+    assert_eq!(words(&*r), words(&*fresh), "words after {what}");
     assert_eq!(r.sticky_elements(1), fresh.sticky_elements(1), "sticky elements after {what}");
 }
 
@@ -4765,4 +4907,820 @@ fn kept_inline_layouts_keep_matching_content_widths() {
             eprintln!("{what}: shaped {shaped}");
         }
     }
+}
+
+// ---------------- review (lay2): the walks that follow damage skip children whose
+// `damaged_descendants` flag is clear (`Node::has_no_damage_below`, `is_clean_layout_child_of`), a
+// table visits only the cells noted at damage time (`table::cells_to_visit`), and hit bounds are
+// computed at the first hit test after a resolve (`ensure_hit_overflow`). Every damage writer must
+// flag; each case below drives one writer and compares with a fresh build (boxes, document size, hit
+// candidates, paint). Run under `--profile test-fast` too: the debug asserts are off there. ----------
+
+/// Steps synced as deltas (a whole-tree sync when the delta does not fit), each compared with a fresh
+/// build; hit candidates only after the steps `hit` selects (and the last), so hit bounds go stale
+/// over several resolves. Returns the failures.
+fn lay2_failures(html: &str, steps: Vec<(String, Mutate)>, hit: &dyn Fn(usize) -> bool) -> Vec<String> {
+    let page = Page::new(html);
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let mut failures = Vec::new();
+    let n = steps.len();
+    for (i, (what, mutate)) in steps.into_iter().enumerate() {
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        let via_delta =
+            delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false, false), false).is_ok());
+        if !via_delta {
+            r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        }
+        lay2_compare(&mut r, &page, &format!("step {i} {what}"), hit(i) || i + 1 == n, &mut failures);
+    }
+    failures
+}
+
+/// `r` against a fresh build of `page`: boxes, document size, hit candidates (`hit`), paint.
+fn lay2_compare(r: &mut Renderer, page: &Page, what: &str, hit: bool, failures: &mut Vec<String>) {
+    lay2_compare_at(r, page, page.snapshot(1, page.tree()), what, hit, failures)
+}
+
+fn lay2_compare_at(r: &mut Renderer, page: &Page, snap: Snapshot, what: &str, hit: bool, failures: &mut Vec<String>) {
+    lay2_compare_with(r, page, snap, &fetcher(), what, hit, failures)
+}
+
+fn lay2_compare_with(
+    r: &mut Renderer,
+    page: &Page,
+    snap: Snapshot,
+    fetch: &Arc<dyn Fetcher>,
+    what: &str,
+    hit: bool,
+    failures: &mut Vec<String>,
+) {
+    let mut fresh = Renderer::new();
+    fresh.sync_layout(&snap, fetch).unwrap();
+    for ((k, a), (_, b)) in boxes(r, page).into_iter().zip(boxes(&fresh, page)) {
+        if a != b {
+            failures.push(format!("{what}: box {k:x} {a:?} vs fresh {b:?}"));
+            break;
+        }
+    }
+    if r.document_size(1) != fresh.document_size(1) {
+        failures.push(format!("{what}: size {:?} vs fresh {:?}", r.document_size(1), fresh.document_size(1)));
+    }
+    if hit {
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hit_candidates_match(r, &mut fresh, what)));
+        if let Err(e) = res {
+            let msg = e.downcast_ref::<String>().cloned().unwrap_or_default();
+            failures.push(format!("{what}: hit candidates: {}", msg.lines().take(2).collect::<Vec<_>>().join(" / ")));
+        }
+    }
+    let painted = r.paint(&snap, Area::Viewport, fetch).unwrap();
+    if painted.hash != Renderer::new().paint(&snap, Area::Viewport, fetch).unwrap().hash {
+        failures.push(format!("{what}: paint differs"));
+    }
+}
+
+#[track_caller]
+fn lay2_assert(html: &str, steps: impl Fn() -> Vec<(String, Mutate)>) {
+    let every: &dyn Fn(usize) -> bool = &|_| true;
+    let third: &dyn Fn(usize) -> bool = &|i| i % 3 == 2;
+    for (label, hit) in [("hit after every step", every), ("hit after every third", third)] {
+        let failures = lay2_failures(html, steps(), hit);
+        assert!(failures.is_empty(), "{label}: {} failures:\n{}", failures.len(), failures.join("\n"));
+    }
+}
+
+fn lay2_rows(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                "<tr id=r{i}>\
+                 <td id=a{i}>A{i} <span id=sa{i}>s{i}</span></td>\
+                 <td id=b{i}><div id=cb{i} class=c><p id=pb{i}>first {i}</p></div></td>\
+                 <td id=c{i}><ol id=ol{i}><li id=la{i}>x</li><li id=lb{i}>y</li></ol></td>\
+                 <td id=d{i} class=z><span id=sd{i} class=pa data-x=\"{i}\">d</span></td></tr>"
+            )
+        })
+        .collect()
+}
+
+fn lay2_page(extra: &str) -> String {
+    format!(
+        "<!doctype html><html><head><style>body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2px }} \
+         p {{ margin: 0 }} ol {{ margin: 0; padding-left: 18px }} .c {{ display: contents }} \
+         .pb::before {{ content: 'B'; display: inline-block; width: 14.5px }} .pa::after {{ content: attr(data-x) }} \
+         .pblk::before {{ content: 'blk'; display: block; height: 11.5px }} .fl::first-letter {{ font-size: 26px }} \
+         .fline::first-line {{ font-weight: bold; font-size: 17px }} .on {{ color: red }} .big {{ font-size: 21px }} \
+         .h {{ display: none }} td:has(.hot) {{ padding: 7px }} tr:nth-child(odd) td.z {{ padding-left: 11px }} \
+         .ins {{ list-style-position: inside }} {extra}</style></head><body>\
+         <table id=t style=\"width:560px\"><tbody id=tb>{}</tbody></table>\
+         <div id=after>after the table</div></body></html>",
+        lay2_rows(10)
+    )
+}
+
+#[test]
+fn review_lay2_pseudo_elements_in_cells_match_fresh_builds() {
+    lay2_assert(
+        &lay2_page(""),
+        || vec![
+            class("#a3", "pb"),
+            attr("#sd2", "data-x", "a longer generated content"),
+            class("#sd2", ""),
+            class("#sd2", "pa"),
+            class("#pb4", "pblk"),
+            edit("a ::before added beside a deep edit in another cell", |p| {
+                let a = p.find("#a5");
+                let s = p.find("#sa7");
+                let mut d = p.dom.borrow_mut();
+                d.set_attribute(a, "class", "pblk").unwrap();
+                d.set_text_content(s, "a much longer span text that wraps in its cell over lines").unwrap();
+            }),
+            class("#t", "pb"),
+            class("#t", ""),
+            class("#tb", "pa"),
+            class("#a3", ""),
+            attr("#sd6", "data-x", ""),
+            attr("#sd6", "data-x", "6"),
+        ],
+    );
+}
+
+#[test]
+fn review_lay2_first_letter_and_first_line_in_cells_match_fresh_builds() {
+    lay2_assert(
+        &lay2_page(""),
+        || vec![
+            class("#pb3", "fl"),
+            text("#pb3", "Wider first letter"),
+            class("#pb5", "fline"),
+            text("#pb5", "a first line that is long enough to wrap in its cell, then more words"),
+            class("#pb3", ""),
+            class("#a1", "fl"),
+            class("#pb5", ""),
+        ],
+    );
+}
+
+#[test]
+fn review_lay2_list_markers_in_cells_match_fresh_builds() {
+    lay2_assert(
+        &lay2_page(""),
+        || vec![
+            edit("an item inserted first in a list in a cell", |p| {
+                let ol = p.find("#ol5");
+                let first = p.find("#la5");
+                let mut d = p.dom.borrow_mut();
+                let li = d.create_element(p.doc, "li").unwrap();
+                let t = d.create_text(p.doc, "new").unwrap();
+                d.append_child(li, t).unwrap();
+                d.insert_before(ol, li, Some(first)).unwrap();
+            }),
+            attr("#ol6", "start", "998"),
+            attr("#ol7", "reversed", ""),
+            class("#ol6", "ins"),
+            attr("#ol6", "start", "1"),
+            edit("an item removed", |p| {
+                let ol = p.find("#ol5");
+                let first = p.find("#la5");
+                p.dom.borrow_mut().remove_child(ol, first).unwrap();
+            }),
+            set_style("#lb2", "display:block"),
+            set_style("#lb2", ""),
+            set_style("#la8", "list-style-type:upper-roman"),
+        ],
+    );
+}
+
+#[test]
+fn review_lay2_display_contents_and_anonymous_blocks_in_cells_match_fresh_builds() {
+    lay2_assert(
+        &lay2_page(""),
+        || vec![
+            set_style("#cb2", "display:block;padding:3.5px"),
+            set_style("#cb2", ""),
+            edit("a block inserted into inline content of a cell (anonymous blocks)", |p| {
+                let a = p.find("#a1");
+                let s = p.find("#sa1");
+                let mut d = p.dom.borrow_mut();
+                let div = d.create_element(p.doc, "div").unwrap();
+                d.set_attribute(div, "id", "blk1").unwrap();
+                let t = d.create_text(p.doc, "block in inline").unwrap();
+                d.append_child(div, t).unwrap();
+                d.insert_before(a, div, Some(s)).unwrap();
+            }),
+            text("#sa1", "the inline after the block, edited"),
+            text("#blk1", "the block, edited, and longer than it was"),
+            edit("the block removed again", |p| {
+                let a = p.find("#a1");
+                let b = p.find("#blk1");
+                p.dom.borrow_mut().remove_child(a, b).unwrap();
+            }),
+            text("#pb2", "inside display contents, edited"),
+            edit("a span in a contents wrapper made a block", |p| {
+                let cb = p.find("#cb3");
+                let mut d = p.dom.borrow_mut();
+                let s = d.create_element(p.doc, "span").unwrap();
+                d.set_attribute(s, "style", "display:block;height:9.5px").unwrap();
+                d.append_child(cb, s).unwrap();
+            }),
+            set_style("#cb4", "display:contents;color:blue"),
+            class("#cb5", ""),
+            class("#cb5", "c"),
+        ],
+    );
+}
+
+#[test]
+fn review_lay2_selector_restyles_reach_cells_match_fresh_builds() {
+    lay2_assert(
+        &lay2_page(""),
+        || vec![
+            class("#sa6", "hot"),
+            edit("a row inserted first (every odd/even row flips)", |p| {
+                let tb = p.find("#tb");
+                let first = p.find("#r0");
+                let mut d = p.dom.borrow_mut();
+                let tr = d.create_element(p.doc, "tr").unwrap();
+                for k in 0..4 {
+                    let td = d.create_element(p.doc, "td").unwrap();
+                    if k == 3 {
+                        d.set_attribute(td, "class", "z").unwrap();
+                    }
+                    let t = d.create_text(p.doc, &format!("new {k}")).unwrap();
+                    d.append_child(td, t).unwrap();
+                    d.append_child(tr, td).unwrap();
+                }
+                d.insert_before(tb, tr, Some(first)).unwrap();
+            }),
+            class("#sa6", ""),
+            edit("a :has() subject made by an insertion", |p| {
+                let a = p.find("#a8");
+                let mut d = p.dom.borrow_mut();
+                let b = d.create_element(p.doc, "b").unwrap();
+                d.set_attribute(b, "class", "hot").unwrap();
+                d.append_child(a, b).unwrap();
+            }),
+            class("#t", "big"),
+            class("#t", ""),
+            class("#tb", "on"),
+            edit("the first row removed (rows flip back)", |p| {
+                let tb = p.find("#tb");
+                let mut d = p.dom.borrow_mut();
+                let first = d.first_child(tb).unwrap().unwrap();
+                d.remove_child(tb, first).unwrap();
+            }),
+        ],
+    );
+}
+
+#[test]
+fn review_lay2_table_relisting_beside_deep_edits_match_fresh_builds() {
+    lay2_assert(
+        &lay2_page(""),
+        || vec![
+            edit("a row moved and a deep edit in another row", |p| {
+                let tb = p.find("#tb");
+                let r7 = p.find("#r7");
+                let r1 = p.find("#r1");
+                let s = p.find("#sa3");
+                let mut d = p.dom.borrow_mut();
+                d.insert_before(tb, r7, Some(r1)).unwrap();
+                d.set_text_content(s, "deep edit beside a move, wider").unwrap();
+            }),
+            attr("#b4", "colspan", "2"),
+            set_style("#c2", "display:none"),
+            text("#sa2", "edit in a row with a hidden cell"),
+            set_style("#c2", ""),
+            set_style("#r5", "display:none"),
+            text("#sa9", "edited while another row is hidden"),
+            set_style("#r5", ""),
+            edit("a cell removed and a cell edited", |p| {
+                let r = p.find("#r6");
+                let c = p.find("#d6");
+                let s = p.find("#sa8");
+                let mut d = p.dom.borrow_mut();
+                d.remove_child(r, c).unwrap();
+                d.set_text_content(s, "x").unwrap();
+            }),
+            attr("#b4", "colspan", "1"),
+            edit("a row detached, edited, and appended", |p| {
+                let tb = p.find("#tb");
+                let r = p.find("#r3");
+                let s = p.find("#sa3");
+                let mut d = p.dom.borrow_mut();
+                d.remove_child(tb, r).unwrap();
+                d.set_text_content(s, "while detached").unwrap();
+                d.append_child(tb, r).unwrap();
+            }),
+        ],
+    );
+}
+
+#[test]
+fn review_lay2_out_of_flow_and_form_controls_in_cells_match_fresh_builds() {
+    lay2_assert(
+        &lay2_page(".abs { position: absolute; left: 400px; top: 300px; width: 90px } td.rel { position: relative }"),
+        || vec![
+            edit("an absolute box with inline content put in a static cell", |p| {
+                let a = p.find("#a4");
+                let mut d = p.dom.borrow_mut();
+                let div = d.create_element(p.doc, "div").unwrap();
+                d.set_attribute(div, "class", "abs").unwrap();
+                d.set_attribute(div, "id", "abs4").unwrap();
+                let s = d.create_element(p.doc, "span").unwrap();
+                d.set_attribute(s, "id", "abs4s").unwrap();
+                let t = d.create_text(p.doc, "abs text").unwrap();
+                d.append_child(s, t).unwrap();
+                d.append_child(div, s).unwrap();
+                d.append_child(a, div).unwrap();
+            }),
+            set_style("#abs4s", "display:block;height:30.5px"),
+            text("#abs4s", "abs text changed and longer, wrapping to more lines"),
+            set_style("#abs4s", "display:inline"),
+            class("#a4", "rel"),
+            text("#abs4s", "in a positioned cell"),
+            class("#a4", ""),
+            edit("a text field and a textarea put in cells", |p| {
+                let a = p.find("#a6");
+                let b = p.find("#a7");
+                let mut d = p.dom.borrow_mut();
+                let i = d.create_element(p.doc, "input").unwrap();
+                d.set_attribute(i, "id", "in6").unwrap();
+                d.append_child(a, i).unwrap();
+                let ta = d.create_element(p.doc, "textarea").unwrap();
+                d.set_attribute(ta, "id", "ta7").unwrap();
+                d.append_child(b, ta).unwrap();
+            }),
+            edit("values typed", |p| {
+                let i = p.find("#in6");
+                let ta = p.find("#ta7");
+                let mut d = p.dom.borrow_mut();
+                d.set_value(i, "typed into a field").unwrap();
+                d.set_value(ta, "line one\nline two\nline three\nline four").unwrap();
+            }),
+            attr("#ta7", "rows", "1"),
+        ],
+    );
+}
+
+#[test]
+fn review_lay2_hidden_tables_nested_tables_and_shadow_trees_match_fresh_builds() {
+    let html = lay2_page(".inner td { border: 1px solid #888 }").replace(
+        "<div id=after>after the table</div>",
+        "<div id=wrap><table id=o><tr><td id=oc><table class=inner id=i><tr id=ir><td id=ic1>inner 1</td><td id=ic2>inner <b id=ib>2</b></td></tr></table></td><td id=oc2>outer</td></tr></table></div>\
+         <div id=host>light <span id=sl slot=x>slotted</span><span id=sl2>other</span></div>",
+    );
+    lay2_assert(
+        &html,
+        || vec![
+            set_style("#t", "display:none"),
+            text("#sa1", "edited while the table is hidden"),
+            text("#sa4", "and again, in another cell, while hidden"),
+            set_style("#t", "width:560px"),
+            text("#ib", "inner bold, now much wider than before"),
+            set_style("#ic1", "width:150.5px"),
+            text("#oc2", "outer edited beside an inner change"),
+            edit("an inner row appended", |p| {
+                let i = p.find("#ir");
+                let mut d = p.dom.borrow_mut();
+                let tbody = d.parent(i).unwrap().unwrap();
+                let tr = d.create_element(p.doc, "tr").unwrap();
+                let td = d.create_element(p.doc, "td").unwrap();
+                let t = d.create_text(p.doc, "appended inner").unwrap();
+                d.append_child(td, t).unwrap();
+                d.append_child(tr, td).unwrap();
+                d.append_child(tbody, tr).unwrap();
+            }),
+            edit("a shadow root with a slot attached", |p| {
+                let host = p.find("#host");
+                let mut d = p.dom.borrow_mut();
+                let root = d.attach_shadow(host, lp_dom::node::ShadowRootMode::Open).unwrap();
+                let div = d.create_element(p.doc, "div").unwrap();
+                d.set_attribute(div, "style", "border:2px solid;padding:3px").unwrap();
+                let slot = d.create_element(p.doc, "slot").unwrap();
+                d.set_attribute(slot, "name", "x").unwrap();
+                d.append_child(div, slot).unwrap();
+                let t = d.create_text(p.doc, " shadow text").unwrap();
+                d.append_child(div, t).unwrap();
+                d.append_child(root, div).unwrap();
+            }),
+            text("#sl", "slotted text, edited"),
+            attr("#sl2", "slot", "x"),
+            attr("#sl", "slot", "y"),
+            set_style("#sl2", "display:block;height:20.5px"),
+        ],
+    );
+}
+
+/// Viewport changes (a whole-tree sync at another width: the root's `ONLY_RELAYOUT` from the device
+/// change, media queries that restyle cells, `vw` sizes) between delta-synced cell edits.
+#[test]
+fn review_lay2_viewport_changes_between_cell_edits_match_fresh_builds() {
+    let page = Page::new(&lay2_page(
+        "@media (max-width: 500px) { td.z { display: none } .pa::after { content: 'narrow' } } \
+         @media (min-width: 700px) { #b3 { width: 30vw } } #a2 { width: 12.5vw }",
+    ));
+    let mut r = Renderer::new();
+    let mut failures = Vec::new();
+    let at = |w: u32| Snapshot { width: w, ..page.snapshot(1, page.tree()) };
+    r.sync_layout(&at(640), &fetcher()).unwrap();
+    let steps: Vec<(u32, (String, Mutate))> = vec![
+        (640, text("#sa3", "an edit at 640")),
+        (480, noop("narrowed to 480")),
+        (480, text("#sa5", "an edit at 480, while the last column is hidden")),
+        (480, text("#sd5", "an edit in a hidden cell")),
+        (800, noop("widened to 800")),
+        (800, text("#pb3", "an edit in the vw-sized cell")),
+        (800, class("#a6", "pb")),
+        (640, text("#sa1", "back at 640")),
+        (633, noop("a few pixels narrower")),
+        (633, text("#sd1", "the cell hidden at 480, edited at 633")),
+    ];
+    let mut width = 640;
+    for (i, (w, (what, mutate))) in steps.into_iter().enumerate() {
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        if w == width {
+            let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+            let ok = delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (w, 480, 1.0, false, false), false).is_ok());
+            if !ok {
+                r.sync_layout(&at(w), &fetcher()).unwrap();
+            }
+        } else {
+            r.sync_layout(&at(w), &fetcher()).unwrap();
+            width = w;
+        }
+        lay2_compare_at(&mut r, &page, at(w), &format!("step {i} {what} at {w}"), i % 2 == 1, &mut failures);
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// Serves Lato and a red PNG after a delay, on another thread.
+struct Lay2Slow(std::time::Duration);
+impl Fetcher for Lay2Slow {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let delay = self.0;
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            done(if url.ends_with("lato.ttf") {
+                Ok(LATO.to_vec())
+            } else if url.ends_with("red.png") {
+                Ok(encode_png(&RgbaImage { width: 37, height: 23, data: [255, 0, 0, 255].repeat(37 * 23) }))
+            } else {
+                Err("404".into())
+            })
+        });
+    }
+}
+
+/// A web font and images arriving after the first layout (`invalidate_inline_contexts` and
+/// `apply_loaded_image` set damage on cells' contents between syncs), then delta-synced edits in
+/// other cells: every cell whose text or image changed is built and laid out again.
+#[test]
+fn review_lay2_fonts_and_images_arriving_in_cells_match_fresh_builds() {
+    let html = lay2_page(
+        "@font-face { font-family: Lato; src: url(lato.ttf) } td.lato { font: 15px Lato, serif }",
+    )
+    .replace("<td id=a4>", "<td id=a4 class=lato>")
+    .replace("<td id=b6>", "<td id=b6><img id=im6 src=red.png>")
+    .replace("<td id=c8>", "<td id=c8 class=lato><img id=im8 src=red.png style=\"float:right\">");
+    let page = Page::new(&html);
+    let slow: Arc<dyn Fetcher> = Arc::new(Lay2Slow(std::time::Duration::from_millis(400)));
+    let ready: Arc<dyn Fetcher> = Arc::new(Lay2Slow(std::time::Duration::from_millis(0)));
+    let mut r = Renderer::new();
+    r.first_layout_wait = std::time::Duration::from_millis(10);
+    r.sync_layout(&page.snapshot(1, page.tree()), &slow).unwrap();
+    let mut failures = Vec::new();
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    let steps: Vec<(String, Mutate)> = vec![
+        text("#sa1", "an unrelated cell edited after the font and images arrived"),
+        text("#sa4", "the Lato cell edited"),
+        set_style("#im6", "width:50px"),
+        text("#sa9", "the last edit"),
+    ];
+    for (i, (what, mutate)) in steps.into_iter().enumerate() {
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        if !delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false, false), false).is_ok()) {
+            r.sync_layout(&page.snapshot(1, page.tree()), &slow).unwrap();
+        }
+        lay2_compare_with(&mut r, &page, page.snapshot(1, page.tree()), &ready, &format!("step {i} {what}"), true, &mut failures);
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// Random mutations of a long table (cell text, classes that change layout, paint, display,
+/// generated content and `display: contents`, inline styles, attributes set to their value, rows and
+/// cells inserted, moved and removed, colspans, blocks inserted into inline content), one to four per
+/// sync, each synced as a delta.
+///
+/// Blitz's incremental layout has known gaps against a fresh build on such sequences (stale boxes of
+/// elements hidden by `display: none` or `contents` cells, a few px of document height after moved
+/// rows) on 267ac8c5 as well, so the check is differential: with LP_LAY2_DUMP=file each sync's boxes,
+/// document size, hit candidates and paint hash are written there, to compare a build of this tree
+/// with one of the base (they must be identical). Without it, the sequences run with debug asserts
+/// on (the damage-flag invariant checks) and hit candidates are taken after every third sync.
+/// LP_LAY2_SEEDS / LP_LAY2_STEPS / LP_LAY2_FROM: more or other sequences.
+#[test]
+fn review_lay2_random_table_deltas() {
+    use std::io::Write;
+    let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok());
+    let seeds = env("LP_LAY2_SEEDS").unwrap_or(if cfg!(debug_assertions) { 3 } else { 12 });
+    let steps = env("LP_LAY2_STEPS").unwrap_or(if cfg!(debug_assertions) { 10 } else { 30 });
+    let from = env("LP_LAY2_FROM").unwrap_or(0);
+    let mut dump = std::env::var_os("LP_LAY2_DUMP").map(|p| std::fs::File::create(p).unwrap());
+    for seed in from..from + seeds {
+        let page = Page::new(&lay2_page(""));
+        let mut r = Renderer::new();
+        r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let mut rng = Rng(0x1234_5678_9abc_def1 ^ (seed + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        for step in 0..steps {
+            let since = page.dom.borrow().version();
+            let n = 1 + rng.next() % 4;
+            let done: Vec<String> = (0..n).map(|_| lay2_mutate(&page, &mut rng)).collect();
+            let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+            if !delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false, false), false).is_ok()) {
+                r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+            }
+            // Hit tests after some syncs only: the bounds of several resolves are brought up to date at once.
+            let hit = step % 3 == 2 || step + 1 == steps;
+            if let Some(f) = dump.as_mut() {
+                writeln!(f, "seed {seed} step {step} {done:?}\n{}", lay2_signature(&mut r, &page, hit)).unwrap();
+            } else if hit {
+                r.ensure_hit_bounds(1);
+                let _ = lay2_hits(&r);
+            }
+        }
+    }
+}
+
+/// Every element's box, the document size, the hit candidates at a grid (`hit`) and the paint hash.
+fn lay2_signature(r: &mut Renderer, page: &Page, hit: bool) -> String {
+    let mut out = String::new();
+    for (k, b) in boxes(r, page) {
+        out.push_str(&format!("  {k:x} {b:?}\n"));
+    }
+    out.push_str(&format!("  size {:?}\n", r.document_size(1)));
+    if hit {
+        r.ensure_hit_bounds(1);
+        out.push_str(&format!("  hits {}\n", lay2_hits(r)));
+    }
+    let painted = paint(r, &page.snapshot(1, page.tree()));
+    out.push_str(&format!("  paint {:x}\n", painted.hash));
+    out
+}
+
+/// The hit candidates at a grid over the viewport, hashed.
+fn lay2_hits(r: &Renderer) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let zero = |_: u64| (0.0, 0.0);
+    for y in (2..480).step_by(9) {
+        for x in (2..640).step_by(13) {
+            let probe = HitProbe { x: x as f64, y: y as f64, ignore_x: false, window_scroll: (0.0, 0.0) };
+            let visits = r.hit_candidates(1, &probe, &zero, &[]).expect("hit bounds up to date");
+            for v in visits {
+                (v.key, format!("{:?}", v.bounds), v.hit).hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
+fn lay2_mutate(page: &Page, rng: &mut Rng) -> String {
+    let t = page.find("#tb");
+    let (rows, cells, inner): (Vec<NodeId>, Vec<NodeId>, Vec<NodeId>) = {
+        let d = page.dom.borrow();
+        let all: Vec<NodeId> =
+            d.descendants(t).unwrap().filter(|&n| n != t && d.node_type(n).ok() == Some(NodeType::Element)).collect();
+        let tag = |n: NodeId| d.tag_name(n).unwrap();
+        (
+            all.iter().copied().filter(|&n| tag(n) == "TR").collect(),
+            all.iter().copied().filter(|&n| tag(n) == "TD").collect(),
+            all.iter().copied().filter(|&n| !matches!(tag(n).as_str(), "TR" | "TD")).collect(),
+        )
+    };
+    let mut d = page.dom.borrow_mut();
+    let classes = ["on", "big", "h", "pa", "pb", "pblk", "c", "fl", "hot", "z", "ins", ""];
+    match rng.next() % 13 {
+        0 | 1 => {
+            // Text deep in a cell.
+            let Some(e) = rng.pick(&inner).or(rng.pick(&cells)) else { return "nothing".into() };
+            let n = rng.next() % 40;
+            d.set_text_content(e, &"word ".repeat(n as usize)).unwrap();
+            format!("text {} x{n}", d.tag_name(e).unwrap())
+        }
+        2 | 3 => {
+            let Some(e) = rng.pick(&inner).or(rng.pick(&cells)) else { return "nothing".into() };
+            let c = rng.pick(&classes).unwrap();
+            d.set_attribute(e, "class", c).unwrap();
+            format!("class {} {c:?}", d.tag_name(e).unwrap())
+        }
+        4 => {
+            let Some(e) = rng.pick(&cells) else { return "nothing".into() };
+            let c = rng.pick(&classes).unwrap();
+            d.set_attribute(e, "class", c).unwrap();
+            format!("cell class {c:?}")
+        }
+        5 => {
+            let Some(e) = rng.pick(&inner).or(rng.pick(&cells)) else { return "nothing".into() };
+            let v = rng
+                .pick(&["padding-left:7.5px", "color:green", "display:block", "display:inline-block;width:33px", "", "width:180px", "visibility:hidden"])
+                .unwrap();
+            d.set_attribute(e, "style", v).unwrap();
+            format!("style {} {v:?}", d.tag_name(e).unwrap())
+        }
+        6 => {
+            // An attribute set to the value it has (a restyle that changes nothing), or data-x.
+            let Some(e) = rng.pick(&inner).or(rng.pick(&cells)) else { return "nothing".into() };
+            if rng.next() % 2 == 0 {
+                let v = d.get_attribute(e, "class").unwrap().unwrap_or("").to_owned();
+                d.set_attribute(e, "class", &v).unwrap();
+                "same class".into()
+            } else {
+                let v = (rng.next() % 1000).to_string();
+                d.set_attribute(e, "data-x", &v).unwrap();
+                "data-x".into()
+            }
+        }
+        7 => {
+            // A row inserted (a clone of another).
+            let Some(src) = rng.pick(&rows) else { return "nothing".into() };
+            let c = d.clone_node(src, true, None).unwrap();
+            d.remove_attribute(c, "id").unwrap();
+            let anchor = rng.pick(&rows);
+            d.insert_before(t, c, anchor).unwrap();
+            "row cloned".into()
+        }
+        8 => {
+            if rows.len() < 3 {
+                return "nothing".into();
+            }
+            let row = rng.pick(&rows).unwrap();
+            if rng.next() % 2 == 0 {
+                d.remove_child(t, row).unwrap();
+                "row removed".into()
+            } else {
+                let anchor = rng.pick(&rows);
+                if anchor == Some(row) {
+                    return "nothing".into();
+                }
+                d.insert_before(t, row, anchor).unwrap();
+                "row moved".into()
+            }
+        }
+        9 => {
+            let Some(cell) = rng.pick(&cells) else { return "nothing".into() };
+            let row = d.parent(cell).unwrap().unwrap();
+            match rng.next() % 3 {
+                0 if d.children(row).unwrap().count() > 1 => {
+                    d.remove_child(row, cell).unwrap();
+                    "cell removed".into()
+                }
+                1 => {
+                    let td = d.create_element(page.doc, "td").unwrap();
+                    let tx = d.create_text(page.doc, "new cell").unwrap();
+                    d.append_child(td, tx).unwrap();
+                    d.insert_before(row, td, Some(cell)).unwrap();
+                    "cell inserted".into()
+                }
+                _ => {
+                    let span = (1 + rng.next() % 3).to_string();
+                    d.set_attribute(cell, "colspan", &span).unwrap();
+                    format!("colspan {span}")
+                }
+            }
+        }
+        10 => {
+            // A block or an inline inserted somewhere in a cell.
+            let Some(host) = rng.pick(&inner).or(rng.pick(&cells)) else { return "nothing".into() };
+            let tag = d.tag_name(host).unwrap();
+            if matches!(tag.as_str(), "OL") {
+                let li = d.create_element(page.doc, "li").unwrap();
+                let tx = d.create_text(page.doc, "item").unwrap();
+                d.append_child(li, tx).unwrap();
+                let first = d.first_child(host).unwrap();
+                d.insert_before(host, li, first).unwrap();
+                return "li inserted".into();
+            }
+            let el = d.create_element(page.doc, rng.pick(&["div", "span", "b"]).unwrap()).unwrap();
+            let tx = d.create_text(page.doc, "ins").unwrap();
+            d.append_child(el, tx).unwrap();
+            let kids: Vec<NodeId> = d.children(host).unwrap().collect();
+            let anchor = rng.pick(&kids);
+            d.insert_before(host, el, anchor).unwrap();
+            format!("inserted into {tag}")
+        }
+        11 => {
+            // An element of a cell removed, or moved into another cell.
+            let Some(e) = rng.pick(&inner) else { return "nothing".into() };
+            let Some(parent) = d.parent(e).unwrap() else { return "nothing".into() };
+            if d.tag_name(e).unwrap() == "LI" || rng.next() % 2 == 0 {
+                d.remove_child(parent, e).unwrap();
+                "inner removed".into()
+            } else {
+                let Some(to) = rng.pick(&cells) else { return "nothing".into() };
+                if d.contains(e, to).unwrap_or(true) {
+                    return "nothing".into();
+                }
+                d.append_child(to, e).unwrap();
+                "inner moved to another cell".into()
+            }
+        }
+        _ => {
+            // A row hidden or shown, or made contents.
+            let Some(row) = rng.pick(&rows) else { return "nothing".into() };
+            let v = rng.pick(&["display:none", "", "", "height:31.5px", "display:contents", "color:blue"]).unwrap();
+            d.set_attribute(row, "style", v).unwrap();
+            format!("row style {v:?}")
+        }
+    }
+}
+
+// ---------------- review (misc2): the layout dispatch split into non-inlined helpers
+// (`leaf_layout_or_algorithm`, `compute_table_root_layout`, `adjusted_child_inputs`,
+// `lay_out_out_of_flow_boxes`, `mirror_child_overflow`, `compute_inner_in_new_bfc`): every leaf
+// and algorithm path, delta-synced against fresh builds ----------------
+
+#[test]
+fn review_misc2_every_dispatch_path_matches_fresh_builds() {
+    steps_match_fresh_builds_at(
+        r#"<div id=f style="display:flex;flex-wrap:wrap;gap:3px;width:400.5px"><input id=i1><input id=cb type=checkbox><input id=pw type=password size=7><input id=hid type=hidden><input id=num type=number><textarea id=ta rows=2>t</textarea><select id=dd><option>One<option id=lo>Longest option label</select><select id=lb multiple><option>a<option>b</select><select id=sz size=3><option>a</select><img id=img width=30 height=20 alt=i><svg id=svg width=40 height=10></svg><button id=btn>Btn</button></div>
+<div id=col style="display:flex;flex-direction:column"><div id=mm style="min-width:max-content">max content min width text</div><div id=half style="width:50%"><input id=pct style="width:100%"></div></div>
+<div id=g style="display:grid;grid-template-columns:1fr 2fr"><div id=sp style="grid-column:span 2">span</div><div id=gf style="display:flex">a</div><div id=gc style="display:flex;flex-direction:column">b</div></div>
+<div id=rel style="position:relative;height:80px"><table id=at style="position:absolute;left:-20px;right:-30px;top:5px"><tr><td id=atd>abs table<div id=oofc style="position:absolute;top:3px">oof in cell</div></td></tr></table></div>
+<table id=t2 style="position:relative"><tr><td>t</td></tr><div id=toof style="position:absolute;left:4px">oof child</div></table>
+<div id=vrl style="writing-mode:vertical-rl;height:120px"><p id=vp>vertical rl text <span id=orth style="display:inline-block;writing-mode:horizontal-tb;width:60px">orthogonal box</span></p><div id=vf style="display:flex">flex in vrl</div></div>
+<div id=vlr style="writing-mode:vertical-lr;height:120px"><p>vertical lr</p><div id=hz style="writing-mode:horizontal-tb">horizontal in vertical</div><div id=opp style="writing-mode:vertical-rl">opp</div></div>
+<div id=vsc style="writing-mode:vertical-rl;overflow:auto;width:80px;height:60px"><div id=vin style="width:200px;height:10px"></div></div>
+<div id=fl style="float:left;width:50.5px">float</div><p id=bes>text beside the float text beside the float</p><div id=fr style="display:flow-root">flow root</div>
+<span id=ib style="display:inline-block;padding:3px">ib <span style="display:inline-block">nested</span></span>"#,
+        vec![
+            (640, style("#f", "display:flex;flex-wrap:wrap;gap:3px;width:250.5px")),
+            (640, attr("#hid", "type", "text")),
+            (640, attr("#cb", "type", "radio")),
+            (640, text("#lo", "an even longer longest option label")),
+            (640, attr("#lb", "size", "5")),
+            (640, attr("#sz", "size", "1")),
+            (640, style("#img", "width:44.5px")),
+            (640, style("#mm", "min-width:min-content")),
+            (640, style("#col", "display:flex;flex-direction:row")),
+            (640, style("#g", "display:grid;grid-template-columns:2fr 1fr;width:300px")),
+            (480, style("#at", "position:absolute;left:-40px;right:-60px;top:5px;margin:0 7px")),
+            (480, style("#oofc", "position:absolute;top:9px;left:2px")),
+            (480, style("#toof", "position:absolute;right:4px")),
+            (480, style("#vrl", "writing-mode:vertical-lr;height:150px")),
+            (480, style("#orth", "display:inline-block;writing-mode:horizontal-tb;width:90px")),
+            (480, style("#vlr", "writing-mode:vertical-rl;height:100px")),
+            (480, style("#vin", "width:300px;height:10px")),
+            (480, style("#fl", "float:right;width:80px")),
+            (800, style("#fr", "display:block")),
+            (800, style("#ib", "display:inline-flex;padding:3px")),
+            (800, style("#t2", "position:static")),
+            (800, style("#hz", "display:none")),
+            (800, style("#lb", "display:none")),
+            (800, style("#lb", "")),
+        ],
+    );
+}
+
+#[test]
+fn review_misc2_deep_mixed_nesting_matches_fresh_builds() {
+    // 240 levels cycling through every algorithm (block, flow-root, flex, column flex, grid,
+    // inline-block, table, vertical writing mode, positioned), then edits deep inside.
+    let kinds = [
+        "padding-left:1px",
+        "display:flow-root;padding-left:1px",
+        "display:flex;padding-left:1px",
+        "display:flex;flex-direction:column;padding-left:1px",
+        "display:grid;padding-left:1px",
+        "display:inline-block;padding-left:1px",
+        "display:table;padding-left:1px",
+        "writing-mode:vertical-lr;padding-left:1px",
+        "writing-mode:horizontal-tb;position:relative;padding-left:1px",
+    ];
+    let depth = 240;
+    let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"{}\">", kinds[i % kinds.len()])).collect();
+    let body = format!("{open}<span id=leaf>deep text</span>{}", "</div>".repeat(depth));
+    let page = Page::new(&format!("{PAINT_BOXES}{body}</body></html>"));
+    let mut r = Renderer::new();
+    check_boxes_at(&mut r, &page, 640, "the first render");
+    for (i, what) in [(200usize, "padding-left:9px"), (120, "display:flex;padding-left:2px"), (60, "display:grid;width:300px")] {
+        let n = page.find(&format!("#n{i}"));
+        page.dom.borrow_mut().set_attribute(n, "style", what).unwrap();
+        check_boxes_at(&mut r, &page, 500, &format!("#n{i} {what}"));
+    }
+    let leaf = page.find("#leaf");
+    page.dom.borrow_mut().set_text_content(leaf, "a longer deep text that may wrap").unwrap();
+    check_boxes_at(&mut r, &page, 640, "#leaf text");
+}
+
+#[test]
+#[ignore = "review misc2: FAILS on 267ac8c5 too (paint differs from a fresh build, boxes equal)"]
+fn review_misc2_a_password_input_size_change_paints_as_a_fresh_build() {
+    // Pre-existing, not from the layout dispatch split: the same hashes on 267ac8c5 and 42c7a0f0.
+    steps_match_fresh_builds(r#"<input id=pw type=password size=7 value=secret>"#, vec![attr("#pw", "size", "15")]);
 }

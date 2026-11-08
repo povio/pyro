@@ -499,16 +499,11 @@ pub fn compute_block_layout(
             LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs },
             inherited_bfc,
         ),
-        _ => {
-            let mut root_bfc = BlockFormattingContext::new();
-            let mut root_ctx = root_bfc.root_block_context();
-            compute_inner(
-                tree,
-                node_id,
-                LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs },
-                &mut root_ctx,
-            )
-        }
+        _ => compute_inner_in_new_bfc(
+            tree,
+            node_id,
+            LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs },
+        ),
     };
 
     // Layout containment suppresses the box's baseline for baseline-alignment purposes
@@ -517,6 +512,17 @@ pub fn compute_block_layout(
     }
 
     output
+}
+
+/// [`compute_inner`] for a box that establishes a block formatting context.
+// lightningpanda: not inlined, so the formatting context is not part of the frame of
+// `compute_block_layout` for the boxes that join their parent's (that frame is on the stack once
+// per tree level of a recursive layout).
+#[inline(never)]
+fn compute_inner_in_new_bfc(tree: &mut impl LayoutBlockContainer, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+    let mut root_bfc = BlockFormattingContext::new();
+    let mut root_ctx = root_bfc.root_block_context();
+    compute_inner(tree, node_id, inputs, &mut root_ctx)
 }
 
 /// Computes the layout of [`LayoutBlockContainer`] according to the block layout algorithm
@@ -931,7 +937,9 @@ fn compute_inner(
 }
 
 /// Create a `Vec` of `BlockItem` structs where each item in the `Vec` represents a child of the current node
-#[inline]
+// lightningpanda: not inlined, so its locals stay out of `compute_inner`'s frame, which is on the
+// stack once per tree level of a recursive layout.
+#[inline(never)]
 fn generate_item_list(
     tree: &impl LayoutBlockContainer,
     node: NodeId,
@@ -1094,7 +1102,8 @@ fn resolve_relative_offset(
 }
 
 /// Compute the content-based width in the case that the width of the container is not known
-#[inline]
+// lightningpanda: not inlined (see `generate_item_list`).
+#[inline(never)]
 fn determine_content_based_container_width(
     tree: &mut impl LayoutPartialTree,
     items: &[BlockItem],
