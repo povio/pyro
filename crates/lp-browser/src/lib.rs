@@ -1228,7 +1228,9 @@ impl Browser {
             return false;
         }
         p.frames.settings.borrow_mut().bindings = p.bindings.clone();
-        for realm in self.page_realms(page) {
+        // A deferred realm defines nothing yet (`add_binding` makes it to
+        // define one): nothing to delete, and not worth making it for.
+        for realm in self.page_realms(page).iter().filter(|r| !r.realm.is_deferred()) {
             if let Ok(scope) = realm.realm.scope() {
                 let _ = scope.global().delete(name);
             }
