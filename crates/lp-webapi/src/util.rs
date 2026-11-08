@@ -1,7 +1,9 @@
 //! Conversions between lp-dom/lp-net results and JS values (WebIDL-ish).
 
+use std::cell::Cell;
+
 use lp_dom::{DomError, NodeId};
-use lp_js::{Args, IdentityKey, JsError, JsResult, Object, Scope, Value, WeakRealm};
+use lp_js::{Args, IdentityKey, JsError, JsResult, Object, Persistent, Scope, Value, WeakRealm};
 
 /// A wrapper found again through its realm's identity map. A native payload
 /// keeps JS values its wrapper owns in hidden properties on that wrapper,
@@ -63,6 +65,49 @@ pub(crate) fn upper_local_name<'s>(s: &Scope<'s>, local: &markup5ever::LocalName
     s.interned_string_with((local.unsafe_data(), 4), local, local.is_dynamic(), || {
         str::to_ascii_uppercase(local).into()
     })
+}
+
+/// The realm's string for an atom-valued attribute of one node (its `id`, a
+/// one-token `class`), kept beside the wrapper that reads it. The second read
+/// of the same atom finds the string here, in the payload the getter has in
+/// hand, instead of in the realm's interned-string table
+/// ([`Scope::interned_string`]), whose probe (control bytes, entry, weak
+/// handle) is three dependent cache lines once the page has read a few
+/// hundred distinct ids. The atom is held, so its bits name its text for as
+/// long as the entry lives: a changed attribute (another atom) is told apart
+/// exactly, and the entry follows it. The string is protected from the
+/// second read on (a wrapper read once costs one small allocation and no
+/// handle), and released with the payload at a safe point, or when another
+/// atom takes its place.
+#[derive(Default)]
+pub(crate) struct AtomString(Cell<Option<Box<(lp_dom::Atom, Option<Persistent>)>>>);
+
+impl AtomString {
+    #[inline]
+    pub(crate) fn get<'s>(&self, s: &Scope<'s>, atom: &lp_dom::Atom) -> Value<'s> {
+        let mut entry = self.0.take();
+        let v = match entry.as_mut() {
+            Some(e) if e.0 == *atom => match &e.1 {
+                Some(string) => string.get(s),
+                None => {
+                    let v = atom.js(s);
+                    e.1 = Some(Persistent::new(s, v));
+                    v
+                }
+            },
+            Some(e) => {
+                e.0 = atom.clone();
+                e.1 = None;
+                atom.js(s)
+            }
+            None => {
+                entry = Some(Box::new((atom.clone(), None)));
+                atom.js(s)
+            }
+        };
+        self.0.set(entry);
+        v
+    }
 }
 
 /// An element's id atom as a string: `""` when it has none.

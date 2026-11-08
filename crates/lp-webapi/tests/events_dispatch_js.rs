@@ -172,3 +172,18 @@ fn computed_style_longhands_are_prototype_attributes() {
         "block,rgb(1, 2, 3),rgb(1, 2, 3),left,left,left,function,,true,false,true,true,true,true,true,string,string,string,true,true"
     );
 }
+
+#[test]
+fn id_and_class_name_follow_attribute_changes() {
+    let e = env("<body><div id=a class=one></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "(() => { const a = document.getElementById('a'); const seen = [a.id, a.id, a.id, a.className, a.className]; \
+               a.id = 'b'; seen.push(a.id, a.id); a.setAttribute('id', 'c'); seen.push(a.id); a.removeAttribute('id'); seen.push(a.id === ''); \
+               a.className = 'one two'; seen.push(a.className, a.className); a.className = 'two'; seen.push(a.className, a.className); \
+               a.id = 'b'; seen.push(a.id); return seen.join(); })()"
+        ),
+        "a,a,a,one,one,b,b,c,true,one two,one two,two,two,b"
+    );
+}
