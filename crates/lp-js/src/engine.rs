@@ -164,6 +164,8 @@ pub(crate) struct EngineInner {
     retired_members: RefCell<Vec<RetiredMembers>>,
     /// Garbage collections seen, for sweeping the realms' interned strings.
     pub(crate) collections: crate::interned::Collections,
+    /// The property hooks' switches (see [`class::HookState`]).
+    pub(crate) hook_state: class::HookState,
 }
 
 /// Decides when a closed page's garbage is worth a full collection: once the
@@ -427,6 +429,7 @@ impl EngineInner {
         let was_current = self.is_current();
         class::drain_finalized(self);
         self.classes.borrow_mut().release_all();
+        self.hook_state.placeholders.set(0);
         // Payload destructors above may have created a new engine on this
         // thread: only clear the thread state if it still refers to us.
         if was_current && self.is_current() {
@@ -579,6 +582,7 @@ impl Engine {
             member_payloads: RefCell::new(Vec::new()),
             retired_members: RefCell::new(Vec::new()),
             collections: crate::interned::Collections::new(),
+            hook_state: class::HookState::default(),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.

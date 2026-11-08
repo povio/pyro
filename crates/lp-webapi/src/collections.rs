@@ -116,23 +116,25 @@ impl NodeListData {
             NodeListSource::FormNamed(h, _) => self.items(&h.page.dom.borrow()).len(),
         }
     }
-    fn get(&self, i: usize) -> Option<(Rc<PageDom>, NodeId)> {
+    /// Member `i` and the page it belongs to (borrowed: an indexed read
+    /// clones no `Rc`).
+    fn get(&self, i: usize) -> Option<(&Rc<PageDom>, NodeId)> {
         match &self.source {
-            NodeListSource::Static(v) => v.as_ref().and_then(|h| Some((h.page.clone(), *h.ids.get(i)?))),
+            NodeListSource::Static(v) => v.as_ref().and_then(|h| Some((&h.page, *h.ids.get(i)?))),
             NodeListSource::Children(h) => {
                 let dom = h.page.dom.borrow();
                 {
                     let c = self.cache.borrow();
                     if c.0 == dom.version() {
-                        return c.1.get(i).map(|&id| (h.page.clone(), id));
+                        return c.1.get(i).map(|&id| (&h.page, id));
                     }
                 }
                 self.items(&dom);
-                self.cache.borrow().1.get(i).map(|&id| (h.page.clone(), id))
+                self.cache.borrow().1.get(i).map(|&id| (&h.page, id))
             }
             NodeListSource::FormNamed(h, _) => {
                 let items = self.items(&h.page.dom.borrow());
-                items.get(i).map(|&id| (h.page.clone(), id))
+                items.get(i).map(|&id| (&h.page, id))
             }
         }
     }
@@ -148,13 +150,13 @@ impl JsClass for NodeList {
         def.pure_method("item", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
             match l.get(i) {
-                Some((p, id)) => Ok(wrap_node(s, &p, id)?.value()),
+                Some((p, id)) => Ok(wrap_node(s, p, id)?.value()),
                 None => Ok(s.null()),
             }
         });
         def.legacy_platform_object();
         def.indexed(|s, l, i| match l.get(i as usize) {
-            Some((p, id)) => Ok(Some(wrap_node(s, &p, id)?.value())),
+            Some((p, id)) => Ok(Some(wrap_node(s, p, id)?.value())),
             None => Ok(None),
         });
         def.indexed_iterable();

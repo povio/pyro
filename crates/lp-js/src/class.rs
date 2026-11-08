@@ -770,6 +770,10 @@ pub(crate) struct ClassInfo {
     pub parent_info: *const ClassInfo,
     pub instance_class: sys::JSClassRef,
     pub def: ClassDefErased,
+    /// The engine's [`HookState`] (it outlives the registry's entries): an
+    /// indexed read finds it from the receiver's payload, with no
+    /// thread-local lookup.
+    pub hook_state: *const HookState,
 }
 
 /// `ClassDef` without the marker type parameter.
@@ -872,9 +876,9 @@ impl ClassRegistry {
         }
         self.classes.clear();
         self.spec = String::from("[]");
-        // The VM is gone, and the placeholder properties with it.
-        let gone = std::mem::take(&mut self.placeholders).len();
-        let _ = PLACEHOLDERS_PENDING.try_with(|p| p.set(p.get().saturating_sub(gone)));
+        // The VM is gone, and the placeholder properties with it (the
+        // engine resets its `HookState::placeholders`).
+        self.placeholders.clear();
     }
 }
 
@@ -967,6 +971,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         parent,
         parent_info,
         instance_class,
+        hook_state: &engine.hook_state,
         def: ClassDefErased {
             methods: def.methods,
             statics: def.statics,
@@ -1988,7 +1993,9 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
     if h.is_null() {
         return None;
     }
-    if PLACEHOLDERS_PENDING.get() != 0 && !scope.engine_inner().classes.borrow().placeholders.is_empty() {
+    if scope.engine_inner().hook_state.placeholders.get() != 0
+        && !scope.engine_inner().classes.borrow().placeholders.is_empty()
+    {
         unsafe { sweep_placeholders(scope) };
     }
     // The hooks from the payload's own class entry (inherited ones are
@@ -2017,30 +2024,57 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
     })
 }
 
-thread_local! {
+/// The property hooks' switches, one per engine (`EngineInner::hook_state`).
+/// Every object whose hooks read them is a wrapper of that engine, whose
+/// payload leads here through its class entry (`ClassInfo::hook_state`):
+/// the hot indexed read gets them with the loads it makes anyway, not with
+/// thread-local lookups.
+#[derive(Default)]
+pub(crate) struct HookState {
     /// Set while a hook asks JavaScriptCore about a wrapper's ordinary
     /// properties: the property hooks then answer nothing, so the operation
     /// sees only the wrapper's real own properties and its prototype chain.
-    static ORDINARY_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Placeholders awaiting removal ([`leave_placeholder`]) in all of the
-    /// thread's engines: the lean dispatch paths, which do not sweep, step
-    /// aside for the full one while it is nonzero, and [`hook_ctx`] looks at
-    /// its engine's list only then.
-    static PLACEHOLDERS_PENDING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub ordinary_only: std::cell::Cell<bool>,
+    /// Placeholders awaiting removal ([`leave_placeholder`]): the lean
+    /// dispatch paths, which do not sweep, step aside for the full one while
+    /// it is nonzero, and [`hook_ctx`] looks at the list only then.
+    pub placeholders: std::cell::Cell<usize>,
 }
 
-/// Runs `f` with the property hooks switched off (see [`ORDINARY_ONLY`]).
-fn ordinary_only<R>(f: impl FnOnce() -> R) -> R {
-    let was = ORDINARY_ONLY.replace(true);
+/// The hook switches of the engine `object` (a wrapper with property hooks)
+/// belongs to; `None` for an object without a wrapper payload, whose hooks
+/// answer nothing anyway.
+#[inline]
+unsafe fn hook_state_of<'a>(h: *mut Header) -> Option<&'a HookState> {
+    unsafe {
+        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).info.is_null() {
+            return None;
+        }
+        Some(&*(*(*h).info).hook_state)
+    }
+}
+
+/// Whether the property hooks of `object` are switched off (see
+/// [`HookState::ordinary_only`]).
+#[inline]
+unsafe fn ordinary_only_on(object: sys::JSObjectRef) -> bool {
+    unsafe { hook_state_of(sys::JSObjectGetPrivate(object) as *mut Header) }.is_some_and(|s| s.ordinary_only.get())
+}
+
+/// Runs `f` with the property hooks switched off (see
+/// [`HookState::ordinary_only`]).
+fn ordinary_only<R>(scope: &Scope<'_>, f: impl FnOnce() -> R) -> R {
+    let state = &scope.engine_inner().hook_state;
+    let was = state.ordinary_only.replace(true);
     let out = f();
-    ORDINARY_ONLY.set(was);
+    state.ordinary_only.set(was);
     out
 }
 
 /// True if `name` resolves without the hooks: a real own property of the
 /// wrapper (an expando) or a property on its prototype chain.
-unsafe fn has_ordinary_property(ctx: sys::JSContextRef, object: sys::JSObjectRef, name: sys::JSStringRef) -> bool {
-    ordinary_only(|| unsafe { sys::JSObjectHasProperty(ctx, object, name) })
+unsafe fn has_ordinary_property(scope: &Scope<'_>, object: sys::JSObjectRef, name: sys::JSStringRef) -> bool {
+    ordinary_only(scope, || unsafe { sys::JSObjectHasProperty(scope.ctx, object, name) })
 }
 
 /// Puts a placeholder on the wrapper: a real own property `name` that is
@@ -2067,7 +2101,7 @@ unsafe fn has_ordinary_property(ctx: sys::JSContextRef, object: sys::JSObjectRef
 unsafe fn leave_placeholder(scope: &Scope<'_>, object: sys::JSObjectRef, name: sys::JSStringRef) {
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        ordinary_only(|| {
+        ordinary_only(scope, || {
             sys::JSObjectSetProperty(
                 scope.ctx,
                 object,
@@ -2080,17 +2114,19 @@ unsafe fn leave_placeholder(scope: &Scope<'_>, object: sys::JSObjectRef, name: s
         sys::JSValueProtect(scope.ctx, object);
         let name = JsString::from_utf16(utf16_of(name));
         scope.engine_inner().classes.borrow_mut().placeholders.push((object, name));
-        PLACEHOLDERS_PENDING.set(PLACEHOLDERS_PENDING.get() + 1);
+        let pending = &scope.engine_inner().hook_state.placeholders;
+        pending.set(pending.get() + 1);
     }
 }
 
 /// Removes the pending placeholders ([`leave_placeholder`]).
 unsafe fn sweep_placeholders(scope: &Scope<'_>) {
     let pending = std::mem::take(&mut scope.engine_inner().classes.borrow_mut().placeholders);
-    PLACEHOLDERS_PENDING.set(PLACEHOLDERS_PENDING.get().saturating_sub(pending.len()));
+    let count = &scope.engine_inner().hook_state.placeholders;
+    count.set(count.get().saturating_sub(pending.len()));
     for (object, name) in pending {
         unsafe {
-            ordinary_only(|| sys::JSObjectDeleteProperty(scope.ctx, object, name.as_raw(), ptr::null_mut()));
+            ordinary_only(scope, || sys::JSObjectDeleteProperty(scope.ctx, object, name.as_raw(), ptr::null_mut()));
             sys::JSValueUnprotect(scope.ctx, object);
         }
     }
@@ -2111,7 +2147,7 @@ unsafe extern "C" fn get_property_hook(
     name: sys::JSStringRef,
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
-    if ORDINARY_ONLY.get() {
+    if unsafe { ordinary_only_on(object) } {
         return ptr::null();
     }
     unsafe {
@@ -2131,7 +2167,7 @@ unsafe extern "C" fn get_property_hook(
                     return Ok(match f(scope, hc.header, units)? {
                         // An own property shadows the named property.
                         Some(_)
-                            if hc.legacy && !hc.override_builtins && has_ordinary_property(scope.ctx, object, name) =>
+                            if hc.legacy && !hc.override_builtins && has_ordinary_property(scope, object, name) =>
                         {
                             ptr::null()
                         }
@@ -2165,12 +2201,17 @@ unsafe extern "C" fn get_by_index_hook(
     // (collections wrap their items): the lean dispatch first, the full one
     // for a receiver of another realm, an error, a panic, or while a
     // termination propagates (see `ClassDef::pure_getter`).
-    if ORDINARY_ONLY.get() {
-        return ptr::null();
-    }
-    if PLACEHOLDERS_PENDING.get() == 0 {
-        if let Some(v) = unsafe { get_by_index_lean(ctx, object, index) } {
-            return v;
+    // The switches come from the receiver's payload, which the lean read
+    // needs anyway.
+    let h = unsafe { sys::JSObjectGetPrivate(object) } as *mut Header;
+    if let Some(state) = unsafe { hook_state_of(h) } {
+        if state.ordinary_only.get() {
+            return ptr::null();
+        }
+        if state.placeholders.get() == 0 {
+            if let Some(v) = unsafe { get_by_index_lean(h, index) } {
+                return v;
+            }
         }
     }
     unsafe {
@@ -2189,14 +2230,11 @@ unsafe extern "C" fn get_by_index_hook(
 }
 
 /// The lean half of [`get_by_index_hook`]: `Some` when it answered.
-unsafe fn get_by_index_lean(ctx: sys::JSContextRef, object: sys::JSObjectRef, index: u32) -> Option<sys::JSValueRef> {
+/// `h` is the receiver's wrapper payload, its class entry set
+/// ([`hook_state_of`] checked both).
+unsafe fn get_by_index_lean(h: *mut Header, index: u32) -> Option<sys::JSValueRef> {
     unsafe {
-        let h = sys::JSObjectGetPrivate(object) as *mut Header;
-        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).info.is_null() {
-            return None;
-        }
         let f = (*(*h).info).def.hooks.indexed?;
-        let _ = ctx;
         let realm = (*h).realm_ref.upgrade()?;
         let ctx = realm.ctx.get() as sys::JSContextRef;
         if ctx.is_null() {
@@ -2220,7 +2258,7 @@ unsafe extern "C" fn set_by_index_hook(
     value: sys::JSValueRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
-    if ORDINARY_ONLY.get() {
+    if unsafe { ordinary_only_on(object) } {
         return false;
     }
     unsafe {
@@ -2232,7 +2270,7 @@ unsafe extern "C" fn set_by_index_hook(
                 // ordinary put that follows stops at the placeholder.
                 if hc.legacy && hc.indexed.is_some() {
                     let name = JsString::new(&index.to_string());
-                    if !has_ordinary_property(scope.ctx, object, name.as_raw()) {
+                    if !has_ordinary_property(scope, object, name.as_raw()) {
                         leave_placeholder(scope, object, name.as_raw());
                         return Ok(false);
                     }
@@ -2369,7 +2407,7 @@ unsafe extern "C" fn set_property_hook(
     value: sys::JSValueRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
-    if ORDINARY_ONLY.get() {
+    if unsafe { ordinary_only_on(object) } {
         return false;
     }
     unsafe {
@@ -2379,7 +2417,7 @@ unsafe extern "C" fn set_property_hook(
             if hc.indexed.is_some() && array_index(units).is_some() && hc.named_set.is_none() {
                 // Indexed properties without a setter are read-only, and no
                 // index past the end can be defined either.
-                if hc.legacy && !has_ordinary_property(scope.ctx, object, name) {
+                if hc.legacy && !has_ordinary_property(scope, object, name) {
                     leave_placeholder(scope, object, name);
                     return Ok(false);
                 }
@@ -2399,7 +2437,7 @@ unsafe extern "C" fn set_property_hook(
                     } else {
                         visible(scope)?
                     };
-                    if visible && !has_ordinary_property(scope.ctx, object, name) {
+                    if visible && !has_ordinary_property(scope, object, name) {
                         leave_placeholder(scope, object, name);
                     }
                     return Ok(false);
@@ -2432,7 +2470,7 @@ unsafe extern "C" fn delete_property_hook(
     name: sys::JSStringRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
-    if ORDINARY_ONLY.get() {
+    if unsafe { ordinary_only_on(object) } {
         return false;
     }
     unsafe {
@@ -2500,7 +2538,7 @@ unsafe extern "C" fn property_names_hook(
                 // properties, when the caller wants non-enumerable keys too.
                 for n in &names {
                     let visible = !(hc.indexed.is_some() && array_index(n.utf16()).is_some())
-                        && !has_ordinary_property(ctx, object, n.as_raw());
+                        && !has_ordinary_property(scope, object, n.as_raw());
                     if visible {
                         leave_placeholder(scope, object, n.as_raw());
                     }
