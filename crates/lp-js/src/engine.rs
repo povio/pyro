@@ -370,6 +370,20 @@ impl EngineInner {
         self.shut_down.get()
     }
 
+    /// [`Engine::drain_finalized`]: the finalized payloads dropped, dead
+    /// interned strings swept, dead realms' member payloads freed.
+    pub(crate) fn drain_finalized(&self) -> usize {
+        let n = class::drain_finalized(self);
+        crate::interned::sweep_realms(self, false);
+        self.release_dead_members();
+        n
+    }
+
+    /// Payloads of finalized wrappers waiting for [`Self::drain_finalized`].
+    pub(crate) fn pending_finalizers(&self) -> usize {
+        self.finalized.len()
+    }
+
     /// Finds the realm owning global context `global`.
     pub(crate) fn realm_for_global(&self, global: sys::JSGlobalContextRef) -> Option<Rc<RealmInner>> {
         self.realms.borrow().get(&(global as usize)).and_then(Weak::upgrade)
@@ -645,10 +659,7 @@ impl Engine {
     /// Releases payloads of wrappers finalized by the GC. Call at safe points
     /// (the event loop does this after each task).
     pub fn drain_finalized(&self) -> usize {
-        let n = class::drain_finalized(&self.inner);
-        crate::interned::sweep_realms(&self.inner, false);
-        self.inner.release_dead_members();
-        n
+        self.inner.drain_finalized()
     }
 
     /// Frees what a closed page (or a navigated-away document) left behind,

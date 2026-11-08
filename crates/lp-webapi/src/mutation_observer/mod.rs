@@ -448,8 +448,14 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
         };})()"#,None,1)?;
     page.mutations.helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
     let weak = Rc::downgrade(page);
-    s.realm().set_native_callback_hook(Some(Rc::new(move |_| {
+    s.realm().set_native_callback_hook(Some(Rc::new(move |s| {
         if let Some(page) = weak.upgrade() {
+            // First: the payloads of finalized wrappers, whose destructors
+            // release DOM nodes the sweep below then frees.
+            if s.realm().pending_finalizers() >= FINALIZER_DRAIN && s.drain_finalized_in_outermost_callback().is_some()
+            {
+                page.sweep_released_nodes();
+            }
             page.flush_iframe_events();
             page.update_render_blocking();
             crate::custom::run_reactions(&page);
@@ -458,10 +464,21 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
         }
     })))?;
     let weak = Rc::downgrade(page);
-    s.realm()
-        .set_native_callback_pending(Some(Rc::new(move || weak.upgrade().is_some_and(|page| hook_pending(&page)))))?;
+    let realm = s.realm().downgrade();
+    s.realm().set_native_callback_pending(Some(Rc::new(move || {
+        weak.upgrade().is_some_and(|page| hook_pending(&page))
+            || realm.upgrade().is_some_and(|realm| realm.pending_finalizers() >= FINALIZER_DRAIN)
+    })))?;
     Ok(())
 }
+
+/// Finalized wrappers whose payloads wait for a safe point, from which the
+/// hook drains them inside the task instead of after it (`Browser::checkpoint`):
+/// a task that creates and drops wrappers by the million (an `innerHTML`
+/// rebuild loop, a big render) otherwise keeps every payload and DOM node
+/// until it ends. A collection finalizes wrappers by the tens of thousands,
+/// so a drain follows nearly every collection and costs nothing between.
+const FINALIZER_DRAIN: usize = 4096;
 
 /// Whether the native callback hook (iframe events, then [`checkpoint`]) has
 /// anything to do. Conservative: true whenever either could act.

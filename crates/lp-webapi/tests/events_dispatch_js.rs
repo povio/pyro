@@ -187,3 +187,22 @@ fn id_and_class_name_follow_attribute_changes() {
         "a,a,a,one,one,b,b,c,true,one two,one two,two,two,b"
     );
 }
+
+#[test]
+fn finalized_wrappers_are_given_back_inside_a_long_task() {
+    let e = env("<body></body>");
+    // One task that makes and drops wrappers by the hundred thousand: the
+    // collector finalizes most of them while it runs, and the post-callback
+    // hook of the outermost callback drains their payloads and frees their
+    // nodes, so the DOM does not hold them all until the task ends.
+    let made = 400_000usize;
+    assert_eq!(
+        eval(&e.main, &format!("(() => {{ let s = 0; for (let i = 0; i < {made}; i++) s += document.createElement('div').nodeType; return s; }})()")),
+        (made as f64).to_string().trim_end_matches(".0").to_owned()
+    );
+    let live = e.page.dom.borrow().live_nodes();
+    assert!(live < made / 2, "{live} nodes live after the task of {made} created (none drained before its end)");
+    // The task's end releases the rest.
+    e.engine.drain_finalized();
+    e.page.after_task();
+}

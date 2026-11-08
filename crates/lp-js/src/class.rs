@@ -1059,14 +1059,27 @@ pub(crate) struct Header {
 /// Payload headers awaiting destruction on the engine thread. Finalizers may
 /// run on any thread, hence the mutex.
 #[derive(Default)]
-pub(crate) struct FinalizeQueue(std::sync::Mutex<Vec<usize>>);
+pub(crate) struct FinalizeQueue {
+    headers: std::sync::Mutex<Vec<usize>>,
+    /// How many are queued, readable without the lock (an embedder decides
+    /// from it whether to drain at a callback safe point).
+    len: std::sync::atomic::AtomicUsize,
+}
 
 impl FinalizeQueue {
     fn push(&self, h: *mut Header) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(h as usize);
+        let mut headers = self.headers.lock().unwrap_or_else(|e| e.into_inner());
+        headers.push(h as usize);
+        self.len.store(headers.len(), std::sync::atomic::Ordering::Relaxed);
     }
     fn take(&self) -> Vec<usize> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        let mut headers = self.headers.lock().unwrap_or_else(|e| e.into_inner());
+        self.len.store(0, std::sync::atomic::Ordering::Relaxed);
+        std::mem::take(&mut *headers)
+    }
+    /// Payloads queued for [`drain_finalized`].
+    pub(crate) fn len(&self) -> usize {
+        self.len.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 

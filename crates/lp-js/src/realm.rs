@@ -731,6 +731,12 @@ impl Realm {
     pub fn downgrade(&self) -> WeakRealm {
         WeakRealm(Rc::downgrade(&self.inner))
     }
+
+    /// Payloads of wrappers the collector finalized that wait for the next
+    /// [`crate::Engine::drain_finalized`] (engine-wide).
+    pub fn pending_finalizers(&self) -> usize {
+        self.inner.engine.pending_finalizers()
+    }
 }
 
 /// Non-owning realm handle; see [`Realm::downgrade`].
@@ -842,6 +848,21 @@ impl<'s> Scope<'s> {
     /// Embedder state set with [`Realm::set_embedder`].
     pub fn embedder<T: Any>(&self) -> Option<Rc<T>> {
         self.realm.embedder.borrow().clone().and_then(|d| d.downcast::<T>().ok())
+    }
+
+    /// [`crate::Engine::drain_finalized`] from the post-callback hook of the
+    /// outermost native callback (nesting depth 1): the callback's body has
+    /// returned, no other native frame of this engine is on the stack, so
+    /// the payload destructors run as they would after the task. `None`,
+    /// nothing done, from a nested callback (an outer native body is
+    /// suspended mid-way, with whatever it holds) or from Rust. Lets a long
+    /// task that makes and drops wrappers by the million give their payloads
+    /// (and what those hold) back before it ends.
+    pub fn drain_finalized_in_outermost_callback(&self) -> Option<usize> {
+        if crate::engine::callback_tls().depth.get() != 1 {
+            return None;
+        }
+        Some(self.realm.engine.drain_finalized())
     }
 
     /// The realm's current event (`window.event`), if a listener call is

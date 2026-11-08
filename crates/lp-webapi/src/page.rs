@@ -1304,6 +1304,21 @@ impl PageDom {
         }
     }
 
+    /// Frees the DOM nodes that wrappers released since the last safe point
+    /// (deferred releases applied, then `Dom::collect_garbage`): the node
+    /// part of a mid-task drain of finalized wrappers (see
+    /// `mutation_observer::install`), the rest of [`PageDom::after_task`]
+    /// waiting for the task's end. Skipped while the DOM is borrowed.
+    pub(crate) fn sweep_released_nodes(&self) {
+        let Ok(mut dom) = self.dom.try_borrow_mut() else { return };
+        for id in std::mem::take(&mut *self.pending_release.borrow_mut()) {
+            dom.release(id);
+        }
+        if dom.has_gc_candidates() {
+            dom.collect_garbage();
+        }
+    }
+
     /// A scheduled resize gather or callback can still change layout.
     pub fn pending_resize_observer_work(&self) -> bool {
         self.resizes.pending_work()
