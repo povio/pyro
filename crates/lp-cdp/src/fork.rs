@@ -1119,6 +1119,15 @@ fn pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
 
 // ---- Framing: a u32 length, JSON, and fds attached to the first byte -----
 
+fn retry_interrupted<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    loop {
+        match operation() {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
+}
+
 fn send(stream: &mut UnixStream, message: &impl Serialize, fds: &[RawFd]) -> std::io::Result<()> {
     let body = serde_json::to_vec(message).map_err(std::io::Error::other)?;
     let mut bytes = (body.len() as u32).to_le_bytes().to_vec();
@@ -1141,11 +1150,15 @@ fn send(stream: &mut UnixStream, message: &impl Serialize, fds: &[RawFd]) -> std
             std::ptr::copy_nonoverlapping(fds.as_ptr(), libc::CMSG_DATA(cmsg).cast::<RawFd>(), fds.len());
         }
     }
-    let n = unsafe { libc::sendmsg(stream.as_raw_fd(), &msg, 0) };
-    if n < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    stream.write_all(&bytes[n as usize..])
+    let n = retry_interrupted(|| {
+        let n = unsafe { libc::sendmsg(stream.as_raw_fd(), &msg, 0) };
+        if n < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(n as usize)
+        }
+    })?;
+    stream.write_all(&bytes[n..])
 }
 
 fn recv<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> std::io::Result<(T, Vec<OwnedFd>)> {
@@ -1157,10 +1170,18 @@ fn recv<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> std::io::Resul
     msg.msg_iovlen = 1;
     msg.msg_control = control.as_mut_ptr().cast();
     msg.msg_controllen = control.len() as _;
-    let n = unsafe { libc::recvmsg(stream.as_raw_fd(), &mut msg, 0) };
-    if n <= 0 {
-        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "no message"));
-    }
+    let n = retry_interrupted(|| {
+        msg.msg_controllen = control.len() as _;
+        msg.msg_flags = 0;
+        let n = unsafe { libc::recvmsg(stream.as_raw_fd(), &mut msg, 0) };
+        if n < 0 {
+            Err(std::io::Error::last_os_error())
+        } else if n == 0 {
+            Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "no message"))
+        } else {
+            Ok(n as usize)
+        }
+    })?;
     let mut fds = Vec::new();
     // SAFETY: walks the control headers recvmsg filled in.
     unsafe {
@@ -1181,7 +1202,7 @@ fn recv<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> std::io::Resul
     let mut bytes = first[..n as usize].to_vec();
     while bytes.len() < 4 {
         let mut more = [0u8; 4];
-        let k = stream.read(&mut more)?;
+        let k = retry_interrupted(|| stream.read(&mut more))?;
         if k == 0 {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
@@ -1190,7 +1211,7 @@ fn recv<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> std::io::Resul
     let len = u32::from_le_bytes(bytes[..4].try_into().expect("4 bytes")) as usize;
     while bytes.len() < 4 + len {
         let mut more = vec![0u8; 4 + len - bytes.len()];
-        let k = stream.read(&mut more)?;
+        let k = retry_interrupted(|| stream.read(&mut more))?;
         if k == 0 {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
@@ -1203,6 +1224,61 @@ fn recv<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> std::io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interrupted_framed_reads_preserve_message_and_descriptors() {
+        const CHILD: &str = "LP_FORK_INTERRUPTED_RECV_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "fork::tests::interrupted_framed_reads_preserve_message_and_descriptors",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        install_child_notifications();
+        for fragmented in [false, true] {
+            let (mut reader, mut writer) = UnixStream::pair().unwrap();
+            reader.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+            let target = unsafe { libc::pthread_self() } as usize;
+            let (read_fd, _write_fd) = pipe().unwrap();
+            let sender = std::thread::spawn(move || {
+                let body = serde_json::to_vec(&Message::Taken).unwrap();
+                let mut bytes = (body.len() as u32).to_le_bytes().to_vec();
+                bytes.extend_from_slice(&body);
+                if fragmented {
+                    writer.write_all(&bytes[..2]).unwrap();
+                }
+                for _ in 0..10 {
+                    std::thread::sleep(Duration::from_millis(5));
+                    assert_eq!(unsafe { libc::pthread_kill(target as libc::pthread_t, libc::SIGCHLD) }, 0);
+                }
+                if fragmented {
+                    writer.write_all(&bytes[2..]).unwrap();
+                } else {
+                    send(&mut writer, &Message::Taken, &[read_fd.as_raw_fd()]).unwrap();
+                }
+            });
+            let result: std::io::Result<(Message, Vec<OwnedFd>)> = recv(&mut reader);
+            sender.join().unwrap();
+            let (message, descriptors) = result.expect("SIGCHLD must not truncate a framed message");
+            assert!(matches!(message, Message::Taken));
+            assert_eq!(descriptors.len(), usize::from(!fragmented));
+            for fd in descriptors {
+                assert_ne!(unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC, 0);
+            }
+        }
+    }
 
     struct SocketFiles(PathBuf);
 
