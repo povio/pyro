@@ -259,3 +259,79 @@ fn visual_viewport_and_screen_orientation_are_event_targets() {
     settle(&mut t);
     assert_eq!(eval(&t, page, "locked+':'+screen.orientation.type"), "ok:portrait-primary");
 }
+
+#[test]
+fn resize_layout_reads_include_new_unstyled_nodes() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert(
+        "http://resize-layout.test/",
+        "text/html",
+        "<style>body{width:90vw}.new-node{width:20vw}</style><body>resize</body>",
+        Duration::ZERO,
+    );
+    t.browser.set_loader(Some(loader));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://resize-layout.test/")).unwrap();
+    settle(&mut t);
+    eval(&t, page, "document.body.offsetWidth");
+    eval(&t, page, r#"
+        globalThis.widths = [];
+        addEventListener('resize', () => {
+            const node = document.createElement('div');
+            node.className = 'new-node';
+            node.style.height = '20px';
+            document.body.append(node);
+            widths.push(document.body.offsetWidth);
+        });
+    "#);
+    for width in 700..720 {
+        t.browser.set_viewport(page, Viewport::new(width, 600)).unwrap();
+        settle(&mut t);
+    }
+    let expected: Vec<_> = (700..720).map(|width| ((f64::from(width) * 0.9).round() as u32).to_string()).collect();
+    assert_eq!(eval(&t, page, "widths.join(',')"), expected.join(","));
+}
+
+#[test]
+fn viewport_restyles_siblings_and_moved_children_of_unstyled_nodes() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert(
+        "http://resize-move.test/",
+        "text/html",
+        "<style>body{width:90vw}.box{width:20vw}.child{display:block;width:10vw}</style><body><div id=existing class=box><span id=moved class=child></span></div></body>",
+        Duration::ZERO,
+    );
+    t.browser.set_loader(Some(loader));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://resize-move.test/")).unwrap();
+    settle(&mut t);
+    eval(&t, page, "document.body.offsetWidth");
+    eval(&t, page, r#"
+        globalThis.widths = [];
+        addEventListener('resize', () => {
+            const node = document.createElement('div');
+            node.className = 'box';
+            node.style.height = '20px';
+            const child = document.createElement('span');
+            child.className = 'child';
+            node.append(child);
+            document.body.prepend(node);
+            const moved = document.getElementById('moved');
+            node.append(moved);
+            widths.push([document.body.offsetWidth, node.offsetWidth,
+                document.getElementById('existing').offsetWidth, moved.offsetWidth, child.offsetWidth].join(':'));
+        });
+    "#);
+    let mut expected = Vec::new();
+    for width in 700..720 {
+        t.browser.set_viewport(page, Viewport::new(width, 600)).unwrap();
+        settle(&mut t);
+        let body = (f64::from(width) * 0.9).round() as u32;
+        let outer = (f64::from(width) * 0.2).round() as u32;
+        let inner = (f64::from(width) * 0.1).round() as u32;
+        expected.push(format!("{body}:{outer}:{outer}:{inner}:{inner}"));
+    }
+    assert_eq!(eval(&t, page, "widths.join('|')"), expected.join("|"));
+}
