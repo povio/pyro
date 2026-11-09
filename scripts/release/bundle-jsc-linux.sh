@@ -32,7 +32,11 @@ patchelf --set-soname libJavaScriptCore.so --set-rpath '$ORIGIN' "$dir/lib/libJa
 for bin in lightningpanda lp-snapshot-compare; do
     [[ -f "$dir/$bin" ]] || continue
     linked="$(patchelf --print-needed "$dir/$bin" | grep 'libJavaScriptCore\.so' || true)"
-    [[ -n "$linked" ]] || { echo "error: $dir/$bin does not link libJavaScriptCore.so" >&2; exit 1; }
+    if [[ -z "$linked" ]]; then
+        # The linker drops unused libraries (--as-needed); the comparator may not use JSC.
+        [[ "$bin" != lightningpanda ]] || { echo "error: $dir/$bin does not link libJavaScriptCore.so" >&2; exit 1; }
+        continue
+    fi
     [[ "$linked" == libJavaScriptCore.so ]] || patchelf --replace-needed "$linked" libJavaScriptCore.so "$dir/$bin"
     patchelf --set-rpath '$ORIGIN/lib' "$dir/$bin"
 done
