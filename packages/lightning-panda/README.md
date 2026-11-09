@@ -280,7 +280,8 @@ npx lightningpanda serve --port 9222
 
 For release candidates, install `@povio/lightning-panda@next`.
 
-The package bundles browsers for **macOS 14+ on Apple Silicon and Intel**, with
+The package bundles browsers for **macOS 14+ on Apple Silicon and Intel** and
+**Linux x64 and arm64 (glibc 2.39+, e.g. Ubuntu 24.04)**, with
 layout, screenshots and PDF rendering enabled. No Rust toolchain, install
 scripts or binary downloads are needed. The API supports Node.js 22+ and Bun;
 Bun loads TypeScript sources, while Node loads compiled JavaScript and types.

@@ -1,0 +1,27 @@
+name: Linux
+
+# Checks the Linux build outside a release: the patched JavaScriptCore
+# (cached), the browser, and the client's tests against it.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/linux.yml
+      - .github/workflows/linux-build.yml
+      - scripts/linux/**
+      - scripts/release/bundle-jsc-linux.sh
+      - crates/lp-jsc-sys/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jsc:
+    uses: ./.github/workflows/jsc.yml
+
+  build:
+    needs: jsc
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      jsc-dir: ${{ needs.jsc.outputs.dir }}

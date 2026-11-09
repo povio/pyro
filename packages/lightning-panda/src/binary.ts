@@ -16,8 +16,8 @@ export function resolveBinary({
   if (statSync(sibling, { throwIfNoEntry: false })?.isFile()) return sibling;
   const bundled = join(root, 'native', `${platform}-${arch}`, 'lightningpanda');
   if (statSync(bundled, { throwIfNoEntry: false })?.isFile()) return bundled;
-  if (platform !== 'darwin' || !['arm64', 'x64'].includes(arch)) {
-    throw new Error(`Lightningpanda has no bundled browser for ${platform}-${arch}. The browser supports macOS 14+ on arm64 and x64. Use Lightningpanda.connect() for a remote browser, or set LIGHTNINGPANDA_BIN.`);
+  if (!['darwin', 'linux'].includes(platform) || !['arm64', 'x64'].includes(arch)) {
+    throw new Error(`Lightningpanda has no bundled browser for ${platform}-${arch}. The browser supports macOS 14+ and Linux (glibc 2.39+) on arm64 and x64. Use Lightningpanda.connect() for a remote browser, or set LIGHTNINGPANDA_BIN.`);
   }
   throw new Error(`Missing bundled browser: ${bundled}. Reinstall @povio/lightning-panda or set LIGHTNINGPANDA_BIN to a built browser.`);
 }

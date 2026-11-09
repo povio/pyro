@@ -8,10 +8,12 @@
 # build.rs finds a build that matches the checkout. Re-running after a patch
 # change rebuilds incrementally in the shared build directory.
 #
-# Needs cmake, ninja, the Xcode Command Line Tools and ~30 GB of free RAM at -j10.
+# Needs cmake, ninja, the Xcode Command Line Tools (macOS) or clang + ICU dev
+# headers (Linux, see scripts/linux/Dockerfile) and ~30 GB of free RAM at -j10.
 #
 # Environment:
-#   LP_JSC_CACHE   artifact root (default ~/Library/Caches/lightningpanda/jsc)
+#   LP_JSC_CACHE   artifact root (default ~/Library/Caches/lightningpanda/jsc on
+#                  macOS, ${XDG_CACHE_HOME:-~/.cache}/lightningpanda/jsc on Linux)
 #   LP_WEBKIT_SRC  WebKit checkout, created if missing (default $LP_JSC_CACHE/../webkit-src)
 #   LP_JSC_BUILD   ninja build dir (default $LP_JSC_CACHE/../webkit-build)
 #   JOBS           parallel jobs (default: number of CPUs)
@@ -28,20 +30,33 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 inputs="$root/crates/lp-jsc-sys/webkit"
 rev="$(tr -d '[:space:]' < "$inputs/REVISION")"
-cache="${LP_JSC_CACHE:-$HOME/Library/Caches/lightningpanda/jsc}"
+os="$(uname -s)"
+if [[ "$os" == Darwin ]]; then
+    default_cache="$HOME/Library/Caches/lightningpanda/jsc"
+    libname=libJavaScriptCore.dylib
+    ncpu="$(sysctl -n hw.ncpu)"
+else
+    default_cache="${XDG_CACHE_HOME:-$HOME/.cache}/lightningpanda/jsc"
+    libname=libJavaScriptCore.so
+    ncpu="$(nproc)"
+fi
+cache="${LP_JSC_CACHE:-$default_cache}"
 src="${LP_WEBKIT_SRC:-$(dirname "$cache")/webkit-src}"
 build="${LP_JSC_BUILD:-$(dirname "$cache")/webkit-build}"
-jobs="${JOBS:-$(sysctl -n hw.ncpu)}"
+jobs="${JOBS:-$ncpu}"
 
-patch_hash="$(cat "$inputs"/patches/*.patch | shasum -a 256 | cut -c1-12)"
+sha256() { if command -v shasum >/dev/null; then shasum -a 256; else sha256sum; fi; }
+patch_hash="$(cat "$inputs"/patches/*.patch | sha256 | cut -c1-12)"
 out="$cache/${rev:0:12}-$patch_hash"
-if [[ -f "$out/lib/libJavaScriptCore.dylib" ]]; then
+if [[ -f "$out/lib/$libname" ]]; then
     echo "up to date: $out"
     exit 0
 fi
 
-for tool in cmake ninja; do
-    command -v "$tool" >/dev/null || { echo "missing $tool (brew install cmake ninja)" >&2; exit 1; }
+tools=(cmake ninja)
+[[ "$os" == Darwin ]] || tools+=(patchelf)
+for tool in "${tools[@]}"; do
+    command -v "$tool" >/dev/null || { echo "missing $tool (brew install cmake ninja / apt install cmake ninja-build patchelf)" >&2; exit 1; }
 done
 
 # Sparse, blobless checkout: JavaScriptCore, WTF, bmalloc and the build tooling.
@@ -67,27 +82,48 @@ done
 # directory, which has no .tool-versions.
 ruby_bin="$(ruby -e 'print RbConfig.ruby' 2>/dev/null || echo /usr/bin/ruby)"
 
+platform_flags=()
+if [[ "$os" == Darwin ]]; then
+    platform_flags+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0)
+else
+    platform_flags+=(-DCMAKE_C_COMPILER="${CC:-clang}" -DCMAKE_CXX_COMPILER="${CXX:-clang++}")
+fi
+
 cmake -G Ninja -S "$src" -B "$build" \
     -DRuby_EXECUTABLE="$ruby_bin" \
     -DPORT=JSCOnly \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+    "${platform_flags[@]}" \
     -DENABLE_STATIC_JSC=OFF \
     -DDEVELOPER_MODE=OFF \
     -DENABLE_TOOLS=OFF
 ninja -C "$build" -j "$jobs" JavaScriptCore
+
+tmp="$out.tmp"
+rm -rf "$tmp"
+mkdir -p "$tmp/lib" "$tmp/inputs/patches"
+cp "$inputs/REVISION" "$tmp/inputs/"
+cp "$inputs"/patches/*.patch "$tmp/inputs/patches/"
+
+if [[ "$os" != Darwin ]]; then
+    # JSCOnly on Linux emits lib/libJavaScriptCore.so.<version> plus symlinks.
+    lib="$(find "$build/lib" -maxdepth 1 -name 'libJavaScriptCore.so*' -type f | head -1)"
+    [[ -n "$lib" ]] || { echo "no libJavaScriptCore.so under $build/lib" >&2; exit 1; }
+    cp "$lib" "$tmp/lib/libJavaScriptCore.so"
+    mv "$tmp" "$out"
+    # An absolute SONAME, like the dylib's install name: binaries linked against
+    # it record this path and load it without an rpath or LD_LIBRARY_PATH.
+    patchelf --set-soname "$out/lib/libJavaScriptCore.so" "$out/lib/libJavaScriptCore.so"
+    echo "built: $out"
+    exit 0
+fi
 
 # On Apple platforms JSCOnly emits a framework; ship its binary as a plain dylib so
 # it cannot be confused with the system JavaScriptCore.framework.
 lib="$(find "$build/lib/JavaScriptCore.framework/Versions" -maxdepth 2 -name JavaScriptCore -type f | head -1)"
 [[ -n "$lib" ]] || { echo "no JavaScriptCore binary under $build/lib" >&2; exit 1; }
 
-tmp="$out.tmp"
-rm -rf "$tmp"
-mkdir -p "$tmp/lib" "$tmp/inputs/patches"
 cp "$lib" "$tmp/lib/libJavaScriptCore.dylib"
-cp "$inputs/REVISION" "$tmp/inputs/"
-cp "$inputs"/patches/*.patch "$tmp/inputs/patches/"
 mv "$tmp" "$out"
 # An absolute install name lets every binary that links it load it without an rpath.
 install_name_tool -id "$out/lib/libJavaScriptCore.dylib" "$out/lib/libJavaScriptCore.dylib"

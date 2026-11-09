@@ -497,7 +497,7 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
 | macOS 27.0.1 (26A434) arm64, SDK 27.0, JavaScriptCore 22625.1.29.11.28 (dylib 625.1.29), rustc 1.99.1 | system framework | builds; all tests pass |
 | macOS 27.0.1 arm64, Command Line Tools only (no Xcode), WebKit `0e0dd70` JSCOnly + `webkit/patches` | source dylib | builds; all tests pass |
 | other macOS versions | system framework | untested. Deployment target is 14.0; SPI is probed at runtime |
-| Linux | WebKitGTK `libjavascriptcoregtk` (C API only) | **not supported yet** (`build.rs` panics). No module loader exists there |
+| Linux x64/arm64, Ubuntu 24.04 (glibc 2.39), clang 21 | source `.so` (JSCOnly + `webkit/patches`) | built in CI (`linux-build.yml`); no system fallback (WebKitGTK has no module loader). Release bundles the library and ICU in `lib/` |
 
 On some hosts the default SDK hits a linker/TAPI mismatch (`unknown arm64e.x1`). Worker 3 worked around it with a
 command-scoped `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`. Do not hardcode that path.

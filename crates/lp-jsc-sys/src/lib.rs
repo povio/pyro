@@ -906,7 +906,10 @@ pub mod spi {
     unsafe extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
+    #[cfg(target_vendor = "apple")]
     const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+    #[cfg(not(target_vendor = "apple"))]
+    const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
 
     macro_rules! resolve {
         ($name:literal) => {{
@@ -1089,6 +1092,7 @@ mod tests {
 }
 
 /// Objective-C autorelease boundaries for native threads entering JavaScriptCore.
+#[cfg(target_os = "macos")]
 pub mod autorelease {
     use std::os::raw::c_void;
 
@@ -1102,6 +1106,7 @@ pub mod autorelease {
 }
 
 /// Foundation class initialization needed before a macOS process first forks.
+#[cfg(target_os = "macos")]
 pub mod foundation {
     unsafe extern "C" {
         /// Materializes and validates NSNumber's boolean/integer/floating class
