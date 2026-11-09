@@ -269,10 +269,11 @@ pub enum PageEvent {
 pub trait PageObserver {
     fn on_page_event(&self, page: PageId, event: &PageEvent);
 
-    /// Transport progress of fetch/XHR request `request` became visible to
+    /// Transport progress of fetch/XHR or cached resource `request` became visible to
     /// the script of the document loaded by `loader`, before any script it
     /// causes runs (`lp_webapi::PageHooks::network_delivery`). `frontier` is
-    /// cumulative for the request. Request ids are per browser context (each
+    /// cumulative for the request. A zero frontier records the request announcement
+    /// without publishing its response. Request ids are per browser context (each
     /// context has its own `lp_net::NetClient`), so `context` is part of the
     /// identity; `loader` tells an old document's requests from its
     /// successor's. Called synchronously on the browser thread: implementations

@@ -14,6 +14,12 @@ use lp_net::{NetClient, NetEvent, NetSubscription, NetWake, RequestId, Subscript
 use crate::network_protocol::MAX_INFLIGHT;
 use crate::outbox::Outbox;
 
+// Service-worker precaching can publish thousands of completed cached requests
+// before the renderer gets its next turn. Match the existing CDP transport's
+// bounded capacity instead of closing after only 256 four-event requests.
+const OBSERVATION_LIMITS: SubscriptionLimits =
+    SubscriptionLimits { max_events: MAX_INFLIGHT, max_bytes: crate::outbox::DEFAULT_OUTBOUND_BUDGET };
+
 pub(super) struct Budget {
     used: AtomicUsize,
     limit: AtomicUsize,
@@ -21,7 +27,7 @@ pub(super) struct Budget {
 
 impl Default for Budget {
     fn default() -> Self {
-        Self { used: AtomicUsize::new(0), limit: AtomicUsize::new(SubscriptionLimits::default().max_bytes) }
+        Self { used: AtomicUsize::new(0), limit: AtomicUsize::new(OBSERVATION_LIMITS.max_bytes) }
     }
 }
 
@@ -99,7 +105,7 @@ fn request_id(event: &NetEvent) -> RequestId {
 
 impl Staged {
     fn stage(&mut self, event: NetEvent, budget: &Arc<Budget>, owner_task: bool) -> Option<()> {
-        if self.failed || self.pending.len() + self.ready.len() >= SubscriptionLimits::default().max_events {
+        if self.failed || self.pending.len() + self.ready.len() >= OBSERVATION_LIMITS.max_events {
             return None;
         }
         let id = request_id(&event);
@@ -214,7 +220,7 @@ impl Inbox {
                 }
             });
             Self {
-                subscription: net.subscribe_with(SubscriptionLimits::default(), Some(notify.clone())),
+                subscription: net.subscribe_with(OBSERVATION_LIMITS, Some(notify.clone())),
                 staged: Mutex::new(Staged::default()),
                 budget,
                 out,
@@ -226,14 +232,17 @@ impl Inbox {
         inbox
     }
 
-    fn ingest(&self, staged: &mut Staged, owner_task: bool) {
+    fn ingest(&self, staged: &mut Staged, owner_task: bool, stop_when_ready: bool) {
         if staged.failed || self.out.is_exceeded() {
             staged.fail();
             return;
         }
-        // The buffer's event cap also bounds each drain under a producer
-        // continuously publishing while this owner task runs.
-        for _ in 0..SubscriptionLimits::default().max_events {
+        // The retained event cap also bounds each drain. Owner delivery must
+        // cover the whole bounded subscription, not leave responses stranded.
+        for _ in 0..OBSERVATION_LIMITS.max_events {
+            if stop_when_ready && !staged.ready.is_empty() {
+                break;
+            }
             match self.subscription.try_recv() {
                 Ok(event) => {
                     if staged.stage(event, &self.budget, owner_task).is_none() {
@@ -255,18 +264,20 @@ impl Inbox {
     fn publish_all(&self) {
         let mut staged = self.staged.lock().unwrap();
         staged.publish_all();
-        self.ingest(&mut staged, true);
+        self.ingest(&mut staged, true, false);
     }
 
     pub(super) fn publish_through(&self, id: RequestId, loader: &str, response: bool, bytes: u64, terminal: bool) {
         let mut staged = self.staged.lock().unwrap();
-        self.ingest(&mut staged, false);
+        self.ingest(&mut staged, false, false);
         staged.publish_through(id, loader, response, bytes, terminal);
     }
 
     pub(super) fn pop(&self) -> Option<Observed> {
         let mut staged = self.staged.lock().unwrap();
-        self.ingest(&mut staged, false);
+        // The caller consumes one observation at a time. Do not fill staging
+        // with another burst while an eligible observation can be delivered.
+        self.ingest(&mut staged, false, true);
         staged.ready.pop_front()
     }
 }
@@ -411,5 +422,155 @@ mod tests {
         let mut s = Staged::default();
         assert!(s.stage(request(1, "L"), &budget, false).is_some());
         assert!(s.stage(data(1, 4096), &budget, false).is_none());
+    }
+    #[test]
+    fn a_full_staging_queue_drains_before_reading_more_subscription_events() {
+        let net = NetClient::new(lp_net::NetConfig::default()).unwrap();
+        let subscription = net.subscribe_with(OBSERVATION_LIMITS, None);
+        let request = lp_net::Request::get("data:text/plain,ok".parse().unwrap(), Destination::Fetch);
+        let (_, body) = net.fetch_blocking(request).unwrap();
+        assert_eq!(body.as_ref(), b"ok");
+        assert!(subscription.queued_usage().0 > 0);
+
+        let budget = budget();
+        let limit = OBSERVATION_LIMITS.max_events;
+        let mut staged = Staged::default();
+        for index in 0..limit {
+            staged.stage(data(1000 + index as u64, 1), &budget, index < limit / 2).unwrap();
+        }
+        assert!(staged.stage(data(999999, 1), &budget, true).is_none(), "the retained event cap remains enforced");
+        let (out, _rx) = Outbox::channel(crate::outbox::DEFAULT_OUTBOUND_BUDGET);
+        let inbox = Inbox {
+            subscription,
+            staged: Mutex::new(staged),
+            budget: budget.clone(),
+            out: out.clone(),
+            notify: Arc::new(|| {}),
+        };
+        let mut seen = Vec::new();
+        while let Some(observed) = inbox.pop() {
+            seen.push(request_id(&observed.event));
+        }
+        assert!(!out.is_exceeded(), "an active consumer must drain staged events instead of falsely overflowing");
+        assert_eq!(
+            seen.iter().filter(|id| id.0 >= 1000).count(),
+            limit / 2,
+            "responses still await an owner delivery boundary"
+        );
+        // More than one owner turn may be needed: events left in the bounded
+        // subscription must not be lost or delivered ahead of their frontier.
+        for _ in 0..3 {
+            inbox.publish_all();
+            while let Some(observed) = inbox.pop() {
+                seen.push(request_id(&observed.event));
+            }
+        }
+        assert!(!out.is_exceeded());
+        assert_eq!(seen.iter().filter(|id| id.0 < 1000).count(), 4, "all four data-URL observations arrive");
+        let original: Vec<_> = seen.into_iter().filter(|id| id.0 >= 1000).map(|id| id.0).collect();
+        assert_eq!(original, (1000..1000 + limit as u64).collect::<Vec<_>>());
+        assert_eq!(inbox.subscription.queued_usage(), (0, 0));
+        drop(inbox);
+        assert_eq!(budget.used(), 0, "every event reservation was released");
+    }
+
+    #[test]
+    fn an_exceeded_connection_still_discards_ready_observations() {
+        let net = NetClient::new(lp_net::NetConfig::default()).unwrap();
+        let budget = budget();
+        let mut staged = Staged::default();
+        staged.stage(data(1, 64), &budget, true).unwrap();
+        let (out, _rx) = Outbox::channel(crate::outbox::DEFAULT_OUTBOUND_BUDGET);
+        let inbox = Inbox {
+            subscription: net.subscribe(),
+            staged: Mutex::new(staged),
+            budget: budget.clone(),
+            out: out.clone(),
+            notify: Arc::new(|| {}),
+        };
+        assert!(budget.used() > 0);
+        out.exceed();
+        assert!(inbox.pop().is_none());
+        assert_eq!(budget.used(), 0);
+        assert!(inbox.staged.lock().unwrap().failed);
+    }
+    #[test]
+    fn an_incoming_burst_delivers_ready_requests_before_accumulating_more() {
+        let net = NetClient::new(lp_net::NetConfig::default()).unwrap();
+        let subscription = net.subscribe_with(OBSERVATION_LIMITS, None);
+        let count = OBSERVATION_LIMITS.max_events / 8 + 1;
+        for _ in 0..count {
+            net.fetch_blocking(lp_net::Request::get("data:text/plain,ok".parse().unwrap(), Destination::Fetch))
+                .unwrap();
+        }
+        let budget = budget();
+        let mut staged = Staged::default();
+        let pending = OBSERVATION_LIMITS.max_events / 2;
+        for index in 0..pending {
+            staged.stage(data(10000 + index as u64, 1), &budget, false).unwrap();
+        }
+        let (out, _rx) = Outbox::channel(crate::outbox::DEFAULT_OUTBOUND_BUDGET);
+        let inbox = Inbox {
+            subscription,
+            staged: Mutex::new(staged),
+            budget: budget.clone(),
+            out: out.clone(),
+            notify: Arc::new(|| {}),
+        };
+        let mut requests = 0;
+        while let Some(observed) = inbox.pop() {
+            assert!(matches!(observed.event, NetEvent::RequestWillBeSent { .. }));
+            requests += 1;
+        }
+        assert!(!out.is_exceeded());
+        assert_eq!(requests, count);
+        inbox.publish_all();
+        let mut responses = 0;
+        while inbox.pop().is_some() {
+            responses += 1;
+        }
+        assert_eq!(responses, pending + 3 * count);
+        assert!(!out.is_exceeded());
+        drop(inbox);
+        assert_eq!(budget.used(), 0);
+    }
+    #[test]
+    fn cached_body_burst_is_fully_delivered_within_the_connection_budget() {
+        let net = NetClient::new(lp_net::NetConfig::default()).unwrap();
+        let subscription = net.subscribe_with(OBSERVATION_LIMITS, None);
+        let body = bytes::Bytes::from(vec![b'x'; 32 * 1024]);
+        let count = 384;
+        for index in 0..count {
+            let mut request = lp_net::Request::get(
+                format!("blob:http://cached-burst.test/{index}").parse().unwrap(),
+                Destination::Fetch,
+            );
+            request.blob = Some(lp_net::BlobBody { bytes: body.clone(), mime: "text/plain".into() });
+            net.fetch_blocking(request).unwrap();
+        }
+        let (events, retained) = subscription.queued_usage();
+        assert_eq!(events, count * 4);
+        assert!(events > SubscriptionLimits::default().max_events);
+        assert!(retained > SubscriptionLimits::default().max_bytes);
+        assert!(retained <= OBSERVATION_LIMITS.max_bytes);
+        let budget = budget();
+        let (out, _rx) = Outbox::channel(crate::outbox::DEFAULT_OUTBOUND_BUDGET);
+        let inbox = Inbox {
+            subscription,
+            staged: Mutex::default(),
+            budget: budget.clone(),
+            out: out.clone(),
+            notify: Arc::new(|| {}),
+        };
+        inbox.publish_all();
+        let mut delivered = 0;
+        while inbox.pop().is_some() {
+            delivered += 1;
+        }
+        assert_eq!(delivered, events, "one owner boundary publishes every observation already received");
+        assert!(!out.is_exceeded());
+        assert_eq!(inbox.subscription.queued_usage(), (0, 0));
+        drop(inbox);
+        assert_eq!(budget.used(), 0);
     }
 }

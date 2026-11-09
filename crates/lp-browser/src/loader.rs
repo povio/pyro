@@ -198,6 +198,20 @@ impl Drop for ResourceCancellation {
 }
 
 impl Browser {
+    fn report_resource_delivery(
+        &self,
+        page: PageId,
+        loader: Option<&LoaderId>,
+        request: lp_net::RequestId,
+        frontier: lp_net::NetworkDelivery,
+    ) {
+        let (Some(page), Some(loader)) = (self.page(page), loader) else { return };
+        let observer = self.observer.borrow().clone();
+        if let Some(observer) = observer {
+            observer.on_network_delivery(page.id, page.context, loader, request, frontier);
+        }
+    }
+
     /// Stores a completion for an asynchronous fetch; see [`Browser::complete_fetch`].
     pub fn register_completion(&mut self, done: FetchDone) -> u64 {
         let id = self.next_completion_id();
@@ -348,7 +362,18 @@ impl ResourceLoader for NetLoader {
                 module_trace!("served from the static directory {}", req.url);
             }
             let start = std::time::Instant::now();
-            let head = self.client.report_local(&req, &hit);
+            let (network_id, head) = self.client.report_local_with_id(&req, &hit);
+            let delivery_loader = req.loader_id.clone().map(LoaderId);
+            let delivery_page = request.page;
+            let delivery_bytes = hit.file.body.len() as u64;
+            // Cached loads emit on this thread. Let observers drain the request
+            // announcement now, but keep responses behind their delivery frontier.
+            browser.report_resource_delivery(
+                delivery_page,
+                delivery_loader.as_ref(),
+                network_id,
+                lp_net::NetworkDelivery { response: false, data_bytes: 0, terminal: false },
+            );
             let report = (timed.is_some() || document).then(|| {
                 let mut response = lp_webapi::resource_timing::ReportedResponse::of(&head);
                 response.encoded = hit.file.body.len() as u64;
@@ -378,7 +403,15 @@ impl ResourceLoader for NetLoader {
                 timing: report.filter(|_| document).map(Box::new),
                 partial: None,
             };
-            browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Ok(resource)));
+            browser.scheduler().post(TaskSource::Networking, move |b| {
+                b.report_resource_delivery(
+                    delivery_page,
+                    delivery_loader.as_ref(),
+                    network_id,
+                    lp_net::NetworkDelivery { response: true, data_bytes: delivery_bytes, terminal: true },
+                );
+                b.complete_fetch(id, Ok(resource));
+            });
             return None;
         }
         if request.kind == ResourceKind::ModuleScript {
@@ -2135,7 +2168,10 @@ impl Browser {
     fn report_load_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::type_error(format!("Failed to load script: {error}")));
+        lp_webapi::lifecycle::report_diagnostic(
+            &scope,
+            &JsError::type_error(format!("Failed to load script: {error}")),
+        );
     }
 
     /// A subresource failure the console reports (no `error` event at the Window).

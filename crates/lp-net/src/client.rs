@@ -2361,6 +2361,16 @@ impl NetClient {
     /// `static_direct` hit (on the caller's thread, in order, all at once)
     /// and returns the response head to build the resource from.
     pub fn report_local(&self, req: &Request, hit: &crate::static_files::StaticMemoryHit) -> ResponseHead {
+        self.report_local_with_id(req, hit).1
+    }
+
+    /// Also returns the request identity so a same-thread loader can report
+    /// observation and response-delivery boundaries without waiting for I/O.
+    pub fn report_local_with_id(
+        &self,
+        req: &Request,
+        hit: &crate::static_files::StaticMemoryHit,
+    ) -> (RequestId, ResponseHead) {
         let shared = &self.inner.shared;
         let id = self.next_request_id();
         let body = &hit.file.body;
@@ -2381,7 +2391,7 @@ impl NetClient {
             timing: Default::default(),
         };
         if !shared.observed() {
-            return head;
+            return (id, head);
         }
         let info = RequestInfo {
             url: req.url.clone(),
@@ -2412,7 +2422,7 @@ impl NetClient {
             shared.emit(NetEvent::DataReceived { id, data: body.clone(), timestamp: now });
         }
         shared.emit(NetEvent::LoadingFinished { id, encoded_len: body.len() as u64, timestamp: now });
-        head
+        (id, head)
     }
 }
 

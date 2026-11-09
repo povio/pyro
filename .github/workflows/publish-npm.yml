@@ -363,7 +363,9 @@ jobs:
           shasum -a 256 -c SHA256SUMS.txt
 
   publish:
-    needs: [release, smoke]
+    # The extracted fork archive runs the complete SDK regression suite.
+    # Do not publish an immutable npm version before those checks pass.
+    needs: [release, smoke, github-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
