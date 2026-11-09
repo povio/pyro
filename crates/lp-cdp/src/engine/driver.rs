@@ -1237,6 +1237,13 @@ impl Sequence {
         Ok(false)
     }
 
+    /// The animation frame the press waits on for its stability check, while
+    /// it has not run.
+    fn stability_frame(&self) -> Option<Rc<Cell<bool>>> {
+        let stability = self.stability.as_ref().filter(|s| !s.ready && !self.opts.force)?;
+        stability.frame.clone().filter(|frame| !frame.get())
+    }
+
     fn wait_diagnostics(&self) -> String {
         let press_next = matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, .. }));
         let stability = self
@@ -1318,8 +1325,9 @@ impl Waiter {
             Phase::Settle { requests, .. } => browser.page_work(self.job.pid).is_none_or(|w| w.quiet(*requests)),
             Phase::Await(settled) => settled.borrow().is_some(),
             Phase::Render(settled) => settled.borrow().is_some(),
-            Phase::Act { hop, at, .. } => match hop {
-                Some(done) => done.get(),
+            Phase::Act { hop, at, seq, .. } => match hop {
+                // A stability frame never runs in a document that went away.
+                Some(done) => done.get() || seq.as_ref().is_some_and(|s| s.page.is_disposed()),
                 None => now >= *at,
             },
         }
@@ -4673,7 +4681,15 @@ impl EngineHost {
                     self.thread.browser.checkpoint();
                     match advanced {
                         Ok(None) => {
-                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: self.turn_end(pid) };
+                            // Waiting for the stability check's frame: that frame is
+                            // the turn (its page callbacks run in it too), so wake when
+                            // it has run instead of after `TURN`, which the pending
+                            // frame itself would otherwise add.
+                            let (hop, at) = match seq.stability_frame() {
+                                Some(frame) => (Some(frame), now),
+                                None => (None, self.turn_end(pid)),
+                            };
+                            w.phase = Phase::Act { seq: Some(seq), before, hop, at };
                             return Ok(Drive::Park(Box::new(w)));
                         }
                         Ok(Some(value)) => {
