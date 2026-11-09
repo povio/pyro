@@ -389,6 +389,78 @@ import('/missing.js').then(() => out.push('missing:ok'), () => out.push('missing
     assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 2);
 }
 
+#[test]
+fn modulepreload_reuses_completed_import_and_resets_on_navigation() {
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<!doctype html><html><head></head><body></body></html>",
+        Duration::ZERO,
+    );
+    loader.insert(
+        "http://site.test/chunk.js",
+        "text/javascript",
+        "globalThis.evals++; export const value = 42;",
+        Duration::ZERO,
+    );
+    thread.browser.set_loader(Some(loader.clone()));
+    for navigation in 1..=2 {
+        thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+        settle(&mut thread);
+        eval(
+            &thread,
+            page,
+            "globalThis.evals=0;globalThis.out=[];import('/chunk.js').then(m=>out.push('import:'+m.value));",
+        );
+        settle(&mut thread);
+        assert_eq!(eval(&thread, page, "out.join()"), "import:42");
+        eval(&thread, page, "const link=document.createElement('link');link.rel='modulepreload';link.href='/chunk.js';link.onload=()=>out.push('preload');document.head.append(link);");
+        settle(&mut thread);
+        assert_eq!(eval(&thread, page, "out.join()"), "import:42,preload");
+        assert_eq!(eval(&thread, page, "String(evals)"), "1");
+        assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), navigation);
+    }
+}
+
+#[test]
+fn modulepreload_joins_import_in_flight() {
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<!doctype html><html><head></head><body></body></html>",
+        Duration::ZERO,
+    );
+    loader.insert(
+        "http://site.test/chunk.js",
+        "text/javascript",
+        "globalThis.evals++; export const value = 42;",
+        Duration::from_millis(50),
+    );
+    thread.browser.set_loader(Some(loader.clone()));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(
+        &thread,
+        page,
+        "globalThis.evals=0;globalThis.out=[];import('/chunk.js').then(m=>out.push('import:'+m.value));",
+    );
+    let observed = loader.clone();
+    thread.run_until(Some(std::time::Instant::now() + Duration::from_secs(1)), |_| {
+        observed.log.borrow().iter().any(|u| u == "http://site.test/chunk.js")
+    });
+    eval(&thread, page, "const link=document.createElement('link');link.rel='modulepreload';link.href='/chunk.js';link.onload=()=>out.push('preload');document.head.append(link);");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.sort().join()"), "import:42,preload");
+    assert_eq!(eval(&thread, page, "String(evals)"), "1");
+    assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 1);
+}
+
 /// A script without a URL uses the current document base URL, including after
 /// `history.pushState`.
 #[test]

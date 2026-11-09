@@ -123,8 +123,8 @@ impl WorkerStart {
         })
     }
 
-    /// A service worker version whose script `page` fetched. Its requests carry
-    /// `page`'s frame id, so they are reported (and routed) on that page.
+    /// A service worker version whose script `page` fetched. Its own network
+    /// requests belong to the worker, not to the registering document's frame.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn for_service(
         id: u64,
@@ -148,7 +148,7 @@ impl WorkerStart {
             net,
             poster,
             shared,
-            frame_id: page.request_context().frame_id,
+            frame_id: None,
             origin: Some(origin),
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),

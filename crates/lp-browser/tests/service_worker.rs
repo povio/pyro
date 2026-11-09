@@ -40,6 +40,10 @@ self.addEventListener('fetch', (e) => {
   }
 });
 self.addEventListener('message', async (e) => {
+  if (e.data === 'background-fetch') {
+    e.source.postMessage({ kind: 'background-fetched', body: await (await fetch('/real')).text() });
+    return;
+  }
   if (e.data === 'flood') {
     // More than the upward message budget, faster than the page takes it.
     for (let i = 0; i < 80; i++) e.source.postMessage(new ArrayBuffer(1 << 20));
@@ -1010,4 +1014,62 @@ fn sandboxed_frame_has_no_cache_storage() {
     );
     until(&mut thread, page, "globalThis.sandboxed !== undefined");
     assert_eq!(eval(&thread, page, "sandboxed"), "SecurityError");
+}
+
+#[test]
+fn service_worker_background_fetches_are_not_client_document_requests() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    register(&mut thread, page);
+    let context = thread.browser.page(page).unwrap().context;
+    let events = thread.browser.context_net(context).unwrap().subscribe();
+    eval(&thread, page, "globalThis.workerReply=null;navigator.serviceWorker.addEventListener('message',e=>{if(e.data.kind==='background-fetched')globalThis.workerReply=e.data.body});navigator.serviceWorker.controller.postMessage('background-fetch');");
+    until(&mut thread, page, "globalThis.workerReply!==null");
+    eval(&thread, page, "globalThis.clientReply=null;fetch('/real').then(r=>r.text()).then(v=>globalThis.clientReply=v);");
+    until(&mut thread, page, "globalThis.clientReply!==null");
+    let mut client_requests = Vec::new();
+    let mut worker_requests = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let lp_net::NetEvent::RequestWillBeSent { request, .. } = event {
+            if request.url.path() == "/real" {
+                if request.loader_id.is_some() { client_requests.push(request); }
+                else { worker_requests.push(request); }
+            }
+        }
+    }
+    assert_eq!(client_requests.len(), 1);
+    assert_eq!(worker_requests.len(), 1);
+    assert!(client_requests[0].frame_id.is_some());
+    assert!(worker_requests[0].frame_id.is_none());
+    assert_eq!(server.hits("/real"), 2);
+}
+
+#[test]
+fn service_worker_intercepted_fetch_preserves_client_network_observations() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    register(&mut thread, page);
+    let context = thread.browser.page(page).unwrap().context;
+    let events = thread.browser.context_net(context).unwrap().subscribe();
+    eval(&thread, page, "globalThis.clientDone=false;fetch('/api/observed',{method:'POST',body:'hello'}).then(r=>r.text()).then(()=>globalThis.clientDone=true);");
+    until(&mut thread, page, "globalThis.clientDone");
+    let mut starts = Vec::new();
+    let mut responses = Vec::new();
+    let mut finishes = 0;
+    while let Ok(event) = events.try_recv() {
+        match event {
+            lp_net::NetEvent::RequestWillBeSent { request, .. } if request.url.path() == "/api/observed" => starts.push(request),
+            lp_net::NetEvent::ResponseReceived { head, .. } if head.url.path() == "/api/observed" => responses.push(head),
+            lp_net::NetEvent::LoadingFinished { .. } => finishes += 1,
+            _ => {},
+        }
+    }
+    assert_eq!(starts.len(), 1);
+    assert!(starts[0].frame_id.is_some());
+    assert!(starts[0].loader_id.is_some());
+    assert_eq!(starts[0].post_data.as_deref(), Some(b"hello".as_slice()));
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].status.as_u16(), 201);
+    assert_eq!(finishes, 1);
+    assert_eq!(server.hits("/api/observed"), 0);
 }

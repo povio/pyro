@@ -2357,6 +2357,36 @@ impl NetClient {
         config.static_files.lookup(&req.url, req.destination == Destination::Document)
     }
 
+    /// Observe a request handled by a service worker without issuing another network fetch.
+    pub fn observe_service_worker_response(&self, id: RequestId, request: &Request, mut sink: ResponseSink) -> ResponseSink {
+        let shared = self.inner.shared.clone();
+        if !shared.observed() { return sink; }
+        let destination = request.destination;
+        let frame_id = request.frame_id.clone();
+        let loader_id = request.loader_id.clone();
+        shared.emit(NetEvent::RequestWillBeSent {
+            id,
+            request: Box::new(RequestInfo {
+                url: request.url.clone(), method: request.method.clone(), headers: request.headers.clone(),
+                post_data: request.body.clone(), destination, frame_id: frame_id.clone(), loader_id: loader_id.clone(),
+            }),
+            redirect_response: None, timestamp: shared.now(), wall_time: wall_time(),
+        });
+        Box::new(move |event| {
+            let timestamp = shared.now();
+            match &event {
+                ResponseEvent::Response(head) => shared.emit(NetEvent::ResponseReceived {
+                    id, head: Box::new(head.clone()), destination, frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp,
+                }),
+                ResponseEvent::Data(data) => shared.emit(NetEvent::DataReceived { id, data: data.clone(), timestamp }),
+                ResponseEvent::Finished { encoded_len, .. } => shared.emit(NetEvent::LoadingFinished { id, encoded_len: *encoded_len, timestamp }),
+                ResponseEvent::Failed(error) => shared.emit(NetEvent::LoadingFailed { id, error: error.clone(), canceled: matches!(error, NetError::Aborted), destination, timestamp }),
+                ResponseEvent::Redirect { .. } => {},
+            }
+            sink(event);
+        })
+    }
+
     /// Publishes the `NetEvent`s of a request the embedder answered from a
     /// `static_direct` hit (on the caller's thread, in order, all at once)
     /// and returns the response head to build the resource from.

@@ -568,6 +568,7 @@ impl LoadRoute {
             client_id: self.client_id,
             resulting_client_id: self.resulting_client_id,
             dispatched: false,
+            observed: false,
         };
         // A worker that is gone drops the job, which then goes to the network.
         self.version.run(move |s, _| crate::service_worker_scope::fetch(s, job));

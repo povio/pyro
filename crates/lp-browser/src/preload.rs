@@ -27,7 +27,7 @@ use crate::{Browser, FetchRequest, ResourceKind};
 #[derive(Default)]
 pub(crate) struct Preloads {
     entries: HashMap<NodeId, String>,
-    /// Module sources fetched (or being fetched) by modulepreload: URL → source.
+    /// Module sources fetched (or being fetched) by preload or import: URL → source.
     modules: HashMap<String, ModuleEntry>,
 }
 
@@ -51,14 +51,40 @@ enum ModuleEntry {
 const MAX_PRELOADS: usize = 2048;
 
 impl Browser {
-    /// Hands the importing `waiter` the source a modulepreload fetched (or
-    /// fetches) for `url` in this document; gives it back when there is no
-    /// such preload, so the caller requests the module itself.
-    pub(crate) fn preloaded_module(&mut self, page: FrameKey, url: &str, waiter: ModuleWaiter) -> Option<ModuleWaiter> {
-        self.preloaded_module_for(page, url, waiter, true)
+    /// Imports and modulepreloads share one document fetch, regardless of which starts first.
+    pub(crate) fn fetch_imported_module(&mut self, page: FrameKey, url: String, waiter: ModuleWaiter) {
+        let Some(waiter) = self.preloaded_module_for(page, &url, waiter, true) else { return };
+        let Some(mut doc) = self.doc_mut(page) else {
+            self.fetch_text(page, url, ResourceKind::ModuleScript, waiter);
+            return;
+        };
+        let bindings = doc.main_frame.page_dom.clone();
+        let document = bindings.as_ref().map(|bindings| bindings.document());
+        let loader = doc.main_frame.loader_id.clone();
+        doc.preloads.modules.insert(url.clone(), ModuleEntry::Pending(Vec::new()));
+        drop(doc);
+        self.fetch_text(page, url.clone(), ResourceKind::ModuleScript, move |browser, result| {
+            if browser.doc(page).is_none_or(|doc| doc.main_frame.loader_id != loader)
+                || bindings
+                    .as_ref()
+                    .is_some_and(|bindings| bindings.is_disposed() || Some(bindings.document()) != document)
+            {
+                waiter(browser, result);
+                return;
+            }
+            if let Some(mut doc) = browser.doc_mut(page) {
+                match doc.preloads.modules.get_mut(&url) {
+                    Some(ModuleEntry::Pending(waiters)) => waiters.insert(0, (waiter, true)),
+                    _ => {
+                        doc.preloads.modules.insert(url.clone(), ModuleEntry::Pending(vec![(waiter, true)]));
+                    }
+                }
+            }
+            browser.module_preloaded(page, &url, result);
+        });
     }
 
-    /// [`Browser::preloaded_module`] for an importer (`import`), which takes
+    /// The shared module map for an importer (`import`), which takes
     /// the source out of the document, or for a modulepreload link, which
     /// only learns whether the fetch succeeded (its waiter gets an empty
     /// source).

@@ -52,6 +52,7 @@ pub(crate) struct FetchJob {
     pub resulting_client_id: String,
     /// A `fetch` event has it: dropping it unanswered is a network error.
     pub dispatched: bool,
+    pub observed: bool,
 }
 
 impl Drop for FetchJob {
@@ -195,6 +196,22 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         Ok(s.undefined())
     })?;
     native.set_atom("done", done.value())?;
+    let observe = s.function("observeFetch", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        PENDING.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            if let Some(job) = pending.get_mut(&key) {
+                if !job.observed {
+                    if let (Some(request), Some(sink)) = (job.request.as_ref(), job.sink.take()) {
+                        job.sink = Some(job.net.observe_service_worker_response(job.id, request, sink));
+                        job.observed = true;
+                    }
+                }
+            }
+        });
+        Ok(s.undefined())
+    })?;
+    native.set_atom("observeFetch", observe.value())?;
     let respond = s.function("respond", |s, _, a| {
         let key = a.get(0).to_number()? as u64;
         let Some(job) = PENDING.with(|p| p.borrow_mut().remove(&key)) else { return Ok(s.undefined()) };

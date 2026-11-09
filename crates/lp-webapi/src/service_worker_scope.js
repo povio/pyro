@@ -290,6 +290,7 @@
       native.passthrough(id);
       return;
     }
+    native.observeFetch(id);
     d.response.then(
       (response) => {
         if (!isResponse(response)) throw new TypeErrorC('respondWith() was given a value that is not a Response');

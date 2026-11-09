@@ -793,8 +793,8 @@ impl ModuleFetcher for PageModuleFetcher {
             if ty != ModuleType::JavaScript {
                 let opts = ScriptFetch { module: Some(ty), ..ScriptFetch::default() };
                 b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
-            } else if let Some(complete) = b.preloaded_module(page, &url, Box::new(complete)) {
-                b.fetch_text(page, url, ResourceKind::ModuleScript, complete);
+            } else {
+                b.fetch_imported_module(page, url, Box::new(complete));
             }
         });
     }
