@@ -225,6 +225,9 @@ pub struct FunctionCoverage {
 /// others' growth too: that collects more often, never less.
 struct ReleaseGate {
     low: Cell<u64>,
+    /// The process exits once its connection is done: closes release
+    /// nothing ([`Engine::skip_release_until_exit`]).
+    exiting: Cell<bool>,
     /// A closed page has not been collected yet.
     pending: Cell<bool>,
     /// A closed page's compiled code has not been dropped yet
@@ -272,6 +275,7 @@ impl ReleaseGate {
     fn new(growth: (u64, u64)) -> ReleaseGate {
         let gate = ReleaseGate {
             low: Cell::new(u64::MAX),
+            exiting: Cell::new(false),
             pending: Cell::new(false),
             code_pending: Cell::new(false),
             growth: Cell::new(growth),
@@ -822,7 +826,9 @@ impl Engine {
     /// plateaus at 270 MB instead of 339 MB. `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0`
     /// turns it off (benchmark comparison).
     pub fn release_closed(&self) {
-        if std::env::var("LIGHTNINGPANDA_RELEASE_ON_CLOSE").is_ok_and(|v| v == "0") {
+        if self.inner.release_gate.exiting.get()
+            || std::env::var("LIGHTNINGPANDA_RELEASE_ON_CLOSE").is_ok_and(|v| v == "0")
+        {
             return;
         }
         let gate = &self.inner.release_gate;
@@ -838,6 +844,14 @@ impl Engine {
         }
         gate.pending.set(true);
         gate.code_pending.set(true);
+    }
+
+    /// For a process that exits once its pages are closed (a forked
+    /// connection's): from now on closes neither collect nor trim, since the
+    /// exit returns every page at once and a collection would only copy the
+    /// heap's pages it marks (they are shared with the template).
+    pub fn skip_release_until_exit(&self) {
+        self.inner.release_gate.exiting.set(true);
     }
 
     /// [`Engine::release_closed`] for a document whose replacement leaves
@@ -1210,6 +1224,7 @@ pub fn configure_process() {
         {
             if std::env::var_os(name).is_none() {
                 std::env::set_var(name, value);
+                PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).push(name);
             }
         }
         // Freed pages leave the resident set (patched JSC): macOS keeps
@@ -1222,6 +1237,16 @@ pub fn configure_process() {
             }
         }
     });
+}
+
+/// The variables [`configure_process`] set itself (the environment had none).
+static PROCESS_DEFAULTS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether [`configure_process`] set environment variable `name` itself (the
+/// user did not): a process spawned for another role may replace it with its
+/// own default (`serve --fork`'s template does).
+pub fn is_process_default(name: &str) -> bool {
+    PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).contains(&name)
 }
 
 /// Complete Foundation number initialization in the parent before its first

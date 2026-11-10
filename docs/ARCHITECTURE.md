@@ -501,8 +501,19 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   go through POSIX signal handlers, which a fork does inherit.
 - The source JavaScriptCore's timers run on WTF's run loop, so the CoreFoundation run-loop service
   (`enable_native_runloop_service`) is off with it; CoreFoundation must not be used in a fork child.
+- **What a forked page costs** (`LIGHTNINGPANDA_FORK_STATS=<file>` logs each fork, each child's CPU, page faults
+  and instructions at each step of its life, and each reaped child, as JSON lines). The template runs with its
+  own JavaScriptCore defaults (`FORK_JSC_DEFAULTS`, over the server's own unless the user set them): a 32 MB JIT
+  pool, since macOS's `fork()` walks the whole `MAP_JIT` reservation (15 ms per fork at JSC's 512 MB, 3.5 ms at
+  32 MB; pages of a mid-size SPA use about 6 MB, and at 16 MB JSC already compiles less), and JSC's own heap
+  growth (`heapGrowthMaxIncrease=3`), so that most pages never collect: a collection in a fork marks memory it
+  shares with the template, for a process that exits seconds later. A child whose connection ends runs its
+  pages' unload handlers, closes the socket and `_exit`s: no realm disposal, collection or engine teardown
+  (`LIGHTNINGPANDA_FORK_FAST_EXIT=0` tears down as a shared process does). Measured on the ToS suite (M1 Max,
+  `-j 16`): a page's test costs about 3.4 G instructions, 0.55 s user and 0.08 s system time, mostly the test's
+  own work, with about 18k page faults (5k of them copy-on-write).
 - Measured on an M1 Max with a release build: an app whose startup runs 0.8 s of JavaScript is handed to a new
-  connection, booted, in about 20 ms (the fork itself takes 12-18 ms).
+  connection, booted, in about 20 ms (the fork itself took 12-18 ms with the 512 MB JIT pool).
 
 ## Platform support
 

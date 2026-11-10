@@ -22,8 +22,8 @@ mod value;
 pub use accessors::slot_usage as accessor_slot_usage;
 pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent, OwnName};
 pub use engine::{
-    configure_process, entry_realm, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, FunctionCoverage,
-    ImpureNames, ScriptCoverage, TerminateHandle, WrapperPropertyHook,
+    configure_process, entry_realm, is_process_default, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine,
+    EngineHooks, FunctionCoverage, ImpureNames, ScriptCoverage, TerminateHandle, WrapperPropertyHook,
 };
 pub use engine::{set_allocator_release, set_allocator_trim};
 pub use error::{DomError, JsError, JsException, JsResult, Message};

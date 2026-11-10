@@ -62,6 +62,22 @@ fn spares_wanted() -> usize {
     std::env::var("LIGHTNINGPANDA_FORK_SPARES").ok().and_then(|v| v.parse().ok()).unwrap_or(2)
 }
 
+/// Whether a forked connection's process leaves its teardown to the exit
+/// (`LIGHTNINGPANDA_FORK_FAST_EXIT=0` tears down as a shared process does).
+fn fast_exit() -> bool {
+    std::env::var("LIGHTNINGPANDA_FORK_FAST_EXIT").map_or(true, |v| v != "0")
+}
+
+/// Ends a forked child that is done. With the fast exit, without the C
+/// library's exit handlers and destructors: nothing in it is needed any more.
+fn exit_child(code: i32) -> ! {
+    if fast_exit() {
+        // SAFETY: ends the process at once; its files close with it.
+        unsafe { libc::_exit(code) }
+    }
+    std::process::exit(code)
+}
+
 /// Most file descriptors one message carries.
 const MAX_FDS: usize = 4;
 
@@ -174,12 +190,28 @@ pub struct Template {
 
 /// JavaScriptCore options the template starts with unless the environment
 /// sets them. JSC reads them once, before the template's first VM, and its
-/// forks inherit them. A fork serves one short connection: code it tiers up
-/// to the DFG (and FTL) is compiled on helper threads that compete with the
-/// other forks for cores, and the connection usually ends before that code
-/// pays for itself. Baseline JIT and LLInt stay on. Set `JSC_useDFGJIT=true`
-/// to get the default tiers back.
-const FORK_JSC_DEFAULTS: [(&str, &str); 1] = [("JSC_useDFGJIT", "false")];
+/// forks inherit them. A fork serves one short connection:
+///
+/// - `useDFGJIT=false`: code it tiers up to the DFG (and FTL) is compiled on
+///   helper threads that compete with the other forks for cores, and the
+///   connection usually ends before that code pays for itself. Baseline JIT
+///   and LLInt stay on. `JSC_useDFGJIT=true` gets the default tiers back.
+/// - `jitMemoryReservationSize` 32 MB instead of 512 MB: macOS's `fork()`
+///   walks the whole `MAP_JIT` reservation and copies the code in it, so a
+///   fork took 15 ms of the template's time with 512 MB, 3.5 ms with 32 MB.
+///   Pages of a mid-size SPA use about 6 MB of it; at 16 MB JavaScriptCore
+///   already compiles less (it raises its tier-up thresholds as the pool
+///   fills: 2.6% more instructions per page).
+/// - `heapGrowthMaxIncrease=3` (JavaScriptCore's own default; other
+///   processes run at 1, see `lp_js::configure_process`): a fork may
+///   allocate about three times the template's live heap before it collects
+///   instead of once, so most pages never collect. A collection in a fork
+///   marks memory it shares with the template (copying the pages it writes)
+///   for a process that exits seconds later: pages of a mid-size SPA ran
+///   2.5% fewer instructions for 9 MB more memory each on average. The
+///   template still settles (one full collection) before it forks.
+const FORK_JSC_DEFAULTS: [(&str, &str); 3] =
+    [("JSC_useDFGJIT", "false"), ("JSC_jitMemoryReservationSize", "33554432"), ("JSC_heapGrowthMaxIncrease", "3")];
 
 impl Template {
     /// Starts `lightningpanda serve --template <socket> <args>` and waits
@@ -199,8 +231,9 @@ impl Template {
             .stdin(std::process::Stdio::piped())
             // The template ends with this server (its stdin), not with our parent.
             .env_remove(crate::serve::PARENT_PID_ENV);
+        // Unless the user set them (this process's own defaults do not count).
         for (name, value) in FORK_JSC_DEFAULTS {
-            if std::env::var_os(name).is_none() {
+            if std::env::var_os(name).is_none() || lp_js::is_process_default(name) {
                 command.env(name, value);
             }
         }
@@ -457,6 +490,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     lp_webapi::hold_for_fork();
     // Before profile preload, VM and network threads, and every template fork.
     lp_js::prepare_process_for_fork();
+    crate::fork_stats::init();
     let profile = crate::serve::browser_profile(options)?;
     if !supported() {
         return Err("this JavaScriptCore cannot fork (build the patched one: scripts/jsc/build.sh)".into());
@@ -534,11 +568,11 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
             while let Some((buffered, fds, _)) = t.waiting.pop_front() {
                 if let Some(child) = t.fork_connection(&options.server, buffered, fds) {
                     // Only the forked child gets here, and it is done.
-                    std::process::exit(child);
+                    exit_child(child);
                 }
             }
             if let Some(child) = t.refill_spares(&options.server) {
-                std::process::exit(child);
+                exit_child(child);
             }
         }
         // Boot what is booting; wake for the next message.
@@ -884,13 +918,16 @@ impl TemplateProcess {
 
     fn reap_children(&mut self) {
         loop {
-            let pid = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+            let mut status = 0;
+            let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+            let pid = unsafe { libc::wait4(-1, &mut status, libc::WNOHANG, &mut usage) };
             if pid < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
                 continue;
             }
             if pid <= 0 {
                 break;
             }
+            crate::fork_stats::reaped(pid, &usage);
             self.derived_pids.retain(|_, child| *child != pid);
             self.terminating.retain(|(child, _, _)| *child != pid);
         }
@@ -981,7 +1018,7 @@ impl TemplateProcess {
                 return false;
             }
         };
-        match fork_process(&self.snapshot) {
+        match fork_process(&self.snapshot, "template") {
             Forked::Parent(pid) => {
                 self.derived_pids.insert(derive.id, pid);
                 false
@@ -1023,12 +1060,13 @@ impl TemplateProcess {
     /// Forks a process for one connection. Returns in the parent with
     /// `None`; in the child, serves the connection and returns its exit code.
     fn fork_connection(&mut self, config: &ServerConfig, buffered: Vec<u8>, fds: Vec<OwnedFd>) -> Option<i32> {
-        match fork_process(&self.snapshot) {
+        match fork_process(&self.snapshot, "conn") {
             Forked::Parent(_) | Forked::Failed => None, // the parent's copies of the fds close here
             Forked::Child => {
                 self.leave_template();
                 unsafe { libc::close(self.conns.as_raw_fd()) };
-                Some(self.serve_child(config, buffered, fds))
+                crate::fork_stats::mark("taken");
+                Some(self.serve_child(config, buffered, fds, "conn", None))
             }
         }
     }
@@ -1042,7 +1080,7 @@ impl TemplateProcess {
         }
         while self.spares.len() < spares_wanted() {
             let Ok((ours, theirs)) = UnixStream::pair() else { return None };
-            match fork_process(&self.snapshot) {
+            match fork_process(&self.snapshot, "spare") {
                 Forked::Failed => return None,
                 Forked::Parent(_) => self.spares.push_back(ours),
                 Forked::Child => {
@@ -1073,6 +1111,7 @@ impl TemplateProcess {
                 poll_readable(&[self.conns.as_raw_fd(), to_template.as_raw_fd()], 250);
             }
             if readable(to_template.as_raw_fd()) {
+                crate::fork_stats::child_done("spare-unused", None);
                 return 0;
             }
             let Ok((mut stream, _)) = self.conns.accept() else { continue };
@@ -1096,6 +1135,7 @@ impl TemplateProcess {
                     let _ = send(&mut s, &Message::Connect { buffered, profile }, &raw);
                 }
                 if stale {
+                    crate::fork_stats::child_done("spare-unused", None);
                     return 0;
                 }
                 continue;
@@ -1106,7 +1146,8 @@ impl TemplateProcess {
             }
             self.snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
             unsafe { libc::close(self.conns.as_raw_fd()) };
-            return self.serve_child(config, buffered, fds);
+            crate::fork_stats::mark("taken");
+            return self.serve_child(config, buffered, fds, "spare", profile);
         }
     }
 
@@ -1130,7 +1171,14 @@ impl TemplateProcess {
 
     /// In a forked child (after `leave_template`): serves one connection with
     /// the snapshot; the exit code.
-    fn serve_child(&mut self, config: &ServerConfig, buffered: Vec<u8>, mut fds: Vec<OwnedFd>) -> i32 {
+    fn serve_child(
+        &mut self,
+        config: &ServerConfig,
+        buffered: Vec<u8>,
+        mut fds: Vec<OwnedFd>,
+        kind: &str,
+        profile: Option<usize>,
+    ) -> i32 {
         let finished = fds.pop().expect("two fds");
         let socket = std::net::TcpStream::from(fds.pop().expect("two fds"));
         let root = self.root.clone();
@@ -1145,7 +1193,10 @@ impl TemplateProcess {
         };
         browser.set_fork_child(Box::new(RootRegistry { root, lease: RefCell::new(None) }));
         lp_webapi::release_after_fork();
-        crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone());
+        let after = if fast_exit() { crate::serve::AfterServe::Exit } else { crate::serve::AfterServe::TearDown };
+        crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone(), after);
+        crate::fork_stats::mark("dropped");
+        crate::fork_stats::child_done(kind, profile);
         drop(finished);
         0
     }
@@ -1158,7 +1209,8 @@ enum Forked {
 }
 
 /// `fork()` with JavaScriptCore and the network told before and after.
-fn fork_process(snapshot: &Snapshot) -> Forked {
+/// `kind` names the child for `LIGHTNINGPANDA_FORK_STATS`.
+fn fork_process(snapshot: &Snapshot, kind: &str) -> Forked {
     let engine = &snapshot.browser.host().thread.browser.engine;
     lp_net::client::suspend_for_fork();
     if let Err(e) = engine.prepare_for_fork() {
@@ -1174,8 +1226,11 @@ fn fork_process(snapshot: &Snapshot) -> Forked {
     }
     // SAFETY: only this thread is alive (checked above, best effort), and
     // each process continues on it after JSC and the network are told.
+    let forking = Instant::now();
     let pid = unsafe { libc::fork() };
+    let fork_us = forking.elapsed().as_micros() as u64;
     if pid == 0 {
+        crate::fork_stats::child_started();
         // SAFETY: the network is stopped and this is the sole surviving thread.
         // Keep inherited handles, but isolate their pipe from sibling readers.
         if let Err(e) = unsafe { snapshot.browser.host().thread.event_loop.reset_after_fork() } {
@@ -1190,6 +1245,9 @@ fn fork_process(snapshot: &Snapshot) -> Forked {
         if pid == 0 {
             std::process::exit(1);
         }
+    }
+    if pid > 0 {
+        crate::fork_stats::forked(kind, pid, fork_us);
     }
     match pid {
         0 => Forked::Child,

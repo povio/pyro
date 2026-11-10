@@ -243,3 +243,46 @@ fn connections_are_forks_of_the_booted_app() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The template starts with fork mode's JavaScriptCore defaults (a 32 MB JIT
+/// pool, JavaScriptCore's own heap growth) in place of the server's own
+/// defaults, and a value the user set wins.
+#[test]
+fn the_template_takes_the_fork_defaults_unless_the_user_set_them() {
+    if !lp_js::Capabilities::detect().fork {
+        eprintln!("skipped: this JavaScriptCore cannot fork (scripts/jsc/build.sh)");
+        return;
+    }
+    let options = |growth: Option<&str>| {
+        let port = free_port();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_lightningpanda"));
+        command
+            .args(["serve", "--port", &port.to_string(), "--fork", "--log-level", "warn"])
+            .env("JSC_dumpOptions", "2")
+            .env_remove("JSC_heapGrowthMaxIncrease")
+            .env_remove("JSC_jitMemoryReservationSize")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        if let Some(growth) = growth {
+            command.env("JSC_heapGrowthMaxIncrease", growth);
+        }
+        let mut server = Server(command.spawn().unwrap());
+        let mut main = connect(port);
+        // Served by a fork: the template is up, its options dumped.
+        assert_eq!(call(&mut main, 1, "Lightningpanda.capabilities", json!({}), None)["fork"], json!(true));
+        let mut stderr = server.0.stderr.take().unwrap();
+        drop(main);
+        drop(server); // the template, then its forks, end with the server
+        let mut text = String::new();
+        stderr.read_to_string(&mut text).unwrap();
+        let values = |name: &str| -> Vec<String> {
+            text.split_whitespace().filter_map(|w| w.strip_prefix(name)).map(str::to_owned).collect()
+        };
+        (values("heapGrowthMaxIncrease="), values("jitMemoryReservationSize="))
+    };
+    let (growth, pool) = options(None);
+    assert!(growth.contains(&"3".to_owned()), "template heap growth: {growth:?}");
+    assert!(pool.contains(&"33554432".to_owned()), "template JIT pool: {pool:?}");
+    let (growth, _) = options(Some("2"));
+    assert!(growth.contains(&"2".to_owned()) && !growth.contains(&"3".to_owned()), "user's heap growth: {growth:?}");
+}

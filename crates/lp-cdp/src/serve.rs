@@ -751,7 +751,19 @@ pub(crate) fn run_browser_thread(
         }
     };
     let browser = Browser::with_prepared(host, profile.prepared.clone());
-    serve_browser(browser, outbox, outbound, socket, buffered, config);
+    serve_browser(browser, outbox, outbound, socket, buffered, config, AfterServe::TearDown);
+}
+
+/// What a connection's end leaves to do in the process that served it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AfterServe {
+    /// The process lives on: every page is closed and its memory released.
+    TearDown,
+    /// The process exits right after (a forked connection's): its pages
+    /// unload as when a tab closes, the connection closes cleanly, and the
+    /// rest (disposing realms, collecting, dropping the engine) is left to
+    /// the exit. The browser is leaked.
+    Exit,
 }
 
 /// Serves one connection with protocol state that already exists: `browser`
@@ -763,6 +775,7 @@ pub(crate) fn serve_browser(
     socket: std::net::TcpStream,
     buffered: &[u8],
     config: ServerConfig,
+    after: AfterServe,
 ) {
     let conn = match Conn::new(socket, buffered, outbound, config) {
         Ok(conn) => conn,
@@ -882,16 +895,26 @@ pub(crate) fn serve_browser(
             break;
         }
     }
+    crate::fork_stats::mark("served");
     browser.host().thread.browser.engine.set_interrupt_check(None);
     browser.host().set_dialog_pump(None);
     browser.host_mut().thread.event_loop.watch_fd(None);
+    if after == AfterServe::Exit {
+        browser.host().thread.browser.engine.skip_release_until_exit();
+    }
     browser.shutdown();
-    browser.host_mut().close_all();
-    lp_webapi::join_stopped(std::time::Duration::from_secs(1));
+    if after == AfterServe::TearDown {
+        browser.host_mut().close_all();
+        lp_webapi::join_stopped(std::time::Duration::from_secs(1));
+    }
     drop(sink);
     match Rc::try_unwrap(conn) {
         Ok(conn) => conn.into_inner().finish(),
         Err(_) => debug_assert!(false, "connection still shared at teardown"),
+    }
+    crate::fork_stats::mark("closed");
+    if after == AfterServe::Exit {
+        std::mem::forget(browser);
     }
 }
 
