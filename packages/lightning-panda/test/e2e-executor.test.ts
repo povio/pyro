@@ -90,6 +90,12 @@ test('a serial test runs alone in its describe, between the tests declared aroun
   expect(at(n, 'start u1')).toBeLessThan(at(n, 'end t1'));
 }, 30000);
 
+test('tests waiting for a beforeAll start when it is done', async () => {
+  const r = await e2e(['test/e2e-fixture/slow-setup/slow.e2e.ts', '-j', '4']);
+  expect(r.code).toBe(0);
+  for (const name of ['a2', 'a3']) expect(at(r.names, `end ${name}`)).toBeLessThan(at(r.names, 'end long'));
+}, 30000);
+
 test('timeouts: --timeout, or the test own', async () => {
   const r = await e2e(['test/e2e-fixture/timeout/timeout.e2e.ts', '--timeout', '150']);
   expect(r.code).toBe(1);

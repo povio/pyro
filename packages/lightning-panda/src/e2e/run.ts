@@ -166,6 +166,8 @@ export class Executor {
   private readonly chains = new Map<TestCase, Scope[]>();
   /** Tests running now, per file. */
   private readonly fileRunning = new Map<string, number>();
+  /** Starts what can start now (set while the queue runs). */
+  private pump?: () => void;
 
   constructor(private readonly o: Options) {}
 
@@ -338,7 +340,7 @@ export class Executor {
 
   private startable(test: TestCase): boolean {
     if (this.o.perFile && (this.fileRunning.get(test.scope.file) ?? 0) >= this.o.perFile) return false;
-    for (const s of this.scopes(test)) if (s.state.setup && !s.state.setupDone) return false; // its beforeAll runs
+    for (const s of this.scopes(test)) if (s.state.claimed && !s.state.setupDone) return false; // its beforeAll runs
     const st = test.scope.state;
     let first = Infinity;
     for (const i of st.unfinished) if (i < first) first = i;
@@ -356,6 +358,8 @@ export class Executor {
           const at = this.queue.findIndex((t) => this.startable(t));
           if (at < 0) break;
           const [test] = this.queue.splice(at, 1);
+          // This test runs the beforeAll hooks still to run: the others of those scopes wait, without a slot.
+          for (const s of this.scopes(test)) s.state.claimed = true;
           running++;
           const st = test.scope.state;
           st.running++;
@@ -372,6 +376,7 @@ export class Executor {
         }
         if (running === 0) resolveAll();
       };
+      this.pump = pump;
       pump();
     });
   }
@@ -390,6 +395,8 @@ export class Executor {
       }
       st.setupDone = true;
       this.charge(scope.file, performance.now() - t0);
+      // The tests that waited for it can start now, not when another test ends.
+      queueMicrotask(() => this.pump?.());
     })();
     return st.setup;
   }

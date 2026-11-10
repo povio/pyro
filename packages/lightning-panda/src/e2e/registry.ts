@@ -32,6 +32,8 @@ export type Scope = {
 export type ScopeState = {
   /** Tests below it that will run and have not finished. */
   remaining: number;
+  /** A test that will run its beforeAll has started: the scope's other tests wait for it. */
+  claimed: boolean;
   /** beforeAll: not started, running, or done with its error (if any). */
   setup?: Promise<unknown>;
   setupDone: boolean;
@@ -119,6 +121,7 @@ export function newScope(kind: Scope['kind'], name: string, file: string, parent
     only: false,
     state: {
       remaining: 0,
+      claimed: false,
       setupDone: false,
       finished: false,
       defers: [],
