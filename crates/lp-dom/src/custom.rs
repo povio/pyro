@@ -256,6 +256,22 @@ impl Dom {
         self.reactions.parser.get(&document).cloned()
     }
 
+    /// The parser hooks of the active `document`, when what its XML parser
+    /// inserted up to a script left them work: reactions queued for the
+    /// document, or elements waiting for an upgrade attempt.
+    pub(crate) fn parser_custom_work(&self, document: u32) -> Option<Rc<dyn ParserCustomElements>> {
+        if self.reactions.parser.is_empty()
+            || !matches!(&self.n(document).kind, crate::node::NodeKind::Document(data) if data.active)
+        {
+            return None;
+        }
+        let document = self.id_of(document);
+        if !self.has_upgrade_candidates() && !self.reactions.queued.contains_key(&document) {
+            return None;
+        }
+        self.reactions.parser.get(&document).cloned()
+    }
+
     /// Sets the flags of an element about to be upgraded or constructed
     /// with a definition: whether it observes attributes and is
     /// form-associated.

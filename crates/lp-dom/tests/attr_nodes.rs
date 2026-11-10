@@ -340,17 +340,22 @@ fn doctype_names_reject_whitespace_nul_and_greater_than() {
 #[test]
 fn a_navigated_xml_document_runs_the_insertion_steps() {
     use lp_dom::iframe::IframeChange;
-    // The XML parser attaches the whole tree at once; iframes still get
-    // their post-connection steps and `on*` attributes are compiled, as for
-    // a document the HTML parser built.
-    let mut dom = Dom::new();
-    let doc = dom.create_document(DocumentKind::Html, "https://example.test/page.xhtml");
-    dom.set_document_active(doc, true).unwrap();
-    dom.watch_iframes(doc).unwrap();
+    use lp_dom::parse::{DocumentParser, ParseStep};
+    // The XML parser attaches a tree without scripts at once; iframes still
+    // get their post-connection steps and `on*` attributes are compiled, as
+    // for a document the HTML parser built.
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = dom.borrow_mut().create_document(DocumentKind::Html, "https://example.test/page.xhtml");
+    dom.borrow_mut().set_document_active(doc, true).unwrap();
+    dom.borrow_mut().watch_iframes(doc).unwrap();
     let source = "<html xmlns='http://www.w3.org/1999/xhtml'><body onload='a()'>\
                   <iframe src='a.xml' onload='b()'/><p/><template><iframe/></template></body></html>";
-    let scripts = lp_dom::xml::parse_into(&mut dom, doc, source.as_bytes(), None, "application/xhtml+xml");
-    assert!(scripts.is_empty());
+    let mut parser = DocumentParser::new_xml(dom.clone(), doc, "application/xhtml+xml").unwrap();
+    assert_eq!(parser.feed_bytes(source.as_bytes()), ParseStep::NeedInput);
+    assert!(dom.borrow().document_element(doc).unwrap().is_none(), "nothing is built before the end of input");
+    assert_eq!(parser.finish_bytes(), ParseStep::NeedInput, "no script to stop at");
+    parser.end();
+    let mut dom = dom.borrow_mut();
     let events = dom.take_iframe_events(doc);
     assert_eq!(events.len(), 1, "the iframe in the template contents is inert");
     assert_eq!(events[0].change, IframeChange::Connected);

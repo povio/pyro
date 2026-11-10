@@ -28,6 +28,7 @@ mod tree;
 mod tree_scope;
 mod walk_summary;
 mod xml;
+mod xml_navigation;
 mod xml_template;
 mod xpath;
 

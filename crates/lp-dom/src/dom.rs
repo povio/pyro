@@ -760,6 +760,13 @@ impl Dom {
             self.note(Change::Removed(parent, node, next));
         }
     }
+    /// Appends a node a parser just made (`alloc_raw`) to `parent` once
+    /// scripts may have run: the insertion a script's `appendChild` makes
+    /// (records, reactions, upgrade candidates, resource and iframe steps),
+    /// without the validity checks, as the tree is what the source says.
+    pub(crate) fn append_parsed(&mut self, node: u32, parent: u32) {
+        self.insert_nodes(&[node], parent, NIL, false);
+    }
     pub(crate) fn set_owner_raw(&mut self, node: u32, doc: u32) {
         self.adopt_idx(node, doc);
     }
