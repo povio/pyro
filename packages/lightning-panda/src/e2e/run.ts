@@ -249,7 +249,7 @@ export class Executor {
 
   private async launch() {
     // The SDK by its package name: the copy the spec files import.
-    const { Lightningpanda } = (await import('@povio/lightning-panda')) as typeof import('../index.js');
+    const { Lightningpanda } = (await import('@povio/lightning-panda')) as unknown as typeof import('../index.js');
     const options: BrowserOptions = this.setupModule?.browser ? await this.setupModule.browser(this.r.setupResult) : {};
     const extra = [...(options.args ?? []), ...this.o.browserArgs];
     const connections = extra.includes('--cdp-max-connections') ? [] : ['--cdp-max-connections', String(Math.max(64, this.o.concurrency * 4 + 8))];
