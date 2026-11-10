@@ -85,6 +85,10 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
             query.matches_with(|q_font: &QueryFont| {
                 use skrifa::MetadataProvider;
 
+                // A face is not used for code points outside its `unicode-range`.
+                if !q_font.unicode_range.contains(ch.into()) {
+                    return QueryStatus::Continue;
+                }
                 let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
                 else {
                     return QueryStatus::Continue;

@@ -662,7 +662,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1454,7 +1705,7 @@
+@@ -1454,18 +1705,22 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -671,7 +671,22 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  // Build a `FontInfoOverride` from the `@font-face` descriptors
                  // captured during stylesheet parsing. Without this, parley
-@@ -1565,7 +1816,75 @@
+                 // reads the family name from the TTF's own metadata, which
+                 // means CSS `font-family: 'Avenir Book'` won't match a font
+                 // file that internally identifies as `Avenir 45 Book`.
++                // The face is only used for the code points of its `unicode-range`, and its
++                // precedence orders it among the faces matching a style equally.
+                 let weight_override = overrides.weight.map(parley::fontique::FontWeight::new);
+                 let info_override = parley::fontique::FontInfoOverride {
+                     family_name: overrides.family_name.as_deref(),
+                     weight: weight_override,
+                     style: overrides.style,
++                    unicode_range: overrides.unicode_range.as_ref(),
++                    precedence: Some(overrides.precedence),
+                     ..Default::default()
+                 };
+ 
+@@ -1565,7 +1820,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -747,7 +762,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1685,14 +2004,24 @@
+@@ -1685,14 +2008,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -775,7 +790,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1703,7 +2032,7 @@
+@@ -1703,7 +2036,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -784,7 +799,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1738,7 +2067,7 @@
+@@ -1738,7 +2071,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -793,7 +808,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1844,10 +2173,16 @@
+@@ -1844,10 +2177,16 @@
          }
  
          // Focus the new node
@@ -811,7 +826,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          );
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
-@@ -1880,6 +2215,38 @@
+@@ -1880,6 +2219,38 @@
          true
      }
  
@@ -850,7 +865,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1976,10 +2343,12 @@
+@@ -1976,10 +2347,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -864,7 +879,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2063,6 +2432,28 @@
+@@ -2063,6 +2436,28 @@
          true
      }
  
@@ -893,7 +908,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2132,12 +2523,46 @@
+@@ -2132,12 +2527,46 @@
          self.mousedown_node_id
      }
  
@@ -940,7 +955,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2251,6 +2676,7 @@
+@@ -2251,6 +2680,7 @@
  
          self.set_stylist_device(make_device(
              &self.viewport,
@@ -948,7 +963,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.media_type.clone(),
              self.font_ctx.clone(),
          ));
-@@ -2300,6 +2726,15 @@
+@@ -2300,6 +2730,15 @@
          let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
          let styles_use_viewport_units = old_device.used_viewport_size();
  
@@ -964,7 +979,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2447,6 +2882,11 @@
+@@ -2447,6 +2886,11 @@
          (pos, *self.nodes[node_id].unrounded_layout())
      }
  
@@ -976,7 +991,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2660,7 +3100,7 @@
+@@ -2660,7 +3104,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -985,6 +1000,81 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
+@@ -3765,6 +4209,7 @@
+                     family_name: Some(String::from(ALIAS)),
+                     weight: Some(800.0),
+                     style: Some(parley::fontique::FontStyle::Italic),
++                    ..Default::default()
+                 },
+             )),
+         };
+@@ -3787,6 +4232,52 @@
+              not the font file's internal `name` table entry",
+         );
+     }
++
++    /// The faces of a family that match a style equally are yielded last rule first, however
++    /// they arrive, each with its `unicode-range`; the first available font is the first whose
++    /// range includes U+0020.
++    #[test]
++    fn font_face_unicode_ranges_and_rule_order_reach_the_query() {
++        use parley::fontique::{Attributes, QueryFamily, QueryStatus, UnicodeRange};
++
++        let latin = UnicodeRange::new([0x20..=0x7E]);
++        let cyrillic = UnicodeRange::new([0x400..=0x4FF]);
++        // The first rule is for latin, the second for cyrillic.
++        let faces = [(1, &latin), (2, &cyrillic)];
++        for arrival in [[0, 1], [1, 0]] {
++            let mut document = BaseDocument::new(DocumentConfig::default());
++            for (precedence, range) in arrival.map(|i| faces[i]) {
++                document.load_resource(ResourceLoadResponse {
++                    request_id: 0,
++                    node_id: None,
++                    resolved_url: Some(format!("test://ranged-{precedence}")),
++                    result: Ok(Resource::Font(
++                        blitz_traits::net::Bytes::from_static(crate::BULLET_FONT),
++                        FontFaceOverrides {
++                            family_name: Some(String::from("Ranged")),
++                            unicode_range: Some(range.clone()),
++                            precedence,
++                            ..Default::default()
++                        },
++                    )),
++                });
++            }
++
++            let mut ctx = document.font_ctx.lock().unwrap();
++            let ctx = &mut *ctx;
++            let mut query = ctx.collection.query(&mut ctx.source_cache);
++            query.set_families([QueryFamily::Named("Ranged")]);
++            query.set_attributes(Attributes::default());
++            let mut ranges = Vec::new();
++            query.matches_with(|font| {
++                ranges.push(font.unicode_range.clone());
++                QueryStatus::Continue
++            });
++            assert_eq!(ranges, [cyrillic.clone(), latin.clone()], "arrival {arrival:?}");
++            let first = query.first_available_font().map(|font| font.unicode_range);
++            assert_eq!(first.as_ref(), Some(&latin), "arrival {arrival:?}");
++        }
++    }
+ }
+ 
+ #[cfg(test)]
+diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/font_metrics.rs
+--- a/packages/blitz-dom/src/font_metrics.rs
++++ b/packages/blitz-dom/src/font_metrics.rs
+@@ -85,6 +85,10 @@
+             query.matches_with(|q_font: &QueryFont| {
+                 use skrifa::MetadataProvider;
+ 
++                // A face is not used for code points outside its `unicode-range`.
++                if !q_font.unicode_range.contains(ch.into()) {
++                    return QueryStatus::Continue;
++                }
+                 let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
+                 else {
+                     return QueryStatus::Continue;
 diff --git a/packages/blitz-dom/src/has_invalidation.rs b/packages/blitz-dom/src/has_invalidation.rs
 new file mode 100644
 --- /dev/null
@@ -9456,7 +9546,30 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 --- a/packages/blitz-dom/src/net.rs
 +++ b/packages/blitz-dom/src/net.rs
-@@ -61,7 +61,8 @@
+@@ -1,5 +1,6 @@
+ use blitz_traits::node_id::NodeId;
+ use selectors::context::QuirksMode;
++use std::sync::atomic::AtomicU64;
+ use std::sync::atomic::Ordering as Ao;
+ use std::{
+     io::Cursor,
+@@ -54,6 +55,15 @@
+     pub weight: Option<f32>,
+     /// `font-style` descriptor mapped to fontique's `FontStyle`.
+     pub style: Option<parley::fontique::FontStyle>,
++    /// `unicode-range` descriptor: the code points the face is used for.
++    /// `None` (no descriptor) is every code point.
++    pub unicode_range: Option<parley::fontique::UnicodeRange>,
++    /// The rule's place among the `@font-face` rules of the process, rising
++    /// in the order they are read: the face's precedence among the faces of a
++    /// family that match a style equally. CSS checks those faces (a
++    /// composite font, such as the per-subset faces of a Google Fonts family)
++    /// last rule first, whichever face finished loading first.
++    pub precedence: u64,
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -61,7 +71,8 @@
      Image(ImageType, u32, u32, Arc<Vec<u8>>),
      #[cfg(feature = "svg")]
      Svg(ImageType, crate::node::SvgImageData),
@@ -9466,7 +9579,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// Stylesheet loaded for an `@import` rule, to be attached to the rule on the document thread
      ImportedCss(ServoArc<Locked<ImportRule>>, ServoArc<Stylesheet>),
      Font(Bytes, FontFaceOverrides),
-@@ -173,11 +174,22 @@
+@@ -173,11 +184,22 @@
  
          self.respond(
              resolved_url,
@@ -9490,7 +9603,37 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Maximum depth of nested `@import` rules. Imports nested deeper than this
  /// are refused, preventing unbounded recursion (e.g. a stylesheet whose
  /// resolved `@import` URL yields another stylesheet importing in turn, with
-@@ -599,8 +611,32 @@
+@@ -421,6 +443,8 @@
+                 // Capture the @font-face descriptors so parley can register
+                 // the font under the CSS-declared family name (and weight /
+                 // style) rather than whatever metadata the TTF reports.
++                // Rules are read in order within a sheet; sheets in the order they load.
++                static RULE_ORDER: AtomicU64 = AtomicU64::new(1);
+                 let overrides = FontFaceOverrides {
+                     family_name: Some(family.name.to_string()),
+                     weight: descriptor
+@@ -428,6 +452,8 @@
+                         .as_ref()
+                         .and_then(|range| range.0.compute().map(|w| w.value())),
+                     style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
++                    unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
++                    precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
+                 };
+                 Some((src, overrides))
+             }
+@@ -450,6 +476,11 @@
+         })
+ }
+ 
++/// The code points of an `@font-face` `unicode-range` descriptor.
++fn unicode_range(ranges: &[cssparser::UnicodeRange]) -> parley::fontique::UnicodeRange {
++    parley::fontique::UnicodeRange::new(ranges.iter().map(|range| range.start..=range.end))
++}
++
+ /// The first source in an `@font-face` `src` list that is in a format we
+ /// support, with its resolved url and format.
+ fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
+@@ -599,8 +630,32 @@
      }
  }
  
@@ -9523,7 +9666,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let image_err = match image::ImageReader::new(Cursor::new(&bytes))
              .with_guessed_format()
              .expect("IO errors impossible with Cursor")
-@@ -609,13 +645,28 @@
+@@ -609,13 +664,28 @@
              Ok(image) => {
                  let width = image.width();
                  let height = image.height();
@@ -9559,6 +9702,69 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
+@@ -649,6 +719,62 @@
+         FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
+     }
+ 
++    /// The `unicode-range` of each `@font-face` rule in `css`
++    fn unicode_ranges(css: &str) -> Vec<Option<parley::fontique::UnicodeRange>> {
++        let lock = SharedRwLock::new();
++        let base_url = Url::parse("https://example.com/css/style.css").unwrap();
++        let sheet = Stylesheet::from_str(
++            css,
++            UrlExtraData(ServoArc::new(base_url)),
++            Origin::Author,
++            ServoArc::new(lock.wrap(MediaList::empty())),
++            lock.clone(),
++            None,
++            None,
++            QuirksMode::NoQuirks,
++            AllowImportRules::No,
++        );
++        let guard = lock.read();
++        sheet
++            .contents(&guard)
++            .rules(&guard)
++            .iter()
++            .filter_map(|rule| match rule {
++                CssRule::FontFace(font_face) => Some(
++                    font_face
++                        .read_with(&guard)
++                        .descriptors
++                        .unicode_range
++                        .as_deref()
++                        .map(unicode_range),
++                ),
++                _ => None,
++            })
++            .collect()
++    }
++
++    #[test]
++    fn unicode_ranges_keep_their_code_points() {
++        let ranges = unicode_ranges(
++            "@font-face { font-family: a; src: url(a.woff2); unicode-range: U+0400-045F, U+25-FF, u+4??, U+20AC }
++            @font-face { font-family: a; src: url(b.woff2) }",
++        );
++        let [Some(range), None] = ranges.as_slice() else {
++            panic!("{ranges:?}");
++        };
++        // Wildcards expand; overlapping intervals merge.
++        assert_eq!(
++            range.ranges().unwrap(),
++            [0x25..=0xFF, 0x400..=0x4FF, 0x20AC..=0x20AC]
++        );
++        for code_point in [0x25, 0x41, 0xFF, 0x400, 0x4FF, 0x20AC] {
++            assert!(range.contains(code_point), "{code_point:#x}");
++        }
++        for code_point in [0x20, 0x24, 0x100, 0x3FF, 0x500, 0x20AB, 0x20AD] {
++            assert!(!range.contains(code_point), "{code_point:#x}");
++        }
++    }
++
+     /// The source picked from the `src` list of each `@font-face` rule in `css`
+     fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
+         let lock = SharedRwLock::new();
 diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/node/element.rs
 --- a/packages/blitz-dom/src/node/element.rs
 +++ b/packages/blitz-dom/src/node/element.rs

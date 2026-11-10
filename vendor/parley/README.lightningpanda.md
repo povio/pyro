@@ -72,11 +72,15 @@ went from about 240 to 40 per break, with identical PDFs. Covered by the differe
 metrics of every style ran a fontique query per layout for the style's first available font, after
 the font selector had queried the same families and attributes while shaping. The selector's
 charmap probe (`query_yields_font`) visits the fonts in the query's order, so the first font it
-visits is the first available font when it comes from the style's own families (not the script
-fallbacks or the emoji family); the selector records it per style (`LayoutContext::style_first_fonts`)
+visits whose `unicode-range` includes U+0020 is the first available font when it comes from the
+style's own families (not the script fallbacks or the emoji family, which the query yields after
+them); the probe goes on past the first font with a charmap until it has found that font or left
+the style's families. The selector records it per style (`LayoutContext::style_first_fonts`)
 and `resolve_style_metrics` takes a style's font from there, querying only a style without one
-(its families yield nothing, or it shaped no text). The font is the same `QueryFont` the query would
-yield, so the metrics are unchanged.
+(its families yield no such font, or it shaped no text). The font is the same `QueryFont` the
+query (`Query::first_available_font`) would yield, so the metrics are unchanged. The fonts'
+`unicode-range` comes from fontique (`vendor/fontique/README.lightningpanda.md`), whose charmaps
+the selector's coverage check reads limited to it.
 
 ## Updating or dropping the patch
 

@@ -216,6 +216,8 @@ taffy = { path = "vendor/taffy" }
 parley_engine = { path = "vendor/parley_engine" }
 # Built layouts reused for identical text and styles; see vendor/parley/README.lightningpanda.md.
 parley = { path = "vendor/parley" }
+# `@font-face` `unicode-range` in font matching; see vendor/fontique/README.lightningpanda.md.
+fontique = { path = "vendor/fontique" }
 # Style sharing; see vendor/stylo/README.lightningpanda.md.
 stylo = { path = "vendor/stylo" }
 # ASCII hosts with invalid xn-- labels pass through; see vendor/idna/README.lightningpanda.md.

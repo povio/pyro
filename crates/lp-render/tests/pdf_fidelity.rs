@@ -38,7 +38,7 @@ fn print(html: &str) -> PdfOutput {
 }
 
 /// The PDF's bytes with every Flate stream inflated in place.
-fn inflated(pdf: &[u8]) -> String {
+pub(crate) fn inflated(pdf: &[u8]) -> String {
     let mut out = String::from_utf8_lossy(pdf).into_owned();
     let mut i = 0;
     while let Some(at) = find(&pdf[i..], b"stream\n").map(|p| p + i + 7) {
@@ -55,7 +55,7 @@ fn inflated(pdf: &[u8]) -> String {
     out
 }
 
-fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+pub(crate) fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
