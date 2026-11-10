@@ -266,11 +266,13 @@ enum LastResortFont {
 struct FontSelector<'a, 'b, B: Brush> {
     query: &'b mut Query<'a>,
     /// lightningpanda: per style, the first font [`Self::query`] yields for the style's own
-    /// families and attributes (its CSS first available font), recorded when the style's fonts
-    /// are first queried; `None` where its families yield nothing or the style shaped no text.
+    /// families and attributes whose `unicode-range` includes U+0020 (its CSS first available
+    /// font), recorded when the style's fonts are first queried; `None` where its families yield
+    /// no such font or the style shaped no text.
     /// The style metrics take their font from here instead of querying again.
     first_fonts: &'b mut Vec<Option<FontInstance>>,
-    /// The first font the current query yields from the current style's own families, if any.
+    /// The first available font of the current query, if it comes from the current style's own
+    /// families.
     current_first: Option<FontInstance>,
     fonts_id: Option<usize>,
     rcx: &'a ResolveContext,
@@ -376,10 +378,11 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
         // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
         // this check and do the last-resort scan after the failed query:
         // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
-        // lightningpanda: the first font this pass visits is the first font the query yields for
-        // the current families and attributes; when it comes from the style's own families (not
-        // the script fallbacks or the emoji family) it is the style's first available font, which
-        // the style metrics need. Fonts without a charmap count here, as there.
+        // lightningpanda: this pass also finds the style's first available font, which the style
+        // metrics need: the first font the query yields for the current families and attributes
+        // whose `unicode-range` includes U+0020, if it comes from the style's own families (not
+        // the script fallbacks or the emoji family, which the query yields after them). Fonts
+        // without a charmap count here, as there.
         let families = self
             .rcx
             .stack(self.styles[style_index as usize].font_family)
@@ -388,10 +391,13 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
         let current_first = &mut self.current_first;
         let query_yields_font = *self.query_yields_font.get_or_insert_with(|| {
             let mut yields_font = false;
-            let mut first = true;
+            let mut seeking_first = true;
             *current_first = None;
             query.matches_with(|font| {
-                if core::mem::take(&mut first) && families.contains(&font.family.0) {
+                if seeking_first && !families.contains(&font.family.0) {
+                    seeking_first = false;
+                } else if seeking_first && font.unicode_range.contains(0x20) {
+                    seeking_first = false;
                     *current_first = Some(FontInstance {
                         font: FontData {
                             data: font.blob.clone(),
@@ -400,8 +406,8 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                         synthesis: font.synthesis,
                     });
                 }
-                if font.charmap().is_some() {
-                    yields_font = true;
+                yields_font |= font.charmap().is_some();
+                if yields_font && !seeking_first {
                     fontique::QueryStatus::Stop
                 } else {
                     fontique::QueryStatus::Continue

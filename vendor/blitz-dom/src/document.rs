@@ -1712,11 +1712,15 @@ impl BaseDocument {
                 // reads the family name from the TTF's own metadata, which
                 // means CSS `font-family: 'Avenir Book'` won't match a font
                 // file that internally identifies as `Avenir 45 Book`.
+                // The face is only used for the code points of its `unicode-range`, and its
+                // precedence orders it among the faces matching a style equally.
                 let weight_override = overrides.weight.map(parley::fontique::FontWeight::new);
                 let info_override = parley::fontique::FontInfoOverride {
                     family_name: overrides.family_name.as_deref(),
                     weight: weight_override,
                     style: overrides.style,
+                    unicode_range: overrides.unicode_range.as_ref(),
+                    precedence: Some(overrides.precedence),
                     ..Default::default()
                 };
 
@@ -4205,6 +4209,7 @@ mod font_face_override_tests {
                     family_name: Some(String::from(ALIAS)),
                     weight: Some(800.0),
                     style: Some(parley::fontique::FontStyle::Italic),
+                    ..Default::default()
                 },
             )),
         };
@@ -4226,6 +4231,52 @@ mod font_face_override_tests {
             "registered family should report the CSS-declared name, \
              not the font file's internal `name` table entry",
         );
+    }
+
+    /// The faces of a family that match a style equally are yielded last rule first, however
+    /// they arrive, each with its `unicode-range`; the first available font is the first whose
+    /// range includes U+0020.
+    #[test]
+    fn font_face_unicode_ranges_and_rule_order_reach_the_query() {
+        use parley::fontique::{Attributes, QueryFamily, QueryStatus, UnicodeRange};
+
+        let latin = UnicodeRange::new([0x20..=0x7E]);
+        let cyrillic = UnicodeRange::new([0x400..=0x4FF]);
+        // The first rule is for latin, the second for cyrillic.
+        let faces = [(1, &latin), (2, &cyrillic)];
+        for arrival in [[0, 1], [1, 0]] {
+            let mut document = BaseDocument::new(DocumentConfig::default());
+            for (precedence, range) in arrival.map(|i| faces[i]) {
+                document.load_resource(ResourceLoadResponse {
+                    request_id: 0,
+                    node_id: None,
+                    resolved_url: Some(format!("test://ranged-{precedence}")),
+                    result: Ok(Resource::Font(
+                        blitz_traits::net::Bytes::from_static(crate::BULLET_FONT),
+                        FontFaceOverrides {
+                            family_name: Some(String::from("Ranged")),
+                            unicode_range: Some(range.clone()),
+                            precedence,
+                            ..Default::default()
+                        },
+                    )),
+                });
+            }
+
+            let mut ctx = document.font_ctx.lock().unwrap();
+            let ctx = &mut *ctx;
+            let mut query = ctx.collection.query(&mut ctx.source_cache);
+            query.set_families([QueryFamily::Named("Ranged")]);
+            query.set_attributes(Attributes::default());
+            let mut ranges = Vec::new();
+            query.matches_with(|font| {
+                ranges.push(font.unicode_range.clone());
+                QueryStatus::Continue
+            });
+            assert_eq!(ranges, [cyrillic.clone(), latin.clone()], "arrival {arrival:?}");
+            let first = query.first_available_font().map(|font| font.unicode_range);
+            assert_eq!(first.as_ref(), Some(&latin), "arrival {arrival:?}");
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use blitz_traits::node_id::NodeId;
 use selectors::context::QuirksMode;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering as Ao;
 use std::{
     io::Cursor,
@@ -54,6 +55,15 @@ pub struct FontFaceOverrides {
     pub weight: Option<f32>,
     /// `font-style` descriptor mapped to fontique's `FontStyle`.
     pub style: Option<parley::fontique::FontStyle>,
+    /// `unicode-range` descriptor: the code points the face is used for.
+    /// `None` (no descriptor) is every code point.
+    pub unicode_range: Option<parley::fontique::UnicodeRange>,
+    /// The rule's place among the `@font-face` rules of the process, rising
+    /// in the order they are read: the face's precedence among the faces of a
+    /// family that match a style equally. CSS checks those faces (a
+    /// composite font, such as the per-subset faces of a Google Fonts family)
+    /// last rule first, whichever face finished loading first.
+    pub precedence: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -433,6 +443,8 @@ pub(crate) fn fetch_font_face_rules<'a>(
                 // Capture the @font-face descriptors so parley can register
                 // the font under the CSS-declared family name (and weight /
                 // style) rather than whatever metadata the TTF reports.
+                // Rules are read in order within a sheet; sheets in the order they load.
+                static RULE_ORDER: AtomicU64 = AtomicU64::new(1);
                 let overrides = FontFaceOverrides {
                     family_name: Some(family.name.to_string()),
                     weight: descriptor
@@ -440,6 +452,8 @@ pub(crate) fn fetch_font_face_rules<'a>(
                         .as_ref()
                         .and_then(|range| range.0.compute().map(|w| w.value())),
                     style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
+                    unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
+                    precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
                 };
                 Some((src, overrides))
             }
@@ -460,6 +474,11 @@ pub(crate) fn fetch_font_face_rules<'a>(
                 );
             }
         })
+}
+
+/// The code points of an `@font-face` `unicode-range` descriptor.
+fn unicode_range(ranges: &[cssparser::UnicodeRange]) -> parley::fontique::UnicodeRange {
+    parley::fontique::UnicodeRange::new(ranges.iter().map(|range| range.start..=range.end))
 }
 
 /// The first source in an `@font-face` `src` list that is in a format we
@@ -698,6 +717,62 @@ mod tests {
 
     fn oblique(min_deg: f32, max_deg: f32) -> FontStyleRange {
         FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
+    }
+
+    /// The `unicode-range` of each `@font-face` rule in `css`
+    fn unicode_ranges(css: &str) -> Vec<Option<parley::fontique::UnicodeRange>> {
+        let lock = SharedRwLock::new();
+        let base_url = Url::parse("https://example.com/css/style.css").unwrap();
+        let sheet = Stylesheet::from_str(
+            css,
+            UrlExtraData(ServoArc::new(base_url)),
+            Origin::Author,
+            ServoArc::new(lock.wrap(MediaList::empty())),
+            lock.clone(),
+            None,
+            None,
+            QuirksMode::NoQuirks,
+            AllowImportRules::No,
+        );
+        let guard = lock.read();
+        sheet
+            .contents(&guard)
+            .rules(&guard)
+            .iter()
+            .filter_map(|rule| match rule {
+                CssRule::FontFace(font_face) => Some(
+                    font_face
+                        .read_with(&guard)
+                        .descriptors
+                        .unicode_range
+                        .as_deref()
+                        .map(unicode_range),
+                ),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unicode_ranges_keep_their_code_points() {
+        let ranges = unicode_ranges(
+            "@font-face { font-family: a; src: url(a.woff2); unicode-range: U+0400-045F, U+25-FF, u+4??, U+20AC }
+            @font-face { font-family: a; src: url(b.woff2) }",
+        );
+        let [Some(range), None] = ranges.as_slice() else {
+            panic!("{ranges:?}");
+        };
+        // Wildcards expand; overlapping intervals merge.
+        assert_eq!(
+            range.ranges().unwrap(),
+            [0x25..=0xFF, 0x400..=0x4FF, 0x20AC..=0x20AC]
+        );
+        for code_point in [0x25, 0x41, 0xFF, 0x400, 0x4FF, 0x20AC] {
+            assert!(range.contains(code_point), "{code_point:#x}");
+        }
+        for code_point in [0x20, 0x24, 0x100, 0x3FF, 0x500, 0x20AB, 0x20AD] {
+            assert!(!range.contains(code_point), "{code_point:#x}");
+        }
     }
 
     /// The source picked from the `src` list of each `@font-face` rule in `css`

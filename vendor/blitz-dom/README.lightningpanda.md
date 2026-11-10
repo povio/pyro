@@ -215,6 +215,17 @@ way its block axis runs; paint turns the lines, and these read them physically:
 printing. The servo build of Stylo parses neither `size` nor `page`, so the parsed rule does not have them. lp-render's
 `page_box` reads them.
 
+## `@font-face` `unicode-range` and rule order
+
+`src/net.rs` (`FontFaceOverrides::unicode_range` and `precedence`), `src/document.rs` (`load_resource`),
+`src/font_metrics.rs`: each `@font-face` face is registered with its `unicode-range` and a precedence rising in the
+order the rules are read (rule order within a sheet, sheets in the order they load), through fontique's
+`FontInfoOverride` (`vendor/fontique/README.lightningpanda.md`). A face is then used only for the characters its
+range includes, and the faces of one family that match a style equally (Google Fonts' per-subset faces) are checked
+last rule first, however the fonts arrive. The metrics of `ex`, `cap` and `ch` take their fonts by the same rule.
+Covered by `unicode_ranges_keep_their_code_points`, `font_face_unicode_ranges_and_rule_order_reach_the_query` and
+lp-render's `font_unicode_range` tests.
+
 ## Collapsed tables without uniform borders
 
 `src/layout/table.rs` (`CollapsedEdges`), `src/node/stylo_data.rs`, `src/node/element.rs`: upstream has one gutter, from the
