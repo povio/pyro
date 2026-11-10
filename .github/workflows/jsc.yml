@@ -13,6 +13,7 @@ on:
     paths:
       - crates/lp-jsc-sys/webkit/**
       - scripts/jsc/build.sh
+      - scripts/jsc/cache-key.sh
       - scripts/linux/setup.sh
       - .github/workflows/jsc.yml
   # A change to the patches shows on its pull request whether they still build.
@@ -20,6 +21,7 @@ on:
     paths:
       - crates/lp-jsc-sys/webkit/**
       - scripts/jsc/build.sh
+      - scripts/jsc/cache-key.sh
       - scripts/linux/setup.sh
       - .github/workflows/jsc.yml
   workflow_dispatch:
@@ -41,12 +43,12 @@ jobs:
       dir: ${{ steps.key.outputs.dir }}
     steps:
       - uses: actions/checkout@v6
+      # The WebKit revision and a hash of the patches (wpt.yml looks the cache up by the same key).
       - name: Cache key
         id: key
         run: |
-          rev="$(tr -d '[:space:]' < crates/lp-jsc-sys/webkit/REVISION)"
-          patches="$(cat crates/lp-jsc-sys/webkit/patches/*.patch | shasum -a 256 | cut -c1-12)"
-          echo "dir=${rev:0:12}-$patches" >> "$GITHUB_OUTPUT"
+          dir="$(scripts/jsc/cache-key.sh)"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
         id: cache
         with:

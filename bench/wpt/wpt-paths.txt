@@ -1,0 +1,24 @@
+# What bench/wpt/fetch-wpt.sh checks out of WPT (git sparse-checkout patterns, relative to the WPT root).
+# Test directories (run.mjs's default --dirs):
+dom/
+html/dom/
+encoding/
+url/
+fetch/api/basic/
+xhr/
+css/selectors/
+uievents/
+shadow-dom/
+webstorage/
+# Support files those tests load (from serve.mjs's request log, WPT_SERVE_LOG, over a full run):
+resources/
+common/
+fonts/
+images/
+interfaces/
+fetch/api/resources/
+html/resources/
+html/interaction/focus/the-autofocus-attribute/resources/
+loading/resources/
+css/support/
+media/1x1-green.png

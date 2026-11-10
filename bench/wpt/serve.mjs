@@ -1,11 +1,17 @@
 // Minimal static server for a WPT checkout: plain files plus generated .any.html / .window.html wrappers
 // (the part of wptserve testharness tests need when they use no Python handlers, pipes or substitutions).
+// Usage: bun serve.mjs <wpt-dir> [port]       (WPT_SERVE_LOG=FILE appends "status /path" per request)
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(process.argv[2]);
 const PORT = Number(process.argv[3] ?? 9415);
+// The report shim run.mjs reads (window.report), served in place of the checkout's own copy so a plain
+// upstream checkout works.
+const REPORT = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'testharnessreport.js'));
+const LOG = process.env.WPT_SERVE_LOG && fs.createWriteStream(process.env.WPT_SERVE_LOG, { flags: 'a' });
 const TYPES = { '.html': 'text/html', '.htm': 'text/html', '.xhtml': 'application/xhtml+xml', '.xml': 'application/xml', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.gif': 'image/gif', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.txt': 'text/plain', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 
 function wrapper(jsRel, src) {
@@ -20,9 +26,11 @@ function wrapper(jsRel, src) {
   return out;
 }
 
-http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   let rel; try { rel = decodeURIComponent(u.pathname).replace(/^\/+/, ''); } catch { res.writeHead(400); res.end(); return; }
+  if (LOG) res.on('finish', () => LOG.write(`${res.statusCode} /${rel}\n`));
+  if (rel === 'resources/testharnessreport.js') { res.writeHead(200, { 'content-type': 'text/javascript' }); res.end(REPORT); return; }
   const m = rel.match(/^(.*)\.(any|window)\.html$/);
   if (m) {
     const js = path.join(ROOT, `${m[1]}.${m[2]}.js`);
@@ -49,5 +57,9 @@ http.createServer((req, res) => {
     res.writeHead(200, headers);
     res.end(buf);
   });
-}).listen(PORT, '127.0.0.1', () => console.log(`wpt static on ${PORT}`));
+});
+// A port already in use is fatal (the runner would otherwise talk to whatever holds it).
+server.on('error', (e) => { console.error(`wpt static: ${e.message}`); process.exit(1); });
+// Port 0 picks a free port; the first stdout line names the one in use.
+server.listen(PORT, '127.0.0.1', () => console.log(`wpt static on ${server.address().port}`));
 process.on('uncaughtException', (e) => console.error('uncaught', e.message));

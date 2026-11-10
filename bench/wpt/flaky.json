@@ -1,0 +1,44 @@
+{
+ "//": "What the WPT gate does not check, each with its reason (README.md). Keys are page URLs, or patterns where * matches anything. An entry is the whole page ({reason}), some subtests ({reason, subtests: [names]}), or only the page's completion ({reason, allowIncomplete: true}). Adding or widening an entry needs the wpt-accept-loss label.",
+ "tests": {
+  "css/selectors/focus-within-009.html": {
+   "reason": "Timing: passes when the page runs alone (4 of 4 runs) and fails in full runs under load (4 of 4), fork JavaScriptCore at 7e68",
+   "subtests": ["Move 'target1' in 'container2'"]
+  },
+  "html/dom/render-blocking/parser-inserted-style-element.html": {
+   "reason": "Timing: whether the stylesheet applies before the check depends on load (passes in 3 of 4 full runs, fails in 4 of 4 runs alone)",
+   "subtests": ["Render-blocking stylesheet is applied"]
+  },
+  "html/dom/render-blocking/remove-attr-style-keeps-blocking.html": {
+   "reason": "Timing: the reverse of parser-inserted-style-element.html (fails in full runs, passes in 4 of 4 runs alone)",
+   "subtests": ["Render-blocking stylesheet is applied"]
+  },
+  "html/dom/render-blocking/remove-attr-unblocks-rendering.optional.html": {
+   "reason": "Timing: these subtests race resource loads against the removal (8 or 15 of 16 pass between two full runs of one binary)",
+   "subtests": [
+    "Render-blocking on parser-inserted async script is cancellable",
+    "Render-blocking on parser-inserted defer script is cancellable",
+    "Render-blocking on parser-inserted module script is cancellable",
+    "Render-blocking on parser-inserted async module script is cancellable",
+    "Render-blocking on script-inserted stylesheet link is cancellable",
+    "Render-blocking on script-inserted script is cancellable",
+    "Render-blocking on script-inserted module script is cancellable"
+   ]
+  },
+  "html/dom/render-blocking/remove-element-unblocks-rendering.optional.html": {
+   "reason": "Timing: these subtests race resource loads against the removal (2 of 8 pass in full runs, 8 of 8 alone)",
+   "subtests": [
+    "Render-blocking on parser-inserted async script is cancellable",
+    "Render-blocking on parser-inserted defer script is cancellable",
+    "Render-blocking on parser-inserted module script is cancellable",
+    "Render-blocking on parser-inserted async module script is cancellable",
+    "Render-blocking on script-inserted script is cancellable",
+    "Render-blocking on script-inserted module script is cancellable"
+   ]
+  },
+  "webstorage/storage_session_window_reopen.window.html": {
+   "reason": "Timing: failed in one of two full runs of one binary under load; passes alone with and without --reuse-context",
+   "subtests": ["ensure that re-opening a named window doesn't copy sessionStorage"]
+  }
+ }
+}
