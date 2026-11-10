@@ -6,3 +6,9 @@ It keeps the characters of `E2E-DUN-MONITOR-OPEN 1,234.56 (EUR) x-y AB xqx` and 
 `tnum` (tabular figures), `calt`/`case` (hyphens and parentheses raised between capitals) and `ccmp` still apply.
 Made with HarfBuzz 15's `hb-subset --unicodes=<those code points> --layout-features='*' --layout-scripts='*'
 --name-IDs='*' --name-languages='*' --glyph-names --notdef-outline`.
+
+`Inter-variable-subset.ttf`: a subset of Inter 4.001's variable font (`Inter[opsz,wght].ttf` as Google Fonts
+distributes it, https://github.com/google/fonts/tree/main/ofl/inter), under the same copyright and license. It keeps
+the same characters, without U+0301, and the font's variation tables: the axes `opsz` (14 to 32, default 14) and `wght`
+(100 to 900, default 400), and an `avar` table that bends the weights above 400. Made with HarfBuzz 15's
+`hb-subset --unicodes=<those code points>`.
