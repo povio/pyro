@@ -135,10 +135,10 @@ fn paint_scene_inner(
 pub struct TextRun {
     /// The node whose style the run has (the innermost element around the text).
     pub node: NodeId,
-    /// The number of glyphs and the first one (id, x, y) as drawn: identifies the run's
+    /// The number of glyphs and their [`glyphs_fingerprint`] as drawn: identifies the run's
     /// `draw_glyphs` call.
     pub glyphs: usize,
-    pub first: (u32, f32, f32),
+    pub fingerprint: u64,
     /// The source text the run shows and each glyph's byte range in it (a ligature's range
     /// spans all the characters it stands for). Empty when the source is unknown.
     pub text: String,
@@ -153,9 +153,11 @@ impl TextRun {
         source: Option<&str>,
         transform: kurbo::Affine,
     ) -> TextRun {
-        let mut glyphs = run.positioned_glyphs();
-        let count = glyphs.clone().count();
-        let first = glyphs.next().map_or((0, 0.0, 0.0), |g| (g.id, g.x, g.y));
+        let mut count = 0;
+        let fingerprint = glyphs_fingerprint(run.positioned_glyphs().map(|g| {
+            count += 1;
+            (g.id, g.x, g.y)
+        }));
         let mut text = String::new();
         let mut glyph_text = Vec::new();
         if let Some(source) = source {
@@ -185,12 +187,25 @@ impl TextRun {
         TextRun {
             node: run.style().brush.id,
             glyphs: count,
-            first,
+            fingerprint,
             text,
             glyph_text,
             bounds: transform.transform_rect_bbox(rect),
         }
     }
+}
+
+/// A hash of glyphs as drawn (id, x, y): [`TextRun::fingerprint`] of a run's glyphs. Two runs
+/// that start alike (table cells of dates, amounts) tell apart by the rest of their glyphs.
+pub fn glyphs_fingerprint(glyphs: impl IntoIterator<Item = (u32, f32, f32)>) -> u64 {
+    // FxHash's step: a run is only compared with the next recorded one.
+    let mut hash = 0u64;
+    for (id, x, y) in glyphs {
+        for word in [u64::from(id), (u64::from(x.to_bits()) << 32) | u64::from(y.to_bits())] {
+            hash = (hash.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+        }
+    }
+    hash
 }
 
 /// [`paint_scene_with`], also returning the glyph runs of the document's text in the order

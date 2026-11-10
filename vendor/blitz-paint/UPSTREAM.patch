@@ -13,7 +13,7 @@ diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/sr
 diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 --- a/packages/blitz-paint/src/lib.rs
 +++ b/packages/blitz-paint/src/lib.rs
-@@ -50,6 +50,52 @@
+@@ -50,6 +50,56 @@
      x_offset: u32,
      y_offset: u32,
  ) {
@@ -63,10 +63,14 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +    backgrounds: bool,
 +    fractional_text_x: bool,
 +) {
++    // Painting walks `paint_children` and the stacking contexts, which a
++    // resolve only marks stale.
++    doc.ensure_paint_tree();
++
      // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
      // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
      //
-@@ -59,7 +105,7 @@
+@@ -59,7 +109,7 @@
      #[cfg(feature = "custom-widget")]
      build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
  
@@ -75,7 +79,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
          doc,
          scale,
          width,
-@@ -68,6 +114,8 @@
+@@ -68,6 +118,8 @@
          y_offset as f64,
          &custom_widget_scenes,
      );
@@ -84,21 +88,19 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      generator.paint_scene(scene);
  
      // println!(
-@@ -76,6 +124,103 @@
-     //     CLIP_DEPTH_USED.load(atomic::Ordering::SeqCst),
-     //     CLIPS_WANTED.load(atomic::Ordering::SeqCst)
+@@ -78,6 +130,121 @@
      // );
-+}
-+
+ }
+ 
 +/// One glyph run [`paint_scene_recording_text`] drew.
 +#[derive(Clone, Debug)]
 +pub struct TextRun {
 +    /// The node whose style the run has (the innermost element around the text).
 +    pub node: NodeId,
-+    /// The number of glyphs and the first one (id, x, y) as drawn: identifies the run's
++    /// The number of glyphs and their [`glyphs_fingerprint`] as drawn: identifies the run's
 +    /// `draw_glyphs` call.
 +    pub glyphs: usize,
-+    pub first: (u32, f32, f32),
++    pub fingerprint: u64,
 +    /// The source text the run shows and each glyph's byte range in it (a ligature's range
 +    /// spans all the characters it stands for). Empty when the source is unknown.
 +    pub text: String,
@@ -113,9 +115,11 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +        source: Option<&str>,
 +        transform: kurbo::Affine,
 +    ) -> TextRun {
-+        let mut glyphs = run.positioned_glyphs();
-+        let count = glyphs.clone().count();
-+        let first = glyphs.next().map_or((0, 0.0, 0.0), |g| (g.id, g.x, g.y));
++        let mut count = 0;
++        let fingerprint = glyphs_fingerprint(run.positioned_glyphs().map(|g| {
++            count += 1;
++            (g.id, g.x, g.y)
++        }));
 +        let mut text = String::new();
 +        let mut glyph_text = Vec::new();
 +        if let Some(source) = source {
@@ -145,12 +149,25 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +        TextRun {
 +            node: run.style().brush.id,
 +            glyphs: count,
-+            first,
++            fingerprint,
 +            text,
 +            glyph_text,
 +            bounds: transform.transform_rect_bbox(rect),
 +        }
 +    }
++}
++
++/// A hash of glyphs as drawn (id, x, y): [`TextRun::fingerprint`] of a run's glyphs. Two runs
++/// that start alike (table cells of dates, amounts) tell apart by the rest of their glyphs.
++pub fn glyphs_fingerprint(glyphs: impl IntoIterator<Item = (u32, f32, f32)>) -> u64 {
++    // FxHash's step: a run is only compared with the next recorded one.
++    let mut hash = 0u64;
++    for (id, x, y) in glyphs {
++        for word in [u64::from(id), (u64::from(x.to_bits()) << 32) | u64::from(y.to_bits())] {
++            hash = (hash.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
++        }
++    }
++    hash
 +}
 +
 +/// [`paint_scene_with`], also returning the glyph runs of the document's text in the order
@@ -166,6 +183,9 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +    y_offset: u32,
 +    backgrounds: bool,
 +) -> Vec<TextRun> {
++    // Painting walks `paint_children` and the stacking contexts, which a
++    // resolve only marks stale.
++    doc.ensure_paint_tree();
 +    #[allow(unused_mut)]
 +    let mut custom_widget_scenes: CustomWidgetSceneMap = HashMap::new();
 +    #[cfg(feature = "custom-widget")]
@@ -185,9 +205,11 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +    generator.paint_scene(scene);
 +    let runs = generator.draw_text_context.borrow_mut().runs.take();
 +    runs.unwrap_or_default()
- }
- 
++}
++
  #[cfg(feature = "custom-widget")]
+ fn build_custom_widget_scenes(
+     custom_widget_scenes: &mut CustomWidgetSceneMap,
 diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/src/render/border.rs
 --- a/packages/blitz-paint/src/render/border.rs
 +++ b/packages/blitz-paint/src/render/border.rs
@@ -847,18 +869,23 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  
                  let css_font_size = font_size as f64 / scale;
  
-@@ -662,6 +813,10 @@
+@@ -662,8 +813,15 @@
                  };
  
                  let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
-+                if let Some(runs) = runs.as_mut() {
-+                    runs.push(crate::TextRun::new(&glyph_run, source, transform));
-+                }
++                let unshifted = transform;
 +                let transform = shifted(transform, shift);
                  // Zero-size text is invisible, but hinting can give its glyphs ink.
                  if font_size > 0.0 {
++                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
++                    // next recorded one, so a run recorded but not drawn would stop the matching.
++                    if let Some(runs) = runs.as_mut() {
++                        runs.push(crate::TextRun::new(&glyph_run, source, unshifted));
++                    }
                      scene.draw_glyphs(
-@@ -737,7 +892,7 @@
+                         font,
+                         font_size,
+@@ -737,7 +895,7 @@
  
          flush_line_decorations(
              scene,
@@ -867,7 +894,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
              options,
              deco_boxes,
              win_ascent_ratios,
-@@ -752,7 +907,7 @@
+@@ -752,7 +910,7 @@
  pub(crate) fn draw_text_selection(
      scene: &mut impl PaintScene,
      layout: &Layout<TextBrush>,
@@ -876,7 +903,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -760,9 +915,9 @@
+@@ -760,9 +918,9 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  

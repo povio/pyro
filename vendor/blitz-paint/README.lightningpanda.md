@@ -13,9 +13,12 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/debug_overlay.rs`: use the real root-element predicate for fixed boxes;
   adapted from https://github.com/DioxusLabs/blitz/pull/1224.
 - `src/lib.rs`, `src/text.rs`, `src/render.rs`: `paint_scene_recording_text` paints like
-  `paint_scene_with` and also returns each text glyph run it drew (`TextRun`: the element,
-  the first glyph, the source text and each glyph's range in it, the content area). PDF output
-  uses it for source text (ligatures), link areas and tags. `paint_scene`/`paint_scene_with`
+  `paint_scene_for_print` and also returns each text glyph run it drew (`TextRun`: the element,
+  the glyph count and a `glyphs_fingerprint` of the glyphs as drawn, the source text and each
+  glyph's range in it, the content area). Only drawn runs are recorded (zero-size text is not
+  drawn): the PDF matches each drawn glyph run to the next recorded one. PDF output uses it for
+  each glyph's text on page boxes and paper cuts (ligatures, glyphs OpenType features
+  substituted), and for link areas and tags on paper cuts. `paint_scene`/`paint_scene_with`
   record nothing.
 
 - `src/render.rs`: `overflow` on `body` does not clip when it is the viewport's.

@@ -453,7 +453,9 @@ pub struct PdfPaint {
     by_selector: bool,
     /// Device px to points.
     scale: f64,
-    /// Paper cuts: text runs, links and structure ([`pdf::Extras`]).
+    /// The text runs painted into `scene`, in paint order.
+    runs: Vec<blitz_paint::TextRun>,
+    /// Paper cuts: links and structure ([`pdf::Extras`]).
     extras: Option<Box<pdf::Extras>>,
     /// The document was laid out again at the paper's width (and back).
     relaid: bool,
@@ -1575,9 +1577,10 @@ fn paint_document(
     let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
     let mut scene = Scene::new();
     let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
-    blitz_paint::paint_scene_for_print(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
+    let runs = blitz_paint::paint_scene_recording_text(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     timings.scene = t.elapsed();
-    Ok(PdfPaint { scene, pages, by_selector: true, scale: pdf::PX_TO_PT / dpr, extras: None, relaid: false, timings })
+    let scale = pdf::PX_TO_PT / dpr;
+    Ok(PdfPaint { scene, pages, by_selector: true, scale, runs, extras: None, relaid: false, timings })
 }
 
 /// The CSS text with `@page` rules of the document's `<style>` elements and `<link>` sheets, in
@@ -1722,7 +1725,7 @@ fn paint_paper(
     let mut scene = Scene::new();
     let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
     let runs = blitz_paint::paint_scene_recording_text(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
-    let mut extras = pdf_extras(doc, runs, dpr, opts.tagged);
+    let mut extras = pdf_extras(doc, &runs, dpr, opts.tagged);
     extras.slice_height = ph;
     extras.shown_height = match opts.page_area {
         Some(area) => area.shown_height(if shrink < 1.0 { shrunk_factor } else { factor }) * dpr,
@@ -1749,6 +1752,7 @@ fn paint_paper(
         pages,
         by_selector: false,
         scale: pdf::PX_TO_PT / dpr,
+        runs,
         extras: Some(Box::new(extras)),
         relaid,
         timings,
@@ -2363,7 +2367,7 @@ fn canvas_color(doc: &blitz_dom::BaseDocument) -> Option<[u8; 4]> {
 
 /// The structure (headings, paragraphs, links) and link targets behind the
 /// painted text `runs`.
-fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dpr: f64, tagged: bool) -> pdf::Extras {
+fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: &[blitz_paint::TextRun], dpr: f64, tagged: bool) -> pdf::Extras {
     use blitz_dom::local_name;
     let mut ex = pdf::Extras { tagged, ..pdf::Extras::default() };
     let root = doc.root_element();
@@ -2443,7 +2447,7 @@ fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dp
         }
         None
     }
-    for run in &runs {
+    for run in runs {
         let s = structure(run.node, doc, &mut ex, &mut structs, &kind_of, &link_target, dpr);
         ex.run_struct.push(s);
         // Inline links cover their text, one area per line.
@@ -2485,16 +2489,16 @@ fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dp
         *rect = Rect::new(snap(rect.x0), snap(rect.y0), snap(rect.x1), snap(rect.y1));
     }
     ex.links.retain(|l| !l.rects.is_empty());
-    ex.runs = runs;
     ex
 }
 
 /// The PDF of painted pages.
 fn write_pdf(paint: PdfPaint, cache: &mut pdf::PdfCache) -> Result<PdfOutput, RenderError> {
-    let PdfPaint { scene, pages, by_selector, scale, extras, mut timings, .. } = paint;
+    let PdfPaint { scene, pages, by_selector, scale, runs, extras, mut timings, .. } = paint;
     let t = Instant::now();
     let placed: Vec<(Rect, Option<pdf::Placement>)> = pages.iter().map(|p| (p.rect, p.placement)).collect();
-    let (bytes, stats) = pdf::write(&scene, &placed, scale, extras.as_deref(), cache).map_err(RenderError::Resource)?;
+    let (bytes, stats) =
+        pdf::write(&scene, &placed, scale, &runs, extras.as_deref(), cache).map_err(RenderError::Resource)?;
     timings.raster = t.elapsed();
     Ok(PdfOutput { bytes, pages, by_selector, stats, commands: scene.commands.len(), timings })
 }

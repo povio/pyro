@@ -3,14 +3,17 @@
 //! (embedded, subset fonts) stay vector; what the PDF model has no
 //! equivalent for is skipped and counted in [`PdfStats`].
 //!
-//! Text is written as glyph ids with positions, as Blitz shaped it. The
-//! display list carries no source text, so the text a glyph stands for is
-//! recovered from the font's cmap (reverse lookup): plain text extracts and
-//! copies, ligatures and glyphs reached only through GSUB do not.
+//! Text is written as glyph ids with positions, as Blitz shaped it. The text
+//! a glyph stands for comes from the text runs Blitz painted
+//! ([`blitz_paint::paint_scene_recording_text`]): the characters of the
+//! cluster it was shaped from, so glyphs that OpenType features substituted
+//! (tabular figures, case-sensitive forms, ligatures) extract as the
+//! characters they stand for ([`glyph_texts`]). Runs painted without their
+//! source text (list markers, form controls) fall back to the font's cmap
+//! (reverse lookup).
 //!
-//! Paper-cut documents (no page boxes) also pass [`Extras`]: the text runs
-//! as painted, with their source text (ligatures copy as the characters
-//! they stand for) and elements, which give link annotations, a tag tree
+//! Paper-cut documents (no page boxes) also pass [`Extras`]: the elements
+//! behind the text runs, which give link annotations and a tag tree
 //! (headings, paragraphs, links). Blurred outset box shadows are drawn on
 //! both (`LIGHTNINGPANDA_PDF_SHADOWS=0` skips them).
 
@@ -44,7 +47,8 @@ pub struct PdfStats {
     pub strokes: u32,
     pub glyph_runs: u32,
     pub glyphs: u32,
-    /// Glyphs with no cmap entry: drawn, but no text behind them.
+    /// Glyphs drawn with no text behind them: no source text, cmap entry or
+    /// text the same glyph was drawn for elsewhere.
     pub glyphs_without_text: u32,
     pub images: u32,
     /// Inset box shadows, written as box-minus-hole fills.
@@ -59,7 +63,7 @@ pub struct PdfStats {
     pub box_shadows: u32,
     /// Link annotations written.
     pub links: u32,
-    /// Glyph runs written with their source text (ligatures, tags).
+    /// Glyph runs written with their source text.
     pub runs_with_source: u32,
     /// Blurred outset shadows hidden on the page by their element's opaque
     /// background: not drawn.
@@ -80,10 +84,16 @@ pub struct PdfStats {
 
 struct FontEntry {
     font: Font,
-    /// Glyph id to the character it maps from (the lowest code point).
-    chars: HashMap<u32, char>,
+    /// By glyph id: the character the cmap maps to it (the lowest code point).
+    chars: Vec<Option<char>>,
     /// The bundled font list bullets are drawn with.
     marker: bool,
+}
+
+impl FontEntry {
+    fn char(&self, glyph: u32) -> Option<char> {
+        self.chars.get(glyph as usize).copied().flatten()
+    }
 }
 
 /// Fonts and images converted for krilla, kept across documents.
@@ -101,12 +111,17 @@ impl PdfCache {
                 let blob = data.data.clone();
                 let bytes: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(blob);
                 let font = Font::new(krilla::Data::from(bytes), data.index)?;
-                let mut chars = HashMap::new();
+                let mut chars = Vec::new();
                 use skrifa::MetadataProvider;
                 if let Ok(f) = skrifa::FontRef::from_index(data.data.as_ref(), data.index) {
+                    // Mappings come in code point order.
                     for (cp, gid) in f.charmap().mappings() {
-                        if let Some(c) = char::from_u32(cp) {
-                            chars.entry(gid.to_u32()).or_insert(c);
+                        let (Some(c), glyph) = (char::from_u32(cp), gid.to_u32() as usize) else { continue };
+                        if glyph <= usize::from(u16::MAX) {
+                            if glyph >= chars.len() {
+                                chars.resize(glyph + 1, None);
+                            }
+                            chars[glyph].get_or_insert(c);
                         }
                     }
                 }
@@ -193,12 +208,10 @@ pub struct Link {
     pub boxed: bool,
 }
 
-/// What a paper-cut document carries besides its display list.
+/// What a paper-cut document carries besides its display list and text runs.
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
-    /// The text runs in the order they were painted.
-    pub runs: Vec<blitz_paint::TextRun>,
-    /// Each run's innermost structure element.
+    /// Each text run's innermost structure element.
     pub run_struct: Vec<Option<u32>>,
     pub structs: Vec<Struct>,
     pub links: Vec<Link>,
@@ -218,15 +231,18 @@ type Leaves = Vec<(krilla::tagging::Identifier, Option<u32>)>;
 
 /// Writes `scene` (device px, document coordinates) as a PDF with one page
 /// per rectangle of `placed`; `scale` converts device px to points. Without
-/// a placement a page is its rectangle's size.
+/// a placement a page is its rectangle's size. `runs`: the text runs painted
+/// into `scene`, in paint order.
 pub fn write(
     scene: &Scene,
     placed: &[(Rect, Option<Placement>)],
     scale: f64,
+    runs: &[blitz_paint::TextRun],
     extras: Option<&Extras>,
     cache: &mut PdfCache,
 ) -> Result<(Vec<u8>, PdfStats), String> {
     let mut stats = PdfStats::default();
+    let recorded = Recorded::new(scene, runs);
     let tagged = extras.is_some_and(|e| e.tagged);
     let mut doc = match extras {
         Some(_) => {
@@ -273,8 +289,9 @@ pub fn write(
             stats: &mut stats,
             layers: Vec::new(),
             extras,
+            recorded: &recorded,
             dpr,
-            next_run: 0,
+            glyph_runs: 0,
             leaves: if tagged { Some(&mut leaves) } else { None },
         }
         .run(scene);
@@ -464,13 +481,173 @@ struct Replay<'a, 'b> {
     cache: &'a mut PdfCache,
     stats: &'a mut PdfStats,
     layers: Vec<Pending>,
+    /// Paper cuts: links and structure.
     extras: Option<&'a Extras>,
+    recorded: &'a Recorded<'a>,
     /// Device px per CSS px.
     dpr: f64,
-    /// The next of `extras.runs` to match a glyph run command with.
-    next_run: usize,
+    /// Glyph run commands met so far (an index of `recorded.run_of`).
+    glyph_runs: usize,
     /// Tagged content written, with its structure element.
     leaves: Option<&'a mut Leaves>,
+}
+
+/// The text runs Blitz painted ([`blitz_paint::paint_scene_recording_text`])
+/// behind a scene's glyph runs.
+struct Recorded<'a> {
+    scene: &'a Scene,
+    runs: &'a [blitz_paint::TextRun],
+    /// For each glyph run command of the scene, in order: the run it draws.
+    run_of: Vec<Option<usize>>,
+    /// [`Recorded::learned`].
+    learned: std::cell::OnceCell<HashMap<(u64, u32, u32), Box<str>>>,
+}
+
+impl<'a> Recorded<'a> {
+    fn new(scene: &'a Scene, runs: &'a [blitz_paint::TextRun]) -> Recorded<'a> {
+        let mut run_of = Vec::new();
+        let mut next = 0;
+        for c in glyph_runs(scene) {
+            // Runs are recorded in paint order; glyph runs Blitz's text
+            // painting did not draw (custom widgets) match none.
+            let matched = runs.get(next).is_some_and(|r| {
+                r.glyphs == c.glyphs.len()
+                    && r.fingerprint == blitz_paint::glyphs_fingerprint(c.glyphs.iter().map(|g| (g.id, g.x, g.y)))
+            });
+            run_of.push(matched.then_some(next));
+            next += usize::from(matched);
+        }
+        Recorded { scene, runs, run_of, learned: Default::default() }
+    }
+
+    /// Glyphs alone in their cluster in a recorded run (font data id, face
+    /// index, glyph id) to the text the first of them stands for: what a
+    /// glyph the cmap does not reach stands for in a run painted without its
+    /// source text. Made when first needed.
+    fn learned(&self) -> &HashMap<(u64, u32, u32), Box<str>> {
+        self.learned.get_or_init(|| {
+            let mut learned = HashMap::new();
+            for (c, run) in glyph_runs(self.scene).zip(&self.run_of) {
+                let Some(r) = run.and_then(|i| self.runs.get(i)).filter(|r| !r.text.is_empty()) else { continue };
+                for (i, g) in c.glyphs.iter().enumerate() {
+                    let range = &r.glyph_text[i];
+                    let alone = (i == 0 || r.glyph_text[i - 1] != *range) && r.glyph_text.get(i + 1) != Some(range);
+                    let text = r.text.get(range.start as usize..range.end as usize).unwrap_or_default();
+                    if alone && !text.is_empty() {
+                        learned.entry((c.font_data.data.id(), c.font_data.index, g.id)).or_insert_with(|| text.into());
+                    }
+                }
+            }
+            learned
+        })
+    }
+}
+
+fn glyph_runs(scene: &Scene) -> impl Iterator<Item = &anyrender::recording::GlyphRunCommand> {
+    scene.commands.iter().filter_map(|c| match c {
+        RenderCommand::GlyphRun(c) => Some(c),
+        _ => None,
+    })
+}
+
+/// The text each glyph of `shown` stands for: ranges of the returned string.
+///
+/// With the run's source text, a glyph stands for the characters of the
+/// cluster it was shaped from: glyphs that OpenType features substituted
+/// (tabular figures, case-sensitive forms, small caps) and ligatures extract
+/// as those characters. A glyph the font's cmap maps its character to keeps
+/// the cmap's lowest code point, as in Chrome's ToUnicode (krilla maps a
+/// glyph to the first text it is written with: a no-break space written
+/// first would be the text of every space); so does a space the font drew
+/// with another space's glyph. A cluster of several glyphs splits into one
+/// character per glyph when the cmap maps each to its glyph (a base and a
+/// mark with no precomposed glyph); otherwise its first glyph gets all of
+/// its text (krilla writes it as ActualText).
+///
+/// Without source text a glyph stands for its cmap character, else for what
+/// the same glyph stands for in the recorded runs ([`Recorded::learned`]).
+fn glyph_texts(
+    c: &anyrender::recording::GlyphRunCommand,
+    shown: &[usize],
+    source: Option<&blitz_paint::TextRun>,
+    entry: &FontEntry,
+    recorded: &Recorded,
+) -> (String, Vec<std::ops::Range<usize>>) {
+    let mut text = String::new();
+    let push = |text: &mut String, s: &str| {
+        let start = text.len();
+        text.push_str(s);
+        start..text.len()
+    };
+    let fallback = |text: &mut String, glyph: u32| match entry.char(glyph) {
+        Some(ch) => push(text, ch.encode_utf8(&mut [0; 4])),
+        None => {
+            let learned = recorded.learned().get(&(c.font_data.data.id(), c.font_data.index, glyph));
+            push(text, learned.map_or("", |t| t))
+        }
+    };
+    let Some(r) = source else {
+        let ranges = shown.iter().map(|&i| fallback(&mut text, c.glyphs[i].id)).collect();
+        return (text, ranges);
+    };
+    text.push_str(&r.text);
+    use skrifa::MetadataProvider;
+    let charmap = std::cell::OnceCell::new();
+    // The cmap character `glyph` stands for in place of `ch`, if any.
+    let as_cmap = |ch: char, glyph: u32| {
+        let own = entry.char(glyph)?;
+        if own == ch {
+            return Some(own);
+        }
+        let charmap = charmap.get_or_init(|| {
+            skrifa::FontRef::from_index(c.font_data.data.as_ref(), c.font_data.index).ok().map(|f| f.charmap())
+        });
+        let mapped = charmap.as_ref().and_then(|m| m.map(ch)).is_some_and(|g| g.to_u32() == glyph);
+        (mapped || (ch.is_whitespace() && own.is_whitespace())).then_some(own)
+    };
+    let n = c.glyphs.len();
+    let mut ranges = Vec::with_capacity(n);
+    let mut i = 0;
+    while i < n {
+        let cluster = r.glyph_text[i].start as usize..r.glyph_text[i].end as usize;
+        let mut end = i + 1;
+        while end < n && r.glyph_text[end] == r.glyph_text[i] {
+            end += 1;
+        }
+        let glyphs = &c.glyphs[i..end];
+        let cluster_text = r.text.get(cluster.clone()).unwrap_or_default();
+        let mut one = cluster_text.chars();
+        if let ([g], Some(ch), None) = (glyphs, one.next(), one.next()) {
+            // One glyph for one character: most text.
+            ranges.push(match as_cmap(ch, g.id) {
+                Some(own) if own != ch => push(&mut text, own.encode_utf8(&mut [0; 4])),
+                _ => cluster,
+            });
+            i = end;
+            continue;
+        }
+        let chars: Vec<(usize, char)> = cluster_text.char_indices().collect();
+        // One character per glyph, each the font's own.
+        let own: Option<Vec<char>> = (chars.len() == glyphs.len())
+            .then(|| glyphs.iter().zip(&chars).map(|(g, &(_, ch))| as_cmap(ch, g.id)).collect())
+            .flatten();
+        if chars.is_empty() {
+            ranges.extend(glyphs.iter().map(|g| fallback(&mut text, g.id)));
+        } else if let Some(own) = own {
+            for (k, (&(at, ch), own)) in chars.iter().zip(own).enumerate() {
+                if own == ch {
+                    let to = chars.get(k + 1).map_or(cluster.end, |&(next, _)| cluster.start + next);
+                    ranges.push(cluster.start + at..to);
+                } else {
+                    ranges.push(push(&mut text, own.encode_utf8(&mut [0; 4])));
+                }
+            }
+        } else {
+            ranges.extend(glyphs.iter().map(|_| cluster.clone()));
+        }
+        i = end;
+    }
+    (text, shown.iter().map(|&i| ranges[i].clone()).collect())
 }
 
 impl Replay<'_, '_> {
@@ -577,7 +754,8 @@ impl Replay<'_, '_> {
                     });
                 }
                 RenderCommand::GlyphRun(c) => {
-                    let source = self.match_run(c);
+                    let source = self.recorded.run_of.get(self.glyph_runs).copied().flatten();
+                    self.glyph_runs += 1;
                     if c.glyphs.is_empty() {
                         continue;
                     }
@@ -590,10 +768,10 @@ impl Replay<'_, '_> {
                         y1 = y1.max(g.y as f64);
                     }
                     let bounds = Rect::new(x0 - size, y0 - size * 1.5, x1 + size * 2.0, y1 + size);
-                    // A recorded run's middle: a line on the next page (cuts are
-                    // at line tops, and a content area can start above its line
-                    // box) is not written on this one.
-                    let bounds = match source.and_then(|i| self.extras?.runs.get(i)) {
+                    // Paper cuts: a recorded run's middle. A line on the next page
+                    // (cuts are at line tops, and a content area can start above
+                    // its line box) is not written on this one.
+                    let bounds = match self.extras.and(source).and_then(|i| self.recorded.runs.get(i)) {
                         Some(r) => r.bounds.inflate(-0.5, 0.5 - r.bounds.height() / 2.0),
                         None => c.transform.transform_rect_bbox(bounds),
                     };
@@ -630,18 +808,6 @@ impl Replay<'_, '_> {
                 self.s.pop();
             }
         }
-    }
-
-    /// The painted text run `c` is (`extras.runs` are in paint order; glyph
-    /// runs Blitz's text painting did not draw, such as SVG text, match none).
-    fn match_run(&mut self, c: &anyrender::recording::GlyphRunCommand) -> Option<usize> {
-        let run = self.extras?.runs.get(self.next_run)?;
-        let first = c.glyphs.first().map(|g| (g.id, g.x, g.y));
-        if run.glyphs != c.glyphs.len() || (run.glyphs != 0 && first != Some(run.first)) {
-            return None;
-        }
-        self.next_run += 1;
-        Some(self.next_run - 1)
     }
 
     /// A blurred outset box shadow: its rounded rectangle blurred by `sigma`
@@ -871,7 +1037,7 @@ impl Replay<'_, '_> {
         if c.embolden != kurbo::Vec2::ZERO {
             self.stats.embolden_skipped += 1;
         }
-        // Only a paper-cut page: `.pz-page` documents keep what they had.
+        // Clipped glyphs and outlined bullets: only a paper-cut page.
         let paper_cut = self.extras.is_some();
         let shown: Vec<usize> =
             if paper_cut && !self.run_all_shown(c) { self.glyphs_shown(c) } else { (0..c.glyphs.len()).collect() };
@@ -888,29 +1054,16 @@ impl Replay<'_, '_> {
         // font, drawn as outlines.
         let outlined = paper_cut && entry.marker;
         let size = c.font_size;
-        let mut text = String::new();
         let mut glyphs = Vec::with_capacity(shown.len());
         let (gx, gy) = (c.glyphs[first].x, c.glyphs[first].y);
-        // The run's source text when it was recorded: each glyph stands for
-        // its cluster's characters (all of them for a ligature).
         let ex = self.extras;
-        let recorded = source.and_then(|i| ex?.runs.get(i)).filter(|r| !r.text.is_empty());
-        if let Some(r) = recorded {
-            text.push_str(&r.text);
+        let run = source.and_then(|i| self.recorded.runs.get(i)).filter(|r| !r.text.is_empty());
+        if run.is_some() {
             self.stats.runs_with_source += 1;
         }
-        for (at, &i) in shown.iter().enumerate() {
+        let (text, ranges) = glyph_texts(c, &shown, run, entry, self.recorded);
+        for (at, (&i, range)) in shown.iter().zip(ranges).enumerate() {
             let g = &c.glyphs[i];
-            let range = match recorded {
-                Some(r) => r.glyph_text[i].start as usize..r.glyph_text[i].end as usize,
-                None => {
-                    let start = text.len();
-                    if let Some(ch) = entry.chars.get(&g.id) {
-                        text.push(*ch);
-                    }
-                    start..text.len()
-                }
-            };
             if range.is_empty() {
                 self.stats.glyphs_without_text += 1;
             }
