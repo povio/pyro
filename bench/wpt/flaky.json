@@ -5,6 +5,22 @@
    "reason": "Timing: passes when the page runs alone (4 of 4 runs) and fails in full runs under load (4 of 4), fork JavaScriptCore at 7e68",
    "subtests": ["Move 'target1' in 'container2'"]
   },
+  "dom/nodes/Node-isEqualNode-xhtml.xhtml": {
+   "reason": "Does not always complete: one of six full runs on the CI runners timed out (15 s) without a result; the other five passed 14 of 14 in about 20 ms",
+   "allowIncomplete": true
+  },
+  "html/dom/render-blocking/element-render-blocking-025.html": {
+   "reason": "Timing: failed in one of six full runs on the CI runners and passed in the other five",
+   "subtests": ["adding an id in the body satisfies render block"]
+  },
+  "html/dom/render-blocking/non-render-blocking-scripts.optional.html": {
+   "reason": "Timing: these subtests passed in one of six full runs on the CI runners and failed in the other five",
+   "subtests": [
+    "script-inserted module script is not implicitly render-blocking",
+    "script-inserted script is not implicitly render-blocking",
+    "script-inserted sync script is not implicitly render-blocking"
+   ]
+  },
   "html/dom/render-blocking/parser-inserted-style-element.html": {
    "reason": "Timing: whether the stylesheet applies before the check depends on load (passes in 3 of 4 full runs, fails in 4 of 4 runs alone)",
    "subtests": ["Render-blocking stylesheet is applied"]
