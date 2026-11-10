@@ -1246,7 +1246,7 @@ static PROCESS_DEFAULTS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex:
 /// user did not): a process spawned for another role may replace it with its
 /// own default (`serve --fork`'s template does).
 pub fn is_process_default(name: &str) -> bool {
-    PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|n| *n == name)
+    PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).contains(&name)
 }
 
 /// Complete Foundation number initialization in the parent before its first

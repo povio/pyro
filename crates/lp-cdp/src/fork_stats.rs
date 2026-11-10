@@ -48,6 +48,7 @@ pub(crate) struct Usage {
     footprint_kb: u64,
     /// Instructions retired (millions): the work done, whatever the load.
     minstr: u64,
+    syscalls: u64,
 }
 
 fn tv_us(tv: libc::timeval) -> u64 {
@@ -69,9 +70,10 @@ struct TaskEventsInfo {
 }
 
 impl Usage {
-    pub(crate) fn now() -> Usage {
+    fn now() -> Usage {
         let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
         unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut ru) };
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut usage = Usage {
             user_us: tv_us(ru.ru_utime),
             sys_us: tv_us(ru.ru_stime),
@@ -92,6 +94,7 @@ impl Usage {
                 usage.faults = info.faults as u64;
                 usage.cow_faults = info.cow_faults as u64;
                 usage.pageins = info.pageins as u64;
+                usage.syscalls = info.syscalls_unix as u64 + info.syscalls_mach as u64;
             }
             let mut ri: libc::rusage_info_v4 = std::mem::zeroed();
             if libc::proc_pid_rusage(
@@ -118,6 +121,7 @@ impl Usage {
             "ivcsw": self.ivcsw,
             "footprint_kb": self.footprint_kb,
             "minstr": self.minstr,
+            "syscalls": self.syscalls,
         })
     }
 }
@@ -130,18 +134,14 @@ pub(crate) fn forked(kind: &str, child: libc::pid_t, fork_us: u64) {
     if file().is_none() {
         return;
     }
-    let usage = Usage::now();
     log(json!({
         "e": "fork",
         "kind": kind,
         "pid": std::process::id(),
         "child": child,
         "fork_us": fork_us,
-        "self": usage.json(),
+        "self": Usage::now().json(),
     }));
-    if kind != "template" && usage.footprint_kb > 50 << 10 {
-        vmmap("template");
-    }
 }
 
 /// In a forked child, right after the fork: its first step.
@@ -162,33 +162,6 @@ pub(crate) fn mark(step: &'static str) {
     let mut marks = MARKS.lock().unwrap_or_else(|e| e.into_inner());
     if !marks.is_empty() {
         marks.push((step, Instant::now(), Usage::now()));
-        drop(marks);
-        if step == "served" {
-            vmmap("child");
-        }
-    }
-}
-
-/// `LIGHTNINGPANDA_FORK_VMMAP=<dir>` (macOS, with the stats on): writes
-/// `vmmap --summary` of this process to `<dir>/<what>-<pid>.txt`, once per
-/// process (children: one in eight).
-pub(crate) fn vmmap(what: &str) {
-    static DONE_BY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let Some(dir) = std::env::var_os("LIGHTNINGPANDA_FORK_VMMAP") else { return };
-    let pid = std::process::id();
-    if file().is_none() || (what == "child" && pid % 8 != 0) {
-        return;
-    }
-    if DONE_BY.swap(pid, std::sync::atomic::Ordering::Relaxed) == pid {
-        return;
-    }
-    let path = std::path::Path::new(&dir).join(format!("{what}-{pid}.txt"));
-    if let Ok(out) = std::fs::File::create(path) {
-        let _ = std::process::Command::new("/usr/bin/vmmap")
-            .args(["--summary", &pid.to_string()])
-            .stdout(out)
-            .stderr(std::process::Stdio::null())
-            .status();
     }
 }
 

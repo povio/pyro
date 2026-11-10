@@ -14,7 +14,10 @@
 //! The overlay runs after CDP `Fetch` interception (routes still see and can
 //! override these requests) and before the HTTP cache; responses are not
 //! cached (the file system is the cache). Only `..` traversal is refused;
-//! symlinks inside `DIR` are the operator's choice.
+//! symlinks inside `DIR` are the operator's choice. Files are read into
+//! memory at startup (up to a budget) and answered from there without a file
+//! system call; a path that was not read then (a file added later, one past
+//! the budget, or none at all) is looked up on disk.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -67,6 +70,20 @@ impl Preloaded {
         }
         guard.as_ref().expect("set above").clone()
     }
+
+    /// The files once read, without waiting.
+    fn ready(&self) -> Option<Arc<FileMap>> {
+        self.files.lock().unwrap().clone()
+    }
+}
+
+/// The preloaded file at `relative`, or its directory's `index.html`.
+fn memory_file<'a>(files: &'a FileMap, relative: &Path) -> Option<&'a Arc<StaticFile>> {
+    let key = relative.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
+    if key.is_empty() {
+        return files.get("index.html");
+    }
+    files.get(&key).or_else(|| files.get(&format!("{key}/index.html")))
 }
 
 /// The configured static roots of a process; `Clone` shares them.
@@ -164,14 +181,9 @@ impl StaticFiles {
         let origin = origin.ascii_serialization();
         let root = self.roots.iter().find(|r| r.origin == origin)?;
         let relative = relative_path(url.path())?;
-        let key = relative.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
         let files = root.files.get();
-        let candidates =
-            if key.is_empty() { vec!["index.html".to_owned()] } else { vec![key.clone(), format!("{key}/index.html")] };
-        for candidate in candidates {
-            if let Some(file) = files.get(&candidate) {
-                return Some(StaticMemoryHit { file: file.clone(), spa_fallback: false });
-            }
+        if let Some(file) = memory_file(&files, &relative) {
+            return Some(StaticMemoryHit { file: file.clone(), spa_fallback: false });
         }
         if document && self.spa_fallback {
             if let Some(file) = files.get("index.html") {
@@ -200,9 +212,20 @@ impl StaticFiles {
         let origin = origin.ascii_serialization();
         let root = self.roots.iter().find(|r| r.origin == origin)?;
         let relative = relative_path(url.path())?;
+        // A file read at startup needs no file system call (requests for an
+        // app's assets are most of what reaches here).
+        if let Some(file) = root.files.ready().as_deref().and_then(|files| memory_file(files, &relative)) {
+            return Some(StaticHit { path: file.path.clone(), spa_fallback: false });
+        }
+        // One call for a path that has nothing (an API request on the same
+        // origin): its metadata, not `is_dir` and then `is_file`.
         let candidate = root.dir.join(&relative);
-        let candidate = if candidate.is_dir() { candidate.join("index.html") } else { candidate };
-        if candidate.is_file() {
+        let candidate = match std::fs::metadata(&candidate) {
+            Ok(meta) if meta.is_dir() => Some(candidate.join("index.html")).filter(|index| index.is_file()),
+            Ok(meta) if meta.is_file() => Some(candidate),
+            _ => None,
+        };
+        if let Some(candidate) = candidate {
             return Some(StaticHit { path: candidate, spa_fallback: false });
         }
         if document && self.spa_fallback {

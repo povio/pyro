@@ -202,14 +202,16 @@ pub struct Template {
 ///   Pages of a mid-size SPA use about 6 MB of it; at 16 MB JavaScriptCore
 ///   already compiles less (it raises its tier-up thresholds as the pool
 ///   fills: 2.6% more instructions per page).
-/// - `smallHeapSize` 256 MB instead of 4 MB: a collection in a fork marks
-///   and sweeps memory it shares with the template (copying the pages it
-///   writes), for a process that exits seconds later. With the floor at
-///   256 MB most pages never collect: 8% less CPU per page of a mid-size
-///   SPA for 17 MB more memory each on average. The template still settles
-///   (one full collection) before it forks; it collects less while booting.
+/// - `heapGrowthMaxIncrease=3` (JavaScriptCore's own default; other
+///   processes run at 1, see `lp_js::configure_process`): a fork may
+///   allocate about three times the template's live heap before it collects
+///   instead of once, so most pages never collect. A collection in a fork
+///   marks memory it shares with the template (copying the pages it writes)
+///   for a process that exits seconds later: pages of a mid-size SPA ran
+///   2.5% fewer instructions for 9 MB more memory each on average. The
+///   template still settles (one full collection) before it forks.
 const FORK_JSC_DEFAULTS: [(&str, &str); 3] =
-    [("JSC_useDFGJIT", "false"), ("JSC_jitMemoryReservationSize", "33554432"), ("JSC_smallHeapSize", "268435456")];
+    [("JSC_useDFGJIT", "false"), ("JSC_jitMemoryReservationSize", "33554432"), ("JSC_heapGrowthMaxIncrease", "3")];
 
 impl Template {
     /// Starts `lightningpanda serve --template <socket> <args>` and waits
