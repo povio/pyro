@@ -162,8 +162,9 @@ The slowest pages are slow by design or by a known engine gap, not by the runner
 - `dom/nodes/NodeList-static-length-getter-tampered-*.html` (6 long pages, 22-29 s each on a loaded machine): 50 x
   50,000 loops over a 100-node `NodeList`, ~1.3e8 indexed reads and `length` gets, each a call into our bindings. It
   is a JIT test; making it fast means indexed access the JIT can inline, not a runner change.
-- `xhr/xmlhttprequest-timeout*.html` (37 variants, 5-20 s each, 266 s in all): the tests wait on their own 5 s timers
-  and use CPU only briefly, which is why each shard runs one page more than it has CPUs.
+- `xhr/xmlhttprequest-timeout*.html` (37 variants, 5-22 s each, 355 s in all): the tests wait on their own 5 s timers
+  and on `delay.py`'s delayed responses and use CPU only briefly, which is why each shard runs one page more than it
+  has CPUs.
 - Pages ending at 10 s complete by testharness's own timeout; those with nothing passing are skipped by the gate.
 - `encoding/legacy-mb-*/*-encode-form-*.html?...` occasionally never reported in full local runs (45 s timeouts in
   2-5 of 584 pages per run, often 2-3 variants of one file together). That is what a browser replacement did to the
