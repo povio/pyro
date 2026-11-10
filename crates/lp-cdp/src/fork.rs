@@ -417,6 +417,10 @@ struct TemplateProcess {
     /// Root only: where each profile's snapshot is served (`None`: here).
     holders: Vec<Option<PathBuf>>,
     derived_pids: HashMap<usize, libc::pid_t>,
+    /// Retired derived templates told to exit, not reaped yet, with when
+    /// they get SIGKILL instead. Nothing waits for them: a large process can
+    /// take a while to exit, and this loop serves every other profile.
+    terminating: Vec<(libc::pid_t, Instant, bool)>,
     is_root: bool,
     /// Root only: profiles shared by name, retired with their last holder.
     names: HashMap<String, Named>,
@@ -496,6 +500,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
         derives: VecDeque::new(),
         holders,
         derived_pids: HashMap::new(),
+        terminating: Vec::new(),
         is_root: true,
         names: HashMap::new(),
         pinned,
@@ -537,7 +542,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
             }
         }
         // Boot what is booting; wake for the next message.
-        let busy = !ready || !t.forwards.is_empty() || !t.pending_derives.is_empty();
+        let busy = !ready || !t.forwards.is_empty() || !t.pending_derives.is_empty() || !t.terminating.is_empty();
         let deadline = Instant::now() + Duration::from_millis(if busy { 20 } else { 1000 });
         t.watch_listener();
         let watch = t.watch.clone();
@@ -887,6 +892,15 @@ impl TemplateProcess {
                 break;
             }
             self.derived_pids.retain(|_, child| *child != pid);
+            self.terminating.retain(|(child, _, _)| *child != pid);
+        }
+        let now = Instant::now();
+        for (pid, deadline, killed) in &mut self.terminating {
+            if !*killed && now >= *deadline {
+                // SAFETY: our child, not reaped yet (reaping removes it from this list).
+                unsafe { libc::kill(*pid, libc::SIGKILL) };
+                *killed = true;
+            }
         }
     }
 
@@ -894,9 +908,10 @@ impl TemplateProcess {
         let before = self.derives.len();
         self.derives.retain(|derive| derive.id != id);
         let mut removed = self.derives.len() != before;
-        if let Some(pid) = self.derived_pids.get(&id).copied() {
-            terminate_owned_child(pid)?;
-            self.derived_pids.remove(&id);
+        if let Some(pid) = self.derived_pids.remove(&id) {
+            // SAFETY: our child, not reaped yet (reaping removes it from derived_pids).
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+            self.terminating.push((pid, Instant::now() + Duration::from_millis(500), false));
             removed = true;
         }
         let path = PathBuf::from(format!("{}.{id}", self.root.display()));
@@ -979,6 +994,7 @@ impl TemplateProcess {
                 self.is_root = false;
                 self.holders.clear();
                 self.derived_pids.clear();
+                self.terminating.clear();
                 self.waiting.clear();
                 self.forwards.clear();
                 self.derives.clear();
@@ -1107,6 +1123,7 @@ impl TemplateProcess {
         self.derives.clear();
         self.leases.clear();
         self.pending_derives.clear();
+        self.terminating.clear();
         // `holders` stays: a spare of the root passes on connections for derived snapshots.
         unsafe { libc::close(self.listener.as_raw_fd()) };
     }
@@ -1323,59 +1340,6 @@ fn install_child_notifications() {
         action.sa_flags = libc::SA_NOCLDSTOP;
         libc::sigemptyset(&mut action.sa_mask);
         libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut());
-    }
-}
-
-fn terminate_owned_child(pid: libc::pid_t) -> Result<(), String> {
-    // Only a still-waitable child can be signalled; a reused unrelated PID is never touched.
-    let status = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
-    if status == pid {
-        return Ok(());
-    }
-    if status < 0 {
-        let error = std::io::Error::last_os_error();
-        return if error.raw_os_error() == Some(libc::ECHILD) { Ok(()) } else { Err(error.to_string()) };
-    }
-    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ESRCH) {
-            return Err(error.to_string());
-        }
-    }
-    let deadline = Instant::now() + Duration::from_millis(500);
-    loop {
-        let result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
-        if result == pid {
-            return Ok(());
-        }
-        if result < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ECHILD) {
-                return Ok(());
-            }
-            if error.raw_os_error() != Some(libc::EINTR) {
-                return Err(error.to_string());
-            }
-        }
-        if Instant::now() >= deadline {
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
-            loop {
-                let result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
-                if result == pid {
-                    return Ok(());
-                }
-                let error = std::io::Error::last_os_error();
-                if error.raw_os_error() == Some(libc::ECHILD) {
-                    return Ok(());
-                }
-                if error.raw_os_error() != Some(libc::EINTR) {
-                    return Err(error.to_string());
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
