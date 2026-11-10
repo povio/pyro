@@ -84,10 +84,16 @@ pub struct PdfStats {
 
 struct FontEntry {
     font: Font,
-    /// Glyph id to the character it maps from (the lowest code point).
-    chars: HashMap<u32, char>,
+    /// By glyph id: the character the cmap maps to it (the lowest code point).
+    chars: Vec<Option<char>>,
     /// The bundled font list bullets are drawn with.
     marker: bool,
+}
+
+impl FontEntry {
+    fn char(&self, glyph: u32) -> Option<char> {
+        self.chars.get(glyph as usize).copied().flatten()
+    }
 }
 
 /// Fonts and images converted for krilla, kept across documents.
@@ -105,12 +111,17 @@ impl PdfCache {
                 let blob = data.data.clone();
                 let bytes: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(blob);
                 let font = Font::new(krilla::Data::from(bytes), data.index)?;
-                let mut chars = HashMap::new();
+                let mut chars = Vec::new();
                 use skrifa::MetadataProvider;
                 if let Ok(f) = skrifa::FontRef::from_index(data.data.as_ref(), data.index) {
+                    // Mappings come in code point order.
                     for (cp, gid) in f.charmap().mappings() {
-                        if let Some(c) = char::from_u32(cp) {
-                            chars.entry(gid.to_u32()).or_insert(c);
+                        let (Some(c), glyph) = (char::from_u32(cp), gid.to_u32() as usize) else { continue };
+                        if glyph <= usize::from(u16::MAX) {
+                            if glyph >= chars.len() {
+                                chars.resize(glyph + 1, None);
+                            }
+                            chars[glyph].get_or_insert(c);
                         }
                     }
                 }
@@ -231,7 +242,7 @@ pub fn write(
     cache: &mut PdfCache,
 ) -> Result<(Vec<u8>, PdfStats), String> {
     let mut stats = PdfStats::default();
-    let recorded = Recorded::new(scene, runs, cache);
+    let recorded = Recorded::new(scene, runs);
     let tagged = extras.is_some_and(|e| e.tagged);
     let mut doc = match extras {
         Some(_) => {
@@ -484,46 +495,59 @@ struct Replay<'a, 'b> {
 /// The text runs Blitz painted ([`blitz_paint::paint_scene_recording_text`])
 /// behind a scene's glyph runs.
 struct Recorded<'a> {
+    scene: &'a Scene,
     runs: &'a [blitz_paint::TextRun],
     /// For each glyph run command of the scene, in order: the run it draws.
     run_of: Vec<Option<usize>>,
-    /// Glyphs the cmap does not reach (font data id, face index, glyph id),
-    /// alone in their cluster, to the text the first of them stands for: for
-    /// the same glyphs in runs painted without their source text.
-    learned: HashMap<(u64, u32, u32), Box<str>>,
+    /// [`Recorded::learned`].
+    learned: std::cell::OnceCell<HashMap<(u64, u32, u32), Box<str>>>,
 }
 
 impl<'a> Recorded<'a> {
-    fn new(scene: &Scene, runs: &'a [blitz_paint::TextRun], cache: &mut PdfCache) -> Recorded<'a> {
+    fn new(scene: &'a Scene, runs: &'a [blitz_paint::TextRun]) -> Recorded<'a> {
         let mut run_of = Vec::new();
-        let mut learned = HashMap::new();
         let mut next = 0;
-        for cmd in &scene.commands {
-            let RenderCommand::GlyphRun(c) = cmd else { continue };
+        for c in glyph_runs(scene) {
             // Runs are recorded in paint order; glyph runs Blitz's text
             // painting did not draw (custom widgets) match none.
-            let matched = runs.get(next).filter(|r| {
+            let matched = runs.get(next).is_some_and(|r| {
                 r.glyphs == c.glyphs.len()
                     && r.fingerprint == blitz_paint::glyphs_fingerprint(c.glyphs.iter().map(|g| (g.id, g.x, g.y)))
             });
-            run_of.push(matched.map(|_| next));
-            let Some(r) = matched else { continue };
-            next += 1;
-            if r.text.is_empty() {
-                continue;
-            }
-            let Some(entry) = cache.font(&c.font_data) else { continue };
-            for (i, g) in c.glyphs.iter().enumerate() {
-                let range = &r.glyph_text[i];
-                let alone = (i == 0 || r.glyph_text[i - 1] != *range) && r.glyph_text.get(i + 1) != Some(range);
-                let Some(text) = r.text.get(range.start as usize..range.end as usize) else { continue };
-                if alone && !text.is_empty() && !entry.chars.contains_key(&g.id) {
-                    learned.entry((c.font_data.data.id(), c.font_data.index, g.id)).or_insert_with(|| text.into());
+            run_of.push(matched.then_some(next));
+            next += usize::from(matched);
+        }
+        Recorded { scene, runs, run_of, learned: Default::default() }
+    }
+
+    /// Glyphs alone in their cluster in a recorded run (font data id, face
+    /// index, glyph id) to the text the first of them stands for: what a
+    /// glyph the cmap does not reach stands for in a run painted without its
+    /// source text. Made when first needed.
+    fn learned(&self) -> &HashMap<(u64, u32, u32), Box<str>> {
+        self.learned.get_or_init(|| {
+            let mut learned = HashMap::new();
+            for (c, run) in glyph_runs(self.scene).zip(&self.run_of) {
+                let Some(r) = run.and_then(|i| self.runs.get(i)).filter(|r| !r.text.is_empty()) else { continue };
+                for (i, g) in c.glyphs.iter().enumerate() {
+                    let range = &r.glyph_text[i];
+                    let alone = (i == 0 || r.glyph_text[i - 1] != *range) && r.glyph_text.get(i + 1) != Some(range);
+                    let text = r.text.get(range.start as usize..range.end as usize).unwrap_or_default();
+                    if alone && !text.is_empty() {
+                        learned.entry((c.font_data.data.id(), c.font_data.index, g.id)).or_insert_with(|| text.into());
+                    }
                 }
             }
-        }
-        Recorded { runs, run_of, learned }
+            learned
+        })
     }
+}
+
+fn glyph_runs(scene: &Scene) -> impl Iterator<Item = &anyrender::recording::GlyphRunCommand> {
+    scene.commands.iter().filter_map(|c| match c {
+        RenderCommand::GlyphRun(c) => Some(c),
+        _ => None,
+    })
 }
 
 /// The text each glyph of `shown` stands for: ranges of the returned string.
@@ -545,9 +569,9 @@ impl<'a> Recorded<'a> {
 fn glyph_texts(
     c: &anyrender::recording::GlyphRunCommand,
     shown: &[usize],
-    recorded: Option<&blitz_paint::TextRun>,
+    source: Option<&blitz_paint::TextRun>,
     entry: &FontEntry,
-    learned: &HashMap<(u64, u32, u32), Box<str>>,
+    recorded: &Recorded,
 ) -> (String, Vec<std::ops::Range<usize>>) {
     let mut text = String::new();
     let push = |text: &mut String, s: &str| {
@@ -555,20 +579,29 @@ fn glyph_texts(
         text.push_str(s);
         start..text.len()
     };
-    let fallback = |text: &mut String, glyph: u32| match entry.chars.get(&glyph) {
+    let fallback = |text: &mut String, glyph: u32| match entry.char(glyph) {
         Some(ch) => push(text, ch.encode_utf8(&mut [0; 4])),
-        None => push(text, learned.get(&(c.font_data.data.id(), c.font_data.index, glyph)).map_or("", |t| t)),
+        None => {
+            let learned = recorded.learned().get(&(c.font_data.data.id(), c.font_data.index, glyph));
+            push(text, learned.map_or("", |t| t))
+        }
     };
-    let Some(r) = recorded else {
+    let Some(r) = source else {
         let ranges = shown.iter().map(|&i| fallback(&mut text, c.glyphs[i].id)).collect();
         return (text, ranges);
     };
     text.push_str(&r.text);
     use skrifa::MetadataProvider;
-    let charmap = skrifa::FontRef::from_index(c.font_data.data.as_ref(), c.font_data.index).ok().map(|f| f.charmap());
+    let charmap = std::cell::OnceCell::new();
     // The cmap character `glyph` stands for in place of `ch`, if any.
     let as_cmap = |ch: char, glyph: u32| {
-        let own = entry.chars.get(&glyph).copied()?;
+        let own = entry.char(glyph)?;
+        if own == ch {
+            return Some(own);
+        }
+        let charmap = charmap.get_or_init(|| {
+            skrifa::FontRef::from_index(c.font_data.data.as_ref(), c.font_data.index).ok().map(|f| f.charmap())
+        });
         let mapped = charmap.as_ref().and_then(|m| m.map(ch)).is_some_and(|g| g.to_u32() == glyph);
         (mapped || (ch.is_whitespace() && own.is_whitespace())).then_some(own)
     };
@@ -582,8 +615,8 @@ fn glyph_texts(
             end += 1;
         }
         let glyphs = &c.glyphs[i..end];
-        let source = r.text.get(cluster.clone()).unwrap_or_default();
-        let mut one = source.chars();
+        let cluster_text = r.text.get(cluster.clone()).unwrap_or_default();
+        let mut one = cluster_text.chars();
         if let ([g], Some(ch), None) = (glyphs, one.next(), one.next()) {
             // One glyph for one character: most text.
             ranges.push(match as_cmap(ch, g.id) {
@@ -593,7 +626,7 @@ fn glyph_texts(
             i = end;
             continue;
         }
-        let chars: Vec<(usize, char)> = source.char_indices().collect();
+        let chars: Vec<(usize, char)> = cluster_text.char_indices().collect();
         // One character per glyph, each the font's own.
         let own: Option<Vec<char>> = (chars.len() == glyphs.len())
             .then(|| glyphs.iter().zip(&chars).map(|(g, &(_, ch))| as_cmap(ch, g.id)).collect())
@@ -1024,11 +1057,11 @@ impl Replay<'_, '_> {
         let mut glyphs = Vec::with_capacity(shown.len());
         let (gx, gy) = (c.glyphs[first].x, c.glyphs[first].y);
         let ex = self.extras;
-        let recorded = source.and_then(|i| self.recorded.runs.get(i)).filter(|r| !r.text.is_empty());
-        if recorded.is_some() {
+        let run = source.and_then(|i| self.recorded.runs.get(i)).filter(|r| !r.text.is_empty());
+        if run.is_some() {
             self.stats.runs_with_source += 1;
         }
-        let (text, ranges) = glyph_texts(c, &shown, recorded, entry, &self.recorded.learned);
+        let (text, ranges) = glyph_texts(c, &shown, run, entry, self.recorded);
         for (at, (&i, range)) in shown.iter().zip(ranges).enumerate() {
             let g = &c.glyphs[i];
             if range.is_empty() {

@@ -198,12 +198,14 @@ impl TextRun {
 /// A hash of glyphs as drawn (id, x, y): [`TextRun::fingerprint`] of a run's glyphs. Two runs
 /// that start alike (table cells of dates, amounts) tell apart by the rest of their glyphs.
 pub fn glyphs_fingerprint(glyphs: impl IntoIterator<Item = (u32, f32, f32)>) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
+    // FxHash's step: a run is only compared with the next recorded one.
+    let mut hash = 0u64;
     for (id, x, y) in glyphs {
-        (id, x.to_bits(), y.to_bits()).hash(&mut hasher);
+        for word in [u64::from(id), (u64::from(x.to_bits()) << 32) | u64::from(y.to_bits())] {
+            hash = (hash.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+        }
     }
-    hasher.finish()
+    hash
 }
 
 /// [`paint_scene_with`], also returning the glyph runs of the document's text in the order
