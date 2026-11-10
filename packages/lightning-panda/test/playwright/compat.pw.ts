@@ -51,6 +51,18 @@ test('click counts, reads, evaluate', async ({ page }) => {
   await expect(page.locator('#t')).toHaveValue('ok');
 });
 
+test('evaluate keeps doubles exact both ways', async ({ page }) => {
+  // 0.9591810769706007 once came back as ...008; one random double in ten was off by one ulp.
+  await page.goto('/simple');
+  const read = await page.evaluate(() => {
+    const xs = [0.9591810769706007, ...Array.from({ length: 1000 }, Math.random)];
+    return { xs, texts: xs.map(String) };
+  });
+  expect(read.xs.map(String)).toEqual(read.texts);
+  const sent = [0.9591810769706007, ...Array.from({ length: 1000 }, Math.random)];
+  expect(await page.evaluate((xs) => xs.map(String), sent)).toEqual(sent.map(String));
+});
+
 test('setContent: roles, filters, checks, select, attributes', async ({ page }) => {
   await page.goto('/simple');
   await page.setContent(`

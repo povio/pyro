@@ -54,6 +54,32 @@ impl H {
             self.b.host_mut().run_until_work(Some(Instant::now() + Duration::from_millis(5)), || false);
         }
     }
+
+    /// `call` with params as JSON text, reading only the reply's envelope:
+    /// the client's own JSON work stays out of the measurement.
+    fn call_text(&mut self, session: &str, method: &str, params: &str) {
+        self.id += 1;
+        let m = format!(r#"{{"id":{},"method":"{method}","params":{params},"sessionId":"{session}"}}"#, self.id);
+        let (ok, failed) = (format!(r#"{{"id":{},"result":"#, self.id), format!(r#"{{"id":{},"#, self.id));
+        let mut sink = self.out.clone();
+        self.b.handle_text(&m, &mut sink);
+        loop {
+            self.b.host_mut().flush();
+            while let Some(Outbound::Frame(f)) = self.rx.try_recv() {
+                let bytes = f.as_ref();
+                let text = &bytes[match bytes[1] {
+                    126 => 4,
+                    127 => 10,
+                    _ => 2,
+                }..];
+                if text.starts_with(ok.as_bytes()) {
+                    return;
+                }
+                assert!(!text.starts_with(failed.as_bytes()), "{method} failed: {}", String::from_utf8_lossy(text));
+            }
+            self.b.host_mut().run_until_work(Some(Instant::now() + Duration::from_millis(5)), || false);
+        }
+    }
 }
 
 fn main() {
@@ -169,6 +195,32 @@ fn main() {
                 json!({"functionDeclaration": source, "objectId": realm, "arguments":[{"value":1}], "returnByValue": true}),
             );
             assert_eq!(r["result"]["result"]["value"], 2);
+            samples.push(t.elapsed());
+        }
+        stats(label, samples);
+    }
+
+    // Doubles in JSON text the engine parses (serde_json `float_roundtrip`,
+    // see the workspace manifest): an `LP.run` eval argument going in, and
+    // the value an eval reads coming out.
+    let doubles = h.call(
+        Some(&session),
+        "Runtime.evaluate",
+        json!({"expression":"globalThis.doubles = Array.from({length: 1000}, Math.random)","returnByValue":true}),
+    )["result"]["result"]["value"]
+        .clone();
+    for (label, step) in [
+        (
+            "LP.run eval arg, 1,000 doubles in",
+            json!({"eval":{"expression":"(xs) => xs.length","call":true,"arg":doubles}}),
+        ),
+        ("LP.run eval read, 1,000 doubles out", json!({"eval":{"expression":"doubles"}})),
+    ] {
+        let params = json!({ "steps": [step] }).to_string();
+        let mut samples = Vec::new();
+        for _ in 0..300 {
+            let t = Instant::now();
+            h.call_text(&session, "LP.run", &params);
             samples.push(t.elapsed());
         }
         stats(label, samples);

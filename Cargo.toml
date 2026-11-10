@@ -45,6 +45,14 @@ lp-render = { path = "crates/lp-render" }
 lp-layout = { path = "crates/lp-layout" }
 lp-canvas = { path = "crates/lp-canvas" }
 lp-media = { path = "crates/lp-media", default-features = false }
+# `float_roundtrip`: a JSON number parses to the nearest double, so a double
+# read back from JSON text (CDP params, the JSON.stringify text an `LP.run`
+# eval reads) is the one that was written, as with Chrome. The default parser
+# was one ulp off for about one random double in ten (0.9591810769706007
+# came back as ...008). Costs ~10 ns per parsed double (cdp_microbench:
+# 1,000 doubles through an LP.run eval, +9 us); integers and strings parse as
+# before. Every crate takes serde_json from here.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
