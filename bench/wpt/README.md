@@ -101,9 +101,13 @@ subtests changed, since a `fail` entry does not name its passes.
 ## Before making it a required check
 
 The gate's false failures come from pages whose results depend on load. `flaky.json` starts with the six such pages
-found in four full local runs and isolated reruns, plus three from the first CI runs (three runs without a baseline,
-each running every page twice). To find the rest on the CI runners: start three manual runs (`full`), one more with
-`runner-args: --jobs 1`, download their `wpt-shard-*` artifacts, and compare them:
+found in four full local runs and isolated reruns, plus two from the first CI runs (three runs without a baseline,
+each running every page twice). Three more pages the CI runs flagged were not flakes of the page and are not listed:
+`dom/nodes/Node-isEqualNode-xhtml.xhtml` (a browser bug: an XML document's content was attached before its scripts
+ran, fixed), `xhr/abort-during-navigation.window.html` (`delay.py` answered at once, below) and a long XHR page the
+runner recorded as timed out when the browser was replaced under it (below). To find the rest on the CI runners:
+start three manual runs (`full`), one more with `runner-args: --jobs 1`, download their `wpt-shard-*` artifacts, and
+compare them:
 
 ```sh
 bun bench/wpt/gate.mjs diff r1/*.json r2/*.json r3/*.json r4/*.json --suggest   # comma-separate a run's shards
@@ -141,6 +145,16 @@ context, so a page's result does not depend on the page that ran before it in th
 the shard split. Results do not depend on the WPT checkout's own `testharnessreport.js`: `serve.mjs` serves
 `testharnessreport.js` from this directory, which exposes `window.report`.
 
+`serve.mjs` is a static server, so discovery leaves out the pages that name a wptserve Python handler (`.py`). It
+cannot see a handler that only a page's support file requests, and a handler served as a file answers at once with
+its source. The one such handler in the subset is answered as wptserve answers it (`HANDLERS` in `serve.mjs`):
+`xhr/resources/delay.py`, which the XHR timeout pages and `xhr/abort-during-navigation.window.html` wait on.
+
+A page that spins the browser's main thread is recorded as `hang` 15 s after its timeout, and the browser is
+replaced (`css/selectors/invalidation/has-complexity.html` in every full run; pull requests skip it). The pages
+that were running in that browser run again: their waits fail with the connection, which used to be recorded as a
+timeout with no result, for a page that was about to complete too.
+
 ## Timings
 
 The slowest pages are slow by design or by a known engine gap, not by the runner:
@@ -151,7 +165,8 @@ The slowest pages are slow by design or by a known engine gap, not by the runner
 - `xhr/xmlhttprequest-timeout*.html` (37 variants, 5-20 s each, 266 s in all): the tests wait on their own 5 s timers
   and use CPU only briefly, which is why each shard runs one page more than it has CPUs.
 - Pages ending at 10 s complete by testharness's own timeout; those with nothing passing are skipped by the gate.
-- `encoding/legacy-mb-*/*-encode-form-*.html?...` occasionally never report on a loaded machine (45 s timeouts in
-  2-5 of 584 pages per full local run, often 2-3 variants of one file together): the gate's 10 s bound and the
-  reruns absorb them, since the page fails only if no run completes. If CI shows otherwise, an `allowIncomplete`
-  pattern entry covers them.
+- `encoding/legacy-mb-*/*-encode-form-*.html?...` occasionally never reported in full local runs (45 s timeouts in
+  2-5 of 584 pages per run, often 2-3 variants of one file together). That is what a browser replacement did to the
+  pages running beside the page that hung (above), before the runner ran them again; whether all of them were that
+  is not known. The gate's 10 s bound and the reruns absorb the rest, since a page fails only if no run completes.
+  If CI shows otherwise, an `allowIncomplete` pattern entry covers them.

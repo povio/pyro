@@ -151,17 +151,23 @@ async function openPage(slot) {
   return slot.page;
 }
 
-async function runOne(slot, t) {
+// `gen`: the browser (`generation`) the page runs in.
+async function runOne(slot, t, gen) {
   const page = await openPage(slot);
   const t0 = Date.now();
   await page.goto(`${BASE}/${t.url}`, { waitUntil: 'commit', timeout: t.limit });
+  // The wait also fails when the browser is gone, replaced because another slot's page hung it. It would fail until
+  // the timeout and record a page that was about to complete as timed out with no result: the worker runs it again.
+  const replaced = () => { if (gen !== generation) throw new Error('the browser was replaced under this page'); };
   for (;;) {
     const left = t.limit - (Date.now() - t0);
     // A navigation inside the test destroys the context the wait runs in: wait again in the new one.
     const r = left > 0 ? await page.evaluate(waitForReport, left).catch(() => null) : null;
     if (r?.complete) return { status: 'complete', log: r.log, ms: Date.now() - t0 };
+    if (!r) replaced();
     if (Date.now() - t0 >= t.limit) {
       const partial = r?.log ?? (await page.evaluate(() => (typeof report === 'object' && report ? report.log : null)).catch(() => null));
+      if (partial == null) replaced();
       return { status: 'timeout', log: partial, ms: Date.now() - t0 };
     }
     await sleep(20);
@@ -169,11 +175,11 @@ async function runOne(slot, t) {
 }
 // A page that spins the browser's main thread never answers `evaluate`, and closing its connection
 // never returns either: past a hard deadline the page is recorded as `hang` and the browser is replaced.
-async function guarded(slot, t) {
+async function guarded(slot, t, gen) {
   const hard = t.limit + 15000;
   let timer;
   const hang = new Promise((r) => { timer = setTimeout(() => r({ status: 'hang', ms: hard }), hard); });
-  const run = runOne(slot, t);
+  const run = runOne(slot, t, gen);
   run.catch(() => {});
   try { return await Promise.race([run, hang]); } finally { clearTimeout(timer); }
 }
@@ -216,11 +222,13 @@ async function worker() {
     let r;
     if (restarting) await restarting;
     const gen = generation;
-    try { r = await guarded(slot, t); }
+    try { r = await guarded(slot, t, gen); }
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
       await resetSlot(slot);
-      if (child.exitCode != null || child.signalCode) { restarts++; await restartBrowser(); }
+      // This page's browser died and no slot has replaced it yet. (After a replacement `child` may still be the
+      // browser that was killed for it, until the new one is spawned.)
+      if (gen === generation && (child.exitCode != null || child.signalCode)) { restarts++; await restartBrowser(gen); }
       // The browser was replaced under this page (another slot's page hung it): run the page again.
       if ((gen !== generation || /ECONNREFUSED|has been closed/.test(r.error)) && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
     }
