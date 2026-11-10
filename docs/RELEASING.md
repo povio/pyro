@@ -9,6 +9,9 @@ Push a tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) on the commit to release. The
 - builds the standard browsers and comparison workers for ARM64 and Intel;
 - builds the fork variant against the patched JavaScriptCore (`jsc.yml`, which
   restores it from the Actions cache, or builds it on a miss);
+- builds Linux x64 and arm64 against the Linux build of the same patched
+  JavaScriptCore (`linux-build.yml`), bundles it with its ICU, and runs the
+  client suite against each;
 - exports the patched JavaScriptCore source (`scripts/release/jsc-source.sh`);
 - assembles, signs and checks the three archives (`scripts/release/assemble.sh`);
 - tests the client against the extracted ARM64 browsers;

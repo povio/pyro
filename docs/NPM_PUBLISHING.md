@@ -4,7 +4,9 @@ One public npm package contains the testing API, `lightningpanda` CLI launcher,
 and two native browsers: `native/darwin-arm64/lightningpanda` and
 `native/darwin-x64/lightningpanda`. The source package lives at
 `packages/lightning-panda`.
-The browsers require macOS 14 or newer. Remote CDP connections can be used from
+The browsers require macOS 14 or newer, or Linux with glibc 2.39+ (Ubuntu 24.04,
+Debian 13, Fedora 40 or newer) on x64 or arm64; `native/linux-<arch>/` holds
+the browser with its patched JavaScriptCore and ICU in `lib/`. Remote CDP connections can be used from
 other operating systems; the package deliberately has no `os` restriction.
 
 Both browsers have rendering enabled. The **arm64 browser is the fork-capable

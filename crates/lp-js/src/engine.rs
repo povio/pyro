@@ -1234,8 +1234,11 @@ pub fn prepare_process_for_fork() {
     ONCE.call_once(|| {
         // SAFETY: the ObjC shim owns its autorelease pool, returns no pointers,
         // and only touches Foundation's thread-safe immutable number classes.
-        let valid = unsafe { sys::foundation::lp_foundation_initialize_numbers() };
-        assert_eq!(valid, 1, "Foundation number initialization failed before fork");
+        #[cfg(target_os = "macos")]
+        {
+            let valid = unsafe { sys::foundation::lp_foundation_initialize_numbers() };
+            assert_eq!(valid, 1, "Foundation number initialization failed before fork");
+        }
         // Mach ports do not survive a fork, so in a child JSC's exception port is
         // gone, and a thread entering a VM there (a dedicated worker) crashes
         // registering with it. Signal handlers are inherited. JSC reads this when

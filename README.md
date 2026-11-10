@@ -11,7 +11,7 @@ describes the module contract.
 ## npm package
 
 The npm distribution is `@povio/lightning-panda`: one package with the browser
-CLI and testing API. It bundles macOS 14+ binaries for Apple Silicon and Intel.
+CLI and testing API. It bundles macOS 14+ binaries for Apple Silicon and Intel, and Linux (glibc 2.39+, e.g. Ubuntu 24.04) binaries for x64 and arm64.
 
 ```sh
 npm install --save-dev @povio/lightning-panda

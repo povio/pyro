@@ -1046,11 +1046,28 @@ fn register_with(template: &Path, profile: &PreparedProfile) -> Result<usize, St
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::kern_return_t;
 }
 
 /// Names of this process's threads other than the calling one.
+#[cfg(target_os = "linux")]
+fn other_threads() -> Vec<String> {
+    // SAFETY: gettid has no preconditions.
+    let me = unsafe { libc::gettid() }.to_string();
+    let Ok(tasks) = std::fs::read_dir("/proc/self/task") else { return Vec::new() };
+    tasks
+        .flatten()
+        .filter(|t| t.file_name().to_str() != Some(me.as_str()))
+        // A thread that exited while we listed is past its last code: harmless.
+        .filter_map(|t| std::fs::read_to_string(t.path().join("comm")).ok())
+        .map(|name| name.trim_end_matches('\n').to_owned())
+        .collect()
+}
+
+/// Names of this process's threads other than the calling one.
+#[cfg(target_os = "macos")]
 fn other_threads() -> Vec<String> {
     let mut names = Vec::new();
     unsafe {

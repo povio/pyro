@@ -125,11 +125,56 @@ EOF
     echo "$out/$base.tar.gz"
 done
 
+# Linux: bundled by scripts/release/bundle-jsc-linux.sh in the build job and
+# smoke-tested there; here only inspected (this script runs on macOS).
+check_elf() {
+    local file="$1" want="$2" desc
+    desc="$(file -b "$file")"
+    [[ "$desc" == ELF* && "$desc" == *"$want"* ]] || fail "$file is $desc, want ELF $want"
+}
+for arch in x64 arm64; do
+    case "$arch" in
+        x64) elf=x86-64 ;;
+        arm64) elf=aarch64 ;;
+    esac
+    platform="linux-$arch"
+    base="lightningpanda-rust-v$version-$platform"
+    dir="$out/$base"
+    rm -rf "${dir:?}"
+    mkdir -p "$dir/lightning-panda" "$dir/third-party/JavaScriptCore" "$dir/third-party/ICU"
+    cp -R "$in/$platform/." "$dir/"
+    chmod +x "$dir/lightningpanda" "$dir/lp-snapshot-compare"
+    if [[ -f "$dir/lib/ICU-COPYRIGHT.txt" ]]; then
+        mv "$dir/lib/ICU-COPYRIGHT.txt" "$dir/third-party/ICU/COPYRIGHT.txt"
+    fi
+    cp "$root/LICENSE" "$root/NOTICE" "$dir/"
+    tar xzf "$client" -C "$dir/lightning-panda" --strip-components=1
+    cp -R "$in/jsc-licenses" "$dir/third-party/JavaScriptCore/licenses"
+    rev="$(tr -d '[:space:]' < "$in/jsc/inputs/REVISION")"
+    {
+        echo "WebKit $rev"
+        echo "Patched JavaScriptCore is dynamically loaded from lib/libJavaScriptCore.so, with the ICU libraries in lib/."
+        echo "Matching already-patched source, original notices, patches and build instructions: $source_asset"
+        echo "https://github.com/povio/lightningpanda/releases/download/v$version/$source_asset"
+    } > "$dir/third-party/JavaScriptCore/SOURCE.txt"
+    for f in "$dir/lightningpanda" "$dir/lp-snapshot-compare" "$dir/lib/libJavaScriptCore.so"; do
+        check_elf "$f" "$elf"
+    done
+    if grep -rIl -e "$HOME" -e /home/runner --include='*.json' --include='*.txt' "$dir" >/dev/null; then
+        fail "$base mentions a build-machine path"
+    fi
+    python3 "$root/scripts/release/linux-build-info.py" "$dir" "$platform" "$version" "$commit" "$in" "$client" "$source_asset" "$rev"
+    (cd "$out" && COPYFILE_DISABLE=1 tar czf "$base.tar.gz" "$base")
+    echo "$out/$base.tar.gz"
+done
+
 cp "$client" "$out/"
 cd "$out"
 shasum -a 256 "$source_asset" \
     "lightningpanda-rust-v$version-macos-arm64-fork.tar.gz" \
     "lightningpanda-rust-v$version-macos-arm64.tar.gz" \
     "lightningpanda-rust-v$version-macos-x64.tar.gz" \
+    "lightningpanda-rust-v$version-linux-x64.tar.gz" \
+    "lightningpanda-rust-v$version-linux-arm64.tar.gz" \
     "povio-lightning-panda-$version.tgz" > SHA256SUMS.txt
 cat SHA256SUMS.txt

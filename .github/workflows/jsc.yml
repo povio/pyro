@@ -1,8 +1,8 @@
 name: Patched JavaScriptCore
 
-# Builds the patched JavaScriptCore the fork variant links
-# (scripts/jsc/build.sh) and keeps it in the Actions cache, keyed by the WebKit
-# revision and the patches. A cold build takes about 7 minutes; `main`
+# Builds the patched JavaScriptCore the fork variant (macOS) and the Linux
+# builds link (scripts/jsc/build.sh) and keeps each platform's build in the
+# Actions cache, keyed by the WebKit revision and the patches. A cold build takes about 7 minutes; `main`
 # rebuilds whenever the inputs change: caches saved on the default branch are
 # the ones release tags can restore. Release tags call this workflow and get
 # the cached build, or build it themselves on a miss.
@@ -13,18 +13,20 @@ on:
     paths:
       - crates/lp-jsc-sys/webkit/**
       - scripts/jsc/build.sh
+      - scripts/linux/setup.sh
       - .github/workflows/jsc.yml
   # A change to the patches shows on its pull request whether they still build.
   pull_request:
     paths:
       - crates/lp-jsc-sys/webkit/**
       - scripts/jsc/build.sh
+      - scripts/linux/setup.sh
       - .github/workflows/jsc.yml
   workflow_dispatch:
   workflow_call:
     outputs:
       dir:
-        description: Directory name of the build under ~/Library/Caches/lightningpanda/jsc
+        description: Directory name of the build under ~/Library/Caches/lightningpanda/jsc (macOS) or ~/.cache/lightningpanda/jsc (Linux)
         value: ${{ jobs.jsc.outputs.dir }}
 
 permissions:
@@ -79,3 +81,59 @@ jobs:
           path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
           if-no-files-found: error
           retention-days: 7
+
+  # The same patched build for Linux: artifacts patched-jsc-linux-x64 and
+  # patched-jsc-linux-arm64, under ~/.cache/lightningpanda/jsc/<dir>. Its
+  # SONAME is that absolute path; restore it there before linking.
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache key
+        id: key
+        run: |
+          rev="$(tr -d '[:space:]' < crates/lp-jsc-sys/webkit/REVISION)"
+          patches="$(cat crates/lp-jsc-sys/webkit/patches/*.patch | sha256sum | cut -c1-12)"
+          echo "dir=${rev:0:12}-$patches" >> "$GITHUB_OUTPUT"
+          echo "setup=$(sha256sum scripts/linux/setup.sh | cut -c1-8)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: ~/.cache/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          key: patched-jsc-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
+      - name: Build patched JavaScriptCore
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          # 4 CPUs and 16 GB on the hosted runners; about 3 GB per job.
+          JOBS: '4'
+          CC: clang
+          CXX: clang++
+        run: |
+          scripts/linux/setup.sh
+          scripts/jsc/build.sh
+      - uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          key: patched-jsc-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
+      - name: Check the build
+        env:
+          DIR: ${{ steps.key.outputs.dir }}
+        run: |
+          lib="$HOME/.cache/lightningpanda/jsc/$DIR/lib/libJavaScriptCore.so"
+          readelf -d "$lib" | grep -F "[$lib]"
+          nm -D --defined-only "$lib" | grep -q JSPrepareForFork
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-jsc-linux-${{ matrix.arch }}
+          path: ~/.cache/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          if-no-files-found: error
