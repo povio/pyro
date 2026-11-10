@@ -813,12 +813,15 @@ pub(crate) fn stroke_text<'a>(
                 };
 
                 let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
-                if let Some(runs) = runs.as_mut() {
-                    runs.push(crate::TextRun::new(&glyph_run, source, transform));
-                }
+                let unshifted = transform;
                 let transform = shifted(transform, shift);
                 // Zero-size text is invisible, but hinting can give its glyphs ink.
                 if font_size > 0.0 {
+                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
+                    // next recorded one, so a run recorded but not drawn would stop the matching.
+                    if let Some(runs) = runs.as_mut() {
+                        runs.push(crate::TextRun::new(&glyph_run, source, unshifted));
+                    }
                     scene.draw_glyphs(
                         font,
                         font_size,

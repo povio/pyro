@@ -1,6 +1,8 @@
 //! PDF output of paper-cut documents: link annotations, tags, source text
-//! (ligatures), blurred shadows, paper-width layout and page breaks.
+//! (ligatures, substituted glyphs), blurred shadows, paper-width layout and
+//! page breaks.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use lp_render::*;
@@ -120,15 +122,258 @@ fn headings_paragraphs_and_links_are_tagged() {
 #[test]
 fn text_maps_to_its_source_characters() {
     // A face that ligates "fi"/"ffi" maps the ligature glyph to its letters;
-    // the cmap reverse lookup alone gave U+FB01 (ﬁ) / U+FB03.
-    let out =
-        print(r#"<!doctype html><body style="font:28px Helvetica, Arial, sans-serif">office fit affluent</body>"#);
-    assert!(out.stats.runs_with_source > 0, "{:?}", out.stats);
-    assert_eq!(out.stats.glyphs_without_text, 0, "{:?}", out.stats);
-    let pdf = inflated(&out.bytes).to_uppercase();
-    assert!(pdf.contains("BEGINBFCHAR"), "the font's ToUnicode map");
-    for lig in ["<FB01>", "<FB02>", "<FB03>", "<FB04>"] {
-        assert!(!pdf.contains(lig), "a ligature maps to {lig}");
+    // the cmap reverse lookup alone gave U+FB01 (ﬁ) / U+FB03. Page boxes too.
+    for body in ["office fit affluent", r#"<div class="pz-page" style="width:600px;height:200px">office fit affluent"#]
+    {
+        let out = print(&format!(
+            r#"<!doctype html><body style="margin:0;font:28px Helvetica, Arial, sans-serif">{body}</body>"#
+        ));
+        assert!(out.stats.runs_with_source > 0, "{:?}", out.stats);
+        assert_eq!(out.stats.glyphs_without_text, 0, "{:?}", out.stats);
+        let pdf = inflated(&out.bytes).to_uppercase();
+        assert!(pdf.contains("BEGINBFCHAR"), "the font's ToUnicode map");
+        for lig in ["<FB01>", "<FB02>", "<FB03>", "<FB04>"] {
+            assert!(!pdf.contains(lig), "a ligature maps to {lig}");
+        }
+    }
+}
+
+/// Inter, cut to the characters these tests show, with its layout features.
+const INTER: &[u8] = include_bytes!("fonts/Inter-subset.ttf");
+
+/// Serves [`INTER`] as `inter.ttf`.
+struct InterFetch;
+impl Fetcher for InterFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(if url.ends_with("/inter.ttf") { Ok(INTER.to_vec()) } else { Err("offline".into()) });
+    }
+}
+
+/// `body` in 20px Inter (a web font, as ToS's pdfgen loads it), on a
+/// `.pz-page` box or cut into Letter pages.
+fn print_inter(body: &str, page_box: bool) -> PdfOutput {
+    let body = if page_box { format!(r#"<div class="pz-page">{body}</div>"#) } else { body.to_owned() };
+    let html = format!(
+        r#"<!doctype html><style>@font-face {{ font-family: InterTest; src: url(inter.ttf) }}
+        body {{ margin: 0; font: 20px/30px InterTest }} .pz-page {{ width: 600px; height: 400px; padding: 20px }}
+        .tnum {{ font-variant-numeric: tabular-nums }}</style>{body}"#
+    );
+    let fetcher: Arc<dyn Fetcher> = Arc::new(InterFetch);
+    let out = Renderer::new().print_pdf(&snap(&html), &fetcher, &PdfOptions::new(".pz-page", (816.0, 1056.0))).unwrap();
+    assert_eq!(out.by_selector, page_box);
+    out
+}
+
+/// The PDF's ToUnicode map: glyph code to text. The PDF has one font.
+fn to_unicode(pdf: &[u8]) -> HashMap<String, String> {
+    let pdf = inflated(pdf);
+    assert_eq!(pdf.matches("/ToUnicode").count(), 1, "one font");
+    let mut map = HashMap::new();
+    for section in pdf.split("beginbfchar").skip(1) {
+        let section = section.split("endbfchar").next().unwrap();
+        let hex: Vec<&str> = section.split(['<', '>']).map(str::trim).filter(|s| !s.is_empty()).collect();
+        for pair in hex.chunks(2) {
+            let units: Vec<u16> = pair[1]
+                .as_bytes()
+                .chunks(4)
+                .map(|u| u16::from_str_radix(std::str::from_utf8(u).unwrap(), 16).unwrap())
+                .collect();
+            map.insert(pair[0].to_uppercase(), String::from_utf16(&units).unwrap());
+        }
+    }
+    map
+}
+
+/// The text of each text object (`BT` .. `ET`) of the pages as pdf.js
+/// extracts it: each glyph code read through the ToUnicode map, ActualText
+/// ignored. A code the map lacks reads as U+FFFD (pdf.js shows the code as a
+/// character).
+fn shown_text(pdf: &[u8]) -> Vec<String> {
+    let map = to_unicode(pdf);
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(i) = find(&pdf[at..], b"/Contents ").map(|i| i + at + 10) {
+        at = i;
+        let id: String = pdf[i..].iter().map(|&b| b as char).take_while(char::is_ascii_digit).collect();
+        let obj = find(pdf, format!("\n{id} 0 obj").as_bytes()).unwrap();
+        let start = find(&pdf[obj..], b"stream\n").unwrap() + obj + 7;
+        let end = find(&pdf[start..], b"\nendstream").unwrap() + start;
+        let content = miniz_oxide::inflate::decompress_to_vec_zlib(&pdf[start..end]).unwrap();
+        for codes in shown_codes(&content) {
+            let text = codes.chunks(2).map(|c| {
+                let code = format!("{:02X}{:02X}", c[0], c.get(1).copied().unwrap_or(0));
+                map.get(&code).map_or("\u{FFFD}", String::as_str)
+            });
+            out.push(text.collect());
+        }
+    }
+    out
+}
+
+/// The bytes of the strings each text object of a content stream shows.
+fn shown_codes(s: &[u8]) -> Vec<Vec<u8>> {
+    let (mut objects, mut object, mut operands) = (Vec::new(), None::<Vec<u8>>, Vec::new());
+    let mut i = 0;
+    while i < s.len() {
+        match s[i] {
+            b'(' => {
+                let mut depth = 0;
+                loop {
+                    let c = s[i];
+                    i += 1;
+                    match c {
+                        b'(' => {
+                            depth += 1;
+                            if depth > 1 {
+                                operands.push(c);
+                            }
+                        }
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                            operands.push(c);
+                        }
+                        b'\\' => {
+                            let e = s[i];
+                            i += 1;
+                            match e {
+                                b'n' => operands.push(b'\n'),
+                                b'r' => operands.push(b'\r'),
+                                b't' => operands.push(b'\t'),
+                                b'b' => operands.push(8),
+                                b'f' => operands.push(12),
+                                b'0'..=b'7' => {
+                                    let mut v = u32::from(e - b'0');
+                                    for _ in 0..2 {
+                                        if !matches!(s[i], b'0'..=b'7') {
+                                            break;
+                                        }
+                                        v = v * 8 + u32::from(s[i] - b'0');
+                                        i += 1;
+                                    }
+                                    operands.push(v as u8);
+                                }
+                                b'\n' | b'\r' => {}
+                                other => operands.push(other),
+                            }
+                        }
+                        c => operands.push(c),
+                    }
+                }
+            }
+            b'<' if s.get(i + 1) == Some(&b'<') => {
+                // A dictionary (marked-content properties): skipped.
+                let mut depth = 0;
+                while i < s.len() {
+                    match &s[i..] {
+                        [b'<', b'<', ..] => {
+                            depth += 1;
+                            i += 2;
+                        }
+                        [b'>', b'>', ..] => {
+                            depth -= 1;
+                            i += 2;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            b'<' => {
+                let end = i + s[i..].iter().position(|&b| b == b'>').unwrap();
+                let hex: Vec<u8> = s[i + 1..end].iter().copied().filter(u8::is_ascii_hexdigit).collect();
+                operands
+                    .extend(hex.chunks(2).map(|h| u8::from_str_radix(std::str::from_utf8(h).unwrap(), 16).unwrap()));
+                i = end + 1;
+            }
+            b'/' => {
+                i += 1;
+                while i < s.len() && !b" \t\r\n/[]()<>".contains(&s[i]) {
+                    i += 1;
+                }
+            }
+            c if c.is_ascii_alphabetic() || c == b'\'' || c == b'"' => {
+                let start = i;
+                while i < s.len() && (s[i].is_ascii_alphanumeric() || b"*'\"".contains(&s[i])) {
+                    i += 1;
+                }
+                match &s[start..i] {
+                    b"BT" => object = Some(Vec::new()),
+                    b"ET" => objects.extend(object.take()),
+                    b"TJ" | b"Tj" | b"'" | b"\"" => object.get_or_insert_default().append(&mut operands),
+                    _ => {}
+                }
+                operands.clear();
+            }
+            _ => i += 1,
+        }
+    }
+    objects
+}
+
+/// The PDF's text as `pdftotext` (poppler) extracts it, one entry per non-empty line;
+/// `None` without `pdftotext`.
+fn pdftotext(pdf: &[u8]) -> Option<Vec<String>> {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("lp-pdf-text-{}-{n}.pdf", std::process::id()));
+    std::fs::write(&path, pdf).unwrap();
+    let out = std::process::Command::new("pdftotext").args(["-enc", "UTF-8"]).arg(&path).arg("-").output();
+    let _ = std::fs::remove_file(&path);
+    let Ok(out) = out.inspect_err(|_| eprintln!("pdftotext not found: its checks are skipped")) else { return None };
+    assert!(out.status.success(), "pdftotext: {}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8(out.stdout).unwrap();
+    Some(text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect())
+}
+
+#[test]
+fn glyphs_that_features_substituted_extract_as_their_source_text() {
+    // Inter's tabular figures (`tnum`) and its hyphens and parentheses raised between capitals
+    // (`calt`/`case`) are glyphs no cmap entry reaches: read back through the cmap, they had no
+    // text (ToS account statements lost their amounts and invoice numbers' hyphens).
+    let lines = ["E2E-DUN-MONITOR-OPEN 1,234.56", "1,234.56 (EUR) x-y"];
+    for page_box in [true, false] {
+        let out = print_inter(&format!(r#"<p class="tnum">{}</p><p>{}</p>"#, lines[0], lines[1]), page_box);
+        assert_eq!(out.stats.glyphs_without_text, 0, "{:?}", out.stats);
+        assert_eq!(shown_text(&out.bytes), lines, "page box: {page_box}");
+        // The tabular and the proportional glyphs were both written, each with its text.
+        let map = to_unicode(&out.bytes);
+        let glyphs_of = |text: &str| map.values().filter(|t| *t == text).count();
+        assert_eq!([glyphs_of("1"), glyphs_of("-"), glyphs_of(" ")], [2, 2, 2], "{map:?}");
+        if let Some(text) = pdftotext(&out.bytes) {
+            assert_eq!(text, lines, "pdftotext, page box: {page_box}");
+        }
+    }
+}
+
+#[test]
+fn text_after_zero_size_text_keeps_its_source() {
+    // The spaces between inline boxes in a `font-size: 0` box are laid out but not drawn: a run
+    // recorded but not drawn stopped every later run from finding its source text.
+    for page_box in [true, false] {
+        let out = print_inter(
+            r#"<div style="font-size:0"> <span style="font-size:20px">A</span> <span style="font-size:20px">B</span> </div>
+            <p class="tnum">1,234.56</p>"#,
+            page_box,
+        );
+        assert_eq!(out.stats.glyphs_without_text, 0, "{:?}", out.stats);
+        assert_eq!(shown_text(&out.bytes).concat(), "AB1,234.56", "page box: {page_box}");
+    }
+}
+
+#[test]
+fn a_cluster_of_a_base_and_a_mark_keeps_both_characters() {
+    // Inter has no precomposed q with acute: q and U+0301 are one cluster of two glyphs. Each
+    // glyph maps to its own character, so readers without ActualText (pdf.js) get both.
+    for page_box in [true, false] {
+        let out = print_inter("<p>xq\u{301}x</p>", page_box);
+        assert_eq!(out.stats.glyphs_without_text, 0, "{:?}", out.stats);
+        assert_eq!(shown_text(&out.bytes), ["xq\u{301}x"], "page box: {page_box}");
+        assert!(!inflated(&out.bytes).contains("ActualText"));
     }
 }
 
@@ -144,14 +389,15 @@ fn blurred_outset_shadows_are_drawn() {
 
 #[test]
 fn page_boxes_keep_their_output() {
-    // `.pz-page` documents: no tags, no recorded text, no links; blurred
-    // shadows are drawn (LIGHTNINGPANDA_PDF_SHADOWS=0 skips them).
+    // `.pz-page` documents: no tags, no links; text is written with its
+    // source; blurred shadows are drawn (LIGHTNINGPANDA_PDF_SHADOWS=0 skips
+    // them).
     let out = print(
         r#"<!doctype html><style>body{margin:0}.pz-page{width:400px;height:500px;box-shadow:0 0 20px #000}</style>
         <div class="pz-page"><h1>One</h1><a href="https://example.com/">x</a></div>"#,
     );
     assert!(out.by_selector);
-    assert_eq!((out.stats.links, out.stats.runs_with_source), (0, 0));
+    assert_eq!((out.stats.links, out.stats.runs_with_source), (0, 2));
     assert_eq!((out.stats.box_shadows, out.stats.box_shadows_skipped), (1, 0));
     let pdf = inflated(&out.bytes);
     for absent in ["/StructTreeRoot", "/MarkInfo", "/StructParents", "BDC"] {
