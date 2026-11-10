@@ -12,6 +12,10 @@
 //! source text (list markers, form controls) fall back to the font's cmap
 //! (reverse lookup).
 //!
+//! A PDF has no variable fonts. Each instance of one that a document draws
+//! (a weight, an optical size) is embedded as a font of its own, with that
+//! instance's outlines and advances ([`PdfCache::font`]).
+//!
 //! Paper-cut documents (no page boxes) also pass [`Extras`]: the elements
 //! behind the text runs, which give link annotations and a tag tree
 //! (headings, paragraphs, links). Blurred outset box shadows are drawn on
@@ -72,7 +76,8 @@ pub struct PdfStats {
     pub filters_skipped: u32,
     /// Compositing other than source-over: drawn as source-over.
     pub compose_skipped: u32,
-    /// Variable-font runs: drawn with the font's default instance.
+    /// Runs of a variable font away from its default instance: drawn with
+    /// the instance (weight, optical size, ...) they were shaped at.
     pub variable_runs: u32,
     /// Synthetic bold runs: drawn without emboldening.
     pub embolden_skipped: u32,
@@ -82,8 +87,13 @@ pub struct PdfStats {
     pub brushes_skipped: u32,
 }
 
+/// A font face, as krilla reads it.
 struct FontEntry {
+    /// At its default instance.
     font: Font,
+    /// A variable font at the other instances runs were shaped at, by their
+    /// normalized coordinates.
+    instances: HashMap<Box<[i16]>, Font>,
     /// By glyph id: the character the cmap maps to it (the lowest code point).
     chars: Vec<Option<char>>,
     /// The bundled font list bullets are drawn with.
@@ -96,6 +106,68 @@ impl FontEntry {
     }
 }
 
+fn font_bytes(data: &FontData) -> krilla::Data {
+    let bytes: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(data.data.clone());
+    krilla::Data::from(bytes)
+}
+
+/// A variable font's axis values (as `font-variation-settings` gives them)
+/// at `coords`, the normalized coordinates a run was shaped at.
+///
+/// A run carries only the normalized coordinates, the ones outlines are
+/// interpolated at; krilla takes an instance as axis values and normalizes
+/// them itself. Normalizing has no inverse to compute directly: the `avar`
+/// table bends each axis, and its version 2 moves an axis by the others. So
+/// each value is searched for with the normalization krilla runs (skrifa's,
+/// which is also the shaper's): the lowest value whose coordinate reaches
+/// the run's. The values normalize to exactly the run's coordinates after
+/// one pass over the axes; with `avar` version 2, further passes close in
+/// on them.
+fn axis_values(font: &skrifa::FontRef, coords: &[i16]) -> Vec<(skrifa::Tag, f32)> {
+    use skrifa::MetadataProvider;
+    let axes = font.axes();
+    let mut values: Vec<(skrifa::Tag, f32)> = axes.iter().map(|a| (a.tag(), a.default_value())).collect();
+    let mut at = vec![skrifa::instance::NormalizedCoord::default(); values.len()];
+    let target = |i: usize| coords.get(i).copied().unwrap_or(0);
+    for _ in 0..4 {
+        axes.location_to_slice(&values, &mut at);
+        if at.iter().enumerate().all(|(i, c)| c.to_bits() == target(i)) {
+            break;
+        }
+        for (i, axis) in axes.iter().enumerate() {
+            if at[i].to_bits() == target(i) {
+                continue;
+            }
+            // In 16.16 steps, the precision axis values are read at.
+            let step = |value: f32| value as f64 * 65536.0;
+            let (mut low, mut high) = (step(axis.min_value()).floor() as i64, step(axis.max_value()).ceil() as i64);
+            while low < high {
+                let middle = low + (high - low) / 2;
+                values[i].1 = (middle as f64 / 65536.0) as f32;
+                axes.location_to_slice(&values, &mut at);
+                if at[i].to_bits() >= target(i) {
+                    high = middle;
+                } else {
+                    low = middle + 1;
+                }
+            }
+            values[i].1 = (low as f64 / 65536.0) as f32;
+            axes.location_to_slice(&values, &mut at);
+        }
+    }
+    values
+}
+
+/// The font at the instance of `coords`.
+fn instance(data: &FontData, coords: &[i16]) -> Option<Font> {
+    let font = skrifa::FontRef::from_index(data.data.as_ref(), data.index).ok()?;
+    let values: Vec<(krilla::text::Tag, f32)> = axis_values(&font, coords)
+        .iter()
+        .map(|(tag, value)| (krilla::text::Tag::new(&tag.to_be_bytes()), *value))
+        .collect();
+    Font::new_variable(font_bytes(data), data.index, &values)
+}
+
 /// Fonts and images converted for krilla, kept across documents.
 #[derive(Default)]
 pub struct PdfCache {
@@ -104,13 +176,20 @@ pub struct PdfCache {
 }
 
 impl PdfCache {
-    fn font(&mut self, data: &FontData) -> Option<&FontEntry> {
-        self.fonts
+    /// The font of a run shaped at `coords` (a variable font's normalized
+    /// coordinates; none or zeros are its default instance), and its face.
+    ///
+    /// A PDF has no variable fonts: krilla embeds each instance as a font of
+    /// its own, with the outlines and advances of that instance. It names
+    /// them all after the face, and tags a subset by the glyphs it draws:
+    /// two instances that draw the same glyphs in the same order have the
+    /// same name (readers tell fonts apart by object, not by name).
+    fn font(&mut self, data: &FontData, coords: &[i16]) -> Option<(Font, &FontEntry)> {
+        let entry = self
+            .fonts
             .entry((data.data.id(), data.index))
             .or_insert_with(|| {
-                let blob = data.data.clone();
-                let bytes: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(blob);
-                let font = Font::new(krilla::Data::from(bytes), data.index)?;
+                let font = Font::new(font_bytes(data), data.index)?;
                 let mut chars = Vec::new();
                 use skrifa::MetadataProvider;
                 if let Ok(f) = skrifa::FontRef::from_index(data.data.as_ref(), data.index) {
@@ -126,9 +205,20 @@ impl PdfCache {
                     }
                 }
                 let marker = data.data.as_ref() == blitz_dom::BULLET_FONT;
-                Some(FontEntry { font, chars, marker })
+                Some(FontEntry { font, instances: HashMap::new(), chars, marker })
             })
-            .as_ref()
+            .as_mut()?;
+        let font = if coords.iter().all(|&c| c == 0) {
+            entry.font.clone()
+        } else if let Some(font) = entry.instances.get(coords) {
+            font.clone()
+        } else {
+            // krilla read the font for its default instance: it reads at any other.
+            let font = instance(data, coords).unwrap_or_else(|| entry.font.clone());
+            entry.instances.insert(coords.into(), font.clone());
+            font
+        };
+        Some((font, entry))
     }
 
     fn image(&mut self, brush: &ImageBrush) -> Option<krilla::image::Image> {
@@ -1031,7 +1121,7 @@ impl Replay<'_, '_> {
     }
 
     fn glyph_run(&mut self, c: &anyrender::recording::GlyphRunCommand, source: Option<usize>) {
-        if !c.normalized_coords.is_empty() {
+        if c.normalized_coords.iter().any(|&c| c != 0) {
             self.stats.variable_runs += 1;
         }
         if c.embolden != kurbo::Vec2::ZERO {
@@ -1044,11 +1134,10 @@ impl Replay<'_, '_> {
         let Some(&first) = shown.first() else { return };
         let Some((paint, opacity)) = self.paint(&c.brush, None) else { return };
         let opacity = norm(opacity.get() * c.brush_alpha);
-        let Some(entry) = self.cache.font(&c.font_data) else {
+        let Some((font, entry)) = self.cache.font(&c.font_data, &c.normalized_coords) else {
             self.stats.fonts_failed += 1;
             return;
         };
-        let font = entry.font.clone();
         // Chrome draws bullets (disc, circle, square, disclosure) as shapes,
         // which are not text in the PDF. Here they are glyphs of the marker
         // font, drawn as outlines.
@@ -1436,5 +1525,35 @@ mod tests {
         // Limited to a page: only that part is sampled.
         let (_, part) = shadow_mask(rect, 0.0, 4.0, [0, 0, 0, 255], Rect::new(0.0, 200.0, 1000.0, 1000.0)).unwrap();
         assert_eq!((part.y0, part.y1), (200.0, 412.0));
+    }
+
+    #[test]
+    fn axis_values_normalize_to_the_coordinates_they_are_found_for() {
+        use skrifa::MetadataProvider;
+        // Inter: `opsz` 14 to 32 (default 14) and `wght` 100 to 900 (default
+        // 400), whose `avar` table bends the weights above 400.
+        let font = skrifa::FontRef::new(include_bytes!("../tests/fonts/Inter-variable-subset.ttf")).unwrap();
+        let axes = font.axes();
+        let coords = |settings: &[(skrifa::Tag, f32)]| -> Vec<i16> {
+            axes.location(settings).coords().iter().map(|c| c.to_bits()).collect()
+        };
+        let [opsz, wght] = [b"opsz", b"wght"].map(skrifa::Tag::new);
+        for size in [14.0, 14.5, 17.0, 24.0, 31.99, 32.0] {
+            for weight in [100.0, 133.3, 250.0, 399.0, 400.0, 401.0, 550.0, 700.0, 900.0] {
+                let at = coords(&[(opsz, size), (wght, weight)]);
+                let values = axis_values(&font, &at);
+                assert_eq!(coords(&values), at, "optical size {size}, weight {weight}: {values:?}");
+                // Within the step of a normalized coordinate.
+                assert_eq!(values.iter().map(|v| v.0).collect::<Vec<_>>(), [opsz, wght]);
+                assert!((values[0].1 - size).abs() < 0.01 && (values[1].1 - weight).abs() < 0.1, "{values:?}");
+            }
+        }
+        // Every coordinate of an axis has a value: none is skipped.
+        for coord in (-16384..=16384).step_by(97) {
+            let values = axis_values(&font, &[0, coord]);
+            assert_eq!(coords(&values), [0, coord], "{values:?}");
+        }
+        // The default instance: the default values themselves.
+        assert_eq!(axis_values(&font, &[]), [(opsz, 14.0), (wght, 400.0)]);
     }
 }

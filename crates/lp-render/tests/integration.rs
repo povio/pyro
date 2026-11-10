@@ -16,6 +16,7 @@ mod line_break_resume;
 mod mirror;
 mod out_of_flow_boundary;
 mod pdf_fidelity;
+mod pdf_variable_fonts;
 mod profiling_timers;
 mod render;
 mod table_cell_height;
