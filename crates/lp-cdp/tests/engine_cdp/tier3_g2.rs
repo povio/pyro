@@ -338,6 +338,26 @@ fn driver_steps_keep_dialogs_non_blocking() {
     assert!(r.to_string().contains("\"false\""), "{r}");
 }
 
+/// `LP.dialogs {block: true}`: a dialog a driver step opens waits for the
+/// client's answer, as Playwright's `page.on('dialog')` expects.
+#[test]
+fn driver_steps_block_on_dialogs_when_the_page_asks() {
+    let mut h = Harness::new();
+    let pump = ScriptedPump::install(&mut h);
+    h.page("Page.enable", json!({}));
+    assert_eq!(h.page("LP.dialogs", json!({"block": true}))["result"], json!({}));
+    pump.push(&h, 910, "Page.handleJavaScriptDialog", json!({"accept": true}));
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "String(confirm('x'))", "as": "c"}}]}));
+    assert_eq!(r["result"]["reads"]["c"], "true", "{r}");
+    pump.push(&h, 911, "Page.handleJavaScriptDialog", json!({"accept": true, "promptText": "typed"}));
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "prompt('q')", "as": "p"}}]}));
+    assert_eq!(r["result"]["reads"]["p"], "typed", "{r}");
+
+    h.page("LP.dialogs", json!({"block": false}));
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "String(confirm('x'))", "as": "c"}}]}));
+    assert_eq!(r["result"]["reads"]["c"], "false", "back to non-blocking: {r}");
+}
+
 #[test]
 fn set_document_content_replaces_the_frame_document() {
     let mut h = Harness::new();
@@ -355,6 +375,38 @@ fn set_document_content_replaces_the_frame_document() {
     );
     let r = h.page("Page.setDocumentContent", json!({"frameId": "nope", "html": ""}));
     assert_eq!(r["error"]["message"], "No frame for given id found", "{r}");
+}
+
+/// `page.setContent()` then `goto()`: document.open() made the initial
+/// about:blank document an ordinary one (HTML "document open steps"), so the
+/// navigation pushes an entry (Chrome: history.length 2) and, once the
+/// process has grown past the release gate (due at every reading here),
+/// leaves the written document's collection pending. An untouched initial
+/// document is replaced and not released.
+#[test]
+fn navigating_from_set_document_content_releases_the_written_document() {
+    for written in [false, true] {
+        let mut h = Harness::new();
+        h.browser.host_mut().thread.browser.engine.set_release_growth(0, 0);
+        h.page("Page.enable", json!({}));
+        let frame = h.frame_id.clone();
+        if written {
+            let html = "<div>".to_string()
+                + &"<p>row</p>".repeat(500)
+                + "</div><script>window.big = new Array(1e5).fill(1)</script>";
+            let r = h.page("Page.setDocumentContent", json!({"frameId": frame, "html": html}));
+            assert_eq!(r["result"], json!({}), "{r}");
+            h.run_for(30);
+        }
+        let release_pending = |h: &mut Harness| h.browser.host_mut().thread.browser.engine.release_pending();
+        assert!(!release_pending(&mut h), "written: {written}");
+        let r = h.page("Page.navigate", json!({"url": "data:text/html,<p>next</p>"}));
+        assert!(r["result"].get("errorText").is_none(), "{r}");
+        h.run_for(50);
+        assert_eq!(eval_value(&mut h, "document.body.textContent"), json!("next"));
+        assert_eq!(release_pending(&mut h), written, "written: {written}");
+        assert_eq!(eval_value(&mut h, "history.length"), json!(if written { 2 } else { 1 }));
+    }
 }
 
 fn closed_target(messages: &[Value], target: &str) -> bool {

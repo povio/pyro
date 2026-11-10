@@ -344,7 +344,7 @@ fn report_under_a_dom_borrow_is_replayed_from_a_task() {
     let thrown = s.eval("new RangeError('deferred cancel')", Some("thrower.js"), 7).unwrap();
     {
         let _held = e.page.dom.borrow_mut();
-        s.report_exception(&lp_js::JsError::Thrown(lp_js::Persistent::new(&s, thrown)));
+        s.report_exception(&lp_js::JsError::thrown(lp_js::Persistent::new(&s, thrown)));
         s.report_exception(&lp_js::JsError::Type("deferred reported".into()));
     }
     assert_eq!(eval(r, "seen.join('|')"), "");

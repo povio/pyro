@@ -10,6 +10,8 @@
 mod conn;
 pub mod engine;
 pub mod fork;
+mod fork_stats;
+pub mod lifetime;
 pub mod serve;
 
 pub use lp_cdp_protocol::{

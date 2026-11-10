@@ -23,6 +23,10 @@ pub struct NodeData {
     /// (`PageDom::node_wrappers`), raw; zero when the wrapper is in the
     /// realm's identity map instead.
     pub(crate) wrapper: std::cell::Cell<usize>,
+    /// The realm's strings for the node's `id` and one-token `class`
+    /// values, by the atom each mirrors (see [`AtomString`]).
+    pub(crate) id_string: AtomString,
+    pub(crate) class_string: AtomString,
 }
 
 impl NodeData {
@@ -71,10 +75,46 @@ pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Obje
         }
         (ty, class, connected)
     };
+    make_node_wrapper(s, page, page_rc, id, ty, class, connected)
+}
+
+/// [`wrap_node`] for a node the calling DOM operation just made in `doc`
+/// (`createElement`, `createTextNode`): no world has a wrapper of it yet,
+/// and when `doc` is the document of `page`, the page of `s`, the node
+/// belongs to `s`'s realm. Then the searches for an existing wrapper, in
+/// this world and its siblings, and for the node's home realm are skipped.
+pub fn wrap_created_node<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId, id: NodeId) -> JsResult<Object<'s>> {
+    let page_rc = page_of(s)?;
+    if doc != page.document() || page_rc.id() != page.id() {
+        return wrap_node(s, page, id);
+    }
+    let (ty, class) = {
+        let mut dom = page.dom.borrow_mut();
+        dom.add_ref(id).js()?;
+        let ty = dom.node(id).js()?.kind.node_type();
+        (ty, crate::html::class_for(&dom, id))
+    };
+    // Not in a document yet: nothing to pin.
+    make_node_wrapper(s, page, page_rc, id, ty, class, false)
+}
+
+/// The wrapper of `id` in `s`'s realm, which has none: `page` holds the
+/// node's new reference already.
+fn make_node_wrapper<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    page_rc: Rc<PageDom>,
+    id: NodeId,
+    ty: NodeType,
+    class: crate::html::ElClass,
+    connected: bool,
+) -> JsResult<Object<'s>> {
     let data = NodeData {
-        target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) },
+        target: EventTargetData::for_key(page_rc, TargetKey::Node(id.index())),
         id,
         wrapper: std::cell::Cell::new(0),
+        id_string: AtomString::default(),
+        class_string: AtomString::default(),
     };
     // The node keeps its wrapper (`PageDom::node_wrappers`) when it has a
     // slot for this world; otherwise the realm's identity map does.
@@ -101,7 +141,10 @@ fn register_node_wrapper(s: &Scope<'_>, page: &PageDom, id: NodeId, wrapper: Obj
     if owned {
         if let Some(r) = s.wrapper_ref(wrapper) {
             page.remember_wrapper(s.realm_id(), id.index(), r);
-            if let Some(node) = s.unwrap::<Node>(wrapper.value()) {
+            // SAFETY: the wrapper was made just now and nothing that could
+            // collect it runs before the payload is written (no allocation
+            // in between): no protect/unprotect pair is needed.
+            if let Some(node) = unsafe { s.unwrap_rooted::<Node>(wrapper.value()) } {
                 node.wrapper.set(r.to_raw());
             }
         }
@@ -157,9 +200,15 @@ pub fn node_value<'s>(s: &Scope<'s>, page: &PageDom, id: Option<NodeId>) -> JsRe
 
 /// Extracts a Node argument (WebIDL `Node`), with a TypeError otherwise.
 pub fn node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<NodeId> {
-    s.unwrap::<Node>(v)
-        .map(|n| n.id)
-        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))
+    node_id_of(s, v)
+        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.").into()))
+}
+
+/// The node of a Node wrapper value: its id is read at once, so no
+/// protect/unprotect pair keeps the wrapper alive meanwhile (`Scope::unwrap`).
+fn node_id_of(s: &Scope<'_>, v: Value<'_>) -> Option<NodeId> {
+    // SAFETY: the payload is read before anything can run a collection.
+    unsafe { s.unwrap_rooted::<Node>(v) }.map(|n| n.id)
 }
 
 pub fn opt_node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<NodeId>> {
@@ -189,8 +238,8 @@ impl NodeArgs {
     fn collect(s: &Scope<'_>, a: &Args<'_>) -> JsResult<Self> {
         let mut items = Vec::with_capacity(a.len());
         for v in a.iter() {
-            items.push(match s.unwrap::<Node>(v) {
-                Some(nd) => NodeArg::Node(nd.id),
+            items.push(match node_id_of(s, v) {
+                Some(id) => NodeArg::Node(id),
                 None => NodeArg::Text(dom_string(v)?),
             });
         }
@@ -240,7 +289,7 @@ impl NodeArgs {
 /// Keeps `on*` IDL handlers in sync with `setAttribute`/`removeAttribute`
 /// on HTML and SVG elements.
 pub(crate) fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str, value: Option<&str>) -> JsResult<()> {
-    let Some(ty) = crate::handlers::is_handler_attribute(&name.to_ascii_lowercase()) else { return Ok(()) };
+    let Some(ty) = crate::handlers::is_handler_attribute(name) else { return Ok(()) };
     let (eligible, reflecting) = {
         let dom = n.page().dom.borrow();
         match dom.element(n.id) {
@@ -299,7 +348,11 @@ impl JsClass for Node {
             Ok(s.number(n.page().dom.borrow().node_type(n.id).js()? as u16 as f64))
         });
         def.pure_getter_typed("nodeName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.shared_string(&n.page().dom.borrow().node_name_shared(n.id).js()?))
+            let dom = n.page().dom.borrow();
+            Ok(match dom.tag_name_parts(n.id).js()? {
+                Some((name, upper)) => tag_name(s, name, upper),
+                None => s.shared_string(&dom.node_name_shared(n.id).js()?),
+            })
         });
         def.accessor(
             "nodeValue",
@@ -314,28 +367,52 @@ impl JsClass for Node {
                 })
             },
             |_s, n, v| {
-                let text = null_to_empty(v)?;
-                let mut dom = n.page().dom.borrow_mut();
-                let kind = &dom.node(n.id).js()?.kind;
-                if kind.char_data().is_some() {
-                    dom.set_char_data(n.id, &text).js()?;
-                } else if kind.node_type() == NodeType::Attribute {
-                    dom.set_attr_node_value(n.id, &text).js()?;
+                let set = |text: &str| {
+                    let mut dom = n.page().dom.borrow_mut();
+                    let kind = &dom.node(n.id).js()?.kind;
+                    if kind.char_data().is_some() {
+                        dom.set_char_data(n.id, text).js()?;
+                    } else if kind.node_type() == NodeType::Attribute {
+                        dom.set_attr_node_value(n.id, text).js()?;
+                    }
+                    Ok(())
+                };
+                if v.is_null() {
+                    set("")
+                } else {
+                    with_str(v, set)
                 }
-                Ok(())
             },
         );
-        def.accessor(
+        def.pure_accessor_typed(
             "textContent",
+            lp_js::GetterResult::Any,
             |s, n| {
-                let t = n.page().dom.borrow().text_content(n.id).js()?;
-                Ok(t.map_or(s.null(), |t| s.string(&t)))
+                let dom = n.page().dom.borrow();
+                Ok(dom.text_content_ref(n.id).js()?.map_or(s.null(), |t| s.string(&t)))
             },
             |_s, n, v| {
                 // `DOMString?`: undefined converts to null, which sets "".
-                let text = if v.is_undefined() { String::new() } else { null_to_empty(v)? };
-                crate::input::blur_before_removal(n.page(), n.id, true);
-                n.page().dom.borrow_mut().set_text_content(n.id, &text).js()
+                // The value converts first (an object's toString runs before
+                // the blur, as in the spec), then a focused element inside
+                // loses focus, which runs script. A string's characters are
+                // borrowed only after that: a handler that uses the string
+                // as a property key can swap its buffer for an atom's, and a
+                // GC can then free the old one.
+                let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
+                let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
+                // A string (the usual value) needs no nullish test first.
+                if v.is_string() {
+                    blur();
+                    return with_str(v, set);
+                }
+                if v.is_nullish() {
+                    blur();
+                    return set("");
+                }
+                let text = dom_string(v)?;
+                blur();
+                set(&text)
             },
         );
         def.pure_getter_typed("parentNode", lp_js::GetterResult::ObjectOrNull, |s, n| {
@@ -377,10 +454,10 @@ impl JsClass for Node {
             let doc = dom.node_document(n.id).js()?;
             Ok(s.string(dom.document_base_url(doc).js()?))
         });
-        def.method("hasChildNodes", 0, |s, n, _a| Ok(s.boolean(n.page().dom.borrow().child_count(n.id).js()? > 0)));
+        def.pure_method("hasChildNodes", 0, |s, n, _a| Ok(s.boolean(n.page().dom.borrow().child_count(n.id).js()? > 0)));
         def.method("getRootNode", 0, |s, n, a| {
             let composed = match a.get(0).as_object() {
-                Some(o) => o.get("composed")?.to_bool(),
+                Some(o) => o.get_atom("composed")?.to_bool(),
                 None => false,
             };
             let r = n.page().dom.borrow().root_node(n.id, composed).js()?;
@@ -419,6 +496,7 @@ impl JsClass for Node {
         def.method("cloneNode", 0, |s, n, a| {
             let deep = a.get(0).to_bool();
             let c = n.page().dom.borrow_mut().clone_node(n.id, deep, None).js()?;
+            crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });
         def.pure_method("contains", 1, |s, n, a| {
@@ -442,7 +520,7 @@ impl JsClass for Node {
             n.page().dom.borrow_mut().normalize(n.id).js()?;
             Ok(s.undefined())
         });
-        def.method("lookupPrefix", 1, |s, n, a| {
+        def.pure_method("lookupPrefix", 1, |s, n, a| {
             let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(match dom.lookup_prefix(n.id, namespace.as_deref()).js()? {
@@ -450,7 +528,7 @@ impl JsClass for Node {
                 None => s.null(),
             })
         });
-        def.method("lookupNamespaceURI", 1, |s, n, a| {
+        def.pure_method("lookupNamespaceURI", 1, |s, n, a| {
             let prefix = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(match dom.lookup_namespace_uri(n.id, prefix.as_deref()).js()? {
@@ -458,7 +536,7 @@ impl JsClass for Node {
                 None => s.null(),
             })
         });
-        def.method("isDefaultNamespace", 1, |s, n, a| {
+        def.pure_method("isDefaultNamespace", 1, |s, n, a| {
             let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(s.boolean(dom.lookup_namespace_uri(n.id, None).js()? == namespace.as_deref().filter(|s| !s.is_empty())))
@@ -539,17 +617,34 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.pure_method("querySelector", 1, |s, n, a| {
         let page = n.page();
-        let list = arg_selector(&a, 0, "querySelector", page)?;
-        let r = page.dom.borrow().query_first(n.id, &list).js()?;
+        let r = with_selector(&a, 0, "querySelector", page, |q| page.dom.borrow().query_first(n.id, q))?.js()?;
         node_value(s, page, r)
     });
     def.pure_method("querySelectorAll", 1, |s, n, a| {
         let page = n.page();
-        let list = arg_selector(&a, 0, "querySelectorAll", page)?;
-        let r = page.dom.borrow().query_all(n.id, &list).js()?;
-        Ok(collections::static_node_list(s, page, r)?.value())
+        // The matches go to a buffer kept for the next query, then once into
+        // the list: no vector grown and shrunk per call.
+        let mut found = FOUND.take();
+        let list =
+            with_selector(&a, 0, "querySelectorAll", page, |q| page.dom.borrow().query_all_into(n.id, q, &mut found))
+                .and_then(|r| r.js())
+                .and_then(|()| collections::static_node_list(s, page, &found[..]));
+        found.clear();
+        // A larger query's buffer is cut down, not kept whole for the
+        // thread's life (and its forks).
+        found.shrink_to(FOUND_KEPT);
+        FOUND.set(found);
+        Ok(list?.value())
     });
 }
+
+thread_local! {
+    /// `querySelectorAll`'s match buffer (taken while a query runs).
+    static FOUND: std::cell::Cell<Vec<NodeId>> = const { std::cell::Cell::new(Vec::new()) };
+}
+/// The most matches whose buffer is kept between queries (64 KB): a
+/// `querySelectorAll('*')` of a document of some thousand elements.
+const FOUND_KEPT: usize = 1 << 13;
 
 fn define_child_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.method("remove", 0, |s, n, _a| {
@@ -662,17 +757,18 @@ impl JsClass for CharacterData {
             },
         );
         def.getter("length", |s, n| Ok(s.number(n.page().dom.borrow().char_length(n.id).js()? as f64)));
-        def.method("substringData", 2, |s, n, a| {
+        def.pure_method("substringData", 2, |s, n, a| {
             a.require(2, "CharacterData.substringData")?;
             let (off, cnt) = (to_u32(a.get(0))?, to_u32(a.get(1))?);
             let r = n.page().dom.borrow().substring_data(n.id, off, cnt).js()?;
             Ok(s.string(&r))
         });
         def.method("appendData", 1, |s, n, a| {
-            let d = arg_string(&a, 0, "CharacterData.appendData")?;
-            let mut dom = n.page().dom.borrow_mut();
-            let len = dom.char_length(n.id).js()?;
-            dom.replace_data(n.id, len, 0, &d).js()?;
+            with_arg_str(&a, 0, "CharacterData.appendData", |d| {
+                let mut dom = n.page().dom.borrow_mut();
+                let len = dom.char_length(n.id).js()?;
+                dom.replace_data(n.id, len, 0, d).js()
+            })?;
             Ok(s.undefined())
         });
         def.method("insertData", 2, |s, n, a| {
@@ -819,9 +915,11 @@ pub fn wrap_new_node<'s, C: JsClass<Data = NodeData>>(
         }
     }
     let data = NodeData {
-        target: EventTargetData { page: page.clone(), key: TargetKey::Node(id.index()) },
+        target: EventTargetData::for_key(page.clone(), TargetKey::Node(id.index())),
         id,
         wrapper: std::cell::Cell::new(0),
+        id_string: AtomString::default(),
+        class_string: AtomString::default(),
     };
     let owned = s.owned_wrappers() && page.wrapper_slot_free(s.realm_id(), id.index());
     let key = if owned { lp_js::IdentityKey::OWNED } else { page.node_identity(id) };
@@ -845,8 +943,7 @@ impl JsClass for DocumentFragment {
             wrap_new_node::<DocumentFragment>(s, &page, id, nt)
         });
         def.pure_method("getElementById", 1, |s, n, a| {
-            let id = arg_string(&a, 0, "getElementById")?;
-            let r = n.page().dom.borrow().get_element_by_id(n.id, &id).js()?;
+            let r = with_arg_str(&a, 0, "getElementById", |id| n.page().dom.borrow().get_element_by_id(n.id, id).js())?;
             node_value(s, n.page(), r)
         });
     }
@@ -865,15 +962,15 @@ fn get_html<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>>
         let o = options.as_object().ok_or_else(|| {
             JsError::Type("Failed to execute 'getHTML': The provided value is not of type 'GetHTMLOptions'.".into())
         })?;
-        serializable = o.get("serializableShadowRoots")?.to_bool();
-        let list = o.get("shadowRoots")?;
+        serializable = o.get_atom("serializableShadowRoots")?.to_bool();
+        let list = o.get_atom("shadowRoots")?;
         if !list.is_undefined() {
             let list = list.as_object().ok_or_else(|| {
                 JsError::Type(
                     "Failed to execute 'getHTML': The provided value cannot be converted to a sequence.".into(),
                 )
             })?;
-            let len = list.get("length")?.to_number()? as u32;
+            let len = list.get_atom("length")?.to_number()? as u32;
             for i in 0..len {
                 let root = node_arg(s, list.get_index(i)?, "getHTML")?;
                 if !n.page().dom.borrow().is_shadow_root(root).js()? {
@@ -930,9 +1027,23 @@ impl JsClass for ShadowRoot {
         });
         def.method("getHTML", 0, get_html);
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
+        def.method("getAnimations", 0, |s, n, _a| {
+            let root = wrap_node(s, n.page(), n.id)?.value();
+            crate::animations::root_animations(s, n.page(), root)
+        });
+        def.accessor("adoptedStyleSheets", crate::css::adopted_style_sheets, crate::css::set_adopted_style_sheets);
         def.method("elementFromPoint", 2, crate::layout_api::shadow_element_from_point);
         def.method("elementsFromPoint", 2, crate::layout_api::shadow_elements_from_point);
-        def.getter("activeElement", |s, _n| Ok(s.null()));
+        def.getter("activeElement", |s, n| {
+            let f = n.page().dom.borrow().active_element(n.id).js()?;
+            node_value(s, n.page(), f)
+        });
+        def.getter("styleSheets", crate::css::style_sheets);
+        def.accessor(
+            "onslotchange",
+            |s, n| crate::target::event_handler(s, &n.target, "slotchange"),
+            |s, n, v| crate::target::set_event_handler(s, &n.target, "slotchange", v),
+        );
         def.accessor(
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
@@ -949,6 +1060,17 @@ impl JsClass for ShadowRoot {
 
 // ----- element ----------------------------------------------------------
 
+/// `tagName` from [`lp_dom::Dom::tag_name_parts`]: the local name's string
+/// (the same as `localName`'s), or its uppercased form, one per realm too.
+#[inline]
+fn tag_name<'s>(s: &Scope<'s>, local: &markup5ever::LocalName, upper: bool) -> Value<'s> {
+    if upper {
+        upper_local_name(s, local)
+    } else {
+        local.js(s)
+    }
+}
+
 pub struct Element;
 impl JsClass for Element {
     const NAME: &'static str = "Element";
@@ -959,54 +1081,85 @@ impl JsClass for Element {
         define_child_node(def);
         define_non_doctype_child(def);
         def.pure_getter_typed("tagName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.shared_string(&n.page().dom.borrow().tag_name_shared(n.id).js()?))
+            let dom = n.page().dom.borrow();
+            Ok(match dom.tag_name_parts(n.id).js()? {
+                Some((name, upper)) => tag_name(s, name, upper),
+                None => s.shared_string(&dom.tag_name_shared(n.id).js()?),
+            })
         });
+        // Names and id are the element's atoms, class its attribute value:
+        // one string each per realm (`AtomJs`, `attr_value`), not a new one
+        // per read.
         def.pure_getter_typed("localName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.string(n.page().dom.borrow().element(n.id).js()?.local_name()))
+            Ok(n.page().dom.borrow().element(n.id).js()?.local_name().js(s))
         });
         def.getter("namespaceURI", |s, n| {
             let dom = n.page().dom.borrow();
             let ns = dom.element(n.id).js()?.namespace();
-            Ok(if ns.is_empty() { s.null() } else { s.string(ns) })
+            Ok(if ns.is_empty() { s.null() } else { ns.js(s) })
         });
         def.getter("prefix", |s, n| {
             let dom = n.page().dom.borrow();
             Ok(match dom.element(n.id).js()?.prefix() {
-                Some(p) if !p.is_empty() => s.string(p),
+                Some(p) if !p.is_empty() => p.js(s),
                 _ => s.null(),
             })
         });
-        def.accessor(
+        def.pure_accessor_typed(
             "id",
-            |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "id").js()?.unwrap_or(""))),
+            lp_js::GetterResult::String,
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(match dom.element(n.id).js()?.id_atom() {
+                    Some(atom) => n.id_string.get(s, atom),
+                    None => atom_or_empty(s, None),
+                })
+            },
             |_s, n, v| {
-                let arg0 = dom_string(v)?;
-                n.page().dom.borrow_mut().set_attribute(n.id, "id", &arg0).js()
+                with_str(v, |id| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("id"), id).js()
+                })
             },
         );
-        def.accessor(
+        def.pure_accessor_typed(
             "className",
-            |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "class").js()?.unwrap_or(""))),
+            lp_js::GetterResult::String,
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(match dom.element(n.id).js()?.class_value() {
+                    Some((_, Some(atom))) => n.class_string.get(s, atom),
+                    Some((value, None)) => attr_value(s, value, None),
+                    None => atom_or_empty(s, None),
+                })
+            },
             |_s, n, v| {
-                let arg0 = dom_string(v)?;
-                n.page().dom.borrow_mut().set_attribute(n.id, "class", &arg0).js()
+                with_str(v, |class| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("class"), class).js()
+                })
             },
         );
-        def.accessor(
+        def.pure_accessor_typed(
             "slot",
-            |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "slot").js()?.unwrap_or(""))),
+            lp_js::GetterResult::String,
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(s.string(dom.element(n.id).js()?.attr_local(&markup5ever::local_name!("slot")).unwrap_or("")))
+            },
             |_s, n, v| {
-                let arg0 = dom_string(v)?;
-                n.page().dom.borrow_mut().set_attribute(n.id, "slot", &arg0).js()
+                with_str(v, |slot| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("slot"), slot).js()
+                })
             },
         );
-        def.accessor(
+        def.pure_accessor_typed(
             "classList",
+            lp_js::GetterResult::ObjectOrNull,
             |s, n| Ok(collections::token_list(s, n.page(), n.id, "class")?.value()),
             // [PutForwards=value]
             |_s, n, v| {
-                let value = dom_string(v)?;
-                n.page().dom.borrow_mut().set_attribute(n.id, "class", &value).js()
+                with_str(v, |value| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("class"), value).js()
+                })
             },
         );
         def.getter("part", |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()));
@@ -1043,21 +1196,32 @@ impl JsClass for Element {
             collections::remove_attribute_node(s, n.page(), n.id, a.get(0))
         });
         def.pure_method("getAttributeNames", 0, |s, n, _a| {
-            let names: Vec<String> =
-                n.page().dom.borrow().attributes(n.id).js()?.iter().map(|a| a.qualified_name()).collect();
             let mut vals = lp_js::RootedVec::new();
-            for name in names {
-                vals.push(s, s.string(&name));
+            {
+                let dom = n.page().dom.borrow();
+                for a in dom.attributes(n.id).js()? {
+                    // Making strings runs no script: the DOM stays borrowed.
+                    vals.push(
+                        s,
+                        match &a.name.prefix {
+                            Some(p) if !p.is_empty() => s.string(&a.qualified_name()),
+                            _ => a.name.local.js(s),
+                        },
+                    );
+                }
             }
             Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
         def.pure_method("getAttribute", 1, |s, n, a| {
             crate::util::with_arg_str(&a, 0, "Element.getAttribute", |name| {
                 let dom = n.page().dom.borrow();
-                Ok(dom.get_attribute_qualified(n.id, name).js()?.map_or(s.null(), |v| s.string(v)))
+                Ok(match dom.get_attribute_qualified_atom(n.id, name).js()? {
+                    Some((value, atom)) => attr_value(s, value, atom),
+                    None => s.null(),
+                })
             })
         });
-        def.method("getAttributeNS", 2, |s, n, a| {
+        def.pure_method("getAttributeNS", 2, |s, n, a| {
             a.require(2, "Element.getAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let local = dom_string(a.get(1))?;
@@ -1066,8 +1230,9 @@ impl JsClass for Element {
         });
         def.method("setAttribute", 2, |s, n, a| {
             a.require(2, "Element.setAttribute")?;
-            let name = dom_string(a.get(0))?;
-            let value = dom_string(a.get(1))?;
+            let (name, value) = (a.get(0), a.get(1));
+            let name = str_of(&name)?;
+            let value = str_of(&value)?;
             n.page().dom.borrow_mut().set_attribute(n.id, &name, &value).js()?;
             handler_attribute_changed(s, n, &name, Some(&value))?;
             crate::input::blur_if_focus_disabled(n.page(), n.id, &name);
@@ -1085,12 +1250,13 @@ impl JsClass for Element {
             Ok(s.undefined())
         });
         def.method("removeAttribute", 1, |s, n, a| {
-            let name = arg_string(&a, 0, "Element.removeAttribute")?;
-            let removed = n.page().dom.borrow_mut().remove_attribute(n.id, &name).js()?;
-            if removed {
-                handler_attribute_changed(s, n, &name, None)?;
-            }
-            Ok(s.undefined())
+            with_arg_str(&a, 0, "Element.removeAttribute", |name| {
+                let removed = n.page().dom.borrow_mut().remove_attribute(n.id, name).js()?;
+                if removed {
+                    handler_attribute_changed(s, n, name, None)?;
+                }
+                Ok(s.undefined())
+            })
         });
         def.method("removeAttributeNS", 2, |s, n, a| {
             a.require(2, "Element.removeAttributeNS")?;
@@ -1104,7 +1270,7 @@ impl JsClass for Element {
                 Ok(s.boolean(n.page().dom.borrow().has_attribute_qualified(n.id, name).js()?))
             })
         });
-        def.method("hasAttributeNS", 2, |s, n, a| {
+        def.pure_method("hasAttributeNS", 2, |s, n, a| {
             let ns = opt_dom_string(a.get(0))?;
             let local = dom_string(a.get(1))?;
             Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, ns.as_deref(), &local).js()?.is_some()))
@@ -1117,24 +1283,24 @@ impl JsClass for Element {
             Ok(s.boolean(present))
         });
         def.pure_method("matches", 1, element_matches);
-        def.method("webkitMatchesSelector", 1, element_matches);
+        def.pure_method("webkitMatchesSelector", 1, element_matches);
         def.pure_method("closest", 1, |s, n, a| {
             let page = n.page();
-            let list = arg_selector(&a, 0, "Element.closest", page)?;
-            let r = page.dom.borrow().element_closest(n.id, &list).js()?;
+            let r =
+                with_selector(&a, 0, "Element.closest", page, |q| page.dom.borrow().element_closest(n.id, q))?.js()?;
             node_value(s, page, r)
         });
-        def.method("getElementsByTagName", 1, |s, n, a| {
+        def.pure_method("getElementsByTagName", 1, |s, n, a| {
             let name = arg_string(&a, 0, "getElementsByTagName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName(name))?.value())
         });
-        def.method("getElementsByTagNameNS", 2, |s, n, a| {
+        def.pure_method("getElementsByTagNameNS", 2, |s, n, a| {
             a.require(2, "getElementsByTagNameNS")?;
             let namespace = opt_dom_string(a.get(0))?.unwrap_or_default();
             let local = dom_string(a.get(1))?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagNameNs(namespace, local))?.value())
         });
-        def.method("getElementsByClassName", 1, |s, n, a| {
+        def.pure_method("getElementsByClassName", 1, |s, n, a| {
             let names = arg_string(&a, 0, "getElementsByClassName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::ClassName(names))?.value())
         });
@@ -1191,7 +1357,7 @@ impl JsClass for Element {
                     return Err(JsError::dom(
                         "SyntaxError",
                         "The value provided is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.",
-                    ))
+                    ));
                 }
             };
             let frag = lp_dom::parse::parse_fragment(&mut dom, ctx, &html).js()?;
@@ -1223,26 +1389,26 @@ impl JsClass for Element {
             };
             // Dictionary members convert in lexicographical order.
             let mut flags = 0;
-            if o.get("clonable")?.to_bool() {
+            if o.get_atom("clonable")?.to_bool() {
                 flags |= lp_dom::shadow_flags::CLONABLE;
             }
-            if o.get("delegatesFocus")?.to_bool() {
+            if o.get_atom("delegatesFocus")?.to_bool() {
                 flags |= lp_dom::shadow_flags::DELEGATES_FOCUS;
             }
-            let mode = dom_string(o.get("mode")?)?;
+            let mode = dom_string(o.get_atom("mode")?)?;
             let mode = match mode.as_str() {
                 "open" => ShadowRootMode::Open,
                 "closed" => ShadowRootMode::Closed,
                 _ => {
                     return Err(JsError::Type(format!(
                         "The provided value '{mode}' is not a valid enum value of type ShadowRootMode."
-                    )))
+                    ).into()))
                 }
             };
-            if o.get("serializable")?.to_bool() {
+            if o.get_atom("serializable")?.to_bool() {
                 flags |= lp_dom::shadow_flags::SERIALIZABLE;
             }
-            let slots = o.get("slotAssignment")?;
+            let slots = o.get_atom("slotAssignment")?;
             if !slots.is_undefined() {
                 match dom_string(slots)?.as_str() {
                     "named" => {}
@@ -1250,9 +1416,14 @@ impl JsClass for Element {
                     other => {
                         return Err(JsError::Type(format!(
                             "The provided value '{other}' is not a valid enum value of type SlotAssignmentMode."
-                        )))
+                        ).into()))
                     }
                 }
+            }
+            // A host whose upgrade constructor runs ("precustomized") makes
+            // the root available to its internals (a custom one does in lp-dom).
+            if crate::custom::is_being_constructed(n.page(), n.id) {
+                flags |= lp_dom::shadow_flags::AVAILABLE_TO_INTERNALS;
             }
             let sr = n.page().dom.borrow_mut().attach_shadow_with(n.id, mode, flags).js()?;
             Ok(wrap_node(s, n.page(), sr)?.value())
@@ -1278,8 +1449,8 @@ fn assigned_slot<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 
 fn element_matches<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
-    let list = arg_selector(&a, 0, "Element.matches", page)?;
-    Ok(s.boolean(page.dom.borrow().element_matches(n.id, &list).js()?))
+    let r = with_selector(&a, 0, "Element.matches", page, |q| page.dom.borrow().element_matches(n.id, q))?;
+    Ok(s.boolean(r.js()?))
 }
 
 fn insert_adjacent(dom: &mut lp_dom::Dom, el: NodeId, pos: &str, node: NodeId) -> JsResult<bool> {
@@ -1331,7 +1502,9 @@ impl JsClass for Document {
             let doc = lp_dom::parse::parse_html_unsafe(&page.dom, &html);
             Ok(wrap_node(s, &page, doc)?.value())
         });
-        def.getter("documentElement", |s, n| {
+        // `documentElement`, `head` and `body` are kept on the document's
+        // data as its tree changes: one load each, on the lean dispatch.
+        def.pure_getter_typed("documentElement", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let e = n.page().dom.borrow().document_element(n.id).js()?;
             node_value(s, n.page(), e)
         });
@@ -1359,16 +1532,23 @@ impl JsClass for Document {
             node_value(s, n.page(), e)
         });
         def.getter("styleSheets", crate::css::style_sheets);
+        def.getter("timeline", |s, n| crate::animations::timeline(s, n.page()));
+        def.method("getAnimations", 0, |s, n, _a| {
+            let root = wrap_node(s, n.page(), n.id)?.value();
+            crate::animations::root_animations(s, n.page(), root)
+        });
+        def.accessor("adoptedStyleSheets", crate::css::adopted_style_sheets, crate::css::set_adopted_style_sheets);
         def.getter("doctype", |s, n| {
             let e = n.page().dom.borrow().doctype(n.id).js()?;
             node_value(s, n.page(), e)
         });
-        def.getter("head", |s, n| {
+        def.pure_getter_typed("head", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let e = n.page().dom.borrow().head(n.id).js()?;
             node_value(s, n.page(), e)
         });
-        def.accessor(
+        def.pure_accessor_typed(
             "body",
+            lp_js::GetterResult::ObjectOrNull,
             |s, n| {
                 let e = n.page().dom.borrow().body(n.id).js()?;
                 node_value(s, n.page(), e)
@@ -1425,16 +1605,14 @@ impl JsClass for Document {
         def.getter("inputEncoding", |s, n| Ok(s.string(n.page().dom.borrow().document_data(n.id).js()?.charset)));
         def.getter("contentType", |s, n| Ok(s.string(&n.page().dom.borrow().document_data(n.id).js()?.content_type)));
         def.getter("readyState", |s, n| Ok(s.string(crate::html::ready_state(n.page(), n.id))));
-        def.getter("visibilityState", |s, _n| Ok(s.string("visible")));
-        def.getter("hidden", |s, _n| Ok(s.boolean(false)));
+        def.getter("visibilityState", |s, n| Ok(s.string(if n.page().is_hidden() { "hidden" } else { "visible" })));
+        def.getter("hidden", |s, n| Ok(s.boolean(n.page().is_hidden())));
         def.getter("defaultView", |s, n| Ok(if n.page().document() == n.id { s.global().value() } else { s.null() }));
         def.getter("activeElement", |s, n| {
-            let dom = n.page().dom.borrow();
-            let f = dom.focused(n.id).js()?.or(dom.body(n.id).js()?);
-            drop(dom);
+            let f = n.page().dom.borrow().active_element(n.id).js()?;
             node_value(s, n.page(), f)
         });
-        def.method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id)));
+        def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id)));
         def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script()));
         def.getter("implementation", |s, n| Ok(crate::html::dom_implementation(s, n)?.value()));
         def.getter("forms", |s, n| {
@@ -1503,11 +1681,16 @@ impl JsClass for Document {
                 }
             }
         });
+        const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
         def.getter("images", |s, n| {
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("img".into()))?.value())
+            // HTML `img` elements only (not foreign elements of that name).
+            let kind = CollectionKind::TagNameNs(HTML_NS.into(), "img".into());
+            Ok(collections::collection(s, n.page(), n.id, kind)?.value())
         });
         def.getter("scripts", |s, n| {
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("script".into()))?.value())
+            // HTML `script` elements only (not foreign elements of that name).
+            let kind = CollectionKind::TagNameNs(HTML_NS.into(), "script".into());
+            Ok(collections::collection(s, n.page(), n.id, kind)?.value())
         });
         def.getter("links", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::Links)?.value()));
         def.accessor(
@@ -1526,7 +1709,10 @@ impl JsClass for Document {
                 Ok(())
             },
         );
-        def.getter("referrer", |s, _n| Ok(s.string("")));
+        def.getter("referrer", |s, n| {
+            let page = n.page();
+            Ok(s.string(&if page.document() == n.id { page.document_referrer() } else { String::new() }))
+        });
         def.getter("domain", |s, n| {
             if s.realm().origin().as_deref() == Some("null") {
                 return Ok(s.string(""));
@@ -1537,56 +1723,64 @@ impl JsClass for Document {
             ))
         });
         def.getter("location", |s, n| {
-            Ok(if n.page().document() == n.id { s.global().get("location")? } else { s.null() })
+            Ok(if n.page().document() == n.id { s.global().get_atom("location")? } else { s.null() })
         });
         def.pure_method("getElementById", 1, |s, n, a| {
-            let id = arg_string(&a, 0, "getElementById")?;
-            let r = n.page().dom.borrow().get_element_by_id(n.id, &id).js()?;
+            let r = with_arg_str(&a, 0, "getElementById", |id| n.page().dom.borrow().get_element_by_id(n.id, id).js())?;
             node_value(s, n.page(), r)
         });
-        def.method("getElementsByTagName", 1, |s, n, a| {
+        def.pure_method("getElementsByTagName", 1, |s, n, a| {
             let name = arg_string(&a, 0, "getElementsByTagName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName(name))?.value())
         });
-        def.method("getElementsByTagNameNS", 2, |s, n, a| {
+        def.pure_method("getElementsByTagNameNS", 2, |s, n, a| {
             a.require(2, "getElementsByTagNameNS")?;
             let namespace = opt_dom_string(a.get(0))?.unwrap_or_default();
             let local = dom_string(a.get(1))?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagNameNs(namespace, local))?.value())
         });
-        def.method("getElementsByClassName", 1, |s, n, a| {
+        def.pure_method("getElementsByClassName", 1, |s, n, a| {
             let names = arg_string(&a, 0, "getElementsByClassName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::ClassName(names))?.value())
         });
-        def.method("getElementsByName", 1, |s, n, a| {
+        def.pure_method("getElementsByName", 1, |s, n, a| {
             let name = arg_string(&a, 0, "getElementsByName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::Name(name))?.value())
         });
         def.method("createElement", 1, |s, n, a| {
-            let name = arg_string(&a, 0, "Document.createElement")?;
-            let el = n.page().dom.borrow_mut().create_element(n.id, &name).js()?;
-            if let Some(is) = a.get(1).as_object().map(|o| o.get("is")).transpose()?.filter(|v| !v.is_undefined()) {
+            let el = with_arg_str(&a, 0, "Document.createElement", |name| {
+                n.page().dom.borrow_mut().create_element(n.id, name).js()
+            })?;
+            if let Some(is) = a
+                .opt(1)
+                .and_then(|o| o.as_object())
+                .map(|o| o.get_atom("is"))
+                .transpose()?
+                .filter(|v| !v.is_undefined())
+            {
                 let arg0 = dom_string(is)?;
                 n.page().dom.borrow_mut().set_attribute(el, "is", &arg0).js()?;
             }
-            crate::html::upgrade_if_custom(s, n.page(), el)
+            crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
         def.method("createElementNS", 2, |s, n, a| {
             a.require(2, "Document.createElementNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let q = dom_string(a.get(1))?;
             let el = n.page().dom.borrow_mut().create_element_ns(n.id, ns.as_deref(), &q).js()?;
-            crate::html::upgrade_if_custom(s, n.page(), el)
+            crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
         def.method("createTextNode", 1, |s, n, a| {
-            let d = arg_string(&a, 0, "Document.createTextNode")?;
-            let t = n.page().dom.borrow_mut().create_text(n.id, &d).js()?;
-            Ok(wrap_node(s, n.page(), t)?.value())
+            let t = with_arg_str(&a, 0, "Document.createTextNode", |d| {
+                n.page().dom.borrow_mut().create_text(n.id, d).js()
+            })?;
+            Ok(wrap_created_node(s, n.page(), n.id, t)?.value())
         });
         def.method("createComment", 1, |s, n, a| {
-            let d = arg_string(&a, 0, "Document.createComment")?;
-            let t = n.page().dom.borrow_mut().create_comment(n.id, &d).js()?;
-            Ok(wrap_node(s, n.page(), t)?.value())
+            let t = with_arg_str(&a, 0, "Document.createComment", |d| {
+                n.page().dom.borrow_mut().create_comment(n.id, d).js()
+            })?;
+            Ok(wrap_created_node(s, n.page(), n.id, t)?.value())
         });
         def.method("createAttribute", 1, |s, n, a| {
             let name = arg_string(&a, 0, "Document.createAttribute")?;
@@ -1619,7 +1813,7 @@ impl JsClass for Document {
         });
         def.method("createDocumentFragment", 0, |s, n, _a| {
             let f = n.page().dom.borrow_mut().create_fragment(n.id).js()?;
-            Ok(wrap_node(s, n.page(), f)?.value())
+            Ok(wrap_created_node(s, n.page(), n.id, f)?.value())
         });
         def.method("createEvent", 1, |s, n, a| {
             let iface = arg_string(&a, 0, "Document.createEvent")?;
@@ -1634,10 +1828,11 @@ impl JsClass for Document {
         def.method("importNode", 1, |s, n, a| {
             let src = node_arg(s, a.get(0), "importNode")?;
             let deep = match a.get(1).as_object() {
-                Some(o) => !o.get("selfOnly")?.to_bool(),
+                Some(o) => !o.get_atom("selfOnly")?.to_bool(),
                 None => a.get(1).to_bool(),
             };
             let c = n.page().dom.borrow_mut().clone_node(src, deep, Some(n.id)).js()?;
+            crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });
         def.method("adoptNode", 1, |s, n, a| {
@@ -1648,14 +1843,35 @@ impl JsClass for Document {
         def.method("elementFromPoint", 2, crate::html::element_from_point);
         def.method("elementsFromPoint", 2, crate::html::elements_from_point);
         def.method("getSelection", 0, |s, _n, _a| {
-            s.global().get("getSelection")?.as_object().map_or(Ok(s.null()), |f| f.call(None, &[]))
+            s.global().get_atom("getSelection")?.as_object().map_or(Ok(s.null()), |f| f.call(None, &[]))
         });
         def.method("execCommand", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.execCommand")?;
             let value = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
-            Ok(s.boolean(crate::editing::exec_command(n.page(), &command, &value)))
+            Ok(s.boolean(crate::edit_commands::exec_command(n.page(), &command, &value)))
         });
-        def.method("queryCommandSupported", 0, |s, _n, _a| Ok(s.boolean(false)));
+        def.method("queryCommandSupported", 1, |s, _n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandSupported")?;
+            Ok(s.boolean(crate::edit_commands::query_supported(&command)))
+        });
+        def.method("queryCommandEnabled", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandEnabled")?;
+            Ok(s.boolean(crate::edit_commands::query_enabled(n.page(), &command)))
+        });
+        def.method("queryCommandState", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandState")?;
+            Ok(s.boolean(crate::edit_commands::query_state(n.page(), &command)))
+        });
+        def.method("queryCommandIndeterm", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandIndeterm")?;
+            Ok(s.boolean(crate::edit_commands::query_indeterm(n.page(), &command)))
+        });
+        def.method("queryCommandValue", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandValue")?;
+            Ok(s.string(&crate::edit_commands::query_value(n.page(), &command)))
+        });
+        def.method("caretRangeFromPoint", 0, crate::editing_globals::caret_range_from_point);
+        def.method("caretPositionFromPoint", 2, crate::editing_globals::caret_position_from_point);
         def.method("open", 0, crate::html::document_open);
         def.method("close", 0, |s, n, _a| crate::html::document_close(s, n));
         def.method("write", 0, |s, n, a| crate::html::document_write(s, n, a, false));

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use style::Atom;
 use style::values::computed::CSSPixelLength;
 use style::values::computed::length_percentage::CalcLengthPercentage;
+use stylo_taffy::CopyStyleGetters;
 use stylo_taffy::TaffyStyloStyle;
 use taffy::{
     AxisStaticEdge, AxisStaticPosition, BlockContext, CoreStyle as _, DetailedLayoutInfo,
@@ -183,14 +184,19 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
-        #[cfg(feature = "writing-mode")]
-        {
-            self.compute_child_layout_in_own_wm(node_id, inputs, block_ctx)
-        }
-        #[cfg(not(feature = "writing-mode"))]
-        {
-            self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
-        }
+        // lightningpanda: every algorithm lays out its children through here (Taffy's
+        // `compute_child_layout` and Blitz's block contexts alike), once per tree level, so a tree
+        // of any depth lays out on a stack grown on demand instead of overflowing the thread's.
+        crate::util::ensure_stack(|| {
+            #[cfg(feature = "writing-mode")]
+            {
+                self.compute_child_layout_in_own_wm(node_id, inputs, block_ctx)
+            }
+            #[cfg(not(feature = "writing-mode"))]
+            {
+                self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
+            }
+        })
     }
 
     /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
@@ -200,6 +206,24 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
+        // lightningpanda: this runs once per tree level of a recursive layout; what is not part
+        // of the recursion stays out of its frame (see `dispatch_child_layout`).
+        let inputs = self.adjusted_child_inputs(node_id, inputs);
+        let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
+        if inputs.run_mode == RunMode::PerformLayout {
+            self.lay_out_out_of_flow_boxes(node_id, &mut output);
+        }
+        output
+    }
+
+    #[inline(never)]
+    fn lay_out_out_of_flow_boxes(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
+        compute_oof_layout(self, node_id, output);
+    }
+
+    /// The inputs `node_id` is laid out with (see [`Self::compute_child_layout_in_current_wm`]).
+    #[inline(never)]
+    fn adjusted_child_inputs(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutInput {
         let mut inputs = inputs;
         // stylo_taffy cannot represent intrinsic keywords in min_size(), so
         // min-width:max-content reaches Taffy as auto. Its flex minimum-size
@@ -210,16 +234,98 @@ impl LayoutPassState<'_> {
             && inputs.available_space.width == AvailableSpace::MinContent
             && self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|style| {
                 !style.writing_mode.is_vertical()
-                    && matches!(style.clone_min_width(), style::values::computed::Size::MaxContent)
+                    && matches!(style.get_min_width(), style::values::computed::Size::MaxContent)
             })
         {
             inputs.available_space.width = AvailableSpace::MaxContent;
         }
-        let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
-        if inputs.run_mode == RunMode::PerformLayout {
-            compute_oof_layout(self, node_id, &mut output);
+        // lightningpanda: a list box (`<select multiple>` or `size` > 1) with
+        // an auto height is `size` rows tall (4 for `multiple`), however many
+        // options it has, as in Chromium: its options scroll inside.
+        if inputs.known_dimensions.height.is_none() {
+            if let Some(height) = self.listbox_height(dom_node_id(node_id), inputs.parent_size.width) {
+                inputs.known_dimensions.height = Some(height);
+            }
         }
-        output
+        if inputs.run_mode == RunMode::PerformLayout {
+            let node = &self.nodes[dom_node_id(node_id)];
+            let is_root = node.parent.is_some_and(|parent| self.nodes[parent].parent.is_none());
+            crate::resolve::phase_profile::performed(is_root);
+        }
+        inputs
+    }
+
+    /// The border-box height of a list-box `<select>` whose height is auto:
+    /// `size` rows (4 for `multiple`) of its first option's height (a line
+    /// of the select's font with nothing to measure), plus its padding and
+    /// border. Chromium's `LayoutListBox` sizing; `min-`/`max-height` clamp.
+    fn listbox_height(&self, id: blitz_traits::NodeId, parent_width: Option<f32>) -> Option<f32> {
+        let node = &self.nodes[id];
+        let el = node.data.downcast_element()?;
+        if el.name.local != local_name!("select") {
+            return None;
+        }
+        let size = el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok());
+        let rows = match (el.attr(local_name!("multiple")).is_some(), size) {
+            (_, Some(n)) if n > 1 => n,
+            (true, None | Some(0)) => 4,
+            (true, Some(_)) => 1,
+            (false, _) => return None,
+        };
+        let style = node.primary_styles()?;
+        if style.writing_mode.is_vertical()
+            || stylo_taffy::convert::dimension(&style.slow_clone_height()).into_option().is_some()
+        {
+            return None;
+        }
+        let line = |s: &style::properties::ComputedValues| {
+            use style::values::computed::font::LineHeight;
+            let font_size = s.slow_clone_font_size().used_size().px();
+            match s.clone_line_height() {
+                // As the option's line box: whole pixels.
+                LineHeight::Normal => (font_size * 1.2).round(),
+                LineHeight::Number(num) => font_size * num.0,
+                LineHeight::Length(value) => value.0.px(),
+            }
+        };
+        let edges = |n: &Node| {
+            let st = n.layout_style();
+            let pb = st.padding().resolve_or_zero(parent_width, resolve_calc_value)
+                + st.border().resolve_or_zero(parent_width, resolve_calc_value);
+            pb.vertical_axis_sum()
+        };
+        // The first option that is displayed, in an optgroup too.
+        let mut first = None;
+        let mut stack: Vec<blitz_traits::NodeId> = node.children.iter().rev().copied().collect();
+        while let Some(c) = stack.pop() {
+            let n = &self.nodes[c];
+            let Some(e) = n.data.downcast_element() else { continue };
+            if n.primary_styles().is_none_or(|s| s.get_box().display.is_none()) {
+                continue;
+            }
+            if e.name.local == local_name!("option") {
+                first = Some(c);
+                break;
+            }
+            if e.name.local == local_name!("optgroup") {
+                stack.extend(n.children.iter().rev().copied());
+            }
+        }
+        let item = match first {
+            Some(o) => {
+                let o = &self.nodes[o];
+                let st = o.primary_styles()?;
+                let min = o.layout_style().min_size().height.resolve_or_zero(parent_width, resolve_calc_value);
+                line(&st).max(min) + edges(o)
+            }
+            None => line(&style),
+        };
+        let height = rows as f32 * item + edges(node);
+        let st = node.layout_style();
+        let min = st.min_size().height.resolve_or_zero(parent_width, resolve_calc_value);
+        let max = st.max_size().height;
+        let max = if max.is_auto() { f32::INFINITY } else { max.resolve_or_zero(parent_width, resolve_calc_value) };
+        Some(height.max(min).min(max))
     }
 
     /// The style of a node being laid out *by* the node whose algorithm is currently running,
@@ -241,12 +347,53 @@ impl LayoutPassState<'_> {
         }
     }
 
+    /// lightningpanda: the layout algorithms recurse through here once per tree level, so this
+    /// frame is kept small: the leaf boxes (form controls, replaced elements) and tables are
+    /// laid out by non-inlined functions whose (large) frames are gone before a container's
+    /// algorithm runs, so a deep tree costs only the algorithms' own frames per level.
     fn dispatch_child_layout(
         &mut self,
         node_id: NodeId,
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
+        match self.leaf_layout_or_algorithm(node_id, inputs) {
+            ChildLayout::Done(output) => output,
+            ChildLayout::Block => compute_block_layout(self, node_id, inputs, block_ctx),
+            ChildLayout::FlowRoot => compute_block_layout(self, node_id, inputs, None),
+            ChildLayout::Inline => self.inline_layout(node_id, inputs, block_ctx),
+            ChildLayout::Flex => self.flexbox_layout(node_id, inputs),
+            ChildLayout::Grid => self.grid_layout(node_id, inputs),
+            ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
+        }
+    }
+
+    // lightningpanda: the algorithms other than block layout, not inlined into
+    // `dispatch_child_layout` (whose frame every tree level pays).
+    #[inline(never)]
+    fn inline_layout(
+        &mut self,
+        node_id: NodeId,
+        inputs: taffy::tree::LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> taffy::tree::LayoutOutput {
+        self.compute_inline_layout(dom_node_id(node_id), inputs, block_ctx)
+    }
+
+    #[inline(never)]
+    fn flexbox_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {
+        compute_flexbox_layout(self, node_id, inputs)
+    }
+
+    #[inline(never)]
+    fn grid_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {
+        compute_grid_layout(self, node_id, inputs)
+    }
+
+    /// The layout of a leaf box (text, form controls, replaced elements, hidden boxes), or the
+    /// algorithm that lays out the container (see [`Self::dispatch_child_layout`]).
+    #[inline(never)]
+    fn leaf_layout_or_algorithm(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> ChildLayout {
         let orthogonal_percent_basis = self.orthogonal_percent_basis_of(dom_node_id(node_id));
         let scale = self.doc.viewport.scale();
         // lightningpanda: the longest option label of a drop-down select (the
@@ -289,7 +436,7 @@ impl LayoutPassState<'_> {
         let font_styles = node.primary_styles().map(|style| {
             use style::values::computed::font::LineHeight;
 
-            let font_size = style.clone_font_size().used_size().px();
+            let font_size = style.slow_clone_font_size().used_size().px();
             let line_height = match style.clone_line_height() {
                 LineHeight::Normal => font_size * 1.2,
                 LineHeight::Number(num) => font_size * num.0,
@@ -340,7 +487,7 @@ impl LayoutPassState<'_> {
                 #[cfg(not(feature = "tracing"))]
                 let _ = data;
 
-                taffy::LayoutOutput::HIDDEN
+                ChildLayout::Done(taffy::LayoutOutput::HIDDEN)
                 // unreachable!();
 
                 // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
@@ -411,17 +558,35 @@ impl LayoutPassState<'_> {
                             );
                         }
                     }
-                    return output;
+                    return ChildLayout::Done(output);
                 }
 
                 // lightningpanda: a drop-down select is an atomic box: its
                 // longest option's label (about half an em per character)
-                // plus the arrow, and a line of the control's font tall
-                // (Chromium's menu list: `line-height` is `normal`). Without
-                // this it had no box at all (its options are hidden).
+                // plus the arrow, and, as Chromium's menu list, a line of
+                // the control's font (`line-height: normal`) plus 2px tall,
+                // the line half of that lower (rounded down), its baseline
+                // the select's. Chromium's own control font (the UA's
+                // `system-ui, sans-serif` here) is a pixel shorter than
+                // `system-ui`: 1px there. Without this it had no box at all
+                // (its options are hidden).
                 if let Some((false, chars)) = select_label_chars {
                     let font_size = font_size.unwrap_or(13.333);
                     let style = node.layout_style();
+                    let line_height = select_line.map(|line| line.line_height / scale);
+                    let extra = if node.primary_styles().is_some_and(|st| {
+                        use style::values::computed::font::{GenericFontFamily, SingleFontFamily};
+                        let list = &st.get_font().font_family.families;
+                        let names: Vec<_> = list.iter().collect();
+                        matches!(
+                            names.as_slice(),
+                            [SingleFontFamily::Generic(GenericFontFamily::SystemUi), SingleFontFamily::Generic(GenericFontFamily::SansSerif)]
+                        )
+                    }) {
+                        1.0
+                    } else {
+                        2.0
+                    };
                     let mut output = compute_leaf_layout(
                         inputs,
                         &style,
@@ -432,30 +597,29 @@ impl LayoutPassState<'_> {
                             } else {
                                 (chars as f32 * 0.5 * font_size + 21.0).ceil()
                             },
-                            height: (font_size * 1.25).ceil(),
+                            height: line_height.map_or((font_size * 1.25).ceil(), |h| h + extra),
                         },
                     );
                     if let Some(line) = select_line {
                         let parent = inputs.parent_size.width;
                         let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                         let border = style.border().resolve_or_zero(parent, resolve_calc_value);
-                        let content_top = padding.top + border.top;
-                        let content_height = output.size.height - content_top - padding.bottom - border.bottom;
-                        let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
-                        let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
+                        let content_height = output.size.height - padding.vertical_axis_sum() - border.vertical_axis_sum();
+                        let offset = ((content_height - line.line_height / scale) / 2.0).floor().max(0.0);
+                        let baseline = padding.top + border.top + offset + line.baseline / scale;
                         output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
                     }
-                    return output;
+                    return ChildLayout::Done(output);
                 }
 
                 if *element_data.name.local == *"input" {
                     match element_data.attr(local_name!("type")) {
                         // if the input type is hidden, hide it
                         Some("hidden") => {
-                            return taffy::LayoutOutput::HIDDEN;
+                            return ChildLayout::Done(taffy::LayoutOutput::HIDDEN);
                         }
                         Some("checkbox") => {
-                            return compute_leaf_layout(
+                            return ChildLayout::Done(compute_leaf_layout(
                                 inputs,
                                 &node.layout_style(),
                                 resolve_calc_value,
@@ -475,7 +639,7 @@ impl LayoutPassState<'_> {
                                         height: min_size,
                                     }
                                 },
-                            );
+                            ));
                         }
                         None | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time") => {
                             // Chromium's intrinsic width: `size` (default 20) average
@@ -523,7 +687,7 @@ impl LayoutPassState<'_> {
                                 let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
                                 output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
                             }
-                            return output;
+                            return ChildLayout::Done(output);
                         }
                         _ => {}
                     }
@@ -583,6 +747,13 @@ impl LayoutPassState<'_> {
                                     DEFAULT_OBJECT_SIZE,
                                 )
                             }
+                            // lightningpanda: a `<video>` whose poster did not load
+                            // keeps the default object size.
+                            ImageData::None
+                                if element_data.name.local == local_name!("video") =>
+                            {
+                                tag_intrinsic_sizes(element_data, attr_size)
+                            }
                             ImageData::None => (IntrinsicSizes::default(), taffy::Size::ZERO),
                         },
                         SpecialElementData::Canvas(_)
@@ -632,8 +803,11 @@ impl LayoutPassState<'_> {
                     // attribute (`natural=W,H`).
                     let loaded = matches!(&element_data.special_data, SpecialElementData::Image(d) if !matches!(&**d, ImageData::None));
                     let is_image = *element_data.name.local == *"img" || is_image_input(element_data);
+                    // A `<video>` with known metadata is sized by its video
+                    // track, whatever its poster's size.
+                    let is_video = element_data.name.local == local_name!("video");
                     let (intrinsic_sizes, default_object_size) = match lp_natural_size(element_data) {
-                        Some((width, height)) if !loaded && is_image => (
+                        Some((width, height)) if is_video || (!loaded && is_image) => (
                             IntrinsicSizes {
                                 width: Some(width),
                                 height: Some(height),
@@ -667,117 +841,138 @@ impl LayoutPassState<'_> {
 
                     let mut style = node.layout_style();
                     style.set_percent_basis(orthogonal_percent_basis);
-                    return compute_replaced_layout(
+                    return ChildLayout::Done(compute_replaced_layout(
                         inputs,
                         &style,
                         resolve_calc_value,
                         &replaced_context,
-                    );
+                    ));
                 }
 
                 if node.flags.is_table_root() {
-                    // The space available to an absolutely positioned table never exceeds
-                    // the size of its containing block (less the table's margins), even
-                    // when negative insets would otherwise add to it
-                    // (https://drafts.csswg.org/css-tables-3/#abspos).
-                    let mut inputs = inputs;
-                    if self.nodes[dom_node_id(node_id)].is_out_of_flow() {
-                        let margin = self.nodes[dom_node_id(node_id)]
-                            .layout_style()
-                            .margin()
-                            .resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
-                        let max_available_space = inputs
-                            .parent_size
-                            .maybe_sub(margin.sum_axes())
-                            .maybe_max(taffy::Size::ZERO);
-                        inputs.available_space =
-                            inputs.available_space.maybe_min(max_available_space);
-                    }
-
-                    let SpecialElementData::TableRoot(context) = &self.nodes[dom_node_id(node_id)]
-                        .data
-                        .downcast_element()
-                        .unwrap()
-                        .special_data
-                    else {
-                        panic!("Node marked as table root but doesn't have TableContext");
-                    };
-                    let context = Arc::clone(context);
-
-                    let mut table_wrapper = TableTreeWrapper {
-                        doc: self,
-                        ctx: context,
-                        style: None,
-                    };
-                    table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
-                    let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
-
-                    // Absolutely positioned children take no part in the table grid. Their
-                    // static position is the top-left of the table's content box.
-                    let context = table_wrapper.ctx;
-                    if inputs.run_mode == RunMode::PerformLayout && !context.oof_children.is_empty()
-                    {
-                        let style = &context.style;
-                        let parent_width = inputs.parent_size.width;
-                        let padding = style
-                            .padding
-                            .resolve_or_zero(parent_width, resolve_calc_value);
-                        let border = style
-                            .border
-                            .resolve_or_zero(parent_width, resolve_calc_value);
-                        let static_position = taffy::Point {
-                            x: padding.left + border.left,
-                            y: padding.top + border.top,
-                        }
-                        .map(|pos| AxisStaticPosition::from_edge(pos, AxisStaticEdge::Start));
-                        let in_flow_count = context.cells.len();
-                        for (idx, (child_id, position)) in context.oof_children.iter().enumerate() {
-                            output.oof_candidates.push(OofCandidate {
-                                node: taffy_node_id(*child_id),
-                                order: (in_flow_count + idx) as u32,
-                                position: *position,
-                                static_position,
-                            });
-                        }
-                    }
-
-                    // HACK: Cap scrollable overflow at node size to prevent scrolling
-                    output.scrollable_overflow_rect.left = 0.0;
-                    output.scrollable_overflow_rect.top = 0.0;
-                    output.scrollable_overflow_rect.right =
-                        output.scrollable_overflow_rect.right.min(output.size.width);
-                    output.scrollable_overflow_rect.bottom = output
-                        .scrollable_overflow_rect
-                        .bottom
-                        .min(output.size.height);
-
-                    return output;
+                    return ChildLayout::Table;
                 }
 
                 if node.flags.is_inline_root() {
-                    return self.compute_inline_layout(dom_node_id(node_id), inputs, block_ctx);
+                    return ChildLayout::Inline;
                 }
 
                 // The default CSS file will set
                 match node.taffy_display() {
-                    Display::Block => compute_block_layout(self, node_id, inputs, block_ctx),
-                    Display::FlowRoot => compute_block_layout(self, node_id, inputs, None),
+                    Display::Block => ChildLayout::Block,
+                    Display::FlowRoot => ChildLayout::FlowRoot,
                     Display::Flex => {
                         #[cfg(feature = "writing-mode")]
                         {
                             self.current_align_axis_is_inline = node.is_column_flex_container();
                         }
-                        compute_flexbox_layout(self, node_id, inputs)
+                        ChildLayout::Flex
                     }
-                    Display::Grid => compute_grid_layout(self, node_id, inputs),
-                    Display::None => taffy::LayoutOutput::HIDDEN,
+                    Display::Grid => ChildLayout::Grid,
+                    Display::None => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
                 }
             }
-            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
+            NodeData::Document(_) => ChildLayout::FlowRoot,
 
-            _ => taffy::LayoutOutput::HIDDEN,
+            _ => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
         }
     }
+
+    /// A table root's layout (see [`Self::dispatch_child_layout`]).
+    #[inline(never)]
+    fn compute_table_root_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::LayoutOutput {
+        // The space available to an absolutely positioned table never exceeds
+        // the size of its containing block (less the table's margins), even
+        // when negative insets would otherwise add to it
+        // (https://drafts.csswg.org/css-tables-3/#abspos).
+        let mut inputs = inputs;
+        if self.nodes[dom_node_id(node_id)].is_out_of_flow() {
+            let margin = self.nodes[dom_node_id(node_id)]
+                .layout_style()
+                .margin()
+                .resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
+            let max_available_space = inputs
+                .parent_size
+                .maybe_sub(margin.sum_axes())
+                .maybe_max(taffy::Size::ZERO);
+            inputs.available_space =
+                inputs.available_space.maybe_min(max_available_space);
+        }
+
+        let SpecialElementData::TableRoot(context) = &self.nodes[dom_node_id(node_id)]
+            .data
+            .downcast_element()
+            .unwrap()
+            .special_data
+        else {
+            panic!("Node marked as table root but doesn't have TableContext");
+        };
+        let context = Arc::clone(context);
+
+        let mut table_wrapper = TableTreeWrapper {
+            doc: self,
+            ctx: context,
+            style: None,
+        };
+        table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
+        let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
+
+        // Absolutely positioned children take no part in the table grid. Their
+        // static position is the top-left of the table's content box.
+        let context = table_wrapper.ctx;
+        if inputs.run_mode == RunMode::PerformLayout && !context.oof_children.is_empty()
+        {
+            let style = &context.style;
+            let parent_width = inputs.parent_size.width;
+            let padding = style
+                .padding
+                .resolve_or_zero(parent_width, resolve_calc_value);
+            let border = style
+                .border
+                .resolve_or_zero(parent_width, resolve_calc_value);
+            let static_position = taffy::Point {
+                x: padding.left + border.left,
+                y: padding.top + border.top,
+            }
+            .map(|pos| AxisStaticPosition::from_edge(pos, AxisStaticEdge::Start));
+            let in_flow_count = context.cells.len();
+            for (idx, (child_id, position)) in context.oof_children.iter().enumerate() {
+                output.oof_candidates.push(OofCandidate {
+                    node: taffy_node_id(*child_id),
+                    order: (in_flow_count + idx) as u32,
+                    position: *position,
+                    static_position,
+                });
+            }
+        }
+
+        // HACK: Cap scrollable overflow at node size to prevent scrolling
+        let overflow = output.scrollable_overflow_rect;
+        output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
+            taffy::Rect {
+                left: 0.0,
+                top: 0.0,
+                right: overflow.right().min(output.size.width),
+                bottom: overflow.bottom().min(output.size.height),
+            },
+            output.scrollable_overflow_rect.is_reversed(),
+        );
+
+        output
+    }
+}
+
+/// lightningpanda: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
+enum ChildLayout {
+    /// A leaf box, laid out.
+    Done(taffy::LayoutOutput),
+    Block,
+    /// A block container that establishes its own formatting context (or the document).
+    FlowRoot,
+    Inline,
+    Flex,
+    Grid,
+    Table,
 }
 
 impl TraversePartialTree for LayoutPassState<'_> {
@@ -1066,11 +1261,25 @@ impl RoundTree for LayoutPassState<'_> {
     }
 
     fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        *self.node_from_id_mut(node_id).final_layout_mut() = *layout;
+        let node = self.node_from_id_mut(node_id);
+        let size_changed = node.final_layout().size != layout.size;
+        *node.final_layout_mut() = *layout;
+        // lightningpanda: a transform resolves against the rounded size
+        // (`Node::set_transform`), and rounding moves with the box's absolute
+        // position: a box that only moved (or sits inside one) can change its
+        // rounded size with no unrounded layout of its own changing. Mark it, so
+        // `resolve_transforms` resolves its transform again instead of reusing
+        // the one for the old size. The style decides, not `transform()`: one
+        // that was the identity at the old size is stored as `None`.
+        if size_changed && node.has_transform_style() {
+            node.mark_layout_changed(Some(node.id));
+        }
     }
 
     fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-        self.node_from_id(node_id).is_out_of_flow()
+        self.node_from_id(node_id)
+            .out_of_flow
+            .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     fn hoisted_child_count(&self, node_id: NodeId) -> usize {
@@ -1087,16 +1296,22 @@ impl RoundTree for LayoutPassState<'_> {
     // (`Node::update_unrounded_layout`). Anonymous boxes are always rounded
     // (damage marking walks the DOM parent chain, so their descendant flags are
     // not maintained), and so are nodes without style data, which have no damage.
-    fn rounded_unchanged(&self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) -> bool {
+    //
+    // lightningpanda: the offset is the fractional part of the parent's absolute
+    // position (`writing_mode::rounded_layout` rounds relative to the pixel grid),
+    // so a subtree moved by whole pixels, the rows below a table cell that grew,
+    // is skipped as well.
+    fn rounded_unchanged(&self, node_id: NodeId, unrounded: &Layout, parent_frac_x: f32, parent_frac_y: f32) -> bool {
         let node = self.node_from_id(node_id);
         !node.is_anonymous()
             && !node.has_damaged_descendants()
             && node.damage().is_some_and(|d| d.is_empty())
-            && node.layout_data().rounded_from == Some((*unrounded, absolute_x, absolute_y))
+            && node.layout_data().rounded_from == Some((*unrounded, parent_frac_x, parent_frac_y))
     }
 
-    fn record_rounded(&mut self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) {
-        self.node_from_id_mut(node_id).layout_data_mut().rounded_from = Some((*unrounded, absolute_x, absolute_y));
+    fn record_rounded(&mut self, node_id: NodeId, unrounded: &Layout, parent_frac_x: f32, parent_frac_y: f32) {
+        self.node_from_id_mut(node_id).layout_data_mut().rounded_from =
+            Some((*unrounded, parent_frac_x, parent_frac_y));
     }
 }
 
@@ -1206,7 +1421,8 @@ impl Iterator for RefCellChildIter<'_> {
 /// lightningpanda: the `natural=W,H` token of the element's
 /// `urn:x-lightningpanda:state` attribute.
 fn lp_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
-    let attr = element.attrs.iter().find(|a| &*a.name.ns == "urn:x-lightningpanda:state")?;
+    let attr =
+        element.attrs.iter().find(|a| &*a.name.ns == "urn:x-lightningpanda:state" && &*a.name.local == "state")?;
     let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;
     Some((w.parse().ok()?, h.parse().ok()?))

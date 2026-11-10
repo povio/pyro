@@ -66,6 +66,10 @@ fn elements_under(dom: &Dom, root: NodeId, out: &mut Vec<NodeId>) {
 }
 
 fn check_all(dom: &Dom, roots: &[NodeId], step: &str) {
+    // Tree flags, attribute atoms and every tree scope's id map, against walks.
+    if let Err(e) = dom.verify_tree_state() {
+        panic!("{e} after {step}");
+    }
     for &r in roots {
         for id in IDS.iter().chain(["missing"].iter()) {
             assert_eq!(dom.get_element_by_id(r, id).unwrap(), walk(dom, r, id), "root {r:?} id {id:?} after {step}");
@@ -109,7 +113,7 @@ fn id_lookups_match_a_full_walk_through_mixed_mutations() {
             }
             let el = els[rng.below(els.len())];
             let id = IDS[rng.below(IDS.len())];
-            let op = rng.below(18);
+            let op = rng.below(20);
             log.push(op);
             match op {
                 // Changes the index must survive.
@@ -168,6 +172,23 @@ fn id_lookups_match_a_full_walk_through_mixed_mutations() {
                     let c = dom.clone_node(el, true, None).unwrap();
                     let target = roots[1 + rng.below(roots.len() - 1)];
                     let _ = dom.append_child(target, c);
+                }
+                18 => {
+                    // moveBefore within one shadow-including root (errors are fine).
+                    let target = els[rng.below(els.len())];
+                    let _ = dom.move_before(target, el, None);
+                }
+                19 => {
+                    // A shadow tree with ids of its own, under any element that can host one.
+                    let host = match dom.shadow_root(el).unwrap() {
+                        Some(sr) => Some(sr),
+                        None => dom.attach_shadow(el, ShadowRootMode::Open).ok(),
+                    };
+                    if let Some(sr) = host {
+                        let e = dom.create_element(d, "span").unwrap();
+                        dom.set_attribute(e, "id", id).unwrap();
+                        dom.append_child(sr, e).unwrap();
+                    }
                 }
                 14 => {
                     let e = dom.create_element(other, "q").unwrap();

@@ -121,7 +121,7 @@ pub(crate) fn compare_boundary_points_dom(dom: &Dom, a: Point, b: Point) -> i8 {
 fn local_node(s: &Scope<'_>, page: &PageDom, v: Value<'_>, what: &str) -> JsResult<Option<NodeId>> {
     let n = s
         .unwrap::<Node>(v)
-        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))?;
+        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.").into()))?;
     Ok(Rc::ptr_eq(&n.page().dom, &page.dom).then_some(n.id))
 }
 
@@ -521,9 +521,9 @@ impl JsClass for Range {
             r.page.dom.borrow_mut().set_live_range(&d.live, r.live.start(), r.live.end()).js()?;
             Ok(s.wrap::<Range>(d, None)?.value())
         });
-        def.method("toString", 0, |s, r, _a| Ok(s.string(&range_text(r)?)));
+        def.pure_method("toString", 0, |s, r, _a| Ok(s.string(&range_text(r)?)));
         def.method("detach", 0, |s, _r, _a| Ok(s.undefined()));
-        def.method("compareBoundaryPoints", 2, |s, r, a| {
+        def.pure_method("compareBoundaryPoints", 2, |s, r, a| {
             a.require(2, "Range.compareBoundaryPoints")?;
             // WebIDL `unsigned short`.
             let how = to_u32(a.get(0))? & 0xffff;
@@ -547,7 +547,7 @@ impl JsClass for Range {
             };
             Ok(s.number(compare_points_in(&dom, x, y)? as f64))
         });
-        def.method("comparePoint", 2, |s, r, a| {
+        def.pure_method("comparePoint", 2, |s, r, a| {
             a.require(2, "Range.comparePoint")?;
             let node = local_node(s, &r.page, a.get(0), "Range.comparePoint")?;
             let off = to_u32(a.get(1))?;
@@ -565,7 +565,7 @@ impl JsClass for Range {
                 0.0
             }))
         });
-        def.method("isPointInRange", 2, |s, r, a| {
+        def.pure_method("isPointInRange", 2, |s, r, a| {
             a.require(2, "Range.isPointInRange")?;
             let node = local_node(s, &r.page, a.get(0), "Range.isPointInRange")?;
             let off = to_u32(a.get(1))?;
@@ -580,7 +580,7 @@ impl JsClass for Range {
                     && compare_points_in(&dom, (node, off), r.live.end())? <= 0,
             ))
         });
-        def.method("intersectsNode", 1, |s, r, a| {
+        def.pure_method("intersectsNode", 1, |s, r, a| {
             a.require(1, "Range.intersectsNode")?;
             let Some(node) = local_node(s, &r.page, a.get(0), "Range.intersectsNode")? else {
                 return Ok(s.boolean(false));
@@ -611,7 +611,7 @@ impl JsClass for Range {
                         .ok_or_else(|| JsError::Type("no context element".into()))?
                 }
             };
-            let frag = lp_dom::parse::parse_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
+            let frag = lp_dom::parse::parse_contextual_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
             Ok(wrap_node(s, &page, frag)?.value())
         });
         def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r)));
@@ -670,7 +670,7 @@ fn static_point(
     if off.is_undefined() {
         return Err(JsError::Type(format!(
             "Failed to construct 'StaticRange': required member {offset} is undefined."
-        )));
+        ).into()));
     }
     if matches!(page.dom.borrow().node_type(id).js()?, NodeType::DocumentType | NodeType::Attribute) {
         return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a doctype or an attribute."));
@@ -704,6 +704,18 @@ impl JsClass for StaticRange {
 
 pub(crate) fn new_range<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId) -> JsResult<Value<'s>> {
     Ok(s.wrap::<Range>(RangeData::new(page, doc)?, None)?.value())
+}
+
+/// A new Range from `start` to `end` (`caretRangeFromPoint`).
+pub(crate) fn range_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: Point, end: Point) -> JsResult<Value<'s>> {
+    Ok(s.wrap::<Range>(RangeData::from_owner(RangeOwner::new(page, start, end)?), None)?.value())
+}
+
+/// The markup of a copy of [start, end)'s contents (copying a selection).
+pub(crate) fn html_between(page: &PageDom, start: Point, end: Point) -> Option<String> {
+    let mut dom = page.dom.borrow_mut();
+    let frag = contents(&mut dom, start, end, false).ok()?;
+    dom.inner_html(frag).ok()
 }
 
 // ----- Selection ------------------------------------------------------------------
@@ -912,7 +924,7 @@ impl JsClass for Selection {
             editing::set_selection(&sel.page, anchor, focus);
             Ok(s.undefined())
         });
-        def.method("containsNode", 1, |s, sel, a| {
+        def.pure_method("containsNode", 1, |s, sel, a| {
             let node = node_arg(s, a.get(0), "Selection.containsNode")?;
             let Some(((sn, _), (en, _))) = editing::selection_range(&sel.page) else { return Ok(s.boolean(false)) };
             let dom = sel.page.dom.borrow();
@@ -934,7 +946,12 @@ impl JsClass for Selection {
             }
             Ok(s.undefined())
         });
-        def.method("modify", 0, |s, _sel, _a| Ok(s.undefined()));
+        def.method("modify", 0, |s, sel, a| {
+            let arg = |i: usize| if a.get(i).is_undefined() { Ok(String::new()) } else { dom_string(a.get(i)) };
+            let (alter, direction, granularity) = (arg(0)?, arg(1)?, arg(2)?);
+            crate::edit_commands::selection_modify(&sel.page, &alter, &direction, &granularity);
+            Ok(s.undefined())
+        });
     }
 }
 

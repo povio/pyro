@@ -65,12 +65,14 @@ impl JsClass for DomRect {
 
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
+    crate::animation_events::layout_flush(page, n.id);
     let r = page.layout().bounding_client_rect(&page.dom.borrow(), n.id);
     rect_value(s, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
+    crate::animation_events::layout_flush(page, n.id);
     let rects = page.layout().client_rects(&page.dom.borrow(), n.id);
     let mut vals = lp_js::RootedVec::new();
     for r in rects {
@@ -250,9 +252,45 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
     );
 }
 
-pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+/// `scrollIntoView(arg)`: `(boolean or ScrollIntoViewOptions)`; `true`, a
+/// missing argument and `{}` align block start / inline nearest, `false`
+/// block end / inline nearest. `behavior` is accepted; scrolling is instant.
+pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    use lp_dom::layout::ScrollAlign;
+    let arg = a.get(0);
+    let (mut block, mut inline) = (ScrollAlign::Start, ScrollAlign::Nearest);
+    if let Some(o) = arg.as_object() {
+        // Dictionary members in lexicographic order: behavior, block, inline.
+        let behavior = o.get("behavior")?;
+        if !behavior.is_undefined() {
+            let b = dom_string(behavior)?;
+            if !matches!(b.as_str(), "auto" | "instant" | "smooth") {
+                return Err(lp_js::JsError::type_error(format!(
+                    "Failed to execute 'scrollIntoView' on 'Element': The provided value '{b}' is not a valid enum value of type ScrollBehavior."
+                )));
+            }
+        }
+        let position = |k: &str, out: &mut ScrollAlign| -> JsResult<()> {
+            let v = o.get(k)?;
+            if v.is_undefined() {
+                return Ok(());
+            }
+            let text = dom_string(v)?;
+            *out = ScrollAlign::parse(&text).ok_or_else(|| {
+                lp_js::JsError::type_error(format!(
+                    "Failed to execute 'scrollIntoView' on 'Element': The provided value '{text}' is not a valid enum value of type ScrollLogicalPosition."
+                ))
+            })?;
+            Ok(())
+        };
+        position("block", &mut block)?;
+        position("inline", &mut inline)?;
+    } else if !arg.is_undefined() && !arg.is_null() && !arg.to_bool() {
+        block = ScrollAlign::End;
+    }
     let page = n.page();
-    let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), n.id);
+    let moved =
+        page.layout.borrow_mut().scroll_into_view_aligned_script_targets(&page.dom.borrow(), n.id, block, inline);
     fire_scroll_targets(page, moved);
     Ok(s.undefined())
 }
@@ -278,16 +316,34 @@ fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<lp_dom::layout::ScrollTarg
     }
 }
 
-pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+/// `checkVisibility(options)`: `checkOpacity` / `opacityProperty` add the
+/// opacity:0 test, `checkVisibilityCSS` / `visibilityProperty` the
+/// visibility test (CSSOM View, CheckVisibilityOptions).
+pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let mut opts = CheckVisibilityOptions::default();
+    let arg = a.get(0);
+    if !arg.is_undefined() && !arg.is_null() {
+        let o = arg.as_object().ok_or_else(|| {
+            lp_js::JsError::type_error("Failed to execute 'checkVisibility': options is not an object.")
+        })?;
+        // Dictionary members are read in lexicographic order.
+        let flag = |k: &str| o.get(k).map(|v| v.to_bool());
+        let check_opacity = flag("checkOpacity")?;
+        let check_visibility_css = flag("checkVisibilityCSS")?;
+        let opacity_property = flag("opacityProperty")?;
+        let visibility_property = flag("visibilityProperty")?;
+        opts.check_opacity = check_opacity || opacity_property;
+        opts.check_visibility = check_visibility_css || visibility_property;
+    }
     let page = n.page();
-    let v = page.layout().check_visibility(&page.dom.borrow(), n.id, CheckVisibilityOptions::default());
+    let v = page.layout().check_visibility(&page.dom.borrow(), n.id, opts);
     Ok(s.boolean(v))
 }
 
 fn scroll_args(a: &Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
-        let l = o.get("left")?;
-        let t = o.get("top")?;
+        let l = o.get_atom("left")?;
+        let t = o.get_atom("top")?;
         Ok((
             (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
             (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
@@ -336,6 +392,7 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {
     // Reading a scroll offset sees the current layout (clamped to it).
+    crate::animation_events::layout_flush(n.page(), n.id);
     clamp_scrolls(n.page(), false);
     let viewport = scrolls_viewport(n.page(), n.id);
     let layout = n.page().layout();
@@ -369,6 +426,7 @@ pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) 
 
 pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<Value<'s>> {
     let page = n.page();
+    crate::animation_events::layout_flush(page, n.id);
     let dom = page.dom.borrow();
     let l = page.layout();
     let metric = match which {
@@ -420,7 +478,9 @@ pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -
     if n.id != page.document() {
         return Ok(s.null());
     }
-    let hit = hit_test(page, x, y);
+    // Retargeted against the document: a hit inside a shadow tree is its
+    // outermost host (CDP's `hit_test` stays un-retargeted, as Chrome's).
+    let hit = hit_test(page, x, y).and_then(|h| page.dom.borrow().retarget_node(h, n.id));
     opt_node(s, page, hit)
 }
 
@@ -431,7 +491,7 @@ pub(crate) fn shadow_element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args
     let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
     let page = n.page();
     let hit = hit_test(page, x, y);
-    let retargeted = hit.and_then(|h| retarget_to_root(&page.dom.borrow(), h, n.id));
+    let retargeted = hit.and_then(|h| page.dom.borrow().retarget_node(h, n.id));
     opt_node(s, page, retargeted)
 }
 
@@ -444,7 +504,7 @@ pub(crate) fn shadow_elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Arg
     {
         let dom = page.dom.borrow();
         for id in ids {
-            if let Some(r) = retarget_to_root(&dom, id, n.id) {
+            if let Some(r) = dom.retarget_node(id, n.id) {
                 if out.last() != Some(&r) {
                     out.push(r);
                 }
@@ -458,30 +518,26 @@ pub(crate) fn shadow_elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Arg
     Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
 }
 
-/// DOM "retarget" of `node` against the tree rooted at `root`: the node
-/// itself when its root is `root`, else the nearest host whose root is;
-/// `None` when `root` is not a shadow-including ancestor.
-fn retarget_to_root(dom: &lp_dom::Dom, node: NodeId, root: NodeId) -> Option<NodeId> {
-    let mut cur = node;
-    loop {
-        let r = dom.root_node(cur, false).ok()?;
-        if r == root {
-            return Some(cur);
-        }
-        if !dom.is_shadow_root(r).unwrap_or(false) {
-            // Not in a shadow tree: nothing to retarget (the host itself).
-            return Some(cur);
-        }
-        cur = dom.fragment_host(r).ok()??;
-    }
-}
-
 pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(2, "Document.elementsFromPoint")?;
     let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
     let page = n.page();
-    let ids =
+    let mut ids =
         if n.id == page.document() { page.layout().elements_from_point(&page.dom.borrow(), x, y) } else { Vec::new() };
+    {
+        // Retarget each hit against the document, dropping the repeats a
+        // shadow tree's nodes collapse to (its host, once).
+        let dom = page.dom.borrow();
+        let mut out: Vec<NodeId> = Vec::with_capacity(ids.len());
+        for id in ids.drain(..) {
+            if let Some(r) = dom.retarget_node(id, n.id) {
+                if !out.contains(&r) {
+                    out.push(r);
+                }
+            }
+        }
+        ids = out;
+    }
     let mut vals = lp_js::RootedVec::new();
     for id in ids {
         vals.push(s, wrap_node(s, page, id)?.value());
@@ -492,6 +548,149 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
 /// Read-only computed style (`getComputedStyle`).
 pub struct ComputedData {
     el: crate::collections::NodeHold,
+    /// The `pseudoElt` argument, parsed.
+    pseudo: lp_dom::stylo::PseudoArg,
+}
+
+impl ComputedData {
+    /// The computed value of `name` for the element or its pseudo-element.
+    fn value(&self, name: &str) -> String {
+        use lp_dom::stylo::PseudoArg;
+        let page = &self.el.page;
+        match &self.pseudo {
+            PseudoArg::Element => {
+                crate::animation_events::observe(page, self.el.id);
+                page.layout().computed_style_value(&page.dom.borrow(), self.el.id, name)
+            }
+            PseudoArg::Pseudo(pseudo) => {
+                page.layout().computed_pseudo_style_value(&page.dom.borrow(), self.el.id, pseudo, name)
+            }
+            PseudoArg::Invalid => String::new(),
+        }
+    }
+}
+
+/// A computed value as a JavaScript string: the realm's one string for a
+/// keyword (`block`, `none`, `auto`: the same few dozen texts come back for
+/// every element), a new string for anything else (lengths, colours, lists:
+/// mostly distinct, where a shared string would cost more than it saves).
+fn computed_string<'s>(s: &Scope<'s>, value: &str) -> Value<'s> {
+    if !value.is_empty() && value.len() <= 24 && value.bytes().all(|b| b.is_ascii_lowercase() || b == b'-') {
+        s.text_string(value)
+    } else {
+        s.string(value)
+    }
+}
+
+/// A computed style's CSS properties, one getter each: Chrome's names
+/// ([`crate::computed_properties`]), then its `epub*` aliases. Each entry is
+/// the property whose value the getter reads.
+fn computed_property_names() -> &'static [&'static str] {
+    static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let names = crate::computed_properties::COMPUTED_PROPERTIES.iter().copied();
+        names.chain(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property)).collect()
+    })
+}
+
+/// Getter of the property `computed_property_names()[I]` (under each of its
+/// names): an attribute of `CSSStyleDeclaration.prototype`, read through the
+/// inline cache like any other, with the property chosen when the class is
+/// defined. The getters are made by index, [`MAX_PROPERTIES`] of them.
+fn property_getter<'s, const I: usize>(s: &Scope<'s>, c: &ComputedData) -> JsResult<Value<'s>> {
+    Ok(computed_string(s, &c.value(computed_property_names()[I])))
+}
+
+type ComputedGetter = for<'s> fn(&Scope<'s>, &ComputedData) -> JsResult<Value<'s>>;
+
+macro_rules! property_getters_block {
+    ($b:literal; $($i:literal),*) => { [ $( property_getter::<{ $b * 16 + $i }> as ComputedGetter ),* ] };
+}
+macro_rules! property_getters {
+    ($($b:literal),*) => {
+        [ $( property_getters_block!($b; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15) ),* ]
+    };
+}
+
+/// Room for the property list; the class definition asserts that it fits.
+const MAX_PROPERTIES: usize = 768;
+/// The getters by property index, in blocks of 16.
+static PROPERTY_GETTERS: [[ComputedGetter; 16]; MAX_PROPERTIES / 16] = property_getters!(
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47
+);
+
+/// The attribute names of each entry of [`computed_property_names`], each
+/// with whether `for..in` lists it, as Chrome has them: the camel-cased name
+/// (CSSOM "camel-cased attribute": `background-color` -> `backgroundColor`,
+/// `-webkit-text-security` -> `webkitTextSecurity`) is listed; the dashed
+/// name and, for a `-webkit-` property, the "webkit-cased attribute"
+/// (`WebkitTextSecurity`) are found by name only; `float` is also
+/// `cssFloat`, an attribute of the interface; the `epub*` aliases are found
+/// by name only.
+fn property_attribute_names() -> &'static [Vec<(&'static str, bool)>] {
+    static NAMES: std::sync::OnceLock<Vec<Vec<(&'static str, bool)>>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let camel = |name: &str, upper_first: bool| {
+            let mut out = String::with_capacity(name.len());
+            let mut upper = upper_first;
+            for ch in name.chars() {
+                if ch == '-' {
+                    upper = upper_first || !out.is_empty();
+                } else if upper {
+                    out.push(ch.to_ascii_uppercase());
+                    upper = false;
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        };
+        let leak = |n: String| -> &'static str { Box::leak(n.into_boxed_str()) };
+        let mut all: Vec<Vec<(&'static str, bool)>> = crate::computed_properties::COMPUTED_PROPERTIES
+            .iter()
+            .map(|&name| {
+                let mut names = Vec::with_capacity(3);
+                let lower = camel(name, false);
+                if lower == name {
+                    names.push((name, true));
+                } else {
+                    names.push((leak(lower), true));
+                    names.push((name, false));
+                }
+                if name == "float" {
+                    names.push(("cssFloat", true));
+                }
+                if name.starts_with("-webkit-") {
+                    names.push((leak(camel(name, true)), false));
+                }
+                names
+            })
+            .collect();
+        all.extend(crate::computed_properties::EPUB_ALIASES.iter().map(|&(alias, _)| vec![(alias, false)]));
+        all
+    })
+}
+
+/// Every name of [`property_attribute_names`], with its property's index (a
+/// name defined twice: the later, as on the prototype).
+fn property_index_by_name() -> &'static rustc_hash::FxHashMap<&'static str, usize> {
+    static INDEX: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, usize>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = rustc_hash::FxHashMap::default();
+        for (i, names) in property_attribute_names().iter().enumerate() {
+            for &(name, _) in names {
+                index.insert(name, i);
+            }
+        }
+        index
+    })
+}
+
+/// Assigning to a computed style's property: Chrome's error, in sloppy code
+/// too.
+fn computed_read_only<'s>(_s: &Scope<'s>, _c: &ComputedData, _v: Value<'s>) -> JsResult<()> {
+    Err(lp_js::JsError::dom("NoModificationAllowedError", "These styles are computed, and therefore read-only."))
 }
 
 pub struct ComputedStyle;
@@ -501,12 +700,53 @@ impl JsClass for ComputedStyle {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.not_exposed();
+        // Every property, by its dashed name and its IDL attribute names, as
+        // attributes of the prototype (CSSOM `CSSStyleDeclaration`). No named
+        // property hook: a class with one sends every property read through
+        // it, which defeats the inline cache.
+        let names = property_attribute_names();
+        assert!(names.len() <= MAX_PROPERTIES, "CSS properties beyond the getter table: raise MAX_PROPERTIES");
+        let mut own = Vec::with_capacity(names.len() * 2);
+        for (i, names) in names.iter().enumerate() {
+            let get = PROPERTY_GETTERS[i / 16][i % 16];
+            for &(name, enumerable) in names {
+                def.pure_accessor_typed(name, lp_js::GetterResult::String, get, computed_read_only);
+                if !enumerable {
+                    def.unenumerable_last_accessor();
+                }
+                // Chrome has the properties as named properties of the object
+                // itself: the camel-cased names listed and enumerable, the
+                // dashed and `Webkit` names own but unlisted, the `epub*`
+                // aliases listed by getOwnPropertyNames only; `cssFloat` is
+                // an attribute of the interface. The values stay with the
+                // prototype's accessors, so reads stay inline-cached.
+                let how = if name == "cssFloat" {
+                    continue;
+                } else if crate::computed_properties::EPUB_ALIASES.iter().any(|&(alias, _)| alias == name) {
+                    lp_js::OwnName::LISTED_HIDDEN
+                } else if enumerable {
+                    lp_js::OwnName::ENUMERABLE
+                } else {
+                    lp_js::OwnName::UNLISTED
+                };
+                own.push((name, how));
+            }
+        }
+        // In Chrome's order: by code unit.
+        own.sort_unstable_by_key(|&(name, _)| name);
+        for (name, how) in own {
+            def.own_property_name(name, how);
+        }
+        // An own name's value (a descriptor, spread, `Object.entries`) is
+        // the property's, as Chrome's named property is, not whatever the
+        // prototype chain holds after `Object.setPrototypeOf`.
+        def.own_property_value(|s, c, name| {
+            let Some(&i) = property_index_by_name().get(name) else { return Ok(None) };
+            Ok(Some(PROPERTY_GETTERS[i / 16][i % 16](s, c)?))
+        });
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
-            let page = &c.el.page;
-            crate::animation_events::observe(page, c.el.id);
-            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &name);
-            Ok(s.string(&v))
+            Ok(computed_string(s, &c.value(&name)))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
         // The longhands, as indexed properties; an element without computed
@@ -519,39 +759,28 @@ impl JsClass for ComputedStyle {
         def.indexed(|s, c, i| Ok(computed_names(c).get(i as usize).map(|name| s.string(name))));
         def.indexed_iterator();
         def.getter("cssText", |s, _c| Ok(s.string("")));
+        def.getter("parentRule", |s, _c| Ok(s.null()));
         def.method("setProperty", 2, |_s, _c, _a| {
             Err::<Value, _>(lp_js::JsError::dom(
                 "NoModificationAllowedError",
                 "These styles are computed, and therefore read-only.",
             ))
         });
-        def.named(false, |s, c, name| {
-            // camelCase IDL attributes (`backgroundColor`) and the dashed
-            // property names themselves (`background-color`).
-            let dashed = name.contains('-');
-            if !name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
-                || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || (dashed && ch == '-'))
-            {
-                return Ok(None);
-            }
-            let prop = if dashed {
-                if !lp_dom::stylo::is_property(name) {
-                    return Ok(None);
-                }
-                name.to_owned()
-            } else {
-                crate::css::camel_to_css(name)
-            };
-            let page = &c.el.page;
-            crate::animation_events::observe(page, c.el.id);
-            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
-            Ok(Some(s.string(&v)))
+        def.method("removeProperty", 1, |_s, _c, a| {
+            let name = arg_string(&a, 0, "CSSStyleDeclaration.removeProperty")?;
+            Err::<Value, _>(lp_js::JsError::dom(
+                "NoModificationAllowedError",
+                format!("These styles are computed, and therefore the '{name}' property is read-only."),
+            ))
         });
     }
 }
 
 /// The property names a computed style lists.
 fn computed_names(c: &ComputedData) -> &'static [&'static str] {
+    if c.pseudo == lp_dom::stylo::PseudoArg::Invalid {
+        return &[];
+    }
     let page = &c.el.page;
     let dom = page.dom.borrow();
     if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
@@ -560,9 +789,19 @@ fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     lp_dom::stylo::longhand_names()
 }
 
-/// `window.getComputedStyle(el)`.
-pub fn get_computed_style<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Object<'s>> {
-    s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)? }, None)
+/// `window.getComputedStyle(el, pseudoElt)`.
+pub fn get_computed_style<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    el: NodeId,
+    pseudo_elt: Value<'s>,
+) -> JsResult<Object<'s>> {
+    let pseudo = if pseudo_elt.is_undefined() || pseudo_elt.is_null() {
+        lp_dom::stylo::PseudoArg::Element
+    } else {
+        lp_dom::stylo::parse_pseudo_arg(&dom_string(pseudo_elt)?)
+    };
+    s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)?, pseudo }, None)
 }
 
 /// A live `MediaQueryList` (`PageDom::media_queries`): its target, query

@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 //! Fresh-process native proof: parent threads stay alive across the fork, and
 //! the child executes real Foundation number operations rather than a once guard.
 

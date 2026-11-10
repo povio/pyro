@@ -75,6 +75,9 @@ options:
                                         pay for it (~3 MB while idle). Default: on with
                                         --prepare, off otherwise;
                                         env LIGHTNINGPANDA_RENDER_PREWARM=on|off
+  --parent-pid <PID>                    exit when process PID exits, however it ends
+                                        (env LIGHTNINGPANDA_PARENT_PID; the SDK's
+                                        Lightningpanda.launch() sets it to its own pid)
 
 HTTP and data: document loading are supported; browser API coverage is partial.
 --experimental-features and --load-resources are accepted for CLI compatibility;
@@ -120,18 +123,50 @@ Each template keeps LIGHTNINGPANDA_FORK_SPARES (default 2) forks waiting, so a
 connection does not wait for its fork. Forks run without JavaScriptCore's
 DFG/FTL tiers (connections are too short for them to pay off) unless
 JSC_useDFGJIT is set.
+
+Shared profiles (--fork): several clients (test workers in other processes)
+can use one server. registerPreparedPage {name, ...} registers a profile
+under a name every client of the server shares: the same definition under
+the same name finds the profile already booted, a different one is refused
+while another client holds it. Lightningpanda.adoptPreparedPage {name} ->
+{profileId, url, initScripts, viewport, setup, base} holds a profile another
+client registered, unregisterPreparedPage {name} releases this connection's
+hold, and Lightningpanda.preparedProfiles lists the names with their holders.
+A connection's holds end when it closes; a profile is retired once no
+connection holds it and no other profile is derived from it.
 ";
 
 /// How long a spare thread keeps booting prepared pages before it just waits.
 const PREBOOT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// The stack of a browser thread: a main thread's (8 MB on macOS and Linux),
+/// as `lightningpanda fetch`/`eval` run their page on, and as Chrome's
+/// renderer main thread and our worker threads have. Layout recurses once
+/// per tree level (Taffy's algorithms), about 2.7 KB per nested block in a
+/// release build: a spawned thread's default 2 MB aborted the whole server
+/// past about 770 nested blocks. Layout and paint now grow the stack on
+/// demand (blitz-dom `util::ensure_stack`), so no depth aborts; 8 MB keeps
+/// about 3,000 levels on the thread's own stack. JSC bounds its own
+/// recursion by the stack it finds (`maxPerThreadStackUsage`, 5 MB), as on
+/// those threads, and a layout read made near that limit grows the stack
+/// too. Untouched stack pages cost no memory.
+const BROWSER_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// No command for this long after a prepared page was taken: boot the next.
 const REFILL_QUIET: std::time::Duration = std::time::Duration::from_millis(15);
 /// With no command for this long, a closed page whose collection was put off
-/// (`Engine::release_closed`) is collected, and compiled code dropped
-/// (`Engine::settle_idle`): the client may stay idle for good. A test suite's
-/// gap between tests is shorter, so a running suite keeps its bytecode.
+/// (`Engine::release_closed`) is collected (`Engine::settle`): a page close
+/// itself only leaves the collection pending, so the closing command returns
+/// at once and the next page does not re-commit the pages a purge on the
+/// command's stack had just returned. A test suite's gap between tests is
+/// shorter than this.
 const RELEASE_QUIET: std::time::Duration = std::time::Duration::from_secs(1);
+/// With no command for this long after a close, every realm's compiled code
+/// is dropped too (`Engine::settle_idle`, the bytecode cache included): the
+/// client may stay idle for good. Longer than a test's pause between
+/// actions: dropped after every quiet second, Playwright's 293 KB injected
+/// script was re-parsed by the next test (2-3 ms CPU), and a page waiting
+/// on a timer lost its compiled code.
+const CODE_QUIET: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServeOptions {
@@ -172,6 +207,9 @@ pub struct ServeOptions {
     /// renderer's process-wide state at startup. `None` follows the mode
     /// like `spare_engine`.
     pub render_prewarm: Option<bool>,
+    /// `--parent-pid` (or `LIGHTNINGPANDA_PARENT_PID`): exit with this
+    /// process ([`crate::lifetime`]).
+    pub parent_pid: Option<libc::pid_t>,
 }
 
 impl ServeOptions {
@@ -238,7 +276,18 @@ impl Default for ServeOptions {
             render_prewarm: std::env::var(RENDER_PREWARM_ENV)
                 .ok()
                 .and_then(|v| parse_switch(RENDER_PREWARM_ENV, &v).ok()),
+            parent_pid: std::env::var(PARENT_PID_ENV).ok().and_then(|v| parse_pid(&v).ok()),
         }
+    }
+}
+
+/// Environment equivalent of `--parent-pid`.
+pub const PARENT_PID_ENV: &str = "LIGHTNINGPANDA_PARENT_PID";
+
+fn parse_pid(value: &str) -> Result<libc::pid_t, String> {
+    match value.trim().parse::<libc::pid_t>() {
+        Ok(pid) if pid > 0 => Ok(pid),
+        _ => Err(format!("--parent-pid: '{value}' is not a process id")),
     }
 }
 
@@ -335,6 +384,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             "--fork" => o.fork = true,
             "--spare-engine" => o.spare_engine = Some(parse_switch("--spare-engine", &value()?)?),
             "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
+            "--parent-pid" => o.parent_pid = Some(parse_pid(&value()?)?),
             "--template" => o.template = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown option '{other}'")),
         }
@@ -421,6 +471,13 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     if let Some(socket) = &options.template {
         return crate::fork::template_main(&options, socket);
     }
+    // Before anything that can take a while: the process may already be gone.
+    if let Some(pid) = options.parent_pid {
+        if let Err(e) = crate::lifetime::exit_with(pid, crate::fork::cleanup_for_exit) {
+            eprintln!("lightningpanda serve: --parent-pid: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
     let profile = match browser_profile(&options) {
         Ok(p) => p,
         Err(e) => {
@@ -434,7 +491,13 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
         match crate::fork::Template::spawn(args) {
-            Ok(t) => Some(Arc::new(t)),
+            Ok(t) => {
+                // Killed by a signal, the server still removes its templates' sockets.
+                if let Err(e) = crate::lifetime::cleanup_on_signals(crate::fork::cleanup_for_exit) {
+                    eprintln!("lightningpanda serve: --fork: {e}");
+                }
+                Some(Arc::new(t))
+            }
             Err(e) => {
                 eprintln!("lightningpanda serve: --fork: {e}");
                 return ExitCode::FAILURE;
@@ -540,7 +603,8 @@ impl ThreadPerConnection {
         let n = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel::<Assignment>();
         let profile = self.profile.clone();
-        std::thread::Builder::new().name(format!("lp-browser-{n}")).spawn(move || {
+        let builder = std::thread::Builder::new().name(format!("lp-browser-{n}")).stack_size(BROWSER_STACK_BYTES);
+        builder.spawn(move || {
             let mut prepared = EngineHost::prepare_thread_with(&profile).map(|mut thread| {
                 let prebooted = EngineHost::preboot(&mut thread, &profile.prepared);
                 (thread, prebooted)
@@ -574,7 +638,7 @@ impl ThreadPerConnection {
                 }
             };
             let _finished = a.finished;
-            run_browser_thread(prepared, &profile, a.socket, &a.buffered, a.config, None);
+            run_browser_thread(prepared, &profile, a.socket, &a.buffered, a.config);
         })?;
         Ok(tx)
     }
@@ -663,14 +727,12 @@ const FLUSH_EVERY: usize = 16;
 
 /// Serves one connection on this (browser) thread until it ends: the
 /// connection's socket is read and written here (see [`crate::conn`]).
-/// `fork_register` makes it a fork child of the template (`serve --fork`).
 pub(crate) fn run_browser_thread(
     prepared: Result<(lp_browser::BrowserThread, Vec<crate::engine::Prebooted>), crate::msg::CdpError>,
     profile: &BrowserProfile,
     socket: std::net::TcpStream,
     buffered: &[u8],
     config: ServerConfig,
-    fork_register: Option<crate::target::RegisterPrepared>,
 ) {
     let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
     let host = match prepared.and_then(|(t, prebooted)| {
@@ -688,11 +750,20 @@ pub(crate) fn run_browser_thread(
             return;
         }
     };
-    let mut browser = Browser::with_prepared(host, profile.prepared.clone());
-    if let Some(register) = fork_register {
-        browser.set_fork_child(register);
-    }
-    serve_browser(browser, outbox, outbound, socket, buffered, config);
+    let browser = Browser::with_prepared(host, profile.prepared.clone());
+    serve_browser(browser, outbox, outbound, socket, buffered, config, AfterServe::TearDown);
+}
+
+/// What a connection's end leaves to do in the process that served it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AfterServe {
+    /// The process lives on: every page is closed and its memory released.
+    TearDown,
+    /// The process exits right after (a forked connection's): its pages
+    /// unload as when a tab closes, the connection closes cleanly, and the
+    /// rest (disposing realms, collecting, dropping the engine) is left to
+    /// the exit. The browser is leaked.
+    Exit,
 }
 
 /// Serves one connection with protocol state that already exists: `browser`
@@ -704,6 +775,7 @@ pub(crate) fn serve_browser(
     socket: std::net::TcpStream,
     buffered: &[u8],
     config: ServerConfig,
+    after: AfterServe,
 ) {
     let conn = match Conn::new(socket, buffered, outbound, config) {
         Ok(conn) => conn,
@@ -758,9 +830,15 @@ pub(crate) fn serve_browser(
             browser.refill_prepared();
             continue;
         }
-        let release_at = browser.host().thread.browser.engine.release_pending().then(|| quiet_since + RELEASE_QUIET);
+        let engine = &browser.host().thread.browser.engine;
+        let code_at = engine.code_release_pending().then(|| quiet_since + CODE_QUIET);
+        let release_at = engine.release_pending().then(|| quiet_since + RELEASE_QUIET).or(code_at);
         if release_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
-            browser.host().thread.browser.engine.settle_idle();
+            if code_at.is_some_and(|at| std::time::Instant::now() >= at) {
+                engine.settle_idle();
+            } else {
+                engine.settle();
+            }
             continue;
         }
         let quiet_at = match (quiet_at, release_at) {
@@ -786,13 +864,15 @@ pub(crate) fn serve_browser(
             match message {
                 Inbound::Text(text) => {
                     lp_browser::note_client_activity();
-                    // Polling the pool's status is not test activity.
-                    if !text.contains("\"Lightningpanda.preparedPages\"") {
-                        quiet_since = std::time::Instant::now();
-                    }
+                    let received = std::time::Instant::now();
                     let handle = crate::perf::span("cdp.handle_text");
                     browser.handle_text(&text, &mut sink);
                     drop(handle);
+                    // Polling the pool's status is not test activity. The
+                    // parsed method says so (no scan of the message text).
+                    if !browser.last_was_pool_poll() {
+                        quiet_since = received;
+                    }
                     let flush = crate::perf::span("host.flush");
                     browser.host_mut().flush();
                     drop(flush);
@@ -815,16 +895,26 @@ pub(crate) fn serve_browser(
             break;
         }
     }
+    crate::fork_stats::mark("served");
     browser.host().thread.browser.engine.set_interrupt_check(None);
     browser.host().set_dialog_pump(None);
     browser.host_mut().thread.event_loop.watch_fd(None);
+    if after == AfterServe::Exit {
+        browser.host().thread.browser.engine.skip_release_until_exit();
+    }
     browser.shutdown();
-    browser.host_mut().close_all();
-    lp_webapi::join_stopped(std::time::Duration::from_secs(1));
+    if after == AfterServe::TearDown {
+        browser.host_mut().close_all();
+        lp_webapi::join_stopped(std::time::Duration::from_secs(1));
+    }
     drop(sink);
     match Rc::try_unwrap(conn) {
         Ok(conn) => conn.into_inner().finish(),
         Err(_) => debug_assert!(false, "connection still shared at teardown"),
+    }
+    crate::fork_stats::mark("closed");
+    if after == AfterServe::Exit {
+        std::mem::forget(browser);
     }
 }
 

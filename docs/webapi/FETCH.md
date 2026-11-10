@@ -7,6 +7,10 @@ JavaScriptCore promises. No browser/runtime wiring is added by this change.
 
 Over HTTP/2 `Response.statusText` is empty, as the protocol has no reason phrase.
 
+Each HTTP(S) fetch (and `navigator.sendBeacon`) adds a Resource Timing entry
+to its document's timeline when it ends (`resource_timing::timed_sink`; see
+`PERFORMANCE_TIMELINE.md`).
+
 Before fetching, the embedder must provide:
 
 - `page.net`: the context's `NetClient`.
@@ -81,8 +85,57 @@ Not implemented: the Request constructor,
 the "response" header guard after construction (later
 `headers.set('set-cookie')` is not filtered), multipart `Response.formData()`
 (urlencoded bodies are parsed; other types reject with TypeError), full MIME parsing for
-response Blob types, service workers and integrity/referrer policy.
-Nonempty integrity/referrer/referrerPolicy and keepalive are explicitly rejected.
+response Blob types and service workers.
+
+Referrer, referrer policy, integrity and keepalive (fetch init or a `Request`
+input):
+- `referrer` (`""` is no referrer; `about:client` or another origin's URL is the
+  document) is sent as `Referer` under the request's `referrerPolicy`, else the
+  document's policy: its last `<head>` `<meta name=referrer>`, else its
+  `Referrer-Policy` response header, else strict-origin-when-cross-origin. The
+  client applies the policy per hop (including the https-to-http downgrade
+  rule), and a redirect's `Referrer-Policy` header changes the next hop's. XHR
+  sends the document URL under the document's policy. Element `referrerpolicy`
+  attributes and `rel=noreferrer` are not applied yet.
+- `integrity` (SRI sha256/384/512, base64 or base64url): the response is held
+  until the whole body has arrived, then delivered if it matches the strongest
+  algorithm's digests, else the fetch rejects with TypeError. A no-cors request
+  with valid metadata rejects (an opaque response cannot match).
+- `keepalive`: the request is not canceled when its document is disposed
+  (navigation, frame removal); its page-side state goes. Keepalive fetches and
+  beacons of a document share a 64 KiB in-flight body quota; over it fetch
+  rejects with TypeError.
+
+`navigator.sendBeacon(url, data)` POSTs with credentials and keepalive
+semantics (no document owns it, so it outlives the page), `no-cors` unless the
+body's type is not CORS-safelisted. CDP reports it as resource type `Ping`. It
+returns false over the keepalive quota or without page networking; a
+ReadableStream body throws TypeError.
+
+Request headers like Chrome: `Sec-Fetch-Site`/`-Mode`/`-Dest` (and
+`Sec-Fetch-User: ?1` on browser-initiated top-level navigations) go to
+potentially trustworthy URLs (https, localhost, loopback), keeping the most
+cross-site value across redirects. A navigation without a referrer counts as
+browser-initiated (`none`), so a CDP `Page.navigate` with a `referrer` reports
+a site relation to it; link and form navigations do not send `Sec-Fetch-User`
+(no user-activation tracking).
+
+`EventSource` (server-sent events) exists in windows and dedicated workers and
+is made on a realm's first use of the name. It streams a `text/event-stream`
+GET (`Accept: text/event-stream`, `Cache-Control: no-cache`, credentials per
+`withCredentials`, CORS for cross-origin URLs) through the context client, and
+parses it per HTML (BOM, CR/LF/CRLF, comments, `event`/`data`/`id`/`retry`).
+`open`, `message`/named events (MessageEvent with `origin` and `lastEventId`)
+and `error` fire in order; the end of the stream or a network error
+reconnects after the reconnection time (default 3 s, `retry`) with
+`Last-Event-ID`; a non-200 response, another MIME type or a CORS failure
+closes it for good. Its events are dispatched by script, so `isTrusted` is
+false. Document disposal or realm teardown stops its connection.
+
+Content-Encoding is decoded like Chrome: lists (`gzip, br`, or several header
+lines) decode in reverse order, `deflate` accepts zlib-wrapped and raw streams,
+and a list naming `identity` or an unsupported coding (`zstd`, bogus values)
+passes the body through undecoded instead of failing.
 
 HTTP cache: each browser context has a private, in-memory, byte-bounded cache in
 lp-net (`crates/lp-net/src/cache.rs`, an RFC 9111 subset). By default contexts

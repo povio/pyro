@@ -1,11 +1,12 @@
 //! Event interfaces. One native `EventCore` per event; each realm that sees
 //! it gets its own wrapper (isolated worlds), all sharing the state.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
 use lp_dom::events::{EventState, TargetKey};
+use lp_dom::NodeId;
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope, Value};
 
 use crate::page::PageDom;
@@ -33,6 +34,7 @@ pub enum EventInterface {
     ErrorEvent,
     PromiseRejectionEvent,
     SubmitEvent,
+    FormDataEvent,
     PopStateEvent,
     HashChangeEvent,
     PageTransitionEvent,
@@ -42,6 +44,11 @@ pub enum EventInterface {
     TouchEvent,
     AnimationEvent,
     TransitionEvent,
+    ToggleEvent,
+    CommandEvent,
+    /// Made in JS on first use (`crate::editing_globals`): natively an
+    /// Event wrapper with ClipboardEvent.prototype.
+    ClipboardEvent,
 }
 
 /// One touch point (`Touch`): its target and viewport/screen position.
@@ -134,8 +141,12 @@ pub struct EventFields {
     pub error: Option<Persistent>,
     pub promise: Option<Persistent>,
     pub reason: Option<Persistent>,
+    /// `SubmitEvent.submitter`, and the `source` of `ToggleEvent` and
+    /// `CommandEvent` (one event never has both).
     pub submitter: Option<TargetKey>,
     pub state: Option<Persistent>,
+    /// `FormDataEvent.formData`.
+    pub form_data: Option<Persistent>,
     pub old_url: String,
     pub new_url: String,
     pub persisted: bool,
@@ -143,7 +154,14 @@ pub struct EventFields {
     /// Same-document Window source, resolved in the observing world without
     /// an event-to-global persistent root. Port messages have no source.
     pub message_source: Option<TargetKey>,
+    /// Another window's `source` (a frame or popup posting here), resolved
+    /// in the observing realm when read, so the event holds no root of it.
+    pub message_source_window: Option<MessageSource>,
+    /// `ports`: the transferred MessagePorts' new ports, in the receiver's realm.
+    pub message_ports: Option<Persistent>,
     pub origin: String,
+    /// MessageEvent `lastEventId` (EventSource); None reads as "".
+    pub last_event_id: Option<Box<str>>,
     pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
     pub storage_key: Option<String>,
     pub storage_old: Option<String>,
@@ -161,7 +179,15 @@ pub struct EventFields {
     /// `elapsedTime` (seconds) and `pseudoElement` of both.
     pub elapsed_time: f64,
     pub pseudo_element: String,
+    /// `ToggleEvent.oldState` / `.newState`.
+    pub old_state: String,
+    pub new_state: String,
+    /// `CommandEvent.command`.
+    pub command: String,
 }
+
+/// Resolves a `MessageEvent.source` window in the realm reading it.
+pub type MessageSource = Rc<dyn for<'s> Fn(&Scope<'s>) -> JsResult<Value<'s>>>;
 
 pub struct EventCore {
     pub id: u64,
@@ -170,7 +196,21 @@ pub struct EventCore {
     pub state: RefCell<EventState>,
     pub fields: RefCell<EventFields>,
     held_nodes: RefCell<Vec<crate::collections::NodeHold>>,
+    /// The target keys ([`EventCore::target_keys`]) the held nodes and the
+    /// hidden edges of every live wrapper of this event were last brought in
+    /// line with; `None` when some wrapper may be behind. A dispatch that
+    /// leaves the keys as they were (nearly all) then has nothing to
+    /// rewrite: the edges only depend on the keys.
+    synced: Cell<Option<TargetKeys>>,
+    /// Realms with a wrapper of this event that are not its page's (a
+    /// sibling page's listener wrapped it first): [`EventCore::refresh_wrappers`]
+    /// brings theirs in line too, or `synced` would skip them.
+    foreign_realms: RefCell<Vec<lp_js::WeakRealm>>,
 }
+
+/// An event's target, relatedTarget and submitter keys: what its hidden
+/// edges and held nodes mirror.
+type TargetKeys = [Option<TargetKey>; 3];
 
 pub type EventData = Rc<EventCore>;
 
@@ -183,6 +223,12 @@ thread_local! {
 /// one (no embedder) counts from the first event of the thread.
 fn now_ms(page: &PageDom) -> f64 {
     page.event_time().unwrap_or_else(|| TIME_ORIGIN.with(|t| t.elapsed().as_secs_f64() * 1000.0))
+}
+
+/// The document's clock now (`performance.now()`'s), as `Event.timeStamp`
+/// reads it.
+pub(crate) fn page_now_ms(page: &PageDom) -> f64 {
+    now_ms(page)
 }
 
 impl EventCore {
@@ -203,6 +249,8 @@ impl EventCore {
             state: RefCell::new(st),
             fields: RefCell::new(EventFields::default()),
             held_nodes: RefCell::new(Vec::new()),
+            synced: Cell::new(None),
+            foreign_realms: RefCell::new(Vec::new()),
         })
     }
 
@@ -231,18 +279,24 @@ impl EventCore {
         e
     }
 
-    /// Keep native identities alive as long as the event exposes them.
-    pub(crate) fn retain_targets(&self) {
+    /// The keys the event's hidden edges and held nodes mirror.
+    fn target_keys(&self) -> TargetKeys {
         let fields = self.fields.borrow();
-        let keys = [self.state.borrow().target, fields.related_target, fields.submitter];
-        let ids: Vec<_> = {
+        [self.state.borrow().target, fields.related_target, fields.submitter]
+    }
+
+    /// Keep native identities alive as long as the event exposes them.
+    fn retain_targets(&self, keys: &TargetKeys) {
+        let mut ids: [Option<NodeId>; 3] = [None; 3];
+        {
             let dom = self.page.dom.borrow();
-            keys.into_iter().flatten().filter_map(|k| dom.key_node(k)).collect()
-        };
-        drop(fields);
+            for (id, key) in ids.iter_mut().zip(keys) {
+                *id = key.and_then(|k| dom.key_node(k));
+            }
+        }
         let mut held = self.held_nodes.borrow_mut();
-        held.retain(|h| ids.contains(&h.id));
-        for id in ids {
+        held.retain(|h| ids.contains(&Some(h.id)));
+        for id in ids.into_iter().flatten() {
             if !held.iter().any(|h| h.id == id) {
                 if let Ok(h) = crate::collections::NodeHold::new(&self.page, id) {
                     held.push(h);
@@ -251,31 +305,74 @@ impl EventCore {
         }
     }
 
-    fn trace_targets(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
-        let fields = self.fields.borrow();
-        let keys = [self.state.borrow().target, fields.related_target, fields.submitter];
-        let data_transfer = fields.data_transfer.clone();
-        drop(fields);
+    fn trace_targets(&self, s: &Scope<'_>, wrapper: Object<'_>, keys: &TargetKeys) -> JsResult<()> {
+        let data_transfer = self.fields.borrow().data_transfer.clone();
         if let Some(data_transfer) = data_transfer {
             s.set_hidden(wrapper, "__lpEventDataTransfer", data_transfer.get(s)?.value())?;
         }
         for (name, key) in ["__lpEventTarget", "__lpRelatedTarget", "__lpSubmitter"].into_iter().zip(keys) {
             // Hidden edges preserve wrapper identity/expandos without native GC cycles.
-            s.set_hidden(wrapper, name, target_value(s, &self.page, key)?)?;
+            s.set_hidden(wrapper, name, target_value(s, &self.page, *key)?)?;
         }
         Ok(())
     }
 
+    /// Brings the hidden edges of an existing wrapper of this event in line
+    /// with its keys, unless every wrapper's already are.
+    fn sync_wrapper(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
+        let keys = self.target_keys();
+        if self.synced.get() == Some(keys) {
+            return Ok(());
+        }
+        // Other wrappers (other realms) stay behind until `refresh_wrappers`.
+        self.synced.set(None);
+        self.retain_targets(&keys);
+        self.trace_targets(s, wrapper, &keys)
+    }
+
+    /// Traces a wrapper just made for this event: it had no edges yet. The
+    /// other wrappers' standing is unchanged by it.
+    fn trace_new_wrapper(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
+        let keys = self.target_keys();
+        let others = self.synced.replace(None);
+        self.retain_targets(&keys);
+        self.trace_targets(s, wrapper, &keys)?;
+        if others == Some(keys) {
+            self.synced.set(others);
+        }
+        Ok(())
+    }
+
+    /// Brings the hidden edges of every wrapper of this event (and its held
+    /// nodes) in line with its keys after they may have changed (a dispatch,
+    /// an `init*Event` call). Nothing to do while they are in line already:
+    /// the edges are a function of the keys, and every wrapper made since
+    /// was traced with them.
     pub(crate) fn refresh_wrappers(&self) {
-        self.retain_targets();
-        let realms: Vec<_> = self.page.realms.borrow().values().filter_map(|r| r.upgrade()).collect();
+        let keys = self.target_keys();
+        if self.synced.get() == Some(keys) {
+            return;
+        }
+        self.synced.set(None);
+        self.retain_targets(&keys);
+        let mut realms: Vec<_> = self.page.realms.borrow().values().filter_map(|r| r.upgrade()).collect();
+        {
+            let mut foreign = self.foreign_realms.borrow_mut();
+            foreign.retain(|r| r.upgrade().is_some());
+            realms.extend(foreign.iter().filter_map(|r| r.upgrade()));
+        }
+        let mut traced = true;
         for realm in realms {
             let Ok(s) = realm.scope() else { continue };
             if let Some(wrapper) = s.lookup_identity(self.page.event_identity(self.id)) {
-                if let Err(err) = self.trace_targets(&s, wrapper) {
+                if let Err(err) = self.trace_targets(&s, wrapper, &keys) {
+                    traced = false;
                     s.report_exception(&err);
                 }
             }
+        }
+        if traced {
+            self.synced.set(Some(keys));
         }
     }
 
@@ -286,10 +383,9 @@ impl EventCore {
 
 /// Wraps `core` in `s`'s realm using the class matching its interface.
 pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
-    core.retain_targets();
     let key = core.page.event_identity(core.id);
     if let Some(o) = s.lookup_identity(key) {
-        core.trace_targets(s, o)?;
+        core.sync_wrapper(s, o)?;
         return Ok(o);
     }
     // An event keeps its object when dispatched into a sibling document.
@@ -297,7 +393,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         for realm in page.sibling_realms(s) {
             let Ok(owner) = realm.scope() else { continue };
             if let Some(o) = owner.lookup_identity(key) {
-                core.trace_targets(&owner, o)?;
+                core.sync_wrapper(&owner, o)?;
                 if let Some(o) = lp_js::Persistent::new(&owner, o.value()).get(s).as_object() {
                     return Ok(o);
                 }
@@ -325,6 +421,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::ErrorEvent => s.wrap::<ErrorEvent>(d, Some(key)),
         EventInterface::PromiseRejectionEvent => s.wrap::<PromiseRejectionEvent>(d, Some(key)),
         EventInterface::SubmitEvent => s.wrap::<SubmitEvent>(d, Some(key)),
+        EventInterface::FormDataEvent => s.wrap::<FormDataEvent>(d, Some(key)),
         EventInterface::PopStateEvent => s.wrap::<PopStateEvent>(d, Some(key)),
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
@@ -334,9 +431,15 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::TouchEvent => s.wrap::<TouchEvent>(d, Some(key)),
         EventInterface::AnimationEvent => s.wrap::<AnimationEvent>(d, Some(key)),
         EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
+        EventInterface::ToggleEvent => s.wrap::<ToggleEvent>(d, Some(key)),
+        EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
+        EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
-    core.trace_targets(s, wrapper)?;
+    if !core.page.realms.borrow().contains_key(&s.realm_id()) {
+        core.foreign_realms.borrow_mut().push(s.realm().downgrade());
+    }
+    core.trace_new_wrapper(s, wrapper)?;
     Ok(wrapper)
 }
 
@@ -353,8 +456,8 @@ fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -
             let define = page.define_properties.borrow().get(&realm).map(|p| p.get(s));
             let define = match define {
                 Some(define) => define,
-                None => match s.global().get("Object")?.as_object() {
-                    Some(object) => object.get("defineProperty")?,
+                None => match s.global().get_atom("Object")?.as_object() {
+                    Some(object) => object.get_atom("defineProperty")?,
                     None => return Ok(()),
                 },
             };
@@ -381,16 +484,16 @@ fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -
     Ok(())
 }
 
-fn get_bool(init: Option<Object<'_>>, name: &str) -> JsResult<bool> {
+fn get_bool(init: Option<Object<'_>>, name: &'static str) -> JsResult<bool> {
     match init {
-        Some(o) => Ok(o.get(name)?.to_bool()),
+        Some(o) => Ok(o.get_atom(name)?.to_bool()),
         None => Ok(false),
     }
 }
-fn get_num(init: Option<Object<'_>>, name: &str, default: f64) -> JsResult<f64> {
+fn get_num(init: Option<Object<'_>>, name: &'static str, default: f64) -> JsResult<f64> {
     match init {
         Some(o) => {
-            let v = o.get(name)?;
+            let v = o.get_atom(name)?;
             if v.is_undefined() {
                 Ok(default)
             } else {
@@ -400,10 +503,10 @@ fn get_num(init: Option<Object<'_>>, name: &str, default: f64) -> JsResult<f64> 
         None => Ok(default),
     }
 }
-fn get_str(init: Option<Object<'_>>, name: &str) -> JsResult<String> {
+fn get_str(init: Option<Object<'_>>, name: &'static str) -> JsResult<String> {
     match init {
         Some(o) => {
-            let v = o.get(name)?;
+            let v = o.get_atom(name)?;
             if v.is_undefined() {
                 Ok(String::new())
             } else {
@@ -462,17 +565,20 @@ fn construct<'s, C: JsClass<Data = EventData>>(
         core.fields.borrow_mut().view = view_init(s, init)?;
     }
     let key = page.event_identity(core.id);
-    core.retain_targets();
     let wrapper = s.wrap_new::<C>(core.clone(), new_target, Some(key))?;
     define_unforgeables(s, &page, wrapper)?;
-    core.trace_targets(s, wrapper)?;
+    // The event's first and only wrapper: traced, every wrapper is in line.
+    let keys = core.target_keys();
+    core.retain_targets(&keys);
+    core.trace_targets(s, wrapper, &keys)?;
+    core.synced.set(Some(keys));
     Ok(wrapper)
 }
 
 /// `UIEventInit.view`: a Window (this realm's global) or null.
 fn view_init<'s>(s: &Scope<'s>, init: Option<Object<'s>>) -> JsResult<Option<Persistent>> {
     let Some(o) = init else { return Ok(None) };
-    let v = o.get("view")?;
+    let v = o.get_atom("view")?;
     view_value(s, v)
 }
 
@@ -483,7 +589,7 @@ fn view_value<'s>(s: &Scope<'s>, v: lp_js::Value<'s>) -> JsResult<Option<Persist
     // This realm's global, or another Window (its `window` is itself).
     let is_window = v.as_object().is_some_and(|o| {
         o.as_raw() == s.global().as_raw()
-            || o.get("window").is_ok_and(|w| w.as_object().is_some_and(|w| w.as_raw() == o.as_raw()))
+            || o.get_atom("window").is_ok_and(|w| w.as_object().is_some_and(|w| w.as_raw() == o.as_raw()))
     });
     if !is_window {
         return Err(JsError::Type("Failed to construct event: member view is not of type Window.".into()));
@@ -502,7 +608,7 @@ fn fill_ui<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> 
 
 fn related<'s>(s: &Scope<'s>, init: Option<Object<'s>>) -> JsResult<Option<TargetKey>> {
     let Some(o) = init else { return Ok(None) };
-    let v = o.get("relatedTarget")?;
+    let v = o.get_atom("relatedTarget")?;
     if let Some(n) = s.unwrap::<crate::node::Node>(v) {
         return Ok(Some(n.target.key));
     }
@@ -563,8 +669,8 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.persistent_device_id = get_num(init, "persistentDeviceId", 0.0)?;
     // Pointer Events: tilt and the spherical angles are two forms of one
     // orientation; whichever the dictionary gives determines the other.
-    let given = |name: &str| -> JsResult<Option<f64>> {
-        match init.map(|o| o.get(name)).transpose()? {
+    let given = |name: &'static str| -> JsResult<Option<f64>> {
+        match init.map(|o| o.get_atom(name)).transpose()? {
             Some(v) if !v.is_undefined() => Ok(Some(v.to_number()?)),
             _ => Ok(None),
         }
@@ -586,13 +692,15 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         }
     }
     for (name, into) in [("coalescedEvents", &mut f.coalesced_events), ("predictedEvents", &mut f.predicted_events)] {
-        let Some(list) = init.map(|o| o.get(name)).transpose()?.filter(|v| !v.is_undefined()) else { continue };
+        let Some(list) = init.map(|o| o.get_atom(name)).transpose()?.filter(|v| !v.is_undefined()) else { continue };
         let events = s.sequence(list, name)?;
-        let len = events.get("length")?.to_number()? as u32;
+        let len = events.get_atom("length")?.to_number()? as u32;
         for i in 0..len {
             let event = events.get_index(i)?;
             if s.unwrap::<PointerEvent>(event).is_none() {
-                return Err(JsError::Type(format!("Failed to construct 'PointerEvent': {name} must hold PointerEvents.")));
+                return Err(JsError::Type(format!(
+                    "Failed to construct 'PointerEvent': {name} must hold PointerEvents."
+                ).into()));
             }
             into.push(Persistent::new(s, event));
         }
@@ -697,7 +805,7 @@ fn fill_keyboard<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>
 fn fill_input<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     fill_ui(s, f, init)?;
     f.data = match init {
-        Some(o) => opt_dom_string(o.get("data")?)?,
+        Some(o) => opt_dom_string(o.get_atom("data")?)?,
         None => None,
     };
     f.input_type = get_str(init, "inputType")?;
@@ -713,7 +821,7 @@ fn fill_focus<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
 
 fn fill_custom<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        let d = o.get("detail")?;
+        let d = o.get_atom("detail")?;
         if !d.is_undefined() {
             f.custom_detail = Some(Persistent::new(s, d));
         }
@@ -734,7 +842,7 @@ fn fill_error<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
     f.lineno = get_num(init, "lineno", 0.0)? as u32;
     f.colno = get_num(init, "colno", 0.0)? as u32;
     if let Some(o) = init {
-        let e = o.get("error")?;
+        let e = o.get_atom("error")?;
         if !e.is_undefined() {
             f.error = Some(Persistent::new(s, e));
         }
@@ -744,8 +852,8 @@ fn fill_error<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
 
 fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     let Some(o) = init else { return Ok(()) };
-    let nullable = |name: &str| -> JsResult<Option<String>> {
-        let v = o.get(name)?;
+    let nullable = |name: &'static str| -> JsResult<Option<String>> {
+        let v = o.get_atom(name)?;
         if v.is_undefined() || v.is_null() {
             Ok(None)
         } else {
@@ -756,7 +864,7 @@ fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.storage_old = nullable("oldValue")?;
     f.storage_new = nullable("newValue")?;
     f.storage_url = get_str(Some(o), "url")?;
-    let area = o.get("storageArea")?;
+    let area = o.get_atom("storageArea")?;
     if !area.is_undefined() && !area.is_null() {
         if s.unwrap::<crate::storage::Storage>(area).is_none() {
             return Err(JsError::Type("StorageEvent: storageArea is not a Storage".into()));
@@ -768,7 +876,7 @@ fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
 
 fn fill_popstate<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        f.state = Some(Persistent::new(s, o.get("state")?));
+        f.state = Some(Persistent::new(s, o.get_atom("state")?));
     }
     Ok(())
 }
@@ -787,9 +895,31 @@ fn fill_media_query<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<
 
 fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        f.message_data = Some(Persistent::new(s, o.get("data")?));
+        f.message_data = Some(Persistent::new(s, o.get_atom("data")?));
+        let ports = o.get_atom("ports")?;
+        if let Some(list) = ports.as_object() {
+            // sequence<MessagePort>: copied into a new array.
+            let copy = s.array(&[])?;
+            let count = list.get_atom("length")?.to_number()? as u32;
+            for i in 0..count {
+                let port = list.get_index(i)?;
+                if s.unwrap::<crate::message_channel::MessagePort>(port).is_none() {
+                    return Err(JsError::Type(
+                        "Failed to construct 'MessageEvent': Failed to read the 'ports' property from 'MessageEventInit': Failed to convert value to 'MessagePort'.".into(),
+                    ));
+                }
+                copy.set_index(i, port)?;
+            }
+            f.message_ports = Some(Persistent::new(s, copy.value()));
+        } else if !ports.is_undefined() {
+            return Err(JsError::Type(
+                "Failed to construct 'MessageEvent': The provided value cannot be converted to a sequence.".into(),
+            ));
+        }
     }
     f.origin = get_str(init, "origin")?;
+    let last_event_id = get_str(init, "lastEventId")?;
+    f.last_event_id = (!last_event_id.is_empty()).then(|| last_event_id.into());
     Ok(())
 }
 
@@ -814,7 +944,7 @@ fn fill_pagetransition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Obje
 
 fn fill_submit<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        if let Some(n) = s.unwrap::<crate::node::Node>(o.get("submitter")?) {
+        if let Some(n) = s.unwrap::<crate::node::Node>(o.get_atom("submitter")?) {
             f.submitter = Some(n.target.key);
         }
     }
@@ -886,8 +1016,8 @@ impl JsClass for Event {
             e.state.borrow_mut().prevent_default();
             Ok(s.undefined())
         });
-        def.method("composedPath", 0, |s, e, _a| {
-            let path = e.state.borrow().path.clone();
+        def.pure_method("composedPath", 0, |s, e, _a| {
+            let path = e.page.dom.borrow().composed_path(&e.state.borrow());
             let mut vals = lp_js::RootedVec::new();
             for k in path {
                 vals.push(s, target_value(s, &e.page, Some(k))?);
@@ -1120,10 +1250,7 @@ fn modifier_state(f: &EventFields, key: &str) -> bool {
         "Shift" => f.shift_key,
         "Alt" => f.alt_key,
         "Meta" => f.meta_key,
-        _ => EXTRA_MODIFIERS
-            .iter()
-            .position(|(_, k)| *k == key)
-            .is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
+        _ => EXTRA_MODIFIERS.iter().position(|(_, k)| *k == key).is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
     }
 }
 
@@ -1178,7 +1305,7 @@ impl JsClass for MouseEvent {
             let k = e.fields.borrow().related_target;
             target_value(s, &e.page, k)
         });
-        def.method("getModifierState", 1, |s, e, a| {
+        def.pure_method("getModifierState", 1, |s, e, a| {
             let k = dom_string(a.get(0))?;
             Ok(s.boolean(modifier_state(&e.fields.borrow(), &k)))
         });
@@ -1230,11 +1357,11 @@ impl JsClass for PointerEvent {
         def.getter("persistentDeviceId", |s, e| Ok(s.number(e.fields.borrow().persistent_device_id)));
         def.getter("pointerType", |s, e| Ok(s.string(&e.fields.borrow().pointer_type)));
         def.getter("isPrimary", |s, e| Ok(s.boolean(e.fields.borrow().is_primary)));
-        def.method("getCoalescedEvents", 0, |s, e, _a| {
+        def.pure_method("getCoalescedEvents", 0, |s, e, _a| {
             let events: Vec<Value<'_>> = e.fields.borrow().coalesced_events.iter().map(|p| p.get(s)).collect();
             Ok(s.array(&events)?.value())
         });
-        def.method("getPredictedEvents", 0, |s, e, _a| {
+        def.pure_method("getPredictedEvents", 0, |s, e, _a| {
             let events: Vec<Value<'_>> = e.fields.borrow().predicted_events.iter().map(|p| p.get(s)).collect();
             Ok(s.array(&events)?.value())
         });
@@ -1271,7 +1398,7 @@ impl JsClass for DragEvent {
             // construction, then keep the value on the event's traced wrapper.
             let _root = Persistent::new(s, wrapper.value());
             let value = match init {
-                Some(init) => init.get("dataTransfer")?,
+                Some(init) => init.get_atom("dataTransfer")?,
                 None => s.null(),
             };
             if !value.is_nullish() {
@@ -1322,7 +1449,7 @@ impl JsClass for KeyboardEvent {
         def.getter("shiftKey", |s, e| Ok(s.boolean(e.fields.borrow().shift_key)));
         def.getter("altKey", |s, e| Ok(s.boolean(e.fields.borrow().alt_key)));
         def.getter("metaKey", |s, e| Ok(s.boolean(e.fields.borrow().meta_key)));
-        def.method("getModifierState", 1, |s, e, a| {
+        def.pure_method("getModifierState", 1, |s, e, a| {
             let k = dom_string(a.get(0))?;
             Ok(s.boolean(modifier_state(&e.fields.borrow(), &k)))
         });
@@ -1361,8 +1488,15 @@ impl JsClass for InputEvent {
         def.getter("data", |s, e| Ok(e.fields.borrow().data.as_deref().map_or(s.null(), |d| s.string(d))));
         def.getter("inputType", |s, e| Ok(s.string(&e.fields.borrow().input_type)));
         def.getter("isComposing", |s, e| Ok(s.boolean(e.fields.borrow().is_composing)));
-        def.getter("dataTransfer", |s, _e| Ok(s.null()));
-        def.method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
+        // Set on paste and insertHTML in editable content.
+        def.getter("dataTransfer", |s, e| {
+            let reference = e.fields.borrow().data_transfer.clone();
+            Ok(match reference {
+                Some(reference) => reference.get(s)?.value(),
+                None => s.null(),
+            })
+        });
+        def.pure_method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
     }
 }
 
@@ -1425,12 +1559,12 @@ impl JsClass for PromiseRejectionEvent {
 
 fn fill_promise_rejection<'s>(s: &Scope<'s>, fields: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     let init = init.ok_or_else(|| JsError::Type("PromiseRejectionEvent requires a promise".into()))?;
-    let promise = init.get("promise")?;
+    let promise = init.get_atom("promise")?;
     if promise.as_object().is_none() {
         return Err(JsError::Type("PromiseRejectionEvent promise must be an object".into()));
     }
     fields.promise = Some(Persistent::new(s, promise));
-    fields.reason = Some(Persistent::new(s, init.get("reason")?));
+    fields.reason = Some(Persistent::new(s, init.get_atom("reason")?));
     Ok(())
 }
 
@@ -1461,6 +1595,101 @@ impl JsClass for SubmitEvent {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| construct::<SubmitEvent>(s, nt, a, EventInterface::SubmitEvent, fill_submit));
         def.getter("submitter", |s, e| {
+            let k = e.fields.borrow().submitter;
+            target_value(s, &e.page, k)
+        });
+    }
+}
+
+/// HTML `FormDataEvent` (`formdata`, fired while a form's entry list is
+/// constructed): `formData` is required in its init dictionary.
+pub struct FormDataEvent;
+impl JsClass for FormDataEvent {
+    const NAME: &'static str = "FormDataEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(2, |s, nt, a| {
+            a.require(2, "FormDataEvent")?;
+            construct::<FormDataEvent>(s, nt, a, EventInterface::FormDataEvent, fill_formdata)
+        });
+        def.getter("formData", |s, e| Ok(e.fields.borrow().form_data.as_ref().map_or(s.null(), |p| p.get(s))));
+    }
+}
+
+fn fill_formdata<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let data = match init {
+        Some(o) => o.get_atom("formData")?,
+        None => s.undefined(),
+    };
+    if s.unwrap::<crate::form_data::FormData>(data).is_none() {
+        return Err(JsError::Type(
+            "Failed to construct 'FormDataEvent': member formData is not of type 'FormData'.".into(),
+        ));
+    }
+    f.form_data = Some(Persistent::new(s, data));
+    Ok(())
+}
+
+/// `source` of a ToggleEventInit or CommandEventInit: an Element or null.
+fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>, iface: &str) -> JsResult<()> {
+    let Some(o) = init else { return Ok(()) };
+    let v = o.get_atom("source")?;
+    if v.is_undefined() || v.is_null() {
+        return Ok(());
+    }
+    let element = s.unwrap::<crate::node::Node>(v).filter(|n| n.page().dom.borrow().element(n.id).is_ok());
+    match element {
+        Some(n) => {
+            f.submitter = Some(n.target.key);
+            Ok(())
+        }
+        None => Err(JsError::Type(format!(
+            "Failed to construct '{iface}': Failed to read the 'source' property from '{iface}Init': Failed to convert value to 'Element'."
+        ).into())),
+    }
+}
+
+fn fill_toggle<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.old_state = get_str(init, "oldState")?;
+    f.new_state = get_str(init, "newState")?;
+    fill_source(s, f, init, "ToggleEvent")
+}
+
+fn fill_command<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.command = get_str(init, "command")?;
+    fill_source(s, f, init, "CommandEvent")
+}
+
+/// `ToggleEvent` (HTML): details, popover and dialog `beforetoggle` /
+/// `toggle`.
+pub struct ToggleEvent;
+impl JsClass for ToggleEvent {
+    const NAME: &'static str = "ToggleEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<ToggleEvent>(s, nt, a, EventInterface::ToggleEvent, fill_toggle));
+        def.getter("oldState", |s, e| Ok(s.string(&e.fields.borrow().old_state)));
+        def.getter("newState", |s, e| Ok(s.string(&e.fields.borrow().new_state)));
+        def.getter("source", |s, e| {
+            let k = e.fields.borrow().submitter;
+            target_value(s, &e.page, k)
+        });
+    }
+}
+
+/// `CommandEvent` (HTML invokers): what a `commandfor` button asks of its
+/// target.
+pub struct CommandEvent;
+impl JsClass for CommandEvent {
+    const NAME: &'static str = "CommandEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<CommandEvent>(s, nt, a, EventInterface::CommandEvent, fill_command));
+        def.getter("command", |s, e| Ok(s.string(&e.fields.borrow().command)));
+        def.getter("source", |s, e| {
             let k = e.fields.borrow().submitter;
             target_value(s, &e.page, k)
         });
@@ -1504,7 +1733,11 @@ impl JsClass for StorageEvent {
             }
             init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
             let nullable = |v: lp_js::Value<'_>| -> JsResult<Option<String>> {
-                if v.is_undefined() || v.is_null() { Ok(None) } else { Ok(Some(dom_string(v)?)) }
+                if v.is_undefined() || v.is_null() {
+                    Ok(None)
+                } else {
+                    Ok(Some(dom_string(v)?))
+                }
             };
             let area = a.get(7);
             let area = if area.is_undefined() || area.is_null() {
@@ -1621,12 +1854,19 @@ impl JsClass for MessageEvent {
         def.constructor(1, |s, nt, a| construct::<MessageEvent>(s, nt, a, EventInterface::MessageEvent, fill_message));
         def.getter("data", |s, e| Ok(e.fields.borrow().message_data.as_ref().map_or(s.null(), |p| p.get(s))));
         def.getter("origin", |s, e| Ok(s.string(&e.fields.borrow().origin)));
-        def.getter("lastEventId", |s, _e| Ok(s.string("")));
+        def.getter("lastEventId", |s, e| Ok(s.string(e.fields.borrow().last_event_id.as_deref().unwrap_or(""))));
         def.getter("source", |s, e| {
+            let window = e.fields.borrow().message_source_window.clone();
+            if let Some(window) = window {
+                return window(s);
+            }
             let source = e.fields.borrow().message_source;
             crate::target::target_value(s, &e.page, source)
         });
-        def.getter("ports", |s, _e| Ok(s.array(&[])?.value()));
+        def.getter("ports", |s, e| match e.fields.borrow().message_ports.as_ref() {
+            Some(ports) => Ok(s.rehome(ports.get(s))),
+            None => Ok(s.array(&[])?.value()),
+        });
     }
 }
 
@@ -1661,6 +1901,7 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<ErrorEvent>();
     engine.register::<PromiseRejectionEvent>();
     engine.register::<SubmitEvent>();
+    engine.register::<FormDataEvent>();
     engine.register::<PopStateEvent>();
     engine.register::<HashChangeEvent>();
     engine.register::<PageTransitionEvent>();
@@ -1671,6 +1912,8 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<TouchEvent>();
     engine.register::<AnimationEvent>();
     engine.register::<TransitionEvent>();
+    engine.register::<ToggleEvent>();
+    engine.register::<CommandEvent>();
 }
 
 /// A `Touch` wrapper's state.
@@ -1691,13 +1934,13 @@ impl JsClass for Touch {
                 .get(0)
                 .as_object()
                 .ok_or_else(|| JsError::Type("Failed to construct 'Touch': 1 argument required, but only 0 present.".into()))?;
-            let identifier = init.get("identifier")?;
+            let identifier = init.get_atom("identifier")?;
             if identifier.is_undefined() {
                 return Err(JsError::Type(
                     "Failed to construct 'Touch': Failed to read the 'identifier' property from 'TouchInit': Required member is undefined.".into(),
                 ));
             }
-            let target = init.get("target")?;
+            let target = init.get_atom("target")?;
             if target.is_undefined() {
                 return Err(JsError::Type(
                     "Failed to construct 'Touch': Failed to read the 'target' property from 'TouchInit': Required member is undefined.".into(),
@@ -1706,7 +1949,7 @@ impl JsClass for Touch {
             let target = event_target_key(s, target).ok_or_else(|| {
                 JsError::Type("Failed to construct 'Touch': Failed to read the 'target' property from 'TouchInit': Failed to convert value to 'EventTarget'.".into())
             })?;
-            let num = |name: &str, default: f64| get_num(Some(init), name, default);
+            let num = |name: &'static str, default: f64| get_num(Some(init), name, default);
             let point = TouchPoint {
                 identifier: identifier.to_number()? as i64,
                 target: Some(target),
@@ -1759,13 +2002,15 @@ fn touch_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, points: &[TouchPoint]) -> J
     Ok(list.value())
 }
 
-fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &str) -> JsResult<Vec<TouchPoint>> {
-    let Some(list) = init.map(|o| o.get(name)).transpose()?.and_then(|v| v.as_object()) else { return Ok(Vec::new()) };
+fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &'static str) -> JsResult<Vec<TouchPoint>> {
+    let Some(list) = init.map(|o| o.get_atom(name)).transpose()?.and_then(|v| v.as_object()) else {
+        return Ok(Vec::new());
+    };
     let mut out = Vec::new();
-    for i in 0..list.get("length")?.to_number()? as u32 {
+    for i in 0..list.get_atom("length")?.to_number()? as u32 {
         let v = list.get_index(i)?;
         let touch = s.unwrap::<Touch>(v).ok_or_else(|| {
-            JsError::Type(format!("Failed to construct 'TouchEvent': Failed to read the '{name}' property from 'TouchEventInit': Failed to convert value to 'Touch'."))
+            JsError::Type(format!("Failed to construct 'TouchEvent': Failed to read the '{name}' property from 'TouchEventInit': Failed to convert value to 'Touch'.").into())
         })?;
         out.push(touch.point.clone());
     }

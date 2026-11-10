@@ -2,9 +2,14 @@
 //! whole engine (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod atom_names_review;
+mod binding_shortcuts;
 mod callback_hook;
 mod callback_lock;
 mod class_lengths;
+mod deferred_realm;
+mod host_strings;
+mod interned_strings;
 mod lazy_interfaces;
 mod legacy_platform_object;
 mod redefined_accessor;

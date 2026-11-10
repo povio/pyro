@@ -62,14 +62,18 @@ const SETTLE_MAX: Duration = Duration::from_millis(1_000);
 /// How many times a turn's marker task lets queued tasks go first.
 const MARKER_HOPS: u32 = 4;
 
-/// What a locator names. Exactly one of `css`, `testId`, `text`, `role`,
-/// `label` or `placeholder`, searched inside each match of `within` (else the
-/// document), narrowed by `filter`; `nth` then picks one match instead of
-/// requiring a unique one.
+/// What a locator names. Exactly one of `css`, `xpath`, `testId`, `text`,
+/// `role`, `label`, `placeholder` or `of` (another locator's matches, so a
+/// filter or `nth` can follow an `nth`), searched inside each match of
+/// `within` (else the document), joined with the matches of `or` (document
+/// order) and kept only where every `and` matches too, narrowed by `filter`;
+/// `nth` then picks one match instead of requiring a unique one.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Locator {
     css: Option<String>,
+    xpath: Option<String>,
+    of: Option<Box<Locator>>,
     test_id: Option<String>,
     /// Attribute `testId` matches (default `data-testid`).
     test_id_attribute: Option<String>,
@@ -77,8 +81,30 @@ pub(super) struct Locator {
     role: Option<String>,
     /// Accessible name for `role`.
     name: Option<Pattern>,
+    /// `role` state filters (Playwright's `getByRole` options): `checked`
+    /// and `pressed` (`true`, `false` or `"mixed"`), `disabled`, `expanded`,
+    /// `selected`, `level`; `includeHidden` lets hidden elements match.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checked: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pressed: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expanded: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    level: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    include_hidden: bool,
     label: Option<Pattern>,
     placeholder: Option<Pattern>,
+    /// Playwright's `aria-ref=e5` selector: the element the document's last
+    /// AI-mode ARIA snapshot gave this ref (`f1e5`: in the frame whose
+    /// snapshot used the `f1` prefix).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aria_ref: Option<String>,
     /// Whole-string, case-sensitive match for text, name, label and
     /// placeholder (after whitespace normalization); otherwise a
     /// case-insensitive substring. A `{"regex"}` pattern ignores it.
@@ -91,6 +117,78 @@ pub(super) struct Locator {
     /// Search inside the document of this `<iframe>` (a locator in the
     /// parent document; may itself have a `frame`).
     frame: Option<Box<Locator>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    or: Vec<Locator>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    and: Vec<Locator>,
+}
+
+impl Locator {
+    // ---- role states ----
+
+    fn has_role_states(&self) -> bool {
+        self.checked.is_some()
+            || self.pressed.is_some()
+            || self.disabled.is_some()
+            || self.expanded.is_some()
+            || self.selected.is_some()
+            || self.level.is_some()
+    }
+
+    /// Whether `n` (an element with the locator's role) has the asked states.
+    fn role_states_hold(&self, dom: &Dom, n: NodeId) -> bool {
+        let tri = |want: &Value, have: Option<&str>| match want {
+            Value::Bool(true) => have == Some("true"),
+            Value::Bool(false) => have != Some("true") && have != Some("mixed"),
+            Value::String(s) => have == Some(s.as_str()),
+            _ => false,
+        };
+        if let Some(want) = &self.checked {
+            let have = match checked_state(dom, n, true) {
+                Some(Checked::Yes) => "true",
+                Some(Checked::Mixed) => "mixed",
+                _ => "false",
+            };
+            if !tri(want, Some(have)) {
+                return false;
+            }
+        }
+        if let Some(want) = &self.pressed {
+            if !tri(want, attr(dom, n, "aria-pressed")) {
+                return false;
+            }
+        }
+        if let Some(want) = self.disabled {
+            let aria = self_and_ancestors(dom, n).any(|a| attr(dom, a, "aria-disabled") == Some("true"));
+            if (disabled(dom, n) || aria) != want {
+                return false;
+            }
+        }
+        if let Some(want) = self.expanded {
+            if (attr(dom, n, "aria-expanded") == Some("true")) != want {
+                return false;
+            }
+        }
+        if let Some(want) = self.selected {
+            let selected = attr(dom, n, "aria-selected") == Some("true")
+                || (local(dom, n) == Some("option") && dom.option_selected(n).unwrap_or(false));
+            if selected != want {
+                return false;
+            }
+        }
+        if let Some(want) = self.level {
+            let level = attr(dom, n, "aria-level").and_then(|l| l.trim().parse::<u32>().ok()).or_else(|| {
+                local(dom, n)
+                    .and_then(|t| t.strip_prefix('h'))
+                    .and_then(|d| d.parse::<u32>().ok())
+                    .filter(|d| (1..=6).contains(d))
+            });
+            if level != Some(want) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// Narrows a locator's matches. Every given condition must hold.
@@ -164,12 +262,37 @@ struct PointerOpts {
     force: bool,
     /// `wheel`: the delta.
     delta: (f64, f64),
+    /// Modifier keys held during the action (`ctrlKey`, `shiftKey`, ... on its events).
+    modifiers: input::Modifiers,
 }
 
 impl Default for PointerOpts {
     fn default() -> Self {
-        PointerOpts { button: MouseButton::Left, position: None, force: false, delta: (0.0, 0.0) }
+        PointerOpts {
+            button: MouseButton::Left,
+            position: None,
+            force: false,
+            delta: (0.0, 0.0),
+            modifiers: input::Modifiers::default(),
+        }
     }
+}
+
+/// `["Shift", "ControlOrMeta"]` as held modifiers (`ControlOrMeta` is Meta on macOS).
+fn modifiers_of(names: &[String]) -> CdpResult<input::Modifiers> {
+    let mut m = input::Modifiers::default();
+    for name in names {
+        match name.as_str() {
+            "Shift" => m.shift = true,
+            "Control" => m.ctrl = true,
+            "Alt" => m.alt = true,
+            "Meta" => m.meta = true,
+            "ControlOrMeta" if cfg!(target_os = "macos") => m.meta = true,
+            "ControlOrMeta" => m.ctrl = true,
+            other => return Err(CdpError::invalid_params(format!("unknown modifier {other:?}"))),
+        }
+    }
+    Ok(m)
 }
 
 /// A `mouse` step's action, at viewport coordinates (`page.mouse.*`).
@@ -217,6 +340,8 @@ enum Read {
     Name,
     Focused,
     Enabled,
+    /// The ARIA tree (aria_snapshot.rs), for `ariaSnapshot()`.
+    Aria,
 }
 
 /// Which requests a `request` step looks for in the run's log.
@@ -405,7 +530,7 @@ pub(super) fn set_file_input(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile
         .collect();
     page.set_input_files(id, entries).map_err(|e| format!("{e:?}"))?;
     input::fire_simple(page, id, "input", true, false);
-    input::fire_simple(page, id, "change", true, false);
+    input::fire_user_change(page, id);
     Ok(())
 }
 
@@ -469,6 +594,8 @@ enum Step {
     Eval {
         expression: String,
         key: Option<String>,
+        /// Call the expression's function value instead of returning it.
+        call: Option<Box<EvalCall>>,
     },
     /// Resizes the viewport mid-run (`innerWidth`, `resize`, media queries,
     /// layout); settles like an action so listeners have run.
@@ -521,6 +648,8 @@ enum Step {
         key: Option<String>,
         /// `css`: the property name.
         property: Option<String>,
+        /// `aria` in AI mode: frame seqs by frame id (`QueryParams`).
+        ai: Option<Box<std::collections::HashMap<String, u32>>>,
     },
     /// Renders the page (or an area, or an element) and compares it with a
     /// baseline image (`screenshot.rs`).
@@ -539,8 +668,8 @@ pub(super) struct ShotStep {
     pub(super) scene_hash: Option<u64>,
     /// 0..1: per-channel difference a pixel may have and still match.
     pub(super) threshold: f64,
-    pub(super) max_diff_pixels: u64,
-    pub(super) max_diff_pixel_ratio: f64,
+    pub(super) max_diff_pixels: Option<u64>,
+    pub(super) max_diff_pixel_ratio: Option<f64>,
     /// CSS px, relative to the document.
     pub(super) clip: Option<(f64, f64, f64, f64)>,
     pub(super) full_page: bool,
@@ -941,6 +1070,12 @@ enum At {
     Element,
     /// The last point.
     Here,
+    /// A press's release: the last point while the pressed element is still
+    /// under it. When page work that ran between the press and the release
+    /// (a list above it finished loading) moved the element away, the
+    /// element's new center instead, so the click stays on what was pressed;
+    /// when something now covers it, the last point.
+    Release,
     Point(f64, f64),
 }
 
@@ -1032,6 +1167,19 @@ impl Sequence {
                         }
                     }
                     At::Here => {}
+                    At::Release => {
+                        let connected = page.dom.borrow().is_connected(self.id).unwrap_or(false);
+                        // Hit testing lays the page out: no DOM borrow across it.
+                        let hit =
+                            if connected { lp_webapi::layout_api::hit_test(&page, self.m.x, self.m.y) } else { None };
+                        let moved = connected && !hit.is_some_and(|hit| contains(&page.dom.borrow(), self.id, hit));
+                        if moved {
+                            if let Ok((x, y)) = pointer_target(&page, self.id, self.opts) {
+                                self.m.x = x;
+                                self.m.y = y;
+                            }
+                        }
+                    }
                     At::Point(x, y) => {
                         self.m.x = x;
                         self.m.y = y;
@@ -1106,6 +1254,13 @@ impl Sequence {
         let realm = self.page.main_world_realm().ok_or("page has no realm")?;
         stability.frame = Some(lp_browser::request_native_frame(&realm).map_err(|error| error.to_string())?);
         Ok(false)
+    }
+
+    /// The animation frame the press waits on for its stability check, while
+    /// it has not run.
+    fn stability_frame(&self) -> Option<Rc<Cell<bool>>> {
+        let stability = self.stability.as_ref().filter(|s| !s.ready && !self.opts.force)?;
+        stability.frame.clone().filter(|frame| !frame.get())
     }
 
     fn wait_diagnostics(&self) -> String {
@@ -1189,8 +1344,9 @@ impl Waiter {
             Phase::Settle { requests, .. } => browser.page_work(self.job.pid).is_none_or(|w| w.quiet(*requests)),
             Phase::Await(settled) => settled.borrow().is_some(),
             Phase::Render(settled) => settled.borrow().is_some(),
-            Phase::Act { hop, at, .. } => match hop {
-                Some(done) => done.get(),
+            Phase::Act { hop, at, seq, .. } => match hop {
+                // A stability frame never runs in a document that went away.
+                Some(done) => done.get() || seq.as_ref().is_some_and(|s| s.page.is_disposed()),
                 None => now >= *at,
             },
         }
@@ -1444,12 +1600,231 @@ pub(super) fn id_refs(dom: &Dom, doc: NodeId, id: NodeId, name: &str) -> Option<
     Some(out)
 }
 
-/// Implicit ARIA role, by Playwright's `kImplicitRoleByTagName`, or the
-/// first token of an explicit `role`.
-pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
-    if let Some(role) = attr(dom, id, "role").and_then(|r| r.split_whitespace().next()) {
-        return Some(role.to_ascii_lowercase());
+/// Playwright's `validRoles`: the roles an explicit `role` may name.
+const VALID_ROLES: &[&str] = &[
+    "alert",
+    "alertdialog",
+    "application",
+    "article",
+    "banner",
+    "blockquote",
+    "button",
+    "caption",
+    "cell",
+    "checkbox",
+    "code",
+    "columnheader",
+    "combobox",
+    "complementary",
+    "contentinfo",
+    "definition",
+    "deletion",
+    "dialog",
+    "directory",
+    "document",
+    "emphasis",
+    "feed",
+    "figure",
+    "form",
+    "generic",
+    "grid",
+    "gridcell",
+    "group",
+    "heading",
+    "img",
+    "insertion",
+    "link",
+    "list",
+    "listbox",
+    "listitem",
+    "log",
+    "main",
+    "mark",
+    "marquee",
+    "math",
+    "meter",
+    "menu",
+    "menubar",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "navigation",
+    "none",
+    "note",
+    "option",
+    "paragraph",
+    "presentation",
+    "progressbar",
+    "radio",
+    "radiogroup",
+    "region",
+    "row",
+    "rowgroup",
+    "rowheader",
+    "scrollbar",
+    "search",
+    "searchbox",
+    "separator",
+    "slider",
+    "spinbutton",
+    "status",
+    "strong",
+    "subscript",
+    "superscript",
+    "switch",
+    "tab",
+    "table",
+    "tablist",
+    "tabpanel",
+    "term",
+    "textbox",
+    "time",
+    "timer",
+    "toolbar",
+    "tooltip",
+    "tree",
+    "treegrid",
+    "treeitem",
+];
+
+/// Roles that may not be named: Playwright's prohibited roles for
+/// `aria-label` / `aria-labelledby` in `kGlobalAriaAttributes`.
+const LABEL_PROHIBITED: &[&str] = &[
+    "caption",
+    "code",
+    "deletion",
+    "emphasis",
+    "generic",
+    "insertion",
+    "paragraph",
+    "presentation",
+    "strong",
+    "subscript",
+    "superscript",
+];
+
+/// Playwright's `hasGlobalAriaAttribute(element, forRole)`.
+fn has_global_aria(dom: &Dom, id: NodeId, role: &str) -> bool {
+    const ANY: &[&str] = &[
+        "aria-atomic",
+        "aria-busy",
+        "aria-controls",
+        "aria-current",
+        "aria-describedby",
+        "aria-details",
+        "aria-dropeffect",
+        "aria-flowto",
+        "aria-grabbed",
+        "aria-hidden",
+        "aria-keyshortcuts",
+        "aria-live",
+        "aria-owns",
+        "aria-relevant",
+    ];
+    ANY.iter().any(|a| attr(dom, id, a).is_some())
+        || (!LABEL_PROHIBITED.contains(&role)
+            && (attr(dom, id, "aria-label").is_some() || attr(dom, id, "aria-labelledby").is_some()))
+        || (role != "generic" && attr(dom, id, "aria-roledescription").is_some())
+}
+
+/// JavaScript's `Number(s)` for an attribute value: whitespace trimmed, ""
+/// is 0, hex/octal/binary prefixes and exponents allowed, NaN otherwise.
+pub(super) fn js_number(s: &str) -> f64 {
+    let t = s.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    if t.is_empty() {
+        return 0.0;
     }
+    for (prefix, radix) in [("0x", 16), ("0X", 16), ("0o", 8), ("0O", 8), ("0b", 2), ("0B", 2)] {
+        if let Some(digits) = t.strip_prefix(prefix) {
+            return if !digits.is_empty() && digits.chars().all(|c| c.is_digit(radix)) {
+                digits.chars().fold(0.0, |acc, c| acc * radix as f64 + c.to_digit(radix).unwrap_or(0) as f64)
+            } else {
+                f64::NAN
+            };
+        }
+    }
+    let unsigned = t.strip_prefix(['+', '-']).unwrap_or(t);
+    if unsigned == "Infinity" {
+        return if t.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+    }
+    // A decimal literal: digits, an optional fraction, an optional exponent.
+    let b = unsigned.as_bytes();
+    let mut i = 0;
+    let int = b.iter().take_while(|c| c.is_ascii_digit()).count();
+    i += int;
+    let mut frac = 0;
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        frac = b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+        i += frac;
+    }
+    if int + frac == 0 {
+        return f64::NAN;
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        let exp = b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if exp == 0 {
+            return f64::NAN;
+        }
+        i += exp;
+    }
+    if i != b.len() {
+        return f64::NAN;
+    }
+    t.parse::<f64>().unwrap_or(f64::NAN)
+}
+
+/// Playwright's `isNativelyDisabled`: a native form control that is
+/// disabled, or in a disabled `<optgroup>` / `<fieldset>`.
+pub(super) fn natively_disabled(dom: &Dom, id: NodeId) -> bool {
+    if !matches!(local(dom, id), Some("button" | "input" | "select" | "textarea" | "option" | "optgroup")) {
+        return false;
+    }
+    dom.is_disabled(id).unwrap_or(false) || attr(dom, id, "disabled").is_some()
+}
+
+/// Playwright's `isFocusable`: not natively disabled, and natively
+/// focusable or with a numeric `tabindex`.
+fn pw_focusable(dom: &Dom, id: NodeId) -> bool {
+    if natively_disabled(dom, id) {
+        return false;
+    }
+    let native = match local(dom, id) {
+        Some("button" | "details" | "select" | "textarea") => true,
+        Some("a" | "area") => attr(dom, id, "href").is_some(),
+        Some("input") => attr(dom, id, "hidden").is_none(),
+        _ => false,
+    };
+    native || attr(dom, id, "tabindex").is_some_and(|t| !js_number(t).is_nan())
+}
+
+/// Playwright's `getAriaRole`: the first valid token of an explicit `role`
+/// (case-sensitive), else the implicit role. `none` / `presentation` give
+/// way to the implicit role on a focusable element or one with a global
+/// `aria-*` attribute (`hasPresentationConflictResolution`).
+pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
+    let explicit = attr(dom, id, "role").and_then(|r| r.split(' ').map(str::trim).find(|t| VALID_ROLES.contains(t)));
+    match explicit {
+        Some(r @ ("none" | "presentation")) => {
+            let implicit = implicit_role(dom, id);
+            let conflict = implicit.as_deref().unwrap_or("");
+            if has_global_aria(dom, id, conflict) || pw_focusable(dom, id) {
+                implicit
+            } else {
+                Some(r.into())
+            }
+        }
+        Some(r) => Some(r.into()),
+        None => implicit_role(dom, id),
+    }
+}
+
+/// Implicit ARIA role, by Playwright's `kImplicitRoleByTagName`.
+fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
     let ty = || attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
     // `<header>`/`<footer>` are landmarks only outside sectioning content.
     let in_sectioning = || {
@@ -1486,6 +1861,8 @@ pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
         "em" => "emphasis",
         "fieldset" => "group",
         "figure" => "figure",
+        // Playwright's kImplicitRoleByTagName: SVG is an img.
+        "svg" => "img",
         "footer" if in_sectioning() => return None,
         "footer" => "contentinfo",
         "form" if has_explicit_name(dom, id) => "form",
@@ -1678,33 +2055,86 @@ fn label_text(dom: &Dom, doc: NodeId, id: NodeId) -> Option<String> {
 }
 
 /// Playwright's `isElementHiddenForAria`: scripts and templates, elements
-/// not rendered (`display:none`, `visibility:hidden`), and anything inside
-/// an `aria-hidden="true"` or `inert` subtree. `ancestors` walks up for the
-/// subtree rules (a descendant traversal has already passed its parents).
-fn hidden_for_aria(dom: &Dom, layout: &Layout, id: NodeId, ancestors: bool) -> bool {
+/// not rendered (`display:none`, `visibility:hidden`), light-DOM children of
+/// a shadow host assigned to no slot, and anything inside an
+/// `aria-hidden="true"` or `inert` subtree. `ancestors` walks up (through
+/// shadow hosts) for the subtree rules; a descendant traversal has already
+/// passed its parents.
+pub(super) fn hidden_for_aria(dom: &Dom, layout: &Layout, id: NodeId, ancestors: bool) -> bool {
     if matches!(local(dom, id), Some("style" | "script" | "noscript" | "template")) {
         return true;
     }
-    let in_select =
-        || local(dom, id) == Some("option") && self_and_ancestors(dom, id).any(|a| local(dom, a) == Some("select"));
     let style = layout.style();
-    if ancestors {
-        if !layout.is_visible(dom, id) {
+    let select = (local(dom, id) == Some("option"))
+        .then(|| self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select")));
+    if let Some(Some(select)) = select {
+        // Playwright's `isOptionInsideSelect` skips only the box and
+        // visibility check (an option of a drop-down select has no box):
+        // its own `display: none` (the `hidden` attribute, author CSS) or an
+        // ancestor's still hides it.
+        if style.has_display_none(dom, id) {
             return true;
         }
-    } else if style.has_display_none(dom, id) {
-        return true;
-    }
-    if style.has_visibility_hidden_inherited(dom, id) && !in_select() {
-        return true;
-    }
-    let mut chain = self_and_ancestors(dom, id);
-    let hidden = |n: NodeId| aria_true(dom, n, "aria-hidden") || attr(dom, n, "inert").is_some();
-    if ancestors {
-        chain.any(hidden)
+        // Up the tree only display:none counts (belongsToDisplayNoneOrAriaHidden),
+        // not whether the select itself has a box.
+        let _ = select;
+        if ancestors && aria_ancestors(dom, id).skip(1).any(|a| style.has_display_none(dom, a)) {
+            return true;
+        }
     } else {
-        chain.next().is_some_and(hidden)
+        // Chromium gives an optgroup of a drop-down <select> no box
+        // (`checkVisibility()` is false), and Playwright has no exception
+        // for it: it and its options are left out.
+        if local(dom, id) == Some("optgroup") && closed_select(dom, id) {
+            return true;
+        }
+        if ancestors {
+            if !layout.is_visible(dom, id) {
+                return true;
+            }
+        } else if style.has_display_none(dom, id) {
+            return true;
+        }
+        if style.has_visibility_hidden_inherited(dom, id) {
+            return true;
+        }
     }
+    // No `inert` rule: Playwright's isElementHiddenForAria has none, and
+    // `checkVisibility()` ignores inert, so getByRole finds inert content.
+    let hidden = |n: NodeId| aria_true(dom, n, "aria-hidden") || non_slotted(dom, n);
+    if ancestors {
+        aria_ancestors(dom, id).any(hidden)
+    } else {
+        hidden(id)
+    }
+}
+
+/// A light-DOM child of a shadow host that no slot shows
+/// (Playwright's `belongsToDisplayNoneOrAriaHiddenOrNonSlotted`).
+fn non_slotted(dom: &Dom, id: NodeId) -> bool {
+    dom.parent_element(id).ok().flatten().is_some_and(|p| dom.shadow_root(p).ok().flatten().is_some())
+        && dom.assigned_slot(id).ok().flatten().is_none()
+}
+
+/// An `<optgroup>` of a drop-down (combobox) `<select>`.
+fn closed_select(dom: &Dom, id: NodeId) -> bool {
+    self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select")).is_some_and(|s| {
+        let sized = attr(dom, s, "size").is_some_and(|v| v.trim().parse::<u32>().is_ok_and(|n| n > 1));
+        attr(dom, s, "multiple").is_none() && !sized
+    })
+}
+
+/// `id` and its ancestors, crossing from a shadow root to its host
+/// (Playwright's `parentElementOrShadowHost`).
+fn aria_ancestors(dom: &Dom, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    std::iter::successors(Some(id), move |n| {
+        let p = dom.parent(*n).ok().flatten()?;
+        if dom.element(p).is_ok() {
+            Some(p)
+        } else {
+            dom.fragment_host(p).ok().flatten().filter(|_| dom.is_shadow_root(p).unwrap_or(false))
+        }
+    })
 }
 
 /// How the element being named relates to the one whose text alternative
@@ -1744,9 +2174,23 @@ struct Names<'a> {
     layout: &'a Layout,
     doc: NodeId,
     visited: RefCell<HashSet<NodeId>>,
+    /// Whether any element may have a generated `::before` / `::after`
+    /// (asked on first use, once per [`PseudoContent`] scope: `false` skips
+    /// the per-element lookups).
+    pseudo_content: &'a PseudoContent,
 }
 
 impl Names<'_> {
+    /// Playwright's `getPseudoContent` of `id`'s `pseudo`; "" without a
+    /// generated one.
+    fn pseudo_content(&self, id: NodeId, pseudo: &lp_dom::stylo::PseudoElement) -> String {
+        let any = *self.pseudo_content.get_or_init(|| self.layout.style().may_have_generated_before_after(self.dom));
+        if !any {
+            return String::new();
+        }
+        self.layout.pseudo_name_content(self.dom, id, pseudo)
+    }
+
     fn alternative(&self, id: NodeId, opts: NameOpts) -> String {
         let dom = self.dom;
         if self.visited.borrow().contains(&id) {
@@ -1855,7 +2299,12 @@ impl Names<'_> {
             self.visited.borrow_mut().insert(id);
             return label.to_owned();
         }
-        // 2E: native text alternatives.
+        // 2E: native text alternatives. A form control is visited before its
+        // labels are read, as in Playwright, so a label wrapping it does not
+        // read the control's own placeholder or title into its name.
+        if matches!(tag, "input" | "textarea" | "select" | "button" | "output") {
+            self.visited.borrow_mut().insert(id);
+        }
         if !matches!(role.as_str(), "presentation" | "none") {
             if let Some(name) = self.native_alternative(id, tag, labelledby.is_some(), opts, child_opts) {
                 self.visited.borrow_mut().insert(id);
@@ -1955,9 +2404,9 @@ impl Names<'_> {
             "textarea" if !has_labelledby => Some(
                 from_labels().or_else(|| attr_text("title")).or_else(|| attr_text("placeholder")).unwrap_or_default(),
             ),
-            "select" | "meter" | "progress" if !has_labelledby => {
-                Some(from_labels().or_else(|| attr_text("title")).unwrap_or_default())
-            }
+            // Playwright has no branch for <meter> / <progress>: their labels
+            // never name them; they fall through to content and title.
+            "select" if !has_labelledby => Some(from_labels().or_else(|| attr_text("title")).unwrap_or_default()),
             "fieldset" if !has_labelledby => {
                 Some(child_named("legend").or_else(|| attr_text("title")).unwrap_or_default())
             }
@@ -1997,7 +2446,15 @@ impl Names<'_> {
     /// around every child that is not `display:inline` (and `<br>`).
     fn inner_text(&self, id: NodeId, opts: NameOpts) -> String {
         let dom = self.dom;
-        let mut out = String::new();
+        // Generated `::before` / `::after` text counts (Playwright's
+        // `getPseudoContent`); the element's own `content` alternative text
+        // replaces its children.
+        let mut out = self.pseudo_content(id, &lp_dom::stylo::PseudoElement::Before);
+        if let Some(content) = self.layout.style().css_content(dom, id, None) {
+            out.push_str(&content);
+            out.push_str(&self.pseudo_content(id, &lp_dom::stylo::PseudoElement::After));
+            return out;
+        }
         for c in dom.children(id).into_iter().flatten() {
             match dom.node(c).map(|n| &n.kind) {
                 Ok(NodeKind::Text(t)) => out.push_str(t),
@@ -2015,12 +2472,30 @@ impl Names<'_> {
                 _ => {}
             }
         }
+        out.push_str(&self.pseudo_content(id, &lp_dom::stylo::PseudoElement::After));
         out
     }
 }
 
+/// Whether the document may have a generated `::before` / `::after`, asked
+/// once for every name computed with it (one DOM state: no mutation between
+/// the names).
+pub(super) type PseudoContent = std::cell::OnceCell<bool>;
+
 /// The accessible name of an element, whitespace-normalized.
 pub(super) fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeId) -> String {
+    accessible_name_in(dom, layout, doc, id, &PseudoContent::new())
+}
+
+/// [`accessible_name`] for one of many elements named in one DOM state,
+/// sharing `pseudo_content`.
+pub(super) fn accessible_name_in(
+    dom: &Dom,
+    layout: &Layout,
+    doc: NodeId,
+    id: NodeId,
+    pseudo_content: &PseudoContent,
+) -> String {
     // Playwright's `getElementAccessibleName`: these roles prohibit naming.
     let prohibits = matches!(
         role_of(dom, id).as_deref(),
@@ -2046,7 +2521,7 @@ pub(super) fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeI
     if prohibits {
         return String::new();
     }
-    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()) };
+    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()), pseudo_content };
     normalize(&names.alternative(id, NameOpts { target: Target::Own, ..NameOpts::default() }))
 }
 
@@ -2134,19 +2609,27 @@ impl Locator {
     fn validate(&self) -> CdpResult<()> {
         let kinds = [
             self.css.is_some(),
+            self.xpath.is_some(),
+            self.of.is_some(),
             self.test_id.is_some(),
             self.text.is_some(),
             self.role.is_some(),
             self.label.is_some(),
             self.placeholder.is_some(),
+            self.aria_ref.is_some(),
         ];
         if kinds.iter().filter(|k| **k).count() != 1 {
             return Err(CdpError::invalid_params(
-                "locator needs exactly one of css, testId, text, role, label, placeholder",
+                "locator needs exactly one of css, xpath, testId, text, role, label, placeholder, ariaRef, of",
             ));
         }
-        if let Some(within) = &self.within {
-            within.validate()?;
+        if self.has_role_states() && self.role.is_none() {
+            return Err(CdpError::invalid_params(
+                "checked, pressed, disabled, expanded, selected and level need a role",
+            ));
+        }
+        for l in self.within.iter().chain(self.of.iter()).map(|b| &**b).chain(self.or.iter()).chain(self.and.iter()) {
+            l.validate()?;
         }
         if let Some(f) = &self.filter {
             for l in [&f.has, &f.has_not].into_iter().flatten() {
@@ -2167,13 +2650,30 @@ impl Locator {
             None => vec![base],
         };
         let mut found = Vec::new();
-        if let [root] = roots[..] {
+        if let Some(of) = &self.of {
+            let mut seen = HashSet::new();
+            for root in roots {
+                found.extend(of.resolve_at(page, selectors, root)?.into_iter().filter(|n| seen.insert(*n)));
+            }
+        } else if let [root] = roots[..] {
             found = self.matches_in(page, selectors, root)?;
         } else {
             let mut seen = HashSet::new();
             for root in roots {
                 found.extend(self.matches_in(page, selectors, root)?.into_iter().filter(|n| seen.insert(*n)));
             }
+        }
+        if !self.or.is_empty() {
+            let mut all: HashSet<NodeId> = found.iter().copied().collect();
+            for other in &self.or {
+                all.extend(other.resolve_at(page, selectors, base)?);
+            }
+            let dom = page.dom.borrow();
+            found = dom.descendants(base).into_iter().flatten().filter(|n| all.contains(n)).collect();
+        }
+        for other in &self.and {
+            let keep: HashSet<NodeId> = other.resolve_at(page, selectors, base)?.into_iter().collect();
+            found.retain(|n| keep.contains(n));
         }
         if let Some(f) = &self.filter {
             let mut kept = Vec::with_capacity(found.len());
@@ -2201,6 +2701,19 @@ impl Locator {
         if let Some(css) = &self.css {
             let sel = selectors.borrow_mut().get(css).map_err(|_| CdpError::invalid_params("invalid css selector"))?;
             found = dom.query_all(root, &sel).map_err(|e| CdpError::server(format!("{e:?}")))?;
+        } else if let Some(xpath) = &self.xpath {
+            let value = lp_dom::xpath::evaluate(&dom, xpath, lp_dom::xpath::XPathNode::Node(root))
+                .map_err(|e| CdpError::invalid_params(format!("invalid xpath: {e:?}")))?;
+            let lp_dom::xpath::XPathValue::NodeSet(nodes) = value else {
+                return Err(CdpError::invalid_params("xpath must select nodes"));
+            };
+            found = nodes
+                .into_iter()
+                .filter_map(|n| match n {
+                    lp_dom::xpath::XPathNode::Node(id) if dom.element(id).is_ok() => Some(id),
+                    _ => None,
+                })
+                .collect();
         } else if let Some(id) = &self.test_id {
             let name = self.test_id_attribute.as_deref().unwrap_or("data-testid");
             found = elements(&dom, root).filter(inside).filter(|n| attr(&dom, *n, name) == Some(id.as_str())).collect();
@@ -2217,12 +2730,16 @@ impl Locator {
         } else if let Some(role) = &self.role {
             let role = role.to_ascii_lowercase();
             let layout = page.layout();
+            let pseudo_content = PseudoContent::new();
             found = elements(&dom, root)
                 .filter(inside)
                 .filter(|n| role_of(&dom, *n).as_deref() == Some(role.as_str()))
-                .filter(|n| !hidden_for_aria(&dom, &layout, *n, true))
+                .filter(|n| self.include_hidden || !hidden_for_aria(&dom, &layout, *n, true))
+                .filter(|n| self.role_states_hold(&dom, *n))
                 .filter(|n| match &self.name {
-                    Some(want) => want.matches(&accessible_name(&dom, &layout, doc, *n), self.exact),
+                    Some(want) => {
+                        want.matches(&accessible_name_in(&dom, &layout, doc, *n, &pseudo_content), self.exact)
+                    }
                     None => true,
                 })
                 .collect();
@@ -2241,6 +2758,11 @@ impl Locator {
                 .filter(|n| matches!(local(&dom, *n), Some("input" | "textarea")))
                 .filter(|n| attr(&dom, *n, "placeholder").is_some_and(|p| want.matches(p, self.exact)))
                 .collect();
+        } else if let Some(r) = &self.aria_ref {
+            // As Playwright's `aria-ref` engine: the scope is not searched,
+            // the ref names the element.
+            drop(dom);
+            found = super::aria_snapshot::ref_node(page, r).into_iter().collect();
         }
         Ok(found)
     }
@@ -2485,7 +3007,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
                     return Attempt::Retry(format!("{error:?}"));
                 }
                 input::fire_simple(page, id, "input", true, false);
-                input::fire_simple(page, id, "change", true, false);
+                input::fire_user_change(page, id);
                 return Attempt::Done(json!({}));
             }
             if is_control {
@@ -2711,12 +3233,24 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer, opts: PointerOpts) -> 
         Ok(p) => p,
         Err(retry) => return retry,
     };
-    let m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
+    let m = MouseInput {
+        x,
+        y,
+        delta_x: opts.delta.0,
+        delta_y: opts.delta.1,
+        modifiers: opts.modifiers,
+        ..MouseInput::default()
+    };
     // Hover-dependent layout (a tooltip the move hid, a menu it opened) can
     // shift the element between events: a move or press goes where it is
-    // then; a release or wheel where the pointer is.
+    // then; a wheel where the pointer is, and a release there too unless the
+    // pressed element moved away from under it (see `At::Release`).
     let events = pointer_events(what, opts.button).into_iter().map(|(kind, button, count)| {
-        let at = if matches!(kind, MouseKind::Moved | MouseKind::Pressed) { At::Element } else { At::Here };
+        let at = match kind {
+            MouseKind::Moved | MouseKind::Pressed => At::Element,
+            MouseKind::Released => At::Release,
+            _ => At::Here,
+        };
         let buttons = if kind == MouseKind::Pressed { buttons_mask(button) } else { 0 };
         Input::Mouse { kind, button, buttons, count, at }
     });
@@ -2749,7 +3283,14 @@ fn mouse_step(
 ) -> Attempt {
     let (x0, y0) = input::pointer_position(page).unwrap_or((0.0, 0.0));
     let (x, y) = (x.unwrap_or(x0), y.unwrap_or(y0));
-    let mut m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
+    let mut m = MouseInput {
+        x,
+        y,
+        delta_x: opts.delta.0,
+        delta_y: opts.delta.1,
+        modifiers: opts.modifiers,
+        ..MouseInput::default()
+    };
     // Buttons stay held between steps (`down`, `move`, `up` drags).
     m.buttons = input::pointer_buttons(page);
     let send = |m: &MouseInput, kind: MouseKind| input::dispatch_mouse(page, kind, m).map_err(Attempt::Retry);
@@ -3012,6 +3553,9 @@ struct ActParams {
     /// `wheel`: the delta.
     delta_x: Option<f64>,
     delta_y: Option<f64>,
+    /// Pointer actions: modifier keys held (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`).
+    #[serde(default)]
+    modifiers: Vec<String>,
     timeout: Option<u64>,
 }
 
@@ -3037,6 +3581,9 @@ struct MouseParams {
     delta_x: Option<f64>,
     delta_y: Option<f64>,
     steps: Option<u32>,
+    /// Modifier keys held (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`).
+    #[serde(default)]
+    modifiers: Vec<String>,
     /// Wait for the requests the action started (default: true).
     settle: Option<bool>,
     timeout: Option<u64>,
@@ -3075,6 +3622,7 @@ impl MouseParams {
             position: None,
             force: true,
             delta: (self.delta_x.unwrap_or(0.0), self.delta_y.unwrap_or(0.0)),
+            modifiers: modifiers_of(&self.modifiers)?,
         };
         let steps = self.steps.unwrap_or(1).clamp(1, 1_000);
         let settle = self.settle.unwrap_or(true);
@@ -3155,6 +3703,11 @@ struct QueryParams {
     key: Option<String>,
     /// `css`: the property name.
     property: Option<String>,
+    /// `aria`: `"ai"` for Playwright's AI snapshot (`"default"` otherwise).
+    mode: Option<String>,
+    /// `aria` in AI mode: each frame's Playwright `seq` by frame id; refs
+    /// in a frame with seq `n > 0` are named `f{n}e…`.
+    frame_seqs: Option<std::collections::HashMap<String, u32>>,
     timeout: Option<u64>,
 }
 
@@ -3240,8 +3793,8 @@ impl MatchScreenshotParams {
         if !(0.0..=1.0).contains(&threshold) {
             return Err(CdpError::invalid_params("threshold must be between 0 and 1"));
         }
-        let ratio = self.max_diff_pixel_ratio.unwrap_or(0.0);
-        if !(0.0..=1.0).contains(&ratio) {
+        let ratio = self.max_diff_pixel_ratio;
+        if ratio.is_some_and(|r| !(0.0..=1.0).contains(&r)) {
             return Err(CdpError::invalid_params("maxDiffPixelRatio must be between 0 and 1"));
         }
         if let Some(c) = &self.clip {
@@ -3259,7 +3812,7 @@ impl MatchScreenshotParams {
             baseline,
             scene_hash,
             threshold,
-            max_diff_pixels: self.max_diff_pixels.unwrap_or(0),
+            max_diff_pixels: self.max_diff_pixels,
             max_diff_pixel_ratio: ratio,
             clip: self.clip.map(|c| (c.x, c.y, c.width, c.height)),
             full_page: self.full_page,
@@ -3487,12 +4040,30 @@ struct RouteParams {
     timeout: Option<u64>,
 }
 
+/// How an `eval` step calls its function (see [`EvalParams`]).
+#[derive(Clone, Debug)]
+struct EvalCall {
+    locator: Option<Locator>,
+    all: bool,
+    arg: Option<Value>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EvalParams {
     expression: String,
     #[serde(rename = "as")]
     key: Option<String>,
+    /// The expression is a function: call it (Playwright's `evaluate(fn, arg)`).
+    #[serde(default)]
+    call: bool,
+    /// Call it with the element this locator matches (waiting for exactly
+    /// one), or with the array of all matches when `all`.
+    locator: Option<Locator>,
+    #[serde(default)]
+    all: bool,
+    /// Its last argument, as JSON.
+    arg: Option<Value>,
     /// How long to wait for a returned promise.
     timeout: Option<u64>,
 }
@@ -3555,6 +4126,7 @@ impl ActParams {
             position: self.position.map(|p| (p.x, p.y)),
             force: self.force,
             delta: (self.delta_x.unwrap_or(0.0), self.delta_y.unwrap_or(0.0)),
+            modifiers: modifiers_of(&self.modifiers)?,
         };
         Ok((
             Step::Act { locator: self.locator, action, value: self.value, settle, to: self.to, files, pointer },
@@ -3620,9 +4192,10 @@ impl QueryParams {
             "name" => Read::Name,
             "focused" => Read::Focused,
             "enabled" => Read::Enabled,
+            "aria" => Read::Aria,
             _ => {
                 return Err(CdpError::invalid_params(
-                    "read must be count, text, value, visible, box, css, name, focused or enabled",
+                    "read must be count, text, value, visible, box, css, name, focused, enabled or aria",
                 ));
             }
         })
@@ -3665,7 +4238,17 @@ impl StepParams {
             StepParams::DownloadCount(p) => Ok((Step::DownloadCount { key: p.key }, p.timeout)),
             StepParams::Popup(p) => Ok((Step::Popup { key: p.key }, p.timeout)),
             StepParams::Route(p) => Ok((Step::Route { url: p.url, settle: p.settle.unwrap_or(true) }, p.timeout)),
-            StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, p.timeout)),
+            StepParams::Eval(p) => {
+                if let Some(l) = &p.locator {
+                    l.validate()?;
+                }
+                if p.all && p.locator.is_none() {
+                    return Err(CdpError::invalid_params("eval: `all` needs a locator"));
+                }
+                let call = (p.call || p.locator.is_some() || p.arg.is_some())
+                    .then(|| Box::new(EvalCall { locator: p.locator, all: p.all, arg: p.arg }));
+                Ok((Step::Eval { expression: p.expression, key: p.key, call }, p.timeout))
+            }
             StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
             StepParams::Viewport(p) => Ok((Step::Viewport { width: p.width, height: p.height }, None)),
             StepParams::Media(p) => p.step(),
@@ -3676,10 +4259,22 @@ impl StepParams {
             StepParams::Check(p) => p.step(),
             StepParams::Read(p) => {
                 let read = p.read()?;
-                Ok((Step::Read { locator: p.locator, read, key: p.key, property: p.property }, p.timeout))
+                let ai = match p.mode.as_deref() {
+                    None | Some("default") => None,
+                    Some("ai") if read == Read::Aria => Some(Box::new(p.frame_seqs.unwrap_or_default())),
+                    Some(_) => return Err(CdpError::invalid_params("mode must be default, or ai for an aria read")),
+                };
+                Ok((Step::Read { locator: p.locator, read, key: p.key, property: p.property, ai }, p.timeout))
             }
         }
     }
+}
+
+/// A child frame's aria ref (`f1e5`, Playwright's `/^f(\d+)e\d+$/`).
+fn frame_ref(r: &str) -> bool {
+    r.strip_prefix('f')
+        .and_then(|r| r.split_once('e'))
+        .is_some_and(|(f, e)| [f, e].iter().all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())))
 }
 
 fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) -> Value {
@@ -3694,6 +4289,10 @@ fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) ->
         }
         Read::Focused => json!(page.dom.borrow().focused(page.document()).ok().flatten() == Some(el)),
         Read::Enabled => json!(!disabled(&page.dom.borrow(), el)),
+        Read::Aria => match super::aria_snapshot::aria_tree(&page.dom.borrow(), &page.layout(), page.document(), el) {
+            Ok(tree) => tree,
+            Err(e) => json!({ "error": e }),
+        },
         Read::Text => json!(normalize(&text_of(&page.dom.borrow(), el))),
         Read::Value => json!(page.dom.borrow().value(el).unwrap_or_default()),
         Read::Visible => json!(visible_box(page, el).is_some()),
@@ -3728,6 +4327,15 @@ impl EngineHost {
         page: &Rc<PageDom>,
         locator: &Locator,
     ) -> CdpResult<Result<Rc<PageDom>, Attempt>> {
+        // Playwright's `_jumpToAriaRefFrameIfNeeded`: `aria-ref=f1e5` is
+        // looked up in the frame whose snapshot named it, wherever the
+        // locator is scoped.
+        if let Some(r) = locator.aria_ref.as_deref().filter(|r| frame_ref(r)) {
+            let docs = self.page_documents(pid);
+            if let Some((_, doc)) = docs.into_iter().find(|(_, d)| super::aria_snapshot::ref_node(d, r).is_some()) {
+                return Ok(Ok(doc));
+            }
+        }
         let Some(frame_locator) = &locator.frame else { return Ok(Ok(page.clone())) };
         let parent = match self.scope_page(pid, page, frame_locator)? {
             Ok(p) => p,
@@ -3765,8 +4373,58 @@ impl EngineHost {
             Ok(p) => p,
             Err(retry) => return Ok((retry, page.clone())),
         };
+        if let Step::Read { read: Read::Aria, ai: Some(seqs), .. } = step {
+            let attempt = self.read_aria_ai(pid, &page, locator, seqs)?;
+            return Ok((attempt, page));
+        }
         let attempt = self.attempt_in(&page, step)?;
         Ok((attempt, page))
+    }
+
+    /// The live documents of a page's frames, with their frame ids.
+    fn page_documents(&self, pid: PageId) -> Vec<(String, Rc<PageDom>)> {
+        let browser = &self.thread.browser;
+        browser
+            .frames(pid)
+            .into_iter()
+            .filter_map(|f| browser.frame(pid, &f.id).and_then(|f| f.page_dom.map(|d| (f.id.0, d))))
+            .filter(|(_, d)| !d.is_disposed())
+            .collect()
+    }
+
+    /// `ariaSnapshot({ mode: "ai" })` of the locator's element: refs named
+    /// after the document's frame seq; each `<iframe>` with a ref carries
+    /// its frame's id (`frameId`) so the client can snapshot it next.
+    fn read_aria_ai(
+        &mut self,
+        pid: PageId,
+        page: &Rc<PageDom>,
+        locator: &Locator,
+        seqs: &std::collections::HashMap<String, u32>,
+    ) -> CdpResult<Attempt> {
+        let found = locator.resolve(page, &self.waiters.selectors)?;
+        let Some(el) = single(&found, &page.dom.borrow(), locator)? else {
+            return Ok(Attempt::Retry(format!("{} matched no element", locator.describe())));
+        };
+        let docs = self.page_documents(pid);
+        let seq = docs.iter().find(|(_, d)| Rc::ptr_eq(d, page)).and_then(|(id, _)| seqs.get(id)).copied();
+        let prefix = match seq {
+            Some(n) if n > 0 => format!("f{n}"),
+            _ => String::new(),
+        };
+        let (mut tree, iframes) = match super::aria_snapshot::aria_tree_ai(page, el, &prefix) {
+            Ok(t) => t,
+            Err(e) => return Ok(Attempt::Done(json!({ "error": e }))),
+        };
+        let frames: Vec<Value> = iframes
+            .into_iter()
+            .filter_map(|(r, owner)| {
+                let id = self.thread.browser.frame_of_owner(pid, owner)?;
+                Some(json!({ "ref": r, "frameId": id.0 }))
+            })
+            .collect();
+        tree["iframes"] = Value::Array(frames);
+        Ok(Attempt::Done(tree))
     }
 
     fn attempt_in(&mut self, page: &Rc<PageDom>, step: &Step) -> CdpResult<Attempt> {
@@ -3869,6 +4527,19 @@ impl EngineHost {
                 (steps, false)
             }
             "query" => return self.driver_query(cmd).map(Some),
+            // `LP.dialogs {block}`: dialogs this page's driver steps open wait
+            // for `Page.handleJavaScriptDialog` like other dialogs (dialog.rs)
+            // instead of returning what a dismissed one gives.
+            "dialogs" => {
+                #[derive(Deserialize)]
+                struct P {
+                    block: bool,
+                }
+                let p = cmd.command.params::<P>()?;
+                let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                self.collector.dialogs.set_driver_blocking(id, p.block);
+                return Ok(Some(json!({})));
+            }
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         };
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
@@ -4034,7 +4705,15 @@ impl EngineHost {
                     self.thread.browser.checkpoint();
                     match advanced {
                         Ok(None) => {
-                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: Instant::now() + TURN };
+                            // Waiting for the stability check's frame: that frame is
+                            // the turn (its page callbacks run in it too), so wake when
+                            // it has run instead of after `TURN`, which the pending
+                            // frame itself would otherwise add.
+                            let (hop, at) = match seq.stability_frame() {
+                                Some(frame) => (Some(frame), now),
+                                None => (None, self.turn_end(pid)),
+                            };
+                            w.phase = Phase::Act { seq: Some(seq), before, hop, at };
                             return Ok(Drive::Park(Box::new(w)));
                         }
                         Ok(Some(value)) => {
@@ -4199,6 +4878,46 @@ impl EngineHost {
                             self.thread.browser.checkpoint();
                             (Attempt::Done(json!({ "advanced": ms })), None)
                         }
+                        Step::Eval { expression, call: Some(call), .. } => {
+                            let main = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
+                            let (doc, nodes) = match &call.locator {
+                                None => (main, Vec::new()),
+                                Some(locator) => {
+                                    let doc = match self.scope_page(pid, &main, locator).map_err(|e| w.job.fail(e))? {
+                                        Ok(doc) => doc,
+                                        Err(Attempt::Retry(reason) | Attempt::RetrySoon(reason)) => {
+                                            return self.park_retry(w, &step, timeout, Some(&main), reason, now);
+                                        }
+                                        Err(_) => unreachable!("scope_page only retries"),
+                                    };
+                                    let found =
+                                        locator.resolve(&doc, &self.waiters.selectors).map_err(|e| w.job.fail(e))?;
+                                    let nodes = if call.all {
+                                        found
+                                    } else {
+                                        match single(&found, &doc.dom.borrow(), locator) {
+                                            Ok(Some(id)) => vec![id],
+                                            Ok(None) => {
+                                                let reason = format!("{} matched no element", locator.describe());
+                                                return self.park_retry(w, &step, timeout, Some(&doc), reason, now);
+                                            }
+                                            Err(e) => return Err(w.job.fail(e)),
+                                        }
+                                    };
+                                    (doc, nodes)
+                                }
+                            };
+                            match self
+                                .call_step(w.job.page, &doc, expression, call, &nodes)
+                                .map_err(|e| w.job.fail(e))?
+                            {
+                                Evaluated::Value(value) => (Attempt::Done(value), None),
+                                Evaluated::Pending(settled) => {
+                                    w.phase = Phase::Await(settled);
+                                    continue;
+                                }
+                            }
+                        }
                         Step::Eval { expression, .. } => {
                             match self
                                 .eval_step(pid, expression, w.job.trace_stage_context())
@@ -4285,7 +5004,7 @@ impl EngineHost {
                     match attempt {
                         Attempt::Done(value) => self.finish_step(&mut w, &step, value, before),
                         Attempt::Continue(seq) => {
-                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: Instant::now() + TURN };
+                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: self.turn_end(pid) };
                             return Ok(Drive::Park(Box::new(w)));
                         }
                         Attempt::RetrySoon(reason) => {
@@ -4331,7 +5050,7 @@ impl EngineHost {
                 w.phase = Phase::Settle { requests, since: now, until: now + SETTLE_MAX };
             }
             None if matches!(step, Step::Act { .. } | Step::Eval { .. } | Step::AdvanceTime { .. }) => {
-                w.phase = Phase::Act { seq: None, before: None, hop: None, at: now + TURN };
+                w.phase = Phase::Act { seq: None, before: None, hop: None, at: self.turn_end(w.job.pid) };
                 if matches!(step, Step::Eval { .. }) {
                     w.job.trace_post_eval_turn_start();
                 }
@@ -4371,6 +5090,18 @@ impl EngineHost {
     }
 
     /// A marker set from a task posted behind the tasks queued now.
+    /// When the event-loop turn starting now may end (the marker task goes
+    /// in then): after [`TURN`] when the page has an animation frame,
+    /// observer callbacks or a timer due soon that the turn must let run;
+    /// at once otherwise, the marker still running behind every queued task.
+    fn turn_end(&self, pid: PageId) -> Instant {
+        let now = Instant::now();
+        match self.thread.browser.page_work(pid) {
+            Some(w) if w.frames == 0 && w.observers == 0 && w.timers == 0 => now,
+            _ => now + TURN,
+        }
+    }
+
     fn marker(&self) -> Rc<Cell<bool>> {
         let done = Rc::new(Cell::new(false));
         post_marker(self.thread.browser.scheduler(), done.clone(), MARKER_HOPS);
@@ -4544,6 +5275,68 @@ impl EngineHost {
         Ok(value)
     }
 
+    /// Calls the function `src` evaluates to in the realm of `doc` with the
+    /// matched element (or the array of them, `all`) and the JSON `arg`.
+    fn call_step(
+        &mut self,
+        page: PageKey,
+        doc: &Rc<PageDom>,
+        src: &str,
+        call: &EvalCall,
+        nodes: &[NodeId],
+    ) -> CdpResult<Evaluated> {
+        let realm = self
+            .with_frame_of_document(page, doc, |f| f.main_realm().cloned())
+            .flatten()
+            .ok_or_else(|| CdpError::server("the element's frame has no realm"))?;
+        let value = {
+            let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
+            let threw = |scope: &lp_js::Scope<'_>, e: lp_js::JsError| {
+                CdpError::server(format!("threw: {}", e.details(scope).message))
+            };
+            let f = scope.eval(&format!("({src}\n)"), Some("lp-run"), 1).map_err(|e| threw(&scope, e))?;
+            let Some(f) = f.as_object().filter(|f| f.is_function()) else {
+                return Err(CdpError::invalid_params("eval: the expression is not a function"));
+            };
+            let mut args = lp_js::RootedVec::new();
+            if call.locator.is_some() {
+                if call.all {
+                    let list = scope.array(&[]).map_err(super::remote::js_to_cdp)?;
+                    for (i, id) in nodes.iter().enumerate() {
+                        let el = lp_webapi::wrap_node(&scope, doc, *id).map_err(super::remote::js_to_cdp)?;
+                        list.set_index(i as u32, el.value()).map_err(super::remote::js_to_cdp)?;
+                    }
+                    args.push(&scope, list.value());
+                } else {
+                    let el = lp_webapi::wrap_node(&scope, doc, nodes[0]).map_err(super::remote::js_to_cdp)?;
+                    args.push(&scope, el.value());
+                }
+            }
+            let arg = match &call.arg {
+                Some(arg) => scope.parse_json(&arg.to_string()).unwrap_or_else(|| scope.undefined()),
+                None => scope.undefined(),
+            };
+            args.push(&scope, arg);
+            let v = f.call_rooted(None, &args).map_err(|e| threw(&scope, e))?;
+            if super::runtime::is_thenable(v) {
+                let settled: Settlement = Rc::new(RefCell::new(None));
+                let (ok, err) = (settled.clone(), settled.clone());
+                scope
+                    .then(
+                        v,
+                        move |_, v| *ok.borrow_mut() = Some(Ok(json_of(v))),
+                        move |s, v| *err.borrow_mut() = Some(Err(JsException::from_value(s, v).message)),
+                    )
+                    .map_err(super::remote::js_to_cdp)?;
+                Evaluated::Pending(settled)
+            } else {
+                Evaluated::Value(json_of(v))
+            }
+        };
+        self.thread.browser.checkpoint();
+        Ok(value)
+    }
+
     /// A `request` step against the requests the run saw so far.
     fn match_request(&self, job: &Job, m: &RequestMatch) -> Attempt {
         let log = self.pages.get(&job.page).and_then(|p| p.network.log.as_ref());
@@ -4666,6 +5459,17 @@ impl EngineHost {
         let p: QueryParams = cmd.command.params()?;
         let read = p.read()?;
         let page = self.main_document(cmd.page)?;
+        match p.mode.as_deref() {
+            None | Some("default") => {}
+            Some("ai") if read == Read::Aria => {
+                let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                return match self.read_aria_ai(pid, &page, &p.locator, &p.frame_seqs.unwrap_or_default())? {
+                    Attempt::Done(v) => Ok(json!({ "value": v })),
+                    _ => Err(CdpError::server(format!("{} matched no element", p.locator.describe()))),
+                };
+            }
+            Some(_) => return Err(CdpError::invalid_params("mode must be default, or ai for an aria read")),
+        }
         let found = p.locator.resolve(&page, &self.waiters.selectors)?;
         if read == Read::Count {
             return Ok(json!({ "value": found.len() }));

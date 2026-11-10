@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use lp_dom::events::{dispatch_with, AddOptions, ListenerHandle, ListenerInvoker, PathItem, TargetKey};
+use lp_dom::events::{dispatch_on_path, AddOptions, ListenerHandle, ListenerInvoker, PathItem, TargetKey};
 use lp_dom::{Dom, NodeId};
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Realm, RealmId, Scope, Value};
 
@@ -23,6 +23,46 @@ const LISTENERS: &str = "__lpListeners";
 pub struct EventTargetData {
     pub page: Rc<PageDom>,
     pub key: TargetKey,
+    /// The functions in this wrapper's listener array, by slot.
+    listeners: ListenerFns,
+}
+
+/// The listener functions of a target wrapper's hidden array ([`LISTENERS`]),
+/// by slot, as raw object pointers: dispatch reads the function of a slot
+/// here, without entering JavaScriptCore for the hidden property and the
+/// element. The array stays the owner: it is traced from the wrapper, so a
+/// function is alive while the wrapper is, and the two are written together
+/// ([`set_listener_slot`]). The payload (and this mirror) dies with the
+/// wrapper, so a wrapper made anew for the same target starts empty, like its
+/// array. Unallocated until the first listener.
+#[derive(Default)]
+struct ListenerFns(std::cell::RefCell<Option<Box<Vec<usize>>>>);
+
+impl ListenerFns {
+    fn get(&self, slot: u32) -> Option<usize> {
+        self.0.borrow().as_ref()?.get(slot as usize).copied().filter(|&raw| raw != 0)
+    }
+    fn set(&self, slot: u32, raw: usize) {
+        let mut fns = self.0.borrow_mut();
+        let fns = fns.get_or_insert_with(Default::default);
+        if fns.len() <= slot as usize {
+            fns.resize(slot as usize + 1, 0);
+        }
+        fns[slot as usize] = raw;
+    }
+}
+
+/// Writes slot `slot` of `holder`'s listener array `array`, and of the
+/// mirror in `holder`'s payload (the Window has no such payload: its array
+/// is read directly). Every write of a listener array goes through here.
+fn set_listener_slot(s: &Scope<'_>, holder: Object<'_>, array: Object<'_>, slot: u32, value: Value<'_>) -> JsResult<()> {
+    array.set_index(slot, value)?;
+    // SAFETY: `holder` is the receiver or a wrapper found live by the
+    // caller, which keeps it for this call.
+    if let Some(t) = unsafe { s.unwrap_rooted::<EventTarget>(holder.value()) } {
+        t.listeners.set(slot, value.as_object().map_or(0, |o| o.as_raw() as usize));
+    }
+    Ok(())
 }
 
 impl EventTargetData {
@@ -37,11 +77,15 @@ impl EventTargetData {
     /// A fresh non-node target (XMLHttpRequest, AbortSignal, `new EventTarget()`).
     pub fn new(page: &Rc<PageDom>) -> EventTargetData {
         let key = page.dom.borrow_mut().new_target_key();
-        EventTargetData { page: page.clone(), key }
+        EventTargetData::for_key(page.clone(), key)
     }
     /// The Window target of `document` (see `PageDom::create_window_target`).
     pub fn window(page: &Rc<PageDom>, key: TargetKey) -> EventTargetData {
-        EventTargetData { page: page.clone(), key }
+        EventTargetData::for_key(page.clone(), key)
+    }
+    /// The data of a wrapper of target `key`.
+    pub(crate) fn for_key(page: Rc<PageDom>, key: TargetKey) -> EventTargetData {
+        EventTargetData { page, key, listeners: ListenerFns::default() }
     }
 }
 
@@ -75,17 +119,16 @@ impl JsClass for EventTarget {
             });
             s.wrap_new::<EventTarget>(data, new_target, Some(key))
         });
-        def.method("addEventListener", 2, |s, t, a| {
-            add_listener(s, t, a)?;
+        def.method_this("addEventListener", 2, |s, t, this, a| {
+            add_listener(s, t, this, a)?;
             Ok(s.undefined())
         });
-        def.method("removeEventListener", 2, |s, t, a| {
-            remove_listener(s, t, a)?;
+        def.method_this("removeEventListener", 2, |s, t, this, a| {
+            remove_listener(s, t, this, a)?;
             Ok(s.undefined())
         });
-        def.method("when", 1, |s, t, a| {
+        def.method_this("when", 1, |s, _t, this, a| {
             a.require(1, "EventTarget.when")?;
-            let this = target_object(s, &t.page, t.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
             crate::observable::when(s, this.value(), a.get(0), a.get(1))
         });
         def.method("dispatchEvent", 1, |s, t, a| {
@@ -154,7 +197,8 @@ fn sibling_window<'s>(s: &Scope<'s>, page: &PageDom, key: TargetKey) -> Option<O
     page.sibling_realms(s).iter().find_map(|realm| {
         let scope = realm.scope().ok()?;
         page_of(&scope).ok()?.is_window_key(key).then(|| ())?;
-        Persistent::new(&scope, scope.global().value()).get(s).as_object()
+        // The sibling's global lives as long as its realm.
+        Some(s.rehome_object(scope.global()))
     })
 }
 
@@ -202,17 +246,17 @@ fn window_listener_array<'s>(s: &Scope<'s>, create: bool) -> JsResult<Option<Obj
 /// (it is not nullable).
 fn parse_options<'s>(s: &Scope<'_>, v: Value<'s>) -> JsResult<(AddOptions, Option<Object<'s>>)> {
     if let Some(o) = v.as_object() {
-        let capture = o.get("capture")?.to_bool();
-        let once = o.get("once")?.to_bool();
+        let capture = o.get_atom("capture")?.to_bool();
+        let once = o.get_atom("once")?.to_bool();
         let passive = {
-            let p = o.get("passive")?;
+            let p = o.get_atom("passive")?;
             if p.is_undefined() {
                 None
             } else {
                 Some(p.to_bool())
             }
         };
-        let signal = o.get("signal")?;
+        let signal = o.get_atom("signal")?;
         let signal = if signal.is_undefined() {
             None
         } else {
@@ -232,7 +276,7 @@ fn parse_options<'s>(s: &Scope<'_>, v: Value<'s>) -> JsResult<(AddOptions, Optio
 /// DOM "flatten": `EventListenerOptions` (only `capture`) or a capture boolean.
 fn parse_capture(v: Value<'_>) -> JsResult<bool> {
     match v.as_object() {
-        Some(o) => Ok(o.get("capture")?.to_bool()),
+        Some(o) => Ok(o.get_atom("capture")?.to_bool()),
         None => Ok(v.to_bool()),
     }
 }
@@ -279,10 +323,22 @@ fn handler_event_type(ty: &'static str) -> &'static str {
     }
 }
 
-fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult<()> {
+/// The wrapper whose listener array dispatch reads for `t`, from a member
+/// called on `this`: a node's receiver is its wrapper in the realm the
+/// member runs in, which `target_object` would find again; other targets
+/// are found as dispatch finds them.
+fn listener_holder<'s>(s: &Scope<'s>, t: &EventTargetData, this: Object<'s>) -> JsResult<Option<Object<'s>>> {
+    match t.key {
+        TargetKey::Node(_) => Ok(Some(this)),
+        TargetKey::Other(_) => target_object(s, &t.page, t.key),
+    }
+}
+
+fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: Args<'s>) -> JsResult<()> {
     a.require(2, "EventTarget.addEventListener")?;
     crate::handlers::drain_inline(&t.page);
-    let ty = dom_string(a.get(0))?;
+    let ty = a.get(0);
+    let ty = str_of(&ty)?;
     let cb = a.get(1);
     // The options are converted before a null callback returns: their getters
     // run (feature detection) and a bad `signal` throws either way.
@@ -298,11 +354,11 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult
             }
         }
     }
-    let obj = target_object(s, &t.page, t.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    let obj = listener_holder(s, t, obj)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
     let arr = listener_array(s, obj, true)?.expect("created");
     // Reuse the slot of an identical callback so native de-duplication by
     // handle matches JS identity.
-    let len = arr.get("length")?.to_number()? as u32;
+    let len = arr.get_atom("length")?.to_number()? as u32;
     let mut slot = None;
     let mut vacant = None;
     for i in 0..len {
@@ -319,13 +375,13 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult
         Some(i) => i,
         None => {
             let slot = vacant.unwrap_or(len);
-            arr.set_index(slot, cb_obj.value())?;
+            set_listener_slot(s, obj, arr, slot, cb_obj.value())?;
             slot
         }
     };
     let realm = s.realm();
     let handle = handle_for(realm.id(), slot);
-    t.page.realms.borrow_mut().entry(realm.id()).or_insert_with(|| realm.downgrade());
+    t.page.register_realm(&realm);
     let added = t.page.dom.borrow_mut().add_listener(t.key, &ty, handle, opts);
     if added {
         maybe_pin(s, &t.page, t.key, obj);
@@ -341,24 +397,25 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult
     Ok(())
 }
 
-fn remove_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult<()> {
+fn remove_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: Args<'s>) -> JsResult<()> {
     a.require(2, "EventTarget.removeEventListener")?;
-    let ty = dom_string(a.get(0))?;
+    let ty = a.get(0);
+    let ty = str_of(&ty)?;
     let cb = a.get(1);
     let capture = parse_capture(a.get(2))?;
     if !cb.is_object() {
         return Ok(());
     }
-    let Some(obj) = target_object(s, &t.page, t.key)? else { return Ok(()) };
+    let Some(obj) = listener_holder(s, t, obj)? else { return Ok(()) };
     let Some(arr) = listener_array(s, obj, false)? else { return Ok(()) };
-    let len = arr.get("length")?.to_number()? as u32;
+    let len = arr.get_atom("length")?.to_number()? as u32;
     for i in 0..len {
         if arr.get_index(i)?.strict_equals(cb) {
             let handle = handle_for(s.realm_id(), i);
             let mut dom = t.page.dom.borrow_mut();
             if dom.remove_listener(t.key, &ty, handle, capture).is_some() && !dom.handle_in_use(t.key, handle) {
                 drop(dom);
-                arr.set_index(i, s.undefined())?;
+                set_listener_slot(s, obj, arr, i, s.undefined())?;
             }
             break;
         }
@@ -372,7 +429,8 @@ fn maybe_pin(s: &Scope<'_>, page: &PageDom, key: TargetKey, obj: Object<'_>) {
     if let TargetKey::Node(_) = key {
         let connected = {
             let d = page.dom.borrow();
-            d.key_node(key).is_some_and(|id| d.is_in_active_document(id))
+            // A detached `<img>` loading keeps its listeners until `load`.
+            d.key_node(key).is_some_and(|id| d.is_in_active_document(id) || page.image_loading(id))
         };
         if !connected {
             return;
@@ -415,11 +473,18 @@ pub(crate) fn pin_wrapper_with_properties(s: &Scope<'_>, object: Object<'_>) {
     }
 }
 
+/// Whether node `id`'s wrappers stay kept: it is in the active document, or
+/// it is an `<img>` whose request is in flight (`PageDom::keep_loading_image`
+/// releases them once it fired `load`/`error`).
+fn still_kept(page: &PageDom, dom: &Dom, id: NodeId) -> bool {
+    dom.is_in_active_document(id) || page.image_loading(id)
+}
+
 /// Safe-point maintenance (see `PageDom::after_task`).
 pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
     for (realm, id) in page.new_property_pins.take() {
         dom.mark_pin_on_connect(id);
-        if !dom.is_in_active_document(id) {
+        if !dom.is_in_active_document(id) && !page.image_loading(id) {
             page.pinned.borrow_mut().remove(&(realm, TargetKey::Node(id.index())));
             page.unkeep_node(Some(realm), id.index());
         }
@@ -431,13 +496,21 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
         let mut pinned = page.pinned.borrow_mut();
         match dom.nodes_removed_since(last) {
             Some(nodes) => {
-                let realms: Vec<RealmId> = page.realms.borrow().keys().copied().collect();
+                // Pins (the identity-map worlds' wrappers) are few: checked
+                // where they are rather than looked up for every removed node.
+                let realms: Vec<RealmId> = if pinned.len() <= nodes.len() {
+                    pinned.retain(|(_, key), _| match key {
+                        TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| still_kept(page, dom, id)),
+                        TargetKey::Other(_) => true,
+                    });
+                    Vec::new()
+                } else {
+                    page.realms.borrow().keys().copied().collect()
+                };
                 for id in nodes {
                     let key = TargetKey::Node(id.index());
                     let kept = page.node_kept(id.index());
-                    if (kept || realms.iter().any(|&r| pinned.contains_key(&(r, key))))
-                        && !dom.is_in_active_document(id)
-                    {
+                    if (kept || realms.iter().any(|&r| pinned.contains_key(&(r, key)))) && !still_kept(page, dom, id) {
                         for &r in &realms {
                             pinned.remove(&(r, key));
                         }
@@ -449,11 +522,11 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
             }
             None => {
                 pinned.retain(|(_, key), _| match key {
-                    TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
+                    TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| still_kept(page, dom, id)),
                     TargetKey::Other(_) => true,
                 });
                 for idx in page.kept_nodes() {
-                    if !dom.key_node(TargetKey::Node(idx)).is_some_and(|id| dom.is_in_active_document(id)) {
+                    if !dom.key_node(TargetKey::Node(idx)).is_some_and(|id| still_kept(page, dom, id)) {
                         page.unkeep_node(None, idx);
                     }
                 }
@@ -499,7 +572,7 @@ pub(crate) fn release_listener_slots(page: &PageDom, released: Vec<(TargetKey, L
         let Ok(s) = realm.scope() else { continue };
         let Ok(Some(obj)) = target_object(&s, page, key) else { continue };
         if let Ok(Some(arr)) = listener_array(&s, obj, false) {
-            let _ = arr.set_index(handle.0 as u32 & !HANDLER_SLOT, s.undefined());
+            let _ = set_listener_slot(&s, obj, arr, handle.0 as u32 & !HANDLER_SLOT, s.undefined());
         }
     }
 }
@@ -513,12 +586,6 @@ struct Invoker<'a> {
     in_shadow: Vec<TargetKey>,
 }
 
-/// Moves a value of this VM into `to`'s realm (the same object, entered there).
-fn rehome<'a>(to: &Scope<'a>, value: Value<'_>) -> Value<'a> {
-    // SAFETY: both realms belong to one VM, and the caller keeps the value alive.
-    unsafe { Value::from_raw(to.ctx(), value.as_raw()) }
-}
-
 /// ECMAScript IsArray throws for a revoked Proxy and runs no trap of a live
 /// one, so it tells the two apart without side effects. JavaScriptCore throws
 /// the TypeError of calling a revoked Proxy in the Proxy's own realm; a
@@ -527,8 +594,9 @@ fn is_revoked_proxy(s: &Scope<'_>, value: Value<'_>) -> bool {
     if !value.has_proxy_target().unwrap_or(false) {
         return false;
     }
-    let is_array = s.global().get("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get("isArray").ok());
-    is_array.and_then(|f| f.as_object()).is_some_and(|f| f.call(None, &[rehome(s, value)]).is_err())
+    let is_array =
+        s.global().get_atom("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get_atom("isArray").ok());
+    is_array.and_then(|f| f.as_object()).is_some_and(|f| f.call(None, &[s.rehome(value)]).is_err())
 }
 
 impl ListenerInvoker for Invoker<'_> {
@@ -558,15 +626,14 @@ impl ListenerInvoker for Invoker<'_> {
         // The listener was registered in `s`'s realm, on the target's wrapper there.
         let found = (|| -> JsResult<Option<(Object<'_>, Object<'_>, Object<'_>)>> {
             let Some(this) = target_object(&s, self.page, current)? else { return Ok(None) };
-            let Some(arr) = listener_array(&s, this, false)? else { return Ok(None) };
-            let Some(fo) = arr.get_index(slot)?.as_object() else { return Ok(None) };
+            let Some(fo) = listener_function(&s, this, slot)? else { return Ok(None) };
             // Web IDL "associated realm" of the callback: the realm the
             // function or callback interface object was created in; for an
             // event handler, that of the handler function (HTML leaves the
             // realm of its internal listener open, and browsers use this one).
             let owner = if is_handler {
-                let ty = self.event.state.borrow().ty.to_string();
-                handler_get(&s, this, &format!("__lpHandler_{ty}"))?.and_then(|v| v.as_object()).unwrap_or(fo)
+                let key = format!("__lpHandler_{}", &*self.event.state.borrow().ty);
+                handler_get(&s, this, &key)?.and_then(|v| v.as_object()).unwrap_or(fo)
             } else {
                 fo
             };
@@ -586,28 +653,31 @@ impl ListenerInvoker for Invoker<'_> {
         // event as its current event unless the invocation target was in a
         // shadow tree; the previous value is restored afterwards, including on
         // throw. The callback's microtask checkpoint runs before the restore.
+        // The realm holds the event raw. `ev_root` keeps it on this frame
+        // (seen by the conservative scan) until the previous value is put
+        // back, past the call, its microtask checkpoint and the exception
+        // report, which run script; the previous value is rooted the same way
+        // by the listener call one level up.
         let in_shadow = self.in_shadow.contains(&current);
-        let mut saved: Option<Persistent> = None;
-        let mut swapped = false;
+        let mut swapped: Option<Option<Value<'_>>> = None;
+        let mut ev_root: Option<Value<'_>> = None;
         let result = (|| -> JsResult<()> {
             let ev = wrap_event(&s, self.event)?;
+            ev_root = Some(ev.value());
             if !in_shadow {
-                let holder = window_listener_array(cs, true)?.expect("created window holder");
-                saved = Some(Persistent::new(cs, holder.get(CURRENT_EVENT)?));
-                holder.set(CURRENT_EVENT, rehome(cs, ev.value()))?;
-                swapped = true;
+                swapped = Some(cs.set_current_event(Some(ev.value())));
             }
             if is_handler {
                 // The trampoline runs in its own realm and calls the handler.
                 fo.call(Some(this), &[ev.value()])?;
                 return Ok(());
             }
-            let (Some(fo), ev) = (rehome(cs, fo.value()).as_object(), rehome(cs, ev.value())) else { return Ok(()) };
-            let this = rehome(cs, this.value()).as_object();
+            let (Some(fo), ev) = (cs.rehome(fo.value()).as_object(), cs.rehome(ev.value())) else { return Ok(()) };
+            let this = cs.rehome(this.value()).as_object();
             if fo.is_function() {
                 fo.call(this, &[ev])?;
             } else {
-                let handle = fo.get("handleEvent")?;
+                let handle = fo.get_atom("handleEvent")?;
                 match handle.as_object().filter(|h| h.is_function()) {
                     Some(h) if is_revoked_proxy(cs, handle) => {
                         let _ = h;
@@ -624,23 +694,57 @@ impl ListenerInvoker for Invoker<'_> {
         // The exception is reported while the event is still the current
         // one: the `error` event's listeners see it as `window.event`.
         if let Err(e) = result {
+            WATCHED.with(|w| {
+                let (watched, _) = w.get();
+                if std::ptr::eq(watched, Rc::as_ptr(self.event)) {
+                    w.set((watched, true));
+                }
+            });
             cs.report_exception(&e);
         }
-        if swapped {
-            if let Ok(Some(holder)) = window_listener_array(cs, false) {
-                let prev = saved.as_ref().map_or(cs.undefined(), |p| p.get(cs));
-                let _ = holder.set(CURRENT_EVENT, prev);
-            }
+        if let Some(prev) = swapped {
+            cs.set_current_event(prev);
         }
+        std::hint::black_box(ev_root);
     }
 }
 
-/// Key of the realm's current event on its traced window holder.
-const CURRENT_EVENT: &str = "__lpCurrentEvent";
+/// The function in slot `slot` of `holder`'s listener array: from the
+/// mirror in `holder`'s payload ([`ListenerFns`]), or, for the Window (whose
+/// array is the realm's holder, with no wrapper payload), from the array.
+fn listener_function<'s>(s: &Scope<'s>, holder: Object<'s>, slot: u32) -> JsResult<Option<Object<'s>>> {
+    // SAFETY: `holder` is a live wrapper the caller keeps for this call.
+    if let Some(t) = unsafe { s.unwrap_rooted::<EventTarget>(holder.value()) } {
+        return Ok(t.listeners.get(slot).map(|raw| {
+            // SAFETY: an element of the live array `holder` owns (see
+            // `ListenerFns`), of this VM.
+            unsafe { Object::from_raw(s.ctx(), raw as lp_js::sys::JSObjectRef) }
+        }));
+    }
+    let Some(arr) = listener_array(s, holder, false)? else { return Ok(None) };
+    Ok(arr.get_index(slot)?.as_object())
+}
+
+thread_local! {
+    /// The event whose dispatch [`fire_noting_exceptions`] runs, and whether
+    /// one of its listeners threw. Touched only on the exception path.
+    static WATCHED: std::cell::Cell<(*const crate::event::EventCore, bool)> =
+        const { std::cell::Cell::new((std::ptr::null(), false)) };
+}
+
+/// [`fire`], also telling whether a listener of this event threw (IndexedDB
+/// aborts the transaction then). Exceptions of other events dispatched by
+/// those listeners do not count.
+pub(crate) fn fire_noting_exceptions(page: &PageDom, target: TargetKey, event: &EventData) -> (bool, bool) {
+    let outer = WATCHED.replace((Rc::as_ptr(event), false));
+    let not_canceled = fire(page, target, event);
+    let (_, threw) = WATCHED.replace(outer);
+    (not_canceled, threw)
+}
 
 /// `window.event`: the realm's current event, or undefined outside dispatch.
 pub(crate) fn current_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
-    Ok(window_listener_array(s, false)?.map(|h| h.get(CURRENT_EVENT)).transpose()?.unwrap_or(s.undefined()))
+    Ok(s.current_event().unwrap_or(s.undefined()))
 }
 
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
@@ -665,11 +769,15 @@ pub(crate) fn fire_with(
         state.related_target = event.fields.borrow().related_target;
     }
     event.refresh_wrappers();
-    // A callback can detach ancestors and run GC during dispatch.
+    // A callback can detach ancestors and run GC during dispatch. The path
+    // is built once, here, and dispatched on below.
     let path = page.dom.borrow().event_path(target, &event.state.borrow());
-    let ids: Vec<_> = path.iter().filter_map(|(key, _)| page.dom.borrow().key_node(*key)).collect();
-    let _path_holds: Vec<_> =
-        ids.into_iter().filter_map(|id| crate::collections::NodeHold::new(&event.page, id).ok()).collect();
+    let ids: Box<[NodeId]> = {
+        let dom = page.dom.borrow();
+        path.iter().filter_map(|(key, _)| dom.key_node(*key)).collect()
+    };
+    // The path's nodes are live (`key_node`), so each can be held.
+    let _path_holds = crate::collections::NodeHolds::new(&event.page, ids).ok();
     // A node whose root is a shadow root has that root on the path after it,
     // so a path without one (nearly all) needs no root walks.
     let in_shadow = {
@@ -685,7 +793,7 @@ pub(crate) fn fire_with(
         }
     };
     let mut inv = Invoker { page, event, in_shadow };
-    let result = dispatch_with(&page.dom, target, &event.state, &mut inv, before_listeners);
+    let result = dispatch_on_path(&page.dom, target, &path, &event.state, &mut inv, before_listeners);
     // The relatedTarget stays as the outermost invocation target saw it, or
     // is reset with the target ("clearTargets").
     event.fields.borrow_mut().related_target = event.state.borrow().related_target;
@@ -708,14 +816,14 @@ fn handler_get<'s>(s: &Scope<'s>, object: Object<'_>, key: &str) -> JsResult<Opt
     if object.as_raw() == s.global().as_raw() {
         return Ok(window_listener_array(s, false)?.map(|h| h.get(key)).transpose()?.filter(|v| !v.is_undefined()));
     }
-    s.get_hidden(object, key)
+    s.get_hidden_str(object, key)
 }
 fn handler_set(s: &Scope<'_>, object: Object<'_>, key: &str, value: Value<'_>) -> JsResult<()> {
     if object.as_raw() == s.global().as_raw() {
         let holder = window_listener_array(s, true)?.expect("created window holder");
         return holder.set(key, value);
     }
-    s.set_hidden(object, key, value)
+    s.set_hidden_str(object, key, value)
 }
 
 /// IDL event handlers use an ordinary listener slot and a traced hidden value.
@@ -791,7 +899,7 @@ pub(crate) fn set_event_handler(
             let handle = handler_handle_for(s.realm_id(), slot);
             target.page.dom.borrow_mut().remove_listener(target.key, ty, handle, false);
             if let Some(array) = listener_array(s, object, false)? {
-                array.set_index(slot, s.undefined())?;
+                set_listener_slot(s, object, array, slot, s.undefined())?;
             }
             handler_set(s, object, &slot_key, s.undefined())?;
         }
@@ -857,7 +965,7 @@ pub(crate) fn set_event_handler(
                 };
                 if cancel {
                     if let Some(event) = event.as_object() {
-                        if let Some(prevent) = event.get("preventDefault")?.as_object() {
+                        if let Some(prevent) = event.get_atom("preventDefault")?.as_object() {
                             prevent.call(Some(event), &[])?;
                         }
                     }
@@ -867,7 +975,7 @@ pub(crate) fn set_event_handler(
         Ok(s.undefined())
     })?;
     let array = listener_array(s, object, true)?.expect("created listener array");
-    let len = array.get("length")?.to_number()? as u32;
+    let len = array.get_atom("length")?.to_number()? as u32;
     let mut slot = len;
     for i in 0..len {
         if array.get_index(i)?.is_undefined() {
@@ -875,7 +983,7 @@ pub(crate) fn set_event_handler(
             break;
         }
     }
-    array.set_index(slot, callback.value())?;
+    set_listener_slot(s, object, array, slot, callback.value())?;
     handler_set(s, object, &slot_key, s.number(slot as f64))?;
     target.page.dom.borrow_mut().add_listener(
         target.key,

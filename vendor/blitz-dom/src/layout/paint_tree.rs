@@ -1,7 +1,8 @@
 //! Construction of the paint tree (`Node::paint_children` and
 //! `Node::stacking_context`) from the laid-out box tree.
 //!
-//! The pass runs once per frame after layout and builds *topology* only: which
+//! The pass runs before the first paint or hit test after layout
+//! (`BaseDocument::ensure_paint_tree`) and builds *topology* only: which
 //! node ids each node paints itself and which z-indexed descendants are hoisted
 //! to the nearest stacking-context root. Geometry (a hoisted box's offset from
 //! its stacking-context root) is derived at use time from `final_layout()` and
@@ -11,9 +12,11 @@
 use blitz_traits::node_id::NodeId;
 use std::cell::Cell;
 use std::ops::Range;
+use stylo_taffy::CopyStyleGetters;
 use thin_vec::ThinVec;
 
 use crate::layout::damage::ALL_DAMAGE;
+use crate::node::NodeFlags;
 use crate::tree::NodeTree;
 use crate::{BaseDocument, Node};
 use style::properties::generated::longhands::position::computed_value::T as Position;
@@ -169,8 +172,8 @@ impl StackingContext {
             return cached;
         }
 
-        let child_rect = |child: &HoistedPaintChild| -> Rect<f32> {
-            let node = &tree[child.node_id];
+        let child_rect = |child: &HoistedPaintChild| -> Option<Rect<f32>> {
+            let node = tree.get(child.node_id)?;
             let position = child.position(tree, sc_root_id);
             let location = node.final_layout().location;
             let mut overflow = *node.scrollable_overflow();
@@ -179,24 +182,23 @@ impl StackingContext {
             }
             let left = position.x + location.x;
             let top = position.y + location.y;
-            Rect {
+            Some(Rect {
                 left: left + (overflow.x0 / scale) as f32,
                 top: top + (overflow.y0 / scale) as f32,
                 right: left + (overflow.x1 / scale) as f32,
                 bottom: top + (overflow.y1 / scale) as f32,
-            }
+            })
         };
 
-        let mut area = Rect::ZERO;
-        if let Some((first, rest)) = self.children.split_first() {
-            area = child_rect(first);
-            for child in rest {
-                let pos = child_rect(child);
-                area.left = area.left.min(pos.left);
-                area.top = area.top.min(pos.top);
-                area.right = area.right.max(pos.right);
-                area.bottom = area.bottom.max(pos.bottom);
-            }
+        // Children dropped by a DOM mutation since the last `resolve` yield
+        // `None` and are left out, like hit testing skips them.
+        let mut rects = self.children.iter().filter_map(child_rect);
+        let mut area = rects.next().unwrap_or(Rect::ZERO);
+        for pos in rects {
+            area.left = area.left.min(pos.left);
+            area.top = area.top.min(pos.top);
+            area.right = area.right.max(pos.right);
+            area.bottom = area.bottom.max(pos.bottom);
         }
         self.hoisted_content_bbox.set((generation, area));
         area
@@ -229,6 +231,71 @@ impl StackingContext {
 }
 
 impl BaseDocument {
+    /// Bring `paint_children` and `stacking_context` up to date with the last
+    /// resolve, here and in every sub-document. Everything that reads them
+    /// calls this first: the blitz-paint entry points and hit testing
+    /// ([`hit`](Self::hit) and the methods built on it). Resolve only marks
+    /// the tree stale, so a run of forced layouts with no paint or hit test
+    /// in between builds it once.
+    pub fn ensure_paint_tree(&mut self) {
+        if std::mem::take(&mut self.paint_tree_dirty)
+            && let Some(root_id) = self.try_root_element().map(|root| root.id)
+        {
+            self.build_paint_tree(root_id);
+            debug_assert!(
+                self.paint_tree_matches_fresh_build(),
+                "the incrementally built paint tree differs from a fresh build"
+            );
+        }
+        for &node_id in &self.sub_document_nodes {
+            if let Some(mut sub_doc) = self
+                .nodes
+                .get_mut(node_id)
+                .and_then(|node| node.subdoc_mut())
+                .map(|doc| doc.inner_mut())
+            {
+                sub_doc.ensure_paint_tree();
+            }
+        }
+    }
+
+    /// Whether the paint tree equals one built from scratch: snapshots every
+    /// node's paint lists, rebuilds the whole tree with every node dirty and
+    /// compares. Leaves the fresh build in place. For tests and debug
+    /// assertions; it costs a full build.
+    #[doc(hidden)]
+    pub fn paint_tree_matches_fresh_build(&mut self) -> bool {
+        let Some(root_id) = self.try_root_element().map(|root| root.id) else {
+            return true;
+        };
+        let incremental = self.paint_tree_snapshot();
+        for (_, node) in self.nodes.iter_mut() {
+            node.flags
+                .insert(NodeFlags::PAINT_TREE_DIRTY | NodeFlags::PAINT_TREE_OWN_DAMAGE);
+        }
+        self.build_paint_tree(root_id);
+        incremental == self.paint_tree_snapshot()
+    }
+
+    /// Every node's paint lists, in slab order.
+    fn paint_tree_snapshot(&self) -> Vec<PaintTreeEntry> {
+        let hoisted = |children: &[HoistedPaintChild]| -> Vec<(NodeId, i32)> {
+            children.iter().map(|c| (c.node_id, c.z_index)).collect()
+        };
+        self.nodes
+            .iter()
+            .map(|(id, node)| PaintTreeEntry {
+                id,
+                paint_children: node.paint_children.borrow().as_ref().map(|c| c.to_vec()),
+                stacking_context: node
+                    .stacking_context
+                    .as_ref()
+                    .map(|sc| (hoisted(&sc.children), sc.negative_z_count)),
+                contribution: hoisted(&node.sc_contribution_cache.borrow()),
+            })
+            .collect()
+    }
+
     /// Rebuild `paint_children` and `stacking_context` for the tree rooted at
     /// `root_id` from the laid-out box tree.
     ///
@@ -236,10 +303,11 @@ impl BaseDocument {
     /// (sorted by paint order) or, when they have a non-zero `z-index` and are
     /// positioned or flex/grid items, in the nearest ancestor stacking context.
     ///
-    /// Subtrees whose stored damage lacks `REBUILD_STACKING_CONTEXT` are skipped: their
+    /// Subtrees not flagged `PAINT_TREE_DIRTY` (no resolve since the last
+    /// build stored `REBUILD_STACKING_CONTEXT` damage on them) are skipped: their
     /// own lists are still valid and the entries they contributed to the
     /// enclosing stacking context are replayed from `Node::sc_contribution_cache`.
-    pub(crate) fn build_paint_tree(&mut self, root_id: NodeId) {
+    fn build_paint_tree(&mut self, root_id: NodeId) {
         self.build_paint_tree_impl(root_id, None);
         self.restore_out_of_flow_stacking_owners(root_id);
     }
@@ -310,7 +378,12 @@ impl BaseDocument {
             // node itself, so the role the caller resolved must match the one
             // this node was last built with.
             let role_unchanged = node.stacking_context.is_some() == stacking_context.is_none();
+            // The build runs after the resolves it catches up with, whose
+            // damage is gone by then: `PAINT_TREE_DIRTY` records it. Damage
+            // still stored (none after a resolve, as every resolve clears it)
+            // is honoured too, so a build can only be more thorough.
             let clean = role_unchanged
+                && !node.flags.contains(NodeFlags::PAINT_TREE_DIRTY)
                 && !node
                     .damage()
                     .unwrap_or(ALL_DAMAGE)
@@ -322,6 +395,17 @@ impl BaseDocument {
                 }
                 return;
             }
+        }
+
+        let own_damage = self.nodes[node_id].flags.contains(NodeFlags::PAINT_TREE_OWN_DAMAGE);
+        self.nodes[node_id]
+            .flags
+            .remove(NodeFlags::PAINT_TREE_DIRTY | NodeFlags::PAINT_TREE_OWN_DAMAGE);
+
+        // lightningpanda: a table whose cells are all plain boxes in it visits again only the cells
+        // that changed (`TableContext::placed`).
+        if !own_damage && self.table_paint_children_kept(node_id) {
+            return;
         }
 
         let Some(display) = self.nodes[node_id].display_style() else {
@@ -388,50 +472,83 @@ impl BaseDocument {
             hoisted_past_parent.sort_by_key(|&(anchor, _)| anchor);
             let mut next_hoisted = 0;
 
-            let mut paint_children = self.nodes[node_id]
-                .paint_children
-                .borrow_mut()
-                .take()
-                .unwrap_or_default();
-            paint_children.clear();
-            paint_children.reserve(children.len() + hoisted_past_parent.len());
+            let is_layer_root =
+                stacking_context.is_none() || self.nodes[node_id].is_paint_layer_root();
+            let keyed_base = self.scratch.keyed_children.len();
 
             for (index, &child_id) in children.iter().enumerate() {
                 if owned_here(self, child_id) {
-                    let is_sc_root = self.nodes[child_id].is_stacking_context_root(is_flex_or_grid);
-                    self.build_paint_tree_impl(
+                    let is_sc_root = self.is_paint_stacking_context_root(child_id, is_flex_or_grid);
+                    let first_entry = entries.len();
+                    crate::util::ensure_stack(|| self.build_paint_tree_impl(
                         child_id,
                         match is_sc_root {
                             true => None,
                             false => Some(&mut entries),
                         },
-                    );
+                    ));
 
                     // Only stacking contexts with a non-zero z-index are lifted
                     // out of tree order into the enclosing stacking context's
                     // z-sorted list (CSS 2.1 Appendix E).
-                    let z_index = self.nodes[child_id].z_index();
+                    let child = &self.nodes[child_id];
+                    let z_index = child.z_index();
+                    let paint_order = node_to_paint_order(child, is_flex_or_grid);
                     if is_sc_root && z_index != 0 {
                         entries.push(HoistedPaintChild::new(child_id, z_index))
+                    } else if !is_layer_root && child.is_in_flow_positioned() {
+                        // Positioned boxes paint above all in-flow content of
+                        // the nearest positioned (or clipping) ancestor, not just
+                        // of their parent: lift them out of this static box.
+                        entries.push(HoistedPaintChild::new(child_id, 0))
                     } else {
-                        paint_children.push(child_id);
+                        self.scratch.keyed_children.push((paint_order, child_id));
+                    }
+
+                    // Positioned descendants lifted out of the static boxes of
+                    // this child's subtree join this node's positioned paint
+                    // level, in tree order after the child.
+                    if is_layer_root && entries.len() > first_entry {
+                        let subtree_entries: ThinVec<_> = entries.drain(first_entry..).collect();
+                        for entry in subtree_entries {
+                            if entry.z_index == 0 {
+                                self.scratch
+                                    .keyed_children
+                                    .push(((2, paint_order.1), entry.node_id));
+                            } else {
+                                entries.push(entry);
+                            }
+                        }
                     }
                 }
 
                 while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                     && anchor == index
                 {
-                    self.attach_hoisted_past_parent(hoisted_id, &mut paint_children, &mut entries);
+                    self.attach_hoisted_past_parent(hoisted_id, is_flex_or_grid, &mut entries);
                     next_hoisted += 1;
                 }
             }
             for &(_, hoisted_id) in &hoisted_past_parent[next_hoisted..] {
-                self.attach_hoisted_past_parent(hoisted_id, &mut paint_children, &mut entries);
+                self.attach_hoisted_past_parent(hoisted_id, is_flex_or_grid, &mut entries);
             }
 
-            paint_children
-                .sort_by_cached_key(|id| node_to_paint_order(&self.nodes[*id], is_flex_or_grid));
+            self.scratch.keyed_children[keyed_base..].sort_by_key(|&(paint_order, _)| paint_order);
 
+            let mut paint_children = self.nodes[node_id]
+                .paint_children
+                .borrow_mut()
+                .take()
+                .unwrap_or_default();
+            paint_children.clear();
+            paint_children.extend(
+                self.scratch
+                    .keyed_children
+                    .drain(keyed_base..)
+                    .map(|(_, id)| id),
+            );
+
+            self.note_table_paint_children(node_id, &children, &paint_children, entries.is_empty());
             let node = &self.nodes[node_id];
             *node.paint_children.borrow_mut() = Some(paint_children);
             *node.layout_children.borrow_mut() = Some(children);
@@ -446,6 +563,108 @@ impl BaseDocument {
             node.sc_contribution_cache.borrow_mut().clear();
             node.stacking_context = Some(Box::new(StackingContext::from_children(entries)));
         }
+    }
+
+    /// Whether `id` roots a stacking context for painting: by its style, or
+    /// (lightningpanda) because it is in the top layer, which always forms
+    /// one (CSS Positioned Layout 4 §4), so its z-indexed and fixed
+    /// descendants stay in its subtree and paint with it above the document.
+    #[inline]
+    fn is_paint_stacking_context_root(&self, id: NodeId, is_flex_or_grid_item: bool) -> bool {
+        self.nodes[id].is_stacking_context_root(is_flex_or_grid_item) || self.is_in_top_layer(id)
+    }
+
+    /// The table `node_id` (with `TableContext::placed` holding what changed) whose cells were all
+    /// plain boxes in it when the paint tree last visited it: no stacking context, nothing hoisted out
+    /// of their subtrees, one paint order. The cells damaged or appended since are visited again, and
+    /// if they still are plain boxes its paint children are the same, plus the appended cells, and it
+    /// adds nothing to the stacking context. `false`: the table is to be visited as any box. (The
+    /// caller asks only for a table without damage of its own since the last build,
+    /// `PAINT_TREE_OWN_DAMAGE`.)
+    fn table_paint_children_kept(&mut self, node_id: NodeId) -> bool {
+        use crate::node::SpecialElementData;
+        let node = &self.nodes[node_id];
+        if !node.flags.is_table_root()
+            || node.before().is_some()
+            || node.after().is_some()
+            || !node.hoisted_children.borrow().is_empty()
+        {
+            return false;
+        }
+        let Some(SpecialElementData::TableRoot(ctx)) = node.data.downcast_element().map(|e| &e.special_data) else {
+            return false;
+        };
+        if !crate::layout::table::keeps_cells(ctx) {
+            return false;
+        }
+        let ctx = std::sync::Arc::clone(ctx);
+        let (cells, order) = {
+            let mut placed = ctx.placed.borrow_mut();
+            let order = placed.plain_paint_order;
+            match (placed.take_paint(), order) {
+                (Some(cells), Some(order)) => (cells, order),
+                _ => return false,
+            }
+        };
+        let Some(mut paint_children) = node.paint_children.borrow_mut().take() else { return false };
+        let kept = paint_children.len() <= ctx.cells.len()
+            && paint_children.iter().zip(&ctx.cells).all(|(&id, cell)| id == cell.node_id);
+        let appended = paint_children.len()..ctx.cells.len();
+        let mut entries = ThinVec::new();
+        let plain = kept
+            && cells.iter().copied().chain(appended.clone()).all(|index| {
+                let Some(cell) = ctx.cells.get(index) else { return false };
+                let child = &self.nodes[cell.node_id];
+                if child.is_stacking_context_root(false) || node_to_paint_order(child, false) != order {
+                    return false;
+                }
+                self.build_paint_tree_impl(cell.node_id, Some(&mut entries));
+                entries.is_empty()
+            });
+        if plain {
+            paint_children.extend(ctx.cells[appended].iter().map(|cell| cell.node_id));
+        }
+        *self.nodes[node_id].paint_children.borrow_mut() = Some(paint_children);
+        if !plain {
+            ctx.placed.borrow_mut().plain_paint_order = None;
+        }
+        plain
+    }
+
+    /// After the paint tree visited the table `node_id` as any box: whether its cells are plain boxes
+    /// in it (see `table_paint_children_kept`), and the cells changed since are none.
+    fn note_table_paint_children(
+        &self,
+        node_id: NodeId,
+        children: &[NodeId],
+        paint_children: &[NodeId],
+        no_entries: bool,
+    ) {
+        use crate::node::SpecialElementData;
+        let node = &self.nodes[node_id];
+        if !node.flags.is_table_root() {
+            return;
+        }
+        let Some(SpecialElementData::TableRoot(ctx)) = node.data.downcast_element().map(|e| &e.special_data) else {
+            return;
+        };
+        let mut placed = ctx.placed.borrow_mut();
+        placed.take_paint();
+        let first = children.first().map(|&id| node_to_paint_order(&self.nodes[id], false));
+        let plain = crate::layout::table::keeps_cells(ctx)
+            && no_entries
+            && node.before().is_none()
+            && node.after().is_none()
+            && node.hoisted_children.borrow().is_empty()
+            && children.len() == ctx.cells.len()
+            && paint_children.len() == children.len()
+            && children.iter().zip(&ctx.cells).all(|(&id, cell)| id == cell.node_id)
+            && paint_children.iter().zip(children).all(|(a, b)| a == b)
+            && children.iter().all(|&id| {
+                let child = &self.nodes[id];
+                !child.is_stacking_context_root(false) && Some(node_to_paint_order(child, false)) == first
+            });
+        placed.plain_paint_order = if plain { first } else { None };
     }
 
     /// The layout child of `node_id` whose subtree contains `id`, following
@@ -469,12 +688,12 @@ impl BaseDocument {
     fn attach_hoisted_past_parent(
         &mut self,
         child_id: NodeId,
-        paint_children: &mut ThinVec<NodeId>,
+        is_flex_or_grid: bool,
         entries: &mut ThinVec<HoistedPaintChild>,
     ) {
         self.build_paint_tree_impl(
             child_id,
-            match self.nodes[child_id].is_stacking_context_root(false) {
+            match self.is_paint_stacking_context_root(child_id, false) {
                 true => None,
                 false => Some(entries),
             },
@@ -484,9 +703,65 @@ impl BaseDocument {
         if z_index != 0 {
             entries.push(HoistedPaintChild::new(child_id, z_index));
         } else {
-            paint_children.push(child_id);
+            let paint_order = node_to_paint_order(&self.nodes[child_id], is_flex_or_grid);
+            self.scratch.keyed_children.push((paint_order, child_id));
         }
     }
+}
+
+impl Node {
+    /// Whether this node paints its positioned descendants itself (CSS 2.1
+    /// Appendix E step 8) rather than leaving them to an ancestor: positioned
+    /// boxes, and boxes that clip their contents. Stacking-context roots are
+    /// handled by the caller.
+    fn is_paint_layer_root(&self) -> bool {
+        use style::values::computed::{Contain, Overflow};
+
+        let Some(style) = self.primary_styles() else {
+            return true;
+        };
+        let box_style = style.get_box();
+        style.clone_position() != Position::Static
+            || !matches!(box_style.overflow_x, Overflow::Visible)
+            || !matches!(box_style.overflow_y, Overflow::Visible)
+            || box_style.slow_clone_contain().contains(Contain::PAINT)
+            || self.element_data().is_some_and(|e| {
+                e.raster_image_data().is_some()
+                    || e.sub_doc_data().is_some()
+                    || e.text_input_data().is_some()
+            })
+    }
+
+    /// Whether this is a `position: relative` or `sticky` box.
+    fn is_in_flow_positioned(&self) -> bool {
+        self.primary_styles().is_some_and(|style| {
+            matches!(
+                style.clone_position(),
+                Position::Relative | Position::Sticky
+            )
+        })
+    }
+
+    /// The offset from the border box of `painter_id` at which this node is
+    /// painted, excluding its own `final_layout().location`, when it is in the
+    /// paint list of `painter_id` without being laid out relative to it (a
+    /// positioned box lifted past static ancestors).
+    pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
+        match self.containing_block() {
+            Some(id) if id == painter_id => None,
+            None => None,
+            Some(_) => Some(hoisted_child_position(self.tree(), painter_id, self.id)),
+        }
+    }
+}
+
+/// One node's paint lists, for [`BaseDocument::paint_tree_matches_fresh_build`].
+#[derive(PartialEq)]
+struct PaintTreeEntry {
+    id: NodeId,
+    paint_children: Option<Vec<NodeId>>,
+    stacking_context: Option<(Vec<(NodeId, i32)>, u32)>,
+    contribution: Vec<(NodeId, i32)>,
 }
 
 #[inline(always)]
@@ -530,5 +805,108 @@ fn node_to_paint_order(node: &Node, is_flex_or_grid: bool) -> (i32, i32) {
             position_to_order(position) + float_to_order(style.clone_float()),
             0,
         )
+    }
+}
+
+
+/// The rank of a `top-layer=N` token in a state attribute value.
+fn top_layer_rank(value: &str) -> Option<u32> {
+    value
+        .split_ascii_whitespace()
+        .find_map(|t| t.strip_prefix("top-layer="))
+        .and_then(|n| n.parse().ok())
+}
+
+/// lightningpanda: the top layer as the embedder marks it: elements by rank
+/// (bottom first, ties in id order) and each element's rank. Membership
+/// tests, entering, leaving and re-ranking are logarithmic or constant, so
+/// a page with many showing popovers costs no quadratic work per snapshot,
+/// drop or painted box.
+#[derive(Default)]
+pub(crate) struct TopLayer {
+    by_rank: std::collections::BTreeMap<(u32, u64), NodeId>,
+    rank_of: std::collections::HashMap<NodeId, u32>,
+}
+
+impl TopLayer {
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.rank_of.is_empty()
+    }
+
+    #[inline]
+    pub(crate) fn contains(&self, id: NodeId) -> bool {
+        self.rank_of.contains_key(&id)
+    }
+
+    /// Takes `id` out of the top layer (if it is in it).
+    pub(crate) fn remove(&mut self, id: NodeId) {
+        if let Some(rank) = self.rank_of.remove(&id) {
+            self.by_rank.remove(&(rank, id.as_u64()));
+        }
+    }
+
+    /// Puts `id` in the top layer at `rank`, or takes it out (`None`).
+    fn set(&mut self, id: NodeId, rank: Option<u32>) {
+        if self.rank_of.get(&id).copied() == rank {
+            return;
+        }
+        self.remove(id);
+        if let Some(rank) = rank {
+            self.rank_of.insert(id, rank);
+            self.by_rank.insert((rank, id.as_u64()), id);
+        }
+    }
+
+    /// The elements, bottom first.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.by_rank.values().copied()
+    }
+}
+
+impl BaseDocument {
+    /// lightningpanda: element `id`'s state attribute is now `value` (`None`:
+    /// removed). Keeps [`Self::top_layer_nodes`] in step: an element with a
+    /// `top-layer=N` token is in the top layer at rank `N`.
+    pub(crate) fn note_lp_state(&mut self, id: NodeId, value: Option<&str>) {
+        let rank = value.and_then(top_layer_rank);
+        if self.top_layer.is_empty() && rank.is_none() {
+            return;
+        }
+        self.top_layer.set(id, rank);
+    }
+
+    /// lightningpanda: whether any element is in the top layer (one length
+    /// check).
+    #[inline]
+    pub fn has_top_layer(&self) -> bool {
+        !self.top_layer.is_empty()
+    }
+
+    /// lightningpanda: whether `id` is in the top layer: painted above the
+    /// whole document (see [`Self::top_layer_nodes`]), not in its place.
+    #[inline]
+    pub fn is_in_top_layer(&self, id: NodeId) -> bool {
+        !self.top_layer.is_empty() && self.top_layer.contains(id)
+    }
+
+    /// lightningpanda: the elements of the top layer that are in the
+    /// document, bottom first.
+    pub fn top_layer_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.top_layer.iter().filter(|&id| {
+            self.nodes
+                .get(id)
+                .is_some_and(|n| n.flags.is_in_document() && n.is_element())
+        })
+    }
+
+    /// lightningpanda: the offset of top-layer element `id` from the root
+    /// element's border box (with the root's scroll applied), excluding its
+    /// own location: where it paints, hoisted to the root's stacking context.
+    pub fn top_layer_position(&self, id: NodeId) -> Point<f32> {
+        match self.try_root_element() {
+            Some(root) => hoisted_child_position(self.tree(), root.id, id),
+            None => Point::ZERO,
+        }
     }
 }

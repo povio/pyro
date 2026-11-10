@@ -1,12 +1,65 @@
 //! Bounded, nonblocking Network event observations. Overflow terminates the
 //! subscription explicitly; it never leaves a partial lifecycle looking valid.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::{NetEvent, ResponseHead};
 
 pub type NetWake = Arc<dyn Fn() + Send + Sync>;
+
+thread_local! {
+    /// On an I/O thread ([`DeferredWakes`]): the observers whose wake is due
+    /// at the end of the thread's turn. `None` elsewhere: wakes run at once.
+    static DEFERRED: RefCell<Option<Vec<Arc<Observer>>>> = const { RefCell::new(None) };
+}
+
+/// While it lives, this thread's observer wakes are held until
+/// [`flush_deferred_wakes`] (the I/O thread runs it before parking and after
+/// each request task): a small response's events (head, body, finished) wake
+/// the consumer once instead of once each, and a terminal event's wake lands
+/// right after the completion the request's sink just posted, so the
+/// consumer's loop is already awake for it. Order per subscription is
+/// unchanged (the queue's). Dropping it flushes.
+pub(crate) struct DeferredWakes(());
+
+impl DeferredWakes {
+    pub(crate) fn enter() -> Self {
+        DEFERRED.with(|d| {
+            let mut d = d.borrow_mut();
+            debug_assert!(d.is_none(), "deferred wakes already entered on this thread");
+            *d = Some(Vec::new());
+        });
+        DeferredWakes(())
+    }
+}
+
+impl Drop for DeferredWakes {
+    fn drop(&mut self) {
+        let due = DEFERRED.with(|d| d.borrow_mut().take()).unwrap_or_default();
+        wake_all(due);
+    }
+}
+
+/// Runs the wakes this thread deferred since the last flush.
+pub(crate) fn flush_deferred_wakes() {
+    let due = DEFERRED.with(|d| d.borrow_mut().as_mut().map(std::mem::take)).unwrap_or_default();
+    wake_all(due);
+}
+
+fn wake_all(due: Vec<Arc<Observer>>) {
+    // Outside the thread-local borrow: a wake may publish or subscribe.
+    for observer in due {
+        observer.wake_due.store(false, Ordering::Release);
+        observer.wake();
+    }
+}
+
+/// While a deferred wake is queued, the consumer is also woken each time its
+/// queue grows by another `1 / PRESSURE_STEPS` of either cap.
+const PRESSURE_STEPS: usize = 16;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SubscriptionLimits {
@@ -42,6 +95,8 @@ struct Observer {
     state: Mutex<State>,
     limits: SubscriptionLimits,
     wake: Option<NetWake>,
+    /// A deferred wake of this observer is queued on an I/O thread.
+    wake_due: AtomicBool,
 }
 
 impl Observer {
@@ -49,8 +104,28 @@ impl Observer {
         self.state.lock().unwrap().terminal.is_none()
     }
 
-    fn send(&self, event: &NetEvent, bytes: usize) {
-        let notify = {
+    /// Wakes the consumer now, or at the end of this thread's turn under
+    /// [`DeferredWakes`] (one entry per observer however often it is due).
+    fn notify(self: &Arc<Self>) {
+        if self.wake.is_none() {
+            return;
+        }
+        let deferred = DEFERRED.with(|d| match d.borrow_mut().as_mut() {
+            Some(due) => {
+                if !self.wake_due.swap(true, Ordering::AcqRel) {
+                    due.push(self.clone());
+                }
+                true
+            }
+            None => false,
+        });
+        if !deferred {
+            self.wake();
+        }
+    }
+
+    fn send(self: &Arc<Self>, event: &NetEvent, bytes: usize) {
+        let (notify, pressure) = {
             let mut state = self.state.lock().unwrap();
             if state.terminal.is_some() {
                 return;
@@ -60,19 +135,35 @@ impl Observer {
                 state.queue.clear();
                 state.bytes = 0;
                 state.terminal = Some(SubscriptionError::Overflow);
-                true
+                (true, false)
             } else {
                 let was_empty = state.queue.is_empty();
+                let before = state.bytes;
                 state.queue.push_back((event.clone(), bytes));
                 state.bytes += bytes;
-                was_empty
+                // Each time the queue grows by another sixteenth of either
+                // cap (64 events / 512 KB by default).
+                let step_events = (self.limits.max_events / PRESSURE_STEPS).max(1);
+                let step_bytes = (self.limits.max_bytes / PRESSURE_STEPS).max(1);
+                let pressure = state.queue.len() % step_events == 0 || before / step_bytes < state.bytes / step_bytes;
+                (was_empty, pressure)
             }
         };
         if notify {
+            self.notify();
+        } else if pressure && self.wake_due.load(Ordering::Acquire) {
+            // The deferred wake waits for the I/O thread to park (or a request
+            // to finish), and a body that keeps its socket readable never lets
+            // a current-thread runtime park: coop yields skip the park hook.
+            // Wake the consumer now so it drains well before either cap; the
+            // queued deferred wake still runs (a spare wake is harmless). At
+            // most PRESSURE_STEPS such wakes per undrained queue, so a slow
+            // consumer is not woken once per event.
             self.wake();
         }
     }
 
+    /// Terminal: wakes at once, never deferred.
     fn close(&self) {
         let notify = {
             let mut state = self.state.lock().unwrap();
@@ -133,6 +224,7 @@ impl Subscriptions {
             state: Mutex::new(State { queue: VecDeque::new(), bytes: 0, terminal: None }),
             limits,
             wake,
+            wake_due: AtomicBool::new(false),
         });
         let closed = {
             let mut registry = self.0.lock().unwrap();
@@ -244,6 +336,9 @@ fn event_bytes(event: &NetEvent) -> usize {
                 | crate::NetError::UnsupportedScheme(s) => s.capacity(),
                 _ => 0,
             },
+            NetEvent::WebSocket { activity, .. } => {
+                std::mem::size_of::<crate::WebSocketActivity>() + activity.retained_bytes()
+            }
         }
 }
 
@@ -359,6 +454,112 @@ mod tests {
         assert!(matches!(sub.try_recv(), Err(SubscriptionError::Closed)));
         let late = hub.subscribe(SubscriptionLimits::default(), None);
         assert!(matches!(late.try_recv(), Err(SubscriptionError::Closed)));
+    }
+
+    /// Under `DeferredWakes` a thread's emits wake each observer once per
+    /// flush, however many empty-to-nonempty transitions its consumer saw;
+    /// `close` still wakes at once, and other threads are not deferred.
+    #[test]
+    fn deferred_wakes_coalesce_per_flush_and_close_is_immediate() {
+        let hub = Arc::new(Subscriptions::default());
+        let slot: Arc<Mutex<Option<NetSubscription>>> = Arc::default();
+        let count = Arc::new(AtomicUsize::new(0));
+        let (s, c) = (slot.clone(), count.clone());
+        // The consumer drains inside the wake, like a loop task would.
+        let sub = hub.subscribe(
+            SubscriptionLimits::default(),
+            Some(Arc::new(move || {
+                c.fetch_add(1, Ordering::SeqCst);
+                if let Some(sub) = s.lock().unwrap().as_ref() {
+                    while sub.try_recv().is_ok() {}
+                }
+            })),
+        );
+        *slot.lock().unwrap() = Some(sub);
+        let deferred = DeferredWakes::enter();
+        for size in 1..=4 {
+            hub.emit(event(size));
+        }
+        assert_eq!(count.load(Ordering::SeqCst), 0, "held until the flush");
+        assert_eq!(slot.lock().unwrap().as_ref().unwrap().queued_usage().0, 4);
+        flush_deferred_wakes();
+        assert_eq!(count.load(Ordering::SeqCst), 1, "one wake for four events");
+        assert_eq!(slot.lock().unwrap().as_ref().unwrap().queued_usage(), (0, 0));
+        flush_deferred_wakes();
+        assert_eq!(count.load(Ordering::SeqCst), 1, "nothing due: no wake");
+        // Another thread's emit is not deferred.
+        let hub2 = hub.clone();
+        std::thread::spawn(move || hub2.emit(event(5))).join().unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 2, "the other thread woke at once");
+        hub.emit(event(6));
+        hub.emit(event(7));
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+        // The deferred wake of events 6-7 is still due; dropping the guard runs it.
+        drop(deferred);
+        assert_eq!(count.load(Ordering::SeqCst), 3);
+        assert_eq!(slot.lock().unwrap().as_ref().unwrap().queued_usage(), (0, 0));
+        let deferred = DeferredWakes::enter();
+        hub.emit(event(8));
+        hub.close();
+        assert_eq!(count.load(Ordering::SeqCst), 4, "close wakes immediately");
+        drop(deferred);
+        assert_eq!(count.load(Ordering::SeqCst), 5, "the deferred wake of event 8 still runs");
+        let sub = slot.lock().unwrap().take().unwrap();
+        assert!(matches!(sub.try_recv(), Err(SubscriptionError::Closed)));
+    }
+
+    /// A deferred wake that never gets flushed (an I/O thread that never
+    /// parks while a fast body streams) still wakes the consumer each time
+    /// the queue grows by another sixteenth of a cap: a consumer that drains
+    /// on wake is never overrun, and one that does not is woken sixteen
+    /// times before the overflow, not once per event.
+    #[test]
+    fn deferred_wake_turns_immediate_under_queue_pressure() {
+        for (limits, size) in [
+            (SubscriptionLimits { max_events: 64, max_bytes: usize::MAX }, 1),
+            (SubscriptionLimits { max_events: usize::MAX, max_bytes: 64 * event_bytes(&event(100)) }, 100),
+        ] {
+            // Draining consumer: thousands of events, never overrun.
+            let hub = Arc::new(Subscriptions::default());
+            let slot: Arc<Mutex<Option<NetSubscription>>> = Arc::default();
+            let count = Arc::new(AtomicUsize::new(0));
+            let (s, c) = (slot.clone(), count.clone());
+            let sub = hub.subscribe(
+                limits,
+                Some(Arc::new(move || {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    if let Some(sub) = s.lock().unwrap().as_ref() {
+                        while sub.try_recv().is_ok() {}
+                    }
+                })),
+            );
+            *slot.lock().unwrap() = Some(sub);
+            let deferred = DeferredWakes::enter();
+            for _ in 0..4000 {
+                hub.emit(event(size));
+            }
+            let sub = slot.lock().unwrap().take().unwrap();
+            assert!(matches!(sub.try_recv(), Err(SubscriptionError::Empty)), "{limits:?}");
+            // One wake per step: 4000 events / 4 per step.
+            assert_eq!(count.load(Ordering::SeqCst), 1000, "{limits:?}");
+            drop(deferred);
+            assert_eq!(count.load(Ordering::SeqCst), 1001, "the queued deferred wake still runs");
+
+            // Consumer that does not drain: a pressure wake at each step,
+            // then the overflow's own (deferred) wake.
+            let hub = Subscriptions::default();
+            let count = Arc::new(AtomicUsize::new(0));
+            let c = count.clone();
+            let sub = hub.subscribe(limits, Some(Arc::new(move || _ = c.fetch_add(1, Ordering::SeqCst))));
+            let deferred = DeferredWakes::enter();
+            for _ in 0..65 {
+                hub.emit(event(size));
+            }
+            assert_eq!(count.load(Ordering::SeqCst), PRESSURE_STEPS, "{limits:?}");
+            assert!(matches!(sub.try_recv(), Err(SubscriptionError::Overflow)));
+            drop(deferred);
+            assert_eq!(count.load(Ordering::SeqCst), PRESSURE_STEPS + 1);
+        }
     }
 
     #[test]

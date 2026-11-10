@@ -42,12 +42,22 @@ macro_rules! local_names {
     };
 }
 
+pub(crate) fn parse_classes(value: &str) -> ThinVec<Atom> {
+    value.split_ascii_whitespace().map(Atom::from).collect()
+}
+
 pub struct ElementData {
     /// The elements tag name, namespace and prefix
     pub name: QualName,
 
     /// The elements id attribute parsed as an atom (if it has one)
     pub id: Option<Atom>,
+
+    /// The elements class attribute split into atoms (empty if it has none).
+    /// Kept in sync with `attrs` by `ElementData::new` and the mutator's
+    /// `set_attribute`/`remove_attribute`, so selector matching can compare
+    /// atoms instead of re-splitting and re-interning the attribute string.
+    pub classes: ThinVec<Atom>,
 
     /// The element's attributes
     pub attrs: Attributes,
@@ -100,6 +110,10 @@ pub struct ElementData {
     /// Whether this node or any of its descendants may carry `RestyleDamage`.
     /// Used by the damage propagation pass to skip unchanged subtrees.
     pub damaged_descendants: AtomicBool,
+    /// Whether an animation or transition set has ever been stored for this
+    /// element (or its pseudo-elements). Lets Stylo skip the animation lookups
+    /// for elements that have never animated.
+    pub may_have_animations: AtomicBool,
 
     // Pseudo element nodes
     pub before: Option<NodeId>,
@@ -129,12 +143,25 @@ pub struct LayoutData {
     pub final_layout: Layout,
     pub scroll_offset: crate::Point<f64>,
     pub scrollable_overflow: KurboRect,
-    /// The unrounded layout and absolute offset the final layout was last rounded from
-    /// (incremental rounding: `RoundTree::rounded_unchanged`).
+    /// lightningpanda: a bound of what hit testing finds in this box's subtree
+    /// (device px, its own coordinates, like `scrollable_overflow`): the
+    /// scrollable overflow with the boxes and lines of no area that it drops
+    /// (a `line-height: 0` line, a box of no width), and the glyph runs' content
+    /// areas reaching past the line boxes (`BaseDocument::resolve_hit_overflow`).
+    /// Brought up to date by the first hit test after a resolve
+    /// (`BaseDocument::ensure_hit_overflow`).
+    pub hit_overflow: KurboRect,
+    /// lightningpanda: a transform pass computed this box again since its
+    /// `hit_overflow` was (`BaseDocument::resolve_transforms`).
+    pub hit_stale: bool,
+    /// The unrounded layout and the fractional part of the parent's absolute position the final
+    /// layout was last rounded from (incremental rounding: `RoundTree::rounded_unchanged`).
     pub rounded_from: Option<(Layout, f32, f32)>,
     /// lightningpanda: the half collapsed borders of a cell in a table without uniform ones (top,
     /// right, bottom, left; see `CollapsedEdges`).
     pub collapsed_border: Option<[f32; 4]>,
+    /// lightningpanda: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
+    pub table_cell_index: u32,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -149,8 +176,11 @@ impl LayoutData {
             final_layout: Layout::new(),
             scroll_offset: crate::Point::ZERO,
             scrollable_overflow: KurboRect::ZERO,
+            hit_overflow: KurboRect::ZERO,
+            hit_stale: true,
             rounded_from: None,
             collapsed_border: None,
+            table_cell_index: u32::MAX,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }
@@ -308,6 +338,7 @@ impl Clone for ElementData {
         Self {
             name: self.name.clone(),
             id: self.id.clone(),
+            classes: self.classes.clone(),
             attrs: self.attrs.clone(),
             is_focussable: self.is_focussable,
             style_attribute: self.style_attribute.clone(),
@@ -327,6 +358,7 @@ impl Clone for ElementData {
             snapshot_handled: AtomicBool::new(false),
             dirty_descendants: AtomicBool::new(true),
             damaged_descendants: AtomicBool::new(true),
+            may_have_animations: AtomicBool::new(false),
             before: None,
             after: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
@@ -412,10 +444,16 @@ impl ElementData {
             .find(|attr| &attr.name.local == "id")
             .map(|attr| attr.value.as_ref())
             .map(|value: &str| Atom::from(value));
+        let classes = attrs
+            .iter()
+            .find(|attr| &attr.name.local == "class")
+            .map(|attr| parse_classes(&attr.value))
+            .unwrap_or_default();
 
         let mut data = ElementData {
             name,
             id: id_attr_atom,
+            classes,
             attrs: Attributes::new(attrs),
             is_focussable: false,
             style_attribute: Default::default(),
@@ -434,6 +472,7 @@ impl ElementData {
             snapshot_handled: AtomicBool::new(false),
             dirty_descendants: AtomicBool::new(true),
             damaged_descendants: AtomicBool::new(true),
+            may_have_animations: AtomicBool::new(false),
             before: None,
             after: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
@@ -455,6 +494,12 @@ impl ElementData {
         {
             data.element_state.insert(ElementState::CHECKED);
         }
+        // lightningpanda: a selected `<option>` is `:checked` (lp-dom's render
+        // tree writes `selected` for the current selectedness), and the form
+        // states lp-dom mirrors as `urn:x-lightningpanda:state` tokens are
+        // element states, so Stylo's state invalidation (and `:has()`'s)
+        // follows them.
+        data.sync_lp_attribute_state();
 
         // The element state needs to be modified if the element can be disabled.
         if data.can_be_disabled() {
@@ -464,6 +509,8 @@ impl ElementData {
                     false => ElementState::ENABLED,
                 });
         }
+
+        data.flush_open_state();
 
         data
     }
@@ -510,6 +557,14 @@ impl ElementData {
         if self.is_link() {
             self.element_state.insert(ElementState::UNVISITED);
         }
+    }
+
+    pub fn flush_open_state(&mut self) {
+        let is_open = matches!(
+            self.name.local,
+            local_name!("details") | local_name!("dialog")
+        ) && self.has_attr(local_name!("open"));
+        self.element_state.set(ElementState::OPEN, is_open);
     }
 
     pub fn image_data(&self) -> Option<&ImageData> {
@@ -623,6 +678,24 @@ impl ElementData {
         self.element_state.set(ElementState::CHECKED, checked);
     }
 
+    /// lightningpanda: brings the element states that mirror attributes
+    /// lp-dom's render tree writes up to the attributes: `:checked` of a
+    /// selected `<option>`, and the [`crate::LP_STATE_NS`] `state` tokens.
+    pub(crate) fn sync_lp_attribute_state(&mut self) {
+        let lp = self
+            .attrs
+            .iter()
+            .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "state")
+            .map(|a| a.value.as_str());
+        let bits = crate::has_invalidation::lp_state_bits(lp);
+        self.element_state.remove(crate::has_invalidation::LP_STATES);
+        self.element_state.insert(bits);
+        if self.name.local == local_name!("option") {
+            let selected = self.has_attr(local_name!("selected"));
+            self.element_state.set(ElementState::CHECKED, selected);
+        }
+    }
+
     #[cfg(feature = "file-input")]
     pub fn file_data(&self) -> Option<&FileData> {
         match &self.special_data {
@@ -692,7 +765,7 @@ impl ElementData {
         guard: &SharedRwLock,
         url_extra_data: UrlExtraData,
     ) -> bool {
-        let context = ParserContext::new(
+        let mut context = ParserContext::new(
             Origin::Author,
             &url_extra_data,
             Some(CssRuleType::Style),
@@ -714,7 +787,7 @@ impl ElementData {
         let Ok(_) = PropertyDeclaration::parse_into(
             &mut source_property_declaration,
             property_id,
-            &context,
+            &mut context,
             &mut parser,
         ) else {
             #[cfg(feature = "tracing")]
@@ -799,8 +872,11 @@ impl ElementData {
     }
 
     #[cfg(feature = "custom-widget")]
-    pub fn set_custom_widget(&mut self, widget: Box<dyn crate::Widget>) {
+    pub fn set_custom_widget(&mut self, mut widget: Box<dyn crate::Widget>) {
         use crate::node::custom_widget::CustomWidgetData;
+        for attr in self.attrs.iter() {
+            widget.attribute_changed(&attr.name.local, None, Some(&attr.value));
+        }
         self.special_data = SpecialElementData::CustomWidget(CustomWidgetData::new(widget));
     }
 
@@ -926,6 +1002,10 @@ impl std::fmt::Debug for SpecialElementData {
 pub struct ListItemLayout {
     pub marker: Marker,
     pub position: ListItemLayoutPosition,
+    /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
+    /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
+    /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
+    pub content_box_subpixel_offset: taffy::Point<f32>,
 }
 
 //We seperate chars from strings in order to optimise rendering - ie not needing to

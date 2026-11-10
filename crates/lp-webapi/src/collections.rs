@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use lp_dom::{attr_name_hash, CollectionWatch, Dom, NodeId};
-use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
+use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
@@ -44,6 +44,27 @@ impl Drop for NodeHold {
     }
 }
 
+/// Nodes of one page, each held as a [`NodeHold`] holds its node, with one
+/// page reference and one DOM borrow for all of them.
+pub struct NodeHolds {
+    page: Rc<PageDom>,
+    ids: Box<[NodeId]>,
+}
+
+impl NodeHolds {
+    pub fn new(page: &Rc<PageDom>, ids: impl Into<Box<[NodeId]>>) -> JsResult<NodeHolds> {
+        let ids = ids.into();
+        page.dom.borrow_mut().add_refs(&ids).map_err(dom_err)?;
+        Ok(NodeHolds { page: page.clone(), ids })
+    }
+}
+
+impl Drop for NodeHolds {
+    fn drop(&mut self) {
+        self.page.release_nodes(&self.ids);
+    }
+}
+
 fn page_rc(s: &Scope<'_>) -> JsResult<Rc<PageDom>> {
     crate::target::page_of(s)
 }
@@ -51,8 +72,8 @@ fn page_rc(s: &Scope<'_>) -> JsResult<Rc<PageDom>> {
 // ----- NodeList -------------------------------------------------------------
 
 pub enum NodeListSource {
-    /// Static snapshot; every member is held.
-    Static(Vec<NodeHold>),
+    /// Static snapshot; every member is held (none for an empty list).
+    Static(Option<NodeHolds>),
     /// Live `childNodes` of the held node.
     Children(NodeHold),
     /// Live controls of the held form with this id or name (`RadioNodeList`).
@@ -72,7 +93,7 @@ fn child_nodes_watch() -> CollectionWatch {
 impl NodeListData {
     fn items(&self, dom: &Dom) -> Vec<NodeId> {
         match &self.source {
-            NodeListSource::Static(v) => v.iter().map(|h| h.id).collect(),
+            NodeListSource::Static(v) => v.as_ref().map_or_else(Vec::new, |h| h.ids.to_vec()),
             NodeListSource::Children(h) => {
                 let mut c = self.cache.borrow_mut();
                 if c.0 != dom.version() {
@@ -90,28 +111,30 @@ impl NodeListData {
     }
     fn len(&self) -> usize {
         match &self.source {
-            NodeListSource::Static(v) => v.len(),
+            NodeListSource::Static(v) => v.as_ref().map_or(0, |h| h.ids.len()),
             NodeListSource::Children(h) => h.page.dom.borrow().child_count(h.id).unwrap_or(0) as usize,
             NodeListSource::FormNamed(h, _) => self.items(&h.page.dom.borrow()).len(),
         }
     }
-    fn get(&self, i: usize) -> Option<(Rc<PageDom>, NodeId)> {
+    /// Member `i` and the page it belongs to (borrowed: an indexed read
+    /// clones no `Rc`).
+    fn get(&self, i: usize) -> Option<(&Rc<PageDom>, NodeId)> {
         match &self.source {
-            NodeListSource::Static(v) => v.get(i).map(|h| (h.page.clone(), h.id)),
+            NodeListSource::Static(v) => v.as_ref().and_then(|h| Some((&h.page, *h.ids.get(i)?))),
             NodeListSource::Children(h) => {
                 let dom = h.page.dom.borrow();
                 {
                     let c = self.cache.borrow();
                     if c.0 == dom.version() {
-                        return c.1.get(i).map(|&id| (h.page.clone(), id));
+                        return c.1.get(i).map(|&id| (&h.page, id));
                     }
                 }
                 self.items(&dom);
-                self.cache.borrow().1.get(i).map(|&id| (h.page.clone(), id))
+                self.cache.borrow().1.get(i).map(|&id| (&h.page, id))
             }
             NodeListSource::FormNamed(h, _) => {
                 let items = self.items(&h.page.dom.borrow());
-                items.get(i).map(|&id| (h.page.clone(), id))
+                items.get(i).map(|&id| (&h.page, id))
             }
         }
     }
@@ -124,16 +147,16 @@ impl JsClass for NodeList {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, l| Ok(s.number(l.len() as f64)));
-        def.method("item", 1, |s, l, a| {
+        def.pure_method("item", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
             match l.get(i) {
-                Some((p, id)) => Ok(wrap_node(s, &p, id)?.value()),
+                Some((p, id)) => Ok(wrap_node(s, p, id)?.value()),
                 None => Ok(s.null()),
             }
         });
         def.legacy_platform_object();
         def.indexed(|s, l, i| match l.get(i as usize) {
-            Some((p, id)) => Ok(Some(wrap_node(s, &p, id)?.value())),
+            Some((p, id)) => Ok(Some(wrap_node(s, p, id)?.value())),
             None => Ok(None),
         });
         def.indexed_iterable();
@@ -221,21 +244,13 @@ pub(crate) fn form_named<'s>(s: &Scope<'s>, page: &PageDom, form: NodeId, name: 
     }
 }
 
-pub fn static_node_list<'s>(s: &Scope<'s>, page: &PageDom, ids: Vec<NodeId>) -> JsResult<Object<'s>> {
+pub fn static_node_list<'s>(s: &Scope<'s>, page: &PageDom, ids: impl Into<Box<[NodeId]>>) -> JsResult<Object<'s>> {
     let page = page_rc(s).inspect(|p| {
         debug_assert_eq!(p.id(), page.id());
     })?;
-    let mut holds = Vec::with_capacity(ids.len());
-    for id in ids {
-        holds.push(NodeHold::new(&page, id)?);
-    }
-    if holds.is_empty() {
-        // Empty static lists need no page reference; use an empty children view.
-        return s.wrap::<NodeList>(
-            NodeListData { source: NodeListSource::Static(Vec::new()), cache: RefCell::new((0, Vec::new())) },
-            None,
-        );
-    }
+    let ids = ids.into();
+    // Empty static lists need no page reference.
+    let holds = if ids.is_empty() { None } else { Some(NodeHolds::new(&page, ids)?) };
     s.wrap::<NodeList>(
         NodeListData { source: NodeListSource::Static(holds), cache: RefCell::new((0, Vec::new())) },
         None,
@@ -368,14 +383,20 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                 || (html && matches!(local, "embed" | "form" | "img" | "object") && e.attr("name") == Some(n.as_str()))
         }
         CollectionKind::DocumentNamed(n) => {
-            (html && matches!(local, "embed" | "form" | "iframe" | "img" | "object") && e.attr("name") == Some(n.as_str()))
-                || (html && local == "img" && e.id() == Some(n.as_str()) && e.attr("name").is_some_and(|v| !v.is_empty()))
+            (html
+                && matches!(local, "embed" | "form" | "iframe" | "img" | "object")
+                && e.attr("name") == Some(n.as_str()))
+                || (html
+                    && local == "img"
+                    && e.id() == Some(n.as_str())
+                    && e.attr("name").is_some_and(|v| !v.is_empty()))
         }
         CollectionKind::Links => html && matches!(local, "a" | "area") && e.attr("href").is_some(),
         CollectionKind::Anchors => html && local == "a" && e.attr("name").is_some(),
         CollectionKind::Empty => false,
         CollectionKind::FormElements => {
-            html && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
+            html && (matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
+                || e.flags & lp_dom::node::element_flags::FORM_ASSOCIATED != 0)
                 && !(local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")))
                 && dom.form_owner(id).ok().flatten() == Some(root)
         }
@@ -463,7 +484,13 @@ impl CollectionData {
             c.0 = version;
             return;
         }
-        *c = (version, shared_members(&self.root.page, dom, self.root.id, &self.kind));
+        // Labels come from the DOM's own index (an ancestor walk and a map
+        // lookup): cheaper than the shared list's lookup and eviction.
+        let members = match self.kind {
+            CollectionKind::Labels => Rc::new(compute(dom, self.root.id, &self.kind)),
+            _ => shared_members(&self.root.page, dom, self.root.id, &self.kind),
+        };
+        *c = (version, members);
     }
     fn items(&self) -> Vec<NodeId> {
         let dom = self.root.page.dom.borrow();
@@ -520,7 +547,7 @@ impl JsClass for HtmlCollection {
         def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, c| {
             Ok(s.number(c.with_items(|v| v.len()) as f64))
         });
-        def.method("item", 1, |s, c, a| {
+        def.pure_method("item", 1, |s, c, a| {
             let i = to_u32(a.get(0))? as usize;
             let id = c.with_items(|v| v.get(i).copied());
             match id {
@@ -528,7 +555,7 @@ impl JsClass for HtmlCollection {
                 None => Ok(s.null()),
             }
         });
-        def.method("namedItem", 1, |s, c, a| {
+        def.pure_method("namedItem", 1, |s, c, a| {
             let name = dom_string(a.get(0))?;
             match c.named(&name) {
                 Some(id) => Ok(wrap_node(s, &c.root.page, id)?.value()),
@@ -550,6 +577,57 @@ impl JsClass for HtmlCollection {
     }
 }
 
+/// `HTMLOptionsCollection.add(element, before)` and `HTMLSelectElement.add`
+/// (HTML §2.7.3): `before` is an element, an index into the options or
+/// null; `element` must not be an ancestor of the select, and an element
+/// `before` must be a descendant of it.
+pub(crate) fn options_add<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    select: NodeId,
+    a: Args<'s>,
+    iface: &str,
+) -> JsResult<()> {
+    let el = crate::node::node_arg(s, a.get(0), &format!("{iface}.add"))?;
+    let before = a.get(1);
+    let mut dom = page.dom.borrow_mut();
+    let is_html = |dom: &lp_dom::Dom, n: NodeId, names: &[&str]| {
+        dom.element(n).is_ok_and(|e| e.is_html() && names.contains(&&*e.name.local))
+    };
+    if !is_html(&dom, el, &["option", "optgroup"]) {
+        return Err(JsError::Type(format!(
+            "Failed to execute 'add' on '{iface}': The provided value is not of type '(HTMLOptGroupElement or HTMLOptionElement)'."
+        ).into()));
+    }
+    if dom.contains(el, select).js()? {
+        return Err(JsError::dom("HierarchyRequestError", "The new child element contains the parent."));
+    }
+    let reference = if let Some(n) = s.unwrap::<crate::node::Node>(before) {
+        if n.id == select || !dom.contains(select, n.id).js()? {
+            return Err(JsError::dom(
+                "NotFoundError",
+                "The node before which the new node is to be inserted is not a child of this node.",
+            ));
+        }
+        Some(n.id)
+    } else if before.is_nullish() {
+        None
+    } else {
+        let index = to_i32(before)?;
+        let opts = dom.select_options(select).js()?;
+        usize::try_from(index).ok().and_then(|i| opts.get(i).copied())
+    };
+    if reference == Some(el) {
+        return Ok(());
+    }
+    let parent = match reference {
+        Some(r) => dom.parent(r).js()?.unwrap_or(select),
+        None => select,
+    };
+    dom.insert_before(parent, el, reference).js()?;
+    Ok(())
+}
+
 pub struct HtmlOptionsCollection;
 impl JsClass for HtmlOptionsCollection {
     const NAME: &'static str = "HTMLOptionsCollection";
@@ -565,22 +643,7 @@ impl JsClass for HtmlOptionsCollection {
             },
         );
         def.method("add", 1, |s, c, a| {
-            let el = crate::node::node_arg(s, a.get(0), "HTMLOptionsCollection.add")?;
-            let before = a.get(1);
-            let mut dom = c.root.page.dom.borrow_mut();
-            let reference = if let Some(n) = s.unwrap::<crate::node::Node>(before) {
-                Some(n.id)
-            } else if before.is_number() {
-                let opts = dom.select_options(c.root.id).js()?;
-                opts.get(to_u32(before)? as usize).copied()
-            } else {
-                None
-            };
-            let parent = match reference {
-                Some(r) => dom.parent(r).js()?.unwrap_or(c.root.id),
-                None => c.root.id,
-            };
-            dom.insert_before(parent, el, reference).js()?;
+            options_add(s, &c.root.page, c.root.id, a, "HTMLOptionsCollection")?;
             Ok(s.undefined())
         });
         def.method("remove", 1, |s, c, a| {
@@ -609,7 +672,6 @@ impl JsClass for HtmlOptionsCollection {
                 return Ok(true);
             }
             if v.is_nullish() {
-
                 if let Some(&option) = options.get(index) {
                     dom.remove_node(option).js()?;
                 }
@@ -620,7 +682,10 @@ impl JsClass for HtmlOptionsCollection {
                 .map(|n| n.id)
                 .filter(|&id| dom.element(id).is_ok_and(|e| e.is_html() && &*e.name.local == "option"))
                 .ok_or_else(|| {
-                    JsError::Type("Failed to set an indexed property on 'HTMLOptionsCollection': not an HTMLOptionElement.".into())
+                    JsError::Type(
+                        "Failed to set an indexed property on 'HTMLOptionsCollection': not an HTMLOptionElement."
+                            .into(),
+                    )
                 })?;
             match options.get(index) {
                 Some(&old) => {
@@ -643,7 +708,6 @@ impl JsClass for HtmlOptionsCollection {
         });
     }
 }
-
 
 fn kind_slot(kind: &CollectionKind) -> Option<u64> {
     Some(match kind {
@@ -712,32 +776,85 @@ pub struct TokenListData {
 }
 
 impl TokenListData {
-    fn tokens(&self) -> Vec<String> {
-        let dom = self.el.page.dom.borrow();
-        let v = dom.get_attribute(self.el.id, self.attr).ok().flatten().unwrap_or("");
-        let mut out: Vec<String> = Vec::new();
-        for t in v.split_ascii_whitespace() {
-            if !out.iter().any(|x| x == t) {
-                out.push(t.to_owned());
+    /// The token set: the attribute's tokens in order, without duplicates,
+    /// borrowed from `dom`. `class` has them as the element's atoms.
+    fn tokens_in<'d>(&self, dom: &'d lp_dom::Dom) -> Vec<&'d str> {
+        let mut out: Vec<&'d str> = Vec::new();
+        let mut add = |t: &'d str| {
+            if !out.contains(&t) {
+                out.push(t);
             }
+        };
+        if self.attr == "class" {
+            if let Ok(e) = dom.element(self.el.id) {
+                e.classes().iter().for_each(|c| add(c));
+            }
+        } else {
+            dom.get_attribute(self.el.id, self.attr)
+                .ok()
+                .flatten()
+                .unwrap_or("")
+                .split_ascii_whitespace()
+                .for_each(add);
         }
         out
     }
-    /// The "update steps": an absent attribute stays absent for an empty set.
-    fn write(&self, tokens: &[String]) -> JsResult<()> {
+    /// Token `i` of the set as a string: a `class` token is the element's
+    /// atom, so its realm's one string for it.
+    fn token<'s>(&self, s: &Scope<'s>, dom: &lp_dom::Dom, i: usize) -> Option<Value<'s>> {
+        if self.attr == "class" {
+            let classes = dom.element(self.el.id).ok()?.classes();
+            let mut set = classes.iter().enumerate().filter(|&(k, c)| !classes[..k].contains(c));
+            return set.nth(i).map(|(_, c)| c.js(s));
+        }
+        self.tokens_in(dom).get(i).map(|x| s.string(x))
+    }
+    /// The attribute's value (`value`, `toString`): `class` as `className`.
+    fn value<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+        let dom = self.el.page.dom.borrow();
+        if self.attr == "class" {
+            return Ok(crate::util::class_name(s, dom.element(self.el.id).js()?));
+        }
+        Ok(s.string(dom.get_attribute(self.el.id, self.attr).js()?.unwrap_or("")))
+    }
+    fn contains(&self, token: &str) -> bool {
+        let dom = self.el.page.dom.borrow();
+        if self.attr == "class" {
+            return dom.element(self.el.id).is_ok_and(|e| e.classes().iter().any(|c| &**c == token));
+        }
+        let value = dom.get_attribute(self.el.id, self.attr).ok().flatten().unwrap_or("");
+        value.split_ascii_whitespace().any(|t| t == token)
+    }
+    /// The "update steps" with `tokens` serialized: an absent attribute
+    /// stays absent for an empty set.
+    fn write(&self, empty: bool, value: &str) -> JsResult<()> {
         let mut dom = self.el.page.dom.borrow_mut();
-        if tokens.is_empty() && !dom.has_attribute(self.el.id, self.attr).js()? {
+        if empty && !dom.has_attribute(self.el.id, self.attr).js()? {
             return Ok(());
         }
-        dom.set_attribute(self.el.id, self.attr, &tokens.join(" ")).js()
+        dom.set_attribute(self.el.id, self.attr, value).js()
     }
 }
 
-fn check_tokens(tokens: &[String]) -> JsResult<()> {
-    if let Some(t) = tokens.iter().find(|t| t.is_empty()) {
+/// Runs `$f` on the token set of `$t` (a `&mut Vec<&str>`) and writes the
+/// result: the tokens stay borrowed from the DOM and the arguments.
+macro_rules! update_tokens {
+    ($t:expr, |$toks:ident| $f:expr) => {{
+        let (empty, value) = {
+            let dom = $t.el.page.dom.borrow();
+            let mut $toks = $t.tokens_in(&dom);
+            $f;
+            ($toks.is_empty(), $toks.join(" "))
+        };
+        $t.write(empty, &value)
+    }};
+}
+
+fn check_tokens<T: AsRef<str>>(tokens: &[T]) -> JsResult<()> {
+    if let Some(t) = tokens.iter().map(AsRef::as_ref).find(|t| t.is_empty()) {
         return Err(JsError::dom("SyntaxError", format!("The token provided ('{t}') must not be empty.")));
     }
-    tokens.iter().try_for_each(|t| check_token(t))
+    tokens.iter().try_for_each(|t| check_token(t.as_ref()))
 }
 
 fn check_token(t: &str) -> JsResult<()> {
@@ -759,68 +876,60 @@ impl JsClass for DomTokenList {
     type Data = TokenListData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("length", |s, t| Ok(s.number(t.tokens().len() as f64)));
+        def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, t| {
+            Ok(s.number(t.tokens_in(&t.el.page.dom.borrow()).len() as f64))
+        });
         def.accessor(
             "value",
-            |s, t| {
-                let dom = t.el.page.dom.borrow();
-                Ok(s.string(dom.get_attribute(t.el.id, t.attr).js()?.unwrap_or("")))
-            },
-            |_s, t, v| {
-                let arg0 = dom_string(v)?;
-                t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, &arg0).js()
-            },
+            |s, t| t.value(s),
+            |_s, t, v| with_str(v, |value| t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, value).js()),
         );
-        def.method("toString", 0, |s, t, _a| {
-            let dom = t.el.page.dom.borrow();
-            Ok(s.string(dom.get_attribute(t.el.id, t.attr).js()?.unwrap_or("")))
-        });
-        def.method("item", 1, |s, t, a| {
+        def.pure_method("toString", 0, |s, t, _a| t.value(s));
+        def.pure_method("item", 1, |s, t, a| {
             let i = to_u32(a.get(0))? as usize;
-            Ok(t.tokens().get(i).map_or(s.null(), |x| s.string(x)))
+            Ok(t.token(s, &t.el.page.dom.borrow(), i).unwrap_or_else(|| s.null()))
         });
         def.legacy_platform_object();
-        def.indexed(|s, t, i| Ok(t.tokens().get(i as usize).map(|x| s.string(x))));
+        def.indexed(|s, t, i| Ok(t.token(s, &t.el.page.dom.borrow(), i as usize)));
 
-        def.method("contains", 1, |s, t, a| {
-            let tok = dom_string(a.get(0))?;
-            Ok(s.boolean(t.tokens().contains(&tok)))
+        def.pure_method("contains", 1, |s, t, a| {
+            let v = a.get(0);
+            Ok(s.boolean(t.contains(&str_of(&v)?)))
         });
         def.method("add", 0, |s, t, a| {
-            let args = a.iter().map(dom_string).collect::<JsResult<Vec<_>>>()?;
+            let values: Vec<Value<'_>> = a.iter().collect();
+            let args = values.iter().map(str_of).collect::<JsResult<Vec<_>>>()?;
             check_tokens(&args)?;
-            let mut toks = t.tokens();
-            for tok in args {
-                if !toks.contains(&tok) {
-                    toks.push(tok);
+            update_tokens!(t, |toks| {
+                for tok in &args {
+                    if !toks.contains(&tok.as_ref()) {
+                        toks.push(tok);
+                    }
                 }
-            }
-            t.write(&toks)?;
+            })?;
             Ok(s.undefined())
         });
         def.method("remove", 0, |s, t, a| {
-            let args = a.iter().map(dom_string).collect::<JsResult<Vec<_>>>()?;
+            let values: Vec<Value<'_>> = a.iter().collect();
+            let args = values.iter().map(str_of).collect::<JsResult<Vec<_>>>()?;
             check_tokens(&args)?;
-            let mut toks = t.tokens();
-            toks.retain(|x| !args.contains(x));
-            t.write(&toks)?;
+            update_tokens!(t, |toks| toks.retain(|x| !args.iter().any(|a| a == x)))?;
             Ok(s.undefined())
         });
         def.method("toggle", 1, |s, t, a| {
-            let tok = arg_string(&a, 0, "DOMTokenList.toggle")?;
+            a.require(1, "DOMTokenList.toggle")?;
+            let v = a.get(0);
+            let tok = str_of(&v)?;
             check_token(&tok)?;
             let force = a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_bool());
-            let mut toks = t.tokens();
-            let present = toks.contains(&tok);
+            let present = t.contains(&tok);
             let result = match (present, force) {
                 (true, None | Some(false)) => {
-                    toks.retain(|x| *x != tok);
-                    t.write(&toks)?;
+                    update_tokens!(t, |toks| toks.retain(|x| *x != tok))?;
                     false
                 }
                 (false, None | Some(true)) => {
-                    toks.push(tok);
-                    t.write(&toks)?;
+                    update_tokens!(t, |toks| toks.push(&tok))?;
                     true
                 }
                 (p, _) => p,
@@ -831,45 +940,80 @@ impl JsClass for DomTokenList {
             a.require(2, "DOMTokenList.replace")?;
             let old = dom_string(a.get(0))?;
             let new = dom_string(a.get(1))?;
-            check_tokens(&[old.clone(), new.clone()])?;
-            let mut toks = t.tokens();
-            let Some(pos) = toks.iter().position(|x| *x == old) else { return Ok(s.boolean(false)) };
-            // Infra "replace" in an ordered set: the first of either token
-            // becomes the new one, every other instance of both goes.
-            let first = toks.iter().position(|x| *x == old || *x == new).unwrap_or(pos);
-            let mut at = 0;
-            toks.retain(|x| {
-                let keep = at == first || (*x != old && *x != new);
-                at += 1;
-                keep
-            });
-            if let Some(slot) = toks.iter_mut().find(|x| **x == old) {
-                *slot = new;
+            check_tokens(&[old.as_str(), new.as_str()])?;
+            if !t.contains(&old) {
+                return Ok(s.boolean(false));
             }
-            t.write(&toks)?;
+            update_tokens!(t, |toks| {
+                // Infra "replace" in an ordered set: the first of either token
+                // becomes the new one, every other instance of both goes.
+                if let Some(first) = toks.iter().position(|x| *x == old || *x == new) {
+                    let mut at = 0;
+                    toks.retain(|x| {
+                        let keep = at == first || (*x != old && *x != new);
+                        at += 1;
+                        keep
+                    });
+                    if let Some(slot) = toks.iter_mut().find(|x| **x == old) {
+                        *slot = &new;
+                    }
+                }
+            })?;
             Ok(s.boolean(true))
         });
-        def.method("supports", 1, |s, t, a| {
+        def.pure_method("supports", 1, |s, t, a| {
             let tok = dom_string(a.get(0))?;
             let supported: &[&str] = match t.attr {
                 "rel" => &[
-                    "alternate", "canonical", "author", "bookmark", "dns-prefetch", "expect", "external", "help",
-                    "icon", "manifest", "modulepreload", "license", "next", "nofollow", "noopener", "noreferrer",
-                    "opener", "pingback", "preconnect", "prefetch", "preload", "prev", "privacy-policy", "search",
-                    "stylesheet", "tag", "terms-of-service",
+                    "alternate",
+                    "canonical",
+                    "author",
+                    "bookmark",
+                    "dns-prefetch",
+                    "expect",
+                    "external",
+                    "help",
+                    "icon",
+                    "manifest",
+                    "modulepreload",
+                    "license",
+                    "next",
+                    "nofollow",
+                    "noopener",
+                    "noreferrer",
+                    "opener",
+                    "pingback",
+                    "preconnect",
+                    "prefetch",
+                    "preload",
+                    "prev",
+                    "privacy-policy",
+                    "search",
+                    "stylesheet",
+                    "tag",
+                    "terms-of-service",
                 ],
                 "sandbox" => &[
-                    "allow-downloads", "allow-forms", "allow-modals", "allow-orientation-lock",
-                    "allow-pointer-lock", "allow-popups", "allow-popups-to-escape-sandbox", "allow-presentation",
-                    "allow-same-origin", "allow-scripts", "allow-top-navigation",
-                    "allow-top-navigation-by-user-activation", "allow-top-navigation-to-custom-protocols",
+                    "allow-downloads",
+                    "allow-forms",
+                    "allow-modals",
+                    "allow-orientation-lock",
+                    "allow-pointer-lock",
+                    "allow-popups",
+                    "allow-popups-to-escape-sandbox",
+                    "allow-presentation",
+                    "allow-same-origin",
+                    "allow-scripts",
+                    "allow-top-navigation",
+                    "allow-top-navigation-by-user-activation",
+                    "allow-top-navigation-to-custom-protocols",
                 ],
                 "blocking" => &["render"],
                 _ => {
                     return Err(JsError::Type(format!(
                         "DOMTokenList has no supported tokens for the '{}' attribute.",
                         t.attr
-                    )))
+                    ).into()))
                 }
             };
             Ok(s.boolean(supported.iter().any(|k| k.eq_ignore_ascii_case(&tok))))
@@ -953,7 +1097,7 @@ impl JsClass for NamedNodeMap {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("length", |s, m| Ok(s.number(m.el.page.dom.borrow().attributes(m.el.id).js()?.len() as f64)));
-        def.method("item", 1, |s, m, a| {
+        def.pure_method("item", 1, |s, m, a| {
             let i = to_u32(a.get(0))? as usize;
             attr_at(s, m, i).map(|o| o.unwrap_or(s.null()))
         });
@@ -1024,7 +1168,6 @@ impl JsClass for NamedNodeMap {
         def.indexed_iterator();
         def.legacy_platform_object();
     }
-
 }
 
 fn attr_at<'s>(s: &Scope<'s>, m: &NamedNodeMapData, i: usize) -> JsResult<Option<Value<'s>>> {
@@ -1106,19 +1249,26 @@ impl JsClass for Attr {
     type Data = NodeData;
     type Parent = crate::node::Node;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, a| Ok(s.string(&a.page().dom.borrow().attr_node_data(a.id).js()?.qualified_name())));
-        def.getter("localName", |s, a| Ok(s.string(&a.page().dom.borrow().attr_node_data(a.id).js()?.name.local)));
+        def.getter("name", |s, a| {
+            let dom = a.page().dom.borrow();
+            let attr = dom.attr_node_data(a.id).js()?;
+            Ok(match &attr.name.prefix {
+                Some(p) if !p.is_empty() => s.string(&attr.qualified_name()),
+                _ => attr.name.local.js(s),
+            })
+        });
+        def.getter("localName", |s, a| Ok(a.page().dom.borrow().attr_node_data(a.id).js()?.name.local.js(s)));
         def.getter("prefix", |s, a| {
             let dom = a.page().dom.borrow();
             Ok(match &dom.attr_node_data(a.id).js()?.name.prefix {
-                Some(p) if !p.is_empty() => s.string(p),
+                Some(p) if !p.is_empty() => p.js(s),
                 _ => s.null(),
             })
         });
         def.getter("namespaceURI", |s, a| {
             let dom = a.page().dom.borrow();
             let ns = &dom.attr_node_data(a.id).js()?.name.ns;
-            Ok(if ns.is_empty() { s.null() } else { s.string(ns) })
+            Ok(if ns.is_empty() { s.null() } else { ns.js(s) })
         });
         def.accessor(
             "value",
@@ -1152,43 +1302,41 @@ pub struct StringMapData {
 }
 
 fn camel_to_data_attr(name: &str) -> Option<String> {
-    let mut out = String::from("data-");
-    let b = name.as_bytes();
-    for (i, &c) in b.iter().enumerate() {
-        if c == b'-' && b.get(i + 1).is_some_and(|n| n.is_ascii_lowercase()) {
+    let mut out = String::with_capacity(name.len() + 5);
+    out.push_str("data-");
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '-' && chars.peek().is_some_and(|n| n.is_ascii_lowercase()) {
             return None; // SyntaxError per spec for setter; getter: absent
         }
         if c.is_ascii_uppercase() {
             out.push('-');
-            out.push(c.to_ascii_lowercase() as char);
+            out.push(c.to_ascii_lowercase());
         } else {
-            out.push(c as char);
+            out.push(c);
         }
     }
     Some(out)
 }
 
 fn data_attr_to_camel(attr: &str) -> Option<String> {
+    // HTML "supported property names" of DOMStringMap: names after `data-`
+    // without ASCII upper alphas; each `-` followed by an ASCII lower alpha
+    // is removed and that letter uppercased.
     let rest = attr.strip_prefix("data-")?;
-    let mut out = String::new();
-    let mut up = false;
-    for c in rest.chars() {
-        if c == '-' {
-            up = true;
-            continue;
-        }
-        if up && c.is_ascii_lowercase() {
-            out.push(c.to_ascii_uppercase());
-        } else {
-            if up {
-                out.push('-');
-            }
-            out.push(c);
-        }
-        up = false;
+    if rest.bytes().any(|b| b.is_ascii_uppercase()) {
+        return None;
     }
-    if up {
-        out.push('-');
+    let mut out = String::with_capacity(rest.len());
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        match chars.peek() {
+            Some(&n) if c == '-' && n.is_ascii_lowercase() => {
+                out.push(n.to_ascii_uppercase());
+                chars.next();
+            }
+            _ => out.push(c),
+        }
     }
     Some(out)
 }
@@ -1251,5 +1399,13 @@ mod tests {
         assert_eq!(camel_to_data_attr("fooBar").as_deref(), Some("data-foo-bar"));
         assert_eq!(data_attr_to_camel("data-foo-bar").as_deref(), Some("fooBar"));
         assert_eq!(data_attr_to_camel("data-x").as_deref(), Some("x"));
+        assert_eq!(data_attr_to_camel("data-foo--bar").as_deref(), Some("foo-Bar"));
+        assert_eq!(data_attr_to_camel("data--").as_deref(), Some("-"));
+        assert_eq!(data_attr_to_camel("data-Foo"), None);
+        assert_eq!(data_attr_to_camel("data-\u{e9}t\u{e9}").as_deref(), Some("\u{e9}t\u{e9}"));
+        assert_eq!(camel_to_data_attr("\u{e0}").as_deref(), Some("data-\u{e0}"));
+        assert_eq!(camel_to_data_attr("\u{37e}foo").as_deref(), Some("data-\u{37e}foo"));
+        assert_eq!(camel_to_data_attr("a-b"), None);
+        assert_eq!(camel_to_data_attr("a-\u{e9}").as_deref(), Some("data-a-\u{e9}"));
     }
 }

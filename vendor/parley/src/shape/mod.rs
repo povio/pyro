@@ -54,7 +54,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
     mut text: &str,
     layout: &mut Layout<B>,
     analysis_data_sources: &AnalysisDataSources,
+    first_fonts: &mut Vec<Option<FontInstance>>,
 ) {
+    // lightningpanda: one slot per style for the first available font the selector saw.
+    first_fonts.clear();
+    first_fonts.resize(styles.len(), None);
+
     // If we have both empty text and no inline boxes, shape with a fake space
     // to generate metrics that can be used to size a cursor.
     if text.is_empty() && inline_boxes.is_empty() {
@@ -179,7 +184,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
         })
     };
 
-    let font_selector = FontSelector::new(&mut fq, rcx, styles, analysis_data_sources);
+    let font_selector =
+        FontSelector::new(&mut fq, rcx, styles, analysis_data_sources, first_fonts);
 
     scx.shape_text(
         text,
@@ -259,6 +265,15 @@ enum LastResortFont {
 
 struct FontSelector<'a, 'b, B: Brush> {
     query: &'b mut Query<'a>,
+    /// lightningpanda: per style, the first font [`Self::query`] yields for the style's own
+    /// families and attributes whose `unicode-range` includes U+0020 (its CSS first available
+    /// font), recorded when the style's fonts are first queried; `None` where its families yield
+    /// no such font or the style shaped no text.
+    /// The style metrics take their font from here instead of querying again.
+    first_fonts: &'b mut Vec<Option<FontInstance>>,
+    /// The first available font of the current query, if it comes from the current style's own
+    /// families.
+    current_first: Option<FontInstance>,
     fonts_id: Option<usize>,
     rcx: &'a ResolveContext,
     styles: &'a [ResolvedStyle<B>],
@@ -284,11 +299,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
         rcx: &'a ResolveContext,
         styles: &'a [ResolvedStyle<B>],
         analysis_data_sources: &'a AnalysisDataSources,
+        first_fonts: &'b mut Vec<Option<FontInstance>>,
     ) -> Self {
         let attrs = fontique::Attributes::default();
 
         Self {
             query,
+            first_fonts,
+            current_first: None,
             fonts_id: None,
             rcx,
             styles,
@@ -360,12 +378,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
         // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
         // this check and do the last-resort scan after the failed query:
         // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
+        // lightningpanda: this pass also finds the style's first available font, which the style
+        // metrics need: the first font the query yields for the current families and attributes
+        // whose `unicode-range` includes U+0020, if it comes from the style's own families (not
+        // the script fallbacks or the emoji family, which the query yields after them). Fonts
+        // without a charmap count here, as there.
+        let families = self
+            .rcx
+            .stack(self.styles[style_index as usize].font_family)
+            .unwrap_or(&[]);
         let query = &mut *self.query;
+        let current_first = &mut self.current_first;
         let query_yields_font = *self.query_yields_font.get_or_insert_with(|| {
             let mut yields_font = false;
+            let mut seeking_first = true;
+            *current_first = None;
             query.matches_with(|font| {
-                if font.charmap().is_some() {
-                    yields_font = true;
+                if seeking_first && !families.contains(&font.family.0) {
+                    seeking_first = false;
+                } else if seeking_first && font.unicode_range.contains(0x20) {
+                    seeking_first = false;
+                    *current_first = Some(FontInstance {
+                        font: FontData {
+                            data: font.blob.clone(),
+                            index: font.index,
+                        },
+                        synthesis: font.synthesis,
+                    });
+                }
+                yields_font |= font.charmap().is_some();
+                if yields_font && !seeking_first {
                     fontique::QueryStatus::Stop
                 } else {
                     fontique::QueryStatus::Continue
@@ -373,6 +415,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
             });
             yields_font
         });
+        if let Some(font) = &self.current_first {
+            let slot = &mut self.first_fonts[style_index as usize];
+            if slot.is_none() {
+                *slot = Some(font.clone());
+            }
+        }
         if !query_yields_font {
             if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                 if let Some(font) = any_font(self.query) {

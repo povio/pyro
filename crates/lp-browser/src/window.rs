@@ -5,12 +5,14 @@
 
 use crate::nav::{History, Location, PageNav, Performance, PerformanceData};
 use crate::Browser;
-use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, Persistent, Realm, Scope, Value};
+use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, Object, Persistent, Realm, Scope, Value};
 use lp_runtime::{Scheduler, TimerId};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+
+mod idle;
 
 /// Frame interval without rendering. Upstream Lightpanda schedules each
 /// animation frame callback 5 ms out (`Window.requestAnimationFrame`).
@@ -83,12 +85,34 @@ pub struct WindowData {
     frame_index_count: Cell<usize>,
     /// Identity of this realm's `performance` wrapper once it was made.
     performance: Cell<Option<IdentityKey>>,
+    /// HTML timer nesting level of the timer task running now (0: none).
+    timer_nesting: Cell<u32>,
+    /// Pending `requestIdleCallback`s by handle.
+    idle_callbacks: RefCell<HashMap<u32, idle::IdleCallback>>,
+    /// idle.js (`IdleDeadline`), once made.
+    idle_module: RefCell<Option<Persistent>>,
+    /// End of the idle period whose callback is running now, if any.
+    idle_period_end: Cell<Option<Instant>>,
+    /// Calls a timer callback whose nesting resets for microtasks, made on
+    /// the first deeply nested timer ([`call_nested_timer`]).
+    nested_timer_call: RefCell<Option<Persistent>>,
 }
 
 impl WindowData {
     /// The page's session history shared with `window.history`.
     pub(crate) fn nav(&self) -> &Rc<PageNav> {
         &self.nav
+    }
+
+    /// The frame this window belongs to (`None` for a window made outside
+    /// a page's frame tree).
+    pub(crate) fn frame_key(&self) -> Option<crate::frames::FrameKey> {
+        self.frame
+    }
+
+    /// The frame tree this window belongs to, while it exists.
+    pub(crate) fn frame_host(&self) -> Option<Rc<crate::frames::FrameHost>> {
+        self.frames.upgrade()
     }
 
     pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> WindowData {
@@ -108,6 +132,11 @@ impl WindowData {
             frame_definer: RefCell::new(None),
             frame_index_count: Cell::new(0),
             performance: Cell::new(None),
+            timer_nesting: Cell::new(0),
+            idle_callbacks: RefCell::new(HashMap::new()),
+            idle_module: RefCell::new(None),
+            idle_period_end: Cell::new(None),
+            nested_timer_call: RefCell::new(None),
         }
     }
 
@@ -159,6 +188,21 @@ impl lp_webapi::WindowHost for WindowData {
     }
 }
 
+/// The realm's `performance` ([SameObject] and an EventTarget: the wrapper
+/// carries its event listeners, so the realm keeps it).
+fn performance_object<'s>(s: &lp_js::Scope<'s>, w: &WindowData) -> JsResult<lp_js::Object<'s>> {
+    if let Some(o) = w.performance.get().and_then(|identity| s.lookup_identity(identity)) {
+        return Ok(o);
+    }
+    let data = PerformanceData::new(w.nav.clone(), &w.target.page);
+    let identity = data.wrapper_identity().unwrap_or(IdentityKey(KEY_PERFORMANCE, 0));
+    let key = data.event_target().key;
+    let performance = s.wrap::<Performance>(data, Some(identity))?;
+    lp_webapi::target::pin_target(s, &w.target.page, key, performance);
+    w.performance.set(Some(identity));
+    Ok(performance)
+}
+
 pub struct Window;
 
 impl JsClass for Window {
@@ -183,6 +227,14 @@ impl JsClass for Window {
             request_animation_frame(s, w, Persistent::new(s, cb.value()))
         });
         def.method("cancelAnimationFrame", 1, clear_timer);
+        def.method("requestIdleCallback", 1, idle::request);
+        def.method("cancelIdleCallback", 1, idle::cancel);
+        def.accessor("IdleDeadline", idle::interface, idle::replace_interface);
+        def.method_this("reportError", 1, |s, _w, this, a| {
+            lp_webapi::report_error::report_error(s, this, &a, "Window", true)
+        });
+        // No COOP/COEP isolation here.
+        def.getter("crossOriginIsolated", |s, _w| Ok(s.boolean(false)));
         def.method("queueMicrotask", 1, |s, _w, a| {
             let cb = a.get(0).as_object().filter(|f| f.is_function()).ok_or_else(|| {
                 JsError::Type(
@@ -213,20 +265,44 @@ impl JsClass for Window {
             },
         );
         def.getter("history", |s, w| Ok(s.wrap::<History>(w.nav.clone(), Some(IdentityKey(KEY_HISTORY, 0)))?.value()));
-        def.getter("performance", |s, w| {
-            if let Some(o) = w.performance.get().and_then(|identity| s.lookup_identity(identity)) {
-                return Ok(o.value());
-            }
-            // [SameObject] and an EventTarget: the wrapper carries its event
-            // listeners, so the realm keeps it.
-            let data = PerformanceData::new(w.nav.clone(), &w.target.page);
-            let identity = data.wrapper_identity().unwrap_or(IdentityKey(KEY_PERFORMANCE, 0));
-            let key = data.event_target().key;
-            let performance = s.wrap::<Performance>(data, Some(identity))?;
-            lp_webapi::target::pin_target(s, &w.target.page, key, performance);
-            w.performance.set(Some(identity));
-            Ok(performance.value())
-        });
+        // Navigation API, made on the realm's first use.
+        def.getter("navigation", |s, w| crate::nav::navigation_module(s, &w.nav)?.get("navigation"));
+        macro_rules! navigation_interfaces {
+            ($($name:literal),*) => {$(
+                def.accessor(
+                    $name,
+                    |s, w| crate::nav::navigation_module(s, &w.nav)?.get($name),
+                    |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, $name, v),
+                );
+            )*};
+        }
+        navigation_interfaces!(
+            "Navigation",
+            "NavigateEvent",
+            "NavigationHistoryEntry",
+            "NavigationDestination",
+            "NavigationTransition",
+            "NavigationCurrentEntryChangeEvent"
+        );
+        // [Replaceable], as in Chrome: assignment shadows it on the window.
+        def.accessor(
+            "performance",
+            |s, w| Ok(performance_object(s, w)?.value()),
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "performance", v),
+        );
+        // Performance Timeline observers, made on the realm's first use.
+        def.accessor(
+            "PerformanceObserver",
+            |s, w| crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserver"),
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserver", v),
+        );
+        def.accessor(
+            "PerformanceObserverEntryList",
+            |s, w| {
+                crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserverEntryList")
+            },
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserverEntryList", v),
+        );
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.relation(s, key, true),
             _ => Ok(s.global().value()),
@@ -304,7 +380,11 @@ impl JsClass for Window {
             }
             _ => Ok(None),
         });
-        def.getter("window", |s, _w| Ok(s.global().value()));
+        // [LegacyUnforgeable]: the global's own constant where the
+        // JavaScriptCore supports it (`lp_webapi::install`).
+        if !lp_webapi::window::has_window_constants() {
+            def.getter("window", |s, _w| Ok(s.global().value()));
+        }
         def.accessor(
             "self",
             |s, _w| Ok(s.global().value()),
@@ -315,17 +395,41 @@ impl JsClass for Window {
             |s, _w| Ok(s.global().value()),
             |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "frames", v),
         );
-        def.getter("isSecureContext", |s, w| {
-            let u = w.url();
-            Ok(s.boolean(
-                u.starts_with("https:")
-                    || u.starts_with("http://localhost")
-                    || u.starts_with("http://127.0.0.1")
-                    || u == "about:blank",
-            ))
-        });
+        def.getter("isSecureContext", |s, w| Ok(s.boolean(is_secure_context(w))));
         def.method("__lpNow", 0, |s, w, _a| Ok(s.number(w.now_ms())));
+        // Window post message steps: from the window whose script is running.
+        def.method("postMessage", 1, |s, w, a| {
+            match (w.frames.upgrade(), w.frame) {
+                (Some(host), Some(key)) => {
+                    crate::frames::post_message(s, &a, crate::frames::incumbent_window(), &host, key)?
+                }
+                _ => lp_webapi::window::post_message_to_self(s, &w.target.page, &a)?,
+            }
+            Ok(s.undefined())
+        });
     }
+}
+
+/// HTML "secure context" for a window: its document's URL and those of its
+/// ancestor frames are potentially trustworthy (Chrome checks every
+/// ancestor; an about:blank or about:srcdoc document counts as its parent).
+fn is_secure_context(w: &WindowData) -> bool {
+    let trustworthy = |url: &str| lp_net::Url::parse(url).is_ok_and(|u| lp_net::is_potentially_trustworthy_url(&u));
+    if !trustworthy(&w.url()) {
+        return false;
+    }
+    let (Some(host), Some(mut key)) = (w.frames.upgrade(), w.frame) else { return true };
+    while key.child.is_some() {
+        let parent = host.parent_key(key);
+        if parent == key {
+            break;
+        }
+        key = parent;
+        if !host.nav(key).is_some_and(|nav| trustworthy(&nav.url())) {
+            return false;
+        }
+    }
+    true
 }
 
 fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
@@ -348,6 +452,12 @@ fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> Js
     schedule(s, w, cb, args, delay, repeat)
 }
 
+/// HTML timer nesting: a timer set from a timer task more than this many
+/// levels deep waits at least [`NESTED_TIMER_MIN_MS`] (Chrome's clamp of
+/// `setTimeout(f, 0)` polling chains and `setInterval(f, 0)`).
+const TIMER_NESTING_LIMIT: u32 = 5;
+const NESTED_TIMER_MIN_MS: u64 = 4;
+
 fn schedule<'s>(
     s: &Scope<'s>,
     w: &WindowData,
@@ -361,26 +471,114 @@ fn schedule<'s>(
     }
     let handle = w.next_handle.get();
     w.next_handle.set(handle.wrapping_add(1).max(1));
-    // Timers must not keep a disposed realm alive: hold it weakly.
-    let realm_weak = s.realm().downgrade();
-    let id = w.sched.set_timer(Duration::from_millis(delay_ms), repeat, true, move |_browser| {
-        let Some(realm) = realm_weak.upgrade() else { return };
-        let Ok(scope) = realm.scope() else { return };
-        if !repeat {
-            if let Some(w) = scope.global_data::<Window>() {
-                w.timers.borrow_mut().remove(&handle);
-            }
-        }
-        let Some(f) = cb.get(&scope).as_object() else { return };
-        // Arguments are rooted by `args` (Persistent) while this call runs.
-        let vals: Vec<Value<'_>> = args.iter().map(|p| p.get(&scope)).collect();
-        if let Err(e) = f.call(None, &vals) {
-            scope.report_exception(&e);
-        }
-    });
+    // The running task's nesting level (0 outside a timer task).
+    let nesting = w.timer_nesting.get();
+    let delay_ms = if nesting > TIMER_NESTING_LIMIT { delay_ms.max(NESTED_TIMER_MIN_MS) } else { delay_ms };
+    let timer = JsTimer { handle, cb, args, delay_ms, repeat };
+    let id = arm_timer(s.realm().downgrade(), w, timer, nesting.saturating_add(1));
     let due = (!repeat).then(|| crate::clock::now() + Duration::from_millis(delay_ms));
     w.timers.borrow_mut().insert(handle, (id, due));
     Ok(s.number(handle as f64))
+}
+
+/// A `setTimeout`/`setInterval` as its loop timer runs it.
+struct JsTimer {
+    handle: u32,
+    cb: Persistent,
+    args: Vec<Persistent>,
+    delay_ms: u64,
+    repeat: bool,
+}
+
+/// Sets the loop timer of `timer`, whose task runs at nesting level `level`
+/// (an interval's repetitions one deeper each).
+fn arm_timer(realm_weak: lp_js::WeakRealm, w: &WindowData, timer: JsTimer, level: u32) -> TimerId {
+    let level = Cell::new(level);
+    let (delay_ms, repeat) = (timer.delay_ms, timer.repeat);
+    // Timers must not keep a disposed realm alive: hold it weakly.
+    w.sched.set_timer(Duration::from_millis(delay_ms), repeat, true, move |_browser| {
+        let Some(realm) = realm_weak.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        let Some(w) = scope.global_data::<Window>() else { return };
+        let handle = timer.handle;
+        if !repeat {
+            w.timers.borrow_mut().remove(&handle);
+        }
+        let Some(f) = timer.cb.get(&scope).as_object() else { return };
+        let run_level = level.get();
+        let outer = w.timer_nesting.replace(run_level);
+        // Arguments are rooted by `args` (Persistent) while this call runs.
+        let vals: Vec<Value<'_>> = timer.args.iter().map(|p| p.get(&scope)).collect();
+        let result = if run_level > TIMER_NESTING_LIMIT {
+            call_nested_timer(&scope, w, f, &vals)
+        } else {
+            f.call(None, &vals).map(|_| ())
+        };
+        w.timer_nesting.set(outer);
+        if let Err(e) = result {
+            scope.report_exception(&e);
+        }
+        if !repeat {
+            return;
+        }
+        level.set(run_level.saturating_add(1));
+        // The repetition is set from this task: an interval below 4 ms this
+        // deep is clamped from now on (once; later repetitions keep 4 ms).
+        if delay_ms < NESTED_TIMER_MIN_MS && run_level > TIMER_NESTING_LIMIT {
+            let mut timers = w.timers.borrow_mut();
+            if let Some(entry) = timers.get_mut(&handle) {
+                let old = entry.0;
+                let clamped = JsTimer {
+                    handle,
+                    cb: timer.cb.clone(),
+                    args: timer.args.clone(),
+                    delay_ms: NESTED_TIMER_MIN_MS,
+                    repeat: true,
+                };
+                entry.0 = arm_timer(realm.downgrade(), w, clamped, run_level.saturating_add(1));
+                drop(timers);
+                w.sched.clear_timer(old);
+            }
+        }
+    })
+}
+
+/// Calls a timer callback above the nesting limit so that timers set by the
+/// microtasks after it are not nested in it (HTML: the microtask checkpoint
+/// is no timer task): a microtask queued ahead of the callback's own resets
+/// the level. JavaScriptCore drains microtasks when the outermost API call
+/// returns, so the callback runs inside a native function that queues the
+/// reset first (made once per window, on its first such timer). Only
+/// callbacks already clamped to 4 ms come here.
+fn call_nested_timer(scope: &Scope<'_>, w: &WindowData, f: Object<'_>, args: &[Value<'_>]) -> JsResult<()> {
+    let cached = w.nested_timer_call.borrow().as_ref().and_then(|p| p.get(scope).as_object());
+    let call = match cached {
+        Some(call) => call,
+        None => {
+            let call = scope.function("", |s, _this, a| {
+                s.then(
+                    s.undefined(),
+                    |s, _| {
+                        if let Some(w) = s.global_data::<Window>() {
+                            w.timer_nesting.set(0);
+                        }
+                    },
+                    |_, _| {},
+                )?;
+                let f = a.get(0).as_object().ok_or(JsError::ContextDestroyed)?;
+                let args: Vec<Value<'_>> = a.iter().skip(1).collect();
+                f.call(None, &args)?;
+                Ok(s.undefined())
+            })?;
+            *w.nested_timer_call.borrow_mut() = Some(Persistent::new(scope, call.value()));
+            call
+        }
+    };
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    call_args.push(f.value());
+    call_args.extend_from_slice(args);
+    call.call(None, &call_args)?;
+    Ok(())
 }
 
 /// Queues `cb` for the next animation frame. Every callback queued before a
@@ -427,6 +625,15 @@ pub fn request_native_frame(realm: &Realm) -> JsResult<Rc<Cell<bool>>> {
     Ok(ready)
 }
 
+/// Runs an animation frame of the realm's window soon, for native work done
+/// in it (`requestVideoFrameCallback`).
+pub(crate) fn request_frame(realm: &Realm) {
+    let Ok(scope) = realm.scope() else { return };
+    let Some(window) = scope.global_data::<Window>() else { return };
+    let mut frame = window.animation.borrow_mut();
+    schedule_animation_frame(&scope, window, &mut frame);
+}
+
 fn run_animation_frame(scope: &Scope<'_>) {
     let Some(w) = scope.global_data::<Window>() else { return };
     // A render-blocked document (a pending render-blocking stylesheet or
@@ -457,7 +664,10 @@ fn run_animation_frame(scope: &Scope<'_>) {
         frame.timer = None;
         (frame.callbacks.iter().map(|(h, _, _)| *h).collect(), std::mem::take(&mut frame.native_callbacks))
     };
-    let now = scope.number(w.now_ms());
+    let now_ms = w.now_ms();
+    // HTML video frame callbacks run before the animation frame callbacks.
+    lp_webapi::media::run_video_frame_callbacks(&w.target.page, now_ms);
+    let now = scope.number(now_ms);
     for handle in handles {
         // A callback may cancel a later one of the same frame.
         let cb = {
@@ -503,6 +713,9 @@ fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value
 
 /// Cancels every pending timer of a realm's window (navigation/teardown).
 pub(crate) fn cancel_timers(realm: &Realm) {
+    if realm.is_deferred() {
+        return;
+    }
     let Ok(scope) = realm.scope() else { return };
     if let Some(w) = scope.global_data::<Window>() {
         for (_, (id, _)) in w.timers.borrow_mut().drain() {
@@ -516,15 +729,17 @@ pub(crate) fn cancel_timers(realm: &Realm) {
         if let Some(id) = frame.timer.take() {
             w.sched.clear_timer(id);
         }
+        drop(frame);
+        idle::cancel_all(w);
     }
 }
 
-/// Capture the descriptor intrinsic before page init scripts can replace it.
-pub(crate) fn init_frame_indices(realm: &Realm) -> JsResult<()> {
-    let scope = realm.scope()?;
-    let define=scope.eval("(()=>{const define=Object.defineProperty;return(g,k,get)=>define(g,k,{get,enumerable:true,configurable:true})})()",Some("lightpanda://frame-indices"),1)?;
+/// Keeps `define`, the step defining a frame index getter on the global
+/// (lp-webapi's install.js `accessor`, which captured the descriptor
+/// intrinsic before page init scripts can replace it).
+pub(crate) fn init_frame_indices(scope: &lp_js::Scope<'_>, define: lp_js::Value<'_>) -> JsResult<()> {
     let w = scope.global_data::<Window>().ok_or(JsError::ContextDestroyed)?;
-    *w.frame_definer.borrow_mut() = Some(Persistent::new(&scope, define));
+    *w.frame_definer.borrow_mut() = Some(Persistent::new(scope, define));
     Ok(())
 }
 pub(crate) fn refresh_frame_indices(

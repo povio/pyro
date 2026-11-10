@@ -144,6 +144,35 @@ fn evaluates_and_reports_syntax_errors() {
     assert_eq!(d.line, Some(1));
 }
 
+/// `Number.prototype.toLocaleString(locales, options)` formats like a fresh
+/// `Intl.NumberFormat` while it shares the ICU formatter of an earlier call
+/// with the same resolved options (JSC patch 0022): the options are still read
+/// on every call, and other options or locales do not share.
+#[test]
+fn to_locale_string_with_options_reads_options_each_call_and_formats_like_number_format() {
+    let e = engine();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let out = eval_str(
+        &r,
+        "const o = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+         const cases = [
+           [1234.5, 'de-DE', o], [1234.5, 'en-US', o], [0.125, 'de-DE', o],
+           [1234.5, 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false }],
+           [1234.5, 'en-US', { style: 'currency', currency: 'EUR' }],
+           [1234.5, 'de-DE', o], [1234.5, 'fr-FR', o], [1234.5, 'ja-JP', o], [1234.5, 'en-US', o],
+           [-7, 'en-US', { signDisplay: 'always' }], [1234.5, 'de-DE', o],
+         ];
+         const mismatched = cases.filter(([n, l, opts]) => n.toLocaleString(l, opts) !== new Intl.NumberFormat(l, opts).format(n));
+         let reads = 0;
+         const counted = { get minimumFractionDigits() { reads++; return 3; } };
+         const a = (1.5).toLocaleString('en-US', counted), b = (1.5).toLocaleString('en-US', counted);
+         [mismatched.length, a, b, reads > 0 && reads % 2 === 0].join('|')",
+    );
+    assert_eq!(out, "0|1.500|1.500|true", "mismatches, two calls, and the getter read on both");
+    assert_eq!(eval_str(&r, "(1).toLocaleString('en-US', { minimumFractionDigits: 101 })").split(':').next(), Some("THROW RangeError"));
+    assert_eq!(eval_str(&r, "(1234.5).toLocaleString('de-DE', { minimumFractionDigits: 2 })"), "1.234,50");
+}
+
 #[test]
 fn only_one_engine_per_thread() {
     let _e = engine();
@@ -323,6 +352,70 @@ fn console_and_exception_hooks() {
 }
 
 #[test]
+fn console_counting_and_timing() {
+    #[derive(Default)]
+    struct Hooks {
+        log: RefCell<Vec<String>>,
+    }
+    impl EngineHooks for Hooks {
+        fn console_api(&self, _realm: &Realm, level: ConsoleLevel, args: &[Value<'_>]) {
+            let parts: Vec<String> = args.iter().map(|a| a.to_string().unwrap_or_default()).collect();
+            self.log.borrow_mut().push(format!("{}:{}", level.cdp_type(), parts.join(" ")));
+        }
+    }
+    let e = engine();
+    let hooks = Rc::new(Hooks::default());
+    e.set_hooks(Some(hooks.clone()));
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    eval_str(
+        &r,
+        "console.count(); console.count(); console.count('x'); console.countReset(); console.count(); \
+         console.countReset('nope'); console.dirxml('d'); console.timeStamp('t'); console.profile('p'); \
+         console.profileEnd('p'); console.time(); console.time();",
+    );
+    assert_eq!(
+        *hooks.log.borrow(),
+        vec![
+            "count:default: 1",
+            "count:default: 2",
+            "count:x: 1",
+            "count:default: 1",
+            "warning:Count for 'nope' does not exist",
+            "dirxml:d",
+            "warning:Timer 'default' already exists",
+        ]
+    );
+    hooks.log.borrow_mut().clear();
+    eval_str(&r, "console.timeLog(undefined, 'extra', 2); console.timeEnd(); console.timeEnd(); console.timeLog('t')");
+    let log = hooks.log.borrow();
+    assert_eq!(log.len(), 4, "{log:?}");
+    let ms = |s: &str, prefix: &str| -> f64 {
+        let rest = s.strip_prefix(prefix).unwrap_or_else(|| panic!("{s}"));
+        let (n, tail) = rest.split_once(" ms").unwrap();
+        assert!(n.parse::<f64>().unwrap() >= 0.0);
+        assert!(!n.contains('e'), "{n}");
+        tail.parse::<f64>().unwrap_or(0.0)
+    };
+    ms(&log[0], "log:default: ");
+    assert!(log[0].ends_with(" ms extra 2"), "{}", log[0]);
+    ms(&log[1], "timeEnd:default: ");
+    assert_eq!(log[2], "warning:Timer 'default' does not exist");
+    assert_eq!(log[3], "warning:Timer 't' does not exist");
+    drop(log);
+    // Labels go through ToString, whose errors are thrown.
+    assert_eq!(
+        eval_str(
+            &r,
+            "['count','countReset','time','timeLog','timeEnd'].map(m => { let called = false; \
+             console[m]({ toString() { called = true; return 'o' } }); \
+             try { console[m]({ toString() { throw new Error('conv') } }); return 'no throw' } \
+             catch (e) { return called + e.message } }).join()"
+        ),
+        "trueconv,trueconv,trueconv,trueconv,trueconv"
+    );
+}
+
+#[test]
 fn native_closures_promises_and_microtasks() {
     let e = engine();
     let r = e.create_realm(RealmOptions::default()).unwrap();
@@ -466,7 +559,7 @@ fn es_modules_through_fetcher() {
                 "http://site.test/lib/b.js" => "export let b = 1; export function inc() { b++ }",
                 "http://site.test/c.js" => "export const c = 42; export const meta = import.meta.url;",
                 _ => {
-                    request.reject(&s, &JsError::Type(format!("404 {url}"))).unwrap();
+                    request.reject(&s, &JsError::Type(format!("404 {url}").into())).unwrap();
                     return;
                 }
             };
@@ -499,6 +592,89 @@ fn es_modules_through_fetcher() {
     );
 }
 
+/// Import attributes reach the fetcher (patched JavaScriptCore): JSON and CSS
+/// module scripts, the (URL, type) module map, and the TypeErrors for types
+/// and attributes HTML does not allow.
+#[test]
+fn typed_module_requests_reach_the_fetcher() {
+    let e = engine();
+    if !e.capabilities().typed_modules {
+        eprintln!("import attributes need the patched JavaScriptCore; skipping");
+        return;
+    }
+    struct Fetcher {
+        requested: RefCell<Vec<(String, ModuleType)>>,
+    }
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+            let ty = request.module_type();
+            self.requested.borrow_mut().push((url.clone(), ty));
+            let s = realm.scope().unwrap();
+            match (url.as_str(), ty) {
+                ("http://site.test/d.json", ModuleType::Json) => request.resolve_json(&s, r#"{"a": 1, "b": [2]}"#),
+                ("http://site.test/bad.json", ModuleType::Json) => request.resolve_json(&s, "{oops"),
+                ("http://site.test/s.css", ModuleType::Css) => {
+                    let sheet = s.eval("({ sheet: 'css' })", None, 1).unwrap().as_object().unwrap();
+                    request.resolve_object(&s, sheet)
+                }
+                // A CSS request resolved with source text is refused.
+                ("http://site.test/wrong.css", ModuleType::Css) => request.resolve(&s, "export default 1"),
+                _ => request.reject(&s, &JsError::Type(format!("not a {ty:?} module: {url}").into())),
+            }
+            .unwrap();
+        }
+    }
+    let r = e.create_realm(RealmOptions { origin: Some("http://site.test".into()), ..Default::default() }).unwrap();
+    let fetcher = Rc::new(Fetcher { requested: RefCell::new(vec![]) });
+    r.set_module_fetcher(Some(fetcher.clone()));
+    let s = r.scope().unwrap();
+    let outcome = |src: &str| format!("import({src}).then(m => m.default, e => e.constructor.name + ': ' + e.message)");
+    s.eval_module(
+        &format!(
+            "import data from './d.json' with {{ type: 'json' }}; \
+             globalThis.out = [JSON.stringify(data)]; \
+             const again = await import('./d.json', {{ with: {{ type: 'json' }} }}); \
+             out.push(again.default === data); \
+             out.push((await import('./s.css', {{ with: {{ type: 'css' }} }})).default.sheet); \
+             for (const r of [{}, {}, {}, {}, {}, {}, {}]) out.push(await r);",
+            outcome("'./d.json'"),
+            outcome("'./bad.json', { with: { type: 'json' } }"),
+            outcome("'./wrong.css', { with: { type: 'css' } }"),
+            outcome("'./t.txt', { with: { type: 'text' } }"),
+            outcome("'./x.js', { with: { type: 'javascript' } }"),
+            outcome("'./x.js', { with: { unknown: 'x' } }"),
+            outcome("'./w.wasm', { with: { type: 'webassembly' } }"),
+        ),
+        "http://site.test/main.js",
+    )
+    .unwrap();
+    let out = eval_str(&r, "JSON.stringify(out)");
+    let out: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap_or_else(|_| panic!("{out}"));
+    assert_eq!(out[0], r#"{"a":1,"b":[2]}"#);
+    assert_eq!(out[1], true, "one module per (URL, type)");
+    assert_eq!(out[2], "css");
+    // The same URL without a type is a separate JavaScript request.
+    assert_eq!(out[3], "TypeError: not a JavaScript module: http://site.test/d.json");
+    assert!(out[4].as_str().unwrap().starts_with("SyntaxError"), "{}", out[4]);
+    assert!(out[5].as_str().unwrap().starts_with("TypeError"), "{}", out[5]);
+    for (i, what) in [(6, "text"), (7, "javascript"), (8, "unknown attribute")] {
+        assert!(out[i].as_str().unwrap().starts_with("TypeError"), "{what}: {}", out[i]);
+    }
+    // "webassembly" parses in JavaScriptCore; the fetcher sees it unsupported.
+    assert_eq!(out[9], "TypeError: not a Unsupported module: http://site.test/w.wasm");
+    assert_eq!(
+        *fetcher.requested.borrow(),
+        vec![
+            ("http://site.test/d.json".to_string(), ModuleType::Json),
+            ("http://site.test/s.css".to_string(), ModuleType::Css),
+            ("http://site.test/d.json".to_string(), ModuleType::JavaScript),
+            ("http://site.test/bad.json".to_string(), ModuleType::Json),
+            ("http://site.test/wrong.css".to_string(), ModuleType::Css),
+            ("http://site.test/w.wasm".to_string(), ModuleType::Unsupported),
+        ]
+    );
+}
+
 #[test]
 fn import_meta_url_is_set_for_entry_and_fetched_modules() {
     let e = engine();
@@ -513,7 +689,7 @@ fn import_meta_url_is_set_for_entry_and_fetched_modules() {
             if url == "http://site.test/dep.js" {
                 request.resolve(&s, "export const url = import.meta.url;").unwrap();
             } else {
-                request.reject(&s, &JsError::Type(format!("unexpected module {url}"))).unwrap();
+                request.reject(&s, &JsError::Type(format!("unexpected module {url}").into())).unwrap();
             }
         }
     }
@@ -549,7 +725,7 @@ fn imports_without_a_script_url_resolve_against_the_document_base() {
                 "http://site.test/app/c.js" | "http://site.test/c.js" => request
                     .resolve(&s, "globalThis.evals = (globalThis.evals || 0) + 1; export const url = import.meta.url;")
                     .unwrap(),
-                _ => request.reject(&s, &JsError::Type(format!("unexpected module {url}"))).unwrap(),
+                _ => request.reject(&s, &JsError::Type(format!("unexpected module {url}").into())).unwrap(),
             }
         }
         fn document_base_url(&self, _realm: &Realm) -> Option<String> {
@@ -725,15 +901,19 @@ fn interrupt_check_stops_running_javascript_from_the_same_thread() {
     let start = std::time::Instant::now();
     let polls = Rc::new(Cell::new(0u32));
     let seen = polls.clone();
+    // Terminates on the second check: the first returned false and the script
+    // went on. Not a wall-clock deadline: JSC's watchdog budget is the thread's
+    // CPU time, so on a loaded machine its first check can come after any
+    // fixed number of milliseconds.
     e.set_interrupt_check(Some(Rc::new(move || {
         seen.set(seen.get() + 1);
-        start.elapsed() > std::time::Duration::from_millis(100)
+        seen.get() >= 2
     })));
     let s = r.scope().unwrap();
     let res = s.eval("for (;;) {}", None, 1);
     assert!(matches!(res, Err(JsError::Terminated)), "{res:?}");
-    assert!(start.elapsed() < std::time::Duration::from_secs(5));
-    assert!(polls.get() >= 2, "checked while the script ran");
+    assert!(start.elapsed() < std::time::Duration::from_secs(30));
+    assert_eq!(polls.get(), 2, "checked while the script ran, and stopped at the check that asked");
     // Without the check the engine runs normally again.
     e.set_interrupt_check(None);
     assert_eq!(s.eval("1 + 1", None, 1).unwrap().to_number().unwrap(), 2.0);
@@ -1135,4 +1315,228 @@ fn global_receiver_fallback_only_for_unbound_receivers() {
     assert_eq!(eval_str(&r, "try { single.who.call({}) } catch (e) { e.message }"), "Illegal invocation");
     // Without a fallback, unbound receivers still throw.
     assert_eq!(eval_str(&r, "try { const p = other.ping; p() } catch (e) { e.message }"), "Illegal invocation");
+}
+
+/// A global's value (a data property, or a constant attribute) as the only
+/// reference to a wrapper; with `holder`, that realm keeps the global itself
+/// (a stale `contentWindow`). Returns whether the constant was installed.
+#[inline(never)]
+fn global_holding_a_wrapper(e: &Engine, drops: &Rc<Cell<u32>>, constant: bool, holder: Option<&Realm>) -> bool {
+    let realm = e.create_realm(RealmOptions::default()).unwrap();
+    let installed = {
+        let s = realm.scope().unwrap();
+        let o = s.wrap::<Node>(node(1, drops), None).unwrap();
+        let installed = constant && s.define_global_constant("held", o.value());
+        if !installed {
+            s.global().set("held", o.value()).unwrap();
+        }
+        installed
+    };
+    assert_eq!(eval_str(&realm, "held.nodeId"), "1");
+    if installed {
+        // A non-configurable accessor that only its realm's global answers.
+        assert_eq!(
+            eval_str(&realm, "const d = Object.getOwnPropertyDescriptor(globalThis, 'held'); [typeof d.get, d.set, d.configurable, d.get.call(globalThis) === held, delete globalThis.held].join()"),
+            "function,,false,true,false"
+        );
+        assert_eq!(eval_str(&realm, "try { d.get.call({}) } catch (e) { e.constructor.name }"), "TypeError");
+        // Compiled code folds it (holding it weakly).
+        assert_eq!(eval_str(&realm, "let n = 0; for (let i = 0; i < 200000; i++) n += held.nodeId; n"), "200000");
+        let s = realm.scope().unwrap();
+        let other = s.object();
+        assert!(!s.define_global_constant("held", other.value()), "set once");
+    }
+    if let Some(holder) = holder {
+        let global = {
+            let s = realm.scope().unwrap();
+            Persistent::new(&s, s.global().value())
+        };
+        let hs = holder.scope().unwrap();
+        hs.global().set("stale", global.get(&hs)).unwrap();
+    }
+    realm.dispose();
+    installed
+}
+
+#[inline(never)]
+fn overwrite_dead_stack() -> u64 {
+    let mut junk = [0u64; 16 * 1024];
+    for (i, slot) in junk.iter_mut().enumerate() {
+        *slot = std::hint::black_box(i as u64);
+    }
+    std::hint::black_box(junk.iter().sum())
+}
+
+#[test]
+fn a_disposed_realms_global_constants_die_with_it() {
+    let e = engine();
+    e.register::<Element>();
+    for (constant, held) in [(false, false), (true, false), (true, true)] {
+        let drops = Rc::new(Cell::new(0));
+        let holder = held.then(|| e.create_realm(RealmOptions::default()).unwrap());
+        let installed = global_holding_a_wrapper(&e, &drops, constant, holder.as_ref());
+        if constant && !installed {
+            // The system framework has no constant accessors: nothing new to check.
+            continue;
+        }
+        overwrite_dead_stack();
+        for _ in 0..6 {
+            e.collect_garbage_now();
+            e.drain_finalized();
+        }
+        assert_eq!(drops.get(), 1, "constant {constant}, global held {held}: the wrapper outlived its realm");
+        if let Some(holder) = &holder {
+            // The global outlives its realm, its constant does not: reads
+            // throw, as the callbacks of a disposed realm do.
+            assert_eq!(
+                eval_str(holder, "try { stale.held; 'read' } catch (e) { e.message }"),
+                "Execution context was destroyed."
+            );
+            assert_eq!(eval_str(holder, "Object.getOwnPropertyDescriptor(stale, 'held').configurable"), "false");
+        }
+    }
+}
+
+/// A lazy constant's maker for the tests below: wraps a node (id 1), counts
+/// its calls in `made`, and fails while `fail` is set.
+fn lazy_wrapper_maker(made: &Rc<Cell<u32>>, fail: &Rc<Cell<bool>>, drops: &Rc<Cell<u32>>) -> LazyGlobalConstant {
+    let (made, fail, drops) = (made.clone(), fail.clone(), drops.clone());
+    Rc::new(move |s| {
+        made.set(made.get() + 1);
+        if fail.get() {
+            return Err(JsError::Type("not yet".into()));
+        }
+        Ok(s.wrap::<Node>(node(1, &drops), None)?.value())
+    })
+}
+
+#[test]
+fn a_lazy_global_constant_is_made_on_its_first_read_only() {
+    let e = engine();
+    e.register::<Element>();
+    let realm = e.create_realm(RealmOptions::default()).unwrap();
+    let (made, fail, drops) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(false)), Rc::new(Cell::new(0)));
+    let installed =
+        realm.scope().unwrap().define_lazy_global_constant("held", lazy_wrapper_maker(&made, &fail, &drops));
+    if !installed {
+        // The system framework has no constant accessors.
+        assert!(!e.capabilities().global_constants);
+        return;
+    }
+    // The property is the constant's from the start; looking at it makes nothing.
+    assert_eq!(
+        eval_str(
+            &realm,
+            "const d = Object.getOwnPropertyDescriptor(globalThis, 'held'); \
+             [typeof d.get, d.set, d.enumerable, d.configurable, 'held' in globalThis, delete globalThis.held, \
+              Object.keys(globalThis).includes('held')].join()"
+        ),
+        "function,,true,false,true,false,true"
+    );
+    assert_eq!(eval_str(&realm, "try { d.get.call({}) } catch (e) { e.constructor.name }"), "TypeError");
+    assert_eq!(made.get(), 0, "nothing read the constant yet");
+    assert_eq!(
+        eval_str(&realm, "try { Object.defineProperty(globalThis, 'held', { value: 1 }); 'redefined' } catch (e) { e.constructor.name }"),
+        "TypeError"
+    );
+    assert_eq!(made.get(), 0);
+    // An error is the read's; the next read tries again.
+    fail.set(true);
+    assert_eq!(eval_str(&realm, "try { held; 'read' } catch (e) { e.message }"), "not yet");
+    assert_eq!(made.get(), 1);
+    fail.set(false);
+    assert_eq!(
+        eval_str(&realm, "[held.nodeId, globalThis.held === held, d.get.call(undefined) === held].join()"),
+        "1,true,true"
+    );
+    assert_eq!(made.get(), 2);
+    // Its getter is the one reified before the first read (a failed one
+    // included), so the descriptor taken then applies again as it is: the
+    // snapshot and restore of a global's properties that sandboxes do.
+    assert_eq!(
+        eval_str(
+            &realm,
+            "const after = Object.getOwnPropertyDescriptor(globalThis, 'held'); \
+             [after.get === d.get, globalThis.__lookupGetter__('held') === d.get, \
+              (() => { try { Object.defineProperty(globalThis, 'held', d); return 'applied'; } catch (e) { return e.message; } })(), \
+              (() => { try { Object.defineProperty(globalThis, 'held', { get: d.get }); return 'applied'; } catch (e) { return e.message; } })(), \
+              held.nodeId].join()"
+        ),
+        "true,true,applied,applied,1"
+    );
+    // Made once: later reads, compiled code folding it, the getter reified
+    // before it was made.
+    assert_eq!(eval_str(&realm, "let n = 0; for (let i = 0; i < 200000; i++) n += held.nodeId; n"), "200000");
+    assert_eq!(eval_str(&realm, "d.get.call(globalThis) === held"), "true");
+    assert_eq!(made.get(), 2);
+    let s = realm.scope().unwrap();
+    assert!(!s.define_lazy_global_constant("held", lazy_wrapper_maker(&made, &fail, &drops)), "set once");
+    assert!(!s.define_global_constant("held", s.object().value()), "set once");
+}
+
+#[inline(never)]
+fn lazy_constant_of_a_disposed_realm(
+    e: &Engine,
+    holder: &Realm,
+    made: &Rc<Cell<u32>>,
+    drops: &Rc<Cell<u32>>,
+    read_first: bool,
+) -> bool {
+    let realm = e.create_realm(RealmOptions::default()).unwrap();
+    let installed = realm
+        .scope()
+        .unwrap()
+        .define_lazy_global_constant("held", lazy_wrapper_maker(made, &Rc::new(Cell::new(false)), drops));
+    if !installed {
+        return false;
+    }
+    if read_first {
+        assert_eq!(eval_str(&realm, "let n = 0; for (let i = 0; i < 200000; i++) n += held.nodeId; n"), "200000");
+    }
+    {
+        let s = realm.scope().unwrap();
+        let global = Persistent::new(&s, s.global().value());
+        let hs = holder.scope().unwrap();
+        hs.global().set("stale", global.get(&hs)).unwrap();
+    }
+    eval_str(holder, "globalThis.staleGet = Object.getOwnPropertyDescriptor(stale, 'held').get");
+    realm.dispose();
+    true
+}
+
+#[test]
+fn a_disposed_realms_lazy_constant_throws_and_releases_its_value() {
+    let e = engine();
+    e.register::<Element>();
+    for read_first in [false, true] {
+        let holder = e.create_realm(RealmOptions::default()).unwrap();
+        let (made, drops) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+        if !lazy_constant_of_a_disposed_realm(&e, &holder, &made, &drops, read_first) {
+            return;
+        }
+        // Reads after the realm is gone throw, as for a constant that was
+        // made, and one that was not never is.
+        assert_eq!(
+            eval_str(&holder, "try { stale.held; 'read' } catch (e) { e.message }"),
+            "Execution context was destroyed."
+        );
+        assert_eq!(
+            eval_str(&holder, "try { Object.getOwnPropertyDescriptor(stale, 'held').get.call(stale); 'read' } catch (e) { e.message }"),
+            "Execution context was destroyed."
+        );
+        assert_eq!(eval_str(&holder, "Object.getOwnPropertyDescriptor(stale, 'held').configurable"), "false");
+        // The getter stays the function it was while the realm lived.
+        assert_eq!(
+            eval_str(&holder, "Object.getOwnPropertyDescriptor(stale, 'held').get === staleGet"),
+            "true",
+            "read first: {read_first}"
+        );
+        assert_eq!(made.get(), u32::from(read_first), "read first: {read_first}");
+        overwrite_dead_stack();
+        for _ in 0..6 {
+            e.collect_garbage_now();
+            e.drain_finalized();
+        }
+        assert_eq!(drops.get(), u32::from(read_first), "read first {read_first}: the value outlived its realm");
+    }
 }

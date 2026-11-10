@@ -50,6 +50,38 @@ up to 1 px, and rounding their tops loses what decides whether a line fits. Cove
 `GlyphRun::atom_texts` (`src/layout/line.rs`) gives each atom's source text range and glyph count
 in glyph order, so PDF output can map a ligature glyph to all the characters it stands for.
 
+`layout/resume.rs`, `TreeBuilder::build_into_keeping_lines` and `BreakLines::resume`: resumed line
+breaking. The breaker records its state at the start of each line (`LayoutData::line_starts`; none
+when the caller placed boxes, hit a max height or reverted mid-break). Building a layout again with
+`build_into_keeping_lines` compares the new shaped data with the old (styles, style metrics, runs,
+items, clusters, characters and glyphs, from the start) and keeps the old lines whose break the
+breaker decided entirely inside the equal prefix: each line start also records how far the breaker
+had read before it (`LineStart::read_end`), and lines are kept up to the last start reached reading
+only the equal prefix. (The atom that overflowed a line can lie many lines on, when a word broken at
+emergency opportunities runs over lines narrower than the first: a hanging or negative
+`text-indent`, or `each-line` after a forced break.) `resume`, called with
+the geometry the caller gives lines after the first, continues breaking after the kept lines when
+the old break had the same layout max advance, text indent and line geometry; otherwise it starts
+over. LTR text without inline boxes only. Blitz builds every inline root this way and resumes
+when no floats are involved and the text is not justified, so a paragraph that pagination grows
+word by word is broken from its last lines. On `cmr-overflow` the bytes going through the breaker
+went from about 240 to 40 per break, with identical PDFs. Covered by the differential tests in
+`crates/lp-render/tests/line_break_resume.rs`.
+
+`shape/mod.rs`, `FontSelector` and `layout/style_metrics.rs`, `resolve_style_metrics`: the style
+metrics of every style ran a fontique query per layout for the style's first available font, after
+the font selector had queried the same families and attributes while shaping. The selector's
+charmap probe (`query_yields_font`) visits the fonts in the query's order, so the first font it
+visits whose `unicode-range` includes U+0020 is the first available font when it comes from the
+style's own families (not the script fallbacks or the emoji family, which the query yields after
+them); the probe goes on past the first font with a charmap until it has found that font or left
+the style's families. The selector records it per style (`LayoutContext::style_first_fonts`)
+and `resolve_style_metrics` takes a style's font from there, querying only a style without one
+(its families yield no such font, or it shaped no text). The font is the same `QueryFont` the
+query (`Query::first_available_font`) would yield, so the metrics are unchanged. The fonts'
+`unicode-range` comes from fontique (`vendor/fontique/README.lightningpanda.md`), whose charmaps
+the selector's coverage check reads limited to it.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

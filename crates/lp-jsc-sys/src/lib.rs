@@ -510,7 +510,26 @@ pub mod spi {
     pub type JSWeakCreateKeptWhileFn =
         unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef, keep_alive: *const u8) -> JSWeakRef;
     pub type JSWeakReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, weak: JSWeakRef);
+    /// `JSWeakRelease` of `count` handles under one lock (patched JSC).
+    pub type JSWeakReleaseManyFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, weaks: *const JSWeakRef, count: usize);
     pub type JSWeakGetObjectFn = unsafe extern "C" fn(weak: JSWeakRef) -> JSObjectRef;
+    /// The structure of new wrappers of a class with one prototype in one
+    /// global object (patched JSC, `JSWrapperShapeCreate`); null if the class
+    /// has none to share.
+    pub type JSWrapperShapeRef = *mut c_void;
+    pub type JSWrapperShapeCreateFn =
+        unsafe extern "C" fn(ctx: JSContextRef, class: JSClassRef, prototype: JSObjectRef) -> JSWrapperShapeRef;
+    pub type JSWrapperShapeReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, shape: JSWrapperShapeRef);
+    /// A new wrapper of `shape` with private data `data` (`JSObjectMakeWrapper`):
+    /// with `keep_alive`, also its `JSWeakCreateKeptWhile` handle in `*weak`.
+    pub type JSObjectMakeWrapperFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        shape: JSWrapperShapeRef,
+        data: *mut c_void,
+        keep_alive: *const u8,
+        weak: *mut JSWeakRef,
+    ) -> JSObjectRef;
     pub type JSGlobalContextSetUnhandledRejectionCallbackFn =
         unsafe extern "C" fn(ctx: JSGlobalContextRef, function: JSObjectRef, exception: *mut JSValueRef);
     pub type JSContextGroupSetExecutionTimeLimitFn = unsafe extern "C" fn(
@@ -567,6 +586,44 @@ pub mod spi {
         setter: Option<JSCustomSetterCallback>,
         attributes: JSPropertyAttributes,
     ) -> bool;
+    /// A constant accessor (patched JSC, `JSObjectSetConstantAccessor`): a
+    /// non-configurable accessor of `object` whose reads on it yield `value`
+    /// with no callback, and which the DFG folds to `value`. Set once.
+    pub type JSObjectSetConstantAccessorFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        value: JSValueRef,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+    ) -> bool;
+    /// What makes a lazy constant accessor's value on its first read
+    /// (`JSConstantAccessorInitializer`): `ctx` is the realm of `object`, the
+    /// holder. The value, or null with `*exception` set.
+    pub type JSConstantAccessorInitializer = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    /// Sets the process's initializer of lazy constant accessors (patched JSC,
+    /// `JSSetConstantAccessorInitializer`).
+    pub type JSSetConstantAccessorInitializerFn =
+        unsafe extern "C" fn(initializer: Option<JSConstantAccessorInitializer>);
+    /// A constant accessor whose value the initializer makes on the first
+    /// read (patched JSC, `JSObjectSetLazyConstantAccessor`): the same
+    /// non-configurable property from the start. Set once.
+    pub type JSObjectSetLazyConstantAccessorFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+    ) -> bool;
+    /// Releases the values of `object`'s constant accessors as its realm is
+    /// torn down (patched JSC, `JSObjectClearConstantAccessors`): reads of
+    /// them throw from then on, lazy ones' too.
+    pub type JSObjectClearConstantAccessorsFn = unsafe extern "C" fn(ctx: JSContextRef, object: JSObjectRef);
     pub type JSContextThrowExceptionFn = unsafe extern "C" fn(ctx: JSContextRef, exception: JSValueRef);
     /// A fast getter (patched JSC, `JSObjectSetFastGetter`): what the JITs
     /// call in place of the custom getter once they have proved the receiver
@@ -613,6 +670,20 @@ pub mod spi {
         get: Option<JSObjectGetPropertyByIndexCallback>,
         set: Option<JSObjectSetPropertyByIndexCallback>,
     );
+    /// Names a class's wrappers have as own properties while the
+    /// prototype's accessors serve reads (`JSClassSetOwnPropertyNames`,
+    /// patch 0024). `get_value` gives an answered name's value when a
+    /// descriptor or a copy reads it (null, or no callback: a `[[Get]]`).
+    pub const kJSOwnPropertyNameListed: u8 = 1;
+    pub const kJSOwnPropertyNameDontEnum: u8 = 2;
+    pub const kJSOwnPropertyNameAnswered: u8 = 4;
+    pub type JSClassSetOwnPropertyNamesFn = unsafe extern "C" fn(
+        class: JSClassRef,
+        names: *const *const c_char,
+        flags: *const u8,
+        count: usize,
+        get_value: JSObjectGetPropertyCallback,
+    );
     /// A function object with embedder data (`JSObjectMakeFunctionWithCallbackAndData`).
     pub type JSObjectCallAsFunctionWithDataCallback = unsafe extern "C" fn(
         ctx: JSContextRef,
@@ -645,6 +716,82 @@ pub mod spi {
         length: *mut usize,
         is_8bit: *mut bool,
     ) -> *const c_void;
+    /// A string value made from `length` Latin-1 bytes, copied once into the
+    /// string (patched JSC, `webkit/patches/0016-direct-strings.patch`):
+    /// `JSValueMakeString` without the `JSStringRef` and its two copies. Null
+    /// when `length` exceeds JavaScript's longest string. Takes the API lock
+    /// only when the caller does not hold it.
+    pub type JSValueMakeStringLatin1Fn =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const u8, length: usize) -> JSValueRef;
+    /// [`JSValueMakeStringLatin1Fn`] for UTF-16 code units (unpaired
+    /// surrogates kept).
+    pub type JSValueMakeStringUTF16Fn =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const JSChar, length: usize) -> JSValueRef;
+    /// `JSStringCreateWithCharacters` for Latin-1 bytes: an 8-bit string,
+    /// nothing decoded (patched JSC, 0016).
+    pub type JSStringCreateWithLatin1CharactersFn =
+        unsafe extern "C" fn(characters: *const u8, length: usize) -> JSStringRef;
+    /// A string's characters as it stores them (patched JSC, 0016): `length`
+    /// units, Latin-1 bytes when `is_8bit`, else UTF-16, valid while the
+    /// string is retained (`JSStringGetCharactersPtr` widens an 8-bit string
+    /// into a second copy the string keeps). May be null when empty.
+    pub type JSStringGetStoredCharactersFn =
+        unsafe extern "C" fn(string: JSStringRef, length: *mut usize, is_8bit: *mut bool) -> *const c_void;
+
+    /// A source of block coverage (patched JSC, `webkit/patches/0019-block-coverage.patch`):
+    /// its id, the global object it first ran in (an identity only), URL (a
+    /// `//# sourceURL=` comment wins), the URL of the code that made it (eval,
+    /// `new Function`; may be null), text (null from `JSContextGroupTakeCoverage`)
+    /// and whether it is a module. Valid for the callback only.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct JSCoverageSource {
+        pub source_id: isize,
+        pub global: JSGlobalContextRef,
+        pub url: JSStringRef,
+        pub origin_url: JSStringRef,
+        pub source: JSStringRef,
+        pub is_module: bool,
+    }
+    /// One basic block: UTF-16 source offsets, `end` inclusive, and how often it ran.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct JSCoverageBlock {
+        pub start: i32,
+        pub end: i32,
+        pub count: u64,
+    }
+    /// A function declared by code compiled while coverage was on: `end` is
+    /// its closing brace; `name` is null when anonymous.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct JSCoverageFunction {
+        pub start: u32,
+        pub end: u32,
+        pub executed: bool,
+        pub name: JSStringRef,
+    }
+    pub type JSCoverageSourceCallback = unsafe extern "C" fn(
+        data: *mut c_void,
+        source: *const JSCoverageSource,
+        blocks: *const JSCoverageBlock,
+        block_count: usize,
+        functions: *const JSCoverageFunction,
+        function_count: usize,
+    );
+    /// Counted on/off of block coverage for a VM; the first enable and the
+    /// last disable recompile all code once no JavaScript runs.
+    pub type JSContextGroupSetCoverageEnabledFn = unsafe extern "C" fn(group: JSContextGroupRef, enabled: bool);
+    /// The sources first compiled after the first `*cursor` ones, with text.
+    pub type JSContextGroupCoverageNewSourcesFn = unsafe extern "C" fn(
+        group: JSContextGroupRef,
+        cursor: *mut usize,
+        callback: JSCoverageSourceCallback,
+        data: *mut c_void,
+    );
+    /// Every source with what ran, without text.
+    pub type JSContextGroupTakeCoverageFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, callback: JSCoverageSourceCallback, data: *mut c_void);
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -653,7 +800,11 @@ pub mod spi {
         pub weak_create: Option<JSWeakCreateFn>,
         pub weak_create_kept_while: Option<JSWeakCreateKeptWhileFn>,
         pub weak_release: Option<JSWeakReleaseFn>,
+        pub weak_release_many: Option<JSWeakReleaseManyFn>,
         pub weak_get_object: Option<JSWeakGetObjectFn>,
+        pub wrapper_shape_create: Option<JSWrapperShapeCreateFn>,
+        pub wrapper_shape_release: Option<JSWrapperShapeReleaseFn>,
+        pub object_make_wrapper: Option<JSObjectMakeWrapperFn>,
         pub set_unhandled_rejection_callback: Option<JSGlobalContextSetUnhandledRejectionCallbackFn>,
         pub set_execution_time_limit: Option<JSContextGroupSetExecutionTimeLimitFn>,
         pub clear_execution_time_limit: Option<JSContextGroupClearExecutionTimeLimitFn>,
@@ -674,14 +825,26 @@ pub mod spi {
         pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
+        pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
+        pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
+        pub set_constant_accessor_initializer: Option<JSSetConstantAccessorInitializerFn>,
+        pub clear_constant_accessors: Option<JSObjectClearConstantAccessorsFn>,
         pub throw_exception: Option<JSContextThrowExceptionFn>,
         pub class_set_indexed_callbacks: Option<JSClassSetIndexedCallbacksFn>,
+        pub class_set_own_property_names: Option<JSClassSetOwnPropertyNamesFn>,
         pub make_function_with_data: Option<JSObjectMakeFunctionWithCallbackAndDataFn>,
         pub get_function_data: Option<JSObjectGetFunctionDataFn>,
         pub release_free_memory: Option<JSContextGroupReleaseFreeMemoryFn>,
         pub delete_all_code: Option<JSContextGroupDeleteAllCodeFn>,
         pub set_decommit_replaces_pages: Option<JSSetDecommitReplacesPagesFn>,
         pub value_string_characters: Option<JSValueGetStringCharactersFn>,
+        pub make_string_latin1: Option<JSValueMakeStringLatin1Fn>,
+        pub make_string_utf16: Option<JSValueMakeStringUTF16Fn>,
+        pub string_create_latin1: Option<JSStringCreateWithLatin1CharactersFn>,
+        pub string_stored_characters: Option<JSStringGetStoredCharactersFn>,
+        pub set_coverage_enabled: Option<JSContextGroupSetCoverageEnabledFn>,
+        pub coverage_new_sources: Option<JSContextGroupCoverageNewSourcesFn>,
+        pub take_coverage: Option<JSContextGroupTakeCoverageFn>,
     }
 
     impl Spi {
@@ -690,16 +853,63 @@ pub mod spi {
             Some((self.weak_create?, self.weak_release?, self.weak_get_object?))
         }
 
+        /// Strings to and from host characters without a `JSStringRef` in
+        /// between (patch 0016), all or nothing. Its JavaScriptCore also makes
+        /// `value_string_characters` safe anywhere: a flat string is read with
+        /// no lock and no exception check, and a rope is resolved under the API
+        /// lock, taken when the caller does not hold it; a failure there (out of
+        /// memory) leaves no exception pending.
+        pub fn direct_strings(&self) -> Option<DirectStrings> {
+            self.value_string_characters?;
+            Some(DirectStrings {
+                make_latin1: self.make_string_latin1?,
+                make_utf16: self.make_string_utf16?,
+                create_latin1: self.string_create_latin1?,
+                stored_characters: self.string_stored_characters?,
+            })
+        }
+
+        /// Block coverage (patch 0019) needs all three entry points.
+        pub fn coverage(
+            &self,
+        ) -> Option<(
+            JSContextGroupSetCoverageEnabledFn,
+            JSContextGroupCoverageNewSourcesFn,
+            JSContextGroupTakeCoverageFn,
+        )> {
+            Some((self.set_coverage_enabled?, self.coverage_new_sources?, self.take_coverage?))
+        }
+
         /// fork() support needs all three entry points.
         pub fn fork(&self) -> Option<(JSPrepareForForkFn, JSDidForkFn, JSGlobalContextReseedRandomFn)> {
             Some((self.prepare_for_fork?, self.did_fork?, self.reseed_random?))
         }
     }
 
+    /// The entry points of [`Spi::direct_strings`].
+    #[derive(Debug, Clone, Copy)]
+    pub struct DirectStrings {
+        pub make_latin1: JSValueMakeStringLatin1Fn,
+        pub make_utf16: JSValueMakeStringUTF16Fn,
+        pub create_latin1: JSStringCreateWithLatin1CharactersFn,
+        pub stored_characters: JSStringGetStoredCharactersFn,
+    }
+
+    /// [`Spi::direct_strings`], resolved once per process: one load on the
+    /// paths that make every string.
+    #[inline]
+    pub fn direct_strings() -> Option<&'static DirectStrings> {
+        static DIRECT: OnceLock<Option<DirectStrings>> = OnceLock::new();
+        DIRECT.get_or_init(|| get().direct_strings()).as_ref()
+    }
+
     unsafe extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
+    #[cfg(target_vendor = "apple")]
     const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+    #[cfg(not(target_vendor = "apple"))]
+    const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
 
     macro_rules! resolve {
         ($name:literal) => {{
@@ -723,7 +933,11 @@ pub mod spi {
             weak_create: resolve!("JSWeakCreate"),
             weak_create_kept_while: resolve!("JSWeakCreateKeptWhile"),
             weak_release: resolve!("JSWeakRelease"),
+            weak_release_many: resolve!("JSWeakReleaseMany"),
             weak_get_object: resolve!("JSWeakGetObject"),
+            wrapper_shape_create: resolve!("JSWrapperShapeCreate"),
+            wrapper_shape_release: resolve!("JSWrapperShapeRelease"),
+            object_make_wrapper: resolve!("JSObjectMakeWrapper"),
             set_unhandled_rejection_callback: resolve!("JSGlobalContextSetUnhandledRejectionCallback"),
             set_execution_time_limit: resolve!("JSContextGroupSetExecutionTimeLimit"),
             clear_execution_time_limit: resolve!("JSContextGroupClearExecutionTimeLimit"),
@@ -744,14 +958,26 @@ pub mod spi {
             add_impure_property: resolve!("JSAddImpureProperty"),
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
+            set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
+            set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),
+            set_constant_accessor_initializer: resolve!("JSSetConstantAccessorInitializer"),
+            clear_constant_accessors: resolve!("JSObjectClearConstantAccessors"),
             throw_exception: resolve!("JSContextThrowException"),
             class_set_indexed_callbacks: resolve!("JSClassSetIndexedCallbacks"),
+            class_set_own_property_names: resolve!("JSClassSetOwnPropertyNames"),
             make_function_with_data: resolve!("JSObjectMakeFunctionWithCallbackAndData"),
             get_function_data: resolve!("JSObjectGetFunctionData"),
             release_free_memory: resolve!("JSContextGroupReleaseFreeMemory"),
             delete_all_code: resolve!("JSContextGroupDeleteAllCode"),
             set_decommit_replaces_pages: resolve!("JSSetDecommitReplacesPages"),
             value_string_characters: resolve!("JSValueGetStringCharacters"),
+            make_string_latin1: resolve!("JSValueMakeStringLatin1"),
+            make_string_utf16: resolve!("JSValueMakeStringUTF16"),
+            string_create_latin1: resolve!("JSStringCreateWithLatin1Characters"),
+            string_stored_characters: resolve!("JSStringGetStoredCharacters"),
+            set_coverage_enabled: resolve!("JSContextGroupSetCoverageEnabled"),
+            coverage_new_sources: resolve!("JSContextGroupCoverageNewSources"),
+            take_coverage: resolve!("JSContextGroupTakeCoverage"),
         })
     }
 }
@@ -764,9 +990,18 @@ pub mod modules {
         userdata: *mut c_void,
         ctx: JSGlobalContextRef,
         identifier: JSStringRef,
+        module_type: c_int,
         resolve: JSObjectRef,
         reject: JSObjectRef,
     );
+
+    /// `module_type` values of [`lp_module_fetch_cb`] and
+    /// [`lp_jsc_module_script_create`] (the request's `type` import attribute).
+    pub const MODULE_TYPE_JAVASCRIPT: c_int = 0;
+    pub const MODULE_TYPE_JSON: c_int = 1;
+    pub const MODULE_TYPE_CSS: c_int = 2;
+    pub const MODULE_TYPE_WEBASSEMBLY: c_int = 3;
+    pub const MODULE_TYPE_TEXT: c_int = 4;
 
     /// The document base URL as an owned string, or null.
     pub type lp_module_base_url_cb = unsafe extern "C" fn(ctx: JSGlobalContextRef) -> JSStringRef;
@@ -783,6 +1018,9 @@ pub mod modules {
         pub fn lp_jsc_module_loader_release(handle: *mut c_void);
         /// 1 when `lp_jsc_import_map_add` works (source-built JavaScriptCore).
         pub fn lp_jsc_import_maps_available() -> c_int;
+        /// 1 when fetch callbacks see the `type` import attribute and JSON
+        /// and CSS module scripts can load (source-built JavaScriptCore).
+        pub fn lp_jsc_typed_modules_available() -> c_int;
         pub fn lp_jsc_import_map_add(
             ctx: JSGlobalContextRef,
             src: *const c_char,
@@ -797,6 +1035,7 @@ pub mod modules {
             src_len: usize,
             url: *const c_char,
             url_len: usize,
+            module_type: c_int,
             error: *mut JSStringRef,
         ) -> JSValueRef;
         pub fn lp_jsc_module_evaluate(
@@ -853,6 +1092,7 @@ mod tests {
 }
 
 /// Objective-C autorelease boundaries for native threads entering JavaScriptCore.
+#[cfg(target_os = "macos")]
 pub mod autorelease {
     use std::os::raw::c_void;
 
@@ -866,6 +1106,7 @@ pub mod autorelease {
 }
 
 /// Foundation class initialization needed before a macOS process first forks.
+#[cfg(target_os = "macos")]
 pub mod foundation {
     unsafe extern "C" {
         /// Materializes and validates NSNumber's boolean/integer/floating class

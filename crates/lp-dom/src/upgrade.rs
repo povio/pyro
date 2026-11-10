@@ -26,9 +26,11 @@ impl Dom {
     /// Whether `i` could be upgraded: an HTML element with a custom element
     /// name (a hyphen in it) that is not custom yet.
     fn upgrade_candidate(&self, i: u32) -> bool {
-        self.n(i)
-            .element()
-            .is_some_and(|e| e.flags & element_flags::CUSTOM_DEFINED == 0 && e.is_html() && e.name.local.contains('-'))
+        self.n(i).element().is_some_and(|e| {
+            e.flags & (element_flags::CUSTOM_DEFINED | element_flags::CUSTOM_FAILED) == 0
+                && e.is_html()
+                && e.name.local.contains('-')
+        })
     }
 
     /// `root` was inserted and is connected: queues the candidates among it
@@ -41,24 +43,15 @@ impl Dom {
         if !matches!(&self.n(doc).kind, crate::node::NodeKind::Document(d) if d.active) {
             return;
         }
-        let mut stack = vec![root];
-        while let Some(i) = stack.pop() {
+        // Shadow trees before children, in tree order.
+        let mut i = root;
+        while i != NIL {
             if self.upgrade_candidate(i) {
                 let id = self.id_of(i);
                 self.upgrades.queued.push(id);
                 self.touch_hook();
             }
-            let mut child = self.n(i).last_child;
-            while child != NIL {
-                stack.push(child);
-                child = self.n(child).prev;
-            }
-            // Pushed last, so the shadow tree is visited before the children.
-            if let Some(e) = self.n(i).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
+            i = self.next_shadow_including(i, root);
         }
     }
 

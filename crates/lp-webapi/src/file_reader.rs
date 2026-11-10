@@ -160,7 +160,7 @@ impl Reader {
         // SAFETY: receiver or Pending roots the wrapper in this same VM.
         Ok(unsafe { Object::from_raw(s.ctx(), wrapper.as_raw()) })
     }
-    fn value<'s>(&self, s: &Scope<'s>, key: &str) -> JsResult<Value<'s>> {
+    fn value<'s>(&self, s: &Scope<'s>, key: &'static str) -> JsResult<Value<'s>> {
         Ok(s.get_hidden(self.wrapper(s)?, key)?.unwrap_or(s.null()))
     }
     fn read(self: &Rc<Self>, s: &Scope<'_>, blob: Value<'_>, mode: Mode) -> JsResult<()> {

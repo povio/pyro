@@ -4,7 +4,7 @@ use blitz_traits::{
     shell::ShellProvider,
 };
 use keyboard_types::{Key, Modifiers, NamedKey};
-use parley::{ContentWidths, FontContext, LayoutContext};
+use parley::{FontContext, LayoutContext};
 
 use crate::util::ACTION_MOD;
 
@@ -24,7 +24,6 @@ impl TextBrush {
 #[derive(Clone, Default)]
 pub struct TextLayout {
     pub text: String,
-    pub content_widths: Option<ContentWidths>,
     pub layout: parley::layout::Layout<TextBrush>,
     /// Block-axis offset (in CSS px) of the line boxes from the top of the container's content
     /// box, as applied by `align-content`.
@@ -42,6 +41,23 @@ pub struct TextLayout {
     /// same inputs again gives the same lines, so it is skipped. `None` when
     /// the layout was built again since.
     pub last_break: Option<u64>,
+    /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
+    /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
+    /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
+    pub content_box_subpixel_offset: taffy::Point<f32>,
+    /// lightningpanda: the min-content and max-content widths of the shaped text, part of the
+    /// build (`build_inline_layout_into`) when no in-flow inline box takes part in them (each
+    /// layout sizes those). With no text indent they are the layout's content widths
+    /// (`Layout::calculate_content_widths`, which walks every cluster): every width the text is
+    /// measured or laid out at reads them instead.
+    pub text_content_widths: Option<parley::layout::ContentWidths>,
+    /// lightningpanda: how far (device px) the content areas of the glyph runs
+    /// reach outside their line boxes (see `BaseDocument::resolve_transforms`),
+    /// measured by the first transform pass after the lines were last broken
+    /// (or justified); `None` until then (breaking resets it).
+    pub hit_reach: Option<f64>,
+    /// lightningpanda: the last alignment justified some lines.
+    pub justified: bool,
 }
 
 impl TextLayout {
@@ -49,10 +65,24 @@ impl TextLayout {
         Default::default()
     }
 
-    pub fn content_widths(&mut self) -> ContentWidths {
-        *self
-            .content_widths
-            .get_or_insert_with(|| self.layout.calculate_content_widths())
+    /// The layout's content widths with a text indent of `indent` set on it.
+    pub fn content_widths(&self, indent: f32) -> parley::layout::ContentWidths {
+        match self.text_content_widths {
+            Some(widths) if indent == 0.0 => {
+                // What the layout computes must be what the build kept.
+                #[cfg(debug_assertions)]
+                {
+                    let same = |a: f32, b: f32| a == b || (a.is_nan() && b.is_nan());
+                    let now = self.layout.calculate_content_widths();
+                    debug_assert!(
+                        same(widths.min, now.min) && same(widths.max, now.max),
+                        "content widths kept with the shaped text ({widths:?}) differ from the layout's ({now:?})"
+                    );
+                }
+                widths
+            }
+            _ => self.layout.calculate_content_widths(),
+        }
     }
 }
 
@@ -81,6 +111,10 @@ pub struct TextInputData {
     /// vertical offset. It is kept up to date so that the caret remains visible within the
     /// input's content box.
     pub scroll_offset: f32,
+    /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
+    /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
+    /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
+    pub content_box_subpixel_offset: taffy::Point<f32>,
 }
 
 // FIXME: Implement Clone for PlainEditor
@@ -97,6 +131,7 @@ impl TextInputData {
             editor,
             is_multiline,
             scroll_offset: 0.0,
+            content_box_subpixel_offset: taffy::Point::ZERO,
         }
     }
 
@@ -242,8 +277,8 @@ impl TextInputData {
                         }
                     }
                     "v" => {
-                        let text = shell_provider.get_clipboard_text().unwrap_or_default();
-                        driver.insert_or_replace_selection(&text)
+                        let _ = shell_provider.request_clipboard_text();
+                        return None;
                     }
                     _ => unreachable!(),
                 }
@@ -788,6 +823,7 @@ impl TextInputData {
                 Some(GeneratedTextInputEvent::PreEditChange)
             }
             BlitzImeEvent::Commit(text) => {
+                driver.clear_compose();
                 driver.insert_or_replace_selection(&text);
                 Some(GeneratedTextInputEvent::Input)
             }
@@ -809,5 +845,45 @@ impl TextInputData {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ime_commit_replaces_preedit() {
+        for committed in ["完成", ""] {
+            for cursor in [Some((3, 3)), None] {
+                let mut input = TextInputData::new(false);
+                let mut font_ctx = FontContext::new();
+                let mut layout_ctx = LayoutContext::new();
+                input.apply_ime_event(
+                    &mut font_ctx,
+                    &mut layout_ctx,
+                    BlitzImeEvent::Preedit("仮".into(), cursor),
+                );
+                input.apply_ime_event(
+                    &mut font_ctx,
+                    &mut layout_ctx,
+                    BlitzImeEvent::Commit(committed.into()),
+                );
+                assert_eq!(input.editor.text(), committed);
+                input.apply_ime_event(&mut font_ctx, &mut layout_ctx, BlitzImeEvent::Disabled);
+                assert_eq!(input.editor.text(), committed);
+            }
+        }
+    }
+
+    #[test]
+    fn ime_commit_without_preedit() {
+        let mut input = TextInputData::new(false);
+        input.apply_ime_event(
+            &mut FontContext::new(),
+            &mut LayoutContext::new(),
+            BlitzImeEvent::Commit("text".into()),
+        );
+        assert_eq!(input.editor.text(), "text");
     }
 }

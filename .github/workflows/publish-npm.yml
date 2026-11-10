@@ -176,6 +176,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Linux x64 and arm64, both linked against the patched JavaScriptCore and
+  # shipping it (and its ICU) beside the browser.
+  linux:
+    needs: [release, jsc]
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      jsc-dir: ${{ needs.jsc.outputs.dir }}
+      release: true
+      version: ${{ needs.release.outputs.version }}
+
   # The JavaScriptCore source asset and the notices the fork archive ships.
   jsc-source:
     needs: release
@@ -195,7 +205,7 @@ jobs:
           retention-days: 7
 
   package:
-    needs: [release, build, fork]
+    needs: [release, build, fork, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -223,6 +233,17 @@ jobs:
         run: |
           mkdir -p ../../npm-package
           npm pack --pack-destination ../../npm-package
+          # Our compressed-payload budget, not a registry API guarantee. npm
+          # expands the tarball to base64 in its publication request.
+          node --input-type=module -e '
+            import { readdirSync, statSync } from "node:fs";
+            const dir = "../../npm-package";
+            for (const file of readdirSync(dir).filter(file => file.endsWith(".tgz"))) {
+              const size = statSync(`${dir}/${file}`).size;
+              console.log(`${file}: ${size} compressed bytes`);
+              if (size > 150 * 1024 * 1024) throw new Error("npm tarball exceeds the 150 MiB release budget");
+            }
+          '
           bun test test/binary.test.ts
       - name: Verify client import on Linux
         run: |
@@ -245,7 +266,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel]
+        runner: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
@@ -268,9 +289,10 @@ jobs:
           npm init -y
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
           ./node_modules/.bin/lightningpanda version
-          # The arm64 browser is the fork build; the Intel one uses system JavaScriptCore.
+          # The macOS arm64 and both Linux browsers are fork builds; the macOS
+          # Intel one uses system JavaScriptCore.
           want=false
-          [[ "$(uname -m)" == arm64 ]] && want=true
+          [[ "$(uname -m)" == arm64 || "$(uname -s)" == Linux ]] && want=true
           ./node_modules/.bin/lightningpanda version | grep -q "fork: $want"
           node "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
           bun "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
@@ -279,7 +301,7 @@ jobs:
   # JavaScriptCore source and checksums (docs/RELEASING.md), assembled from the
   # builds above and tested from their extracted form before upload.
   github-release:
-    needs: [release, build, fork, jsc, jsc-source, package, smoke]
+    needs: [release, build, fork, linux, jsc, jsc-source, package, smoke]
     runs-on: macos-15
     timeout-minutes: 45
     permissions:
@@ -308,6 +330,14 @@ jobs:
         with:
           name: archive-fork
           path: release-in/fork
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-linux-x64
+          path: release-in/linux-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-linux-arm64
+          path: release-in/linux-arm64
       - uses: actions/download-artifact@v4
         with:
           name: patched-jsc
@@ -363,7 +393,9 @@ jobs:
           shasum -a 256 -c SHA256SUMS.txt
 
   publish:
-    needs: [release, smoke]
+    # The extracted fork archive runs the complete SDK regression suite.
+    # Do not publish an immutable npm version before those checks pass.
+    needs: [release, smoke, github-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read

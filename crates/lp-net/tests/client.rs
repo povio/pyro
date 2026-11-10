@@ -133,6 +133,18 @@ fn start_server() -> Server {
                             b"ok",
                         ),
                         (_, "/cookie") => respond(&mut stream, "200 OK", &[], hv("cookie").as_bytes()),
+                        (_, "/no-referrer-redirect") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", "/headers".into()), ("Referrer-Policy", "unknown, no-referrer".into())],
+                            b"",
+                        ),
+                        (_, "/cross-redirect") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://localhost:{port}/headers"))],
+                            b"",
+                        ),
                         (_, "/headers") => {
                             let all: String = headers.iter().map(|(k, v)| format!("{k}: {v}\n")).collect();
                             respond(&mut stream, "200 OK", &[], all.as_bytes())
@@ -553,6 +565,7 @@ fn observer_starts_data_and_early_failure_requests() {
                 NetEvent::DataReceived { .. } => "data",
                 NetEvent::LoadingFinished { .. } => "finished",
                 NetEvent::LoadingFailed { .. } => "failed",
+                NetEvent::WebSocket { .. } => "websocket",
             });
         }
         assert_eq!(observed, expected, "{url} offline={offline} same_origin={same_origin}");
@@ -755,4 +768,252 @@ fn self_signed_certificate_fails_unless_errors_are_ignored() {
     c.set_ignore_certificate_errors(false);
     let (_, _, _, e) = collect(&c, Request::get(url, Destination::Fetch));
     assert_eq!(e.map(|e| e.error_text().to_owned()).as_deref(), Some("net::ERR_CERT_AUTHORITY_INVALID"));
+}
+
+fn header_lines(c: &NetClient, req: Request) -> Vec<String> {
+    let (_, _, b, e) = collect(c, req);
+    assert_eq!(e, None);
+    String::from_utf8(b).unwrap().lines().map(str::to_owned).collect()
+}
+
+fn has(lines: &[String], line: &str) -> bool {
+    lines.iter().any(|l| l == line)
+}
+
+/// Referer follows the request's policy (Chrome's default
+/// strict-origin-when-cross-origin), a redirect's Referrer-Policy header
+/// changes the next hop's, and Fetch Metadata goes to trustworthy URLs.
+#[test]
+fn referrer_policy_and_fetch_metadata() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let page = format!("http://127.0.0.1:{}/page?q=1#frag", s.port);
+    let fetch = |path: &str, policy: ReferrerPolicy| {
+        let mut req = Request::get(url(&s, path), Destination::Fetch);
+        req.origin = Some(format!("http://127.0.0.1:{}", s.port));
+        req.referrer = Some(Url::parse(&page).unwrap());
+        req.referrer_policy = policy;
+        req
+    };
+    let lines = header_lines(&c, fetch("/headers", ReferrerPolicy::default()));
+    assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/page?q=1", s.port)), "{lines:?}");
+    assert!(has(&lines, "sec-fetch-site: same-origin"), "{lines:?}");
+    assert!(has(&lines, "sec-fetch-mode: cors"), "{lines:?}");
+    assert!(has(&lines, "sec-fetch-dest: empty"), "{lines:?}");
+    assert!(!lines.iter().any(|l| l.starts_with("sec-fetch-user")), "{lines:?}");
+
+    let lines = header_lines(&c, fetch("/headers", ReferrerPolicy::Origin));
+    assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/", s.port)), "{lines:?}");
+    let lines = header_lines(&c, fetch("/headers", ReferrerPolicy::NoReferrer));
+    assert!(!lines.iter().any(|l| l.starts_with("referer")), "{lines:?}");
+
+    let lines = header_lines(&c, fetch("/no-referrer-redirect", ReferrerPolicy::UnsafeUrl));
+    assert!(!lines.iter().any(|l| l.starts_with("referer")), "redirect policy applies: {lines:?}");
+
+    // A cross-origin hop: the referrer is cut to its origin and the site
+    // relation keeps the most cross-site value of the chain.
+    let mut cross = fetch("/cross-redirect", ReferrerPolicy::default());
+    cross.mode = RequestMode::NoCors;
+    let lines = header_lines(&c, cross);
+    assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/", s.port)), "{lines:?}");
+    assert!(has(&lines, "sec-fetch-site: cross-site"), "{lines:?}");
+
+    // A browser-initiated navigation: none, navigate, document, ?1.
+    let lines = header_lines(&c, Request::get(url(&s, "/headers"), Destination::Document));
+    for want in ["sec-fetch-site: none", "sec-fetch-mode: navigate", "sec-fetch-dest: document", "sec-fetch-user: ?1"] {
+        assert!(has(&lines, want), "{want}: {lines:?}");
+    }
+    // A navigation a document started: relative to its referrer.
+    let mut nav = Request::get(url(&s, "/headers"), Destination::Iframe);
+    nav.referrer = Some(Url::parse(&page).unwrap());
+    let lines = header_lines(&c, nav);
+    assert!(has(&lines, "sec-fetch-site: same-origin") && has(&lines, "sec-fetch-dest: iframe"), "{lines:?}");
+    assert!(!lines.iter().any(|l| l.starts_with("sec-fetch-user")), "{lines:?}");
+}
+
+/// The I/O thread wakes an observer once per turn: a response answered in
+/// one go (its head, body and end) is one wake, not one per event, and a
+/// request whose response is pending still announces itself before the
+/// thread parks.
+#[test]
+fn observer_wakes_once_per_io_thread_turn() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    // The consumer drains inside the wake, like the browser loop's task.
+    let drained: Arc<Mutex<Vec<String>>> = Arc::default();
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let slot: Arc<Mutex<Option<NetSubscription>>> = Arc::default();
+    let (d, w, sl) = (drained.clone(), wakes.clone(), slot.clone());
+    let sub = c.subscribe_with(
+        SubscriptionLimits::default(),
+        Some(Arc::new(move || {
+            w.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(sub) = sl.lock().unwrap().as_ref() {
+                while let Ok(ev) = sub.try_recv() {
+                    d.lock().unwrap().push(match ev {
+                        NetEvent::RequestWillBeSent { .. } => "request".into(),
+                        NetEvent::ResponseReceived { .. } => "response".into(),
+                        NetEvent::DataReceived { .. } => "data".into(),
+                        NetEvent::LoadingFinished { .. } => "finished".into(),
+                        other => format!("{other:?}"),
+                    });
+                }
+            }
+        })),
+    );
+    *slot.lock().unwrap() = Some(sub);
+    let count = || wakes.load(std::sync::atomic::Ordering::SeqCst);
+    let wait_for = |n: usize| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while count() < n {
+            assert!(std::time::Instant::now() < deadline, "no wake {n} (got {})", count());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+
+    // Answered on the I/O thread in one task poll: four events, one wake.
+    let (k, _, body, _) = collect(&c, Request::get(Url::parse("data:text/plain,hi").unwrap(), Destination::Fetch));
+    assert_eq!((k.as_slice(), body.as_slice()), (&["response 200".to_string(), "finished".into()][..], &b"hi"[..]));
+    wait_for(1);
+    std::thread::sleep(Duration::from_millis(20));
+    assert_eq!(count(), 1, "one wake for the whole data: response");
+    assert_eq!(drained.lock().unwrap().as_slice(), ["request", "response", "data", "finished"]);
+    drained.lock().unwrap().clear();
+
+    // Held by the server: the request's announcement goes out when the
+    // thread parks for the response, not when the request ends.
+    let (tx, rx) = mpsc::channel();
+    c.fetch(Request::get(url(&s, "/gated"), Destination::Fetch), Box::new(move |ev| tx.send(ev).unwrap()));
+    wait_for(2);
+    assert_eq!(drained.lock().unwrap().as_slice(), ["request"], "announced before the gate opens");
+    drained.lock().unwrap().clear();
+    s.open_gate();
+    while !matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Finished { .. }) {}
+    wait_for(3);
+    std::thread::sleep(Duration::from_millis(20));
+    // Head and body may arrive in one read or two: at most two wakes for
+    // the three events, never one each.
+    assert!(count() <= 4, "{} wakes for the response's three events", count() - 2);
+    assert_eq!(drained.lock().unwrap().as_slice(), ["response", "data", "finished"]);
+}
+
+/// Review (perf/network C6): `localhost` (any case, with the root dot)
+/// connects whether the server listens only on `::1` or only on
+/// `127.0.0.1`, and many parallel connects to an unresolvable name all fail
+/// as a name-resolution error.
+#[test]
+fn review_localhost_reaches_either_loopback_family() {
+    fn serve_once(listener: TcpListener) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(3) {
+                let mut stream = stream.unwrap();
+                if read_request(&mut stream).is_some() {
+                    respond(&mut stream, "200 OK", &[("connection", "close".into())], b"ok");
+                }
+            }
+        })
+    }
+    for bind in ["[::1]:0", "127.0.0.1:0"] {
+        let Ok(listener) = TcpListener::bind(bind) else {
+            eprintln!("skip {bind}: cannot bind");
+            continue;
+        };
+        let port = listener.local_addr().unwrap().port();
+        let server = serve_once(listener);
+        let c = NetClient::new(NetConfig::default()).unwrap();
+        for host in ["localhost", "LOCALHOST", "localhost."] {
+            let u = Url::parse(&format!("http://{host}:{port}/")).unwrap();
+            let start = std::time::Instant::now();
+            let (k, _, body, err) = collect(&c, Request::get(u, Destination::Fetch));
+            assert_eq!(
+                (k.as_slice(), body.as_slice(), err.is_none()),
+                (&["response 200".to_string(), "finished".into()][..], &b"ok"[..], true),
+                "{bind} {host}: {err:?}"
+            );
+            assert!(start.elapsed() < Duration::from_secs(2), "{bind} {host}: {:?}", start.elapsed());
+        }
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn review_parallel_lookups_of_a_missing_host_all_fail_as_name_not_resolved() {
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let rxs: Vec<_> = (0..6)
+        .map(|i| {
+            let (tx, rx) = mpsc::channel();
+            let u = Url::parse(&format!("http://lp-review-nxdomain.invalid/{i}")).unwrap();
+            c.fetch(Request::get(u, Destination::Fetch), Box::new(move |ev| tx.send(ev).unwrap()));
+            rx
+        })
+        .collect();
+    for rx in rxs {
+        loop {
+            match rx.recv_timeout(Duration::from_secs(30)).expect("event") {
+                ResponseEvent::Failed(e) => {
+                    let text = format!("{e:?} {e}");
+                    assert!(matches!(e, NetError::NameNotResolved), "{text}");
+                    break;
+                }
+                ResponseEvent::Finished { .. } => panic!("resolved a .invalid host"),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Review (perf/network C2): an observer that drains whenever it is woken
+/// (as the CDP inbox does) must keep up with a large fast response. With the
+/// I/O thread's wakes deferred until it parks, a body that keeps the socket
+/// readable never lets it park: the queue reaches its cap and the
+/// subscription overflows (CDP then closes the connection with 1008).
+#[test]
+fn review_observer_keeps_up_with_a_large_fast_body() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    const SIZE: usize = 48 << 20;
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(1) {
+            let mut stream = stream.unwrap();
+            if read_request(&mut stream).is_some() {
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {SIZE}\r\nContent-Type: application/octet-stream\r\n\r\n"
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let chunk = vec![b'x'; 1 << 16];
+                for _ in 0..SIZE / chunk.len() {
+                    if stream.write_all(&chunk).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let slot: Arc<Mutex<Option<NetSubscription>>> = Arc::default();
+    let failure: Arc<Mutex<Option<String>>> = Arc::default();
+    let (sl, f) = (slot.clone(), failure.clone());
+    let sub = c.subscribe_with(
+        SubscriptionLimits::default(),
+        Some(Arc::new(move || {
+            if let Some(sub) = sl.lock().unwrap().as_ref() {
+                loop {
+                    match sub.try_recv() {
+                        Ok(_) => {}
+                        Err(SubscriptionError::Empty) => break,
+                        Err(e) => {
+                            *f.lock().unwrap() = Some(format!("{e:?}"));
+                            break;
+                        }
+                    }
+                }
+            }
+        })),
+    );
+    *slot.lock().unwrap() = Some(sub);
+    let u = Url::parse(&format!("http://127.0.0.1:{port}/big")).unwrap();
+    let (k, _, body, err) = collect(&c, Request::get(u, Destination::Fetch));
+    assert!(err.is_none() && body.len() == SIZE, "{k:?} {err:?}");
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(failure.lock().unwrap().take(), None, "the observer was overrun");
 }

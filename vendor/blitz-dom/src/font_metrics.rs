@@ -67,7 +67,7 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
         // let fb_language = locale.and_then(crate::swash_convert::locale_to_fontique);
         // query.set_fallbacks(fontique::FallbackKey::new(fb_script, fb_language.as_ref()));
 
-        let variations = stylo_to_parley::font_variations(&font_styles.font_variation_settings);
+        let variations = stylo_to_parley::font_variations(font_styles, font_size.px());
         // let features = self.rcx.features(style.font_features).unwrap_or(&[]);
 
         // fn name_of(font_ref: &skrifa::FontRef) -> String {
@@ -85,6 +85,10 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
             query.matches_with(|q_font: &QueryFont| {
                 use skrifa::MetadataProvider;
 
+                // A face is not used for code points outside its `unicode-range`.
+                if !q_font.unicode_range.contains(ch.into()) {
+                    return QueryStatus::Continue;
+                }
                 let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
                 else {
                     return QueryStatus::Continue;

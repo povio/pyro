@@ -17,7 +17,11 @@
 //
 // Against `lightningpanda serve --fork` every page gets a connection of its own:
 // the server forks it from a process that booted each profile once, so the
-// page starts booted and its process exits when the page closes.
+// page starts booted and its process exits when the page closes. Profiles
+// there are shared by name with every client of the server: one launcher
+// starts the server and registers profiles, and workers in other processes
+// `connect()` to `lp.wsEndpoint` and `adopt()` them (or `page({ as })` them
+// directly) instead of booting their own.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { resolveBinary } from './binary.js';
@@ -49,6 +53,7 @@ export type Profile = {
   /**
    * Starts from another profile's snapshot (`serve --fork` only): its page is
    * forked from that profile's, and only this profile's `setup` runs on it.
+   * The base may be a profile another client of the server registered.
    */
   base?: string;
 };
@@ -78,7 +83,13 @@ export class RunError extends Error {
 const storageScript = (entries: Record<string, string>) =>
   `(() => { try { const s = window.localStorage; for (const [k, v] of Object.entries(${JSON.stringify(entries)})) s.setItem(k, v); } catch {} })();`;
 
-type ProfileEntry = { ids: number[] | null; profile: Profile; scripts: string[] };
+type ProfileEntry = {
+  ids: number[] | null;
+  profile: Profile;
+  scripts: string[];
+  /** Shared profiles: the registered definition, to tell a changed one. */
+  definition?: string;
+};
 
 /** One CDP connection: one browser thread, with its own page pools and screenshot baselines. */
 type Conn = {
@@ -105,6 +116,12 @@ export class Lightningpanda {
   private turn = 0;
   /** `serve --fork`: one connection (a forked process) per page. */
   private fork = false;
+  /**
+   * The server keeps profiles by name for all its clients (`serve --fork`):
+   * this client holds the ones it registers or adopts until it releases
+   * them or disconnects.
+   */
+  private shared = false;
   /** Pages taken from a pool, and pages booted on demand because none was waiting. */
   readonly stats = { prepared: 0, preparedBooting: 0, fresh: 0 };
 
@@ -114,11 +131,12 @@ export class Lightningpanda {
     private child?: ChildProcess,
   ) {}
 
-  /** Asks the server whether it forks connections (`serve --fork`). */
+  /** Asks the server whether it forks connections (`serve --fork`) and shares profiles. */
   private async detect(): Promise<this> {
     try {
-      const { fork } = await this.cdp.send('Lightningpanda.capabilities');
+      const { fork, sharedProfiles } = await this.cdp.send('Lightningpanda.capabilities');
       this.fork = fork === true;
+      this.shared = sharedProfiles === true;
     } catch (e) {
       if (!(e instanceof CdpError)) throw e; // an older server: no fork mode
     }
@@ -130,6 +148,14 @@ export class Lightningpanda {
     return this.conns[0].cdp;
   }
 
+  /**
+   * The server's CDP endpoint: other processes `Lightningpanda.connect()` to
+   * it and share its profiles (`serve --fork`).
+   */
+  get wsEndpoint(): string {
+    return this.wsUrl;
+  }
+
   static async connect(wsUrl: string, opts: ConnectOptions = {}): Promise<Lightningpanda> {
     return new Lightningpanda(wsUrl, await openConns(wsUrl, opts)).detect();
   }
@@ -137,13 +163,18 @@ export class Lightningpanda {
   /**
    * Starts `lightningpanda serve` on a free port and connects to it. The binary
    * is `bin`, else `$LIGHTNINGPANDA_BIN`, else the bundled binary for this
-   * platform (or the sibling binary in a legacy release archive).
+   * platform (or the sibling binary in a legacy release archive). The server
+   * exits with this process, however it ends (`close()` ends it sooner).
    */
   static async launch(opts: ConnectOptions & { bin?: string; args?: string[] } = {}): Promise<Lightningpanda> {
     const port = await freePort();
     const child = spawn(opts.bin ?? resolveBinary(), ['serve', '--host', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])], {
       stdio: ['ignore', 'ignore', 'inherit'],
       detached: process.platform !== 'win32',
+      // `serve --parent-pid`: a runner may stop this process without running
+      // its exit handlers (bun test --parallel workers), and the browser's
+      // process group would outlive it.
+      env: { ...process.env, LIGHTNINGPANDA_PARENT_PID: String(process.pid) },
     });
     let spawnError: Error | undefined;
     child.once('error', (error) => { spawnError = error; });
@@ -170,12 +201,43 @@ export class Lightningpanda {
     return result;
   }
 
-  /** Declares a kind of page tests ask for by name (`lp.page({ as: name })`). */
+  /**
+   * Declares a kind of page tests ask for by name (`lp.page({ as: name })`).
+   *
+   * Against `serve --fork` the name is shared by every client of the server:
+   * when another client registered the same definition under it, this one
+   * adopts that profile (nothing boots again); a different definition is
+   * refused while another client holds the name. Declaring a name again
+   * with a different definition replaces this client's own.
+   */
   async profile(name: string, profile: Profile): Promise<void> {
     return this.updateProfiles(async () => {
-      const base = profile.base === undefined ? undefined : this.profiles.get(profile.base)?.ids?.[0];
+      const base = profile.base === undefined ? undefined : (await this.resolveLocked(profile.base))?.ids?.[0];
       if (profile.base !== undefined && base === undefined) throw new Error(`no prepared profile ${profile.base} to start from`);
       const scripts = [...(profile.localStorage ? [storageScript(profile.localStorage)] : []), ...(profile.initScripts ?? [])];
+      const params = {
+        url: profile.url,
+        initScripts: scripts,
+        ...(profile.viewport ? { viewport: profile.viewport } : {}),
+        pool: profile.pool ?? 2,
+        ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
+        ...(base !== undefined ? { base } : {}),
+      };
+      const local = this.profiles.get(name);
+      if (this.shared && profile.prepare !== false) {
+        // The template keeps one page per profile: the pool does not matter there.
+        const definition = JSON.stringify({ ...params, pool: undefined });
+        if (local?.definition === definition) return;
+        if (local?.ids) await this.cdp.send('Lightningpanda.unregisterPreparedPage', { name });
+        this.profiles.delete(name);
+        const { profileId } = await this.cdp.send('Lightningpanda.registerPreparedPage', { name, ...params });
+        this.profiles.set(name, { ids: [profileId], profile, scripts, definition });
+        return;
+      }
+      if (local?.definition !== undefined) {
+        await this.cdp.send('Lightningpanda.unregisterPreparedPage', { name });
+        this.profiles.delete(name);
+      }
       if (profile.prepare === false) {
         this.profiles.set(name, { ids: null, profile, scripts });
         return;
@@ -184,14 +246,7 @@ export class Lightningpanda {
       const conns = this.fork ? this.conns.slice(0, 1) : this.conns;
       const ids = await Promise.all(
         conns.map(async (c) => {
-          const { profileId } = await c.cdp.send('Lightningpanda.registerPreparedPage', {
-            url: profile.url,
-            initScripts: scripts,
-            ...(profile.viewport ? { viewport: profile.viewport } : {}),
-            pool: profile.pool ?? 2,
-            ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
-            ...(base !== undefined ? { base } : {}),
-          });
+          const { profileId } = await c.cdp.send('Lightningpanda.registerPreparedPage', params);
           return profileId as number;
         }),
       );
@@ -199,11 +254,58 @@ export class Lightningpanda {
     });
   }
 
-  /** Releases one name, retiring shared native snapshots only after their last alias. Acquired pages remain independent. */
+  /**
+   * Holds the profile another client of this server registered as `name`
+   * (`serve --fork`), so that `page({ as: name })` and `base: name` work
+   * here too: no boot, the pages fork from the server's snapshot. `page()`
+   * and `profile()` adopt a name they do not know by themselves; the server
+   * keeps a profile while some client holds it (until it releases it with
+   * `releaseProfile` or disconnects) or another profile derives from it.
+   */
+  async adopt(name: string): Promise<void> {
+    await this.updateProfiles(async () => {
+      if (!(await this.resolveLocked(name))) throw new Error(`no profile ${name}: adopting a profile needs lightningpanda serve --fork`);
+    });
+  }
+
+  /** This client's profile `name`, adopting the server's when it does not have one. */
+  private async resolveLocked(name: string): Promise<ProfileEntry | undefined> {
+    const local = this.profiles.get(name);
+    if (local || !this.shared) return local;
+    let r: any;
+    try {
+      r = await this.cdp.send('Lightningpanda.adoptPreparedPage', { name });
+    } catch (e) {
+      if (e instanceof CdpError && e.message.endsWith(`: no profile ${name}`)) {
+        throw new Error(`no profile ${name} on this server: declare it with lp.profile()`);
+      }
+      throw e;
+    }
+    const profile: Profile = {
+      url: r.url,
+      initScripts: r.initScripts ?? [],
+      ...(r.viewport ? { viewport: r.viewport } : {}),
+    };
+    const entry: ProfileEntry = { ids: [r.profileId], profile, scripts: r.initScripts ?? [], definition: '' };
+    this.profiles.set(name, entry);
+    return entry;
+  }
+
+  /**
+   * Releases one name. Against `serve --fork` this drops this client's hold:
+   * the server retires the profile once no client holds it and no other
+   * profile derives from it. Otherwise shared native snapshots are retired
+   * after their last alias. Acquired pages remain independent.
+   */
   async releaseProfile(name: string): Promise<void> {
     return this.updateProfiles(async () => {
       const entry = this.profiles.get(name);
       if (!entry) return;
+      if (entry.definition !== undefined) {
+        await this.cdp.send('Lightningpanda.unregisterPreparedPage', { name });
+        this.profiles.delete(name);
+        return;
+      }
       if (entry.ids) {
         const conns = this.fork ? this.conns.slice(0, 1) : this.conns;
         await Promise.all(conns.map(async (conn, i) => {
@@ -218,7 +320,7 @@ export class Lightningpanda {
 
   /** Waits until every connection's pool of profile `name` is fully booted. */
   async warm(name: string, timeoutMs = 5_000): Promise<void> {
-    const entry = this.profiles.get(name);
+    const entry = this.profiles.get(name) ?? (this.shared ? await this.updateProfiles(() => this.resolveLocked(name)) : undefined);
     if (!entry?.ids) return;
     const deadline = Date.now() + timeoutMs;
     if (this.fork) {
@@ -266,8 +368,11 @@ export class Lightningpanda {
    * page then boots fresh instead of coming from the pool.
    */
   async page(opts: { as?: string; route?: string; url?: string; initScripts?: string[] } = {}): Promise<Page> {
-    const entry = opts.as === undefined ? undefined : this.profiles.get(opts.as);
-    if (opts.as !== undefined && !entry) throw new Error(`no profile ${opts.as}: declare it with lp.profile()`);
+    const as = opts.as;
+    let entry = as === undefined ? undefined : this.profiles.get(as);
+    // Another client's profile on this server: adopt it.
+    if (as !== undefined && !entry && this.shared) entry = await this.updateProfiles(() => this.resolveLocked(as));
+    if (as !== undefined && !entry) throw new Error(`no profile ${as}: declare it with lp.profile()`);
     if (!this.fork) {
       const index = this.pick();
       return this.openPage(this.conns[index], index, entry, opts);

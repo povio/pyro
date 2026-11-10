@@ -4,6 +4,7 @@
 //! whole document's boxes and words for queries that need them all (hit
 //! testing, text ranges, carets, scroll anchoring).
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -75,18 +76,39 @@ pub struct ExternalSticky {
     pub limit: Option<(f64, f64, f64, f64)>,
 }
 
-/// The whole document as the external engine laid it out, keyed by
-/// [`crate::snapshot::render_key`].
+/// The whole document's boxes as the external engine laid it out, keyed
+/// by [`crate::snapshot::render_key`] (the words: [`GeometrySource::text_words`]).
 #[derive(Clone, Debug, Default)]
 pub struct ExternalGeometry {
     /// Element boxes in tree order.
     pub boxes: Vec<(u64, ExternalBox)>,
-    /// Words of text nodes, in layout order.
-    pub words: Vec<(u64, ExternalWord)>,
     pub sticky: Vec<(u64, ExternalSticky)>,
     /// Scroll size (at least the viewport).
     pub document_width: f64,
     pub document_height: f64,
+}
+
+/// A viewport point to hit-test ([`GeometrySource::hit_candidates`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitProbe {
+    pub x: f64,
+    pub y: f64,
+    /// Only `y` counts (WebDriver's vertical hit test).
+    pub ignore_x: bool,
+    /// The window scroll offset: a box outside every `position: fixed` box
+    /// lies at the point plus it in document coordinates.
+    pub window_scroll: (f64, f64),
+}
+
+/// One element [`GeometrySource::hit_candidates`] reports: a candidate
+/// (`hit`: its box may hold the point) or an ancestor of one, with its box
+/// and its place in tree order among the reported elements.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HitVisit {
+    pub key: u64,
+    pub order: u32,
+    pub bounds: ExternalBox,
+    pub hit: bool,
 }
 
 /// An element's CSS boxes as quads (CDP `DOM.getBoxModel` and
@@ -130,8 +152,42 @@ pub trait GeometrySource {
     fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {
         None
     }
-    /// The whole document as of the last sync.
+    /// The whole document's boxes as of the last sync.
     fn geometry(&self) -> Option<ExternalGeometry>;
+    /// Every word of every text node as of the last sync, in layout order
+    /// (`None`: the engine reports none).
+    fn text_words(&self) -> Option<Vec<(u64, ExternalWord)>> {
+        None
+    }
+    /// [`GeometrySource::text_words`] for the text nodes below the element
+    /// `key` (more words may come; the caller filters), as of the last sync,
+    /// in the same order (`None`: the engine reads no part of the document
+    /// alone, or `key` is not one of its nodes).
+    fn subtree_words(&self, _key: u64) -> Option<Vec<(u64, ExternalWord)>> {
+        None
+    }
+    /// The `position: sticky` elements as of the last sync, with their
+    /// inputs: [`ExternalGeometry::sticky`] without the boxes.
+    fn sticky_elements(&self) -> Vec<(u64, ExternalSticky)> {
+        self.geometry().map(|g| g.sticky).unwrap_or_default()
+    }
+    /// The elements whose box may hold `probe` and their ancestors, in
+    /// tree order, from a descent of the engine's tree that skips the
+    /// subtrees that cannot hold it (`None`: the engine has no such
+    /// descent, and the whole document's boxes are tested). `shifted`: the
+    /// keys of the elements this document moves from where the engine laid
+    /// them out (scrolled containers, sticky boxes); `offset`: how far any
+    /// element's box is moved (document px added to the point), consulted
+    /// when `shifted` is not empty. The candidates are a superset: the
+    /// caller tests each box itself.
+    fn hit_candidates(
+        &self,
+        _probe: &HitProbe,
+        _offset: &dyn Fn(u64) -> (f64, f64),
+        _shifted: &[u64],
+    ) -> Option<Vec<HitVisit>> {
+        None
+    }
     /// The document's scroll size as of the last sync.
     fn document_size(&self) -> Option<(f64, f64)>;
     /// Whether any element is `position: sticky` (as of the last sync).
@@ -144,6 +200,11 @@ pub trait GeometrySource {
     fn active(&self) -> bool {
         true
     }
+    /// Whether a style rule of the engine's sheets depends on `:active`
+    /// (as of the last sync); true when the engine cannot tell.
+    fn styles_depend_on_active(&self) -> bool {
+        true
+    }
     /// Whether the engine must sync again although the document did not
     /// change (a sub-resource it laid out without arrived since).
     fn stale(&self) -> bool {
@@ -153,6 +214,40 @@ pub trait GeometrySource {
     /// has none for it, and the document's own cascade answers).
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
+    }
+    /// Whether the element is outside every `display: none` subtree of the
+    /// rendered tree, from the styles the engine keeps as of the last style
+    /// sync (`None`: the engine cannot tell, and the derived
+    /// [`crate::style::ComputedStyle`] answers).
+    fn element_displayed(&self, _key: u64) -> Option<bool> {
+        None
+    }
+    /// The elements whose style was replaced since the last call, by key,
+    /// with the style before and after; recorded while the engine's
+    /// [`crate::style::StyleEngine::track_style_changes`] is on.
+    fn take_style_changes(
+        &self,
+    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    {
+        Vec::new()
+    }
+    /// The computed style of one element's pseudo-element `pseudo`
+    /// (`getComputedStyle(el, pseudo)`) as of the last sync; with
+    /// `generated_only`, only a stored style of a pseudo-element its rules
+    /// generate.
+    fn element_pseudo_style(
+        &self,
+        _key: u64,
+        _pseudo: &style::selector_parser::PseudoElement,
+        _generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        None
+    }
+    /// `false` when [`Self::element_pseudo_style`] with `generated_only`
+    /// answers `None` for `::before` / `::after` of every element as of the
+    /// last sync (no element is styled with a generated one).
+    fn may_have_generated_before_after(&self) -> bool {
+        true
     }
 }
 
@@ -226,18 +321,78 @@ impl TextRun {
     }
 }
 
-/// The whole document's geometry.
+/// The whole document's boxes (or, for one hit test, the boxes of the
+/// elements it may hit and of their ancestors: see
+/// [`crate::layout::Layout::element_from_point`]).
 #[derive(Clone, Debug, Default)]
 pub struct LayoutResult {
     pub boxes: FxHashMap<NodeId, LayoutBox>,
-    /// Text nodes: the union of their words, and whether inside a fixed box.
-    pub texts: FxHashMap<NodeId, (Rect, bool)>,
-    /// Every word, in layout order.
-    pub text_runs: Vec<TextRun>,
     /// Document scroll size (at least the viewport).
     pub document_width: f64,
     pub document_height: f64,
     pub sticky: FxHashMap<NodeId, ExternalSticky>,
+    /// Hit testing's derived data, filled per box on first use: it depends
+    /// only on the tree, the styles and the boxes, which this result is
+    /// valid for (a new result is read after any of them change).
+    pub(crate) hit: RefCell<HitTestData>,
+}
+
+/// The whole document's words, for text ranges, carets and selection.
+#[derive(Clone, Debug, Default)]
+pub struct TextResult {
+    /// Text nodes: the union of their words, and whether inside a fixed box.
+    pub texts: FxHashMap<NodeId, (Rect, bool)>,
+    /// Every word, in layout order.
+    pub text_runs: Vec<TextRun>,
+}
+
+impl TextResult {
+    pub fn from_words(dom: &Dom, words: Vec<(u64, ExternalWord)>) -> TextResult {
+        let mut out = TextResult::default();
+        let mut seen = FxHashSet::default();
+        for (key, w) in words {
+            let Some(node) = node_of(dom, key) else { continue };
+            let (Some(first), Some(last)) = (w.edges.first(), w.edges.last()) else { continue };
+            let rect = Rect { x: w.x, y: w.y, width: w.width, height: w.height };
+            let (start, end) = (first.0.min(last.0), first.0.max(last.0));
+            let union = out.texts.entry(node).or_insert((rect, w.fixed));
+            if seen.insert(node) {
+                *union = (rect, w.fixed);
+            } else {
+                let r = union.0;
+                let (x0, y0) = (r.x.min(rect.x), r.y.min(rect.y));
+                let (x1, y1) = ((r.x + r.width).max(rect.x + rect.width), (r.y + r.height).max(rect.y + rect.height));
+                union.0 = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+            }
+            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, edges: w.edges.into() });
+        }
+        out
+    }
+}
+
+/// One stacking level of a paint key: (layer, z-index, box order).
+pub(crate) type PaintEntry = (u8, i32, u32);
+
+/// The paint-order state after an element's ancestor chain (itself
+/// included), from which its own and its descendants' paint keys follow.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PaintChain {
+    /// The stacking contexts entered, outermost first.
+    pub(crate) contexts: Rc<[PaintEntry]>,
+    /// The z-auto positioned box whose layer the content belongs to.
+    pub(crate) positioned_layer: Option<PaintEntry>,
+    /// The last box of the chain makes its own layer.
+    pub(crate) own_layer: bool,
+}
+
+/// Per-box hit-testing data of one [`LayoutResult`].
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HitTestData {
+    pub(crate) chains: FxHashMap<NodeId, PaintChain>,
+    pub(crate) keys: FxHashMap<NodeId, Rc<[PaintEntry]>>,
+    /// The overflow clips that apply to an element: (ancestor, its clipped
+    /// axes), nearest first.
+    pub(crate) clips: FxHashMap<NodeId, Rc<[(NodeId, crate::style::ScrollAxes)]>>,
 }
 
 /// The node `key` names, when it is still in `dom`.
@@ -260,34 +415,8 @@ impl LayoutResult {
         // Tree order: an element's ancestors are in before it.
         for (i, (key, b)) in g.boxes.iter().enumerate() {
             if let Some(el) = node_of(dom, *key) {
-                let mut b = LayoutBox::from_external(b, i as u32 + 1);
-                let mut cur = dom.parent_element(el).ok().flatten();
-                while let Some(p) = cur {
-                    if let Some(pb) = out.boxes.get(&p) {
-                        b.in_positioned |= pb.in_positioned;
-                        break;
-                    }
-                    cur = dom.parent_element(p).ok().flatten();
-                }
-                out.boxes.insert(el, b);
+                out.insert_box(dom, el, LayoutBox::from_external(b, i as u32 + 1));
             }
-        }
-        let mut seen = FxHashSet::default();
-        for (key, w) in g.words {
-            let Some(node) = node_of(dom, key) else { continue };
-            let (Some(first), Some(last)) = (w.edges.first(), w.edges.last()) else { continue };
-            let rect = Rect { x: w.x, y: w.y, width: w.width, height: w.height };
-            let (start, end) = (first.0.min(last.0), first.0.max(last.0));
-            let union = out.texts.entry(node).or_insert((rect, w.fixed));
-            if seen.insert(node) {
-                *union = (rect, w.fixed);
-            } else {
-                let r = union.0;
-                let (x0, y0) = (r.x.min(rect.x), r.y.min(rect.y));
-                let (x1, y1) = ((r.x + r.width).max(rect.x + rect.width), (r.y + r.height).max(rect.y + rect.height));
-                union.0 = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
-            }
-            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, edges: w.edges.into() });
         }
         for (key, s) in g.sticky {
             if let Some(el) = node_of(dom, key) {
@@ -295,5 +424,20 @@ impl LayoutResult {
             }
         }
         out
+    }
+
+    /// Adds `el`'s box, inheriting the positioned layer from the nearest
+    /// ancestor with a box (the ancestors are added before their
+    /// descendants).
+    pub(crate) fn insert_box(&mut self, dom: &Dom, el: NodeId, mut b: LayoutBox) {
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(p) = cur {
+            if let Some(pb) = self.boxes.get(&p) {
+                b.in_positioned |= pb.in_positioned;
+                break;
+            }
+            cur = dom.parent_element(p).ok().flatten();
+        }
+        self.boxes.insert(el, b);
     }
 }

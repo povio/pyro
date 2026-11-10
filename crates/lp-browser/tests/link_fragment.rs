@@ -60,7 +60,10 @@ fn a_link_elsewhere_still_loads_a_document() {
     let (mut t, page, _loader) = load(PAGE);
     eval(&t, page, "document.getElementById('away').click()");
     settle(&mut t);
-    assert_eq!(eval(&t, page, "location.href + ' ' + typeof marker + ' ' + !!document.getElementById('other')"), "http://site.test/other undefined true");
+    assert_eq!(
+        eval(&t, page, "location.href + ' ' + typeof marker + ' ' + !!document.getElementById('other')"),
+        "http://site.test/other undefined true"
+    );
 }
 
 #[test]

@@ -885,6 +885,25 @@ fn grid_parity_tailwind_columns() {
 }
 
 #[test]
+fn grid_fr_columns_with_min_width_0_items_ignore_their_content() {
+    // Column sizing reads nothing of a `min-width: 0` item in an `fr` column, so Taffy skips its
+    // min-content re-check after row sizing (vendor/taffy README); the columns stay an even split
+    // however wide the content is, and an `auto` column beside them still takes its content's width.
+    let word = "x".repeat(80);
+    let html = format!(
+        "<!doctype html><body style=\"margin:0\"><div style=\"display:grid;grid-template-columns:1fr 1fr;width:400px\"><div id=a style=\"min-width:0\">{word}</div><div id=b style=\"min-width:0\">short</div></div><div style=\"display:grid;grid-template-columns:auto 1fr;width:400px\"><div id=c><span id=cs>auto</span></div><div id=d style=\"min-width:0\">{word}</div></div></body>"
+    );
+    let p = page(&html);
+    let result = p.layout.layout_result(&p.dom);
+    let rect = |id: &str| result.get(p.id(id)).unwrap().rect;
+    assert_eq!((rect("a").x, rect("a").width), (0.0, 200.0));
+    assert_eq!((rect("b").x, rect("b").width), (200.0, 200.0));
+    let (c, cs, d) = (rect("c"), rect("cs"), rect("d"));
+    assert!((c.width - cs.width).abs() < 0.01, "auto column {c:?} is its content {cs:?}");
+    assert!((d.x - c.width).abs() < 0.01 && (c.width + d.width - 400.0).abs() < 0.01, "{c:?} {d:?}");
+}
+
+#[test]
 fn grid_parity_calendar_fr_rows_with_min_height() {
     let cells = |n: usize| "<div></div>".repeat(n);
     let html = format!(
@@ -3655,7 +3674,7 @@ fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     let (tp, tq) = (p.dom.first_child(p.id("p")).unwrap().unwrap(), p.dom.first_child(p.id("q")).unwrap().unwrap());
     let r = p.layout.text_rect(&p.dom, tp).unwrap();
     // The engine's advances: the x of each character boundary of "abcdefghij".
-    let result = p.layout.layout_result(&p.dom);
+    let result = p.layout.text_result(&p.dom);
     let edges = result.text_runs.iter().find(|t| t.node == tp).unwrap().edges().to_vec();
     let w = |s: &str| {
         let at = |o: u32| edges.iter().find(|e| e.0 == o).unwrap().1;
@@ -3935,7 +3954,25 @@ fn text_clip_facts_fixed_absolute_and_contents_wrappers() {
 
 #[test]
 fn text_clip_facts_deep_nesting_without_recursion() {
-    let depth = 400;
+    // On a test thread's default 2 MB stack: layout itself recurses once per
+    // level (Taffy), about 2.4 KB here (5.3 KB before its per-level frames
+    // were trimmed, which overflowed at about 380 levels).
+    deep_nesting(400);
+}
+
+#[test]
+fn deep_nesting_lays_out_on_a_browser_thread_stack() {
+    // A browser thread's 8 MB stack (lp-cdp `BROWSER_STACK_BYTES`, a main
+    // thread's): 2,000 nested blocks lay out, in debug builds too.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| deep_nesting(2000))
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
+}
+
+fn deep_nesting(depth: usize) {
     let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"padding-left:1px\">")).collect();
     let close = "</div>".repeat(depth);
     let html = format!(
@@ -3944,6 +3981,7 @@ fn text_clip_facts_deep_nesting_without_recursion() {
     let p = page(&html);
     assert!(sw(&p, "n0") > 0.0);
     assert!(sw(&p, &format!("n{}", depth - 1)) > 0.0);
+    assert_eq!(p.layout.bounding_client_rect(&p.dom, p.id("leaf")).x, depth as f64 + 8.0);
 }
 
 #[test]
@@ -4635,4 +4673,89 @@ fn table_cell_declared_height_is_minimum() {
     );
     assert_eq!(p.metrics("short")[3], 26.0);
     assert!(p.metrics("footer")[3] >= 68.0, "footer {:?}, content {:?}", p.metrics("footer"), p.metrics("content"));
+}
+
+// review (misc2): the frame trimming covers block layout; the other algorithms recurse through
+// larger frames. On a browser thread's 8 MB (release): block and flow-root about 3,000 levels,
+// flex about 2,000, grid and inline-block about 1,200-1,500. Each kind lays out 600 levels on
+// 8 MB in a debug build.
+#[test]
+fn review_misc2_deep_nesting_of_each_algorithm_on_a_browser_thread_stack() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            for kind in [
+                "display:flex",
+                "display:flex;flex-direction:column",
+                "display:grid",
+                "display:inline-block",
+                "display:flow-root",
+                "position:relative",
+            ] {
+                let depth = 600;
+                let open: String =
+                    (0..depth).map(|i| format!("<div id=n{i} style=\"{kind};padding-left:1px\">")).collect();
+                let html = format!(
+                    "<body style=\"margin:8px\">{open}<span id=leaf style=\"white-space:nowrap\">deep</span>{}",
+                    "</div>".repeat(depth)
+                );
+                let p = page(&html);
+                assert_eq!(p.layout.bounding_client_rect(&p.dom, p.id("leaf")).x, depth as f64 + 8.0, "{kind}");
+            }
+        })
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
+}
+
+#[test]
+fn deep_nesting_of_each_algorithm_lays_out_on_any_stack() {
+    // Layout grows its stack on demand (blitz-dom `util::ensure_stack`): 5,000 levels of each
+    // algorithm lay out on a 256 KB thread, which holds about 100 levels of nested blocks.
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            for kind in [
+                "display:block",
+                "display:flex",
+                "display:flex;flex-direction:column",
+                "display:grid",
+                "display:inline-block",
+                "display:table",
+                "display:flow-root",
+                "position:relative",
+                "writing-mode:vertical-lr",
+                "writing-mode:vertical-rl",
+            ] {
+                let depth = 5000;
+                let vertical = kind.starts_with("writing-mode");
+                let pad = if vertical { "padding-top" } else { "padding-left" };
+                let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"{kind};{pad}:1px\">")).collect();
+                let html = format!(
+                    "<body style=\"margin:8px\">{open}<span id=leaf style=\"white-space:nowrap\">deep</span>{}",
+                    "</div>".repeat(depth)
+                );
+                let p = page(&html);
+                // Each level moves the leaf 1px along its padding (widths run out long before).
+                let leaf = p.layout.bounding_client_rect(&p.dom, p.id("leaf"));
+                // (`display: table` boxes nested in each other place their content differently, as on
+                // 267ac8c5 at any depth: only that they lay out is checked for them.)
+                if kind != "display:table" {
+                    assert_eq!(if vertical { leaf.y } else { leaf.x }, depth as f64 + 8.0, "{kind}");
+                }
+                // The first hit test brings the hit bounds up to date (`ensure_hit_overflow`, a walk
+                // as deep as the tree), descends to the leaf and reads its computed style (an
+                // ancestor chain as long as the tree). Not for vertical trees: their physical
+                // geometry walks the containing-block chain per box, quadratic in depth (pre-existing).
+                if !vertical {
+                    let hit = p.layout.element_from_point(&p.dom, leaf.x + leaf.width / 2.0, leaf.y + leaf.height / 2.0);
+                    if kind != "display:table" {
+                        assert_eq!(hit, Some(p.id("leaf")), "{kind}: hit");
+                    }
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
 }

@@ -41,7 +41,7 @@ macro_rules! global_events {
     ($callback:ident!($($args:tt)*)) => {
         $callback!($($args)* [
             "abort", "auxclick", "beforeinput", "beforetoggle", "blur", "cancel", "canplay", "canplaythrough",
-            "change", "click", "close", "contextlost", "contextmenu", "contextrestored", "copy", "cuechange", "cut",
+            "change", "click", "close", "command", "contextlost", "contextmenu", "contextrestored", "copy", "cuechange", "cut",
             "dblclick", "drag", "dragend", "dragenter", "dragleave", "dragover", "dragstart", "drop",
             "durationchange", "emptied", "ended", "error", "focus", "formdata", "input", "invalid", "keydown",
             "keypress", "keyup", "load", "loadeddata", "loadedmetadata", "loadstart", "mousedown", "mouseenter",
@@ -97,9 +97,14 @@ pub(crate) const GLOBAL: &[&str] = global_events!(event_list!());
 pub(crate) const WINDOW: &[&str] = window_events!(event_list!());
 pub(crate) const DOCUMENT: &[&str] = document_events!(event_list!());
 
-/// Whether `on<name>` is a known event handler content attribute.
+/// The event type of an event handler content attribute named `local`
+/// (`onclick`), compared ASCII case-insensitively.
 pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
-    let ty = local.strip_prefix("on")?;
+    if local.len() < 3 || !local.as_bytes()[..2].eq_ignore_ascii_case(b"on") {
+        return None;
+    }
+    // The first two bytes are ASCII: a char boundary follows them.
+    let ty = &local[2..];
     GLOBAL.iter().chain(WINDOW).chain(DOCUMENT).find(|t| t.eq_ignore_ascii_case(ty)).copied()
 }
 
@@ -148,7 +153,7 @@ pub(crate) fn content_attribute_changed(
     }
     let handler: Value<'_> = match body {
         Some(body) => {
-            let ctor = s.global().get("Function")?;
+            let ctor = s.global().get_atom("Function")?;
             // HTML "getting the current value of the event handler": the
             // document, form owner and element are on the scope chain.
             let scoped =
@@ -210,7 +215,7 @@ pub(crate) fn define_touch_handlers(s: &Scope<'_>) -> JsResult<()> {
         let key = page.window_target().ok_or_else(|| lp_js::JsError::Type("Illegal invocation".into()))?;
         Ok(crate::target::EventTargetData::window(&page, key))
     }
-    let define = s.global().get("Object")?.as_object().map(|o| o.get("defineProperty")).transpose()?;
+    let define = s.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?;
     let define =
         define.and_then(|d| d.as_object()).ok_or_else(|| lp_js::JsError::Type("Object.defineProperty".into()))?;
     for ty in ["touchstart", "touchend", "touchmove", "touchcancel"] {
@@ -220,10 +225,10 @@ pub(crate) fn define_touch_handlers(s: &Scope<'_>) -> JsResult<()> {
             set_event_handler(s, &window_target(s)?, ty, a.get(0))?;
             Ok(s.undefined())
         })?;
-        desc.set("get", get.value())?;
-        desc.set("set", set.value())?;
-        desc.set("enumerable", s.boolean(true))?;
-        desc.set("configurable", s.boolean(true))?;
+        desc.set_atom("get", get.value())?;
+        desc.set_atom("set", set.value())?;
+        desc.set_atom("enumerable", s.boolean(true))?;
+        desc.set_atom("configurable", s.boolean(true))?;
         define.call(None, &[s.global().value(), s.string(&format!("on{ty}")), desc.value()])?;
     }
     Ok(())

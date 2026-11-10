@@ -12,10 +12,13 @@ mod focus;
 mod frames;
 mod images;
 mod loader;
+mod media;
 mod nav;
 mod network_idle;
 mod preload;
 mod quiet;
+mod refresh;
+mod speculate;
 mod stylesheets;
 mod viewport;
 mod window;
@@ -26,7 +29,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-pub use frames::FrameInfo;
+pub use frames::{realm_page, FrameInfo};
 use frames::{FrameHost, FrameKey};
 pub use loader::{
     FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
@@ -90,6 +93,18 @@ pub enum HistoryHandling {
     Traverse,
     /// Reload of the current entry, which keeps its id and state.
     Reload,
+}
+
+/// The document a commit replaces, as far as freeing it goes
+/// (`Browser::commit_document`).
+#[derive(Clone, Copy)]
+enum Replaced {
+    /// None, or the initial about:blank one as it was made.
+    Nothing,
+    /// The initial about:blank one, given content since.
+    FilledBlank,
+    /// A loaded one.
+    Loaded,
 }
 
 #[derive(Debug, Clone)]
@@ -254,10 +269,11 @@ pub enum PageEvent {
 pub trait PageObserver {
     fn on_page_event(&self, page: PageId, event: &PageEvent);
 
-    /// Transport progress of fetch/XHR request `request` became visible to
+    /// Transport progress of fetch/XHR or cached resource `request` became visible to
     /// the script of the document loaded by `loader`, before any script it
     /// causes runs (`lp_webapi::PageHooks::network_delivery`). `frontier` is
-    /// cumulative for the request. Request ids are per browser context (each
+    /// cumulative for the request. A zero frontier records the request announcement
+    /// without publishing its response. Request ids are per browser context (each
     /// context has its own `lp_net::NetClient`), so `context` is part of the
     /// identity; `loader` tells an old document's requests from its
     /// successor's. Called synchronously on the browser thread: implementations
@@ -409,10 +425,14 @@ pub struct DocumentState {
     pub nav: Rc<PageNav>,
     pub(crate) pending_loader: Option<LoaderId>,
     pub(crate) pending_cancel: Option<ResourceCancellation>,
+    /// The loader and URL of `pending_loader` when the frame's scripts
+    /// started it, which `document.open()` stops (HTML "stop loading").
+    pub(crate) pending_script: Option<(LoaderId, String)>,
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
     pub(crate) preloads: preload::Preloads,
+    pub(crate) refresh: refresh::Refresh,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
 }
 
@@ -448,6 +468,7 @@ pub struct Page {
     max_touch_points: u32,
     extra_http_headers: lp_net::http::HeaderMap,
     cache_disabled: bool,
+    bypass_service_worker: bool,
     request_defaults: lp_net::RequestDefaults,
     viewport: lp_dom::media::Viewport,
     pending_resize: Option<LoaderId>,
@@ -540,7 +561,8 @@ impl Browser {
         }
         let (Some(bindings), nav) = (state.main_frame.page_dom.clone(), state.nav.clone()) else { return };
         drop(state);
-        let has_body = bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
+        let has_body =
+            bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
         if has_body && !bindings.render_blocked() {
             nav.note_first_paint();
         }
@@ -600,14 +622,19 @@ impl BrowserThread {
         let engine = Engine::new()?;
         lp_webapi::register(&engine);
         engine.register::<frames::CrossWindow>();
+        engine.register::<frames::CrossLocation>();
         engine.register::<Window>();
         engine.register::<Location>();
         engine.register::<History>();
         engine.register::<Performance>();
-        engine.register::<nav::PerformanceEntry>();
-        engine.register::<nav::PerformancePaintTiming>();
-        engine.register::<nav::PerformanceMark>();
-        engine.register::<nav::PerformanceMeasure>();
+        engine.register::<lp_webapi::performance::PerformanceEntry>();
+        engine.register::<lp_webapi::performance::PerformancePaintTiming>();
+        engine.register::<lp_webapi::performance::PerformanceMark>();
+        engine.register::<lp_webapi::performance::PerformanceMeasure>();
+        engine.register::<lp_webapi::performance::PerformanceResourceTiming>();
+        engine.register::<lp_webapi::performance::PerformanceNavigationTiming>();
+        engine.register::<nav::PerformanceTiming>();
+        engine.register::<nav::PerformanceNavigation>();
         let event_loop = EventLoop::new();
         // The system JavaScriptCore binds this VM's timers to this thread's
         // run loop; the loop services it at a bounded interval for the VM's
@@ -707,7 +734,8 @@ impl Browser {
             for page in &self.pages {
                 for info in self.frames(page.id) {
                     if let Some(frame) = self.frame(page.id, &info.id) {
-                        for realm in &frame.realms {
+                        // A deferred realm's setup reads the clock's state when it is made.
+                        for realm in frame.realms.iter().filter(|r| !r.realm.is_deferred()) {
                             realm.realm.scope()?.eval(
                                 clock::DATE_SCRIPT,
                                 Some("lightningpanda://internal/clock.js"),
@@ -904,6 +932,9 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: None,
+            initiator: None,
+            module: None,
+            part: None,
         };
         loader.fetch(self, request, done);
     }
@@ -938,6 +969,7 @@ impl Browser {
         let session_storage = frames.settings.borrow().session.clone();
         let init_scripts = self.contexts.iter().find(|c| c.id == context).unwrap().init_scripts.clone();
         frames.settings.borrow_mut().scripts = init_scripts.clone();
+        debug_assert!(self.pages.last().is_none_or(|last| last.id < id), "page ids increase");
         self.pages.push(Page {
             id,
             context,
@@ -949,11 +981,13 @@ impl Browser {
                 main_frame: frame,
                 pending_loader: None,
                 pending_cancel: None,
+                pending_script: None,
                 nav,
                 load: None,
                 stylesheets: Default::default(),
                 images: Default::default(),
                 preloads: Default::default(),
+                refresh: Default::default(),
                 _owner_pin: None,
             },
             session_storage,
@@ -963,6 +997,7 @@ impl Browser {
             max_touch_points: 0,
             extra_http_headers: Default::default(),
             cache_disabled: false,
+            bypass_service_worker: false,
             request_defaults: Default::default(),
             viewport: Default::default(),
             pending_resize: None,
@@ -1005,6 +1040,7 @@ impl Browser {
         p.main_frame.name = ticket.name().to_owned();
         if let Some((frames, origin)) = opener_state {
             *p.frames.opener.borrow_mut() = Some(frames);
+            *p.frames.popup.borrow_mut() = Some(ticket.clone());
             // The initial about:blank document is the opener's creation.
             if p.main_frame.url == "about:blank" {
                 p.main_frame.origin = origin.0.clone();
@@ -1036,12 +1072,20 @@ impl Browser {
         self.page(page)?.frames.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).map(|h| h.page)
     }
 
+    /// `pages` stays sorted by id: ids come from one increasing counter,
+    /// pages are only appended at creation and removal keeps the order.
+    fn page_index(&self, id: PageId) -> Option<usize> {
+        debug_assert!(self.pages.windows(2).all(|w| w[0].id < w[1].id), "pages sorted by id");
+        self.pages.binary_search_by_key(&id, |p| p.id).ok()
+    }
+
     pub fn page(&self, id: PageId) -> Option<&Page> {
-        self.pages.iter().find(|p| p.id == id)
+        self.page_index(id).map(|i| &self.pages[i])
     }
 
     pub(crate) fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
-        let page = self.pages.iter_mut().find(|p| p.id == id)?;
+        let index = self.page_index(id)?;
+        let page = &mut self.pages[index];
         page.root_dirty.set(true);
         Some(page)
     }
@@ -1059,14 +1103,14 @@ impl Browser {
             .as_ref()
             .map(lp_webapi::UserAgentOverride::request_defaults)
             .transpose()
-            .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?
+            .map_err(|e| JsError::type_error(format!("invalid user agent request defaults: {e}")))?
             .unwrap_or_default();
         // The user agent override owns none of the page's other request options.
         state.apply_request_options(&mut defaults);
         if let Some(bindings) = &state.main_frame.page_dom {
             bindings
                 .set_user_agent_override(value.clone())
-                .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?;
+                .map_err(|e| JsError::type_error(format!("invalid user agent request defaults: {e}")))?;
         }
         state.user_agent_override = value;
         state.request_defaults = defaults;
@@ -1117,6 +1161,19 @@ impl Browser {
         }
         state.cache_disabled = disabled;
         state.request_defaults.cache_disabled = disabled;
+        self.refresh_frame_settings(page);
+        true
+    }
+
+    /// Makes this page's fetch/XHR skip the controlling service worker
+    /// (`Network.setBypassServiceWorker`), in all its frames and across
+    /// navigation. Returns false if there is no such page.
+    pub fn set_bypass_service_worker(&mut self, page: PageId, bypass: bool) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        if let Some(bindings) = &state.main_frame.page_dom {
+            bindings.set_bypass_service_worker(bypass);
+        }
+        state.bypass_service_worker = bypass;
         self.refresh_frame_settings(page);
         true
     }
@@ -1173,7 +1230,9 @@ impl Browser {
             return false;
         }
         p.frames.settings.borrow_mut().bindings = p.bindings.clone();
-        for realm in self.page_realms(page) {
+        // A deferred realm defines nothing yet (`add_binding` makes it to
+        // define one): nothing to delete, and not worth making it for.
+        for realm in self.page_realms(page).iter().filter(|r| !r.realm.is_deferred()) {
             if let Ok(scope) = realm.realm.scope() {
                 let _ = scope.global().delete(name);
             }
@@ -1233,6 +1292,15 @@ impl Browser {
         if let Some(leaving) = self.doc(page).and_then(|doc| doc.main_frame.page_dom.clone()) {
             lp_webapi::lifecycle::before_unload(&leaving);
         }
+        // "The navigation must be a replace" when it leaves the initial
+        // about:blank document, decided as it starts: a document.open()
+        // before it commits does not make it a push.
+        let history = match history {
+            HistoryHandling::Push if self.doc(page).is_some_and(|doc| doc.nav.is_initial_blank()) => {
+                HistoryHandling::Replace
+            }
+            history => history,
+        };
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         // Invalidate the previous fetch even for blank or failed navigation.
         self.cancel_pending_document(page);
@@ -1257,7 +1325,7 @@ impl Browser {
         if opts.url != "about:blank" {
             let error = "net::ERR_NOT_IMPLEMENTED (no resource loader configured)".to_string();
             self.navigation_failed(page, &opts, loader_id, error);
-            return Err(JsError::Unsupported("navigation to non-blank URLs"));
+            return Err(JsError::Unsupported(&"navigation to non-blank URLs"));
         }
         self.commit_document(page, &opts, loader_id.clone(), "null", history)?;
         self.finish_blank_document(page);
@@ -1267,6 +1335,27 @@ impl Browser {
     /// Starts an ordinary navigation, adding a session-history entry on commit.
     pub fn navigate(&mut self, page: PageId, opts: NavigateOpts) -> Result<LoaderId, JsError> {
         self.navigate_with_history(page, opts, false)
+    }
+
+    /// HTML "unload a document and its descendants" for the active document
+    /// of `frame`: its child frames' documents first, then its own
+    /// (`lp_webapi::lifecycle::unload`). A frame tree without listeners
+    /// costs a walk over its frames.
+    fn unload_documents(&mut self, frame: FrameKey) {
+        let Some(host) = self.page(frame.page).map(|p| p.frames.clone()) else { return };
+        fn collect(b: &Browser, host: &frames::FrameHost, key: FrameKey, out: &mut Vec<Rc<lp_webapi::PageDom>>) {
+            for child in host.child_keys(key) {
+                collect(b, host, child, out);
+            }
+            if let Some(dom) = b.doc(key).and_then(|d| d.main_frame.page_dom.clone()) {
+                out.push(dom);
+            }
+        }
+        let mut documents = Vec::new();
+        collect(self, &host, frame, &mut documents);
+        for dom in documents {
+            lp_webapi::lifecycle::unload(&dom);
+        }
     }
 
     /// Replaces the frame's realms with fresh ones for the new document, runs
@@ -1279,6 +1368,8 @@ impl Browser {
         origin: &str,
         history: HistoryHandling,
     ) -> Result<(), JsError> {
+        // The document being replaced (and its frames) unloads first.
+        self.unload_documents(page);
         let host = self.page(page.page).ok_or(JsError::ContextDestroyed)?.frames.clone();
         self.cancel_pending_document(page);
         host.invalidate_focus(page, false);
@@ -1353,15 +1444,34 @@ impl Browser {
             p.stylesheets = Default::default();
             p.images = Default::default();
             p.preloads = Default::default();
+            p.refresh = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
+            // What the commit replaces: nothing (a new frame's first
+            // document) or the initial about:blank one as it was made; that
+            // one given content, written with document.open() (it is not
+            // "initial" any more) or filled through DOM APIs; or a loaded
+            // document.
+            let replaced = match &old_dom {
+                None => Replaced::Nothing,
+                Some(old) if p.nav.is_first_blank() => {
+                    if !p.nav.is_initial_blank() || bindings::blank_document_has_content(old) {
+                        Replaced::FilledBlank
+                    } else {
+                        Replaced::Nothing
+                    }
+                }
+                Some(_) => Replaced::Loaded,
+            };
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
             p.nav.commit_document(&opts.url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
-            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), old_dom)
+            p.nav.set_page_dom(&page_dom);
+            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced))
         };
+        let (old_dom, replaced) = old_dom;
         if let Some(dom) = &old_dom {
             dom.dispose();
         }
@@ -1381,8 +1491,23 @@ impl Browser {
         // it before the next one boots instead of waiting for JSC's heuristics.
         // Measured on 80 navigations of a 2 MB React bundle: the process
         // plateaus at 218 MB instead of 629 MB, for about 5 ms per navigation.
+        // A page's first document and its untouched initial about:blank one
+        // leave nothing that pays for a full collection: a test's first `goto`
+        // collected the whole heap for a blank page's two realms. Its
+        // footprint still counts as a low point for later closes. An initial
+        // document given content is collected only once the process has grown
+        // past the gate, and then later (`Engine::defer_release_if_due`):
+        // `page.setContent` of 40k nodes and a 1M-object array stayed after
+        // the `goto` (81 MB, 26 MB released), while a `<style>` an init script
+        // added had the idle loop drop the next page's compiled code. (What a
+        // script kept on the blank document's window alone, with no node, is
+        // left to the next release or JavaScriptCore's own collections.)
         drop(old_dom);
-        self.engine.release_closed();
+        match replaced {
+            Replaced::Loaded => self.engine.release_closed(),
+            Replaced::FilledBlank => self.engine.defer_release_if_due(),
+            Replaced::Nothing => self.engine.note_release_point(),
+        }
         // Worlds: main plus every world named by an init script.
         let mut worlds: Vec<Option<String>> = vec![None];
         for s in &scripts {
@@ -1418,9 +1543,19 @@ impl Browser {
         self.isolated_world_in_frame(page, &frame, name)
     }
 
-    /// Closes a page, disposing its realms and cancelling timers.
+    /// Closes a page, disposing its realms and cancelling timers. Its
+    /// documents unload first (`pagehide`, `visibilitychange`, `unload`), as
+    /// a tab Chrome closes.
     pub fn close_page(&mut self, page: PageId) -> bool {
-        let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
+        if self.page_index(page).is_none() {
+            return false;
+        }
+        self.unload_documents(page.into());
+        self.dispose_page(page)
+    }
+
+    fn dispose_page(&mut self, page: PageId) -> bool {
+        let Some(pos) = self.page_index(page) else { return false };
         self.cancel_pending_document(page.into());
         let host = self.pages[pos].frames.clone();
         host.invalidate_focus(page.into(), false);
@@ -1449,11 +1584,11 @@ impl Browser {
         true
     }
 
-    /// Disposes every page (connection teardown).
+    /// Disposes every page (connection teardown): no script runs.
     pub fn close_all(&mut self) {
         let ids: Vec<PageId> = self.pages.iter().map(|p| p.id).collect();
         for id in ids {
-            self.close_page(id);
+            self.dispose_page(id);
         }
         frames::drop_spare_realm();
         self.engine.drain_finalized();

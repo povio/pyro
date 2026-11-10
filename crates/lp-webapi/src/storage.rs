@@ -21,7 +21,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, JsString, NoParent, Scope, Value};
+use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Scope, Value};
 use rustc_hash::FxHashMap;
 
 use crate::page::PageDom;
@@ -41,13 +41,17 @@ fn lossy(units: &[u16]) -> String {
     String::from_utf16_lossy(units)
 }
 
-/// ToString of a JS value kept as UTF-16 (may run user `toString`).
+/// ToString of a JS value kept as UTF-16 (may run user `toString`). A
+/// string's units are read in place (patched JSC).
 fn dom_wtf16(v: Value<'_>) -> JsResult<Wtf16> {
+    if let Some(units) = v.string_units() {
+        return Ok(units.to_units().into_vec());
+    }
     Ok(v.to_js_string()?.utf16().to_vec())
 }
 
 fn js_wtf16<'s>(s: &Scope<'s>, units: &[u16]) -> Value<'s> {
-    s.js_string(&JsString::from_utf16(units))
+    s.string_utf16(units)
 }
 
 static NEXT_AREA: AtomicU64 = AtomicU64::new(1);
@@ -163,6 +167,7 @@ fn seed_origin(text: &str) -> Result<String, String> {
 
 struct Namespace {
     indexed_db: crate::indexeddb::Namespace,
+    caches: crate::cache_storage::Namespace,
     origins: RefCell<FxHashMap<String, Rc<RefCell<Area>>>>,
     quota: usize,
     /// Pages attached to this namespace (`PageDom::set_storage_namespaces`):
@@ -186,10 +191,22 @@ impl StorageNamespace {
     pub fn with_quota(bytes: usize) -> Self {
         Self(Rc::new(Namespace {
             indexed_db: Default::default(),
+            caches: Default::default(),
             origins: RefCell::new(FxHashMap::default()),
             quota: bytes,
             pages: RefCell::new(Vec::new()),
         }))
+    }
+
+    /// A fresh namespace whose IndexedDB data and caches are `indexed_db`'s
+    /// and `caches`' (a worker shares its owner's databases and Cache
+    /// Storage; workers have no Web Storage).
+    pub(crate) fn with_shared(indexed_db: crate::indexeddb::Namespace, caches: crate::cache_storage::Namespace) -> Self {
+        let namespace = Self::default();
+        let mut inner = Rc::try_unwrap(namespace.0).ok().expect("fresh namespace");
+        inner.indexed_db = indexed_db;
+        inner.caches = caches;
+        Self(Rc::new(inner))
     }
 
     /// A namespace with the default quota holding a copy of `seed`'s entries.
@@ -232,6 +249,12 @@ impl StorageNamespace {
         value
     }
 
+    /// UTF-16 bytes stored under `origin` (keys and values), as counted
+    /// against the quota; `navigator.storage.estimate()` reports it.
+    pub(crate) fn usage(&self, origin: &str) -> usize {
+        self.0.origins.borrow().get(origin).map_or(0, |area| area.borrow().bytes)
+    }
+
     /// Registers a page that uses this namespace (for `storage` events).
     pub(crate) fn attach(&self, page: &Rc<PageDom>) {
         let mut pages = self.0.pages.borrow_mut();
@@ -247,6 +270,10 @@ impl StorageNamespace {
 
     pub(crate) fn indexed_db(&self) -> crate::indexeddb::Namespace {
         self.0.indexed_db.clone()
+    }
+
+    pub(crate) fn caches(&self) -> crate::cache_storage::Namespace {
+        self.0.caches.clone()
     }
 
     fn area(&self, origin: String) -> Rc<RefCell<Area>> {
@@ -357,12 +384,12 @@ impl JsClass for Storage {
 
     fn define(def: &mut ClassDef<Self>) {
         def.getter("length", |s, data| Ok(s.number(data.0.borrow().entries.len() as f64)));
-        def.method("key", 1, |s, data, args| {
+        def.pure_method("key", 1, |s, data, args| {
             args.require(1, "Storage.key")?;
             let index = to_u32(args.get(0))? as usize;
             Ok(data.0.borrow().entries.get(index).map_or(s.null(), |(key, _)| js_wtf16(s, key)))
         });
-        def.method("getItem", 1, |s, data, args| {
+        def.pure_method("getItem", 1, |s, data, args| {
             args.require(1, "Storage.getItem")?;
             let key = dom_wtf16(args.get(0))?;
             Ok(data.0.borrow().get(&key).map_or(s.null(), |v| js_wtf16(s, v)))

@@ -149,10 +149,6 @@ pub(crate) struct Cx<'a> {
     pub(crate) quirks: QuirksMode,
     /// Open popovers (`:popover-open`; the style engine tracks them).
     pub(crate) popovers: &'a rustc_hash::FxHashSet<u32>,
-    /// Ids and class lists as Stylo atoms, interned once per element and
-    /// pass (boxed: references into them outlive later insertions).
-    ids: UnsafeCell<FxHashMap<u32, Box<Option<Atom>>>>,
-    classes: UnsafeCell<FxHashMap<u32, Box<[Atom]>>>,
 }
 
 impl<'a> Cx<'a> {
@@ -163,35 +159,8 @@ impl<'a> Cx<'a> {
         quirks: QuirksMode,
         popovers: &'a rustc_hash::FxHashSet<u32>,
     ) -> Self {
-        Cx { dom, store, lock, quirks, popovers, ids: UnsafeCell::default(), classes: UnsafeCell::default() }
+        Cx { dom, store, lock, quirks, popovers }
     }
-    fn id_atom(&self, idx: u32) -> Option<&Atom> {
-        // SAFETY: entries are boxed and never removed during the pass.
-        let ids = unsafe { &mut *self.ids.get() };
-        let entry =
-            ids.entry(idx).or_insert_with(|| Box::new(self.dom.n(idx).element().and_then(|e| e.id()).map(Atom::from)));
-        let ptr: *const Option<Atom> = &**entry;
-        // SAFETY: see above.
-        unsafe { &*ptr }.as_ref()
-    }
-    fn class_atoms(&self, idx: u32) -> &[Atom] {
-        // SAFETY: entries are boxed and never removed during the pass.
-        let classes = unsafe { &mut *self.classes.get() };
-        let entry = classes.entry(idx).or_insert_with(|| {
-            let attr = self.dom.n(idx).element().and_then(|e| e.attr("class")).unwrap_or("");
-            attr.split_ascii_whitespace().map(Atom::from).collect()
-        });
-        let ptr: *const [Atom] = &**entry;
-        // SAFETY: see above.
-        unsafe { &*ptr }
-    }
-}
-
-/// Elements' class tokens as atoms, for one (DOM uid, version).
-type ClassAtoms = ((u64, u64), FxHashMap<u32, Box<[Atom]>>);
-
-thread_local! {
-    static CLASS_ATOMS: std::cell::RefCell<ClassAtoms> = Default::default();
 }
 
 /// A node of the current styling pass. One word: Stylo's style-sharing
@@ -419,7 +388,7 @@ impl<'a, C: CxSource<'a>> TNode for SNode<'a, C> {
         self.at(self.node().owner_doc)
     }
     fn is_in_document(&self) -> bool {
-        matches!(self.cx().dom.n(self.cx().dom.root_idx(self.i())).kind, NodeKind::Document(_))
+        self.node().in_document_tree()
     }
     fn traversal_parent(&self) -> Option<SNode<'a, C>> {
         if let Some(host) = self.shadow_host_of_parent() {
@@ -449,7 +418,7 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
 
     fn opaque(&self) -> OpaqueElement {
         let ptr = NonNull::new((self.idx).wrapping_add(1) as *mut ()).expect("non-null");
-        OpaqueElement::from_non_null_ptr(ptr)
+        OpaqueElement::from_ptr(ptr)
     }
     fn parent_element(&self) -> Option<Self> {
         self.parent_node().filter(|p| p.is_element())
@@ -458,6 +427,9 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
         self.shadow_host_of_parent().is_some()
     }
     fn containing_shadow_host(&self) -> Option<Self> {
+        if !self.node().in_shadow_tree() {
+            return None;
+        }
         let root = self.cx().dom.root_idx(self.i());
         match &self.cx().dom.n(root).kind {
             NodeKind::Fragment(f) if f.shadow.is_some() => self.with(f.host),
@@ -508,7 +480,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
     fn match_non_ts_pseudo_class(&self, pc: &NonTSPseudoClass, _ctx: &mut MatchingContext<SelectorImpl>) -> bool {
         use NonTSPseudoClass as N;
         match pc {
-            N::Active | N::Visited | N::Fullscreen | N::Autofill => false,
+            N::Active => self.matches(PseudoClass::Active),
+            N::Visited | N::Fullscreen | N::Autofill => false,
             N::Target => self.matches(PseudoClass::Target),
             N::AnyLink | N::Link => self.matches(PseudoClass::Link),
             N::Checked => self.matches(PseudoClass::Checked),
@@ -531,7 +504,12 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::Open => self.matches(PseudoClass::Open),
             N::Modal => self.matches(PseudoClass::Modal),
             N::PopoverOpen => self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen),
+            N::InRange => self.matches(PseudoClass::InRange),
+            N::OutOfRange => self.matches(PseudoClass::OutOfRange),
+            N::UserValid => self.matches(PseudoClass::UserValid),
+            N::UserInvalid => self.matches(PseudoClass::UserInvalid),
             N::Lang(lang) => self.match_element_lang(None, lang),
+            N::CustomState(state) => self.cx().dom.has_custom_state_idx(self.i(), &state.0 .0),
             _ => false,
         }
     }
@@ -560,33 +538,19 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
         let e = self.element();
         e.is_html() && e.name.local == local_name!("slot")
     }
-    // Compared as strings: interning every element's id and classes per
-    // query (`querySelectorAll('.x')` over a page) costs more than matching.
+    // The atoms the element parsed when its attributes were written.
     fn has_id(&self, id: &AtomIdent, cs: CaseSensitivity) -> bool {
-        let Some(own) = self.element().id() else { return false };
-        cs.eq(own.as_bytes(), id.0.as_bytes())
+        self.element().id_atom().is_some_and(|own| match cs {
+            CaseSensitivity::CaseSensitive => *own == id.0,
+            CaseSensitivity::AsciiCaseInsensitive => own.eq_ignore_ascii_case(&id.0),
+        })
     }
     fn has_class(&self, name: &AtomIdent, cs: CaseSensitivity) -> bool {
-        let Some(attr) = self.element().attr("class") else { return false };
-        if cs != CaseSensitivity::CaseSensitive {
-            let name = name.0.as_bytes();
-            return attr.split_ascii_whitespace().any(|c| cs.eq(c.as_bytes(), name));
+        let classes = self.element().classes();
+        match cs {
+            CaseSensitivity::CaseSensitive => classes.contains(&name.0),
+            CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
         }
-        // Tailwind class lists run to dozens of tokens and matching tests
-        // them repeatedly: keep each element's tokens as atoms (pointer
-        // compares) for the current DOM version.
-        let dom = self.cx().dom;
-        CLASS_ATOMS.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            let key = (dom.uid(), dom.version());
-            if cache.0 != key {
-                cache.0 = key;
-                cache.1.clear();
-            }
-            let atoms =
-                cache.1.entry(self.i()).or_insert_with(|| attr.split_ascii_whitespace().map(Atom::from).collect());
-            atoms.contains(&name.0)
-        })
     }
     fn imported_part(&self, _name: &AtomIdent) -> Option<AtomIdent> {
         None
@@ -605,8 +569,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
         let p = self.node().parent;
         p != NIL && matches!(self.cx().dom.n(p).kind, NodeKind::Document(_))
     }
-    fn has_custom_state(&self, _name: &AtomIdent) -> bool {
-        false
+    fn has_custom_state(&self, name: &AtomIdent) -> bool {
+        self.cx().dom.has_custom_state_idx(self.i(), &name.0)
     }
     fn add_element_unique_hashes(&self, filter: &mut BloomFilter) -> bool {
         each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
@@ -651,7 +615,7 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         self.element().name.ns == ns!(svg)
     }
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-        let text = self.element().attr("style")?;
+        let text = self.element().attr_local(&local_name!("style"))?;
         let (cx, i) = (self.cx(), self.i());
         // SAFETY: styling is sequential, and only this element's own style
         // computation reads its parsed style attribute.
@@ -679,6 +643,7 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         // Every state `match_non_ts_pseudo_class` answers from, so
         // invalidation snapshots see each one change.
         set(PseudoClass::Hover, ElementState::HOVER);
+        set(PseudoClass::Active, ElementState::ACTIVE);
         set(PseudoClass::Focus, ElementState::FOCUS);
         set(PseudoClass::FocusWithin, ElementState::FOCUS_WITHIN);
         set(PseudoClass::FocusVisible, ElementState::FOCUSRING);
@@ -699,6 +664,10 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         set(PseudoClass::Open, ElementState::OPEN);
         set(PseudoClass::Modal, ElementState::MODAL);
         set(PseudoClass::Target, ElementState::URLTARGET);
+        set(PseudoClass::InRange, ElementState::INRANGE);
+        set(PseudoClass::OutOfRange, ElementState::OUTOFRANGE);
+        set(PseudoClass::UserValid, ElementState::USER_VALID);
+        set(PseudoClass::UserInvalid, ElementState::USER_INVALID);
         if self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen) {
             s |= ElementState::POPOVER_OPEN;
         }
@@ -711,13 +680,13 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         false
     }
     fn id(&self) -> Option<&Atom> {
-        self.cx().id_atom(self.i())
+        self.element().id_atom()
     }
     fn each_class<F>(&self, mut callback: F)
     where
         F: FnMut(&AtomIdent),
     {
-        for a in self.cx().class_atoms(self.i()) {
+        for a in self.element().classes() {
             callback(AtomIdent::cast(a));
         }
     }
@@ -784,6 +753,8 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
     fn may_have_animations(&self) -> bool {
         false
     }
+    // lp-dom's cascade runs no animations.
+    fn set_may_have_animations(&self) {}
     fn has_animations(&self, _context: &SharedStyleContext) -> bool {
         false
     }
@@ -803,6 +774,9 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         self.with(self.element().shadow_root)
     }
     fn containing_shadow(&self) -> Option<SNode<'a, C>> {
+        if !self.node().in_shadow_tree() {
+            return None;
+        }
         let root = self.cx().dom.root_idx(self.i());
         self.with(root).and_then(|r| r.as_shadow_root())
     }
@@ -810,7 +784,7 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         self.element().attrs.iter().find(|a| a.name.local == attr.0 && a.name.ns == ns.0).map(|a| a.value.to_string())
     }
     fn lang_attr(&self) -> Option<style::selector_parser::AttrValue> {
-        self.element().attr("lang").map(style::values::AtomString::from)
+        self.element().attr_local(&local_name!("lang")).map(style::values::AtomString::from)
     }
     fn match_element_lang(
         &self,

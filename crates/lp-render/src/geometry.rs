@@ -11,14 +11,16 @@
 //!   (the first cell's widest borders; row borders are left out). Chromium's
 //!   cells take half of each collapsed border, the row's included.
 //!
-//! Boxes are computed per element on request; transforms along the
-//! containing-block chains are memoized until the document changes.
+//! Boxes are computed per element on request from the document as it is:
+//! nothing is memoized between queries. An element's transform walks its
+//! containing-block chain (O(depth)), and layout-tree membership reads the
+//! list owner Blitz records on each node as it writes the layout child lists
+//! (`Node::layout_child_of`).
 
-use std::cell::RefCell;
+use stylo_taffy::CopyStyleGetters;
 
 use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Rect};
-use rustc_hash::FxHashMap;
 
 /// One element's boxes, CSS px.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -96,57 +98,70 @@ impl LayoutBox {
     }
 }
 
-/// Per-document memo, valid until the document changes ([`Geometry::clear`]).
+/// Layout queries of one persistent document. It holds no state: every
+/// query reads the document.
 #[derive(Default)]
-pub(crate) struct Geometry {
-    transforms: RefCell<FxHashMap<NodeId, (Affine, bool)>>,
-    has_sticky: std::cell::Cell<Option<bool>>,
-}
+pub(crate) struct Geometry;
 
 impl Geometry {
-    pub(crate) fn clear(&self) {
-        self.transforms.borrow_mut().clear();
-        self.has_sticky.set(None);
+    /// Whether `id` is a box of the current layout: the root element, or a
+    /// layout (or hoisted) child of its layout parent. O(1): Blitz records
+    /// which list holds each layout child when it builds the lists
+    /// (`Node::layout_child_of`), and Taffy the containing block of each
+    /// hoisted box (`Node::oof_containing_block`).
+    pub(crate) fn in_layout_tree(&self, doc: &BaseDocument, id: NodeId) -> bool {
+        if doc.root_element().id == id {
+            return true;
+        }
+        let Some(node) = doc.get_node(id) else { return false };
+        let Some(parent) = node.layout_parent.get() else { return false };
+        let found = doc.get_node(parent).is_some()
+            && (node.layout_child_of.get() == Some(parent) || node.oof_containing_block.get() == Some(parent));
+        debug_assert_eq!(found, in_layout_tree(doc, id), "layout tree membership of {id:?} under {parent:?}");
+        found
     }
 
-    /// Whether any element is `position: sticky`.
+    /// Whether any element is `position: sticky` (the set Blitz's style
+    /// traversal keeps, not a scan of the document).
     pub(crate) fn has_sticky(&self, doc: &BaseDocument) -> bool {
-        if let Some(v) = self.has_sticky.get() {
-            return v;
-        }
-        let v = doc.tree().iter().any(|(_, n)| {
-            n.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky)
-        });
-        self.has_sticky.set(Some(v));
-        v
+        doc.has_sticky()
     }
 
-    /// `id`'s border box to the document and whether it is in a fixed box.
-    fn transform(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool)> {
-        if let Some(t) = self.transforms.borrow().get(&id) {
-            return Some(*t);
+    /// `id`'s border box to the document and whether it is in a fixed box:
+    /// composed down its containing-block chain, root first.
+    pub(crate) fn transform(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool)> {
+        let mut chain = Vec::new();
+        let mut cur = Some(id);
+        while let Some(i) = cur {
+            let node = doc.get_node(i)?;
+            chain.push(node);
+            cur = node.containing_block();
         }
-        let node = doc.get_node(id)?;
-        let (base, in_fixed) = match node.containing_block() {
-            Some(parent) => {
-                let (p, fixed) = self.transform(doc, parent)?;
-                let scroll = doc.get_node(parent)?.scroll_offset();
-                (p * Affine::translate((-scroll.x, -scroll.y)), fixed)
-            }
-            None => (Affine::IDENTITY, false),
-        };
-        let fixed = in_fixed
-            || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
-        let location = doc.physical_unrounded_layout(id).location;
-        // Blitz keeps the CSS transform's translation in device px
-        // (`Node::set_transform`); this chain is in CSS px.
-        let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
-            let scale = doc.viewport().scale_f64();
-            let [a, b, c, d, e, f] = t.as_coeffs();
-            Affine::new([a, b, c, d, e / scale, f / scale])
-        });
-        let t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
-        self.transforms.borrow_mut().insert(id, (t, fixed));
+        let scale = doc.viewport().scale_f64();
+        let (mut t, mut fixed) = (Affine::IDENTITY, false);
+        let mut parent: Option<&blitz_dom::Node> = None;
+        for node in chain.into_iter().rev() {
+            let base = match parent {
+                Some(p) => {
+                    let scroll = p.scroll_offset();
+                    t * Affine::translate((-scroll.x, -scroll.y))
+                }
+                None => Affine::IDENTITY,
+            };
+            fixed = fixed
+                || node
+                    .primary_styles()
+                    .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
+            let location = doc.physical_unrounded_layout(node.id).location;
+            // Blitz keeps the CSS transform's translation in device px
+            // (`Node::set_transform`); this chain is in CSS px.
+            let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
+                let [a, b, c, d, e, f] = t.as_coeffs();
+                Affine::new([a, b, c, d, e / scale, f / scale])
+            });
+            t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
+            parent = Some(node);
+        }
         Some((t, fixed))
     }
 
@@ -155,7 +170,7 @@ impl Geometry {
     /// formatting context) has none, whatever an earlier layout left in it.
     fn laid_out(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
         let node = doc.get_node(id)?;
-        if !in_layout_tree(doc, id) {
+        if !self.in_layout_tree(doc, id) {
             let (_, fixed) = self.transform(doc, id)?;
             return Some(LayoutBox { fixed, ..LayoutBox::default() });
         }
@@ -240,10 +255,10 @@ impl Geometry {
             Some((px, (hundred - px) / 100.0))
         };
         let insets = [
-            inset(&style.clone_top()),
-            inset(&style.clone_right()),
-            inset(&style.clone_bottom()),
-            inset(&style.clone_left()),
+            inset(&style.slow_clone_top()),
+            inset(&style.slow_clone_right()),
+            inset(&style.slow_clone_bottom()),
+            inset(&style.slow_clone_left()),
         ];
         // Containing block: the table for table parts, else the parent.
         let mut cb = doc.get_node(id).and_then(|n| n.parent);
@@ -280,7 +295,10 @@ impl Geometry {
 
     fn adjusted_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
         let mut b = self.laid_out(doc, id)?;
-        if is_cell(doc, id) {
+        // A cell with no box now (not in the layout tree: a `<td>` in a
+        // block, which Blitz does not wrap in an anonymous table) gets no
+        // gutters either: grown by them, its empty box would be hit.
+        if is_cell(doc, id) && self.in_layout_tree(doc, id) {
             if let Some((gx, top, bottom)) = cell_gutters(doc, id) {
                 b.x -= gx;
                 b.y -= top;
@@ -319,7 +337,7 @@ impl Geometry {
             // zero box at the content-box origin of the nearest box around it.
             let mut cur = doc.get_node(id).and_then(|n| n.parent);
             while let Some(p) = cur {
-                if in_layout_tree(doc, p) {
+                if self.in_layout_tree(doc, p) {
                     let pb = self.laid_out(doc, p)?;
                     let (x, y) = (pb.x + pb.border[3] + pb.padding[3], pb.y + pb.border[0] + pb.padding[0]);
                     return Some(LayoutBox {
@@ -336,19 +354,14 @@ impl Geometry {
     /// Rows have no Blitz box. Project their actual grid track instead of
     /// unioning cells, since a cell originating here may span later rows.
     fn row_track_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
-        let mut table = doc.get_node(id)?.parent?;
-        while tag(doc, table) != Some("table") {
-            table = doc.get_node(table)?.parent?;
-        }
-        if doc.get_node(table)?.primary_styles()?.writing_mode.is_vertical() {
-            return None;
-        }
+        let table = table_of(doc, id)?;
+        self.row_tracks_apply(doc, table)?;
         // Table/ancestor transforms are handled below. Keep the old child
         // projection for independently transformed row parts.
         let mut ancestor = id;
         while ancestor != table {
             let node = doc.get_node(ancestor)?;
-            if node.transform().as_deref().is_some_and(|transform| *transform != Affine::IDENTITY) {
+            if transformed(node) {
                 return None;
             }
             ancestor = node.parent?;
@@ -365,16 +378,91 @@ impl Geometry {
             return None;
         }
         let row = info.rows.positions.get(index)?;
-        let left = info.columns.positions.first()?.start as f64;
-        let right = info.columns.positions.last()?.end as f64;
-        let (gx, top, bottom) = table_gutters(doc, table, Some(id)).unwrap_or((0.0, 0.0, 0.0));
-        let local = Rect::new(left - gx, row.start as f64 - top, right + gx, row.end as f64 + bottom);
+        let columns = (info.columns.positions.first()?.start as f64, info.columns.positions.last()?.end as f64);
         let (transform, fixed) = self.transform(doc, table)?;
-        Some(LayoutBox::from_rect(transform.transform_rect_bbox(local), fixed))
+        let base = table_gutter_base(doc, table);
+        Some(row_track_rect(doc, (row.start as f64, row.end as f64), columns, id, base, transform, fixed))
+    }
+
+    /// The checks of [`Geometry::row_track_box`] that depend on the table
+    /// alone (`None`: no row of it is projected from its track).
+    fn row_tracks_apply(&self, doc: &BaseDocument, table: NodeId) -> Option<()> {
+        if doc.get_node(table)?.primary_styles()?.writing_mode.is_vertical() {
+            return None;
+        }
+        // A table out of the layout tree (in a cell made a block) keeps the context of its last
+        // layout, which places no row now.
+        if !self.in_layout_tree(doc, table) {
+            return None;
+        }
+        Some(())
+    }
+
+    /// [`Geometry::children_union`] of a row group whose rows are all
+    /// projected from their tracks ([`Geometry::row_track_box`]), reading
+    /// the grid once for all of them instead of once per row (which scans
+    /// the table's rows for the row's index: quadratic in the rows). `None`
+    /// when a child is not such a row (the generic union applies); the
+    /// result is otherwise what the generic union would be.
+    fn group_rows_union(&self, doc: &BaseDocument, group: NodeId) -> Option<Option<Rect>> {
+        let table = table_of(doc, group)?;
+        self.row_tracks_apply(doc, table)?;
+        let node = doc.get_node(group)?;
+        if transformed(node) || node.parent != Some(table) {
+            return None;
+        }
+        let element = doc.get_node(table)?.element_data()?;
+        let blitz_dom::node::SpecialElementData::TableRoot(context) = &element.special_data else { return None };
+        let info = context.computed_grid_info.try_borrow().ok()?;
+        let info = info.as_ref()?;
+        if info.rows.positions.len() > context.rows.len() {
+            return None;
+        }
+        let columns = (info.columns.positions.first()?.start as f64, info.columns.positions.last()?.end as f64);
+        let (transform, fixed) = self.transform(doc, table)?;
+        let base = table_gutter_base(doc, table);
+        let unit = |v: f64| v.signum() * ((v.abs() * 64.0 + 0.01).trunc() / 64.0);
+        let mut rows = context.rows.iter().enumerate().filter(|(_, row)| row.group == Some(group)).peekable();
+        let mut acc: Option<Rect> = None;
+        let mut add = |b: LayoutBox| {
+            let (x, y, w, h) = (unit(b.x), unit(b.y), unit(b.width), unit(b.height));
+            if w > 0.0 || h > 0.0 {
+                let r = Rect::new(x, y, x + w, y + h);
+                acc = Some(acc.map_or(r, |a| a.union(r)));
+            }
+        };
+        for &c in &node.children {
+            let Some(child) = doc.get_node(c) else { continue };
+            if !child.is_element() {
+                continue;
+            }
+            // The group's rows in the grid, in order: a row child the grid
+            // placed is the next of them; one it did not (hidden) is read
+            // as any other child.
+            if tag(doc, c) == Some("tr") && rows.peek().is_some_and(|(_, row)| row.node_id == c) {
+                let (index, _) = rows.next()?;
+                if transformed(child) {
+                    return None;
+                }
+                let track = info.rows.positions.get(index)?;
+                add(row_track_rect(doc, (track.start as f64, track.end as f64), columns, c, base, transform, fixed));
+            } else if let Some(b) = self.element_box(doc, c) {
+                add(b);
+            }
+        }
+        if rows.next().is_some() {
+            return None;
+        }
+        Some(acc)
     }
 
     /// Union of the (adjusted) boxes of a table part's children.
     fn children_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
+        if is_table_part(doc, id) && tag(doc, id) != Some("tr") {
+            if let Some(union) = self.group_rows_union(doc, id) {
+                return union;
+            }
+        }
         let node = doc.get_node(id)?;
         let mut acc: Option<Rect> = None;
         for &c in &node.children {
@@ -448,30 +536,7 @@ impl Geometry {
         for (index, line) in text.layout.lines().enumerate() {
             let origin = origin * line_slot(doc, root_id, &line.metrics(), scale);
             for item in line.items() {
-                let (start, r) = match item {
-                    parley::PositionedLayoutItem::GlyphRun(run) => {
-                        // The content area from whole-pixel ascent and descent, as
-                        // Chromium's font metrics and Parley's quantized lines round them
-                        // (18px SF: 17 + 4, not 21.1875).
-                        let metrics = run.run().font_metrics();
-                        let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
-                        (
-                            Some(run.style().brush.id),
-                            Rect::new(
-                                x,
-                                baseline - metrics.ascent.round() as f64,
-                                // Chromium's text fragments are their advance ceiled to
-                                // a layout unit (1/64 px).
-                                x + ((run.advance() as f64 / scale * 64.0 - 0.01).ceil() / 64.0) * scale,
-                                baseline + metrics.descent.round() as f64,
-                            ),
-                        )
-                    }
-                    parley::PositionedLayoutItem::InlineBox(b) => (
-                        Some(NodeId::from_u64(b.id)),
-                        Rect::new(b.x as f64, b.y as f64, (b.x + b.width) as f64, (b.y + b.height) as f64),
-                    ),
-                };
+                let (start, r) = inline_item_rect(&item, scale);
                 if within(start) {
                     f(origin, index, Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
                 }
@@ -496,7 +561,7 @@ impl Geometry {
         let side = |v: &style::values::computed::LengthPercentage| {
             v.resolve(style::values::computed::Length::new(0.0)).px() as f64
         };
-        if !in_layout_tree(doc, id) {
+        if !self.in_layout_tree(doc, id) {
             let style = style?;
             let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
             let border = [
@@ -607,11 +672,43 @@ pub struct BoxQuads {
     pub fixed: bool,
 }
 
-/// `r`'s corners through `t`, clockwise from the top-left one.
+/// One item of a line in its inline root's text space (device px): the
+/// node it belongs to (a glyph run's text node or innermost element, an
+/// inline box's element) and its fragment rect.
+pub(crate) fn inline_item_rect(
+    item: &parley::PositionedLayoutItem<'_, blitz_dom::node::TextBrush>,
+    scale: f64,
+) -> (Option<NodeId>, Rect) {
+    match item {
+        parley::PositionedLayoutItem::GlyphRun(run) => {
+            // The content area from whole-pixel ascent and descent, as
+            // Chromium's font metrics and Parley's quantized lines round them
+            // (18px SF: 17 + 4, not 21.1875).
+            let metrics = run.run().font_metrics();
+            let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
+            (
+                Some(run.style().brush.id),
+                Rect::new(
+                    x,
+                    baseline - metrics.ascent.round() as f64,
+                    // Chromium's text fragments are their advance ceiled to
+                    // a layout unit (1/64 px).
+                    x + ((run.advance() as f64 / scale * 64.0 - 0.01).ceil() / 64.0) * scale,
+                    baseline + metrics.descent.round() as f64,
+                ),
+            )
+        }
+        parley::PositionedLayoutItem::InlineBox(b) => (
+            Some(NodeId::from_u64(b.id)),
+            Rect::new(b.x as f64, b.y as f64, (b.x + b.width) as f64, (b.y + b.height) as f64),
+        ),
+    }
+}
+
 /// The inline root's line coordinates (x inline, y block, in CSS px from the first line box) in
 /// its border box. A vertical writing mode turns them a quarter clockwise; lines of `vertical-lr`
 /// are then each rotated within their slot (see [`line_slot`]).
-fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextLayout) -> Affine {
+pub(crate) fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextLayout) -> Affine {
     let l = doc.physical_unrounded_layout(id);
     let (left, top) = ((l.border.left + l.padding.left) as f64, (l.border.top + l.padding.top) as f64);
     let block_offset = text.block_offset as f64;
@@ -626,13 +723,14 @@ fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextL
 }
 
 /// What moves a line (CSS px) to its slot in [`line_box_origin`]'s coordinates.
-fn line_slot(doc: &BaseDocument, id: NodeId, metrics: &parley::layout::LineMetrics, scale: f64) -> Affine {
+pub(crate) fn line_slot(doc: &BaseDocument, id: NodeId, metrics: &parley::layout::LineMetrics, scale: f64) -> Affine {
     match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
         Some(true) => Affine::translate((0.0, -((metrics.block_min_coord + metrics.block_max_coord) as f64) / scale)),
         _ => Affine::IDENTITY,
     }
 }
 
+/// `r`'s corners through `t`, clockwise from the top-left one.
 fn quad(t: Affine, r: Rect) -> [f64; 8] {
     let p = [(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1)].map(|(x, y)| t * kurbo::Point::new(x, y));
     [p[0].x, p[0].y, p[1].x, p[1].y, p[2].x, p[2].y, p[3].x, p[3].y]
@@ -666,12 +764,73 @@ impl Geometry {
     /// layout order.
     pub(crate) fn text_words(&self, doc: &BaseDocument) -> Vec<TextWord> {
         let mut out = Vec::new();
-        for (id, node) in doc.tree().iter() {
-            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { continue };
-            if !node.flags.is_inline_root() || text.text_nodes.is_empty() || !in_layout_tree(doc, id) {
+        for (id, _) in doc.tree().iter() {
+            self.root_words(doc, id, &mut out);
+        }
+        out
+    }
+
+    /// The words [`Geometry::text_words`] reports for the text nodes in
+    /// `within`'s subtree, in the same order, with others: the words of the
+    /// inline formatting contexts inside it (in the flat tree lp-dom mirrors,
+    /// where a slotted node lies below its host) and of the one it lies in.
+    /// Only those contexts are read, not the document.
+    pub(crate) fn subtree_words(&self, doc: &BaseDocument, within: NodeId) -> Vec<TextWord> {
+        let mut roots = Vec::new();
+        // The context `within` lies in when it is inline content (or no box,
+        // `display: contents`): the nearest ancestor that is an inline root,
+        // or that wraps inline content in anonymous blocks (all of them).
+        let boxless = doc
+            .get_node(within)
+            .and_then(|n| n.primary_styles())
+            .is_some_and(|s| s.clone_display().is_inline_flow() || s.clone_display().is_contents());
+        let mut cur = doc.get_node(within).and_then(|n| n.parent).filter(|_| boxless);
+        while let Some(r) = cur {
+            let Some(n) = doc.get_node(r) else { break };
+            if n.flags.is_inline_root() {
+                roots.push(r);
+                break;
+            }
+            if !n.anonymous_blocks.is_empty() {
+                roots.extend(n.anonymous_blocks.iter().copied());
+                break;
+            }
+            cur = n.parent;
+        }
+        // The contexts inside it: inline roots, and the anonymous blocks
+        // wrapping inline children.
+        let mut stack = vec![within];
+        while let Some(id) = stack.pop() {
+            let Some(node) = doc.get_node(id) else { continue };
+            if !node.is_element() {
                 continue;
             }
-            let Some((t, fixed)) = self.transform(doc, id) else { continue };
+            if node.flags.is_inline_root() {
+                roots.push(id);
+            }
+            roots.extend(node.anonymous_blocks.iter().copied());
+            stack.extend(node.children.iter().copied());
+        }
+        // `text_words`' order: the slab's.
+        roots.sort_unstable_by_key(|id| id.as_u64() as u32);
+        roots.dedup();
+        let mut out = Vec::new();
+        for id in roots {
+            self.root_words(doc, id, &mut out);
+        }
+        out
+    }
+
+    /// The words of inline formatting context `id` (nothing when it is not
+    /// one laid out now), appended to `out`.
+    fn root_words(&self, doc: &BaseDocument, id: NodeId, out: &mut Vec<TextWord>) {
+        let Some(node) = doc.get_node(id) else { return };
+        {
+            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { return };
+            if !node.flags.is_inline_root() || text.text_nodes.is_empty() || !self.in_layout_tree(doc, id) {
+                return;
+            }
+            let Some((t, fixed)) = self.transform(doc, id) else { return };
             let origin = t * line_box_origin(doc, id, text);
             let scale = text.layout.scale() as f64;
             // Per text node: the UTF-16 offset of each byte of its laid-out text.
@@ -748,7 +907,6 @@ impl Geometry {
                 }
             }
         }
-        out
     }
 }
 
@@ -779,7 +937,8 @@ fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
 }
 
 /// Whether `id` is a box of the current layout: the root element, or a
-/// layout child of its layout parent.
+/// layout child of its layout parent (by scanning the parent's lists;
+/// [`Geometry::in_layout_tree`] reads the list owner Blitz records instead).
 fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {
     if doc.root_element().id == id {
         return true;
@@ -801,7 +960,7 @@ pub(crate) fn describe(doc: &BaseDocument, id: NodeId) -> String {
             let class: String = e.attr(blitz_dom::local_name!("class")).unwrap_or("").chars().take(300).collect();
             let s = n.primary_styles();
             let display = s.as_ref().map(|s| format!("{:?}", s.clone_display())).unwrap_or_default();
-            let height = s.as_ref().map(|s| format!("{:?}", s.clone_height())).unwrap_or_default();
+            let height = s.as_ref().map(|s| format!("{:?}", s.slow_clone_height())).unwrap_or_default();
             let l = n.unrounded_layout();
             let text: String = n.text_content().chars().take(40).collect();
             let kids: Vec<String> = n
@@ -841,12 +1000,44 @@ fn tag(doc: &BaseDocument, id: NodeId) -> Option<&str> {
     doc.get_node(id).and_then(|n| n.element_data()).map(|e| &*e.name.local)
 }
 
-fn is_cell(doc: &BaseDocument, id: NodeId) -> bool {
+pub(crate) fn is_cell(doc: &BaseDocument, id: NodeId) -> bool {
     matches!(tag(doc, id), Some("td" | "th"))
 }
 
-fn is_table_part(doc: &BaseDocument, id: NodeId) -> bool {
+pub(crate) fn is_table_part(doc: &BaseDocument, id: NodeId) -> bool {
     matches!(tag(doc, id), Some("tr" | "thead" | "tbody" | "tfoot"))
+}
+
+/// The nearest `<table>` ancestor of `id`.
+fn table_of(doc: &BaseDocument, id: NodeId) -> Option<NodeId> {
+    let mut table = doc.get_node(id)?.parent?;
+    while tag(doc, table) != Some("table") {
+        table = doc.get_node(table)?.parent?;
+    }
+    Some(table)
+}
+
+/// Whether `node` has a transform other than the identity.
+fn transformed(node: &blitz_dom::Node) -> bool {
+    node.transform().as_deref().is_some_and(|transform| *transform != Affine::IDENTITY)
+}
+
+/// The box of row `id` from its grid track `(start, end)` across the
+/// table's columns `(left, right)` (see [`Geometry::row_track_box`]), grown
+/// by the collapsed-border gutters (`base`, see [`table_gutter_base`]) and
+/// placed by the table's `transform`.
+fn row_track_rect(
+    doc: &BaseDocument,
+    track: (f64, f64),
+    columns: (f64, f64),
+    id: NodeId,
+    base: Option<(f64, f64)>,
+    transform: Affine,
+    fixed: bool,
+) -> LayoutBox {
+    let (gx, top, bottom) = base.map(|b| row_gutters(doc, Some(id), b)).unwrap_or((0.0, 0.0, 0.0));
+    let local = Rect::new(columns.0 - gx, track.0 - top, columns.1 + gx, track.1 + bottom);
+    LayoutBox::from_rect(transform.transform_rect_bbox(local), fixed)
 }
 
 fn side(w: app_units::Au, s: style::values::computed::BorderStyle) -> f64 {
@@ -860,18 +1051,19 @@ fn side(w: app_units::Au, s: style::values::computed::BorderStyle) -> f64 {
 /// Half the collapsed borders around cell `id` (horizontal, top, bottom):
 /// Blitz's gutter (the table's first cell's widest borders) and the row's own.
 /// `None` outside collapsed-border tables.
-fn cell_gutters(doc: &BaseDocument, id: NodeId) -> Option<(f64, f64, f64)> {
-    let mut table = doc.get_node(id)?.parent;
-    while let Some(t) = table {
-        if tag(doc, t) == Some("table") {
-            break;
-        }
-        table = doc.get_node(t)?.parent;
-    }
-    table_gutters(doc, table?, doc.get_node(id)?.parent)
+pub(crate) fn cell_gutters(doc: &BaseDocument, id: NodeId) -> Option<(f64, f64, f64)> {
+    let table = table_of(doc, id)?;
+    table_gutters(doc, table, doc.get_node(id)?.parent)
 }
 
 fn table_gutters(doc: &BaseDocument, table: NodeId, row: Option<NodeId>) -> Option<(f64, f64, f64)> {
+    Some(row_gutters(doc, row, table_gutter_base(doc, table)?))
+}
+
+/// The part of [`table_gutters`] that depends on the table alone: half its
+/// first cell's widest horizontal and vertical borders (`None` outside
+/// collapsed-border tables with uniform borders).
+pub(crate) fn table_gutter_base(doc: &BaseDocument, table: NodeId) -> Option<(f64, f64)> {
     let styles = doc.get_node(table)?.primary_styles()?;
     if styles.clone_border_collapse() != style::computed_values::border_collapse::T::Collapse {
         return None;
@@ -889,13 +1081,19 @@ fn table_gutters(doc: &BaseDocument, table: NodeId, row: Option<NodeId>) -> Opti
         side(b.border_left_width.0, b.border_left_style).max(side(b.border_right_width.0, b.border_right_style)) / 2.0;
     let gy =
         side(b.border_top_width.0, b.border_top_style).max(side(b.border_bottom_width.0, b.border_bottom_style)) / 2.0;
+    Some((gx, gy))
+}
+
+/// [`table_gutters`] of the cells of `row` from the table's `(gx, gy)`
+/// ([`table_gutter_base`]): the row's own borders widen the vertical ones.
+pub(crate) fn row_gutters(doc: &BaseDocument, row: Option<NodeId>, (gx, gy): (f64, f64)) -> (f64, f64, f64) {
     let (mut top, mut bottom) = (gy, gy);
     if let Some(rs) = row.and_then(|p| doc.get_node(p)).and_then(|r| r.primary_styles()) {
         let b = rs.get_border();
         top = top.max(side(b.border_top_width.0, b.border_top_style) / 2.0);
         bottom = bottom.max(side(b.border_bottom_width.0, b.border_bottom_style) / 2.0);
     }
-    Some((gx, top, bottom))
+    (gx, top, bottom)
 }
 
 fn first_cell(doc: &BaseDocument, id: NodeId) -> Option<NodeId> {

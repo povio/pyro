@@ -37,7 +37,7 @@ impl Dom {
     }
 
     fn dir_attr(&self, idx: u32) -> Option<&str> {
-        let value = self.n(idx).element()?.attr("dir")?;
+        let value = self.n(idx).element()?.attr_local(&local_name!("dir"))?;
         for k in ["ltr", "rtl", "auto"] {
             if value.eq_ignore_ascii_case(k) {
                 return Some(k);
@@ -187,7 +187,7 @@ impl Dom {
                 }) {
                     return Some(a.value.to_string());
                 }
-                if let Some(v) = e.attr("lang").filter(|_| e.is_html() || e.name.ns.is_empty()) {
+                if let Some(v) = e.attr_local(&local_name!("lang")).filter(|_| e.is_html() || e.name.ns.is_empty()) {
                     return Some(v.to_string());
                 }
             }

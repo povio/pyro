@@ -66,6 +66,73 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn fetch_media(
+        &self,
+        request: lp_webapi::MediaRequest,
+        done: Box<dyn FnOnce(Result<lp_webapi::MediaResponse, String>)>,
+    ) -> Option<lp_webapi::MediaFetchHandle> {
+        let handle = crate::media::MediaFetch {
+            cancelled: Rc::new(std::cell::Cell::new(false)),
+            cancel: Rc::new(std::cell::RefCell::new(None)),
+        };
+        let (cancelled, slot) = (handle.cancelled.clone(), handle.cancel.clone());
+        // A finished request has nothing to cancel.
+        let finished = slot.clone();
+        let done: crate::media::MediaDone = Box::new(move |result| {
+            let cancel = finished.borrow_mut().take();
+            if let Some(cancel) = cancel {
+                cancel.disarm();
+            }
+            done(result);
+        });
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Networking, move |b| {
+            if cancelled.get() || !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                return;
+            }
+            let cancel = b.fetch_media(page, loader, request, done);
+            if cancelled.get() {
+                drop(cancel);
+            } else {
+                *slot.borrow_mut() = cancel;
+            }
+        });
+        Some(Box::new(handle))
+    }
+
+    fn set_media_timer(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) -> Option<u64> {
+        let page = self.page;
+        let loader = self.loader.clone();
+        let task = std::cell::RefCell::new(Some(task));
+        // Playback must not keep `run_until_idle` (or network idle) busy.
+        let id = self.sched.set_timer(delay, false, false, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                let task = task.borrow_mut().take();
+                if let Some(task) = task {
+                    task();
+                }
+            }
+        });
+        Some(u64::from(id.0))
+    }
+
+    fn clear_media_timer(&self, id: u64) {
+        if let Ok(id) = u32::try_from(id) {
+            self.sched.clear_timer(lp_runtime::TimerId(id));
+        }
+    }
+
+    fn media_load_delay_released(&self) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Networking, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.maybe_fire_load(page);
+            }
+        });
+    }
+
     fn navigate(&self, request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();
@@ -73,14 +140,29 @@ impl PageHooks for Hooks {
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
         let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
-        if own_frame && request.method == "GET" && request.body.is_none() {
-            let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page));
-            if nav.is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
+        let nav = own_frame
+            .then(|| self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page)))
+            .flatten();
+        if request.method == "GET" && request.body.is_none() {
+            if nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
                 return;
             }
+            // Navigation API: the document's `navigate` event may cancel
+            // or intercept the load.
+            if let Some(nav) = nav.as_ref().filter(|_| !request.url.starts_with("javascript:")) {
+                match nav.navigate_event("push", &request.url, true) {
+                    crate::nav::NavigateDecision::Cancel => return,
+                    crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, "push"),
+                    crate::nav::NavigateDecision::Proceed => {}
+                }
+            }
         }
+        // `document.open()` before the task runs drops it (stop loading).
+        let stops = nav.map(|nav| nav.stop_count());
         self.sched.post(TaskSource::Navigation, move |b| {
-            if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+            if !b.doc(page).is_some_and(|p| {
+                p.main_frame.loader_id == loader && stops.is_none_or(|stops| p.nav.stop_count() == stops)
+            }) {
                 return;
             }
             let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
@@ -121,7 +203,7 @@ impl PageHooks for Hooks {
             let result = if new_context
                 || (page.child.is_some() && request.target.as_deref().is_some_and(|t| matches!(t, "_top" | "_parent")))
             {
-                Err(JsError::Unsupported("form POST to a new window and cross-frame navigation targets"))
+                Err(JsError::Unsupported(&"form POST to a new window and cross-frame navigation targets"))
             } else {
                 b.navigate_frame_with_handling(
                     named.unwrap_or(page),
@@ -243,6 +325,16 @@ impl PageHooks for Hooks {
     }
 
     fn document_reopened(&self) {
+        // At once, not in the task below: a navigation the same script
+        // starts commits against the opened document.
+        let nav = self
+            .frames
+            .upgrade()
+            .filter(|host| host.matches(self.page, &self.loader))
+            .and_then(|host| host.nav(self.page));
+        if let Some(nav) = nav {
+            nav.document_opened();
+        }
         let page = self.page;
         let loader = self.loader.clone();
         self.sched.post(TaskSource::DomManipulation, move |b| {
@@ -287,6 +379,16 @@ impl PageHooks for Hooks {
         let observer = self.observer.borrow().clone();
         if let Some(observer) = observer {
             observer.on_worker_event(self.page.page, event);
+        }
+    }
+
+    fn request_animation_frame(&self) {
+        if let Some(host) = self.frames.upgrade() {
+            if host.matches(self.page, &self.loader) {
+                if let Some(realm) = host.frame(self.page).and_then(|f| f.main_realm().cloned()) {
+                    crate::window::request_frame(&realm);
+                }
+            }
         }
     }
 
@@ -381,6 +483,13 @@ impl PageHooks for Hooks {
             });
         }))
     }
+
+    fn thread_poster(&self) -> Option<RemotePoster> {
+        let handle = self.handle.clone();
+        Some(Arc::new(move |task| {
+            let _ = handle.post(move |_| task());
+        }))
+    }
 }
 
 impl Browser {
@@ -407,6 +516,7 @@ impl Browser {
             user_agent: state.user_agent_override.clone(),
             extra_headers: state.extra_http_headers.clone(),
             cache_disabled: state.cache_disabled,
+            bypass_service_worker: state.bypass_service_worker,
             scripts: state.init_scripts.clone(),
             bindings: state.bindings.clone(),
         };
@@ -428,7 +538,7 @@ impl Browser {
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
             let dom = host.dom.borrow();
-            (dom.has_iframe_events(), dom.has_resource_events())
+            (dom.has_iframe_events() || dom.has_media_events(), dom.has_resource_events())
         };
         if !iframe_events && !resource_events {
             return;
@@ -470,6 +580,11 @@ impl Browser {
                 // Script-inserted (or `src`-changed) scripts: "already
                 // started" makes repeats of one element no-ops.
                 self.script_event(target, event.node);
+            } else if event.kind == lp_dom::script::ResourceKind::Meta {
+                // A refresh pragma acts on insertion only.
+                if event.reason == lp_dom::script::ResourceReason::Connected {
+                    self.meta_refresh_event(target, event.node);
+                }
             } else {
                 bindings.apply_style_event(&event);
             }
@@ -485,6 +600,25 @@ fn javascript_url_source(url: &str) -> Option<String> {
     Some(percent_encoding::percent_decode_str(rest).decode_utf8_lossy().into_owned())
 }
 
+/// Every about:blank document's markup.
+const BLANK_MARKUP: &str = "<!doctype html><html><head></head><body></body></html>";
+/// The nodes `BLANK_MARKUP` makes: the document, the doctype, html, head, body.
+const BLANK_NODES: usize = 5;
+
+/// An about:blank document has nodes beyond the ones it was made with: a
+/// script or `Runtime.evaluate` filled it through DOM APIs (an inserted
+/// iframe, whose documents are its own, included). A shadow tree is not
+/// among the document's descendants: one attached to body (the only one of
+/// the five that can host one) counts as well.
+pub(crate) fn blank_document_has_content(page_dom: &PageDom) -> bool {
+    let dom = page_dom.dom.borrow();
+    let Ok(nodes) = dom.descendants(page_dom.document()) else { return true };
+    nodes
+        .take(BLANK_NODES + 1)
+        .enumerate()
+        .any(|(i, node)| i == BLANK_NODES || dom.shadow_root(node).is_ok_and(|root| root.is_some()))
+}
+
 pub(crate) fn create(
     host: &Rc<crate::frames::FrameHost>,
     page: FrameKey,
@@ -495,34 +629,39 @@ pub(crate) fn create(
     let settings = host.settings.borrow().clone();
     let dom = host.dom.clone();
     let doc = if url == "about:blank" {
-        lp_dom::parse::parse_document(&dom, url, "<!doctype html><html><head></head><body></body></html>")
+        lp_dom::parse::parse_document(&dom, url, BLANK_MARKUP)
     } else {
         dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, url)
     };
-    dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
-    dom.borrow_mut().set_allow_declarative_shadow_roots(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
+    dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::type_error(format!("{e:?}")))?;
+    dom.borrow_mut().set_allow_declarative_shadow_roots(doc, true).map_err(|e| JsError::type_error(format!("{e:?}")))?;
     dom.borrow_mut().set_resource_tracking(true);
     dom.borrow_mut()
         .set_document_base_url(doc, matches!(url, "about:blank" | "about:srcdoc").then_some(frame.base_url.as_str()))
-        .map_err(|e| JsError::Type(format!("{e:?}")))?;
+        .map_err(|e| JsError::type_error(format!("{e:?}")))?;
     let bindings = PageDom::new(dom, doc);
     bindings.set_storage_namespaces(settings.local, settings.session);
     bindings.set_viewport(settings.viewport);
     if page.child.is_some() {
         bindings.set_frame_viewport_source(frame_viewport_source(host, &frame));
     }
-    bindings.set_context_services(settings.services);
+    bindings.set_nested_frame(page.child.is_some());
+    bindings.set_opaque_origin(frame.sandbox.opaque);
     bindings.set_max_touch_points(settings.max_touch_points);
     bindings
         .set_user_agent_override(settings.user_agent)
-        .map_err(|e| JsError::Type(format!("invalid request defaults: {e}")))?;
+        .map_err(|e| JsError::type_error(format!("invalid request defaults: {e}")))?;
     bindings.set_extra_http_headers(settings.extra_headers);
     bindings.set_cache_disabled(settings.cache_disabled);
+    bindings.set_bypass_service_worker(settings.bypass_service_worker);
     bindings.set_scripting_disabled(frame.sandbox.scripts_disabled);
     bindings.set_request_context(lp_webapi::RequestContext {
         frame_id: Some(frame.id.0),
         loader_id: Some(loader.0.clone()),
     });
+    // After the frame id: a navigation a service worker handled reserved
+    // the new client's id under it.
+    bindings.set_context_services(settings.services);
     bindings.create_window_target(doc);
     bindings.set_ready_state(doc, "loading");
     *bindings.net.borrow_mut() = settings.net;

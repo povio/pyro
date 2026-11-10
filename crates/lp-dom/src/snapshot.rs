@@ -41,6 +41,13 @@ pub struct RenderHtml<'a> {
     pub stylesheet_href: &'a dyn Fn(NodeId) -> Option<String>,
     /// Element to mark with `mark.1` (a valueless attribute).
     pub mark: Option<(NodeId, &'a str)>,
+    /// The constructed sheets (id and text) a document or shadow root adopts
+    /// (`adoptedStyleSheets`), in order; `None` when nothing adopts any.
+    /// They render as `<style>` elements after the document element's
+    /// children and after a shadow tree's, each text once: shadow styles are
+    /// global in the render tree, and a sheet shared by many shadow roots
+    /// (a component's) is one sheet to the renderer.
+    pub adopted: Option<&'a dyn Fn(NodeId) -> Vec<(u64, std::rc::Rc<str>)>>,
 }
 
 /// Changes to a [`RenderTree`] ([`Dom::render_delta`]).
@@ -105,6 +112,8 @@ const NONE: Scope = usize::MAX;
 
 enum Step {
     Enter(u32, Scope),
+    /// An adopted sheet, as a `<style>` element of that key.
+    Adopted(u64, std::rc::Rc<str>),
     Close,
     /// Text standing for element `.0`'s children.
     Synthetic(u32, String, TextKind),
@@ -265,18 +274,45 @@ impl Dom {
 
     fn render_walk(&self, doc: NodeId, opts: &RenderHtml<'_>, sink: &mut dyn Sink) -> DomResult<()> {
         let d = self.check(doc)?;
-        self.render_walk_from(self.child_idx_iter(d).collect(), opts, sink);
+        let root = self.child_idx_iter(d).find(|&c| self.n(c).is_element()).unwrap_or(NIL);
+        self.render_walk_from(self.child_idx_iter(d).collect(), opts, sink, root, false);
         Ok(())
     }
 
+    /// Pushes the `<style>` steps of the sheets `scope` adopts (rendered
+    /// after what `stack` holds above them), but texts already `emitted`.
+    fn push_adopted(
+        &self,
+        stack: &mut Vec<Step>,
+        opts: &RenderHtml<'_>,
+        scope: u32,
+        emitted: &mut rustc_hash::FxHashSet<std::rc::Rc<str>>,
+    ) {
+        let Some(adopted) = opts.adopted else { return };
+        let mut sheets = Vec::new();
+        for (_, text) in adopted(self.id_of(scope)) {
+            if !text.is_empty() && emitted.insert(text.clone()) {
+                sheets.push((adopted_key(emitted.len()), text));
+            }
+        }
+        for (key, text) in sheets.into_iter().rev() {
+            stack.push(Step::Adopted(key, text));
+        }
+    }
+
     /// The render walk over the subtrees of `roots` (in order), outside any
-    /// shadow tree.
-    fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink) {
+    /// shadow tree. `root` is the document element (whose rendered children
+    /// end with the document's adopted sheets), `NIL` when not walked.
+    /// `single`: stop after the first node written to `sink` (its own
+    /// content, no subtree).
+    fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink, root: u32, single: bool) {
         let mark = opts.mark.and_then(|(id, _)| self.check(id).ok());
         // Shadow hosts entered: (host, the host's own scope).
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
         // Tags of the open elements, for `close`.
         let mut tags: Vec<String> = Vec::new();
+        // Adopted sheet texts rendered so far.
+        let mut emitted = rustc_hash::FxHashSet::default();
         let mut stack = Vec::new();
         push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
@@ -290,11 +326,23 @@ impl Dom {
                     sink.close(&tag);
                     continue;
                 }
+                Step::Adopted(key, text) => {
+                    let name = QualName::new(None, ns!(html), markup5ever::local_name!("style"));
+                    sink.open(key, "style", &name, &[], false, false);
+                    sink.text(key | SYNTHETIC_TEXT, &text, TextKind::Style);
+                    sink.close("style");
+                    continue;
+                }
                 Step::Enter(n, scope) => (n, scope),
             };
             match &self.n(n).kind {
                 NodeKind::Doctype(dt) => sink.doctype(&dt.name),
-                NodeKind::Text(s) | NodeKind::CData(s) => sink.text(render_key(self.id_of(n)), s, TextKind::Node),
+                NodeKind::Text(s) | NodeKind::CData(s) => {
+                    sink.text(render_key(self.id_of(n)), s, TextKind::Node);
+                    if single {
+                        return;
+                    }
+                }
                 NodeKind::Comment(_) | NodeKind::ProcessingInstruction(_) | NodeKind::Attr(_) => {}
                 NodeKind::Document(_) | NodeKind::Fragment(_) => {
                     push_children(&mut stack, self.child_idx_iter(n).collect(), scope);
@@ -338,6 +386,12 @@ impl Dom {
                     let mut attrs: Vec<RAttr<'_>> = Vec::with_capacity(e.attrs.len() + 1);
                     for a in &e.attrs {
                         let name: &str = &a.name.local;
+                        // The state namespace is the snapshot's own: a page's
+                        // `setAttributeNS` in it would fake pseudo-classes or
+                        // the top layer for the renderer.
+                        if &*a.name.ns == STATE_NS {
+                            continue;
+                        }
                         if a.name.ns == ns!() {
                             let skip = match (local, name) {
                                 ("input", "value" | "checked") => input_type.is_some(),
@@ -387,17 +441,26 @@ impl Dom {
                             valueless: false,
                         });
                     }
+                    if let Some(states) = self.render_custom_states(n) {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), "custom-states".into())),
+                            value: Cow::Owned(states),
+                            valueless: false,
+                        });
+                    }
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);
+                    if single {
+                        return;
+                    }
                     if void {
                         continue;
                     }
                     tags.push(tag);
                     stack.push(Step::Close);
                     if html && local == "style" {
-                        let text = (opts.style_text)(id)
-                            .unwrap_or_else(|| self.text_content(id).ok().flatten().unwrap_or_default());
+                        let text = (opts.style_text)(id).unwrap_or_else(|| self.child_text_content(id).into_owned());
                         stack.push(Step::Synthetic(n, text, TextKind::Style));
                         continue;
                     }
@@ -410,8 +473,12 @@ impl Dom {
                     }
                     if e.shadow_root != NIL {
                         hosts.push((n, scope));
+                        self.push_adopted(&mut stack, opts, e.shadow_root, &mut emitted);
                         push_children(&mut stack, self.child_idx_iter(e.shadow_root).collect(), hosts.len() - 1);
                     } else {
+                        if n == root && self.n(n).parent != NIL {
+                            self.push_adopted(&mut stack, opts, self.n(n).parent, &mut emitted);
+                        }
                         push_children(&mut stack, self.child_idx_iter(n).collect(), scope);
                     }
                 }
@@ -429,7 +496,7 @@ impl Dom {
     /// content gives its sheet text.
     pub fn render_delta(&self, doc: NodeId, since: u64, opts: &RenderHtml<'_>) -> Option<RenderDelta> {
         let d = self.check(doc).ok()?;
-        if self.shadow_root_count() != 0 || opts.mark.is_some() {
+        if self.shadow_root_count() != 0 || opts.mark.is_some() || opts.adopted.is_some() {
             return None;
         }
         let mut changed: Vec<u32> = Vec::new();
@@ -525,7 +592,8 @@ impl Dom {
             }
         };
         // The `<style>` element `i` is or is in: its render content is its
-        // sheet's text, which a change inside it replaces.
+        // sheet's text, its child text content, which only a change of its
+        // own children replaces (nothing deeper in it is rendered).
         let style_owner = |mut i: u32| -> Option<u32> {
             while i != NIL && i != d {
                 if let NodeKind::Element(e) = &self.n(i).kind {
@@ -556,7 +624,12 @@ impl Dom {
         for &p in &parents {
             match rendered(p) {
                 Err(()) => {
-                    styles.push(style_owner(p)?);
+                    // A child of the `<style>` came or went; deeper in it,
+                    // nothing rendered changed.
+                    let owner = style_owner(p)?;
+                    if owner == p {
+                        styles.push(owner);
+                    }
                     continue;
                 }
                 Ok(false) => continue,
@@ -569,7 +642,7 @@ impl Dom {
             let kids: Vec<u32> = self.child_idx_iter(p).filter(|&k| self.render_child(k)).collect();
             let fresh: Vec<u32> = kids.iter().copied().filter(|k| inserted.contains(k)).collect();
             let mut sink = TreeSink::default();
-            self.render_walk_from(fresh, opts, &mut sink);
+            self.render_walk_from(fresh, opts, &mut sink, NIL, false);
             ops.push(DeltaOp::Children {
                 parent: (p != d).then(|| render_key(self.id_of(p))),
                 kids: kids.iter().map(|&k| render_key(self.id_of(k))).collect(),
@@ -603,7 +676,11 @@ impl Dom {
                 // Inside a `<style>`: its sheet text.
                 Err(()) => match style_owner(i).filter(|&owner| owner != i) {
                     Some(owner) => {
-                        styles.push(owner);
+                        // A child's data: the sheet text. Deeper: nothing
+                        // rendered.
+                        if self.n(i).parent == owner {
+                            styles.push(owner);
+                        }
                         continue;
                     }
                     None if covered(i) || inserted.contains(&i) => continue,
@@ -615,9 +692,10 @@ impl Dom {
             if covered(i) || inserted.contains(&i) {
                 continue;
             }
-            // The node alone (its subtree walk, first node).
+            // The node alone: the walk stops at the first node it writes
+            // (the node's own content, not its subtree).
             let mut sink = TreeSink::default();
-            self.render_walk_from(vec![i], opts, &mut sink);
+            self.render_walk_from(vec![i], opts, &mut sink, NIL, true);
             let Some(first) = sink.tree.nodes.into_iter().next() else { continue };
             if first.key != render_key(self.id_of(i)) {
                 return None;
@@ -645,8 +723,7 @@ impl Dom {
                 Err(()) => return None,
             }
             let id = self.id_of(owner);
-            let text =
-                (opts.style_text)(id).unwrap_or_else(|| self.text_content(id).ok().flatten().unwrap_or_default());
+            let text = (opts.style_text)(id).unwrap_or_else(|| self.child_text_content(id).into_owned());
             ops.push(DeltaOp::Node { key: render_key(id) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) });
         }
         Some(RenderDelta { ops })
@@ -659,8 +736,7 @@ impl Dom {
         if !(e.is_html() && &*e.name.local == "style") {
             return None;
         }
-        let text =
-            (opts.style_text)(owner).unwrap_or_else(|| self.text_content(owner).ok().flatten().unwrap_or_default());
+        let text = (opts.style_text)(owner).unwrap_or_else(|| self.child_text_content(owner).into_owned());
         Some(DeltaOp::Node { key: render_key(owner) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) })
     }
 
@@ -675,12 +751,15 @@ impl Dom {
         let control = matches!(local, "input" | "textarea" | "select" | "button" | "output");
         let kind = e.is_html()
             && (control
-                || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog")
-                || e.attr("popover").is_some());
+                || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog" | "progress")
+                || e.attr("popover").is_some()
+                || e.flags & crate::node::element_flags::FORM_ASSOCIATED != 0);
         let editable = e.attr("contenteditable").is_some();
         // An image button (`<input type=image>`) is laid out like `<img>`:
         // its natural size travels the same way.
+        // A `<video>` with known metadata reports its video size the same way.
         let is_image = local == "img"
+            || local == "video"
             || (local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")));
         let natural = (e.is_html() && is_image).then(|| self.natural_size(self.id_of(n))).flatten();
         if !kind && !editable && natural.is_none() {
@@ -702,6 +781,10 @@ impl Dom {
             (Open, "open"),
             (Modal, "modal"),
             (PopoverOpen, "popover-open"),
+            (InRange, "in-range"),
+            (OutOfRange, "out-of-range"),
+            (UserValid, "user-valid"),
+            (UserInvalid, "user-invalid"),
         ] {
             if self.matches_state(n, &pc) {
                 if !out.is_empty() {
@@ -709,6 +792,14 @@ impl Dom {
                 }
                 out.push_str(name);
             }
+        }
+        // The top layer's paint order: renderers paint these elements above
+        // the document by rank (one empty check without a top layer).
+        if let Some(rank) = self.top_layer_rank(self.id_of(n)) {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            let _ = std::fmt::Write::write_fmt(&mut out, format_args!("top-layer={rank}"));
         }
         (!out.is_empty()).then_some(out)
     }
@@ -768,6 +859,14 @@ impl Dom {
             })
             .collect()
     }
+}
+
+/// The render key of the `n`th adopted sheet rendered: bit 62 marks it
+/// apart from node keys. Keys follow the rendering order (not the sheet), so
+/// a reordered list changes the texts of the same elements: the renderer
+/// cascades its sheets in the order it made their elements.
+fn adopted_key(n: usize) -> u64 {
+    (1 << 62) | n as u64
 }
 
 fn push_children(stack: &mut Vec<Step>, kids: Vec<u32>, scope: Scope) {

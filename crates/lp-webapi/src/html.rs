@@ -845,9 +845,9 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
 pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     def.method("getBoundingClientRect", 0, |s, n, _a| crate::layout_api::bounding_rect(s, n));
     def.method("getClientRects", 0, |s, n, _a| crate::layout_api::client_rects(s, n));
-    def.method("scrollIntoView", 0, |s, n, _a| crate::layout_api::scroll_into_view(s, n));
+    def.method("scrollIntoView", 0, |s, n, a| crate::layout_api::scroll_into_view(s, n, a));
     def.method("scrollIntoViewIfNeeded", 0, |s, n, a| crate::layout_api::scroll_into_view_if_needed(s, n, a));
-    def.method("checkVisibility", 0, |s, n, _a| crate::layout_api::check_visibility(s, n));
+    def.method("checkVisibility", 0, |s, n, a| crate::layout_api::check_visibility(s, n, a));
     def.method("scroll", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, false));
     def.method("scrollTo", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, false));
     def.method("scrollBy", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, true));
@@ -873,13 +873,17 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
         let page = n.page();
         Ok(s.number(page.layout().client_left(&page.dom.borrow(), n.id)))
     });
-    def.method("setPointerCapture", 1, |s, _n, _a| Ok(s.undefined()));
-    def.method("releasePointerCapture", 1, |s, _n, _a| Ok(s.undefined()));
-    def.method("hasPointerCapture", 1, |s, _n, _a| Ok(s.boolean(false)));
-    def.method("animate", 0, |s, _n, _a| {
-        s.eval("({finished: Promise.resolve(), cancel(){}, finish(){}, play(){}, pause(){}, addEventListener(){}, removeEventListener(){}, onfinish: null, playState: 'finished'})", None, 1)
+    def.method("setPointerCapture", 1, crate::pointer_capture::set_pointer_capture);
+    def.method("releasePointerCapture", 1, crate::pointer_capture::release_pointer_capture);
+    def.pure_method("hasPointerCapture", 1, crate::pointer_capture::has_pointer_capture);
+    def.method("animate", 1, |s, n, a| {
+        let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+        crate::animations::animate(s, n.page(), el, &a)
     });
-    def.method("getAnimations", 0, |s, _n, _a| Ok(s.array(&[])?.value()));
+    def.method("getAnimations", 0, |s, n, a| {
+        let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+        crate::animations::element_animations(s, n.page(), el, &a)
+    });
     // ARIA reflection (ARIAMixin) for the attributes Playwright/Testing
     // Library read through properties.
     reflect_aria(def);
@@ -1145,76 +1149,41 @@ impl JsClass for HtmlElement {
             crate::input::blur_element(n.page(), n.id);
             Ok(s.undefined())
         });
-        def.method("attachInternals", 0, |s, n, _a| {
-            let id = n.id;
-            let root = s.function("shadowRoot", move |s, _this, _a| {
-                let page = crate::target::page_of(s)?;
-                let root = page.dom.borrow().shadow_root(id).unwrap_or(None);
-                node_value(s, &page, root)
-            })?;
-            let make = s.eval("(function(root){return {get shadowRoot(){return root()}, setFormValue(){}, setValidity(){}, states: new Set(), form: null, labels: [], willValidate: false, checkValidity(){return true}, reportValidity(){return true}}})", None, 1)?;
-            make.as_object().ok_or_else(|| JsError::Type("attachInternals".into()))?.call(None, &[root.value()])
-        });
-        def.method("showPopover", 0, |s, n, _a| {
-            set_popover_showing(n, true)?;
+        def.method("attachInternals", 0, |s, n, _a| crate::internals::attach(s, n.page(), n.id));
+        def.method("showPopover", 0, |s, n, a| {
+            let source = crate::popover::source_option(s, a.get(0))?;
+            crate::popover::show_popover(n.page(), n.id, true, source)?;
             Ok(s.undefined())
         });
         def.method("hidePopover", 0, |s, n, _a| {
-            set_popover_showing(n, false)?;
+            crate::popover::hide_popover(n.page(), n.id, true, true, true, None)?;
             Ok(s.undefined())
         });
         def.method("togglePopover", 0, |s, n, a| {
-            // `force` is a boolean or a dictionary with a `force` member.
-            let force = match a.get(0) {
-                v if v.is_undefined() => None,
+            // `force` is a boolean or a dictionary with `force` and `source`.
+            let (force, source) = match a.get(0) {
+                v if v.is_undefined() => (None, None),
                 v => match v.as_object() {
-                    Some(options) => Some(options.get("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
-                    None => Some(v.to_bool()),
+                    Some(options) => (
+                        Some(options.get_atom("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
+                        crate::popover::source_option(s, v)?,
+                    ),
+                    None => (Some(v.to_bool()), None),
                 },
             };
-            let showing = n.page().dom.borrow().is_popover_showing(n.id);
+            let page = n.page();
+            let showing = page.dom.borrow().is_popover_showing(n.id);
             match force {
                 // Already in the wanted state: only the validity errors.
                 Some(want) if want == showing => {
-                    check_popover_validity(n, showing)?;
+                    crate::popover::check_popover_validity(page, n.id, showing, true)?;
                 }
-                _ => set_popover_showing(n, !showing)?,
+                _ if showing => crate::popover::hide_popover(page, n.id, true, true, true, source)?,
+                _ => crate::popover::show_popover(page, n.id, true, source)?,
             }
-            Ok(s.boolean(n.page().dom.borrow().is_popover_showing(n.id)))
+            Ok(s.boolean(page.dom.borrow().is_popover_showing(n.id)))
         });
     }
-}
-
-/// HTML "check popover validity": whether `showPopover` (`expect_showing`
-/// false) or `hidePopover` (true) has anything to do. An element without a
-/// valid `popover` attribute throws NotSupportedError, a disconnected one or
-/// an open dialog InvalidStateError.
-fn check_popover_validity(n: &NodeData, expect_showing: bool) -> JsResult<bool> {
-    let dom = n.page().dom.borrow();
-    if !dom.has_attribute(n.id, "popover").js()? {
-        return Err(JsError::dom("NotSupportedError", "Not supported on elements that do not have a valid value for the 'popover' attribute."));
-    }
-    if !dom.is_connected(n.id).js()? {
-        return Err(JsError::dom("InvalidStateError", "Invalid on disconnected popover elements."));
-    }
-    let open_dialog =
-        dom.element(n.id).js()?.local_name() == &lp_dom::LocalName::from("dialog") && dom.has_attribute(n.id, "open").js()?;
-    if !expect_showing && open_dialog {
-        return Err(JsError::dom("InvalidStateError", "The dialog is already open as a dialog, and therefore cannot be opened as a popover."));
-    }
-    Ok(dom.is_popover_showing(n.id) == expect_showing)
-}
-
-/// `showPopover()` / `hidePopover()`: the popover visibility state, which
-/// `:popover-open` and the UA rule hiding closed popovers read. Removing the
-/// popover from its document hides it; `moveBefore` does not.
-/// Not modelled: `beforetoggle`/`toggle` events, light dismiss, the auto
-/// popover stack (showing one popover hides no other).
-fn set_popover_showing(n: &NodeData, showing: bool) -> JsResult<()> {
-    if check_popover_validity(n, !showing)? {
-        n.page().dom.borrow_mut().set_popover_showing(n.id, showing).js()?;
-    }
-    Ok(())
 }
 
 simple_class!(HtmlUnknownElement, "HTMLUnknownElement", HtmlElement);
@@ -1333,7 +1302,7 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_str!(def, "ping", "ping");
     reflect_tokens!(def, "relList", "rel");
-    def.method("toString", 0, |s, n, _a| {
+    def.pure_method("toString", 0, |s, n, _a| {
         let dom = n.page().dom.borrow();
         Ok(s.string(&dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(&dom, n.id, h)).unwrap_or_default()))
     });
@@ -1444,7 +1413,7 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
         let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
         Ok(s.string(&selected.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
     });
-    def.method("decode", 0, |s, _n, _a| s.eval("Promise.resolve()", None, 1));
+    def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
 });
 
 // ----- forms --------------------------------------------------------------------
@@ -1565,14 +1534,44 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.method("setRangeText", 1, |s, n, a| {
         let text = arg_string(&a, 0, "setRangeText")?;
-        let range = if a.len() >= 3 { Some((to_u32(a.get(1))?, to_u32(a.get(2))?)) } else { None };
-        let mut dom = n.page().dom.borrow_mut();
-        if let Some((st, en)) = range {
-            dom.set_selection_range(n.id, st, en).js()?;
+        // The arguments convert (in order) before the type is checked.
+        let range = if a.len() >= 2 {
+            a.require(3, "setRangeText")?;
+            let (start, end) = (to_u32(a.get(1))?, to_u32(a.get(2))?);
+            let mode = match a.get(3) {
+                v if v.is_undefined() => lp_dom::forms::RangeMode::Preserve,
+                v => match dom_string(v)?.as_str() {
+                    "select" => lp_dom::forms::RangeMode::Select,
+                    "start" => lp_dom::forms::RangeMode::Start,
+                    "end" => lp_dom::forms::RangeMode::End,
+                    "preserve" => lp_dom::forms::RangeMode::Preserve,
+                    other => {
+                        return Err(JsError::Type(format!(
+                            "Failed to execute 'setRangeText': The provided value '{other}' is not a valid enum value of type SelectionMode."
+                        ).into()))
+                    }
+                },
+            };
+            Some((start, end, mode))
+        } else {
+            None
+        };
+        if !has_selection(n) {
+            return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
         }
-        dom.insert_text(n.id, &text).js()?;
-        drop(dom);
+        let (start, end, mode) = match range {
+            Some(r) => r,
+            None => {
+                let (st, en) = n.page().dom.borrow().selection(n.id).js()?;
+                (st, en, lp_dom::forms::RangeMode::Preserve)
+            }
+        };
+        if start > end {
+            return Err(JsError::dom("IndexSizeError", "The provided start value is larger than the end value."));
+        }
+        n.page().dom.borrow_mut().set_range_text(n.id, &text, start, end, mode).js()?;
         crate::editing::queue_control_selectionchange(n.page(), n.id);
+        crate::input::queue_simple(n.page(), n.id, "select", true, false);
         Ok(s.undefined())
     });
 }
@@ -1597,6 +1596,7 @@ fn has_selection(n: &NodeData) -> bool {
 }
 
 simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
+    crate::popover::define_popover_invoker(def);
     define_labels(def);
     define_validation(def);
     define_text_selection(def);
@@ -1674,19 +1674,39 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     );
     def.accessor(
         "valueAsNumber",
-        |s, n| {
-            let dom = n.page().dom.borrow();
-            let ty = dom.input_type(n.id).js()?;
-            let v = dom.value(n.id).js()?;
-            Ok(s.number(match ty {
-                InputType::Number | InputType::Range => v.parse::<f64>().unwrap_or(f64::NAN),
-                _ => f64::NAN,
-            }))
-        },
+        |s, n| Ok(s.number(n.page().dom.borrow().value_as_number(n.id).js()?)),
         |_s, n, v| {
             let x = v.to_number()?;
-            let text = if x.is_finite() { format_number(x) } else { String::new() };
-            n.page().dom.borrow_mut().set_value(n.id, &text).js()
+            if x.is_infinite() {
+                return Err(JsError::Type(
+                    "Failed to set the 'valueAsNumber' property on 'HTMLInputElement': The value provided is infinite."
+                        .into(),
+                ));
+            }
+            n.page().dom.borrow_mut().set_value_as_number(n.id, x).js()
+        },
+    );
+    def.accessor(
+        "valueAsDate",
+        |s, n| {
+            let time = n.page().dom.borrow().value_as_date(n.id).js()?;
+            match time {
+                Some(t) => Ok(s.date(t)?.value()),
+                None => Ok(s.null()),
+            }
+        },
+        |_s, n, v| {
+            let time = if v.is_null() {
+                None
+            } else if v.is_date() {
+                Some(v.to_number()?)
+            } else {
+                return Err(JsError::Type(
+                    "Failed to set the 'valueAsDate' property on 'HTMLInputElement': The provided value is not a Date."
+                        .into(),
+                ));
+            };
+            n.page().dom.borrow_mut().set_value_as_date(n.id, time).js()
         },
     );
     def.accessor("files", crate::file::input_files, crate::file::set_input_files);
@@ -1701,32 +1721,15 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
         drop(dom);
         node_value(s, n.page(), target)
     });
-    def.method("stepUp", 0, |s, n, a| step(s, n, a, 1.0));
-    def.method("stepDown", 0, |s, n, a| step(s, n, a, -1.0));
+    def.method("stepUp", 0, |s, n, a| step(s, n, a, true));
+    def.method("stepDown", 0, |s, n, a| step(s, n, a, false));
     def.method("showPicker", 0, |s, _n, _a| Ok(s.undefined()));
 });
 
-fn format_number(x: f64) -> String {
-    if x.fract() == 0.0 && x.abs() < 1e15 {
-        format!("{}", x as i64)
-    } else {
-        format!("{x}")
-    }
-}
-
-fn step<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, dir: f64) -> JsResult<Value<'s>> {
-    let k = if a.get(0).is_undefined() { 1.0 } else { a.get(0).to_number()? };
-    let mut dom = n.page().dom.borrow_mut();
-    let step = dom.get_attribute(n.id, "step").js()?.and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
-    let cur = dom.value(n.id).js()?.parse::<f64>().unwrap_or(0.0);
-    let mut v = cur + dir * k * step;
-    if let Some(max) = dom.get_attribute(n.id, "max").js()?.and_then(|x| x.parse::<f64>().ok()) {
-        v = v.min(max);
-    }
-    if let Some(min) = dom.get_attribute(n.id, "min").js()?.and_then(|x| x.parse::<f64>().ok()) {
-        v = v.max(min);
-    }
-    dom.set_value(n.id, &format_number(v)).js()?;
+/// `stepUp(n)` / `stepDown(n)`.
+fn step<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, up: bool) -> JsResult<Value<'s>> {
+    let k = if a.get(0).is_undefined() { 1 } else { to_i32(a.get(0))? };
+    n.page().dom.borrow_mut().step_value(n.id, f64::from(k), up).js()?;
     Ok(s.undefined())
 }
 
@@ -1807,7 +1810,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
             n.page().dom.borrow_mut().set_value(n.id, &arg0).js()
         },
     );
-    def.method("item", 1, |s, n, a| {
+    def.pure_method("item", 1, |s, n, a| {
         let i = to_u32(a.get(0))? as usize;
         let o = n.page().dom.borrow().select_options(n.id).js()?.get(i).copied();
         node_value(s, n.page(), o)
@@ -1819,7 +1822,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
             None => Ok(None),
         }
     });
-    def.method("namedItem", 1, |s, n, a| {
+    def.pure_method("namedItem", 1, |s, n, a| {
         let name = dom_string(a.get(0))?;
         let dom = n.page().dom.borrow();
         let found = dom.select_options(n.id).js()?.into_iter().find(|&o| {
@@ -1829,14 +1832,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
         node_value(s, n.page(), found)
     });
     def.method("add", 1, |s, n, a| {
-        let el = crate::node::node_arg(s, a.get(0), "HTMLSelectElement.add")?;
-        let before = crate::node::opt_node_arg(s, a.get(1), "HTMLSelectElement.add").ok().flatten();
-        let mut dom = n.page().dom.borrow_mut();
-        let parent = match before {
-            Some(b) => dom.parent(b).js()?.unwrap_or(n.id),
-            None => n.id,
-        };
-        dom.insert_before(parent, el, before).js()?;
+        collections::options_add(s, n.page(), n.id, a, "HTMLSelectElement")?;
         Ok(s.undefined())
     });
     def.method("remove", 0, |s, n, a| {
@@ -1967,6 +1963,8 @@ simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
     reflect_bool!(def, "disabled", "disabled");
     reflect_bool!(def, "formNoValidate", "formnovalidate");
     def.getter("form", form_value);
+    crate::popover::define_popover_invoker(def);
+    crate::popover::define_command_invoker(def);
     def.accessor(
         "type",
         |s, n| {
@@ -1975,6 +1973,8 @@ simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
             Ok(s.string(match t.as_deref() {
                 Some("reset") => "reset",
                 Some("button") => "button",
+                // Without a valid type, a `command`/`commandfor` button is a plain button.
+                _ if !crate::popover::button_is_submit(&dom, n.id) => "button",
                 _ => "submit",
             }))
         },
@@ -2003,7 +2003,7 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
     );
     def.getter("length", |s, n| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
-        c.get("length")
+        c.get_atom("length")
     });
     def.indexed(|s, n, i| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
@@ -2049,28 +2049,13 @@ simple_class!(HtmlLabelElement, "HTMLLabelElement", HtmlElement, |def| {
 
 /// The labeled control of a `<label>` (HTML §4.10.4).
 pub fn labeled_control(dom: &Dom, label: NodeId) -> Option<NodeId> {
-    let labelable = |id: NodeId| {
-        dom.element(id).is_ok_and(|e| {
-            e.is_html()
-                && (matches!(&*e.name.local, "button" | "meter" | "output" | "progress" | "select" | "textarea")
-                    || (&*e.name.local == "input"
-                        && dom.input_type(id).map(|t| t != InputType::Hidden).unwrap_or(false)))
-        })
-    };
-    if let Ok(Some(f)) = dom.get_attribute(label, "for") {
-        let root = dom.root_node(label, false).ok()?;
-        let target = dom.get_element_by_id(root, f).ok()??;
-        return labelable(target).then_some(target);
-    }
-    dom.descendants(label).ok()?.skip(1).find(|&d| labelable(d))
+    dom.labeled_control(label).ok().flatten()
 }
 
+/// `element.labels`: from the tree scope's index of labels by `for` and the
+/// control's ancestors (lp-dom), not a walk of the document.
 pub(crate) fn labels_for(dom: &Dom, control: NodeId) -> Vec<NodeId> {
-    let Ok(root) = dom.root_node(control, false) else { return Vec::new() };
-    let Ok(desc) = dom.descendants(root) else { return Vec::new() };
-    desc.filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && &*e.name.local == "label"))
-        .filter(|&l| labeled_control(dom, l) == Some(control))
-        .collect()
+    dom.labels(control).unwrap_or_default()
 }
 
 simple_class!(HtmlFieldSetElement, "HTMLFieldSetElement", HtmlElement, |def| {
@@ -2220,7 +2205,14 @@ fn delete_member(n: &NodeData, a: &Args<'_>, kind: &CollectionKind, operation: &
 
 /// `insertRow(index)` on a section, `insertCell(index)` on a row: a new `tag`
 /// child at `index` of the element's `kind` collection.
-fn insert_member<'s>(s: &Scope<'s>, n: &NodeData, a: &Args<'_>, kind: &CollectionKind, tag: &str, what: &str) -> JsResult<Value<'s>> {
+fn insert_member<'s>(
+    s: &Scope<'s>,
+    n: &NodeData,
+    a: &Args<'_>,
+    kind: &CollectionKind,
+    tag: &str,
+    what: &str,
+) -> JsResult<Value<'s>> {
     let mut dom = n.page().dom.borrow_mut();
     let members = table_collection(&dom, n.id, kind);
     let before = insertion_index(a, members.len(), what)?.map(|i| members[i]);
@@ -2324,7 +2316,6 @@ simple_class!(HtmlTableRowElement, "HTMLTableRowElement", HtmlElement, |def| {
     def.method("insertCell", 0, |s, n, a| insert_member(s, n, &a, &CollectionKind::RowCells, "td", "index"));
     def.method("deleteCell", 1, |s, n, a| {
         delete_member(n, &a, &CollectionKind::RowCells, "deleteCell").map(|()| s.undefined())
-
     });
 
     def.getter("rowIndex", |s, n| {
@@ -2454,7 +2445,7 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
 
 fn slot_assigned<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, elements_only: bool) -> JsResult<Value<'s>> {
     let flatten = match a.get(0).as_object() {
-        Some(o) => o.get("flatten")?.to_bool(),
+        Some(o) => o.get_atom("flatten")?.to_bool(),
         None => false,
     };
     let nodes = n.page().dom.borrow().assigned_nodes(n.id, flatten).js()?;
@@ -2472,22 +2463,40 @@ simple_class!(HtmlSlotElement, "HTMLSlotElement", HtmlElement, |def| {
     def.method("assignedElements", 0, |s, n, a| slot_assigned(s, n, a, true));
 });
 simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
-    reflect_ulong!(def, "width", "width", 300);
-    reflect_ulong!(def, "height", "height", 150);
-    // "2d": text measurement and state without a rasterizer (canvas.rs);
+    // Setting either dimension clears the bitmap and resets the context.
+    def.accessor(
+        "width",
+        |s, n| Ok(s.number(int_attr(n, "width", 0, 300)?)),
+        |s, n, v| {
+            set_ulong(n, "width", to_u32(v)?, 300)?;
+            crate::canvas::canvas_resized(s, n.page(), n.id)
+        },
+    );
+    def.accessor(
+        "height",
+        |s, n| Ok(s.number(int_attr(n, "height", 0, 150)?)),
+        |s, n, v| {
+            set_ulong(n, "height", to_u32(v)?, 150)?;
+            crate::canvas::canvas_resized(s, n.page(), n.id)
+        },
+    );
+    // "2d": a rasterized 2D context (canvas.rs);
     // other context types are unsupported (null).
     def.method("getContext", 1, |s, n, a| {
         let kind = arg_string(&a, 0, "HTMLCanvasElement.getContext")?;
         crate::canvas::get_context(s, n.page(), n.id, &kind)
     });
-    def.method("toDataURL", 0, |s, _n, _a| Ok(s.string("data:,")));
+    def.method("toDataURL", 0, |s, n, a| crate::canvas::to_data_url(s, n.page(), n.id, a));
+    def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), n.id, a));
+    def.method("transferControlToOffscreen", 0, |s, n, _a| {
+        crate::canvas::transfer_control_to_offscreen(s, n.page(), n.id)
+    });
 });
 simple_class!(HtmlMediaElement, "HTMLMediaElement", HtmlElement, |def| {
     reflect_url!(def, "src", "src");
     reflect_bool!(def, "autoplay", "autoplay");
     reflect_bool!(def, "loop", "loop");
     reflect_bool!(def, "controls", "controls");
-    reflect_bool!(def, "muted", "muted");
     reflect_bool!(def, "defaultMuted", "muted");
     reflect_cors!(def, "crossOrigin", "crossorigin");
     reflect_enum!(def, "loading", "loading", LOADING);
@@ -2505,24 +2514,16 @@ simple_class!(HtmlMediaElement, "HTMLMediaElement", HtmlElement, |def| {
         },
         |_s, n, v| set_attr(n, "preload", &dom_string(v)?),
     );
-    def.getter("paused", |s, _n| Ok(s.boolean(true)));
-    def.getter("currentTime", |s, _n| Ok(s.number(0.0)));
-    def.getter("duration", |s, _n| Ok(s.number(f64::NAN)));
-    def.getter("readyState", |s, _n| Ok(s.number(0.0)));
-    def.method("play", 0, |s, _n, _a| {
-        s.eval("Promise.reject(new DOMException('Media playback is not supported', 'NotSupportedError'))", None, 1)
-    });
-    def.method("pause", 0, |s, _n, _a| Ok(s.undefined()));
-    def.method("load", 0, |s, _n, _a| Ok(s.undefined()));
-    def.method("canPlayType", 1, |s, _n, _a| Ok(s.string("")));
+    crate::media::define(def);
 });
 simple_class!(HtmlVideoElement, "HTMLVideoElement", HtmlMediaElement, |def| {
     reflect_ulong!(def, "width", "width", 0);
     reflect_ulong!(def, "height", "height", 0);
     reflect_url!(def, "poster", "poster");
     reflect_bool!(def, "playsInline", "playsinline");
-    def.getter("videoWidth", |s, _n| Ok(s.number(0.0)));
-    def.getter("videoHeight", |s, _n| Ok(s.number(0.0)));
+    def.getter("videoWidth", |s, n| Ok(s.number(f64::from(crate::media::video_size(n).0))));
+    def.getter("videoHeight", |s, n| Ok(s.number(f64::from(crate::media::video_size(n).1))));
+    crate::media::define_video(def);
 });
 simple_class!(HtmlAudioElement, "HTMLAudioElement", HtmlMediaElement, |def| {
     // [LegacyFactoryFunction=Audio(optional DOMString src)]
@@ -2569,49 +2570,9 @@ simple_class!(HtmlDialogElement, "HTMLDialogElement", HtmlElement, |def| {
             Ok(())
         },
     );
-    def.method("show", 0, |s, n, _a| {
-        n.page().dom.borrow_mut().set_attribute(n.id, "open", "").js()?;
-        Ok(s.undefined())
-    });
-    def.method("showModal", 0, |s, n, _a| {
-        {
-            let dom = n.page().dom.borrow();
-            if dom.has_attribute(n.id, "open").js()? {
-                if dom.is_modal(n.id) {
-                    return Ok(s.undefined());
-                }
-                return Err(JsError::dom("InvalidStateError", "The dialog is already open as a non-modal dialog, and therefore cannot be opened as a modal dialog."));
-            }
-            if !dom.is_connected(n.id).js()? {
-                return Err(JsError::dom("InvalidStateError", "The element is not in a Document."));
-            }
-            if dom.is_popover_showing(n.id) {
-                return Err(JsError::dom("InvalidStateError", "The dialog is already open as a Popover, and therefore cannot be opened as a modal dialog."));
-            }
-        }
-        let mut dom = n.page().dom.borrow_mut();
-        dom.set_attribute(n.id, "open", "").js()?;
-        // `:modal` until the dialog closes or leaves its document.
-        dom.set_modal(n.id, true).js()?;
-        Ok(s.undefined())
-    });
-    def.method("close", 0, |s, n, a| {
-        let was_open = n.page().dom.borrow().has_attribute(n.id, "open").js()?;
-        if !was_open {
-            return Ok(s.undefined());
-        }
-        if !a.get(0).is_undefined() {
-            n.page().set_dialog_return(n.id, dom_string(a.get(0))?);
-        }
-        {
-            let mut dom = n.page().dom.borrow_mut();
-            dom.remove_attribute(n.id, "open").js()?;
-            dom.set_modal(n.id, false).js()?;
-        }
-        crate::input::queue_simple(n.page(), n.id, "close", false, false);
-        Ok(s.undefined())
-    });
+    crate::popover::define_dialog(def);
 });
+
 simple_class!(HtmlDetailsElement, "HTMLDetailsElement", HtmlElement, |def| {
     reflect_bool!(def, "open", "open");
     reflect_str!(def, "name", "name");
@@ -2924,8 +2885,8 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     crate::layout_api::elements_from_point(s, n, a)
 }
 
-pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Value<'s>> {
-    crate::custom::create_element_value(s, page, el)
+pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId, el: NodeId) -> JsResult<Value<'s>> {
+    crate::custom::create_element_value(s, page, doc, el)
 }
 
 // ----- document.open / write / close ----------------------------------------
@@ -2955,7 +2916,12 @@ fn html_document(page: &PageDom, doc: NodeId) -> JsResult<()> {
 }
 
 fn network_parser_active(page: &PageDom, doc: NodeId) -> bool {
-    !page.script_parser_active.get() && page.ready_state(doc) != "complete"
+    // An about:blank document (a new iframe's initial one, still "loading"
+    // until its load task) has no network parser: it can be opened at once,
+    // as in Chrome.
+    !page.script_parser_active.get()
+        && page.ready_state(doc) != "complete"
+        && !page.dom.borrow().document_data(doc).is_ok_and(|d| &*d.url == "about:blank")
 }
 
 /// A script the network parser reached is running and `doc` is that parser's.
@@ -2972,11 +2938,12 @@ fn writes_blocked(page: &PageDom, doc: NodeId) -> bool {
 pub(crate) fn document_open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
     if a.len() >= 3 {
-        let open = s.global().get("open")?;
+        let open = s.global().get_atom("open")?;
         let open = open.as_object().ok_or_else(|| JsError::Type("window.open is not a function".into()))?;
         return open.call(None, &[a.get(0), a.get(1), a.get(2)]);
     }
     html_document(page, n.id)?;
+    crate::custom::check_dynamic_markup(page, n.id)?;
     let document = node_value(s, page, Some(n.id))?;
     // From a script the active parser is running: no-op.
     if (page.script_parser_active.get() || writes_to_network_parser(page, n.id)) && page.script_nesting.get() > 0 {
@@ -3016,7 +2983,10 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
     *page.script_parser.borrow_mut() = Some(parser);
     page.script_parser_active.set(true);
     page.script_parser_close.set(false);
-    if let Some(hooks) = page.hooks() {
+    // The frame's document only: one made with createHTMLDocument (or
+    // DOMParser) is no frame's, which neither loads again nor stops being
+    // the initial about:blank document.
+    if let Some(hooks) = page.hooks().filter(|_| doc == page.document()) {
         hooks.document_reopened();
     }
     Ok(())
@@ -3026,6 +2996,7 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
 pub(crate) fn document_write<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, ln: bool) -> JsResult<Value<'s>> {
     let page = n.page();
     html_document(page, n.id)?;
+    crate::custom::check_dynamic_markup(page, n.id)?;
     let mut text = String::new();
     for i in 0..a.len() {
         text.push_str(&dom_string(a.get(i))?);
@@ -3065,6 +3036,7 @@ pub(crate) fn document_write<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, ln: b
 pub(crate) fn document_close<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     html_document(page, n.id)?;
+    crate::custom::check_dynamic_markup(page, n.id)?;
     if !page.script_parser_active.get() {
         return Ok(s.undefined());
     }
@@ -3091,7 +3063,8 @@ fn close_document(page: &Rc<PageDom>, doc: NodeId) {
     parser.end();
     page.script_parser_active.set(false);
     crate::lifecycle::set_ready_state(page, doc, "interactive");
-    if !page.hooks().is_some_and(|h| h.document_closed()) {
+    // The frame's document only, as for `document_reopened`.
+    if !page.hooks().filter(|_| doc == page.document()).is_some_and(|h| h.document_closed()) {
         let p = page.clone();
         page.post_task(Box::new(move || {
             if p.is_disposed() || p.document() != doc {
@@ -3220,7 +3193,7 @@ pub(crate) fn written_script_fetched(page: &Rc<PageDom>, node: NodeId, url: &str
                 if let Ok(scope) = realm.scope() {
                     crate::lifecycle::report_diagnostic(
                         &scope,
-                        &JsError::Type(format!("Failed to load script: {error}")),
+                        &JsError::Type(format!("Failed to load script: {error}").into()),
                     );
                 }
             }
@@ -3276,7 +3249,8 @@ impl JsClass for DomImplementation {
             a.require(2, "DOMImplementation.createDocument")?;
             let ns = opt_dom_string(a.get(0))?;
             let q = null_to_empty(a.get(1))?;
-            let doctype = if a.get(2).is_nullish() { None } else { Some(crate::node::node_arg(s, a.get(2), "createDocument")?) };
+            let doctype =
+                if a.get(2).is_nullish() { None } else { Some(crate::node::node_arg(s, a.get(2), "createDocument")?) };
             let mut dom = h.page.dom.borrow_mut();
             let doc = dom.create_document(lp_dom::DocumentKind::Xml, "about:blank");
             let element = if q.is_empty() { None } else { Some(dom.create_element_ns(doc, ns.as_deref(), &q).js()?) };
@@ -3304,7 +3278,7 @@ impl JsClass for DomImplementation {
             drop(dom);
             Ok(wrap_node(s, &h.page, dt)?.value())
         });
-        def.method("hasFeature", 0, |s, _h, _a| Ok(s.boolean(true)));
+        def.pure_method("hasFeature", 0, |s, _h, _a| Ok(s.boolean(true)));
     }
 }
 
@@ -3396,7 +3370,7 @@ fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value
         value
             .as_object()
             .ok_or_else(|| JsError::Type("Focus options must be an object".into()))?
-            .get("preventScroll")?
+            .get_atom("preventScroll")?
             .to_bool()
     };
     crate::input::focus_element_with_options(n.page(), n.id, prevent_scroll);

@@ -100,6 +100,7 @@ pub(crate) struct Settings {
     pub user_agent: Option<lp_webapi::UserAgentOverride>,
     pub extra_headers: lp_net::http::HeaderMap,
     pub cache_disabled: bool,
+    pub bypass_service_worker: bool,
     pub scripts: Vec<InitScript>,
     pub bindings: Vec<crate::Binding>,
 }
@@ -135,6 +136,22 @@ pub(crate) fn drop_spare_realm() {
     });
 }
 
+/// The child key a child frame's id spells (`{key:032X}`), if it is one.
+fn child_of_frame_id(id: &str) -> Option<u64> {
+    let hex = id.as_bytes();
+    if hex.len() != 32 || !hex.iter().all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(b)) {
+        return None;
+    }
+    u64::try_from(u128::from_str_radix(id, 16).ok()?).ok()
+}
+
+/// The page and frame a realm's `Window` belongs to, read from the realm's
+/// own global data (every frame realm gets it in `make_realm`). Says nothing
+/// about whether the frame is still live; see [`Browser::has_live_realm`].
+pub fn realm_page(scope: &lp_js::Scope<'_>) -> Option<PageId> {
+    scope.global_data::<Window>()?.frame_key().map(|key| key.page)
+}
+
 /// Frame keys of one page without a heap allocation for up to four frames.
 pub type FrameKeys = smallvec::SmallVec<[FrameKey; 4]>;
 
@@ -157,6 +174,9 @@ pub(crate) struct FrameHost {
     /// The page that opened this one as a popup with its opener kept
     /// (`Browser::adopt_popup`): the top-level window's `opener`.
     pub(crate) opener: RefCell<Option<std::rc::Weak<FrameHost>>>,
+    /// For such a popup, the ticket through which the opener's document
+    /// reaches it (its `window.open` result is `event.source` there).
+    pub(crate) popup: RefCell<Option<Rc<lp_webapi::PopupTicket>>>,
 }
 impl FrameHost {
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
@@ -177,6 +197,7 @@ impl FrameHost {
                 user_agent: None,
                 extra_headers: Default::default(),
                 cache_disabled: false,
+                bypass_service_worker: false,
                 scripts: Vec::new(),
                 bindings: Vec::new(),
             }),
@@ -190,6 +211,7 @@ impl FrameHost {
             retired: RefCell::new(Vec::new()),
             class: Cell::new(browser.engine.register::<Window>()),
             opener: RefCell::new(None),
+            popup: RefCell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
     }
@@ -217,14 +239,17 @@ impl FrameHost {
         !self.children.borrow().is_empty()
     }
     pub fn key(&self, id: &FrameId) -> Option<FrameKey> {
-        if self.root.borrow().id == *id {
+        self.key_of(&id.0)
+    }
+    /// [`FrameHost::key`] for an id given as text.
+    pub fn key_of(&self, id: &str) -> Option<FrameKey> {
+        if self.root.borrow().id.0 == id {
             return Some(self.page.into());
         }
-        self.children
-            .borrow()
-            .iter()
-            .find(|(_, d)| d.main_frame.id == *id)
-            .map(|(id, _)| FrameKey { page: self.page, child: Some(*id) })
+        // A child frame's id is its key in hex (`attach`): no search.
+        let child = child_of_frame_id(id)?;
+        let found = self.children.borrow().get(&child).is_some_and(|d| d.main_frame.id.0 == id);
+        found.then_some(FrameKey { page: self.page, child: Some(child) })
     }
     /// Root first, then child frames. Inline for the common single-frame
     /// page: this runs several times per checkpoint.
@@ -262,6 +287,43 @@ impl FrameHost {
         let frame = self.frame(key).ok_or(JsError::ContextDestroyed)?;
         let dom = frame.page_dom.ok_or(JsError::ContextDestroyed)?;
         let class = self.window_class();
+        let (scripts, bindings) = {
+            let settings = self.settings.borrow();
+            let scripts: Vec<InitScript> = settings.scripts.iter().filter(|s| s.world == world).cloned().collect();
+            let bindings: Vec<Binding> =
+                settings.bindings.iter().filter(|b| b.applies_to(world.as_deref())).cloned().collect();
+            (scripts, bindings)
+        };
+        let options = RealmOptions {
+            name: world.clone().unwrap_or_default(),
+            global_class: Some(class),
+            origin: Some(frame.origin.clone()),
+        };
+        // An isolated world that nothing fills when its document is made
+        // (no init script with any source, no binding) is made when first
+        // entered: Playwright's utility world, announced for every document
+        // (`Page.addScriptToEvaluateOnNewDocument` with an empty source,
+        // then `Page.createIsolatedWorld`), is entered only by its actions,
+        // and a realm costs about 1.3 ms of CPU (as much as the main world).
+        // The realm exists now, with its id and origin, for the events and
+        // lookups; its context, bindings and init scripts (all empty) come
+        // with its first `scope()`, wherever that happens.
+        let deferred = world.is_some()
+            && bindings.is_empty()
+            && scripts.iter().all(|script| script.source.trim().is_empty());
+        if deferred {
+            let host = Rc::downgrade(self);
+            let (setup_nav, setup_dom, setup_world) = (nav, dom, world.clone());
+            let setup: lp_js::DeferredSetup = Box::new(move |realm: &Realm| {
+                let host = host.upgrade().ok_or(JsError::ContextDestroyed)?;
+                host.setup_realm(realm, key, setup_nav, &setup_dom)?;
+                host.finish_realm(realm, key, &setup_world, &[], &[])
+            });
+            let realm = Engine::defer_realm_in_current_thread(options, setup)?;
+            self.push_realm(key, world.clone(), &realm)?;
+            self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
+            return Ok(realm);
+        }
         // A main-world realm prepared while this thread was idle (see
         // `prepare_spare_realm`) only needs its origin; otherwise build one.
         let spare = if world.is_none() { SPARE_REALM.with(|s| s.borrow_mut().take()) } else { None };
@@ -270,57 +332,81 @@ impl FrameHost {
                 realm.set_origin(Some(frame.origin.clone()));
                 realm
             }
-            None => Engine::create_realm_in_current_thread(RealmOptions {
-                name: world.clone().unwrap_or_default(),
-                global_class: Some(class),
-                origin: Some(frame.origin.clone()),
-            })?,
+            None => Engine::create_realm_in_current_thread(options)?,
         };
+        self.setup_realm(&realm, key, nav, &dom)?;
+        self.push_realm(key, world.clone(), &realm)?;
+        self.finish_realm(&realm, key, &world, &bindings, &scripts)?;
+        self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
+        Ok(realm)
+    }
+    /// A made realm's frame state and bindings: the Window's data, the
+    /// page's bindings (lp-webapi), the module fetcher.
+    fn setup_realm(
+        self: &Rc<Self>,
+        realm: &Realm,
+        key: FrameKey,
+        nav: Rc<PageNav>,
+        dom: &Rc<lp_webapi::PageDom>,
+    ) -> Result<(), JsError> {
         realm.set_global_data::<Window>(WindowData::for_frame(
             self.sched.clone(),
             nav,
-            &dom,
+            dom,
             Rc::downgrade(self),
             key,
         ))?;
-        lp_webapi::install(&realm.scope()?, dom)?;
-        // Uncaught exceptions of the realm's callbacks fire `error` at the Window.
-        realm.set_exception_reporter(Some(lp_webapi::lifecycle::report_exception));
-        if crate::clock::page_clock_enabled() {
-            realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
+        {
+            // Engine code only, up to the bindings and init scripts below.
+            let _setup = realm.setup_without_watchdog();
+            let scope = realm.scope()?;
+            let helpers = lp_webapi::install_with_helpers(&scope, dom.clone())?;
+            // Uncaught exceptions of the realm's callbacks fire `error` at the Window.
+            realm.set_exception_reporter(Some(lp_webapi::lifecycle::report_exception));
+            if crate::clock::page_clock_enabled() {
+                scope.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
+            }
+            window::init_frame_indices(&scope, helpers.get_atom("accessor")?)?;
         }
-        window::init_frame_indices(&realm)?;
-        loader::install_module_fetcher(self.sched.clone(), key, &realm);
-        let entry = FrameRealm { world: world.clone(), realm: realm.clone() };
+        loader::install_module_fetcher(self.sched.clone(), key, realm);
+        Ok(())
+    }
+    /// Lists the realm among its frame's (before any script of it runs:
+    /// `world_of` finds it there).
+    fn push_realm(&self, key: FrameKey, world: Option<String>, realm: &Realm) -> Result<(), JsError> {
+        let entry = FrameRealm { world, realm: realm.clone() };
         match key.child {
             None => self.root.borrow_mut().realms.push(entry),
             Some(id) => {
                 self.children.borrow_mut().get_mut(&id).ok_or(JsError::ContextDestroyed)?.main_frame.realms.push(entry)
             }
         }
-        window::refresh_frame_indices(&realm, self, key)?;
-        let bindings = {
-            let settings = self.settings.borrow();
-            match settings.bindings.is_empty() {
-                true => Vec::new(),
-                false => settings.bindings.clone(),
-            }
-        };
+        Ok(())
+    }
+    /// What runs in a listed realm: frame indices, `bindings` (the ones
+    /// that apply to the world) and `scripts` (the world's init scripts).
+    fn finish_realm(
+        self: &Rc<Self>,
+        realm: &Realm,
+        key: FrameKey,
+        world: &Option<String>,
+        bindings: &[Binding],
+        scripts: &[InitScript],
+    ) -> Result<(), JsError> {
+        window::refresh_frame_indices(realm, self, key)?;
         for binding in bindings.iter().filter(|b| b.applies_to(world.as_deref())) {
             let scope = realm.scope()?;
             if let Err(e) = scope.install_binding(&binding.name) {
                 scope.report_exception(&e);
             }
         }
-        let scripts = self.settings.borrow().scripts.clone();
-        for script in scripts.iter().filter(|s| s.world == world) {
+        for script in scripts.iter().filter(|s| s.world == *world) {
             let scope = realm.scope()?;
             if let Err(e) = scope.eval(&script.source, Some(&format!("init-script:{}", script.id)), 1) {
                 scope.report_exception(&e);
             }
         }
-        self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
-        Ok(realm)
+        Ok(())
     }
     fn window_class(&self) -> lp_js::ClassId {
         self.class.get()
@@ -328,7 +414,8 @@ impl FrameHost {
 
     fn refresh_indices(self: &Rc<Self>, key: FrameKey) {
         let realms = self.frame(key).map(|f| f.realms).unwrap_or_default();
-        for world in realms {
+        // A deferred realm defines its indices when it is made.
+        for world in realms.into_iter().filter(|w| !w.realm.is_deferred()) {
             if let Err(e) = window::refresh_frame_indices(&world.realm, self, key) {
                 if let Ok(scope) = world.realm.scope() {
                     scope.report_exception(&e);
@@ -370,6 +457,7 @@ impl FrameHost {
         let id = self.next();
         let key = FrameKey { page: self.page, child: Some(id) };
         let fid = FrameId(format!("{id:032X}"));
+        debug_assert_eq!(child_of_frame_id(&fid.0), Some(id));
         let lid = LoaderId(format!("{:032X}", self.next()));
         let origin = if sandbox.opaque { "null".into() } else { ancestor.origin.clone() };
         let nav = PageNav::new(self.page, fid.clone(), self.sched.clone(), self.observer.clone());
@@ -392,7 +480,7 @@ impl FrameHost {
             loaded: false,
             sandbox,
         };
-        self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::Type(format!("{e:?}")))?;
+        self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::type_error(format!("{e:?}")))?;
         self.children.borrow_mut().insert(
             id,
             DocumentState {
@@ -400,10 +488,12 @@ impl FrameHost {
                 nav: nav.clone(),
                 pending_loader: None,
                 pending_cancel: None,
+                pending_script: None,
                 load: None,
                 stylesheets: Default::default(),
                 images: Default::default(),
                 preloads: Default::default(),
+                refresh: Default::default(),
                 _owner_pin: Some(loader::ResourceNode { dom: self.dom.clone(), node }),
             },
         );
@@ -412,6 +502,7 @@ impl FrameHost {
         let result = (|| {
             let dom = bindings::create(self, key, "about:blank", &lid)?;
             nav.commit_document("about:blank", HistoryHandling::Replace, Some((self.dom.clone(), dom.document())));
+            nav.set_page_dom(&dom);
             {
                 let mut children = self.children.borrow_mut();
                 let child = children.get_mut(&id).ok_or(JsError::ContextDestroyed)?;
@@ -596,7 +687,7 @@ impl FrameHost {
             .or_else(|| named.iter().find(|&&key| self.same_origin(source, key)))
             .copied()
     }
-    fn parent_key(&self, key: FrameKey) -> FrameKey {
+    pub(crate) fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
     }
     pub fn child_keys(&self, key: FrameKey) -> FrameKeys {
@@ -636,14 +727,19 @@ impl FrameHost {
         let world = match self.world_of(source, realm) {
             Ok(world) => world,
             Err(_) => {
-                let of_retired = retired.iter().flat_map(|d| d.main_frame.realms.iter()).find(|r| r.realm.id() == realm);
+                let of_retired =
+                    retired.iter().flat_map(|d| d.main_frame.realms.iter()).find(|r| r.realm.id() == realm);
                 match of_retired {
                     Some(r) => r.world.clone(),
                     None => return Vec::new(),
                 }
             }
         };
-        let of = |frame: &Frame| frame.realms.iter().find(|r| r.world == world).map(|r| r.realm.clone());
+        // A deferred realm has run no script: it holds no wrapper, no
+        // listener and no event, which is what these lookups are after.
+        let of = |frame: &Frame| {
+            frame.realms.iter().find(|r| r.world == world && !r.realm.is_deferred()).map(|r| r.realm.clone())
+        };
         let mut realms = Vec::new();
         if source.child.is_some() {
             realms.extend(of(&self.root.borrow()));
@@ -690,7 +786,7 @@ impl FrameHost {
             let value = lp_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), target };
+        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target };
         Ok(s.wrap::<CrossWindow>(data, Some(lp_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
             .value())
     }
@@ -721,7 +817,7 @@ impl FrameHost {
             let value = lp_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        opener_proxy(s, &opener)
+        opener_proxy(s, &opener, Some((Rc::downgrade(self), key)))
     }
     pub fn relation<'s>(
         self: &Rc<Self>,
@@ -751,14 +847,86 @@ impl FrameHost {
     }
 }
 
-/// The cross-origin stand-in for `opener`'s top-level window (one per realm).
-fn opener_proxy<'s>(s: &lp_js::Scope<'s>, opener: &Rc<FrameHost>) -> lp_js::JsResult<lp_js::Value<'s>> {
+/// The cross-origin stand-in for `opener`'s top-level window (one per
+/// realm), as frame `from` (the popup's top-level frame) sees it.
+fn opener_proxy<'s>(
+    s: &lp_js::Scope<'s>,
+    opener: &Rc<FrameHost>,
+    from: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
+) -> lp_js::JsResult<lp_js::Value<'s>> {
     let key = lp_js::IdentityKey(0x4f50454e45525758, u64::from(opener.page.0));
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, target: opener.page.into() };
+    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, from, target: opener.page.into() };
     Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+}
+
+/// The window whose script is running (HTML's incumbent global, as
+/// [`lp_js::entry_realm`] approximates it): its frame host and key.
+pub(crate) fn incumbent_window() -> Option<(Rc<FrameHost>, FrameKey)> {
+    let realm = lp_js::entry_realm()?;
+    let scope = realm.scope().ok()?;
+    let window = scope.global_data::<Window>()?;
+    Some((window.frame_host()?, window.frame_key()?))
+}
+
+/// `event.source` of a message from window `source` to window `target`,
+/// resolved in the realm reading it: the source's WindowProxy as the target
+/// sees it (its global, a cross-origin stand-in, the popup's `opener`, or
+/// the opener's `window.open` result). Null for a pair this cannot name (a
+/// frame inside a popup or its opener), or once either side is gone.
+fn message_source(
+    target_host: &Rc<FrameHost>,
+    target: FrameKey,
+    source_host: &Rc<FrameHost>,
+    source: FrameKey,
+) -> lp_webapi::event::MessageSource {
+    let (th, sh) = (Rc::downgrade(target_host), Rc::downgrade(source_host));
+    Rc::new(move |s| {
+        let (Some(th), Some(sh)) = (th.upgrade(), sh.upgrade()) else { return Ok(s.null()) };
+        let opener_of = |h: &FrameHost| h.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade);
+        let value = if Rc::ptr_eq(&th, &sh) {
+            th.window_value(s, target, source)
+        } else if source.child.is_none() && opener_of(&th).is_some_and(|o| Rc::ptr_eq(&o, &sh)) {
+            th.opener_window(s, target)
+        } else if target.child.is_none()
+            && source.child.is_none()
+            && opener_of(&sh).is_some_and(|o| Rc::ptr_eq(&o, &th))
+        {
+            let ticket = sh.popup.borrow().clone();
+            match (ticket, th.page_dom(target)) {
+                (Some(ticket), Some(dom)) => ticket.window_in(s, &dom),
+                _ => Ok(s.null()),
+            }
+        } else {
+            Ok(s.null())
+        };
+        Ok(value.unwrap_or_else(|_| s.null()))
+    })
+}
+
+/// `postMessage` on window `target` of `host` (HTML "window post message
+/// steps"), from window `source` (`None`: the target itself). The message
+/// is cloned into the target's main-world realm now and delivered as a
+/// task if the target's origin matches `targetOrigin`.
+pub(crate) fn post_message<'s>(
+    s: &lp_js::Scope<'s>,
+    a: &lp_js::Args<'s>,
+    source: Option<(Rc<FrameHost>, FrameKey)>,
+    host: &Rc<FrameHost>,
+    target: FrameKey,
+) -> lp_js::JsResult<()> {
+    let (source_host, source) = source.unwrap_or_else(|| (host.clone(), target));
+    let incumbent = source_host.with_frame(source, |f| f.origin.clone()).unwrap_or_else(|| "null".into());
+    let (message, target_origin, options) = lp_webapi::window_message::post_message_args(s, a, &incumbent)?;
+    let found = host.with_frame(target, |f| Some((f.page_dom.clone()?, f.main_realm()?.clone(), f.origin.clone())));
+    // A window whose document is gone receives nothing.
+    let Some((page, realm, origin)) = found.flatten() else { return Ok(()) };
+    let deliver = target_origin.allows(&origin);
+    let window = (!Rc::ptr_eq(&source_host, host) || source != target)
+        .then(|| message_source(host, target, &source_host, source));
+    lp_webapi::window_message::send_window_message(s, message, options, &page, &realm, incumbent, window, deliver)
 }
 
 pub(crate) struct CrossWindow;
@@ -768,7 +936,78 @@ pub(crate) struct CrossWindowData {
     /// popup's view of its opener (another page), which is always
     /// cross-origin and whose target is its own top and parent.
     source: Option<FrameKey>,
+    /// For a popup's view of its opener: the popup's frame host and frame.
+    from: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
     target: FrameKey,
+}
+
+impl CrossWindowData {
+    /// The accessing window: its frame host and frame.
+    fn accessor(&self, host: &Rc<FrameHost>) -> Option<(Rc<FrameHost>, FrameKey)> {
+        match (self.source, &self.from) {
+            (Some(source), _) => Some((host.clone(), source)),
+            (None, Some((from, key))) => Some((from.upgrade()?, *key)),
+            (None, None) => None,
+        }
+    }
+}
+
+/// `location` of a cross-origin window: only `href` (set) and `replace()`.
+pub(crate) struct CrossLocation;
+pub(crate) struct CrossLocationData {
+    host: std::rc::Weak<FrameHost>,
+    target: FrameKey,
+    /// Base URL of the accessing document, which relative URLs resolve against.
+    base: String,
+}
+impl CrossLocationData {
+    fn navigate(&self, value: lp_js::Value<'_>, replace: bool) -> lp_js::JsResult<()> {
+        let nav = self.host.upgrade().and_then(|h| h.nav(self.target)).ok_or(JsError::ContextDestroyed)?;
+        crate::nav::navigate_cross_origin(&nav, &self.base, value, replace)
+    }
+}
+impl lp_js::JsClass for CrossLocation {
+    const NAME: &'static str = "CrossOriginLocation";
+    type Data = CrossLocationData;
+    type Parent = lp_js::NoParent;
+    fn define(def: &mut lp_js::ClassDef<Self>) {
+        def.not_exposed();
+        // Every name goes through here (no prototype reads cross-origin).
+        def.named(true, |s, d, name| {
+            if name != "replace" {
+                return Err(JsError::dom(
+                    "SecurityError",
+                    "Blocked a frame from accessing a cross-origin frame's location.",
+                ));
+            }
+            let data = CrossLocationData { host: d.host.clone(), target: d.target, base: d.base.clone() };
+            let replace = s.function("replace", move |s, _, a| {
+                a.require(1, "replace")?;
+                data.navigate(a.get(0), true)?;
+                Ok(s.undefined())
+            })?;
+            Ok(Some(replace.value()))
+        });
+        def.named_setter(|_, d, name, value| match name {
+            "href" => d.navigate(value, false).map(|()| true),
+            _ => Err(JsError::dom("SecurityError", "Blocked a cross-origin location write")),
+        });
+        def.named_deleter(|_, _, _| Err(JsError::dom("SecurityError", "Blocked a cross-origin location delete")));
+    }
+}
+
+/// `w.location` of cross-origin window `w`, for the accessing window.
+fn cross_location<'s>(
+    s: &lp_js::Scope<'s>,
+    w: &CrossWindowData,
+    host: &Rc<FrameHost>,
+) -> lp_js::JsResult<lp_js::Value<'s>> {
+    let base = w
+        .accessor(host)
+        .and_then(|(h, key)| h.with_frame(key, |f| f.base_url.clone()))
+        .unwrap_or_else(|| "about:blank".into());
+    let data = CrossLocationData { host: Rc::downgrade(host), target: w.target, base };
+    Ok(s.wrap::<CrossLocation>(data, None)?.value())
 }
 impl lp_js::JsClass for CrossWindow {
     const NAME: &'static str = "CrossOriginWindow";
@@ -781,7 +1020,7 @@ impl lp_js::JsClass for CrossWindow {
                 return if name == "closed" { Ok(Some(s.boolean(true))) } else { Err(JsError::ContextDestroyed) };
             };
             let value = match (name, w.source) {
-                ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host)?,
+                ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host, w.from.clone())?,
                 ("window" | "self" | "frames", Some(source)) => host.window_value(s, source, w.target)?,
                 ("parent", Some(source)) => host.window_value(s, source, host.parent_key(w.target))?,
                 ("top", Some(source)) => host.window_value(s, source, host.page.into())?,
@@ -799,11 +1038,41 @@ impl lp_js::JsClass for CrossWindow {
                     .value()
                 }
                 ("close" | "blur", _) => s.function(name, |s, _, _| Ok(s.undefined()))?.value(),
+                ("postMessage", _) => {
+                    let (weak, target) = (w.host.clone(), w.target);
+                    let source = w.accessor(&host).map(|(h, key)| (Rc::downgrade(&h), key));
+                    s.function(name, move |s, _, a| {
+                        let Some(host) = weak.upgrade() else { return Ok(s.undefined()) };
+                        let source = source.as_ref().and_then(|(h, key)| Some((h.upgrade()?, *key)));
+                        post_message(s, &a, source, &host, target)?;
+                        Ok(s.undefined())
+                    })?
+                    .value()
+                }
+                ("location", _) => cross_location(s, w, &host)?,
                 _ => return Err(JsError::dom("SecurityError", "Blocked cross-origin frame access")),
             };
             Ok(Some(value))
         });
-        def.named_setter(|_, _, _, _| Err(JsError::dom("SecurityError", "Blocked cross-origin frame write")));
+        // `frames[i]` of a cross-origin window: its child windows, as the
+        // accessing frame sees them.
+        def.indexed(|s, w, index| {
+            let (Some(host), Some(source)) = (w.host.upgrade(), w.source) else { return Ok(None) };
+            let child = host.child_keys(w.target).get(index as usize).copied();
+            child.map(|child| host.window_value(s, source, child)).transpose()
+        });
+        def.named_setter(|s, w, name, value| {
+            // `w.location = url` navigates it, as `w.location.href = url` does.
+            if name == "location" {
+                if let Some(host) = w.host.upgrade() {
+                    let location = cross_location(s, w, &host)?;
+                    let data = s.unwrap::<CrossLocation>(location).ok_or(JsError::ContextDestroyed)?;
+                    data.navigate(value, false)?;
+                    return Ok(true);
+                }
+            }
+            Err(JsError::dom("SecurityError", "Blocked cross-origin frame write"))
+        });
         def.named_deleter(|_, _, _| Err(JsError::dom("SecurityError", "Blocked cross-origin frame delete")));
     }
 }
@@ -834,20 +1103,67 @@ impl Browser {
         p.frames
             .keys()
             .into_iter()
-            .filter_map(|key| self.doc(key).map(|d| d.main_frame.clone()))
-            .map(|f| FrameInfo {
-                id: f.id,
-                parent: f.parent,
-                owner: f.owner,
-                url: f.url,
-                loader_id: f.loader_id,
-                name: f.name,
-                origin: f.origin,
-                network_idle: f.network_idle,
-                dom_content_loaded: f.dom_content_loaded,
-                loaded: f.loaded,
+            .filter_map(|key| {
+                // Only the snapshot's fields are copied, not the whole frame.
+                self.doc(key).map(|d| {
+                    let f = &d.main_frame;
+                    FrameInfo {
+                        id: f.id.clone(),
+                        parent: f.parent.clone(),
+                        owner: f.owner,
+                        url: f.url.clone(),
+                        loader_id: f.loader_id.clone(),
+                        name: f.name.clone(),
+                        origin: f.origin.clone(),
+                        network_idle: f.network_idle.clone(),
+                        dom_content_loaded: f.dom_content_loaded,
+                        loaded: f.loaded,
+                    }
+                })
             })
             .collect()
+    }
+    /// Whether `realm` belongs to a live (not detached) frame of `page`. No
+    /// frame is cloned.
+    pub fn has_live_realm(&self, page: PageId, realm: RealmId) -> bool {
+        let Some(p) = self.page(page) else { return false };
+        self.sync_root(page);
+        let holds = |f: &Frame| f.realms.iter().any(|r| r.realm.id() == realm);
+        holds(&p.frames.root.borrow()) || p.frames.children.borrow().values().any(|d| holds(&d.main_frame))
+    }
+    /// Whether `page` has a live frame with this id.
+    pub fn has_frame(&self, page: PageId, id: &str) -> bool {
+        self.page(page).is_some_and(|p| p.frames.key_of(id).is_some())
+    }
+    /// Reads the live frame `id` of `page` without cloning it (the borrowed
+    /// counterpart of [`Browser::frame`]). `f` must not mutate the browser.
+    pub fn with_frame<R>(&self, page: PageId, id: &FrameId, f: impl FnOnce(&Frame) -> R) -> Option<R> {
+        let host = &self.page(page)?.frames;
+        let key = host.key(id)?;
+        if key.child.is_none() {
+            self.sync_root(page);
+        }
+        host.with_frame(key, f)
+    }
+    /// Reads the live frame of `page` whose document is `document`, root
+    /// first, without cloning it. `f` must not mutate the browser.
+    pub fn with_frame_of_document<R>(
+        &self,
+        page: PageId,
+        document: &Rc<lp_webapi::PageDom>,
+        f: impl FnOnce(&Frame) -> R,
+    ) -> Option<R> {
+        let host = &self.page(page)?.frames;
+        self.sync_root(page);
+        let shows = |frame: &Frame| frame.page_dom.as_ref().is_some_and(|dom| Rc::ptr_eq(dom, document));
+        {
+            let root = host.root.borrow();
+            if shows(&root) {
+                return Some(f(&root));
+            }
+        }
+        let children = host.children.borrow();
+        children.values().map(|d| &d.main_frame).find(|frame| shows(frame)).map(f)
     }
     /// The page's realm with this id, searching the root frame first. A
     /// handle clone only; no frame is cloned (hot: every `Runtime.*` command).
@@ -871,7 +1187,7 @@ impl Browser {
     }
     pub fn frame_of_owner(&self, page: PageId, owner: NodeId) -> Option<FrameId> {
         let host = &self.page(page)?.frames;
-        host.owner(owner).and_then(|key| host.frame(key)).map(|f| f.id)
+        host.owner(owner).and_then(|key| host.with_frame(key, |f| f.id.clone()))
     }
     pub fn isolated_world_in_frame(&mut self, page: PageId, id: &FrameId, name: &str) -> Result<Realm, JsError> {
         let host = self.page(page).ok_or(JsError::ContextDestroyed)?.frames.clone();
@@ -915,7 +1231,7 @@ impl Browser {
         let Some(parent) = frame.parent.as_ref().and_then(|id| host.key(id)).and_then(|key| host.frame(key)) else {
             return;
         };
-        let (srcdoc, src) = {
+        let (srcdoc, src, src_base) = {
             let dom = host.dom.borrow();
             if !dom.is_connected(owner).unwrap_or(false) {
                 return;
@@ -923,6 +1239,8 @@ impl Browser {
             (
                 dom.get_attribute(owner, "srcdoc").ok().flatten().map(str::to_owned),
                 dom.get_attribute(owner, "src").ok().flatten().map(str::to_owned),
+                // `<base href>` aware.
+                crate::loader::node_base_url(&dom, owner),
             )
         };
         let result = if let Some(html) = srcdoc {
@@ -956,6 +1274,10 @@ impl Browser {
                     body: html.into_bytes(),
                     content_disposition: None,
                     header_csp: false,
+                    refresh: None,
+                    referrer_policy: None,
+                    timing: None,
+                    partial: None,
                 },
                 HistoryHandling::Replace,
             )
@@ -964,13 +1286,17 @@ impl Browser {
             let url = if raw.trim().is_empty() {
                 "about:blank".to_string()
             } else {
-                url::Url::parse(&parent.base_url)
+                url::Url::parse(src_base.as_deref().unwrap_or(&parent.base_url))
                     .and_then(|u| u.join(&raw))
                     .map(|u| u.to_string())
                     .unwrap_or_else(|_| raw.clone())
             };
             if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
-                self.finish_blank_document(key);
+                // A script that opened the initial document since (append,
+                // then `contentDocument.open()`) finishes it with `close()`.
+                if host.nav(key).map_or(true, |nav| nav.is_initial_blank()) {
+                    self.finish_blank_document(key);
+                }
                 Ok(())
             } else {
                 self.navigate_frame_with_handling(
@@ -1006,6 +1332,7 @@ impl Browser {
             settings.user_agent = p.user_agent_override.clone();
             settings.extra_headers = p.extra_http_headers.clone();
             settings.cache_disabled = p.cache_disabled;
+            settings.bypass_service_worker = p.bypass_service_worker;
             settings.viewport = p.viewport.clone();
             settings.max_touch_points = p.max_touch_points;
         }
@@ -1015,7 +1342,23 @@ impl Browser {
             let _ = dom.set_user_agent_override(settings.user_agent.clone());
             dom.set_extra_http_headers(settings.extra_headers.clone());
             dom.set_cache_disabled(settings.cache_disabled);
+            dom.set_bypass_service_worker(settings.bypass_service_worker);
             dom.set_max_touch_points(settings.max_touch_points);
         }
+    }
+}
+
+#[cfg(test)]
+mod frame_id_tests {
+    use super::child_of_frame_id;
+
+    #[test]
+    fn child_frame_ids_spell_their_keys() {
+        for key in [0u64, 1, 42, 0xDEAD_BEEF, u64::MAX] {
+            assert_eq!(child_of_frame_id(&format!("{key:032X}")), Some(key));
+        }
+        assert_eq!(child_of_frame_id(&format!("{:032x}", 0xABu64)), None, "lowercase is not an id we made");
+        assert_eq!(child_of_frame_id("2A"), None);
+        assert_eq!(child_of_frame_id(&format!("{:032X}", u128::from(u64::MAX) + 1)), None);
     }
 }

@@ -5,6 +5,7 @@
   "description": "Reproducible CDP smoke/startup/RSS benchmarks against any CDP browser binary",
   "dependencies": {
     "playwright-core": "1.59.1",
-    "ws": "8.21.0"
+    "ws": "8.21.0",
+    "msw": "2.15.0"
   }
 }

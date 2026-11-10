@@ -354,7 +354,9 @@ fn indexed_properties_answer_every_index_key_form() {
     let checks = [
         ("leaf[0] + ',' + leaf['1'] + ',' + leaf[2] + ',' + leaf['01'] + ',' + leaf[-1]", "0,10,undefined,undefined,undefined"),
         ("[('0' in leaf), (1 in leaf), ('2' in leaf), leaf.hasOwnProperty('1'), leaf.hasOwnProperty(2)].join()", "true,true,false,true,false"),
-        ("JSON.stringify(Object.getOwnPropertyDescriptor(leaf, '1'))", r#"{"value":10,"writable":false,"enumerable":false,"configurable":true}"#),
+        // Enumerable, as WebIDL's indexed properties are (patch 0024).
+        ("JSON.stringify(Object.getOwnPropertyDescriptor(leaf, '1'))", r#"{"value":10,"writable":false,"enumerable":true,"configurable":true}"#),
+        ("Object.keys({ ...leaf }).join()", "0,1"),
         ("Object.getOwnPropertyDescriptor(leaf, '5')", "undefined"),
         ("Object.keys(leaf).join() + '|' + Object.getOwnPropertyNames(leaf).join()", "0,1|0,1"),
         ("[...leaf].join('+') + '|' + Array.from(leaf).length + '|' + leaf.length", "0+10|2|2"),
@@ -369,4 +371,129 @@ fn indexed_properties_answer_every_index_key_form() {
     for (src, want) in checks {
         assert_eq!(eval(&r, src), want, "{src}");
     }
+}
+
+/// `Scope::after_populate`: the embedder's step for a class runs once, when
+/// the class is first populated however that happens (a wrap, a trap of its
+/// interface object, a subclass), and at once for a class already populated.
+#[test]
+fn after_populate_runs_once_with_the_population() {
+    let (_e, r) = realm();
+    let s = r.scope().unwrap();
+    let hook = |tag: &str| {
+        let src = format!("(proto, ctor) => {{ globalThis.log = (globalThis.log || '') + '{tag}:' + ctor.name + ':' + (proto === ctor.prototype) + ';'; }}");
+        s.eval(&src, None, 1).unwrap().as_object().unwrap()
+    };
+    s.after_populate::<Base>(hook("base")).unwrap();
+    s.after_populate::<Hidden>(hook("hidden")).unwrap();
+    assert_eq!(eval(&r, "String(globalThis.log)"), "undefined", "nothing populated yet");
+    // A trap of a subclass's interface object populates the chain, root first.
+    assert_eq!(eval(&r, "typeof LzMid.prototype.midOnly"), "function");
+    assert_eq!(eval(&r, "globalThis.log"), "base:LzBase:true;");
+    // A wrap of a hidden class (no global name) populates it.
+    let o = s.wrap::<Hidden>(Rc::new(Data { id: 1 }), None).unwrap();
+    s.global().set("hidden", o.value()).unwrap();
+    assert_eq!(eval(&r, "globalThis.log"), "base:LzBase:true;hidden:LzHidden:true;");
+    assert_eq!(eval(&r, "Object.getPrototypeOf(hidden) === Object.getPrototypeOf(hidden).constructor.prototype"), "true");
+    // Populated already: runs at once.
+    s.after_populate::<Mid>(hook("mid")).unwrap();
+    assert_eq!(eval(&r, "globalThis.log"), "base:LzBase:true;hidden:LzHidden:true;mid:LzMid:true;");
+    assert_eq!(eval(&r, "new LzLeaf(); globalThis.log.split(';').length"), "4");
+}
+
+/// Interfaces are populated (their prototypes made, members installed) when a
+/// page first uses them, after its scripts ran: a page that put `get`/`value`
+/// on Object.prototype or replaced Array iteration must not break that.
+#[test]
+fn population_after_page_changed_intrinsics_installs_the_eager_shape() {
+    let (e, r) = realm();
+    // The same engine's untouched installation (a realm of the stock
+    // framework has its own setter lengths, see the eager shape tests).
+    let clean = e.create_realm(RealmOptions::default()).unwrap();
+    eval(
+        &r,
+        "const d = Object.defineProperty;
+         d(Object.prototype, 'get', { __proto__: null, value: function () { return 'polluted'; }, configurable: true, writable: true });
+         d(Object.prototype, 'value', { __proto__: null, value: 'polluted', configurable: true, writable: true });
+         globalThis.realIterator = Array.prototype[Symbol.iterator];
+         d(Array.prototype, Symbol.iterator, { __proto__: null, value: function () { throw new Error('iterated'); }, configurable: true, writable: true });
+         'ok'",
+    );
+    // First use of every interface happens here, with the intrinsics changed.
+    assert_eq!(eval(&r, "typeof LzLeaf.prototype.leafOnly + typeof LzMid.prototype.midOnly"), "functionfunction");
+    eval(
+        &r,
+        "delete Object.prototype.get; delete Object.prototype.value;
+         Object.defineProperty(Array.prototype, Symbol.iterator, { value: realIterator, configurable: true, writable: true }); 'ok'",
+    );
+    assert_eq!(eval(&r, DUMP), eval(&clean, DUMP));
+}
+
+/// Population runs after page script, so nothing it does may reach code a
+/// page put on Array.prototype (indexed accessors over the helper's tables)
+/// or Object.prototype (accessors named like members, which an assignment
+/// would call; proxy traps the interface objects do not define).
+#[test]
+fn population_after_page_changed_prototypes_runs_no_page_code() {
+    let (e, r) = realm();
+    let clean = e.create_realm(RealmOptions::default()).unwrap();
+    eval(
+        &r,
+        "globalThis.seen = [];
+         const d = Object.defineProperty;
+         for (let i = 0; i < 2000; i++) d(Array.prototype, i, { configurable: true,
+           get() { seen.push('read ' + i); return function () { seen.push('called'); }; },
+           set(v) { seen.push('write ' + i); } });
+         for (const k of ['ping', 'twoArgs', 'midOnly', 'leafOnly', 'create']) d(Object.prototype, k, { configurable: true,
+           get() { return undefined; }, set(v) { seen.push('set ' + k); } });
+         for (const k of ['get', 'set']) d(Object.prototype, k, { configurable: true,
+           get() { seen.push('descriptor ' + k); return undefined; } });
+         Object.prototype.apply = function (t) { seen.push('apply ' + t.name); return 'hijacked'; };
+         Object.prototype.construct = function (t) { seen.push('construct ' + t.name); return {}; };
+         'ok'",
+    );
+    // First use of every interface happens here.
+    assert_eq!(
+        eval(&r, "const l = new LzLeaf(); [typeof l.leafOnly, typeof LzMid.prototype.midOnly, Object.getPrototypeOf(l) === LzLeaf.prototype].join()"),
+        "function,function,true"
+    );
+    {
+        let s = r.scope().unwrap();
+        let o = s.wrap::<Hidden>(Rc::new(Data { id: 1 }), None).unwrap();
+        s.global().set("hidden", o.value()).unwrap();
+    }
+    assert_eq!(eval(&r, "try { LzBase(); 'called' } catch (e) { e.constructor.name }"), "TypeError");
+    assert_eq!(eval(&r, "seen.join()"), "");
+    eval(
+        &r,
+        "for (let i = 0; i < 2000; i++) delete Array.prototype[i];
+         for (const k of ['ping', 'twoArgs', 'midOnly', 'leafOnly', 'create', 'apply', 'construct', 'get', 'set']) delete Object.prototype[k];
+         'ok'",
+    );
+    assert_eq!(eval(&r, "[hidden.hiddenOnly(), LzBase.create()].join()"), "1,static");
+    assert_eq!(eval(&r, DUMP), eval(&clean, DUMP));
+}
+
+/// A first use that fails part way (the stack runs out somewhere in the
+/// population, at a different point for each attempt here) is completed by
+/// the next use: no prototype is left without its constructor, its tag or a
+/// member.
+#[test]
+fn population_failing_part_way_is_completed_by_the_next_use() {
+    let (e, r) = realm();
+    let clean = e.create_realm(RealmOptions::default()).unwrap();
+    let outcome = eval(
+        &r,
+        "(() => {
+           const names = ['LzBase', 'LzMid', 'LzLeaf'];
+           let next = 0, failed = 0;
+           function touch() { if (next >= names.length) return; try { void globalThis[names[next]].prototype; next++; } catch (e) { failed++; } }
+           function probe(k) { try { Reflect.apply(touch, null, new Array(k).fill(0)); } catch (e) { failed++; } }
+           function deeper(n) { try { deeper(n + 1); } catch (e) {} if (next < names.length) for (let k = 0; k < 64; k++) probe(k); }
+           for (let round = 0; round < 50 && next < names.length; round++) deeper(0);
+           return next + ',' + (failed > 0);
+         })()",
+    );
+    assert_eq!(outcome, "3,true");
+    assert_eq!(eval(&r, DUMP), eval(&clean, DUMP));
 }

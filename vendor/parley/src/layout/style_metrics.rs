@@ -101,11 +101,14 @@ pub(crate) struct StyleMetrics {
 /// Relies on the style table being ordered parent-first (`style.parent <= index`), which both
 /// style builders guarantee. `shaped_text` is the already shaped text of the layout, whose run
 /// metrics are reused where a style's first available font was also used for shaping.
+/// `first_fonts` holds, per style, the first available font the shaper's font selector found
+/// (lightningpanda; see `shape::FontSelector`); a style without one is queried here.
 pub(crate) fn resolve_style_metrics<B: Brush>(
     rcx: &ResolveContext,
     fcx: &mut FontContext,
     styles: &[ResolvedStyle<B>],
     shaped_text: &ShapedText,
+    first_fonts: &[Option<FontInstance>],
     quantize: bool,
     out: &mut Vec<StyleMetrics>,
 ) {
@@ -115,11 +118,19 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
     let mut query = fcx.collection.query(&mut fcx.source_cache);
 
     for (index, style) in styles.iter().enumerate() {
-        let font_metrics = first_available_font(&mut query, rcx, style)
+        let queried;
+        let font = match first_fonts.get(index).and_then(Option::as_ref) {
+            Some(font) => Some(font),
+            None => {
+                queried = first_available_font(&mut query, rcx, style);
+                queried.as_ref()
+            }
+        };
+        let font_metrics = font
             .and_then(|font| {
                 let variations = rcx.variations(style.font_variations).unwrap_or(&[]);
-                shaped_run_metrics(shaped_text, &font, style.font_size, variations)
-                    .or_else(|| FontMetrics::from_font_instance(&font, style.font_size, variations))
+                shaped_run_metrics(shaped_text, font, style.font_size, variations)
+                    .or_else(|| FontMetrics::from_font_instance(font, style.font_size, variations))
             })
             .unwrap_or_else(|| FontMetrics::fallback(style.font_size));
 

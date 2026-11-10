@@ -1,6 +1,7 @@
 //! Enable the dom to participate in styling by servo
 //!
 
+use stylo_taffy::CopyStyleGetters;
 use blitz_traits::node_id::NodeId;
 use std::ptr::NonNull;
 use std::sync::Mutex;
@@ -10,6 +11,7 @@ use crate::StyleThreading;
 use crate::layout::damage::compute_layout_damage;
 use crate::node::Node;
 use crate::node::NodeData;
+use crate::node::LayoutStyles;
 use markup5ever::{LocalName, LocalNameStaticSet, Namespace, NamespaceStaticSet, local_name, ns};
 use selectors::bloom::BLOOM_HASH_MASK;
 use selectors::{
@@ -26,11 +28,21 @@ use style::bloom::each_relevant_element_hash;
 use style::color::AbsoluteColor;
 use style::data::{ElementDataMut, ElementDataRef};
 use style::global_style_data::STYLE_THREAD_POOL;
+
+/// Serialises `Parallel` style traversals across documents. Stylo's per-worker
+/// caches (`StyleSharingCache`, `StyleBloom`) live in native thread-locals that
+/// a traversal borrows mutably for its whole duration, so two traversals in
+/// flight on the shared pool at once panic with `already mutably borrowed`
+/// (<https://github.com/DioxusLabs/blitz/issues/430>).
+static PARALLEL_TRAVERSAL_LOCK: Mutex<()> = Mutex::new(());
 use style::invalidation::element::restyle_hints::RestyleHint;
 use style::properties::ComputedValues;
 use style::properties::{Importance, PropertyDeclaration};
 use style::rule_tree::CascadeLevel;
 use style::rule_tree::CascadeOrigin;
+use style::invalidation::element::invalidation_map::TSStateForInvalidation;
+use style::invalidation::element::invalidator::{InvalidationResult, SiblingTraversalMap};
+use style::invalidation::element::relative_selector::{DomMutationOperation, RelativeSelectorInvalidator};
 use style::selector_parser::PseudoElement;
 use style::selector_parser::RestyleDamage;
 use style::stylesheets::layer_rule::LayerOrder;
@@ -75,14 +87,14 @@ impl Drop for LayoutThreadScope {
 }
 
 impl Node {
-    /// lightningpanda: whether the element's `urn:x-lightningpanda:state`
-    /// attribute (written by lp-dom's render tree) lists `state`: the
-    /// pseudo-classes Blitz cannot derive itself (validity, placeholder
-    /// shown, read-write, ...).
-    fn has_lp_state(&self, state: &str) -> bool {
+    /// `:state(name)`: lightningpanda's custom states attribute (names
+    /// separated by U+001F).
+    fn has_lp_custom_state(&self, state: &str) -> bool {
         self.element_data().is_some_and(|e| {
             e.attrs.iter().any(|a| {
-                &*a.name.ns == "urn:x-lightningpanda:state" && a.value.split_ascii_whitespace().any(|s| s == state)
+                &*a.name.ns == "urn:x-lightningpanda:state"
+                    && &*a.name.local == "custom-states"
+                    && a.value.split('\u{1f}').any(|s| s == state)
             })
         })
     }
@@ -172,19 +184,44 @@ impl crate::document::BaseDocument {
         let token = RecalcStyle::pre_traverse(root, &context);
 
         let mut nodes_needing_style_image_flush = Vec::new();
+        let mut style_changes = Vec::new();
         if token.should_traverse() {
             // Style the elements, resolving their data
             let mut traverser = RecalcStyle::new(context);
+            traverser.track_style_changes = self.track_style_changes;
             // `Sequential` bypasses Stylo's global pool. See `StyleThreading`.
-            let pool_guard = matches!(self.style_threading, StyleThreading::Parallel)
-                .then(|| STYLE_THREAD_POOL.pool());
+            let parallel = matches!(self.style_threading, StyleThreading::Parallel);
+            let _traversal_lock = parallel.then(|| {
+                PARALLEL_TRAVERSAL_LOCK
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+            });
+            let pool_guard = parallel.then(|| STYLE_THREAD_POOL.pool());
             let rayon_pool = pool_guard.as_ref().and_then(|g| g.as_ref());
             style::driver::traverse_dom(&traverser, token, rayon_pool);
             nodes_needing_style_image_flush =
                 std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
+            self.sticky_nodes
+                .extend(std::mem::take(traverser.sticky_nodes.get_mut().unwrap()));
+            style_changes = std::mem::take(traverser.style_changes.get_mut().unwrap());
+            // Sticky: set once an element is styled with a generated
+            // `::before` / `::after`, never cleared.
+            if traverser.generated_before_after.into_inner() {
+                self.generated_before_after = true;
+            }
+        }
+        // lightningpanda: restyled nodes that stopped being sticky, and
+        // removed ones, leave the set (only nodes that were sticky are in it).
+        if !self.sticky_nodes.is_empty() {
+            let nodes = &self.nodes;
+            self.sticky_nodes
+                .retain(|id| nodes.get(*id).is_some_and(|node| is_sticky(node)));
         }
         self.pending_style_image_nodes
             .extend(nodes_needing_style_image_flush);
+        if !style_changes.is_empty() {
+            crate::document::note_style_changes(&mut self.style_changes, &mut self.style_change_index, style_changes);
+        }
 
         for opaque in self.snapshots.keys() {
             let id = NodeId::from_u64(opaque.id() as u64);
@@ -204,7 +241,25 @@ impl crate::document::BaseDocument {
                 transition.is_new = false;
             }
         }
-        sets.retain(|_, state| !state.is_empty());
+        let mut finished = Vec::new();
+        sets.retain(|key, state| {
+            let keep = !state.is_empty();
+            if !keep {
+                finished.push(key.node);
+            }
+            keep
+        });
+        // Clear `may_have_animations` on elements whose last set (including
+        // their pseudo-elements' sets) was just removed.
+        for node in finished {
+            if sets.keys().any(|key| key.node == node) {
+                continue;
+            }
+            let node_id = NodeId::from_u64(node.id() as u64);
+            if let Some(data) = self.nodes.get(node_id).and_then(|node| node.element_data()) {
+                data.may_have_animations.store(false, Ordering::Relaxed);
+            }
+        }
         self.has_active_animations = sets.values().any(|state| state.needs_animation_ticks());
 
         // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
@@ -220,6 +275,142 @@ impl crate::document::BaseDocument {
     /// (styling any unstyled ancestors along the way) without storing it on the
     /// node. Returns `None` for non-elements and elements outside the document.
     pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
+        Some(self.resolve_undisplayed_styles(node_id)?.primary().clone())
+    }
+
+    /// lightningpanda: `false` while no style traversal has kept a
+    /// `::before` / `::after` style for any element, so
+    /// [`Self::pseudo_element_style`] with `generated_only` answers `None`
+    /// for every element (it may stay `true` after they are gone).
+    pub fn may_have_generated_before_after(&self) -> bool {
+        self.generated_before_after
+    }
+
+    /// lightningpanda: the style `getComputedStyle(element, pseudo)` reads
+    /// for the element `node_id`: an eagerly cascaded pseudo-element's
+    /// (`::before`, `::after`, `::first-letter`, `::selection`) as the
+    /// traversal kept it (resolved on demand inside `display: none`), a
+    /// lazily cascaded one's computed from its rules, and otherwise (no rule
+    /// generates it) a style with no rules of its own, inheriting from the
+    /// element. `None` for non-elements and elements outside the document.
+    /// With `generated_only`, only a stored eagerly cascaded style (a
+    /// generated `::before` / `::after` of a rendered element), and no
+    /// work otherwise.
+    pub fn pseudo_element_style(
+        &self,
+        node_id: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<Arc<ComputedValues>> {
+        let node = self.nodes.get(node_id)?;
+        if !node.is_element() || !node.flags.is_in_document() {
+            return None;
+        }
+        let stored = node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| {
+            let primary = d.styles.get_primary()?.clone();
+            let eager = if pseudo.is_eager() { d.styles.pseudos.get(pseudo).cloned() } else { None };
+            Some((primary, eager))
+        });
+        if generated_only {
+            return stored.and_then(|(_, eager)| eager);
+        }
+        let (primary, eager) = match stored {
+            Some(styles) => styles,
+            None => {
+                let styles = self.resolve_undisplayed_styles(node_id)?;
+                let eager = if pseudo.is_eager() { styles.pseudos.get(pseudo).cloned() } else { None };
+                (styles.primary().clone(), eager)
+            }
+        };
+        if eager.is_some() {
+            return eager;
+        }
+        if pseudo.is_before_or_after() {
+            // The traversal drops a `::before` / `::after` that generates no
+            // box (`content: none`), but its rules still apply to its
+            // computed style (Chromium): match them against this element
+            // alone. With no `::before` / `::after` rules this is an empty
+            // selector-map lookup.
+            use selectors::context::{MatchingForInvalidation, NeedsSelectorFlags, SelectorCaches};
+            use selectors::matching::MatchingMode;
+            let _layout_thread_scope = LayoutThreadScope::enter();
+            let guard = &self.guard;
+            let guards = StylesheetGuards {
+                author: &guard.read(),
+                ua_or_user: &guard.read(),
+            };
+            let mut caches = SelectorCaches::default();
+            let mut matching = MatchingContext::<SelectorImpl>::new(
+                MatchingMode::ForStatelessPseudoElement,
+                None,
+                &mut caches,
+                self.stylist.quirks_mode(),
+                NeedsSelectorFlags::No,
+                MatchingForInvalidation::No,
+            );
+            matching.extra_data.originating_element_style = Some(&primary);
+            let mut declarations = style::applicable_declarations::ApplicableDeclarationList::new();
+            self.stylist.push_applicable_declarations(
+                node,
+                Some(pseudo),
+                None,
+                None,
+                Default::default(),
+                RuleInclusion::All,
+                &mut declarations,
+                &mut matching,
+            );
+            if !declarations.is_empty() {
+                let flags = matching.extra_data.cascade_input_flags;
+                let rules = self.stylist.rule_tree().compute_rule_node(&mut declarations, &guards);
+                let inputs = style::context::CascadeInputs {
+                    rules: Some(rules),
+                    flags,
+                    ..Default::default()
+                };
+                return Some(self.stylist.compute_pseudo_element_style_with_inputs(
+                    inputs,
+                    pseudo,
+                    &guards,
+                    Some(&primary),
+                    Some(node),
+                ));
+            }
+        }
+        if pseudo.is_lazy() {
+            let _layout_thread_scope = LayoutThreadScope::enter();
+            let guard = &self.guard;
+            let guards = StylesheetGuards {
+                author: &guard.read(),
+                ua_or_user: &guard.read(),
+            };
+            let lazy = self.stylist.lazily_compute_pseudo_element_style(
+                &guards,
+                node,
+                pseudo,
+                RuleInclusion::All,
+                &primary,
+                false,
+                None,
+            );
+            if lazy.is_some() {
+                return lazy;
+            }
+        }
+        Some(
+            style::properties::StyleBuilder::for_inheritance(
+                self.stylist.device(),
+                Some(&self.stylist),
+                Some(&primary),
+                Some(pseudo),
+            )
+            .build(),
+        )
+    }
+
+    /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
+    /// cascaded pseudo-elements included.
+    fn resolve_undisplayed_styles(&self, node_id: NodeId) -> Option<style::data::ElementStyles> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
@@ -243,14 +434,17 @@ impl crate::document::BaseDocument {
             snapshot_map: &self.snapshots,
             registered_speculative_painters: &RegisteredPaintersImpl,
         };
-        let mut thread_local = ThreadLocalStyleContext::new();
-        let mut context = StyleContext {
-            shared: &shared,
-            thread_local: &mut thread_local,
+        // The thread-local context's sequential task list asserts the LAYOUT state when dropped
+        let styles = {
+            let mut thread_local = ThreadLocalStyleContext::new();
+            let mut context = StyleContext {
+                shared: &shared,
+                thread_local: &mut thread_local,
+            };
+            resolve_style(&mut context, node, RuleInclusion::All, None, None)
         };
-        let styles = resolve_style(&mut context, node, RuleInclusion::All, None, None);
 
-        Some(styles.primary().clone())
+        Some(styles)
     }
 }
 
@@ -397,7 +591,7 @@ impl selectors::Element for BlitzNode<'_> {
         // Shadow DOM functionality in Stylo.
         let non_null =
             NonNull::new((self.id.as_u64() as usize).wrapping_add(1) as *mut ()).unwrap();
-        OpaqueElement::from_non_null_ptr(non_null)
+        OpaqueElement::from_ptr(non_null)
     }
 
     fn parent_element(&self) -> Option<Self> {
@@ -493,38 +687,47 @@ impl selectors::Element for BlitzNode<'_> {
                 .element_state()
                 .intersects(ElementState::VISITED_OR_UNVISITED),
             NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
-            NonTSPseudoClass::Valid => self.has_lp_state("valid"),
-            NonTSPseudoClass::Invalid => self.has_lp_state("invalid"),
+            NonTSPseudoClass::Valid => self.element_state().contains(ElementState::VALID),
+            NonTSPseudoClass::Invalid => self.element_state().contains(ElementState::INVALID),
             NonTSPseudoClass::Defined => false,
             NonTSPseudoClass::Disabled => self.element_state().contains(ElementState::DISABLED),
             NonTSPseudoClass::Enabled => self.element_state().contains(ElementState::ENABLED),
             NonTSPseudoClass::Focus => self.element_state().contains(ElementState::FOCUS),
             NonTSPseudoClass::FocusWithin => self.element_state().contains(ElementState::FOCUS_WITHIN),
-            NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUS),
+            NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUSRING),
             NonTSPseudoClass::Fullscreen => false,
             NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
-            NonTSPseudoClass::Indeterminate => self.has_lp_state("indeterminate"),
+            NonTSPseudoClass::Indeterminate => {
+                self.element_state().contains(ElementState::INDETERMINATE)
+            }
             NonTSPseudoClass::Lang(_) => false,
-            NonTSPseudoClass::CustomState(_) => false,
+            NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
-            NonTSPseudoClass::PlaceholderShown => self.has_lp_state("placeholder-shown"),
-            NonTSPseudoClass::ReadWrite => self.has_lp_state("read-write"),
-            NonTSPseudoClass::ReadOnly => !self.has_lp_state("read-write"),
+            NonTSPseudoClass::PlaceholderShown => {
+                self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
+            }
+            NonTSPseudoClass::ReadWrite => self.element_state().contains(ElementState::READWRITE),
+            NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
             NonTSPseudoClass::Target => false,
             NonTSPseudoClass::Visited => false,
             NonTSPseudoClass::Autofill => false,
-            NonTSPseudoClass::Default => self.has_lp_state("default"),
+            NonTSPseudoClass::Default => self.element_state().contains(ElementState::DEFAULT),
 
-            NonTSPseudoClass::InRange => false,
-            NonTSPseudoClass::Modal => self.has_lp_state("modal"),
-            NonTSPseudoClass::Open => self.has_lp_state("open"),
-            NonTSPseudoClass::Optional => self.has_lp_state("optional"),
-            NonTSPseudoClass::OutOfRange => false,
-            NonTSPseudoClass::PopoverOpen => self.has_lp_state("popover-open"),
-            NonTSPseudoClass::Required => self.has_lp_state("required"),
-            NonTSPseudoClass::UserInvalid => false,
-            NonTSPseudoClass::UserValid => false,
+            NonTSPseudoClass::InRange => self.element_state().contains(ElementState::INRANGE),
+            NonTSPseudoClass::Modal => self.element_state().contains(ElementState::MODAL),
+            NonTSPseudoClass::MozInert => self.element_state().contains(ElementState::INERT),
+            NonTSPseudoClass::Open => self.element_state().contains(ElementState::OPEN),
+            NonTSPseudoClass::Optional => self.element_state().contains(ElementState::OPTIONAL_),
+            NonTSPseudoClass::OutOfRange => self.element_state().contains(ElementState::OUTOFRANGE),
+            NonTSPseudoClass::PopoverOpen => {
+                self.element_state().contains(ElementState::POPOVER_OPEN)
+            }
+            NonTSPseudoClass::Required => self.element_state().contains(ElementState::REQUIRED),
+            NonTSPseudoClass::UserInvalid => {
+                self.element_state().contains(ElementState::USER_INVALID)
+            }
+            NonTSPseudoClass::UserValid => self.element_state().contains(ElementState::USER_VALID),
             NonTSPseudoClass::MozMeterOptimum => false,
             NonTSPseudoClass::MozMeterSubOptimum => false,
             NonTSPseudoClass::MozMeterSubSubOptimum => false,
@@ -594,11 +797,10 @@ impl selectors::Element for BlitzNode<'_> {
         search_name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
         case_sensitivity: selectors::attr::CaseSensitivity,
     ) -> bool {
-        self.element_data().is_some_and(|el| {
-            el.attrs
-                .class_atoms()
+        self.element_data().is_some_and(|data| {
+            data.classes
                 .iter()
-                .any(|atom| case_sensitivity.eq_atom(atom, search_name))
+                .any(|class| case_sensitivity.eq_atom(class, search_name))
         })
     }
 
@@ -631,6 +833,16 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
+        // lightningpanda: this element is in the subtree (or among the
+        // siblings) a `:has()` bloom filter covers, and a search the filter
+        // fast-rejects visits nothing and so flags nothing. Flag it as
+        // searched in both directions, as a full search would have, so a
+        // later change to it still reaches the anchors
+        // (`has_invalidation`). Filters are built only for `:has()`.
+        self.selector_flags().set(
+            self.selector_flags().get()
+                | ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING,
+        );
         each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
         true
     }
@@ -706,9 +918,9 @@ impl<'a> TElement for BlitzNode<'a> {
     where
         F: FnMut(&style::values::AtomIdent),
     {
-        if let Some(el) = self.element_data() {
-            for atom in el.attrs.class_atoms() {
-                callback(AtomIdent::cast(atom));
+        if let Some(data) = self.element_data() {
+            for class in &data.classes {
+                callback(AtomIdent::cast(class));
             }
         }
     }
@@ -719,7 +931,7 @@ impl<'a> TElement for BlitzNode<'a> {
     {
         if let Some(attrs) = self.data.attrs() {
             for attr in attrs.iter() {
-                callback(&GenericAtomIdent(attr.name.local.clone()));
+                callback(GenericAtomIdent::cast(&attr.name.local));
             }
         }
     }
@@ -777,14 +989,12 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn borrow_data(&self) -> Option<ElementDataRef<'_>> {
-        // lightningpanda: elements get their data when created, before they
-        // are styled. Until then they are unstyled to Stylo (as in Gecko and
-        // Servo, which give an element data when they style it): the
-        // traversal styles them from scratch, and invalidation must not read
-        // their (missing) styles.
+        // Stylo reads the existence of element data as "has been styled" (its invalidator
+        // unwraps the primary style of every element with data it descends into), but an
+        // element here can carry data before it has styles.
         self.try_stylo_element_data()
             .and_then(|s| s.get())
-            .filter(|data| data.styles.get_primary().is_some())
+            .filter(|data| data.styles.primary.is_some())
     }
 
     fn mutate_data(&self) -> Option<ElementDataMut<'_>> {
@@ -796,11 +1006,24 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn may_have_animations(&self) -> bool {
-        true
+        self.element_data()
+            .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
+    }
+
+    fn set_may_have_animations(&self) {
+        if let Some(data) = self.element_data() {
+            data.may_have_animations.store(true, Ordering::Relaxed);
+        }
     }
 
     fn has_animations(&self, context: &SharedStyleContext) -> bool {
-        self.has_css_animations(context, None) || self.has_css_transitions(context, None)
+        if !self.may_have_animations() {
+            return false;
+        }
+        let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
+        context
+            .animations
+            .has_active_animations_or_transitions(&key)
     }
 
     fn has_css_animations(
@@ -808,6 +1031,9 @@ impl<'a> TElement for BlitzNode<'a> {
         context: &SharedStyleContext,
         pseudo_element: Option<PseudoElement>,
     ) -> bool {
+        if !self.may_have_animations() {
+            return false;
+        }
         let key = AnimationSetKey::new(TNode::opaque(&TElement::as_node(self)), pseudo_element);
         context.animations.has_active_animations(&key)
     }
@@ -817,6 +1043,9 @@ impl<'a> TElement for BlitzNode<'a> {
         context: &SharedStyleContext,
         pseudo_element: Option<PseudoElement>,
     ) -> bool {
+        if !self.may_have_animations() {
+            return false;
+        }
         let key = AnimationSetKey::new(TNode::opaque(&TElement::as_node(self)), pseudo_element);
         context.animations.has_active_transitions(&key)
     }
@@ -1202,6 +1431,18 @@ impl<'a> TElement for BlitzNode<'a> {
                 }
             }
 
+            // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
+            if *name == local_name!("cellspacing") && *tag == local_name!("table") {
+                if let Ok(px) = style::servo::attr::parse_unsigned_integer(value.chars()) {
+                    use style::values::specified::{BorderSpacing, NonNegativeLength};
+                    let spacing = NonNegativeLength::from_px(px as f32);
+                    push_style(PropertyDeclaration::BorderSpacing(BorderSpacing::new(
+                        spacing.clone(),
+                        spacing,
+                    )));
+                }
+            }
+
             if *name == local_name!("bgcolor") {
                 use style::values::specified::Color;
                 if let Some((r, g, b, a)) = parse_color_attr(value) {
@@ -1214,6 +1455,44 @@ impl<'a> TElement for BlitzNode<'a> {
             if *name == local_name!("hidden") {
                 use style::values::specified::Display;
                 push_style(PropertyDeclaration::Display(Display::None));
+            }
+        }
+
+        // A table's `cellpadding` attribute maps to the padding of its cells (not
+        // those of nested tables), as a pixel length. The table is the first
+        // ancestor that isn't a row or row group.
+        // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
+        if *tag == local_name!("td") || *tag == local_name!("th") {
+            let mut ancestor = self.parent_node();
+            let mut cellpadding = None;
+            while let Some(node) = ancestor {
+                let Some(elem) = node.data.downcast_element() else {
+                    break;
+                };
+                let name = &elem.name.local;
+                let is_table_internal = *name == local_name!("tr")
+                    || *name == local_name!("tbody")
+                    || *name == local_name!("thead")
+                    || *name == local_name!("tfoot");
+                if !is_table_internal {
+                    if *name == local_name!("table") {
+                        cellpadding = elem.attr(local_name!("cellpadding")).and_then(|value| {
+                            style::servo::attr::parse_unsigned_integer(value.chars()).ok()
+                        });
+                    }
+                    break;
+                }
+                ancestor = node.parent_node();
+            }
+            if let Some(px) = cellpadding {
+                use style::values::generics::NonNegative;
+                use style::values::specified::{LengthPercentage, NoCalcLength};
+                let padding =
+                    NonNegative(LengthPercentage::Length(NoCalcLength::from_px(px as f32)));
+                push_style(PropertyDeclaration::PaddingTop(padding.clone()));
+                push_style(PropertyDeclaration::PaddingRight(padding.clone()));
+                push_style(PropertyDeclaration::PaddingBottom(padding.clone()));
+                push_style(PropertyDeclaration::PaddingLeft(padding));
             }
         }
 
@@ -1243,11 +1522,21 @@ impl<'a> TElement for BlitzNode<'a> {
         self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
     }
 
-    fn each_custom_state<F>(&self, _callback: F)
+    fn each_custom_state<F>(&self, mut callback: F)
     where
         F: FnMut(&AtomIdent),
     {
-        todo!()
+        // lightningpanda: lp-dom's render tree lists them (`has_lp_custom_state`).
+        let value = self.attrs().and_then(|attrs| {
+            attrs
+                .iter()
+                .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "custom-states")
+        });
+        if let Some(attr) = value {
+            for state in crate::has_invalidation::lp_custom_states(Some(&attr.value)) {
+                callback(AtomIdent::cast(&style::Atom::from(state)));
+            }
+        }
     }
 
     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
@@ -1338,6 +1627,16 @@ pub struct RecalcStyle<'a> {
     /// dedicated storage on the node (see `flush_image_layers_from_style`)
     /// because their style changed during this traversal.
     nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
+    /// lightningpanda: an element styled in this traversal kept a
+    /// `::before` / `::after` style (one its rules generate).
+    generated_before_after: std::sync::atomic::AtomicBool,
+    /// lightningpanda: elements styled `position: sticky` in this traversal
+    /// (`BaseDocument::sticky_nodes`).
+    sticky_nodes: Mutex<Vec<NodeId>>,
+    /// lightningpanda: the elements whose primary style this traversal replaced, with the old
+    /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
+    style_changes: Mutex<Vec<crate::StyleChange>>,
+    track_style_changes: bool,
 }
 
 impl<'a> RecalcStyle<'a> {
@@ -1345,11 +1644,175 @@ impl<'a> RecalcStyle<'a> {
         RecalcStyle {
             context,
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
+            generated_before_after: std::sync::atomic::AtomicBool::new(false),
+            sticky_nodes: Mutex::new(Vec::new()),
+            style_changes: Mutex::new(Vec::new()),
+            track_style_changes: false,
         }
     }
 }
 
 #[allow(unsafe_code)]
+/// lightningpanda: what the style traversal must reach once Stylo's relative selector
+/// invalidator invalidated `element` (as Gecko's `relative_selector_invalidated_at`): the
+/// hints are set, the dirty-descendants bits lead to them.
+fn relative_selector_invalidated_at(element: BlitzNode<'_>, result: &InvalidationResult) {
+    if result.has_invalidated_siblings() {
+        if let Some(parent) = <BlitzNode<'_> as TNode>::parent_element(&element) {
+            Node::set_dirty_descendants(parent);
+            parent.mark_ancestors_dirty();
+        }
+    } else if result.has_invalidated_descendants() {
+        Node::set_dirty_descendants(element);
+        element.mark_ancestors_dirty();
+    } else if result.has_invalidated_self() {
+        element.mark_ancestors_dirty();
+    }
+}
+
+impl crate::BaseDocument {
+    /// lightningpanda: the `:has()` anchors whose answer the insertion of `node_id` can change
+    /// restyle. Stylo's relative selector invalidator (as Gecko's
+    /// `MaybeInvalidateRelativeSelectorForInsertion`) looks the element's, and its
+    /// descendants', tags, ids, classes and attributes up in the stylist's relative selector
+    /// invalidation map, so an element no `:has()` argument can match invalidates nothing, and
+    /// an anchor restyles itself and what the rest of its selector reaches, not its subtree.
+    /// Called with the element linked in the document. It takes over its parent's and previous
+    /// sibling's search-direction flags: a `:has()` search that reached them reaches it.
+    pub(crate) fn invalidate_relative_selectors_for_insertion(&self, node_id: NodeId) {
+        let node = &self.nodes[node_id];
+        if !node.is_element() || !node.flags.is_in_document() {
+            return;
+        }
+        let mut inherited = ElementSelectorFlags::empty();
+        if let Some(parent) = <BlitzNode<'_> as TNode>::parent_element(&node) {
+            inherited |= parent.relative_selector_search_direction();
+        }
+        if let Some(prev) = node.prev_sibling_element() {
+            inherited |= prev.relative_selector_search_direction();
+        }
+        let operation = if node.next_sibling_element().is_none() {
+            DomMutationOperation::Append
+        } else {
+            DomMutationOperation::Insert
+        };
+        self.invalidate_relative_selectors(node, inherited, operation);
+    }
+
+    /// lightningpanda: as [`Self::invalidate_relative_selectors_for_insertion`] for an element
+    /// about to be removed (or moved away), called while it is still linked: the anchors are
+    /// found through its parent and earlier siblings.
+    pub(crate) fn invalidate_relative_selectors_for_removal(&self, node_id: NodeId) {
+        let node = &self.nodes[node_id];
+        if !node.is_element() || !node.flags.is_in_document() {
+            return;
+        }
+        self.invalidate_relative_selectors(node, ElementSelectorFlags::empty(), DomMutationOperation::Remove);
+    }
+
+    fn invalidate_relative_selectors(
+        &self,
+        node: BlitzNode<'_>,
+        inherited: ElementSelectorFlags,
+        operation: DomMutationOperation,
+    ) {
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        fn invalidator<'dom>(
+            element: BlitzNode<'dom>,
+            sibling_traversal_map: SiblingTraversalMap<BlitzNode<'dom>>,
+        ) -> RelativeSelectorInvalidator<'dom, 'dom, BlitzNode<'dom>> {
+            RelativeSelectorInvalidator {
+                element,
+                quirks_mode: QuirksMode::NoQuirks,
+                snapshots: None,
+                invalidated: relative_selector_invalidated_at,
+                sibling_traversal_map,
+            }
+        }
+        let prev = node.prev_sibling_element();
+        let next = node.next_sibling_element();
+        invalidator(node, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
+            !node.children.is_empty(),
+            &self.stylist,
+            inherited,
+            operation,
+        );
+        // The neighbours' sibling relations changed too (`:has(+ .a + .b)`). The next
+        // sibling's previous one is the element's: what it was before an insertion, what it
+        // is after a removal.
+        if let Some(prev) = prev {
+            invalidator(prev, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
+                false,
+                &self.stylist,
+                ElementSelectorFlags::empty(),
+                DomMutationOperation::SideEffectPrevSibling,
+            );
+        }
+        if let Some(next) = next {
+            let map = SiblingTraversalMap::new(next, prev, next.next_sibling_element());
+            invalidator(next, map).invalidate_relative_selectors_for_dom_mutation(
+                false,
+                &self.stylist,
+                ElementSelectorFlags::empty(),
+                DomMutationOperation::SideEffectNextSibling,
+            );
+        }
+    }
+
+    /// lightningpanda: the `:has()` anchors whose answer a change of `node_id`'s emptiness or
+    /// sibling position can flip restyle (as Gecko's
+    /// `MaybeInvalidateRelativeSelectorForEmptyDependency`, `...ForNthEdgeDependency` and
+    /// `...ForNthDependencyFromSibling`). `:empty`, `:nth-child()` and `:first-child`/
+    /// `:last-child` in an argument match by the tree around an element, not by its identity,
+    /// so the element that came or went (`.z` in `.a:has(> .x:first-child)` with `.z` inserted
+    /// before `.x`, a text node in `.a:has(> .p:empty)`) tells the mutation invalidator nothing:
+    /// instead the element whose condition changed is looked up in the stylist's
+    /// tree-structural dependency map for the `state`s given. Called after the mutation, with
+    /// `node_id` linked in the document; an element no `:has()` search has reached cannot
+    /// change an anchor's answer and is skipped.
+    pub(crate) fn invalidate_relative_selectors_for_ts_state(
+        &self,
+        node_id: NodeId,
+        state: TSStateForInvalidation,
+    ) {
+        let node = &self.nodes[node_id];
+        if !node.is_element()
+            || !node.flags.is_in_document()
+            || node.relative_selector_search_direction().is_empty()
+        {
+            return;
+        }
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        let invalidator = RelativeSelectorInvalidator {
+            element: node,
+            quirks_mode: QuirksMode::NoQuirks,
+            snapshots: None,
+            invalidated: relative_selector_invalidated_at,
+            sibling_traversal_map: SiblingTraversalMap::default(),
+        };
+        invalidator.invalidate_relative_selectors_for_this(
+            &self.stylist,
+            |element, scope, data, quirks_mode, collector| {
+                data.relative_invalidation_map_attributes()
+                    .ts_state_to_selector
+                    .lookup_with_additional(
+                        *element,
+                        quirks_mode,
+                        None,
+                        &[],
+                        ElementState::empty(),
+                        |dependency| {
+                            if dependency.state.intersects(state) {
+                                collector.add_dependency(&dependency.dep, *element, scope);
+                            }
+                            true
+                        },
+                    );
+            },
+        );
+    }
+}
+
 impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
     fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
         &self,
@@ -1362,7 +1825,73 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             // let mut data = el.mutate_data().unwrap();
             let mut data = unsafe { el.ensure_data() };
             let before = context.thread_local.statistics.clone();
+            // Held (not just its address) so that a replacement cannot reuse the allocation.
+            let old_primary = data.styles.get_primary().cloned();
             recalc_style_at(self, context, el, &mut data, note_child);
+            // lightningpanda: a replaced primary style rewrites what layout reads of it.
+            let new_primary = data.styles.get_primary();
+            let replaced = match (&old_primary, new_primary) {
+                (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
+                (None, None) => false,
+                _ => true,
+            };
+            // lightningpanda: the embedder's transitions want the style before and after a
+            // replacement; a first style, or styles dropped, is no change.
+            if self.track_style_changes && replaced {
+                if let (Some(old), Some(new)) = (&old_primary, new_primary) {
+                    self.style_changes.lock().unwrap().push(crate::StyleChange {
+                        node: el.id,
+                        before: old.clone(),
+                        after: new.clone(),
+                    });
+                }
+            }
+            // Stylo diffs the old and new style into `data.damage` (nothing when there was no old
+            // style, so a first style is always derived). A replacement without layout damage
+            // (colour, background, :hover, a class that changes only paint) leaves the derived
+            // layout styles as they are.
+            let derive =
+                replaced && (old_primary.is_none() || LayoutStyles::affected_by(data.damage));
+            // A table without uniform collapsed borders resolves their colours when it collects
+            // its rows (`CollapsedEdges`): a paint-only restyle of a table part that changes the
+            // colour of one of its borders (a border colour, or `color` under a `currentColor`
+            // border) collects its row again, with the text in its cells shaped as it was
+            // (`BOX_DAMAGE`). Its widths and styles reach layout on their own. Upstream gave
+            // every attribute change layout damage, which hid this.
+            let collapsed_edges_changed = !derive
+                && match (&old_primary, new_primary) {
+                    (Some(old), Some(new)) if replaced => {
+                        use style::computed_values::border_collapse::T as BorderCollapse;
+                        let display = *new.get_display();
+                        new.get_inherited_table().border_collapse == BorderCollapse::Collapse
+                            && (display.outside() == style::values::specified::box_::DisplayOutside::InternalTable
+                                || display.inside() == style::values::specified::box_::DisplayInside::Table)
+                            && resolved_border_colors(old) != resolved_border_colors(new)
+                    }
+                    _ => false,
+                };
+            drop(old_primary);
+            if derive {
+                let derived = match new_primary {
+                    Some(style) => LayoutStyles::derive(style, el.collapsed_border()),
+                    None => LayoutStyles::default(),
+                };
+                // SAFETY: the traversal has exclusive access to `el`, and nothing reads its
+                // layout styles while it runs.
+                if let Some(stylo) = el.try_stylo_element_data() {
+                    unsafe { stylo.set_layout_styles(derived) };
+                }
+            } else if replaced {
+                #[cfg(debug_assertions)]
+                if let (Some(style), Some(stylo)) = (new_primary, el.try_stylo_element_data()) {
+                    stylo
+                        .layout_styles()
+                        .assert_current(style, el.collapsed_border(), el.id);
+                }
+            }
+            if collapsed_edges_changed {
+                data.damage.insert(crate::layout::damage::BOX_DAMAGE);
+            }
             let after = &context.thread_local.statistics;
             crate::resolve::phase_profile::style_stats([
                 after.elements_styled - before.elements_styled,
@@ -1372,6 +1901,26 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             ]);
 
             sync_pseudo_element_styles(el, &data, &self.nodes_needing_style_image_flush);
+            if let Some(style) = data.styles.get_primary() {
+                el.record_out_of_flow(style);
+            }
+
+            if data.styles.get_primary().is_some_and(|style| {
+                style.clone_position() == style::computed_values::position::T::Sticky
+            }) {
+                self.sticky_nodes.lock().unwrap().push(el.id);
+            }
+
+            // One empty check for an element without eager pseudo styles.
+            if !data.styles.pseudos.is_empty() {
+                use style::selector_parser::PseudoElement;
+                if data.styles.pseudos.get(&PseudoElement::Before).is_some()
+                    || data.styles.pseudos.get(&PseudoElement::After).is_some()
+                {
+                    self.generated_before_after
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
 
             if !data.damage.is_empty() {
                 // Mark the ancestor chain so that the damage propagation pass
@@ -1412,6 +1961,12 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
     fn shared_context(&self) -> &SharedStyleContext<'_> {
         &self.context
     }
+}
+
+/// lightningpanda: whether `node`'s primary style is `position: sticky`.
+pub(crate) fn is_sticky(node: &Node) -> bool {
+    node.primary_styles()
+        .is_some_and(|style| style.clone_position() == style::computed_values::position::T::Sticky)
 }
 
 /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
@@ -1486,9 +2041,39 @@ fn sync_pseudo_element_styles(
                     .push(pe_node_id);
             }
         }
+        if LayoutStyles::affected_by(diff.damage) {
+            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border());
+            // SAFETY: as for `pe_data` above (only the owner's `process_preorder` reaches it).
+            unsafe { stylo_data.set_layout_styles(derived) };
+        } else {
+            #[cfg(debug_assertions)]
+            stylo_data
+                .layout_styles()
+                .assert_current(&pe_style, pe_node.collapsed_border(), pe_node_id);
+        }
+        pe_node.record_out_of_flow(&pe_style);
         pe_data.styles.primary = Some(pe_style);
         pe_data.set_restyled();
     }
+}
+
+/// The colours of a style's four visible borders (top, right, bottom, left; `None` for one with no
+/// width or style) with `currentColor` resolved: what a collapsed table's `CollapsedEdges` keep of
+/// them.
+fn resolved_border_colors(style: &ComputedValues) -> [Option<AbsoluteColor>; 4] {
+    use style::values::computed::{BorderStyle, Color};
+    let border = style.get_border();
+    let current = style.clone_color();
+    let resolve = |width: f32, border_style: BorderStyle, color: &Color| {
+        (width > 0.0 && !matches!(border_style, BorderStyle::None | BorderStyle::Hidden))
+            .then(|| color.resolve_to_absolute(&current))
+    };
+    [
+        resolve(border.border_top_width.0.to_f32_px(), border.border_top_style, &border.border_top_color),
+        resolve(border.border_right_width.0.to_f32_px(), border.border_right_style, &border.border_right_color),
+        resolve(border.border_bottom_width.0.to_f32_px(), border.border_bottom_style, &border.border_bottom_color),
+        resolve(border.border_left_width.0.to_f32_px(), border.border_left_style, &border.border_left_color),
+    ]
 }
 
 /// Whether a node's `background-image`/`mask-image` layers need flushing to
@@ -1552,4 +2137,689 @@ fn parse_inline() {
     // );
 
     // let val = CSSInlineStyleDeclaration();
+}
+
+/// lightningpanda: `:has()` anchors follow insertions and removals through Stylo's relative
+/// selector invalidator (`invalidate_relative_selectors_for_insertion`/`_removal`), and
+/// emptiness and sibling-position changes inside an argument through its tree-structural
+/// dependencies (`invalidate_relative_selectors_for_ts_state`).
+#[cfg(test)]
+mod relative_selector_invalidation_tests {
+    use super::*;
+    use crate::{Attribute, BaseDocument, DocumentConfig, DocumentMutator, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// `<html><head><style>{css}</style></head><body>`, resolved; the body's id. `tag` keeps
+    /// the sheet text apart from other tests' (author sheets are shared per thread by text).
+    fn make_doc(css: &str, tag: &str) -> (BaseDocument, NodeId) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        (doc, body)
+    }
+
+    fn div(m: &mut DocumentMutator<'_>, class: &str) -> NodeId {
+        m.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("class"), value: class.to_string() }])
+    }
+
+    /// The computed `order` of `id`: 7 where the test's `:has()` rule matched, else 0.
+    fn order(doc: &BaseDocument, id: NodeId) -> i32 {
+        doc.nodes[id].primary_styles().unwrap().get_position().order
+    }
+
+    /// The restyle hint waiting on `id` for the next resolve.
+    fn hint(doc: &BaseDocument, id: NodeId) -> RestyleHint {
+        doc.nodes[id].stylo_element_data().get().unwrap().hint
+    }
+
+    #[test]
+    fn subject_anchor_follows_insertions_and_removals() {
+        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-subject");
+        let mut m = d.mutate();
+        let (a, p, b) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "b"));
+        m.append_children(a, &[p]);
+        m.append_children(body, &[a, b]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+
+        // An element no `:has()` argument can match invalidates no anchor.
+        let mut m = d.mutate();
+        let y = div(&mut m, "y");
+        m.append_children(p, &[y]);
+        drop(m);
+        assert!(hint(&d, a).is_empty(), "nothing matches .y");
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.append_children(p, &[x]);
+        drop(m);
+        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF), "the anchor restyles itself");
+        assert!(hint(&d, p).is_empty(), "not the rest of its subtree");
+        assert!(hint(&d, b).is_empty(), "nor a sibling that anchors nothing");
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+
+        let mut m = d.mutate();
+        m.remove_node(x);
+        drop(m);
+        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF));
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+    }
+
+    #[test]
+    fn child_combinator_argument_needs_a_direct_child() {
+        let (mut d, body) = make_doc(".a:has(> .x) { order: 7 }", "has-child");
+        let mut m = d.mutate();
+        let (a, p) = (div(&mut m, "a"), div(&mut m, "p"));
+        m.append_children(a, &[p]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.append_children(p, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, "a grandchild");
+        let mut m = d.mutate();
+        let x2 = div(&mut m, "x");
+        m.append_children(a, &[x2]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, "a child");
+        let mut m = d.mutate();
+        m.remove_node(x2);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+    }
+
+    #[test]
+    fn next_sibling_argument_follows_what_comes_between() {
+        let (mut d, body) = make_doc(".a:has(+ .x) { order: 7 }", "has-next-sibling");
+        let mut m = d.mutate();
+        let (a, q) = (div(&mut m, "a"), div(&mut m, "q"));
+        m.append_children(body, &[a, q]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.insert_nodes_before(q, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".x right after .a");
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.insert_nodes_before(x, &[z]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".z came between");
+        let mut m = d.mutate();
+        m.remove_node(z);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z went away");
+    }
+
+    #[test]
+    fn later_sibling_subtree_argument_sees_a_deep_insertion() {
+        let (mut d, body) = make_doc(".a:has(~ .s .x) { order: 7 }", "has-later-sibling");
+        let mut m = d.mutate();
+        let (a, s, p) = (div(&mut m, "a"), div(&mut m, "s"), div(&mut m, "p"));
+        m.append_children(s, &[p]);
+        m.append_children(body, &[a, s]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.append_children(p, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+        let mut m = d.mutate();
+        m.remove_node(x);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+    }
+
+    #[test]
+    fn non_subject_anchor_restyles_what_its_selector_reaches() {
+        let (mut d, body) = make_doc(".a:has(.x) .d { order: 7 }", "has-non-subject");
+        let mut m = d.mutate();
+        let (a, dd, p) = (div(&mut m, "a"), div(&mut m, "d"), div(&mut m, "p"));
+        m.append_children(a, &[dd, p]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, dd), 0);
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.append_children(p, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, dd), 7);
+        let mut m = d.mutate();
+        m.remove_node(x);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, dd), 0);
+    }
+
+    #[test]
+    fn an_inserted_subtree_is_searched() {
+        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-subtree");
+        let mut m = d.mutate();
+        let a = div(&mut m, "a");
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        let mut m = d.mutate();
+        let (w, v, x) = (div(&mut m, "w"), div(&mut m, "v"), div(&mut m, "x"));
+        m.append_children(v, &[x]);
+        m.append_children(w, &[v]);
+        m.append_children(a, &[w]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".x deep in the inserted subtree");
+        let mut m = d.mutate();
+        m.remove_node(w);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+    }
+
+    #[test]
+    fn a_moved_argument_updates_both_anchors() {
+        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-move");
+        let mut m = d.mutate();
+        let (a1, a2, x) = (div(&mut m, "a"), div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a1, &[x]);
+        m.append_children(body, &[a1, a2]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!((order(&d, a1), order(&d, a2)), (7, 0));
+        let mut m = d.mutate();
+        m.append_children(a2, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!((order(&d, a1), order(&d, a2)), (0, 7));
+    }
+
+    // Arguments that match by position or emptiness: the element that came or went is not
+    // what the argument matches, the sibling (or parent) whose condition flipped is.
+
+    #[test]
+    fn first_child_argument_follows_an_unrelated_sibling() {
+        let (mut d, body) = make_doc(".a:has(> .x:first-child) { order: 7 }", "has-first-child");
+        let mut m = d.mutate();
+        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a, &[x]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.insert_nodes_before(x, &[z]);
+        drop(m);
+        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF), "the anchor restyles itself");
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".z inserted before .x");
+        let mut m = d.mutate();
+        m.remove_node(z);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z removed");
+    }
+
+    #[test]
+    fn last_child_argument_follows_an_appended_sibling() {
+        let (mut d, body) = make_doc(".a:has(> .x:last-child) { order: 7 }", "has-last-child");
+        let mut m = d.mutate();
+        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a, &[x]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.append_children(a, &[z]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".z appended after .x");
+        let mut m = d.mutate();
+        m.remove_node(z);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z removed");
+        // A same-parent move: `.x` leaves its position and comes back last.
+        let mut m = d.mutate();
+        let y = div(&mut m, "y");
+        m.append_children(a, &[y]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".x moved last");
+    }
+
+    #[test]
+    fn nth_child_argument_follows_a_sibling_inserted_before_it() {
+        let (mut d, body) = make_doc(".a:has(> .x:nth-child(2)) { order: 7 }", "has-nth-child");
+        let mut m = d.mutate();
+        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a, &[x]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.insert_nodes_before(x, &[z]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z inserted before .x");
+        // Not at the front: `.x` is a later sibling of the change.
+        let mut m = d.mutate();
+        let w = div(&mut m, "w");
+        m.insert_nodes_before(x, &[w]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".w inserted between");
+        let mut m = d.mutate();
+        m.remove_node(z);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z removed");
+    }
+
+    #[test]
+    fn nth_last_child_argument_follows_a_sibling_appended_after_it() {
+        let (mut d, body) =
+            make_doc(".a:has(> .x:nth-last-child(2)) { order: 7 }", "has-nth-last-child");
+        let mut m = d.mutate();
+        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a, &[x]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.append_children(a, &[z]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z appended after .x");
+    }
+
+    #[test]
+    fn empty_argument_follows_the_children_of_its_element() {
+        let (mut d, body) = make_doc(".a:has(> .p:empty) { order: 7 }", "has-empty");
+        let mut m = d.mutate();
+        let (a, p, q) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "q"));
+        m.append_children(p, &[q]);
+        m.append_children(a, &[p]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        m.remove_node(q);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".q removed, .p empty");
+        let mut m = d.mutate();
+        let q2 = div(&mut m, "q");
+        m.append_children(p, &[q2]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".q appended again");
+        // Text nodes count for `:empty` too, though no `:has()` argument matches them.
+        let mut m = d.mutate();
+        m.remove_and_drop_all_children(p);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, "all children dropped");
+        let mut m = d.mutate();
+        let t = m.create_text_node("text");
+        m.append_children(p, &[t]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, "a text node");
+        let mut m = d.mutate();
+        m.remove_node(t);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, "the text node removed");
+    }
+
+    #[test]
+    fn dropping_all_children_leaves_their_anchors() {
+        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-drop-all");
+        let mut m = d.mutate();
+        let (a, p, x) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "x"));
+        m.append_children(p, &[x]);
+        m.append_children(a, &[p]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+        let mut m = d.mutate();
+        m.remove_and_drop_all_children(p);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".x dropped with its siblings");
+    }
+}
+
+/// lightningpanda: Stylo skips the eager `::before`/`::after` match and cascade when no rule
+/// that can generate a box matches (`Stylist::may_generate_box_for_pseudo`). What generates,
+/// and the styles Stylo keeps, must not change.
+#[cfg(test)]
+mod style_change_tests {
+    use super::*;
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// `<html><head><style>{css}</style></head><body><div class=a>`, resolved.
+    fn make_doc(css: &str, tag: &str) -> (BaseDocument, NodeId) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        let div = m.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("class"), value: "a".into() }]);
+        m.append_children(body, &[div]);
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        (doc, div)
+    }
+
+    fn set_class(doc: &mut BaseDocument, id: NodeId, class: &str) {
+        let mut m = doc.mutate();
+        m.set_attribute(id, qual_name!("class"), class);
+        drop(m);
+    }
+
+    fn order(style: &style::properties::ComputedValues) -> i32 {
+        style.get_position().order
+    }
+
+    #[test]
+    fn replaced_styles_are_recorded_once_tracked_with_the_first_old_and_last_new() {
+        let (mut d, div) = make_doc(".a { order: 1 } .b { order: 2 } .c { order: 3 }", "style-changes");
+        // Nothing is recorded until asked: the first styles above are no change either way.
+        set_class(&mut d, div, "b");
+        d.resolve(0.0);
+        assert!(d.take_style_changes().is_empty(), "not tracked");
+        d.set_track_style_changes(true);
+        set_class(&mut d, div, "c");
+        d.resolve(0.0);
+        let changes = d.take_style_changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!((changes[0].node, order(&changes[0].before), order(&changes[0].after)), (div, 2, 3));
+        assert!(d.take_style_changes().is_empty(), "taken");
+        // Two restyles before a take: the style before the first and after the last.
+        set_class(&mut d, div, "a");
+        d.resolve(0.0);
+        set_class(&mut d, div, "b");
+        d.resolve(0.0);
+        let changes = d.take_style_changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!((order(&changes[0].before), order(&changes[0].after)), (3, 2));
+        // A first style is no change: a new element appears in no entry.
+        let mut m = d.mutate();
+        let fresh = m.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("class"), value: "c".into() }]);
+        m.append_children(div, &[fresh]);
+        drop(m);
+        d.resolve(0.0);
+        assert!(d.take_style_changes().is_empty(), "a first style");
+        // Turning tracking off drops what was recorded.
+        set_class(&mut d, div, "c");
+        d.resolve(0.0);
+        d.set_track_style_changes(false);
+        assert!(d.take_style_changes().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod box_generating_pseudo_tests {
+    use super::*;
+    use crate::{Attribute, BaseDocument, DocumentConfig, QualName, UserAgentStylesheet, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+    use style::stylist::RuleInclusion;
+    use style::traversal::resolve_style;
+
+    struct Doc {
+        doc: BaseDocument,
+        style: NodeId,
+        body: NodeId,
+    }
+
+    /// `<html><head><style>{css}</style></head><body>` with a `div` per `(id class, class)`.
+    /// A per-test `tag` keeps the sheet text apart from other tests' (author sheets are shared
+    /// per thread by text, and one test edits its sheet through the CSSOM).
+    fn make_doc(ua: Option<&str>, css: &str, tag: &str, divs: &[(&str, &str)]) -> (Doc, Vec<NodeId>) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        if let Some(ua) = ua {
+            doc.add_user_agent_stylesheet(UserAgentStylesheet::parse(ua));
+        }
+        let root_id = doc.root_node().id;
+        let attr = |name, value: &str| Attribute { name, value: value.to_string() };
+        let mut ids = Vec::new();
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        for (tag, class) in divs {
+            let local = LocalName::from(*tag);
+            let name = QualName::new(None, ns!(html), local);
+            let el = m.create_element(name, vec![attr(qual_name!("class"), class)]);
+            m.append_children(body, &[el]);
+            ids.push(el);
+        }
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        (Doc { doc, style, body }, ids)
+    }
+
+    /// The eager (`before`, `after`) styles Stylo kept for `id`.
+    fn kept(doc: &BaseDocument, id: NodeId) -> (bool, bool) {
+        let data = doc.nodes[id].stylo_element_data().get().unwrap();
+        let pseudos = data.styles.pseudos.as_array();
+        (pseudos[1].is_some(), pseudos[0].is_some())
+    }
+
+    /// The (`::before`, `::after`) boxes of `id`.
+    fn boxes(doc: &BaseDocument, id: NodeId) -> (bool, bool) {
+        let node = &doc.nodes[id];
+        (node.before().is_some(), node.after().is_some())
+    }
+
+    #[test]
+    fn non_generating_rules_keep_no_pseudo_style() {
+        let css = "*::before, *::after { box-sizing: border-box; color: red } \
+                   .x::before { content: '' } .y::after { content: 'y' } \
+                   .d::before { display: inherit } .v::before { content: var(--c) } \
+                   .all::after { all: inherit } .an::before { animation-name: a }";
+        let (d, ids) = make_doc(
+            Some("q:before { content: open-quote } q:after { content: close-quote }"),
+            css,
+            "non-generating",
+            &[("div", ""), ("div", "x"), ("div", "y"), ("q", ""), ("div", "d"), ("div", "v"), ("div", "all"), ("div", "an")],
+        );
+        let doc = &d.doc;
+        assert_eq!(kept(doc, ids[0]), (false, false), "box-sizing and color alone generate nothing");
+        assert_eq!(boxes(doc, ids[0]), (false, false));
+        assert_eq!(boxes(doc, ids[1]), (true, false), ".x::before");
+        assert_eq!(boxes(doc, ids[2]), (false, true), ".y::after");
+        assert_eq!(boxes(doc, ids[3]), (true, true), "q's UA quotes");
+        // `display: inherit` and `content: var()` keep the style as upstream does
+        // (`DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE`); `content` stays `normal`, no box.
+        assert_eq!(kept(doc, ids[4]), (true, false), "display: inherit");
+        assert_eq!(boxes(doc, ids[4]), (false, false));
+        assert_eq!(kept(doc, ids[5]), (true, false), "content: var(--c)");
+        assert_eq!(kept(doc, ids[6]), (false, true), "all: inherit");
+        assert_eq!(kept(doc, ids[7]), (false, false), "animation-name alone: content is normal");
+    }
+
+    /// Which declaration blocks the index files: a value that cannot make the box appear
+    /// (`content: normal | none`, `animation-name: none`) keeps a rule out of it, so the UA
+    /// `*::before, *::after { animation: none !important }` does not match every element.
+    #[test]
+    fn index_ignores_declarations_that_cannot_generate_a_box() {
+        use style::properties::declaration_block::parse_style_attribute;
+        use style::stylesheets::CssRuleType;
+        use style::stylist::declarations_may_generate_pseudo_box;
+        let (d, _) = make_doc(None, "", "index-decls", &[]);
+        let url = d.doc.url.url_extra_data();
+        let generates = |css: &str| {
+            let block = parse_style_attribute(css, &url, None, QuirksMode::NoQuirks, CssRuleType::Style);
+            declarations_may_generate_pseudo_box(&block)
+        };
+        assert!(!generates("transition: none; animation: none"));
+        assert!(!generates("animation-name: none, none"));
+        assert!(!generates("content: normal"));
+        assert!(!generates("content: none; color: red"));
+        assert!(generates("animation-name: a"));
+        assert!(generates("animation-name: none, a"));
+        assert!(generates("animation: var(--a)"));
+        assert!(generates("animation-name: inherit"));
+        assert!(generates("content: ''"));
+        assert!(generates("content: var(--c)"));
+        assert!(generates("content: inherit"));
+        assert!(generates("display: none"));
+        assert!(generates("all: unset"));
+    }
+
+    /// `PseudoElementResolution::Force` (out-of-document styles) still resolves every eager
+    /// pseudo-element any rule matches.
+    #[test]
+    fn forced_resolution_keeps_non_generating_pseudo_styles() {
+        let (mut d, ids) = make_doc(
+            None,
+            "div::before { color: red } .h { display: none }",
+            "forced",
+            &[("div", ""), ("div", "h")],
+        );
+        assert_eq!(kept(&d.doc, ids[0]), (false, false));
+        // An element in a `display: none` subtree is left unstyled, as `resolve_style` wants.
+        let mut m = d.doc.mutate();
+        let hidden = m.create_element(qual_name!("div"), vec![]);
+        m.append_children(ids[1], &[hidden]);
+        drop(m);
+        d.doc.resolve(0.0);
+        let doc = &d.doc;
+
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        let guard = &doc.guard;
+        let guards = StylesheetGuards { author: &guard.read(), ua_or_user: &guard.read() };
+        let shared = SharedStyleContext {
+            traversal_flags: TraversalFlags::empty(),
+            stylist: &doc.stylist,
+            options: GLOBAL_STYLE_DATA.options.clone(),
+            guards,
+            visited_styles_enabled: false,
+            animations: doc.animations.clone(),
+            current_time_for_animations: 0.0,
+            snapshot_map: &doc.snapshots,
+            registered_speculative_painters: &RegisteredPaintersImpl,
+        };
+        let mut thread_local = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
+        let node = &doc.nodes[hidden];
+        let styles = resolve_style(&mut context, node, RuleInclusion::All, None, None);
+        assert!(styles.pseudos.get(&PseudoElement::Before).is_some(), "forced ::before");
+        assert!(styles.pseudos.get(&PseudoElement::After).is_none(), "nothing matches ::after");
+    }
+
+    /// The index is rebuilt with the rules: a CSSOM edit that adds `content` makes the box
+    /// appear. This fails if `RuleChangeKind::StyleRuleDeclarations` stops rebuilding the
+    /// cascade data (stylesheet_set.rs).
+    #[test]
+    fn cssom_declaration_edit_makes_the_pseudo_appear() {
+        let (mut d, ids) = make_doc(None, ".c::before { color: red }", "cssom", &[("div", "c")]);
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false));
+        d.doc
+            .stylesheet_rule_style_set_property(d.style, &[0], "content", "\"a\"", false)
+            .unwrap();
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[0]), (true, false), "content set through the CSSOM");
+        d.doc.stylesheet_rule_style_remove_property(d.style, &[0], "content").unwrap();
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false), "and removed");
+    }
+
+    /// Selector flags from the index's own match drive sibling invalidation.
+    #[test]
+    fn last_child_after_follows_appends_and_removals() {
+        let (mut d, ids) = make_doc(
+            None,
+            ".a:last-child::after { content: '' } .a::after { color: red }",
+            "last-child",
+            &[("div", "a"), ("div", "a")],
+        );
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false));
+        assert_eq!(boxes(&d.doc, ids[1]), (false, true));
+
+        let body = d.body;
+        let mut m = d.doc.mutate();
+        let attr = Attribute { name: qual_name!("class"), value: "a".into() };
+        let added = m.create_element(qual_name!("div"), vec![attr]);
+        m.append_children(body, &[added]);
+        drop(m);
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[1]), (false, false), "no longer the last child");
+        assert_eq!(boxes(&d.doc, added), (false, true), "the new last child");
+
+        let mut m = d.doc.mutate();
+        m.remove_node(added);
+        drop(m);
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
+    }
 }

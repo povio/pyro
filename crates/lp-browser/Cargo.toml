@@ -21,6 +21,8 @@ smallvec = "1"
 
 [dev-dependencies]
 lp-layout.workspace = true
+# Every codec in this crate's tests (tests/media_decoding.rs).
+lp-media = { workspace = true, features = ["av1", "h264"] }
 lp-render.workspace = true
 
 [[test]]

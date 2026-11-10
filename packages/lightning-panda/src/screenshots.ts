@@ -8,9 +8,16 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import type { ScreenshotStep } from './steps.js';
 
-/** Write new baselines instead of comparing (`LP_UPDATE_SNAPSHOTS=1`, or `bun test --update-snapshots` / `-u`). */
+/** Playwright's `updateSnapshots` modes, for `toHaveScreenshot`. */
+export type UpdateMode = 'all' | 'changed' | 'missing' | 'none';
+
+/**
+ * Write new baselines instead of comparing (`LP_UPDATE_SNAPSHOTS=1`, or
+ * `bun test --update-snapshots` / `-u`). The steps API's switch; the
+ * Playwright layer passes its own `UpdateMode` to `prepare`/`settle`.
+ */
 export const updateMode = (): boolean =>
-  ['1', 'true', 'all'].includes(process.env.LP_UPDATE_SNAPSHOTS ?? '') ||
+  ['1', 'true', 'all', 'changed'].includes(process.env.LP_UPDATE_SNAPSHOTS ?? '') ||
   process.argv.includes('--update-snapshots') ||
   process.argv.includes('-u');
 
@@ -45,14 +52,22 @@ export type SentBaselines = Map<string, string>;
 
 const paths = (step: ScreenshotStep) => {
   const base = join(step.opts.dir ?? join(step.testDir, '__screenshots__'), step.name);
-  return { png: `${base}.png`, meta: `${base}.json`, actual: `${base}.actual.png`, diff: `${base}.diff.png` };
+  if (step.outputStem) {
+    const out = step.outputStem;
+    return { png: `${base}.png`, meta: `${base}.json`, actual: `${out}-actual.png`, diff: `${out}-diff.png`, expected: `${out}-expected.png` };
+  }
+  return { png: `${base}.png`, meta: `${base}.json`, actual: `${base}.actual.png`, diff: `${base}.diff.png`, expected: undefined as string | undefined };
 };
 
-/** Fills `step.wire` from disk. */
-export function prepare(step: ScreenshotStep, sent: SentBaselines): void {
+/**
+ * Fills `step.wire` from disk. With a `mode` (the Playwright layer), only
+ * "all" or a missing baseline records; "changed" compares, and the caller
+ * rewrites on a mismatch (`rewrite`).
+ */
+export function prepare(step: ScreenshotStep, sent: SentBaselines, mode?: UpdateMode): void {
   const p = paths(step);
   step.wire = {};
-  if (updateMode() || !existsSync(p.png)) {
+  if ((mode ? mode === 'all' : updateMode()) || !existsSync(p.png)) {
     step.wire = { update: true };
     return;
   }
@@ -83,8 +98,12 @@ const toResult = (step: ScreenshotStep, r: any): ScreenshotResult => ({
   ms: r.ms,
 });
 
-/** A step's result from a successful run: writes recorded baselines. */
-export function settle(step: ScreenshotStep, r: any): ScreenshotResult {
+/**
+ * A step's result from a successful run: writes recorded baselines. Without
+ * a `mode` it throws on a recorded baseline outside update mode; with one,
+ * the caller reports it (`result.recorded`).
+ */
+export function settle(step: ScreenshotStep, r: any, mode?: UpdateMode): ScreenshotResult {
   const p = paths(step);
   const result = toResult(step, r);
   rmSync(p.actual, { force: true });
@@ -95,11 +114,24 @@ export function settle(step: ScreenshotStep, r: any): ScreenshotResult {
     writeFileSync(p.png, Buffer.from(r.actual, 'base64'));
     writeFileSync(p.meta, JSON.stringify({ sceneHash: r.sceneHash, width: r.width, height: r.height }, null, 2) + '\n');
     result.files = { baseline: p.png };
-    if (!updateMode()) {
+    if (!mode && !updateMode()) {
       const what = existed ? 'was replaced' : 'did not exist';
       throw new ScreenshotMismatchError(`screenshot '${step.name}': the baseline ${what}; wrote ${p.png}`, result);
     }
   }
+  return result;
+}
+
+/** On a mismatch in "changed" / "all" mode: the actual image becomes the baseline. */
+export function rewrite(step: ScreenshotStep, data: any): ScreenshotResult {
+  const p = paths(step);
+  const result = toResult(step, data);
+  mkdirSync(dirname(p.png), { recursive: true });
+  writeFileSync(p.png, Buffer.from(data.actual, 'base64'));
+  writeFileSync(p.meta, JSON.stringify({ sceneHash: data.sceneHash, width: data.width, height: data.height }, null, 2) + '\n');
+  rmSync(p.actual, { force: true });
+  rmSync(p.diff, { force: true });
+  result.files = { baseline: p.png };
   return result;
 }
 
@@ -110,6 +142,7 @@ export function mismatch(step: ScreenshotStep, data: any, message: string): Scre
   mkdirSync(dirname(p.actual), { recursive: true });
   writeFileSync(p.actual, Buffer.from(data.actual, 'base64'));
   writeFileSync(p.diff, Buffer.from(data.diff, 'base64'));
+  if (p.expected && existsSync(p.png)) writeFileSync(p.expected, readFileSync(p.png));
   result.files = { baseline: p.png, actual: p.actual, diff: p.diff };
   return new ScreenshotMismatchError(`${message}\n  actual: ${p.actual}\n  diff:   ${p.diff}`, result);
 }

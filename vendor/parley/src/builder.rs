@@ -334,6 +334,25 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
         let text = self.build_into(&mut layout);
         (layout, text)
     }
+
+    /// Like [`Self::build_into`], building `layout` again, but keeps the lines of its last
+    /// break that the same break of the new content would produce again: those over the
+    /// beginning the old and new content share (see [`crate::layout::resume`]).
+    /// [`BreakLines::resume`](crate::layout::BreakLines::resume) continues breaking after them.
+    pub fn build_into_keeping_lines(self, layout: &mut Layout<B>) -> String {
+        let text = self
+            .lcx
+            .tree_style_builder
+            .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
+
+        // Build into the scratch's buffers, keeping the old data to compare with.
+        core::mem::swap(&mut layout.data, &mut self.lcx.previous_layout);
+        build_into_layout(layout, &text, self.lcx, self.fcx, self.options);
+        crate::layout::resume::adopt_line_prefix(&mut layout.data, &self.lcx.previous_layout);
+        self.lcx.previous_layout.clear();
+
+        text
+    }
 }
 
 fn build_into_layout<B: Brush>(
@@ -424,6 +443,7 @@ fn build_into_layout<B: Brush>(
             text,
             layout,
             &lcx.analysis_data_sources,
+            &mut lcx.style_first_fonts,
         );
     }
 
@@ -433,6 +453,7 @@ fn build_into_layout<B: Brush>(
         fcx,
         &lcx.style_table,
         &layout.data.shaped_text,
+        &lcx.style_first_fonts,
         options.quantize,
         &mut layout.data.style_metrics,
     );

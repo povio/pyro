@@ -11,7 +11,7 @@ describes the module contract.
 ## npm package
 
 The npm distribution is `@povio/lightning-panda`: one package with the browser
-CLI and testing API. It bundles macOS 14+ binaries for Apple Silicon and Intel.
+CLI and testing API. It bundles macOS 14+ binaries for Apple Silicon and Intel, and Linux (glibc 2.39+, e.g. Ubuntu 24.04) binaries for x64 and arm64.
 
 ```sh
 npm install --save-dev @povio/lightning-panda
@@ -34,6 +34,10 @@ cargo build --release
 cargo test
 ./scripts/check-no-v8.sh
 ```
+
+For iteration, `cargo t -p <crate>` and `cargo tall` (every crate, `render` on) test under the `test-fast`
+profile: release optimization without LTO, so a rebuild after editing lp-dom takes under a minute instead of
+tens of minutes. Ship and benchmark `release` builds.
 
 Screenshots (`Page.captureScreenshot`, `LP.run` `matchScreenshot`) need the `render` feature, off by default:
 `cargo build --release --features render`. It adds lp-render (Blitz, Stylo, Vello's CPU rasterizer: about 200
@@ -75,6 +79,22 @@ crates that include build-script output from `OUT_DIR`, and users of proc-macros
 whose dylibs record where they were linked. Workspace crates are compiled incrementally, which
 sccache passes through, so edit rebuilds are unchanged (lp-dom edit: 4.6-5.3 s with it, 5.8-5.9 s without).
 `sccache --show-stats` shows the hit rate.
+
+### Profile-guided optimization (optional)
+
+`scripts/pgo/build.sh` builds `target/release-pgo/lightningpanda` in three steps that can also run
+separately: `generate.sh` (instrumented build, `-Cprofile-generate`), `train.sh` (one `serve` runs
+`bench/playwright-suite` three times and `bench/scripts/css-bench.mjs`, plus `LP_PGO_EXTRA=<script>` for a
+workload outside the repository, for example an application's own E2E suite against `LP_WS`), `use.sh`
+(`llvm-profdata merge` from rustup's `llvm-tools` component, then `-Cprofile-use`). The `release-pgo` profile
+is `release` in another directory; the flags come from the scripts, and `release` stays the default because
+the flow costs about 2.5 release builds and the profile goes stale as hot code changes. Measured on an M1 Max
+with this training against the same tree at `release` (CPU time of the `serve` process, binaries alternated, two
+sessions of 3-4 runs each): Playwright suite -5% and -7%, 1,200-row table text-edit loop -5% and -12%,
+paragraph-append and mixed layout loops -7% to -16%, PDF generation over 44 templates -2%, a React SPA load within
+noise; PDF output byte-identical. Adding your own workload with `LP_PGO_EXTRA` focuses the profile on it.
+Fat LTO on top of PGO and a thin-LTO JavaScriptCore were measured and not adopted; see the notes
+in `Cargo.toml` and `scripts/jsc/build.sh`.
 
 ## Usage
 

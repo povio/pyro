@@ -55,7 +55,6 @@ test('completed fork profiles retire their templates and spares while active pag
       await browser.profile('feature', { base: 'app', url, setup: [evaluate(`window.marker=${i}`)] });
       await using active = await browser.page({ as: 'feature' });
       expect((await active.run([evaluate('window.marker', 'marker')])).values.marker).toBe(i);
-      await expect(browser.releaseProfile('app')).rejects.toThrow('dependent');
       await browser.releaseProfile('feature');
       expect((await active.run([evaluate('window.marker', 'marker')])).values.marker).toBe(i);
       await active[Symbol.asyncDispose]();
@@ -63,6 +62,26 @@ test('completed fork profiles retire their templates and spares while active pag
     }
     await using base = await browser.page({ as: 'app' });
     expect((await base.run([evaluate('window.marker === undefined', 'pristine')])).values.pristine).toBe(true);
+  } finally { browser.close(); }
+}, 20000);
+
+test('a released base stays while a profile derived from it is held, then retires with it', async () => {
+  const browser = await Lightningpanda.launch({ bin, args: ['--fork'] });
+  const pid = (browser as unknown as { child: { pid: number } }).child.pid;
+  const names = async () => (await browser.cdp.send('Lightningpanda.preparedProfiles')).profiles.map((p: { name: string; holders: number }) => `${p.name}:${p.holders}`);
+  try {
+    await browser.profile('app', { url, setup: [check(css('#ready')).visible()] });
+    await browser.profile('feature', { base: 'app', url, setup: [evaluate('window.marker="feature"')] });
+    await browser.releaseProfile('app');
+    expect(await names()).toEqual(['app:0', 'feature:1']);
+    await using page = await browser.page({ as: 'feature' });
+    expect((await page.run([evaluate('window.marker', 'marker')])).values.marker).toBe('feature');
+    await browser.releaseProfile('feature');
+    expect(await names()).toEqual([]);
+    expect((await page.run([evaluate('window.marker', 'marker')])).values.marker).toBe('feature');
+    await page[Symbol.asyncDispose]();
+    await waitForBound(pid, 5);
+    await expect(browser.page({ as: 'app' })).rejects.toThrow('no profile app');
   } finally { browser.close(); }
 }, 20000);
 

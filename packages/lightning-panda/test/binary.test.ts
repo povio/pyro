@@ -10,15 +10,17 @@ import { Lightningpanda } from '../src/index';
 test('resolves each bundled architecture and gives an explicit override precedence', () => {
   const root = mkdtempSync(join(tmpdir(), 'lp-package-'));
   try {
-    for (const arch of ['arm64', 'x64']) {
-      const dir = join(root, 'native', `darwin-${arch}`);
-      mkdirSync(dir, { recursive: true });
-      const binary = join(dir, 'lightningpanda');
-      writeFileSync(binary, 'fixture');
-      expect(resolveBinary({ root, platform: 'darwin', arch, env: {} })).toBe(binary);
-      expect(resolveBinary({ root, platform: 'darwin', arch, env: { LIGHTNINGPANDA_BIN: '/custom/browser' } })).toBe('/custom/browser');
+    for (const platform of ['darwin', 'linux']) {
+      for (const arch of ['arm64', 'x64']) {
+        const dir = join(root, 'native', `${platform}-${arch}`);
+        mkdirSync(dir, { recursive: true });
+        const binary = join(dir, 'lightningpanda');
+        writeFileSync(binary, 'fixture');
+        expect(resolveBinary({ root, platform, arch, env: {} })).toBe(binary);
+        expect(resolveBinary({ root, platform, arch, env: { LIGHTNINGPANDA_BIN: '/custom/browser' } })).toBe('/custom/browser');
+      }
     }
-    expect(() => resolveBinary({ root, platform: 'linux', arch: 'x64', env: {} })).toThrow('connect()');
+    expect(() => resolveBinary({ root, platform: 'win32', arch: 'x64', env: {} })).toThrow('connect()');
     expect(() => resolveBinary({ root, platform: 'darwin', arch: 'unknown', env: {} })).toThrow('no bundled browser');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

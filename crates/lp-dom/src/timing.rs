@@ -94,14 +94,18 @@ impl TimingRules {
     /// declaring an animation name matches, and those whose `style`
     /// attribute declares one.
     pub fn animation_candidates(&self, dom: &Dom, doc: NodeId) -> Vec<NodeId> {
+        if self.keyframes.is_empty() {
+            return Vec::new();
+        }
+        self.candidates(dom, doc, Longhand::AnimationName, "animation")
+    }
+
+    fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
         let mut seen = FxHashSet::default();
         let mut out = Vec::new();
-        if self.keyframes.is_empty() {
-            return out;
-        }
         let Ok(root) = dom.check(doc) else { return out };
         for rule in &self.rules {
-            if !rule.declarations.iter().any(|d| d.0 == Longhand::AnimationName) {
+            if !rule.declarations.iter().any(|d| d.0 == longhand) {
                 continue;
             }
             for idx in crate::stylo::select::query(dom, root, &rule.selectors, false) {
@@ -112,7 +116,11 @@ impl TimingRules {
         }
         if let Ok(descendants) = dom.descendants(doc) {
             for id in descendants {
-                let inline = dom.element(id).ok().and_then(|e| e.attr("style")).is_some_and(|s| s.contains("animation"));
+                let inline = dom
+                    .element(id)
+                    .ok()
+                    .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
+                    .is_some_and(|s| s.contains(inline_word));
                 if inline && seen.insert(id.index()) {
                     out.push(id);
                 }
@@ -128,10 +136,11 @@ impl TimingRules {
         if !dom.n(idx).is_element() {
             return out;
         }
-        let inline: Vec<Declared> = match dom.element(el).ok().and_then(|e| e.attr("style")) {
-            Some(style) if mentions(style) => declarations(style),
-            _ => Vec::new(),
-        };
+        let inline: Vec<Declared> =
+            match dom.element(el).ok().and_then(|e| e.attr_local(&markup5ever::local_name!("style"))) {
+                Some(style) if mentions(style) => declarations(style),
+                _ => Vec::new(),
+            };
         // The rules that match, with their specificity, once for all longhands.
         let matching: Vec<(u32, usize, &Rule)> = self
             .rules
@@ -221,14 +230,34 @@ impl TimingRules {
 /// properties a later one changed.
 pub type StyleSnapshot = style::servo_arc::Arc<style::properties::ComputedValues>;
 
+/// Whether `style` is `display: none` (the element is not rendered).
+pub fn displays_none(style: &StyleSnapshot) -> bool {
+    style.get_box().display.is_none()
+}
+
 /// The longhands `property` (a longhand, a shorthand or `all`) covers whose
 /// computed value differs between `before` and `after`: the ones a
 /// transition of `property` starts for.
 pub fn changed_longhands(before: &StyleSnapshot, after: &StyleSnapshot, property: &str) -> Vec<&'static str> {
+    use style::properties::animated_properties::AnimationValue;
     use style::properties::{PropertyDeclarationId, ShorthandId};
+    use style::values::animated::{Animate, Procedure};
+    // Different, and values Stylo can animate between (`width: auto` to a
+    // length starts none; properties Stylo animates discretely, `float` or
+    // `display`, still do). Animated values exist for physical longhands
+    // only: a logical one (`inline-size`) is mapped through the after-change
+    // style's writing mode.
     let differs = |longhand: style::properties::LonghandId| {
         let id = PropertyDeclarationId::Longhand(longhand);
+        let physical = PropertyDeclarationId::Longhand(longhand.to_physical(after.writing_mode));
         before.computed_value_to_string(id) != after.computed_value_to_string(id)
+            && match (
+                AnimationValue::from_computed_values(physical, before),
+                AnimationValue::from_computed_values(physical, after),
+            ) {
+                (Some(a), Some(b)) => a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok(),
+                _ => false,
+            }
     };
     let shorthand = if property == "all" {
         Some(ShorthandId::All)
@@ -352,7 +381,8 @@ fn declarations(body: &str) -> Vec<Declared> {
         };
         match name {
             "animation" => {
-                let (mut names, mut durations, mut delays, mut counts) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                let (mut names, mut durations, mut delays, mut counts) =
+                    (Vec::new(), Vec::new(), Vec::new(), Vec::new());
                 for item in split_commas(value) {
                     let item = animation_item(item);
                     names.push(item.name);
@@ -533,7 +563,10 @@ mod tests {
     #[test]
     fn shorthands_expand_to_their_longhands() {
         let item = animation_item("anim 100s -99.9s 2");
-        assert_eq!((item.name.as_str(), item.duration.as_str(), item.delay.as_str(), item.count.as_str()), ("anim", "100s", "-99.9s", "2"));
+        assert_eq!(
+            (item.name.as_str(), item.duration.as_str(), item.delay.as_str(), item.count.as_str()),
+            ("anim", "100s", "-99.9s", "2")
+        );
         let item = animation_item("1ms ease-in infinite alternate both spin");
         assert_eq!((item.name.as_str(), item.duration.as_str(), item.count.as_str()), ("spin", "1ms", "infinite"));
         // A keyword already given names the animation.

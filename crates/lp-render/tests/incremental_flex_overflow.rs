@@ -29,7 +29,10 @@ impl Page {
         let keys: Vec<_> =
             ids.iter().map(|id| render_key(d.get_element_by_id(self.doc, id).unwrap().unwrap())).collect();
         let tree = d
-            .render_tree(self.doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None })
+            .render_tree(
+                self.doc,
+                &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None },
+            )
             .unwrap();
         let tree = Tree {
             nodes: tree

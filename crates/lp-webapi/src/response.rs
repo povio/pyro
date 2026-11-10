@@ -61,7 +61,7 @@ impl JsClass for Response {
             let body = a.get(0);
             let body = if body.is_null() || body.is_undefined() { None } else { Some(body) };
             if body.is_some() && is_null_body_status(status) {
-                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body")));
+                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body").into()));
             }
             if let Some(stream) = body.filter(|b| crate::streams::is_stream(s, *b).unwrap_or(false)) {
                 let page = crate::target::page_of(s)?;
@@ -96,7 +96,7 @@ impl JsClass for Response {
             let url = resolve(s, &target)?;
             let status = if a.get(1).is_undefined() { 302 } else { crate::util::to_u32(a.get(1))? as u16 };
             if !matches!(status, 301 | 302 | 303 | 307 | 308) {
-                return Err(JsError::Range(format!("Invalid redirect status {status}")));
+                return Err(JsError::Range(format!("Invalid redirect status {status}").into()));
             }
             let headers = HeadersData::from_pairs([("location".to_owned(), url)], true);
             construct(s, None, Origin::Script, status, String::new(), headers, None)
@@ -105,7 +105,7 @@ impl JsClass for Response {
             let json = a.get(0).to_json(0)?.ok_or_else(|| JsError::Type("Value is not JSON serializable".into()))?;
             let (status, status_text, headers) = parse_init(s, a.get(1))?;
             if is_null_body_status(status) {
-                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body")));
+                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body").into()));
             }
             if !headers.contains("content-type") {
                 headers.append_raw("content-type", "application/json");
@@ -147,8 +147,8 @@ impl JsClass for Response {
                 None,
             )?;
             d.source_made.set(true);
-            let read = source.get("read")?;
-            let cancel = source.get("cancel")?;
+            let read = source.get_atom("read")?;
+            let cancel = source.get_atom("cancel")?;
             let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
             let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
             let owner = realm.scope()?;
@@ -224,7 +224,7 @@ fn parse_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<(u16, String, HeadersD
     if !(200..=599).contains(&status) {
         return Err(JsError::Range(format!(
             "Failed to construct 'Response': The status provided ({status}) is outside the range [200, 599]."
-        )));
+        ).into()));
     }
     let text = get("statusText")?;
     let status_text = if text.is_undefined() { String::new() } else { crate::headers::byte_string(text)? };
@@ -248,7 +248,7 @@ fn resolve(s: &Scope<'_>, target: &str) -> JsResult<String> {
     };
     parsed
         .map(|u| u.to_string())
-        .map_err(|_| JsError::Type(format!("Failed to execute 'redirect' on 'Response': Invalid URL '{target}'")))
+        .map_err(|_| JsError::Type(format!("Failed to execute 'redirect' on 'Response': Invalid URL '{target}'").into()))
 }
 
 fn construct<'s>(
@@ -275,6 +275,7 @@ fn construct<'s>(
         kind: ResponseKind::Basic,
         remote_addr: None,
         protocol: lp_net::http::Version::HTTP_11,
+        timing: Default::default(),
     };
     let body = crate::fetch::Body::constructed(s, bytes, mime);
     wrap_script(s, new_target, origin, head, body, headers)
@@ -313,7 +314,7 @@ fn wrap_script<'s>(
 fn opaque(kind: ResponseKind) -> bool {
     matches!(kind, ResponseKind::Opaque | ResponseKind::OpaqueRedirect)
 }
-fn hidden<'s>(s: &Scope<'s>, data: &ResponseData, key: &str) -> JsResult<Value<'s>> {
+fn hidden<'s>(s: &Scope<'s>, data: &ResponseData, key: &'static str) -> JsResult<Value<'s>> {
     // A method borrowed from another same-VM realm still addresses the original
     // wrapper's traced properties. Do not root the wrapper in its own payload.
     let realm = data.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
@@ -397,6 +398,49 @@ pub(crate) fn wrap<'s>(
         s.set_hidden(wrapper, SIGNAL, signal)?;
     }
     Ok(wrapper.value())
+}
+
+/// A response read back from a cache (`cache_storage`): its stored type
+/// ("default" for a script's, "error", or a network one's), URL, status,
+/// status text, headers (as script saw them) and body, in a new object.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stored<'s>(
+    s: &Scope<'s>,
+    kind: &str,
+    url: &str,
+    status: u16,
+    status_text: String,
+    headers: Vec<(String, String)>,
+    redirected: bool,
+    body: Option<Bytes>,
+) -> JsResult<Value<'s>> {
+    let (origin, kind) = match kind {
+        "default" => (Origin::Script, ResponseKind::Basic),
+        "error" => (Origin::Error, ResponseKind::Basic),
+        "cors" => (Origin::Network, ResponseKind::Cors),
+        "opaque" => (Origin::Network, ResponseKind::Opaque),
+        "opaqueredirect" => (Origin::Network, ResponseKind::OpaqueRedirect),
+        _ => (Origin::Network, ResponseKind::Basic),
+    };
+    let mime = headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone());
+    let head = ResponseHead {
+        url: lp_net::Url::parse(url).unwrap_or_else(|_| lp_net::Url::parse("about:blank").expect("static URL")),
+        // Opaque and error responses read 0 through their kind and origin.
+        status: lp_net::http::StatusCode::from_u16(status).unwrap_or(lp_net::http::StatusCode::OK),
+        status_text,
+        headers: Default::default(),
+        mime: mime.clone().unwrap_or_default(),
+        charset: None,
+        redirected,
+        from_cache: false,
+        kind,
+        remote_addr: None,
+        protocol: lp_net::http::Version::HTTP_11,
+        timing: Default::default(),
+    };
+    let body = crate::fetch::Body::constructed(s, body, mime.unwrap_or_default());
+    let headers = HeadersData::from_pairs(headers, origin != Origin::Script);
+    wrap_script(s, None, origin, head, body, headers)
 }
 
 pub(crate) fn filtered_headers(head: &ResponseHead, credentials: Credentials) -> HeadersData {

@@ -1,19 +1,22 @@
 use blitz_traits::node_id::NodeId;
 use selectors::context::QuirksMode;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering as Ao;
 use std::{
     io::Cursor,
     sync::{Arc, atomic::AtomicUsize, mpsc::Sender},
 };
 use style::{
-    font_face::{FontFaceSourceFormat, FontFaceSourceFormatKeyword, FontStyleRange, Source},
+    font_face::{
+        FontFaceSourceFormat, FontFaceSourceFormatKeyword, FontStyleRange, Source, SourceList,
+    },
     media_queries::MediaList,
     servo_arc::Arc as ServoArc,
     shared_lock::SharedRwLock,
     shared_lock::{Locked, SharedRwLockReadGuard},
     stylesheets::{
-        AllowImportRules, CssRule, DocumentStyleSheet, ImportRule, Origin, Stylesheet,
-        StylesheetInDocument, StylesheetLoader as ServoStylesheetLoader, UrlExtraData,
+        CssRule, DocumentStyleSheet, ImportRule, Origin, Stylesheet, StylesheetInDocument,
+        StylesheetLoader as ServoStylesheetLoader, UrlExtraData,
         import_rule::{ImportLayer, ImportSheet, ImportSupportsCondition},
     },
     values::{CssUrl, SourceLocation},
@@ -52,6 +55,15 @@ pub struct FontFaceOverrides {
     pub weight: Option<f32>,
     /// `font-style` descriptor mapped to fontique's `FontStyle`.
     pub style: Option<parley::fontique::FontStyle>,
+    /// `unicode-range` descriptor: the code points the face is used for.
+    /// `None` (no descriptor) is every code point.
+    pub unicode_range: Option<parley::fontique::UnicodeRange>,
+    /// The rule's place among the `@font-face` rules of the process, rising
+    /// in the order they are read: the face's precedence among the faces of a
+    /// family that match a style equally. CSS checks those faces (a
+    /// composite font, such as the per-subset faces of a Google Fonts family)
+    /// last rule first, whichever face finished loading first.
+    pub precedence: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -142,17 +154,19 @@ pub struct StylesheetHandler {
 }
 
 impl NetHandler for ResourceHandler<StylesheetHandler> {
-    fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-        let Ok(css) = std::str::from_utf8(&bytes) else {
-            return self.respond(resolved_url, Err(String::from("Invalid UTF8")));
-        };
+    fn error(self: Box<Self>, url: String, error: String) {
+        self.respond(url, Err(error));
+    }
 
+    fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
 
-        let sheet = Stylesheet::from_str(
-            css,
+        let sheet = Stylesheet::from_bytes(
+            &bytes,
             self.data.source_url.clone().into(),
+            None,
+            None,
             Origin::Author,
             ServoArc::new(self.data.guard.wrap(MediaList::empty())),
             self.data.guard.clone(),
@@ -166,17 +180,24 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
             }),
             None, // error_reporter
             QuirksMode::NoQuirks,
-            AllowImportRules::Yes,
         );
 
         self.respond(
             resolved_url,
             Ok(Resource::Css(
                 DocumentStyleSheet(ServoArc::new(sheet)),
-                css.contains("@page").then(|| css.to_owned()),
+                linked_page_css(&bytes),
             )),
         );
     }
+}
+
+/// lightningpanda: the text of a linked sheet with `@page` rules, kept for printing (the servo build
+/// of Stylo parses neither `size` nor `page`).
+fn linked_page_css(bytes: &[u8]) -> Option<String> {
+    let css = String::from_utf8_lossy(bytes);
+    css.contains("@page")
+        .then(|| css.trim_start_matches('\u{feff}').to_owned())
 }
 
 /// Maximum depth of nested `@import` rules. Imports nested deeper than this
@@ -263,23 +284,20 @@ struct NestedStylesheetHandler {
 
 impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-        let Ok(css) = std::str::from_utf8(&bytes) else {
-            return self.respond(resolved_url, Err(String::from("Invalid UTF8")));
-        };
-
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
 
-        let sheet = ServoArc::new(Stylesheet::from_str(
-            css,
+        let sheet = ServoArc::new(Stylesheet::from_bytes(
+            &bytes,
             UrlExtraData(self.data.url.clone()),
+            None,
+            None,
             Origin::Author,
             self.data.media.clone(),
             self.data.lock.clone(),
             Some(&self.data.loader),
             None, // error_reporter
             QuirksMode::NoQuirks,
-            AllowImportRules::Yes,
         ));
 
         // Fetch @font-face fonts
@@ -425,6 +443,8 @@ pub(crate) fn fetch_font_face_rules<'a>(
                 // Capture the @font-face descriptors so parley can register
                 // the font under the CSS-declared family name (and weight /
                 // style) rather than whatever metadata the TTF reports.
+                // Rules are read in order within a sheet; sheets in the order they load.
+                static RULE_ORDER: AtomicU64 = AtomicU64::new(1);
                 let overrides = FontFaceOverrides {
                     family_name: Some(family.name.to_string()),
                     weight: descriptor
@@ -432,81 +452,15 @@ pub(crate) fn fetch_font_face_rules<'a>(
                         .as_ref()
                         .and_then(|range| range.0.compute().map(|w| w.value())),
                     style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
+                    unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
+                    precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
                 };
                 Some((src, overrides))
             }
             _ => None,
         })
         .for_each(|(source_list, overrides)| {
-            // Find the first font source in the source list that specifies a font of a type
-            // that we support.
-            let preferred_source = source_list
-                .0
-                .iter()
-                .filter_map(|source| match source {
-                    Source::Url(url_source) => Some(url_source),
-                    // TODO: support local fonts in @font-face
-                    Source::Local(_) => None,
-                })
-                .find_map(|url_source| {
-                    let mut format = match &url_source.format_hint {
-                        Some(FontFaceSourceFormat::Keyword(fmt)) => *fmt,
-                        Some(FontFaceSourceFormat::String(str)) => match str.as_str() {
-                            "woff2" => FontFaceSourceFormatKeyword::Woff2,
-                            "ttf" => FontFaceSourceFormatKeyword::Truetype,
-                            "otf" => FontFaceSourceFormatKeyword::Opentype,
-                            _ => FontFaceSourceFormatKeyword::None,
-                        },
-                        _ => FontFaceSourceFormatKeyword::None,
-                    };
-                    // A url with no extension, such as a `data:` url, is
-                    // sniffed from its bytes once fetched.
-                    if format == FontFaceSourceFormatKeyword::None
-                        && let Some((_, end)) = url_source.url.as_str().rsplit_once('.')
-                    {
-                        format = match end {
-                            "woff2" => FontFaceSourceFormatKeyword::Woff2,
-                            "woff" => FontFaceSourceFormatKeyword::Woff,
-                            "ttf" => FontFaceSourceFormatKeyword::Truetype,
-                            "otf" => FontFaceSourceFormatKeyword::Opentype,
-                            "svg" => FontFaceSourceFormatKeyword::Svg,
-                            "eot" => FontFaceSourceFormatKeyword::EmbeddedOpentype,
-                            _ => FontFaceSourceFormatKeyword::None,
-                        }
-                    }
-
-                    if matches!(
-                        format,
-                        FontFaceSourceFormatKeyword::Svg
-                            | FontFaceSourceFormatKeyword::EmbeddedOpentype
-                    ) {
-                        #[cfg(feature = "tracing")]
-                        tracing::warn!("Skipping unsupported font of type {:?}", format);
-                        return None;
-                    }
-
-                    #[cfg(not(feature = "woff"))]
-                    if matches!(
-                        format,
-                        FontFaceSourceFormatKeyword::Woff | FontFaceSourceFormatKeyword::Woff2
-                    ) {
-                        #[cfg(feature = "tracing")]
-                        tracing::warn!("Skipping unsupported font of type {:?}", format);
-                        return None;
-                    }
-
-                    // A relative url with no base url to resolve against
-                    // yields None; skip the source instead of panicking
-                    let Some(url) = url_source.url.url() else {
-                        #[cfg(feature = "tracing")]
-                        tracing::warn!("Skipping @font-face source with unresolvable url");
-                        return None;
-                    };
-                    let url = url.as_ref().clone();
-                    Some((url, format))
-                });
-
-            if let Some((url, format)) = preferred_source {
+            if let Some((url, format)) = preferred_font_source(source_list) {
                 network_provider.fetch(
                     doc_id,
                     stamped_request(url, abort_signal),
@@ -520,6 +474,111 @@ pub(crate) fn fetch_font_face_rules<'a>(
                 );
             }
         })
+}
+
+/// The code points of an `@font-face` `unicode-range` descriptor.
+fn unicode_range(ranges: &[cssparser::UnicodeRange]) -> parley::fontique::UnicodeRange {
+    parley::fontique::UnicodeRange::new(ranges.iter().map(|range| range.start..=range.end))
+}
+
+/// The first source in an `@font-face` `src` list that is in a format we
+/// support, with its resolved url and format.
+fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
+    source_list.0.iter().find_map(|source| {
+        let url_source = match source {
+            Source::Url(url_source) => url_source,
+            // TODO: support local fonts in @font-face
+            Source::Local(_) => return None,
+        };
+
+        // A relative url with no base url to resolve against
+        // yields None; skip the source instead of panicking
+        let Some(url) = url_source.url.url() else {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("Skipping @font-face source with unresolvable url");
+            return None;
+        };
+
+        let format = match &url_source.format_hint {
+            Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
+            Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
+            None => font_format_from_extension(url),
+        };
+
+        let supported = match format {
+            FontFaceSourceFormatKeyword::None
+            | FontFaceSourceFormatKeyword::Collection
+            | FontFaceSourceFormatKeyword::Opentype
+            | FontFaceSourceFormatKeyword::Truetype => true,
+            FontFaceSourceFormatKeyword::Woff | FontFaceSourceFormatKeyword::Woff2 => {
+                cfg!(feature = "woff")
+            }
+            FontFaceSourceFormatKeyword::EmbeddedOpentype
+            | FontFaceSourceFormatKeyword::Svg
+            | FontFaceSourceFormatKeyword::Unknown => false,
+        };
+        if !supported {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("Skipping unsupported font of type {:?}", format);
+            return None;
+        }
+
+        Some((url.as_ref().clone(), format))
+    })
+}
+
+/// Map a `format("...")` string hint to a format. Besides the keywords, this
+/// accepts the legacy `-variations` strings and the `ttf`/`otf` extensions.
+fn font_format_from_string(format: &str) -> FontFaceSourceFormatKeyword {
+    const FORMATS: &[(&str, FontFaceSourceFormatKeyword)] = &[
+        ("collection", FontFaceSourceFormatKeyword::Collection),
+        (
+            "embedded-opentype",
+            FontFaceSourceFormatKeyword::EmbeddedOpentype,
+        ),
+        ("opentype", FontFaceSourceFormatKeyword::Opentype),
+        ("opentype-variations", FontFaceSourceFormatKeyword::Opentype),
+        ("otf", FontFaceSourceFormatKeyword::Opentype),
+        ("svg", FontFaceSourceFormatKeyword::Svg),
+        ("truetype", FontFaceSourceFormatKeyword::Truetype),
+        ("truetype-variations", FontFaceSourceFormatKeyword::Truetype),
+        ("ttf", FontFaceSourceFormatKeyword::Truetype),
+        ("woff", FontFaceSourceFormatKeyword::Woff),
+        ("woff-variations", FontFaceSourceFormatKeyword::Woff),
+        ("woff2", FontFaceSourceFormatKeyword::Woff2),
+        ("woff2-variations", FontFaceSourceFormatKeyword::Woff2),
+    ];
+    FORMATS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(format))
+        .map_or(FontFaceSourceFormatKeyword::Unknown, |(_, format)| *format)
+}
+
+/// Guess a font's format from the file extension of its url's path. Urls
+/// with no known extension, such as `data:` urls, get
+/// `FontFaceSourceFormatKeyword::None` and are sniffed from their bytes once
+/// fetched.
+fn font_format_from_extension(url: &Url) -> FontFaceSourceFormatKeyword {
+    const EXTENSIONS: &[(&str, FontFaceSourceFormatKeyword)] = &[
+        ("eot", FontFaceSourceFormatKeyword::EmbeddedOpentype),
+        ("otf", FontFaceSourceFormatKeyword::Opentype),
+        ("svg", FontFaceSourceFormatKeyword::Svg),
+        ("ttc", FontFaceSourceFormatKeyword::Collection),
+        ("ttf", FontFaceSourceFormatKeyword::Truetype),
+        ("woff", FontFaceSourceFormatKeyword::Woff),
+        ("woff2", FontFaceSourceFormatKeyword::Woff2),
+    ];
+    if url.cannot_be_a_base() {
+        return FontFaceSourceFormatKeyword::None;
+    }
+    let file_name = url.path().rsplit('/').next().unwrap_or_default();
+    let Some((_, extension)) = file_name.rsplit_once('.') else {
+        return FontFaceSourceFormatKeyword::None;
+    };
+    EXTENSIONS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(extension))
+        .map_or(FontFaceSourceFormatKeyword::None, |(_, format)| *format)
 }
 
 /// Translate stylo's `@font-face` `font-style` descriptor into the fontique
@@ -653,10 +712,187 @@ impl ImageHandler {
 mod tests {
     use super::*;
     use parley::fontique::FontStyle as Fq;
+    use style::stylesheets::AllowImportRules;
     use style::values::specified::Angle;
 
     fn oblique(min_deg: f32, max_deg: f32) -> FontStyleRange {
         FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
+    }
+
+    /// The `unicode-range` of each `@font-face` rule in `css`
+    fn unicode_ranges(css: &str) -> Vec<Option<parley::fontique::UnicodeRange>> {
+        let lock = SharedRwLock::new();
+        let base_url = Url::parse("https://example.com/css/style.css").unwrap();
+        let sheet = Stylesheet::from_str(
+            css,
+            UrlExtraData(ServoArc::new(base_url)),
+            Origin::Author,
+            ServoArc::new(lock.wrap(MediaList::empty())),
+            lock.clone(),
+            None,
+            None,
+            QuirksMode::NoQuirks,
+            AllowImportRules::No,
+        );
+        let guard = lock.read();
+        sheet
+            .contents(&guard)
+            .rules(&guard)
+            .iter()
+            .filter_map(|rule| match rule {
+                CssRule::FontFace(font_face) => Some(
+                    font_face
+                        .read_with(&guard)
+                        .descriptors
+                        .unicode_range
+                        .as_deref()
+                        .map(unicode_range),
+                ),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unicode_ranges_keep_their_code_points() {
+        let ranges = unicode_ranges(
+            "@font-face { font-family: a; src: url(a.woff2); unicode-range: U+0400-045F, U+25-FF, u+4??, U+20AC }
+            @font-face { font-family: a; src: url(b.woff2) }",
+        );
+        let [Some(range), None] = ranges.as_slice() else {
+            panic!("{ranges:?}");
+        };
+        // Wildcards expand; overlapping intervals merge.
+        assert_eq!(
+            range.ranges().unwrap(),
+            [0x25..=0xFF, 0x400..=0x4FF, 0x20AC..=0x20AC]
+        );
+        for code_point in [0x25, 0x41, 0xFF, 0x400, 0x4FF, 0x20AC] {
+            assert!(range.contains(code_point), "{code_point:#x}");
+        }
+        for code_point in [0x20, 0x24, 0x100, 0x3FF, 0x500, 0x20AB, 0x20AD] {
+            assert!(!range.contains(code_point), "{code_point:#x}");
+        }
+    }
+
+    /// The source picked from the `src` list of each `@font-face` rule in `css`
+    fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
+        let lock = SharedRwLock::new();
+        let base_url = Url::parse("https://example.com/css/style.css").unwrap();
+        let sheet = Stylesheet::from_str(
+            css,
+            UrlExtraData(ServoArc::new(base_url)),
+            Origin::Author,
+            ServoArc::new(lock.wrap(MediaList::empty())),
+            lock.clone(),
+            None,
+            None,
+            QuirksMode::NoQuirks,
+            AllowImportRules::No,
+        );
+        let guard = lock.read();
+        sheet
+            .contents(&guard)
+            .rules(&guard)
+            .iter()
+            .filter_map(|rule| match rule {
+                CssRule::FontFace(font_face) => font_face.read_with(&guard).descriptors.src.clone(),
+                _ => None,
+            })
+            .map(|src| preferred_font_source(&src).map(|(url, format)| (url.to_string(), format)))
+            .collect()
+    }
+
+    #[test]
+    fn bootstrap_glyphicons_skip_eot_source() {
+        let sources = preferred_sources(
+            "@font-face {
+                font-family: 'Glyphicons Halflings';
+                src: url('../fonts/glyphicons-halflings-regular.eot');
+                src: url('../fonts/glyphicons-halflings-regular.eot?#iefix') format('embedded-opentype'),
+                    url('../fonts/glyphicons-halflings-regular.woff2') format('woff2'),
+                    url('../fonts/glyphicons-halflings-regular.woff') format('woff'),
+                    url('../fonts/glyphicons-halflings-regular.ttf') format('truetype'),
+                    url('../fonts/glyphicons-halflings-regular.svg#glyphicons_halflingsregular') format('svg');
+            }",
+        );
+        let expected = if cfg!(feature = "woff") {
+            (
+                "https://example.com/fonts/glyphicons-halflings-regular.woff2",
+                FontFaceSourceFormatKeyword::Woff2,
+            )
+        } else {
+            (
+                "https://example.com/fonts/glyphicons-halflings-regular.ttf",
+                FontFaceSourceFormatKeyword::Truetype,
+            )
+        };
+        assert_eq!(sources, [Some((expected.0.to_string(), expected.1))]);
+    }
+
+    #[test]
+    fn format_strings_map_to_formats() {
+        use FontFaceSourceFormatKeyword as Kw;
+        for (string, format) in [
+            ("collection", Kw::Collection),
+            ("embedded-opentype", Kw::EmbeddedOpentype),
+            ("opentype", Kw::Opentype),
+            ("OpenType", Kw::Opentype),
+            ("opentype-variations", Kw::Opentype),
+            ("otf", Kw::Opentype),
+            ("svg", Kw::Svg),
+            ("truetype", Kw::Truetype),
+            ("truetype-variations", Kw::Truetype),
+            ("ttf", Kw::Truetype),
+            ("woff", Kw::Woff),
+            ("woff-variations", Kw::Woff),
+            ("woff2", Kw::Woff2),
+            ("woff2-variations", Kw::Woff2),
+            ("x-unknown", Kw::Unknown),
+        ] {
+            assert_eq!(font_format_from_string(string), format, "{string}");
+        }
+    }
+
+    #[test]
+    fn extension_ignores_query_and_fragment() {
+        use FontFaceSourceFormatKeyword as Kw;
+        for (url, format) in [
+            ("https://example.com/a.eot?#iefix", Kw::EmbeddedOpentype),
+            ("https://example.com/a.svg#font", Kw::Svg),
+            ("https://example.com/a.TTF?v=4.7.0", Kw::Truetype),
+            ("https://example.com/a.otf", Kw::Opentype),
+            ("https://example.com/a.woff2?v=1#x", Kw::Woff2),
+            ("https://example.com/fonts.v2/font", Kw::None),
+            ("https://example.com/font?name=a.ttf", Kw::None),
+            ("data:font/ttf;base64,AAEAAA.ttf", Kw::None),
+        ] {
+            let url = Url::parse(url).unwrap();
+            assert_eq!(font_format_from_extension(&url), format, "{url}");
+        }
+    }
+
+    #[test]
+    fn unsupported_sources_are_skipped() {
+        use FontFaceSourceFormatKeyword as Kw;
+        let sources = preferred_sources(
+            "@font-face { font-family: a; src: url(a.ttf) format('x-unknown'), url(a.otf); }
+            @font-face { font-family: b; src: url(b.svg#b), url(b.eot), url(b.ttf?v=1#x); }
+            @font-face { font-family: c; src: url(c.eot) format(embedded-opentype); }
+            @font-face { font-family: d; src: url(d.eot) format(truetype); }",
+        );
+        assert_eq!(
+            sources,
+            [
+                Some(("https://example.com/css/a.otf".to_string(), Kw::Opentype)),
+                Some((
+                    "https://example.com/css/b.ttf?v=1#x".to_string(),
+                    Kw::Truetype
+                )),
+                None,
+                Some(("https://example.com/css/d.eot".to_string(), Kw::Truetype)),
+            ]
+        );
     }
 
     #[test]

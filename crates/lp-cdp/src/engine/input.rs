@@ -30,7 +30,10 @@ struct KeyParams {
     windows_virtual_key_code: u32,
     #[serde(default)]
     auto_repeat: bool,
-    // `commands` (macOS editing commands) is advisory and not read.
+    /// macOS editing commands (Playwright sends them on macOS), run in
+    /// place of the key's default action when handled.
+    #[serde(default)]
+    commands: Vec<String>,
     timestamp: Option<f64>,
     #[serde(default)]
     is_system_key: bool,
@@ -204,11 +207,12 @@ impl EngineHost {
                     p.location = 3;
                 }
                 // Playwright on macOS attaches the editing commands its table
-                // derives from the key (e.g. ArrowRight -> ["moveRight"]).
-                // They are advisory: the key's own default action runs, as for
-                // the same key on Linux, where Playwright sends none (Home/End,
-                // arrows, Backspace/Delete, Meta+A act; clipboard, undo, word
-                // movement and Emacs-style aliases do nothing).
+                // derives from the key (e.g. ArrowRight -> ["moveRight"],
+                // Meta+KeyC -> ["copy"], Alt+Backspace ->
+                // ["deleteWordBackward"]). The handled ones run in place of
+                // the key's default action, as in Chromium; for the others
+                // (scrolling, cancelOperation, ...) the key's own default
+                // action runs.
                 if p.timestamp.is_some()
                     || p.is_system_key
                     || p.native_virtual_key_code != 0
@@ -225,6 +229,7 @@ impl EngineHost {
                     location: p.location,
                     auto_repeat: p.auto_repeat,
                     key_code: p.windows_virtual_key_code,
+                    commands: p.commands,
                 };
                 // Chrome consumes a pending suppression only for char. A new
                 // keydown or keyup clears it; insertText is independent. Do not
@@ -476,7 +481,10 @@ impl EngineHost {
         for _ in 0..32 {
             let Some(node) = lp_webapi::layout_api::hit_test(&page, x, y) else { break };
             let Some(frame_id) = self.thread.browser.frame_of_owner(page_id, node) else { break };
-            let Some(child) = self.thread.browser.frame(page_id, &frame_id).and_then(|f| f.page_dom) else { break };
+            let Some(child) = self.thread.browser.with_frame(page_id, &frame_id, |f| f.page_dom.clone()).flatten()
+            else {
+                break;
+            };
             // The child viewport starts at the iframe's content box.
             let (r, inset) = {
                 let layout = page.layout();

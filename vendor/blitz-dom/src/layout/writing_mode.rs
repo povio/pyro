@@ -20,15 +20,15 @@
 //! [`compute_child_layout_in_own_wm`]: LayoutPassState::compute_child_layout_in_own_wm
 //! [`physicalise_and_round_layout`]: LayoutPassState::physicalise_and_round_layout
 
-use super::{BlockContext, LayoutPassState};
+use super::{BlockContext, LayoutPassState, resolve_calc_value};
 use crate::document::BaseDocument;
 use crate::dom_node_id;
 use crate::node::Node;
 use stylo_taffy::WritingMode;
 use stylo_taffy::WritingModeExt;
 use taffy::{
-    AvailableSpace, AxisStaticEdge, AxisStaticPosition, Layout, LayoutInput, LayoutOutput, NodeId,
-    Point, RoundTree, RunMode, Size, TraversePartialTree,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, CoreStyle, Layout, LayoutInput,
+    LayoutOutput, NodeId, Point, ResolveOrZero, RoundTree, RunMode, Size, TraversePartialTree,
 };
 
 impl BaseDocument {
@@ -81,7 +81,7 @@ impl LayoutPassState<'_> {
         let parent_align_axis_is_inline =
             core::mem::replace(&mut self.current_align_axis_is_inline, false);
 
-        let output = if node_wm.is_vertical() == parent_wm.is_vertical() {
+        let mut output = if node_wm.is_vertical() == parent_wm.is_vertical() {
             let mut output = self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx);
             if node_wm.is_vertical() && node_wm.is_vertical_lr() != parent_wm.is_vertical_lr() {
                 // Parallel writing modes with opposite block directions (`vertical-lr` in `vertical-rl`
@@ -97,11 +97,51 @@ impl LayoutPassState<'_> {
             self.compute_orthogonal_child_layout(node_id, inputs, parent_wm)
         };
 
+        let node_block_reversed = node_wm.block_left_is_end();
+        let parent_block_reversed = parent_wm.block_left_is_end();
+        let mirror_x = node_block_reversed && !parent_wm.is_vertical();
+        let mirror_y = (node_block_reversed && parent_wm.is_vertical()) ^ parent_block_reversed;
+        if mirror_x || mirror_y {
+            self.mirror_child_overflow(node_id, inputs, parent_wm, &mut output, mirror_x, mirror_y);
+        }
+
         self.layout_wm = parent_wm;
         self.current_align_axis_is_inline = parent_align_axis_is_inline;
         output
     }
 
+    /// lightningpanda: kept out of the frame of `compute_child_layout_in_own_wm`, which is on the
+    /// stack once per tree level of a recursive layout.
+    #[inline(never)]
+    fn mirror_child_overflow(
+        &self,
+        node_id: NodeId,
+        inputs: LayoutInput,
+        parent_wm: WritingMode,
+        output: &mut LayoutOutput,
+        mirror_x: bool,
+        mirror_y: bool,
+    ) {
+        let style = self.nodes[dom_node_id(node_id)].layout_style_in(parent_wm);
+        let border = style
+            .border()
+            .resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
+        let client_size = output.size - border.sum_axes();
+        let overflow = style.overflow();
+        let is_scroll_container =
+            overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
+        output.scrollable_overflow_rect = mirror_overflow(
+            output.scrollable_overflow_rect,
+            client_size,
+            Point {
+                x: mirror_x,
+                y: mirror_y,
+            },
+            is_scroll_container,
+        );
+    }
+
+    #[inline(never)]
     fn compute_orthogonal_child_layout(
         &mut self,
         node_id: NodeId,
@@ -207,33 +247,45 @@ impl LayoutPassState<'_> {
         };
         let root_wm = self.layout_wm_of(dom_node_id(root));
         self.round_counts = (0, 0);
-        self.physicalise_and_round_inner(root, root_wm, viewport, Point::ZERO, Point::ZERO);
+        self.physicalise_and_round_inner(root, root_wm, viewport, Point::ZERO);
         crate::resolve::phase_profile::rounded(self.round_counts);
         #[cfg(debug_assertions)]
-        self.assert_rounding_is_current(root, root_wm, viewport, Point::ZERO, Point::ZERO);
+        self.assert_rounding_is_current(root, root_wm, viewport, Point::ZERO);
     }
 
+    /// `parent_frac` is the fractional part (in `[0, 1)`) of the parent's unrounded absolute
+    /// position: all the rounding of a box and its subtree depends on besides their own layouts
+    /// (see [`rounded_layout`]).
     fn physicalise_and_round_inner(
         &mut self,
         node_id: NodeId,
         placer_wm: WritingMode,
         placer_size: Size<f32>,
-        parent_pos: Point<f32>,
-        rounded_parent_pos: Point<f32>,
+        parent_frac: Point<f32>,
     ) {
-        let unrounded = physical_layout(self.get_unrounded_layout(node_id), placer_wm, placer_size);
+        // lightningpanda: only a vertical placer reads it (`physical_layout`).
+        let is_scroll_container = placer_wm.is_vertical() && {
+            let overflow = self.doc.nodes[dom_node_id(node_id)].layout_style().overflow();
+            overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
+        };
+        let unrounded = physical_layout(
+            self.get_unrounded_layout(node_id),
+            placer_wm,
+            placer_size,
+            is_scroll_container,
+        );
         self.round_counts.0 += 1;
 
-        // Keyed on the physical layout: a `*-rl` box's x depends on its placer's size. That, the offset
-        // (`rounded_parent_pos` is `parent_pos` rounded) and the subtree's unrounded layouts, whose
-        // changes are damage, are all the rounding below reads.
-        if self.rounded_unchanged(node_id, &unrounded, parent_pos.x, parent_pos.y) {
+        // Keyed on the physical layout: a `*-rl` box's x depends on its placer's size. That, the
+        // parent's fractional offset and the subtree's unrounded layouts, whose changes are damage,
+        // are all the rounding below reads: a subtree moved by whole pixels rounds as it did.
+        if self.rounded_unchanged(node_id, &unrounded, parent_frac.x, parent_frac.y) {
             self.round_counts.1 += 1;
             return;
         }
-        self.record_rounded(node_id, &unrounded, parent_pos.x, parent_pos.y);
+        self.record_rounded(node_id, &unrounded, parent_frac.x, parent_frac.y);
 
-        let (layout, pos, rounded_pos) = rounded_layout(unrounded, parent_pos, rounded_parent_pos);
+        let (layout, frac) = rounded_layout(unrounded, parent_frac);
         let size = unrounded.size;
 
         // `unrounded_layout` is left in the placer's writing mode: Taffy's cache may skip re-placing
@@ -241,18 +293,39 @@ impl LayoutPassState<'_> {
         self.set_final_layout(node_id, &layout);
 
         let wm = self.layout_wm_of(dom_node_id(node_id));
-        self.node_from_id_mut(node_id)
-            .layout_data_mut()
-            .writing_mode = wm;
+        // lightningpanda: `content_box_subpixel_offset` (upstream #1382) stays zero: screenshots keep
+        // text at the whole-pixel content box, and print moves text to its layout-unit x itself
+        // (`fractional_text_x` in blitz-paint).
+        self.node_from_id_mut(node_id).layout_data_mut().writing_mode = wm;
+        // lightningpanda: a table where it was rounds again only the cells its grid placed since:
+        // the others' layouts and offsets, all their rounding reads, are the same.
+        let table_cells = (self.nodes[dom_node_id(node_id)].flags.is_table_root() && !wm.is_vertical())
+            .then(|| crate::layout::table::table_cells_to_round(self, dom_node_id(node_id), frac))
+            .flatten();
+        if let Some(cells) = table_cells {
+            let node = &self.nodes[dom_node_id(node_id)];
+            let pseudos = [node.before(), node.after()];
+            for child in cells.into_iter().chain(pseudos.into_iter().flatten()) {
+                let child = crate::taffy_node_id(child);
+                if !self.is_out_of_flow(child) {
+                    crate::util::ensure_stack(|| self.physicalise_and_round_inner(child, wm, size, frac));
+                }
+            }
+            for index in 0..self.hoisted_child_count(node_id) {
+                let child = self.get_hoisted_child_id(node_id, index);
+                crate::util::ensure_stack(|| self.physicalise_and_round_inner(child, wm, size, frac));
+            }
+            return;
+        }
         for index in 0..self.child_count(node_id) {
             let child = self.get_child_id(node_id, index);
             if !self.is_out_of_flow(child) {
-                self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
+                crate::util::ensure_stack(|| self.physicalise_and_round_inner(child, wm, size, frac));
             }
         }
         for index in 0..self.hoisted_child_count(node_id) {
             let child = self.get_hoisted_child_id(node_id, index);
-            self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
+            crate::util::ensure_stack(|| self.physicalise_and_round_inner(child, wm, size, frac));
         }
     }
 
@@ -264,11 +337,14 @@ impl LayoutPassState<'_> {
         node_id: NodeId,
         placer_wm: WritingMode,
         placer_size: Size<f32>,
-        parent_pos: Point<f32>,
-        rounded_parent_pos: Point<f32>,
+        parent_frac: Point<f32>,
     ) {
-        let unrounded = physical_layout(self.get_unrounded_layout(node_id), placer_wm, placer_size);
-        let (layout, pos, rounded_pos) = rounded_layout(unrounded, parent_pos, rounded_parent_pos);
+        let is_scroll_container = placer_wm.is_vertical() && {
+            let overflow = self.doc.nodes[dom_node_id(node_id)].layout_style().overflow();
+            overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
+        };
+        let unrounded = physical_layout(self.get_unrounded_layout(node_id), placer_wm, placer_size, is_scroll_container);
+        let (layout, frac) = rounded_layout(unrounded, parent_frac);
         let node = self.node_from_id(node_id);
         // Formatted, as NaNs (never equal) must not fail this.
         let current = node.final_layout();
@@ -283,46 +359,59 @@ impl LayoutPassState<'_> {
         for index in 0..self.child_count(node_id) {
             let child = self.get_child_id(node_id, index);
             if !self.is_out_of_flow(child) {
-                self.assert_rounding_is_current(child, wm, unrounded.size, pos, rounded_pos);
+                crate::util::ensure_stack(|| self.assert_rounding_is_current(child, wm, unrounded.size, frac));
             }
         }
         for index in 0..self.hoisted_child_count(node_id) {
             let child = self.get_hoisted_child_id(node_id, index);
-            self.assert_rounding_is_current(child, wm, unrounded.size, pos, rounded_pos);
+            crate::util::ensure_stack(|| self.assert_rounding_is_current(child, wm, unrounded.size, frac));
         }
     }
 }
 
+/// Rounds half up (`-2.5` to `-2`, as Blink's `LayoutUnit::Round`): the only rounding that moves
+/// with the pixel grid, `round(k + v) == k + round(v)` for every integer `k`, which `f32::round`
+/// (half away from zero) is not across zero. Exact for `f32` values.
+#[inline]
+fn round_half_up(v: f32) -> f32 {
+    let rounded = v.round();
+    if v - rounded == 0.5 { rounded + 1.0 } else { rounded }
+}
+
 /// `unrounded` (physical) rounded, as in `taffy::round_layout`: the box's outer edges are rounded in
 /// absolute coordinates and every inner edge is rounded relative to them, so adjacent boxes never
-/// overlap or gap. Also returns its absolute position, unrounded and rounded.
-fn rounded_layout(
-    unrounded: Layout,
-    parent_pos: Point<f32>,
-    rounded_parent_pos: Point<f32>,
-) -> (Layout, Point<f32>, Point<f32>) {
+/// overlap or gap.
+///
+/// lightningpanda: the absolute coordinates are kept modulo whole pixels. `parent_frac` is the
+/// fractional part of the parent's absolute position; the box's position in the pixel grid is
+/// `parent_frac + location`, rounded half up, and the parent's is `parent_frac` rounded. Moving the
+/// parent by whole pixels changes nothing here (the arithmetic never sees the whole pixels), so
+/// a subtree moved that way needs no rounding again (`RoundTree::rounded_unchanged`), and the
+/// sums are taken near zero, where `f32` is finest. Also returns the box's fractional offset, for
+/// its children.
+fn rounded_layout(unrounded: Layout, parent_frac: Point<f32>) -> (Layout, Point<f32>) {
     let pos = Point {
-        x: parent_pos.x + unrounded.location.x,
-        y: parent_pos.y + unrounded.location.y,
+        x: parent_frac.x + unrounded.location.x,
+        y: parent_frac.y + unrounded.location.y,
     };
     let size = unrounded.size;
     let rounded_pos = Point {
-        x: pos.x.round(),
-        y: pos.y.round(),
+        x: round_half_up(pos.x),
+        y: round_half_up(pos.y),
     };
     let rounded_end = Point {
-        x: (pos.x + size.width).round(),
-        y: (pos.y + size.height).round(),
+        x: round_half_up(pos.x + size.width),
+        y: round_half_up(pos.y + size.height),
     };
-    let from_left = |v: f32| (pos.x + v).round() - rounded_pos.x;
-    let from_top = |v: f32| (pos.y + v).round() - rounded_pos.y;
-    let from_right = |v: f32| rounded_end.x - (pos.x + size.width - v).round();
-    let from_bottom = |v: f32| rounded_end.y - (pos.y + size.height - v).round();
+    let from_left = |v: f32| round_half_up(pos.x + v) - rounded_pos.x;
+    let from_top = |v: f32| round_half_up(pos.y + v) - rounded_pos.y;
+    let from_right = |v: f32| rounded_end.x - round_half_up(pos.x + size.width - v);
+    let from_bottom = |v: f32| rounded_end.y - round_half_up(pos.y + size.height - v);
 
     let mut layout = unrounded;
     layout.location = Point {
-        x: rounded_pos.x - rounded_parent_pos.x,
-        y: rounded_pos.y - rounded_parent_pos.y,
+        x: rounded_pos.x - round_half_up(parent_frac.x),
+        y: rounded_pos.y - round_half_up(parent_frac.y),
     };
     layout.size = Size {
         width: rounded_end.x - rounded_pos.x,
@@ -341,14 +430,22 @@ fn rounded_layout(
         top: from_top(unrounded.padding.top),
         bottom: from_bottom(unrounded.padding.bottom),
     };
-    let overflow = unrounded.scrollable_overflow_rect;
-    layout.scrollable_overflow_rect = taffy::Rect {
-        left: from_left(overflow.left),
-        right: from_left(overflow.right),
-        top: from_top(overflow.top),
-        bottom: from_top(overflow.bottom),
+    let overflow = unrounded.scrollable_overflow_rect.rect();
+    layout.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
+        taffy::Rect {
+            left: from_left(overflow.left),
+            right: from_left(overflow.right),
+            top: from_top(overflow.top),
+            bottom: from_top(overflow.bottom),
+        },
+        unrounded.scrollable_overflow_rect.is_reversed(),
+    );
+    // The box's fractional offset: `pos` less its whole pixels (exact in `f32`).
+    let frac = Point {
+        x: pos.x - pos.x.floor(),
+        y: pos.y - pos.y.floor(),
     };
-    (layout, pos, rounded_pos)
+    (layout, frac)
 }
 
 /// Map the static positions of `output`'s out-of-flow candidates (relative to the border box of a
@@ -402,11 +499,131 @@ fn mirror_static_position(position: AxisStaticPosition, extent: f32) -> AxisStat
     }
 }
 
+fn mirror_overflow(
+    overflow: taffy::ScrollableOverflow,
+    client_size: Size<f32>,
+    axes: Point<bool>,
+    is_scroll_container: bool,
+) -> taffy::ScrollableOverflow {
+    let mut rect = overflow.rect();
+    let mut reversed = overflow.is_reversed();
+    if axes.x {
+        let left = client_size.width - rect.right;
+        rect.right = (client_size.width - rect.left).max(0.0);
+        rect.left = left.min(0.0);
+        reversed.x = is_scroll_container && !reversed.x;
+    }
+    if axes.y {
+        let top = client_size.height - rect.bottom;
+        rect.bottom = (client_size.height - rect.top).max(0.0);
+        rect.top = top.min(0.0);
+        reversed.y = is_scroll_container && !reversed.y;
+    }
+    taffy::ScrollableOverflow::new(rect, reversed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mirrored_overflow_preserves_both_sides_and_scroll_container_flags() {
+        for is_scroll_container in [false, true] {
+            let original = taffy::ScrollableOverflow::new(
+                taffy::Rect {
+                    left: -96.0,
+                    right: 204.0,
+                    top: -20.0,
+                    bottom: 150.0,
+                },
+                Point { x: false, y: false },
+            );
+            let size = Size {
+                width: 100.0,
+                height: 80.0,
+            };
+            let axes = Point { x: true, y: true };
+            let mirrored = mirror_overflow(original, size, axes, is_scroll_container);
+            assert_eq!(
+                mirrored.rect(),
+                taffy::Rect {
+                    left: -104.0,
+                    right: 196.0,
+                    top: -70.0,
+                    bottom: 100.0
+                }
+            );
+            assert_eq!(
+                mirrored.is_reversed(),
+                Point {
+                    x: is_scroll_container,
+                    y: is_scroll_container
+                }
+            );
+            assert_eq!(
+                mirror_overflow(mirrored, size, axes, is_scroll_container),
+                original
+            );
+        }
+    }
+
+    #[test]
+    fn empty_overflow_remains_without_scrollable_extent_when_mirrored() {
+        let size = Size {
+            width: 100.0,
+            height: 80.0,
+        };
+        let overflow = mirror_overflow(
+            taffy::ScrollableOverflow::ZERO,
+            size,
+            Point { x: true, y: true },
+            true,
+        );
+        let layout = Layout {
+            size,
+            scrollable_overflow_rect: overflow,
+            ..Layout::new()
+        };
+        assert_eq!((layout.scroll_width(), layout.scroll_height()), (0.0, 0.0));
+    }
+}
+
 /// `logical`, written by a placing algorithm running in `placer_wm` within a box of physical size
 /// `placer_size`, in physical coordinates.
-fn physical_layout(logical: Layout, placer_wm: WritingMode, placer_size: Size<f32>) -> Layout {
+/// lightningpanda: whether `node` is a scroll container, for CSSOM geometry queries. These reach
+/// boxes outside the layout tree too (below a `display: none` element, which have no styles), and
+/// an unstyled box is not one.
+fn is_styled_scroll_container(node: &Node) -> bool {
+    node.primary_styles().is_some_and(|style| {
+        let b = style.get_box();
+        b.overflow_x.is_scrollable() || b.overflow_y.is_scrollable()
+    })
+}
+
+fn physical_layout(
+    logical: Layout,
+    placer_wm: WritingMode,
+    placer_size: Size<f32>,
+    is_scroll_container: bool,
+) -> Layout {
     if !placer_wm.is_vertical() {
         return logical;
+    }
+    let mut overflow = logical.scrollable_overflow_rect.transpose();
+    if !placer_wm.is_vertical_lr() {
+        let client_width = logical.size.height
+            - logical.border.top
+            - logical.border.bottom
+            - logical.scrollbar_size.height;
+        overflow = mirror_overflow(
+            overflow,
+            Size {
+                width: client_width,
+                height: 0.0,
+            },
+            Point { x: true, y: false },
+            is_scroll_container,
+        );
     }
     Layout {
         location: Point {
@@ -419,7 +636,7 @@ fn physical_layout(logical: Layout, placer_wm: WritingMode, placer_size: Size<f3
         },
         size: logical.size.transpose(),
         scrollbar_size: logical.scrollbar_size.transpose(),
-        scrollable_overflow_rect: logical.scrollable_overflow_rect.transpose(),
+        scrollable_overflow_rect: overflow,
         border: placer_wm.physical_rect(logical.border),
         padding: placer_wm.physical_rect(logical.padding),
         margin: placer_wm.physical_rect(logical.margin),
@@ -466,42 +683,58 @@ impl BaseDocument {
         let root_id = self.try_root_element().map(|root| root.id);
         let node = &self.nodes[node_id];
         let (mut pos, placer_wm, placer_size) = self.placer_geometry(node, node_id, root_id);
-        let layout = physical_layout(*node.unrounded_layout(), placer_wm, placer_size);
+        let layout = physical_layout(
+            *node.unrounded_layout(),
+            placer_wm,
+            placer_size,
+            is_styled_scroll_container(node),
+        );
         pos.x += layout.location.x - node.scroll_offset().x as f32;
         pos.y += layout.location.y - node.scroll_offset().y as f32;
         (pos, layout)
     }
 
     /// Document-relative position, writing mode and physical size of the box that places `node`.
+    ///
+    /// lightningpanda: a loop over the containing-block chain, outermost first, instead of a
+    /// recursion per level (which overflowed the stack on deep vertical trees).
     fn placer_geometry(
         &self,
         node: &Node,
         node_id: crate::NodeId,
         root_id: Option<crate::NodeId>,
     ) -> (crate::util::Point<f32>, WritingMode, Size<f32>) {
-        let Some(placer_id) = node.containing_block().filter(|_| Some(node_id) != root_id) else {
-            let viewport = self.stylist.device().au_viewport_size();
-            let viewport = Size {
-                width: viewport.width.to_f32_px(),
-                height: viewport.height.to_f32_px(),
-            };
-            let wm = root_id.map_or(WritingMode::empty(), |root| {
-                self.nodes[root].layout_data().writing_mode
-            });
-            return (crate::util::Point { x: 0.0, y: 0.0 }, wm, viewport);
-        };
+        // `node`'s placers, innermost first.
+        let mut placers = Vec::new();
+        let (mut current, mut current_id) = (node, node_id);
+        while let Some(placer_id) = current.containing_block().filter(|_| Some(current_id) != root_id) {
+            placers.push(placer_id);
+            (current, current_id) = (&self.nodes[placer_id], placer_id);
+        }
 
-        let placer = &self.nodes[placer_id];
-        let (mut pos, grand_wm, grand_size) = self.placer_geometry(placer, placer_id, root_id);
-        let logical = placer.unrounded_layout();
-        let (location, size) = if grand_wm.is_vertical() {
-            let physical = physical_layout(*logical, grand_wm, grand_size);
-            (physical.location, physical.size)
-        } else {
-            (logical.location, logical.size)
+        let viewport = self.stylist.device().au_viewport_size();
+        let mut size = Size {
+            width: viewport.width.to_f32_px(),
+            height: viewport.height.to_f32_px(),
         };
-        pos.x += location.x - placer.scroll_offset().x as f32;
-        pos.y += location.y - placer.scroll_offset().y as f32;
-        (pos, placer.layout_data().writing_mode, size)
+        let mut wm = root_id.map_or(WritingMode::empty(), |root| {
+            self.nodes[root].layout_data().writing_mode
+        });
+        let mut pos = crate::util::Point { x: 0.0, y: 0.0 };
+        for &placer_id in placers.iter().rev() {
+            let placer = &self.nodes[placer_id];
+            let logical = placer.unrounded_layout();
+            let (location, placer_size) = if wm.is_vertical() {
+                let physical = physical_layout(*logical, wm, size, is_styled_scroll_container(placer));
+                (physical.location, physical.size)
+            } else {
+                (logical.location, logical.size)
+            };
+            pos.x += location.x - placer.scroll_offset().x as f32;
+            pos.y += location.y - placer.scroll_offset().y as f32;
+            wm = placer.layout_data().writing_mode;
+            size = placer_size;
+        }
+        (pos, wm, size)
     }
 }

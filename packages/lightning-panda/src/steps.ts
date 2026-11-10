@@ -23,6 +23,8 @@ export type LocatorSpec = {
   name?: Pattern;
   label?: Pattern;
   placeholder?: Pattern;
+  /** Playwright's `aria-ref=e5`: the element an AI-mode `ariaSnapshot()` gave this ref. */
+  ariaRef?: string;
   exact?: boolean;
   within?: LocatorSpec;
   filter?: {
@@ -35,6 +37,22 @@ export type LocatorSpec = {
   nth?: number;
   /** Search inside the document of the `<iframe>` this locator matches (in the parent document). */
   frame?: LocatorSpec;
+  /** An XPath expression (relative to `within`, else the document). */
+  xpath?: string;
+  /** Another locator's matches as the base set (a filter or `nth` after an `nth`). */
+  of?: LocatorSpec;
+  /** Joined with these locators' matches, in document order (Playwright's `or`). */
+  or?: LocatorSpec[];
+  /** Kept only where each of these matches too (Playwright's `and`). */
+  and?: LocatorSpec[];
+  /** `role` states (Playwright's `getByRole` options). */
+  checked?: boolean | 'mixed';
+  pressed?: boolean | 'mixed';
+  disabled?: boolean;
+  expanded?: boolean;
+  selected?: boolean;
+  level?: number;
+  includeHidden?: boolean;
 };
 
 export type Step = Record<string, unknown>;
@@ -577,8 +595,12 @@ export class ScreenshotStep implements StepLike {
     readonly opts: ScreenshotOptions & { locator?: LocatorSpec },
     /** Directory of the test file that built the step. */
     readonly testDir: string,
+    /** Off for Playwright's snapshot paths, already resolved to `opts.dir` + `name`. */
+    checkName = true,
+    /** Path stem a mismatch writes `-actual.png`, `-expected.png` and `-diff.png` to (Playwright's test output dir); beside the baseline when unset. */
+    readonly outputStem?: string,
   ) {
-    if (!/^[\w.@-][\w.@/-]*$/.test(name) || name.includes('..')) {
+    if (checkName && (!/^[\w.@-][\w.@/-]*$/.test(name) || name.includes('..'))) {
       throw new Error(`screenshot name '${name}': use letters, digits, '.', '-', '_', '@' and '/'`);
     }
   }
@@ -597,7 +619,7 @@ export const matchScreenshot = (name: string, opts: ScreenshotOptions = {}): Scr
 function callerDir(): string {
   const here = import.meta.url.replace(/^file:\/\//, '').replace(/[^/]*$/, '');
   for (const line of (new Error().stack ?? '').split('\n').slice(1)) {
-    const m = /(?:\(|at )(?:file:\/\/)?(\/[^():]+):\d+:\d+\)?\s*$/.exec(line);
+    const m = /(?:\(|at )(?:file:\/\/)?(\/[^():]+):\d+(?::\d+)?\)?\s*$/.exec(line);
     if (m && !m[1].startsWith(here)) return m[1].replace(/\/[^/]*$/, '');
   }
   return process.cwd();

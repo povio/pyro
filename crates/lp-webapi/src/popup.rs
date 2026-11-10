@@ -30,7 +30,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
 
 use crate::page::PageDom;
 use crate::storage::StorageNamespace;
@@ -110,6 +110,14 @@ impl PopupTicket {
     /// one), through which the opener's stand-in reaches the popup.
     pub fn attach_page(&self, page: &Rc<PageDom>) {
         *self.0.page.borrow_mut() = Rc::downgrade(page);
+    }
+}
+
+impl PopupTicket {
+    /// The popup's WindowProxy stand-in as `opener` (the opener's document)
+    /// sees it in `s`'s realm: the object its `window.open` returned.
+    pub fn window_in<'s>(&self, s: &Scope<'s>, opener: &Rc<PageDom>) -> JsResult<Value<'s>> {
+        wrap_popup(s, opener, &self.0)
     }
 }
 
@@ -219,7 +227,7 @@ impl PopupData {
         let Some((_, realm)) = self.reachable_page()? else { return Ok(None) };
         let scope = realm.scope()?;
         let value = scope.global().get(name)?;
-        Ok(Some(Persistent::new(&scope, value).get(s)))
+        Ok(Some(s.rehome(value)))
     }
 
     /// `popup.fetch(...)`: the popup's own `fetch` once its page exists,
@@ -229,13 +237,13 @@ impl PopupData {
         match self.reachable_page()? {
             Some((_, realm)) => {
                 let scope = realm.scope()?;
-                let fetch = scope.global().get("fetch")?;
+                let fetch = scope.global().get_atom("fetch")?;
                 let fetch = fetch.as_object().filter(|f| f.is_function()).ok_or(JsError::ContextDestroyed)?;
                 let result = fetch.call(None, &args)?;
-                Ok(Persistent::new(&scope, result).get(s))
+                Ok(s.rehome(result))
             }
             None => {
-                let fetch = s.global().get("fetch")?;
+                let fetch = s.global().get_atom("fetch")?;
                 let fetch = fetch.as_object().filter(|f| f.is_function()).ok_or(JsError::ContextDestroyed)?;
                 fetch.call(None, &args)
             }
@@ -247,7 +255,7 @@ impl PopupData {
         if let Some((page, realm)) = self.reachable_page()? {
             let scope = realm.scope()?;
             let value = crate::storage::window_storage(&scope, &page, session)?;
-            return Ok(Persistent::new(&scope, value).get(s));
+            return Ok(s.rehome(value));
         }
         if !self.same_origin() {
             return Err(JsError::dom("SecurityError", "Blocked a frame from accessing a cross-origin frame."));
@@ -273,47 +281,14 @@ impl PopupData {
     /// `popup.postMessage(message, targetOrigin, transfer)`: structured
     /// clone in the opener, delivered as a task in the popup's document.
     fn post_message<'s>(&self, s: &Scope<'s>, a: &Args<'s>) -> JsResult<()> {
-        a.require(1, "Window.postMessage")?;
-        let (target_origin, options) = match a.get(1).as_object() {
-            Some(o) if !a.get(1).is_array() => {
-                let t = o.get("targetOrigin")?;
-                let t = if t.is_undefined() { "/".to_owned() } else { t.to_string()? };
-                (t, a.get(1))
-            }
-            _ => {
-                let t = if a.get(1).is_undefined() { "/".to_owned() } else { a.get(1).to_string()? };
-                let options = match a.opt(2) {
-                    Some(v) if v.is_array() => {
-                        let o = s.object();
-                        o.set("transfer", v)?;
-                        o.value()
-                    }
-                    Some(v) => v,
-                    None => s.undefined(),
-                };
-                (t, options)
-            }
-        };
         let sender = self.opener_origin().unwrap_or_else(|| "null".into());
-        let wanted = match target_origin.as_str() {
-            "*" => None,
-            "/" => Some(sender.clone()),
-            other => Some(
-                lp_net::Url::parse(other)
-                    .ok()
-                    .filter(|u| u.origin().is_tuple())
-                    .map(|u| u.origin().ascii_serialization())
-                    .ok_or_else(|| JsError::dom("SyntaxError", format!("Invalid target origin '{other}'")))?,
-            ),
-        };
+        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &sender)?;
         // Clone even when the message will be dropped (errors are reported
         // regardless of the target).
-        let message = crate::structured_clone::encode_message(s, a.get(0), options)?;
+        let message = crate::structured_clone::encode_message(s, message, options)?;
         let Some(page) = self.popup.page() else { return Ok(()) };
-        if let Some(wanted) = wanted {
-            if crate::storage::document_origin(&page).as_deref() != Some(wanted.as_str()) {
-                return Ok(());
-            }
+        if !wanted.allows(crate::storage::document_origin(&page).as_deref().unwrap_or("null")) {
+            return Ok(());
         }
         deliver_message(&page, message, sender);
         Ok(())
@@ -330,17 +305,7 @@ pub(crate) fn deliver_message(page: &Rc<PageDom>, message: crate::structured_clo
         }
         let (Some(window), Some(realm)) = (page.window_target(), page.main_world_realm()) else { return };
         let Ok(scope) = realm.scope() else { return };
-        let (ty, data) = match crate::structured_clone::decode_message(&scope, &message) {
-            Ok(value) => ("message", Some(Persistent::new(&scope, value))),
-            Err(_) => ("messageerror", None),
-        };
-        let ev = crate::event::EventCore::trusted(&page, crate::event::EventInterface::MessageEvent, ty, false, false);
-        {
-            let mut f = ev.fields.borrow_mut();
-            f.message_data = data;
-            f.origin = origin;
-        }
-        crate::target::fire(&page, window, &ev);
+        crate::message_channel::fire_wire_message(&scope, &page, window, &message, origin);
     }));
 }
 

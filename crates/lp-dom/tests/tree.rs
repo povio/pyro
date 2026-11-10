@@ -355,6 +355,24 @@ fn shadow_retargeting_path() {
 }
 
 #[test]
+fn non_node_targets_take_an_explicit_event_parent() {
+    let (dom, _d) = doc("");
+    let mut dm = dom.borrow_mut();
+    let (request, tx, db) = (dm.new_target_key(), dm.new_target_key(), dm.new_target_key());
+    let ev = EventState::new("error", true, true, false);
+    assert_eq!(dm.event_path(request, &ev), vec![(request, request)]);
+    dm.set_target_parent(request, Some(tx));
+    dm.set_target_parent(tx, Some(db));
+    let path: Vec<TargetKey> = dm.event_path(request, &ev).into_iter().map(|(k, _)| k).collect();
+    assert_eq!(path, vec![request, tx, db]);
+    // A forgotten target leaves no link behind; unlinking removes the parent.
+    dm.forget_target(request);
+    assert_eq!(dm.event_path(request, &ev).len(), 1);
+    dm.set_target_parent(tx, None);
+    assert_eq!(dm.event_path(tx, &ev).len(), 1);
+}
+
+#[test]
 fn clone_deep_with_template() {
     let (dom, d) = doc("<div id=x a=1><template><p>t</p></template><input id=i></div>");
     let mut dm = dom.borrow_mut();
@@ -509,4 +527,82 @@ fn namespace_prefix_lookups() {
     assert_eq!(dom.lookup_namespace_uri(c, None).unwrap(), Some("http://www.w3.org/2000/svg"));
     assert_eq!(dom.lookup_namespace_uri(c, Some("xml")).unwrap(), Some("http://www.w3.org/XML/1998/namespace"));
     assert_eq!(dom.lookup_namespace_uri(frag, Some("xml")).unwrap(), None, "fragments have no namespace");
+}
+
+/// `innerHTML` set to text without markup takes a path around the fragment
+/// parser; what it builds must be what the parser builds in every context.
+#[test]
+fn inner_html_text_matches_the_fragment_parser() {
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let d = parse_document(&dom, "http://test/", "<!doctype html><body>");
+    let mut dom = dom.borrow_mut();
+    fn describe(dom: &Dom, parent: NodeId) -> Vec<String> {
+        dom.children(parent)
+            .unwrap()
+            .map(|c| match dom.char_data(c) {
+                Ok(data) => format!("{:?} {data:?}", dom.node_type(c).unwrap()),
+                Err(_) => format!("{} [{}]", dom.node_name(c).unwrap(), describe(dom, c).join(", ")),
+            })
+            .collect()
+    }
+    let html = Some("http://www.w3.org/1999/xhtml");
+    let contexts: &[(Option<&str>, &str)] = &[
+        (html, "div"),
+        (html, "p"),
+        (html, "body"),
+        (html, "pre"),
+        (html, "td"),
+        (html, "tr"),
+        (html, "table"),
+        (html, "select"),
+        (html, "textarea"),
+        (html, "title"),
+        (html, "style"),
+        (html, "script"),
+        (html, "noscript"),
+        (html, "plaintext"),
+        (html, "html"),
+        (html, "head"),
+        (html, "frameset"),
+        (html, "template"),
+        (Some("http://www.w3.org/2000/svg"), "svg"),
+        (Some("http://www.w3.org/1998/Math/MathML"), "math"),
+    ];
+    let inputs = [
+        "",
+        "plain",
+        "  ",
+        "\n\nx",
+        " a b ",
+        "a&amp;b",
+        "a<b",
+        "x\ry",
+        "x\r\ny",
+        "nul\0",
+        "ünï ✓",
+        "\u{feff}x",
+        "x\u{feff}",
+    ];
+    for &(ns, name) in contexts {
+        for input in inputs {
+            let el = dom.create_element_ns(d, ns, name).unwrap();
+            set_inner_html(&mut dom, el, "<i>old</i>").unwrap();
+            set_inner_html(&mut dom, el, input).unwrap();
+            let frag = parse_fragment(&mut dom, el, input).unwrap();
+            let got = if name == "template" {
+                // The template's contents: what `innerHTML` replaced.
+                dom.inner_html(el).unwrap()
+            } else {
+                describe(&dom, el).join(", ")
+            };
+            let want = if name == "template" {
+                let tmp = dom.create_element(d, "div").unwrap();
+                dom.append_child(tmp, frag).unwrap();
+                dom.inner_html(tmp).unwrap()
+            } else {
+                describe(&dom, frag).join(", ")
+            };
+            assert_eq!(got, want, "<{name}>.innerHTML = {input:?}");
+        }
+    }
 }

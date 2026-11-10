@@ -11,6 +11,66 @@ use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+/// The process's Rust heap. macOS's allocator keeps the pages of freed
+/// blocks resident and charged to the process (`malloc_zone_pressure_relief`
+/// releases none of them): after a closed SPA the system heap held 28 MB
+/// for 3 MB of live blocks. mimalloc returns them (`MADV_FREE_REUSABLE`
+/// after a delay, at once on [`lp_js::Engine::settle`]).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+unsafe extern "C" {
+    /// Frees the calling thread's empty pages (and the blocks other threads
+    /// freed into them) and returns the free ones to the system.
+    fn mi_collect(force: bool);
+}
+
+/// The VM tag of mimalloc's regions. Its default (100) is
+/// `VM_MEMORY_IOACCELERATOR`, so vmmap and footprint showed the Rust heap as
+/// the GPU driver's "IOAccelerator"; `VM_MEMORY_APPLICATION_SPECIFIC_1`
+/// shows as "App-Specific Tag 1".
+#[cfg(target_os = "macos")]
+mod allocator_tag {
+    use std::ffi::{c_int, c_long};
+
+    /// mimalloc's `mi_option_os_tag`.
+    const MI_OPTION_OS_TAG: c_int = 18;
+    const VM_MEMORY_APPLICATION_SPECIFIC_1: c_long = 240;
+
+    unsafe extern "C" {
+        fn mi_option_set(option: c_int, value: c_long);
+    }
+
+    extern "C" fn tag_allocator_regions() {
+        // SAFETY: mimalloc's public API; it only stores the value.
+        unsafe { mi_option_set(MI_OPTION_OS_TAG, VM_MEMORY_APPLICATION_SPECIFIC_1) }
+    }
+
+    /// Runs before `main`, so before the first Rust allocation: mimalloc
+    /// tags a region when it maps it, and its first arena serves the heap
+    /// from then on.
+    #[used]
+    #[link_section = "__DATA,__mod_init_func"]
+    static TAG_BEFORE_MAIN: extern "C" fn() = tag_allocator_regions;
+}
+
+/// Returns mimalloc's free pages to the system now: the browser thread's on
+/// [`lp_js::Engine::settle`], an I/O thread's or the render thread's once it
+/// is idle (each owns the pages of what it allocated: response buffers,
+/// render documents and images, which the browser thread frees).
+fn release_allocator() {
+    // SAFETY: mimalloc's public API, callable from any thread at any time.
+    unsafe { mi_collect(true) }
+}
+
+/// mimalloc's cheap collection: the calling thread's delayed frees and
+/// empty pages, without purging what it retains
+/// ([`lp_js::Engine::release_closed`] when the full release waits for idle).
+fn trim_allocator() {
+    // SAFETY: mimalloc's public API, callable from any thread at any time.
+    unsafe { mi_collect(false) }
+}
+
 const USAGE: &str = "\
 usage: lightningpanda <command> [options]
 
@@ -23,7 +83,33 @@ commands:
                                load a page (scripts run), dump the DOM after `load`
 ";
 
+/// PGO training builds (`scripts/pgo/generate.sh`, `--cfg lp_pgo_training`) exit
+/// normally on SIGTERM/SIGINT so the LLVM profile runtime's atexit hook writes the
+/// `.profraw`; the default disposition would kill the process without it. `serve`
+/// has no shutdown command, so this is how the training harness stops it.
+/// Not compiled into other builds.
+#[cfg(lp_pgo_training)]
+fn exit_on_termination_signals() {
+    extern "C" fn exit_now(_signal: libc::c_int) {
+        std::process::exit(0);
+    }
+    // SAFETY: installs a plain C handler before any thread exists; `exit`
+    // is not async-signal-safe, which a training run accepts.
+    let handler = exit_now as *const () as libc::sighandler_t;
+    unsafe {
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGINT, handler);
+    }
+}
+
 fn main() -> ExitCode {
+    #[cfg(lp_pgo_training)]
+    exit_on_termination_signals();
+    lp_js::set_allocator_release(release_allocator);
+    lp_js::set_allocator_trim(trim_allocator);
+    lp_net::set_idle_release(release_allocator);
+    #[cfg(feature = "render")]
+    lp_render::worker::set_idle_release(release_allocator);
     lp_js::configure_process();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {

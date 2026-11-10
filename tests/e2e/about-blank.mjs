@@ -278,6 +278,20 @@ const fixture = http.createServer((req, res) => {
     res.end("console.log('from worker', 7); onmessage = async (e) => postMessage({ doubled: e.data.value * 2, size: e.data.list.size, fetched: (await fetch('/document')).ok });");
     return;
   }
+  if (req.url === '/port-worker.js') {
+    // Answers on a transferred port, returns a CryptoKey it used, and
+    // hands back a TransformStream that runs here.
+    res.writeHead(200, { 'content-type': 'text/javascript' });
+    res.end(`onmessage = async (e) => {
+      const [port] = e.ports;
+      port.onmessage = (m) => port.postMessage('worker:' + m.data);
+      const { key } = e.data;
+      const sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: new Uint8Array(12) }, key, new TextEncoder().encode('ok'));
+      const upper = new TransformStream({ transform(chunk, c) { c.enqueue(String(chunk).toUpperCase()); } });
+      postMessage({ key, sealed, upper }, [upper]);
+    };`);
+    return;
+  }
   if (req.url === '/missing-worker.js') {
     res.writeHead(404);
     res.end();
@@ -1188,9 +1202,10 @@ try {
       await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
       const invalid = await p.evaluate(() => {
         const failure = (f) => { try { f(); return 'no throw'; } catch (e) { return e.name; } };
-        return [failure(() => new Worker('http://[')), failure(() => new Worker('/x.js', { type: 'module' }))];
+        return [failure(() => new Worker('http://[')), failure(() => new Worker('/x.js', { type: 'module' }).terminate())];
       });
-      assert.deepEqual(invalid, ['SyntaxError', 'NotSupportedError']);
+      // Module workers are supported (patched JavaScriptCore).
+      assert.deepEqual(invalid, ['SyntaxError', 'no throw']);
       const missing = await p.evaluate(() => new Promise((resolve) => {
         const w = new Worker('/missing-worker.js');
         w.onerror = (ev) => resolve(ev.type);
@@ -1217,6 +1232,34 @@ try {
       await p.evaluate(() => w.terminate());
       await closed;
       assert.deepEqual(p.workers(), []);
+    } finally { await p.close(); }
+  });
+  await check('dedicated Worker: transferred MessagePort, CryptoKey and TransformStream', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+      const got = await p.evaluate(() => new Promise((resolve, reject) => {
+        setTimeout(() => reject(new Error('timed out')), 4000);
+        (async () => {
+          const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 128 }, false, ['encrypt', 'decrypt']);
+          const w = new Worker('/port-worker.js');
+          const channel = new MessageChannel();
+          const echoed = new Promise((ok) => { channel.port1.onmessage = (m) => ok(m.data); });
+          w.onmessage = async (e) => {
+            const open = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(12) }, e.data.key, e.data.sealed);
+            const writer = e.data.upper.writable.getWriter();
+            writer.write('chunk'); writer.close();
+            const reader = e.data.upper.readable.getReader();
+            const first = await reader.read();
+            channel.port1.postMessage('ping');
+            resolve([new TextDecoder().decode(open), e.data.key instanceof CryptoKey, e.data.key.extractable, first.value,
+              (await reader.read()).done, await echoed]);
+            w.terminate();
+          };
+          w.postMessage({ key }, [channel.port2]);
+        })().catch(reject);
+      }));
+      assert.deepEqual(got, ['ok', true, false, 'CHUNK', true, 'worker:ping']);
     } finally { await p.close(); }
   });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {

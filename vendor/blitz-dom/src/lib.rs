@@ -46,6 +46,8 @@ mod debug;
 mod events;
 mod font_metrics;
 mod form;
+mod has_invalidation;
+pub use has_invalidation::LP_STATE_NS;
 mod html;
 /// Loading of `<iframe>` elements into sub-documents.
 mod iframe;
@@ -77,6 +79,7 @@ pub use cssom::{CssRuleInfo, CssomError};
 pub use resolved_style::{
     css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
 };
+pub use stylo_taffy::CopyStyleGetters;
 pub use stylo_to_kurbo::resolve_2d_transform;
 
 pub mod net;
@@ -96,6 +99,7 @@ pub use blitz_traits::node_id::NodeId;
 // `Node::final_layout`)
 pub use config::{DocumentConfig, StyleThreading};
 pub use document::{
+    StyleChange,
     BaseDocument, BoundingRect, DocGuard, DocGuardMut, Document, PlainDocument, UserAgentStylesheet,
 };
 pub use markup5ever::{

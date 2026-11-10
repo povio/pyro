@@ -252,6 +252,67 @@ fn by_value_results_keep_key_order_as_on_the_wire() {
     assert!(reply.contains(r#""value":{"b":1,"a":[3,1],"c":{"z":1e+21,"y":"q","x":null},"":true}"#), "{reply}");
 }
 
+/// A double crosses CDP unchanged, as with Chrome, in results
+/// (`Runtime.evaluate` by value, `LP.run` `eval` reads) and in arguments
+/// (`Runtime.callFunctionOn`, `LP.run` `eval` `arg`), checked against
+/// `String(x)` in the page. JSON numbers the engine parses must round
+/// correctly (serde_json's `float_roundtrip`, set in the workspace
+/// manifest): without it 0.9591810769706007 read as 0.9591810769706008,
+/// and about one random double in ten was one ulp off.
+#[test]
+fn doubles_cross_cdp_unchanged() {
+    let mut h = Harness::new();
+    let setup = "globalThis.doubles = [0.9591810769706007, 0.011425316439999667, 0.11370447987098531, \
+        0.9333951639905637, 123456.78901234567, -0.1, 1e21, 1e-7, 5e-324, 2.2250738585072014e-308, \
+        1.7976931348623157e308].concat(Array.from({length: 1000}, Math.random)); doubles.map(String)";
+    let r = h.page("Runtime.evaluate", json!({"expression": setup, "returnByValue": true}));
+    let texts: Vec<String> = r["result"]["result"]["value"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{r}"))
+        .iter()
+        .map(|t| t.as_str().unwrap().to_owned())
+        .collect();
+    // The double each text names (`str::parse` rounds correctly).
+    let doubles: Vec<f64> = texts.iter().map(|t| t.parse().unwrap()).collect();
+    let same = |what: &str, got: &[Value]| {
+        assert_eq!(got.len(), texts.len(), "{what}");
+        for ((got, want), text) in got.iter().zip(&doubles).zip(&texts) {
+            assert_eq!(got.as_f64(), Some(*want), "{what}: {got} for the page's {text}");
+        }
+    };
+
+    let scalars: Vec<Value> = (0..texts.len())
+        .map(|i| {
+            let r = h.page("Runtime.evaluate", json!({"expression": format!("doubles[{i}]"), "returnByValue": true}));
+            r["result"]["result"]["value"].clone()
+        })
+        .collect();
+    same("Runtime.evaluate number", &scalars);
+    let r = h.page("Runtime.evaluate", json!({"expression": "doubles", "returnByValue": true}));
+    same("Runtime.evaluate array", r["result"]["result"]["value"].as_array().unwrap_or_else(|| panic!("{r}")));
+
+    let mut steps: Vec<Value> =
+        (0..texts.len()).map(|i| json!({"eval": {"expression": format!("doubles[{i}]")}})).collect();
+    steps.push(json!({"eval": {"expression": "doubles", "as": "all"}}));
+    steps.push(json!({"eval": {"expression": "(xs) => xs.map(String)", "call": true, "arg": doubles, "as": "texts"}}));
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    same("LP.run eval number", &results[..texts.len()]);
+    same("LP.run eval array", r["result"]["reads"]["all"].as_array().unwrap_or_else(|| panic!("{r}")));
+    assert_eq!(r["result"]["reads"]["texts"], json!(texts), "LP.run eval arg");
+
+    let global = h.page("Runtime.evaluate", json!({"expression": "globalThis"}));
+    let global = global["result"]["result"]["objectId"].as_str().unwrap().to_owned();
+    for (want, text) in doubles.iter().zip(&texts) {
+        let r = h.page(
+            "Runtime.callFunctionOn",
+            json!({"functionDeclaration": "function(x) { return String(x); }", "objectId": global,
+                "arguments": [{"value": want}], "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"], text.as_str(), "Runtime.callFunctionOn argument");
+    }
+}
+
 #[test]
 fn evaluate_call_function_and_handles() {
     let mut h = Harness::new();
@@ -778,6 +839,59 @@ fn run_immediately_creates_the_isolated_world() {
 }
 
 #[test]
+fn playwright_utility_world_is_announced_at_commit_and_made_by_its_first_evaluation() {
+    // Playwright: an init script with no source names the utility world for
+    // every document, `Page.createIsolatedWorld` makes it for the first one,
+    // and after each navigation the world's `executionContextCreated` is
+    // what its actions wait for. The realm behind the announced id is made
+    // when first evaluated in.
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.page("Page.enable", json!({}));
+    h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source":"","worldName":"__pw_utility"}));
+    let frame = h.frame_id.clone();
+    let first = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"__pw_utility"}))["result"]
+        ["executionContextId"]
+        .clone();
+    let events = h.page_with_events("Page.navigate", json!({ "url": html_url("<p>committed</p>") }));
+    let mut events = events;
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        events.extend(h.run_for(100));
+    }
+    let created: Vec<&Value> =
+        events.iter().filter(|m| m["method"] == "Runtime.executionContextCreated").collect();
+    let utility = created
+        .iter()
+        .find(|m| m["params"]["context"]["name"] == "__pw_utility")
+        .unwrap_or_else(|| panic!("utility world announced for the new document: {events:#?}"));
+    let context = utility["params"]["context"]["id"].clone();
+    assert_ne!(context, first, "a new context per document");
+    assert_eq!(utility["params"]["context"]["auxData"]["isDefault"], false);
+    assert!(created.iter().any(|m| m["params"]["context"]["auxData"]["isDefault"] == true), "{events:#?}");
+    let destroyed = events.iter().position(|m| m["method"] == "Runtime.executionContextsCleared").unwrap();
+    let announced = events
+        .iter()
+        .position(|m| m["method"] == "Runtime.executionContextCreated" && m["params"]["context"]["id"] == context)
+        .unwrap();
+    assert!(announced > destroyed, "{events:#?}");
+    let frame = h.frame_id.clone();
+    let r = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"__pw_utility"}));
+    assert_eq!(r["result"]["executionContextId"], context, "the same world for this document");
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"document.querySelector('p').textContent + ':' + (globalThis.mark = 1)","contextId": context,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "committed:1", "{r}");
+    let r = h.page("Runtime.evaluate", json!({"expression":"typeof mark","returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], "undefined", "main world untouched");
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"functionDeclaration":"function() { return mark + 1 }","executionContextId": context,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], 2, "{r}");
+}
+
+#[test]
 fn console_without_runtime_is_not_retained_and_floods_close_the_connection() {
     let mut h = Harness::new();
     h.page("Runtime.evaluate", json!({"expression":"for (let i = 0; i < 200000; i++) console.log(i, {i})"}));
@@ -941,6 +1055,50 @@ fn network_http_redirect_response_and_body() {
         json!({"body":"hello","base64Encoded":false})
     );
     server.join().unwrap();
+}
+
+/// A document fetched over HTTP reports its whole network lifecycle before
+/// the page events its commit causes, as Chrome does: the I/O thread wakes
+/// the engine for the observations before it posts the completion that
+/// commits the document, so they are owner-published when `frameNavigated`
+/// is queued behind them.
+#[test]
+fn document_network_events_precede_its_frame_navigated() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0; 1024];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut chunk).unwrap();
+            assert!(n > 0 && request.len() + n <= 8192);
+            request.extend_from_slice(&chunk[..n]);
+        }
+        let body = b"<!doctype html><title>net order</title><p>hello";
+        let head = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        stream.write_all(head.as_bytes()).unwrap();
+        stream.write_all(body).unwrap();
+    });
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Network.enable", json!({}));
+    let session = h.session.clone();
+    h.send(Some(&session), "Page.navigate", json!({"url":format!("http://{address}/doc")}));
+    let events = until_event(&mut h, "Page.loadEventFired");
+    server.join().unwrap();
+    let methods: Vec<&str> = events.iter().filter_map(|e| e["method"].as_str()).collect();
+    let at = |method: &str| methods.iter().position(|m| *m == method).unwrap_or_else(|| panic!("missing {method}: {methods:?}"));
+    assert!(at("Network.requestWillBeSent") < at("Network.responseReceived"), "{methods:?}");
+    assert!(at("Network.responseReceived") < at("Network.dataReceived"), "{methods:?}");
+    assert!(at("Network.dataReceived") < at("Network.loadingFinished"), "{methods:?}");
+    assert!(at("Network.loadingFinished") < at("Page.frameNavigated"), "{methods:?}");
+    assert!(at("Page.frameNavigated") < at("Page.loadEventFired"), "{methods:?}");
+    let request = events.iter().find(|e| e["method"] == "Network.requestWillBeSent").unwrap();
+    let navigated = events.iter().find(|e| e["method"] == "Page.frameNavigated").unwrap();
+    assert_eq!(request["params"]["loaderId"], navigated["params"]["frame"]["loaderId"]);
 }
 
 fn until_event(h: &mut Harness, method: &str) -> Vec<Value> {
@@ -2458,9 +2616,8 @@ fn push_state_event_precedes_the_evaluate_reply() {
 
 /// Playwright on macOS sends the editing commands its table derives from the
 /// key (crInput `_commandsForCode`), e.g. ArrowRight -> ["moveRight"]. Those are
-/// accepted and the engine's own key default actions run (TOS batch 12,
-/// docubox-templates `keyboard.press("ArrowRight")`). Commands that are not the
-/// key's own encoding still fail explicitly, before any event is delivered.
+/// accepted and run in place of the key's default action (TOS batch 12,
+/// docubox-templates `keyboard.press("ArrowRight")`).
 #[test]
 fn input_accepts_mac_key_derived_editing_commands() {
     let mut h = Harness::new();
@@ -2535,9 +2692,10 @@ fn input_accepts_mac_key_derived_editing_commands() {
             "ArrowDown"
         ])
     );
-    // Commands are advisory (Playwright derives scrolling, clipboard, undo
-    // and word movement too, and Emacs-style aliases): the key events are
-    // delivered and the key's own default action runs, as on Linux.
+    // Other commands (scrolling, clipboard, undo, word movement, Emacs-style
+    // aliases): the key events are delivered; handled commands act on the
+    // focused element (here a button: nothing to edit), the others leave the
+    // key's own default action.
     let advisory = [
         ("ArrowLeft", "ArrowLeft", 1, json!(["moveWordLeft"])),
         ("z", "KeyZ", 4, json!(["undo"])),
@@ -2656,7 +2814,10 @@ fn emulated_media_flips_match_media_and_fires_change() {
 #[test]
 fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
     let mut h = Harness::new();
-    h.page("Emulation.setDeviceMetricsOverride", json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}));
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
     let wide = r#"<div style="width:2000px;height:50px"></div>"#;
     let tall = r#"<div style="width:50px;height:1000px"></div>"#;
     let far = "left:1900px;top:2000px";
@@ -2665,21 +2826,41 @@ fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
         (format!(r#"<body style="margin:0;overflow:hidden;width:300px">{wide}"#), [2000, 600]),
         (format!(r#"<body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 1000]),
         // Stays on `body`: the root has its own.
-        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#), [800, 600]),
-        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 600]),
+        (
+            format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#),
+            [800, 600],
+        ),
+        (
+            format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#),
+            [800, 600],
+        ),
         // Empty boxes count for nothing, wherever they are.
         (r#"<body style="margin:0"><div style="width:2000px;height:0"></div>"#.into(), [800, 600]),
-        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#), [800, 600]),
+        (
+            format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#),
+            [800, 600],
+        ),
         // Fixed does not count, absolute does.
-        (format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#), [800, 600]),
-        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#), [1950, 2010]),
+        (
+            format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#),
+            [800, 600],
+        ),
+        (
+            format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#),
+            [1950, 2010],
+        ),
     ] {
         load_html(&mut h, &format!("<!doctype html>{doc}"));
-        let scroll = eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
+        let scroll =
+            eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
         assert_eq!(scroll, json!(chrome), "{doc}");
         let metrics = h.page("Page.getLayoutMetrics", json!({}));
         let content = &metrics["result"]["cssContentSize"];
-        assert_eq!([content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()], chrome.map(f64::from), "{doc}");
+        assert_eq!(
+            [content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()],
+            chrome.map(f64::from),
+            "{doc}"
+        );
     }
     // `body` keeps its own scroll sizes, 2000 px wide inside 300 px, either way.
     load_html(&mut h, &format!(r#"<!doctype html><body style="margin:0;overflow:hidden;width:300px">{wide}"#));
@@ -2727,7 +2908,8 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
         location.hash = 'x';"#,
     );
     h.run_for(50);
-    assert_eq!(eval_value(&mut h, "seen"), json!([["hashchange", "", "#x"]]));
+    // A fragment navigation fires popstate (state null) before hashchange, as Chrome does.
+    assert_eq!(eval_value(&mut h, "seen"), json!([["popstate", "/two#x", null], ["hashchange", "", "#x"]]));
     let (index, entries) = history(&mut h);
     let urls: Vec<_> = entries.iter().map(|(_, u)| u.as_str()).collect();
     let base = format!("http://{address}");
@@ -2746,7 +2928,7 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
     let within = position(&messages, "navigatedWithinDocument", |m| m["method"] == "Page.navigatedWithinDocument");
     assert_eq!(messages[within]["params"]["url"], format!("{base}/one"));
     assert!(!messages.iter().any(|m| m["method"] == "Page.frameNavigated"), "same-document: {messages:#?}");
-    assert_eq!(eval_value(&mut h, "seen.slice(1)"), json!([["popstate", "/one", {"n": 1}]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(2)"), json!([["popstate", "/one", {"n": 1}]]));
     assert_eq!(history(&mut h).0, 1);
 
     // Forward to the fragment entry of the same pushState entry: popstate (no
@@ -2759,11 +2941,11 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
     let frame = h.page("Page.getFrameTree", json!({}));
     assert_eq!(frame["result"]["frameTree"]["frame"]["url"], format!("{base}/two#x"));
     // /one -> /two#x is not a fragment-only change: no hashchange.
-    assert_eq!(eval_value(&mut h, "seen.slice(2)"), json!([["popstate", "/two#x", null]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(3)"), json!([["popstate", "/two#x", null]]));
     // history.back() over a fragment entry fires both events.
     eval_value(&mut h, "history.back()");
     h.run_for(50);
-    assert_eq!(eval_value(&mut h, "seen.slice(3)"), json!([["popstate", "/two", {"n": 2}], ["hashchange", "#x", ""]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(4)"), json!([["popstate", "/two", {"n": 2}], ["hashchange", "#x", ""]]));
 }
 
 /// Cross-document traversal re-fetches the entry (no bfcache) and commits as an
@@ -3339,11 +3521,23 @@ mod accessibility;
 #[path = "engine_cdp/frames.rs"]
 mod frames;
 
+#[path = "engine_cdp/layout_text.rs"]
+mod layout_text;
+
 #[path = "engine_cdp/tier3_g2.rs"]
 mod tier3_g2;
 
 #[path = "engine_cdp/tier3_g1.rs"]
 mod tier3_g1;
+
+#[path = "engine_cdp/websocket.rs"]
+mod websocket;
+
+#[path = "engine_cdp/aria_snapshot.rs"]
+mod aria_snapshot;
+
+#[path = "engine_cdp/coverage.rs"]
+mod coverage;
 
 #[test]
 fn links_and_window_open_targeting_blank_open_paused_popups() {
@@ -4490,6 +4684,131 @@ fn driver_run_routes_presses_and_checks_requests() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
 }
 
+/// `eval` with `call`: the expression is a function, called with the JSON
+/// `arg`; with a `locator` it gets the element (waiting for exactly one) or,
+/// with `all`, the array of matches. Playwright's `evaluate(fn, arg)` and
+/// `locator.evaluate(fn, arg)`.
+#[test]
+fn driver_run_eval_calls_functions_with_elements() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "(n) => n * 2", "call": true, "arg": 21, "as": "doubled"}},
+        {"eval": {"expression": "() => document.title.length >= 0", "call": true, "as": "noArg"}},
+        {"eval": {"expression": "(el, suffix) => el.id + suffix", "locator": {"role": "button", "name": "Settings", "exact": true}, "arg": "!", "as": "one"}},
+        {"eval": {"expression": "(els) => els.map((e) => e.tagName)", "locator": {"css": "button"}, "all": true, "as": "all"}},
+        {"eval": {"expression": "(els) => els.length", "locator": {"css": "#missing"}, "all": true, "as": "none"}},
+        {"eval": {"expression": "async (el) => { await new Promise((r) => setTimeout(r, 5)); return el.tagName; }", "locator": {"css": "#out"}, "as": "later"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["doubled"], 42, "{r}");
+    assert_eq!(reads["noArg"], true, "{r}");
+    assert_eq!(reads["one"], "settings!", "{r}");
+    assert!(reads["all"].as_array().is_some_and(|a| !a.is_empty() && a.iter().all(|t| t == "BUTTON")), "{r}");
+    assert_eq!(reads["none"], 0, "{r}");
+    assert_eq!(reads["later"], "DIV", "{r}");
+
+    // Waits for the element, then times out naming the locator.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"eval": {"expression": "(el) => el.id", "locator": {"css": "#missing"}, "timeout": 50}}]}),
+    );
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("timed out after 50 ms") && message.contains("matched no element"), "{r}");
+    let r =
+        h.page("LP.run", json!({"steps": [{"eval": {"expression": "(el) => el.id", "locator": {"css": "button"}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("strict mode violation"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "42", "call": true}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a function"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "(x) => x.y.z", "call": true, "arg": {}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "(e) => e", "all": true}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("needs a locator"), "{r}");
+}
+
+/// Locator kinds for Playwright's API: `xpath`, `of` (filter or nth after
+/// an nth), `or` (union in document order), `and` (intersection) and the
+/// `getByRole` state options.
+#[test]
+fn driver_locators_xpath_of_or_and_role_states() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let html = r#"<h1>Top</h1><h2>Sub</h2><div aria-level="3" role="heading">Aria</div>
+<ul><li>Apple <b>red</b></li><li>Banana</li><li>Cherry <b>red</b></li></ul>
+<input type="checkbox" id="a" checked aria-label="A"><input type="checkbox" id="b" aria-label="B">
+<button aria-pressed="true">Bold</button><button aria-pressed="false">Italic</button><button disabled>Off</button>
+<button aria-expanded="true">Menu</button><button hidden>Ghost</button>
+<select aria-label="S"><option>x</option><option selected>y</option></select>"#;
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "(h) => { document.body.innerHTML = h; }", "arg": html}},
+        {"read": {"locator": {"xpath": "//li[b]"}, "read": "count", "as": "xpath"}},
+        {"read": {"locator": {"of": {"css": "li", "nth": 0}, "filter": {"hasText": "Apple"}}, "read": "count", "as": "ofKeep"}},
+        {"read": {"locator": {"of": {"css": "li", "nth": 0}, "filter": {"hasText": "Banana"}}, "read": "count", "as": "ofDrop"}},
+        {"read": {"locator": {"of": {"css": "h2"}, "or": [{"css": "h1"}], "nth": 0}, "read": "text", "as": "orFirst"}},
+        {"read": {"locator": {"of": {"css": "li"}, "and": [{"xpath": "//li[b]"}]}, "read": "count", "as": "and"}},
+        {"read": {"locator": {"of": {"css": "li"}, "and": [{"text": "red"}]}, "read": "count", "as": "andText"}},
+        {"read": {"locator": {"role": "heading", "level": 2}, "read": "text", "as": "level2"}},
+        {"read": {"locator": {"role": "heading", "level": 3}, "read": "text", "as": "level3"}},
+        {"read": {"locator": {"role": "checkbox", "checked": true}, "read": "name", "as": "checked"}},
+        {"read": {"locator": {"role": "button", "pressed": true}, "read": "name", "as": "pressed"}},
+        {"read": {"locator": {"role": "button", "disabled": true}, "read": "name", "as": "disabled"}},
+        {"read": {"locator": {"role": "button", "expanded": true}, "read": "name", "as": "expanded"}},
+        {"read": {"locator": {"role": "option"}, "read": "count", "as": "options"}},
+        {"read": {"locator": {"role": "option", "selected": true}, "read": "text", "as": "selected"}},
+        {"read": {"locator": {"role": "button", "includeHidden": true}, "read": "count", "as": "hidden"}},
+        {"read": {"locator": {"role": "button"}, "read": "count", "as": "notHidden"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["xpath"], 2, "{r}");
+    assert_eq!(reads["ofKeep"], 1, "{r}");
+    assert_eq!(reads["ofDrop"], 0, "{r}");
+    assert_eq!(reads["orFirst"], "Top", "document order: {r}");
+    assert_eq!(reads["and"], 2, "{r}");
+    // As Playwright: the text locator names the <b>, not the <li>.
+    assert_eq!(reads["andText"], 0, "{r}");
+    assert_eq!(reads["options"], 2, "options of a visible select: {r}");
+    assert_eq!(reads["level2"], "Sub", "{r}");
+    assert_eq!(reads["level3"], "Aria", "{r}");
+    assert_eq!(reads["checked"], "A", "{r}");
+    assert_eq!(reads["pressed"], "Bold", "{r}");
+    assert_eq!(reads["disabled"], "Off", "{r}");
+    assert_eq!(reads["expanded"], "Menu", "{r}");
+    assert_eq!(reads["selected"], "y", "{r}");
+    assert_eq!(reads["hidden"], 5, "{r}");
+    assert_eq!(reads["notHidden"], 4, "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"read": {"locator": {"css": "li", "level": 1}, "read": "count"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("need a role"), "{r}");
+}
+
+/// `modifiers` on pointer actions set the events' modifier flags (Playwright's
+/// `click({ modifiers })`).
+#[test]
+fn driver_click_modifiers_reach_the_events() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "() => { document.body.innerHTML = '<button id=m>M</button>'; window.seen = []; m.addEventListener('click', (e) => seen.push([e.shiftKey, e.ctrlKey, e.altKey, e.metaKey].join())); }", "call": true}},
+        {"act": {"locator": {"css": "#m"}, "action": "click", "modifiers": ["Shift", "Alt"]}},
+        {"act": {"locator": {"css": "#m"}, "action": "click"}},
+        {"mouse": {"action": "click", "x": 5, "y": 5, "modifiers": ["Control"]}},
+        {"eval": {"expression": "seen", "as": "seen"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let seen = r["result"]["reads"]["seen"].as_array().cloned().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(seen[0], "true,false,true,false", "{r}");
+    assert_eq!(seen[1], "false,false,false,false", "{r}");
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"act": {"locator": {"css": "#m"}, "action": "click", "modifiers": ["Hyper"]}}]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("unknown modifier"), "{r}");
+}
+
 const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
 <style>#tip{display:none} #cell:hover + #tip{display:block} #box{color:rgb(1, 2, 3);width:120px;height:40px}</style>
 <div id="cell">Cell</div><div id="tip">Tooltip</div>
@@ -5434,7 +5753,7 @@ fn driver_accessible_name_labelledby_uses_aria_label_and_dedupes() {
 /// Elements in an `inert` or `aria-hidden` subtree are hidden for ARIA: role
 /// locators skip them and names from content do not read them.
 #[test]
-fn driver_role_locators_skip_inert_and_aria_hidden_subtrees() {
+fn driver_role_locators_skip_aria_hidden_but_not_inert_subtrees() {
     let mut h = Harness::new();
     load_html(
         &mut h,
@@ -5450,15 +5769,15 @@ fn driver_role_locators_skip_inert_and_aria_hidden_subtrees() {
         &[
             ("headers", "count", json!({"role": "columnheader", "name": "Name", "exact": true})),
             ("buttons", "count", json!({"role": "button"})),
-            ("goName", "name", json!({"role": "button"})),
         ],
     );
-    assert_eq!(reads, json!({"headers": 1, "buttons": 1, "goName": "Go"}));
-    let r = h.page(
-        "LP.run",
-        json!({"steps": [{"check": {"locator": {"role": "columnheader", "name": "Name", "exact": true}, "assert": "text", "expected": "Name"}}]}),
-    );
-    assert!(r.get("error").is_none(), "{r}");
+    // Playwright's isElementHiddenForAria has no inert rule (and
+    // checkVisibility() ignores inert): inert content keeps its role and
+    // its text stays in names; aria-hidden content does not.
+    assert_eq!(reads["headers"], 2, "{reads}");
+    assert_eq!(reads["buttons"], 2, "{reads}");
+    let r = h.page("LP.query", json!({"locator": {"role": "button", "name": "Go (y)", "exact": true}, "read": "name"}));
+    assert_eq!(r["result"]["value"], "Go (y)", "{r}");
 }
 
 /// `checked` honours `aria-checked` on checkbox-like roles (and `mixed`);
@@ -5819,6 +6138,42 @@ fn driver_run_turns_the_event_loop_between_input_events_and_steps() {
     assert_eq!(r["result"]["reads"]["saves"], "a=1,b=2", "{r}");
 }
 
+const DRIVER_SHIFT_PAGE: &str = r#"<!doctype html><body style="margin:0">
+<div id="list"></div>
+<button id="archive" style="width:160px;height:30px"><span>Archive Department</span></button>
+<div id="section" style="height:400px">You will not be able to undo this</div>
+<script>
+  const log = [];
+  document.getElementById('archive').addEventListener('pointerdown', () => setTimeout(() => {
+    document.getElementById('list').innerHTML = '<div style="height:200px">rows that loaded late</div>';
+    log.push('shifted');
+  }, 0));
+  for (const t of ['pointerdown', 'pointerup', 'click']) {
+    document.addEventListener(t, (e) => log.push(t + ':' + (e.target.closest('[id]')?.id ?? e.target.tagName)), true);
+  }
+  window.getLog = () => log.join(',');
+</script>"#;
+
+/// Page work that runs between a click's press and release (an async list
+/// above the button finished loading) can move the pressed element: the
+/// release follows it, so the click lands on what was pressed instead of on
+/// whatever moved under the pointer (react-aria cancels a press released
+/// elsewhere).
+#[test]
+fn driver_click_release_follows_an_element_that_moved_after_the_press() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_SHIFT_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 1000, "steps": [
+            {"act": {"locator": {"css": "#archive"}, "action": "click"}},
+            {"eval": {"expression": "getLog()", "as": "log"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["log"], "pointerdown:archive,shifted,pointerup:archive,click:archive", "{r}");
+}
+
 const DRIVER_BLUR_PAGE: &str = r#"<!doctype html><body>
 <input id="f"><input id="g">
 <script>
@@ -6155,6 +6510,194 @@ mod screenshot {
         assert_eq!(pixel(&shot(&mut h), 5, 5), [255, 0, 0, 255]);
         h.page("Emulation.setEmulatedMedia", json!({"media": ""}));
         assert_eq!(pixel(&shot(&mut h), 5, 5), [0, 0, 255, 255]);
+    }
+
+    /// Modal dialogs and showing popovers paint above everything, in
+    /// top-layer order, over their `::backdrop`, whatever their ancestors'
+    /// z-index, opacity or overflow clip; hit testing and clicks follow.
+    #[test]
+    fn top_layer_paints_above_everything_over_its_backdrop() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: #fff; }
+              #cover { position: fixed; inset: 0; z-index: 2147483647; background: rgb(0, 0, 255); }
+              #clip { position: relative; z-index: 1; opacity: 0.5; overflow: hidden; width: 10px; height: 10px; }
+              #d { width: 100px; height: 60px; padding: 0; border: 0; background: rgb(255, 0, 0); }
+              #d button { display: block; width: 100px; height: 60px; padding: 0; border: 0; background: transparent; }
+              #p { width: 40px; height: 40px; padding: 0; border: 0; background: rgb(255, 255, 0); }
+            </style>
+            <div id="clip"><dialog id="d"><button id="in">in</button></dialog><div id="p" popover></div></div>
+            <div id="cover"></div>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        let click = |h: &mut Harness, x: u32, y: u32| {
+            for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+                let r = h.page(
+                    "Input.dispatchMouseEvent",
+                    json!({"type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1}),
+                );
+                assert_eq!(r["result"], json!({}), "{r}");
+            }
+        };
+        eval_value(
+            &mut h,
+            "globalThis.clicks = []; for (const id of ['in', 'cover', 'd']) document.getElementById(id).addEventListener('click', e => clicks.push(id + ':' + e.target.id))",
+        );
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [0, 0, 255, 255], "closed: the cover");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(200, 150).id"), "cover");
+
+        // The modal dialog is centered in the viewport above the cover, at
+        // full opacity and unclipped; the rest is under its backdrop
+        // (rgba(0, 0, 0, 0.1) over blue).
+        eval_value(&mut h, "d.showModal()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 165, 170), [255, 0, 0, 255], "dialog (away from its text)");
+        assert_eq!(pixel(&img, 248, 178), [255, 0, 0, 255], "dialog bottom-right corner");
+        assert_eq!(pixel(&img, 151, 121), [255, 0, 0, 255], "dialog top-left corner");
+        assert_eq!(pixel(&img, 148, 150), [0, 0, 229, 255], "backdrop left of the dialog");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 229, 255], "backdrop");
+        assert_eq!(
+            eval_value(
+                &mut h,
+                "[document.elementFromPoint(200, 150).id, document.elementFromPoint(10, 10).id, JSON.stringify(d.getBoundingClientRect())]"
+            ),
+            json!(["in", "d", r#"{"x":150,"y":120,"width":100,"height":60,"top":120,"right":250,"bottom":180,"left":150}"#])
+        );
+        // A click reaches the dialog's button; one outside lands on the
+        // backdrop (the dialog), never on the inert cover.
+        click(&mut h, 200, 150);
+        click(&mut h, 10, 10);
+        assert_eq!(eval_value(&mut h, "clicks.join()"), "in:in,d:in,d:d");
+
+        // An author `::backdrop`.
+        eval_value(&mut h, "document.head.insertAdjacentHTML('beforeend', '<style>#d::backdrop { background: rgb(0, 255, 0) }</style>')");
+        assert_eq!(pixel(&shot(&mut h), 10, 10), [0, 255, 0, 255], "author backdrop");
+
+        // A popover shown later is above the dialog; its backdrop is
+        // transparent.
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [255, 255, 0, 255], "popover above the dialog");
+        assert_eq!(pixel(&img, 170, 150), [255, 0, 0, 255], "dialog around the popover");
+        assert_eq!(pixel(&img, 10, 10), [0, 255, 0, 255], "the popover's backdrop is transparent");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(170, 150).id"), "in");
+
+        // Hiding and closing put everything back where it was.
+        eval_value(&mut h, "p.hidePopover(); d.close()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [0, 0, 255, 255], "closed again: the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "no backdrop");
+
+        // A popover alone: above the cover, no backdrop color.
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [255, 255, 0, 255], "popover above the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "the cover, not dimmed");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(200, 150).id"), "p");
+    }
+
+    /// On a scrolled page the top layer stays fixed to the viewport, and a
+    /// popover shown inside a modal dialog paints above it by its own rank.
+    #[test]
+    fn top_layer_is_fixed_to_the_viewport_and_nests() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: rgb(0, 0, 255); }
+              #d { width: 100px; height: 60px; padding: 0; border: 0; background: rgb(255, 0, 0); }
+              #q { width: 20px; height: 20px; padding: 0; border: 0; margin: 0; top: 0; left: 0; background: rgb(0, 255, 0); }
+              #d::backdrop { background: rgb(255, 255, 255); }
+            </style>
+            <div style="height: 3000px"></div><dialog id="d"><div id="q" popover></div></dialog>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        eval_value(&mut h, "scrollTo(0, 1000); d.showModal(); q.showPopover()");
+        assert_eq!(eval_value(&mut h, "scrollY"), json!(1000));
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 165, 170), [255, 0, 0, 255], "dialog centered in the scrolled viewport");
+        assert_eq!(pixel(&img, 10, 290), [255, 255, 255, 255], "backdrop covers the viewport");
+        assert_eq!(pixel(&img, 5, 5), [0, 255, 0, 255], "the nested popover, above its dialog's backdrop");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(5, 5).id"), "q");
+        // Hidden, the popover is not painted where its dialog would put it.
+        eval_value(&mut h, "q.hidePopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 5, 5), [255, 255, 255, 255], "backdrop where the popover was");
+        // A full-page capture keeps the dialog on the viewport it was laid out in.
+        let r = h.page("Page.captureScreenshot", json!({"captureBeyondViewport": true}));
+        let full = png_of(&r["result"]["data"]);
+        assert!(full.height >= 3000, "{}", full.height);
+    }
+
+    /// A top-layer element is a stacking context whatever its style: an
+    /// author `position: absolute` popover (no z-index, opacity or
+    /// transform) keeps its z-indexed and fixed descendants, which paint
+    /// with it above the document, not in place under it.
+    #[test]
+    fn top_layer_element_keeps_its_z_indexed_and_fixed_descendants() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: #fff; }
+              #cover { position: fixed; inset: 0; z-index: 2147483647; background: rgb(0, 0, 255); }
+              #p { position: absolute; inset: auto; left: 50px; top: 50px; width: 100px; height: 100px;
+                   margin: 0; padding: 0; border: 0; overflow: visible; background: rgb(255, 0, 0); }
+              #z { position: relative; z-index: 1; width: 40px; height: 40px; background: rgb(0, 255, 0); }
+              #f { position: fixed; left: 300px; top: 200px; width: 20px; height: 20px; background: rgb(255, 255, 0); }
+            </style>
+            <div id="p" popover="manual"><div id="z"></div><div id="f"></div></div>
+            <div id="cover"></div>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 120, 120), [255, 0, 0, 255], "the popover above the cover");
+        assert_eq!(pixel(&img, 70, 70), [0, 255, 0, 255], "its z-indexed child above it");
+        assert_eq!(pixel(&img, 310, 210), [255, 255, 0, 255], "its fixed child above the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "the cover elsewhere");
+    }
+
+    /// The root element in the top layer (`<html popover>`) paints with its
+    /// own transform applied once, as in the document pass.
+    #[test]
+    fn root_element_in_the_top_layer_paints_its_transform_once() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><html popover="manual"><style>
+              html, html:popover-open { position: static; margin: 0; padding: 0; border: 0; width: auto; height: auto;
+                overflow: visible; inset: auto; background: rgb(0, 0, 255); transform: translateX(100px); }
+              body { margin: 0; }
+              #b { width: 50px; height: 50px; background: rgb(255, 0, 0); }
+            </style><div id="b"></div></html>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        // (Hidden, the root popover is `display: none`.)
+        eval_value(&mut h, "document.documentElement.showPopover()");
+        assert_eq!(eval_value(&mut h, "document.documentElement.matches(':popover-open')"), json!(true));
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 125, 25), [255, 0, 0, 255], "shown: still translated once");
+        assert_ne!(pixel(&img, 225, 25), [255, 0, 0, 255], "not translated twice");
     }
 
     #[test]
@@ -7919,9 +8462,16 @@ fn network_get_request_post_data_returns_the_body() {
     server.join().unwrap();
 }
 
+/// `LP.geometryStats` resets process-wide counters (layouts, layoutMs,
+/// resolveMs, ...): tests that call it take this lock, so one test's reset
+/// does not land between another's two calls.
+#[cfg(feature = "render")]
+static GEOMETRY_STATS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(feature = "render")]
 #[test]
 fn performance_get_metrics_reports_chrome_names() {
+    let _stats = GEOMETRY_STATS.lock().unwrap_or_else(|e| e.into_inner());
     let mut h = Harness::new();
     load_html(&mut h, "<!doctype html><div><p>a</p><p>b</p></div>");
     h.page("Performance.enable", json!({}));
@@ -7948,6 +8498,30 @@ fn performance_get_metrics_reports_chrome_names() {
     }
     assert!(metrics["Nodes"] >= 5.0 && metrics["Frames"] == 1.0, "{r}");
     assert!(metrics["LayoutCount"] >= 1.0, "geometryStats ({stats}) did not reset it: {r}");
+}
+
+#[cfg(feature = "render")]
+#[test]
+fn geometry_stats_time_layouts_once_requested() {
+    let _stats = GEOMETRY_STATS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><div><p>a</p><p>b</p></div>");
+    // The first call turns the timers on (and resets the counters).
+    h.page("LP.geometryStats", json!({}));
+    eval_value(
+        &mut h,
+        "for (const w of [10, 20, 30]) { document.querySelector('p').style.width = w + 'px'; \
+         document.querySelector('p').getBoundingClientRect(); } 0",
+    );
+    let r = h.page("LP.geometryStats", json!({}));
+    let stats = &r["result"];
+    assert!(stats["layouts"].as_u64().unwrap_or(0) >= 3, "{r}");
+    assert!(stats["layoutMs"].as_f64().unwrap_or(0.0) > 0.0, "layout time reads zero: {r}");
+    // The sync's split: settle may already have resolved (resolveMs then
+    // reads ~0), so the three together are what must be non-zero.
+    let sync_ms: f64 = ["mirrorMs", "settleMs", "resolveMs"].iter().map(|k| stats[k].as_f64().unwrap_or(0.0)).sum();
+    assert!(sync_ms > 0.0, "sync time reads zero: {r}");
+    assert!(stats["blitzCumulative"]["phasesMs"]["layout"].as_f64().unwrap_or(0.0) > 0.0, "{r}");
 }
 
 #[test]
@@ -8122,4 +8696,122 @@ fn dom_set_file_input_files_reads_paths_and_fires_input_and_change() {
     assert_eq!(r["result"], json!({}), "{r}");
     assert_eq!(eval_value(&mut h, "f.files.length"), 0, "no files clears the selection");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- Review (perf/realms): every protocol path as the first entry of a deferred world ----
+
+#[test]
+fn review_each_protocol_path_can_be_the_first_entry_of_a_deferred_world() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    load_html(&mut h, "<!doctype html><p id=p>para</p><iframe srcdoc='<span>in</span>'></iframe>");
+    let frame = h.frame_id.clone();
+    let mut n = 0;
+    fn make(h: &mut Harness, frame: &str, n: &mut u32) -> Value {
+        *n += 1;
+        let r = h.page("Page.createIsolatedWorld", json!({"frameId": frame, "worldName": format!("fresh{n}")}));
+        r["result"]["executionContextId"].clone()
+    }
+    macro_rules! fresh {
+        ($h:expr) => {
+            make($h, &frame, &mut n)
+        };
+    }
+    // Runtime.callFunctionOn with an executionContextId.
+    let id = fresh!(&mut h);
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"functionDeclaration": "function() { return document.getElementById('p').textContent + window.length }", "executionContextId": id, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "para1", "{r}");
+    // Runtime.evaluate returning the global, then Runtime.getProperties on it.
+    let id = fresh!(&mut h);
+    let r = h.page("Runtime.evaluate", json!({"expression": "window", "contextId": id}));
+    let object = r["result"]["result"]["objectId"].clone();
+    assert!(object.is_string(), "{r}");
+    let props = h.page("Runtime.getProperties", json!({"objectId": object, "ownProperties": true}));
+    let names: Vec<&str> =
+        props["result"]["result"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
+    assert!(names.contains(&"document") && names.contains(&"Node") && names.contains(&"0"), "{names:?}");
+    // DOM.resolveNode into a world that was never entered.
+    let object = h.page("Runtime.evaluate", json!({"expression": "document.getElementById('p')"}))["result"]["result"]["objectId"].clone();
+    let backend = h.page("DOM.describeNode", json!({"objectId": object}))["result"]["node"]["backendNodeId"].clone();
+    let id = fresh!(&mut h);
+    let resolved = h.page("DOM.resolveNode", json!({"backendNodeId": backend, "executionContextId": id}));
+    let adopted = resolved["result"]["object"]["objectId"].clone();
+    assert!(adopted.is_string(), "{resolved}");
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"objectId": adopted, "functionDeclaration": "function() { return this.textContent + (this.ownerDocument === document) }", "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "paratrue", "{r}");
+    // Console messages carry the world's context id.
+    let id = fresh!(&mut h);
+    let events = h.page_with_events("Runtime.evaluate", json!({"expression": "console.log('from-world'); 1", "contextId": id}));
+    let mut events = events;
+    if !events.iter().any(|m| m["method"] == "Runtime.consoleAPICalled") {
+        events.extend(h.run_for(100));
+    }
+    let console = events.iter().find(|m| m["method"] == "Runtime.consoleAPICalled").expect("consoleAPICalled");
+    assert_eq!(console["params"]["executionContextId"], id, "{console}");
+    // Runtime.addBinding naming a world that exists but was never entered.
+    let id = fresh!(&mut h);
+    let name = format!("fresh{n}");
+    let r = h.page("Runtime.addBinding", json!({"name": "hostCall", "executionContextName": name}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    let events = h.page_with_events("Runtime.evaluate", json!({"expression": "hostCall('w'); typeof hostCall", "contextId": id, "returnByValue": true}));
+    let mut events = events;
+    if !events.iter().any(|m| m["method"] == "Runtime.bindingCalled") {
+        events.extend(h.run_for(100));
+    }
+    let called = events.iter().find(|m| m["method"] == "Runtime.bindingCalled").expect("bindingCalled");
+    assert_eq!(called["params"]["executionContextId"], id, "{called}");
+    assert_eq!(called["params"]["payload"], "w");
+    assert_eq!(eval_value(&mut h, "typeof hostCall"), "undefined", "not in the main world");
+    // A second session's Runtime.enable announces the deferred worlds without making them.
+    let id = fresh!(&mut h);
+    let second = h.attach_second_session();
+    let events = {
+        let sent = h.send(Some(&second), "Runtime.enable", json!({}));
+        h.until_response(sent)
+    };
+    let announced: Vec<&Value> = events
+        .iter()
+        .filter(|m| m["method"] == "Runtime.executionContextCreated")
+        .map(|m| &m["params"]["context"]["id"])
+        .collect();
+    assert!(announced.contains(&&id), "{events:#?}");
+    let r = h.call(Some(&second), "Runtime.evaluate", json!({"expression": "location.href.startsWith('data:') || location.href", "contextId": id, "returnByValue": true}));
+    assert!(r["result"].get("exceptionDetails").is_none(), "{r}");
+    // Navigating away destroys never-entered worlds as it does entered ones.
+    let id = fresh!(&mut h);
+    let events = h.page_with_events("Page.navigate", json!({ "url": html_url("<p>next</p>") }));
+    let mut events = events;
+    events.extend(h.run_for(100));
+    let r = h.page("Runtime.evaluate", json!({"expression": "1", "contextId": id}));
+    assert!(r.get("error").is_some(), "the old document's world is gone: {r}");
+}
+
+#[test]
+fn review_closing_a_target_while_its_deferred_world_waits() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source": "", "worldName": "__pw_utility"}));
+    load_html(&mut h, "<!doctype html><p>x</p>");
+    let frame = h.frame_id.clone();
+    let id = h.page("Page.createIsolatedWorld", json!({"frameId": frame, "worldName": "__pw_utility"}))["result"]["executionContextId"].clone();
+    // A pending evaluation in the world (its first entry), then the close.
+    let session = h.session.clone();
+    let pending = h.send(Some(&session), "Runtime.evaluate", json!({"expression": "new Promise(() => {})", "awaitPromise": true, "contextId": id}));
+    h.run_for(50);
+    let target = h.frame_id.clone();
+    let r = h.call(None, "Target.closeTarget", json!({"targetId": target}));
+    assert_eq!(r["result"]["success"], true, "{r}");
+    let seen = h.until_reply(pending, 1000);
+    // Whether the closed session still answers is the base's behaviour (not
+    // changed here); what matters is that nothing waits on the world.
+    if let Some(reply) = seen.iter().find(|m| m["id"] == pending) {
+        assert!(reply.get("error").is_some() || reply["result"].get("exceptionDetails").is_some(), "{reply}");
+    }
+    assert_eq!(h.pending_replies(), 0, "no reply is left waiting on the closed page's world");
 }

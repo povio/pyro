@@ -1,0 +1,917 @@
+diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/src/debug_overlay.rs
+--- a/packages/blitz-paint/src/debug_overlay.rs
++++ b/packages/blitz-paint/src/debug_overlay.rs
+@@ -64,7 +64,7 @@
+     while let Some(parent_id) = node.containing_block() {
+         let child_is_fixed = node.taffy_position() == taffy::Position::Fixed;
+         node = &dom.as_ref().tree()[parent_id];
+-        fixed_to_viewport = child_is_fixed && node.containing_block().is_none();
++        fixed_to_viewport = child_is_fixed && node.is_root_element();
+         let taffy::Point { x, y } = node.final_layout().location;
+         abs_x += x;
+         abs_y += y;
+diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
+--- a/packages/blitz-paint/src/lib.rs
++++ b/packages/blitz-paint/src/lib.rs
+@@ -50,6 +50,56 @@
+     x_offset: u32,
+     y_offset: u32,
+ ) {
++    paint_scene_with(scene, doc, scale, width, height, x_offset, y_offset, true)
++}
++
++/// [`paint_scene`], with background colors and images left out when
++/// `backgrounds` is false (printing without `printBackground`).
++#[allow(clippy::too_many_arguments)]
++pub fn paint_scene_with(
++    scene: &mut impl PaintScene,
++    doc: &mut BaseDocument,
++    scale: f64,
++    width: u32,
++    height: u32,
++    x_offset: u32,
++    y_offset: u32,
++    backgrounds: bool,
++) {
++    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, false)
++}
++
++/// [`paint_scene_with`] for print: text at its layout-unit x.
++#[allow(clippy::too_many_arguments)]
++pub fn paint_scene_for_print(
++    scene: &mut impl PaintScene,
++    doc: &mut BaseDocument,
++    scale: f64,
++    width: u32,
++    height: u32,
++    x_offset: u32,
++    y_offset: u32,
++    backgrounds: bool,
++) {
++    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true)
++}
++
++#[allow(clippy::too_many_arguments)]
++fn paint_scene_inner(
++    scene: &mut impl PaintScene,
++    doc: &mut BaseDocument,
++    scale: f64,
++    width: u32,
++    height: u32,
++    x_offset: u32,
++    y_offset: u32,
++    backgrounds: bool,
++    fractional_text_x: bool,
++) {
++    // Painting walks `paint_children` and the stacking contexts, which a
++    // resolve only marks stale.
++    doc.ensure_paint_tree();
++
+     // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
+     // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
+     //
+@@ -59,7 +109,7 @@
+     #[cfg(feature = "custom-widget")]
+     build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
+ 
+-    let generator = BlitzDomPainter::new(
++    let mut generator = BlitzDomPainter::new(
+         doc,
+         scale,
+         width,
+@@ -68,6 +118,8 @@
+         y_offset as f64,
+         &custom_widget_scenes,
+     );
++    generator.backgrounds = backgrounds;
++    generator.fractional_text_x = fractional_text_x;
+     generator.paint_scene(scene);
+ 
+     // println!(
+@@ -78,6 +130,121 @@
+     // );
+ }
+ 
++/// One glyph run [`paint_scene_recording_text`] drew.
++#[derive(Clone, Debug)]
++pub struct TextRun {
++    /// The node whose style the run has (the innermost element around the text).
++    pub node: NodeId,
++    /// The number of glyphs and their [`glyphs_fingerprint`] as drawn: identifies the run's
++    /// `draw_glyphs` call.
++    pub glyphs: usize,
++    pub fingerprint: u64,
++    /// The source text the run shows and each glyph's byte range in it (a ligature's range
++    /// spans all the characters it stands for). Empty when the source is unknown.
++    pub text: String,
++    pub glyph_text: Vec<std::ops::Range<u32>>,
++    /// The run's content area (ascent to descent), in the scene's coordinates.
++    pub bounds: kurbo::Rect,
++}
++
++impl TextRun {
++    pub(crate) fn new(
++        run: &parley::GlyphRun<'_, blitz_dom::node::TextBrush>,
++        source: Option<&str>,
++        transform: kurbo::Affine,
++    ) -> TextRun {
++        let mut count = 0;
++        let fingerprint = glyphs_fingerprint(run.positioned_glyphs().map(|g| {
++            count += 1;
++            (g.id, g.x, g.y)
++        }));
++        let mut text = String::new();
++        let mut glyph_text = Vec::new();
++        if let Some(source) = source {
++            let atoms: Vec<_> = run.atom_texts().collect();
++            let start = atoms.iter().map(|(r, _)| r.start).min().unwrap_or(0);
++            let end = atoms.iter().map(|(r, _)| r.end).max().unwrap_or(0);
++            if let Some(t) = source.get(start..end) {
++                text.push_str(t);
++                for (r, n) in atoms {
++                    let r = (r.start - start) as u32..(r.end - start) as u32;
++                    glyph_text.extend(std::iter::repeat_n(r, n));
++                }
++            }
++            if glyph_text.len() != count {
++                text.clear();
++                glyph_text.clear();
++            }
++        }
++        let metrics = run.run().font_metrics();
++        let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
++        let rect = kurbo::Rect::new(
++            x,
++            baseline - metrics.ascent as f64,
++            x + run.advance() as f64,
++            baseline + metrics.descent as f64,
++        );
++        TextRun {
++            node: run.style().brush.id,
++            glyphs: count,
++            fingerprint,
++            text,
++            glyph_text,
++            bounds: transform.transform_rect_bbox(rect),
++        }
++    }
++}
++
++/// A hash of glyphs as drawn (id, x, y): [`TextRun::fingerprint`] of a run's glyphs. Two runs
++/// that start alike (table cells of dates, amounts) tell apart by the rest of their glyphs.
++pub fn glyphs_fingerprint(glyphs: impl IntoIterator<Item = (u32, f32, f32)>) -> u64 {
++    // FxHash's step: a run is only compared with the next recorded one.
++    let mut hash = 0u64;
++    for (id, x, y) in glyphs {
++        for word in [u64::from(id), (u64::from(x.to_bits()) << 32) | u64::from(y.to_bits())] {
++            hash = (hash.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
++        }
++    }
++    hash
++}
++
++/// [`paint_scene_with`], also returning the glyph runs of the document's text in the order
++/// they were drawn (PDF output maps them back to their text and elements).
++#[allow(clippy::too_many_arguments)]
++pub fn paint_scene_recording_text(
++    scene: &mut impl PaintScene,
++    doc: &mut BaseDocument,
++    scale: f64,
++    width: u32,
++    height: u32,
++    x_offset: u32,
++    y_offset: u32,
++    backgrounds: bool,
++) -> Vec<TextRun> {
++    // Painting walks `paint_children` and the stacking contexts, which a
++    // resolve only marks stale.
++    doc.ensure_paint_tree();
++    #[allow(unused_mut)]
++    let mut custom_widget_scenes: CustomWidgetSceneMap = HashMap::new();
++    #[cfg(feature = "custom-widget")]
++    build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
++    let mut generator = BlitzDomPainter::new(
++        doc,
++        scale,
++        width,
++        height,
++        x_offset as f64,
++        y_offset as f64,
++        &custom_widget_scenes,
++    );
++    generator.backgrounds = backgrounds;
++    generator.fractional_text_x = true;
++    generator.draw_text_context.borrow_mut().runs = Some(Vec::new());
++    generator.paint_scene(scene);
++    let runs = generator.draw_text_context.borrow_mut().runs.take();
++    runs.unwrap_or_default()
++}
++
+ #[cfg(feature = "custom-widget")]
+ fn build_custom_widget_scenes(
+     custom_widget_scenes: &mut CustomWidgetSceneMap,
+diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/src/render/border.rs
+--- a/packages/blitz-paint/src/render/border.rs
++++ b/packages/blitz-paint/src/render/border.rs
+@@ -148,6 +148,12 @@
+ impl ElementCx<'_, '_> {
+     /// Draw all borders for a node
+     pub(crate) fn draw_border(&self, scene: &mut impl PaintScene) {
++        // A table without uniform collapsed borders draws them all (`draw_collapsed_edges`).
++        if self.node.layout_data().collapsed_border.is_some()
++            || matches!(&self.element.special_data, SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some())
++        {
++            return;
++        }
+         let style = &*self.style;
+         let border = style.get_border();
+         let current_color = style.clone_color();
+@@ -244,7 +250,11 @@
+             };
+             let color = color.resolve_to_absolute(&current_color).as_srgb_color();
+ 
+-            if color.components[3] <= 0.0 {
++            // A zero-width edge (Tailwind's preflight sets `border: 0 solid` on
++            // every element) covers nothing, but its degenerate polygon is still
++            // painted as a hairline by PDF rasterizers, which fill every pixel a
++            // shape touches.
++            if color.components[3] <= 0.0 || self.edge_width(edge) <= 0.0 {
+                 continue;
+             }
+ 
+@@ -522,6 +532,10 @@
+         let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
+             return;
+         };
++        if let Some(edges) = &table.collapsed_edges {
++            self.draw_collapsed_edges(scene, edges, grid_info);
++            return;
++        }
+         let Some(border_style) = table.border_style.as_deref() else {
+             return;
+         };
+@@ -589,6 +603,74 @@
+         }
+     }
+ 
++    /// The winning borders of a table without uniform ones, centered on the grid lines. Segments of one
++    /// width and color are drawn as one rectangle, so that they have no seams.
++    fn draw_collapsed_edges(
++        &self,
++        scene: &mut impl PaintScene,
++        edges: &blitz_dom::CollapsedEdges,
++        grid_info: &taffy::DetailedGridInfo<style::Atom>,
++    ) {
++        let cols = PhysicalTracks::from_tracks(&grid_info.columns);
++        let rows = PhysicalTracks::from_tracks(&grid_info.rows);
++        let xs: Vec<f64> = line_positions(&cols);
++        let ys: Vec<f64> = line_positions(&rows);
++        if xs.len() != edges.columns + 1 || ys.len() != edges.rows + 1 {
++            return;
++        }
++        let position = self.context.dom.physical_unrounded_geometry(self.node.id).0;
++        let (ax, ay) = (position.x as f64, position.y as f64);
++        // A rule is snapped to whole pixels of the page, as Chromium paints it: it starts at its centered
++        // position, rounded, and is its width wide.
++        let snap_x = |x: f64| (ax + x).round() - ax.round();
++        let snap_y = |y: f64| (ay + y).round() - ay.round();
++        let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64, color: style::color::AbsoluteColor| {
++            let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
++            scene.fill(Fill::NonZero, self.transform, color.as_srgb_color(), None, &shape);
++        };
++        // A rule starts and ends on the outer sides of the rules across it.
++        for line in 0..=edges.rows {
++            let mut c = 0;
++            while c < edges.columns {
++                let edge = *edges.horizontal_at(line, c);
++                let mut end = c + 1;
++                while end < edges.columns && same_edge(edges.horizontal_at(line, end), &edge) {
++                    end += 1;
++                }
++                if edge.width > 0.0 {
++                    let width = edge.width as f64;
++                    let across = |col: usize| {
++                        let up = line.checked_sub(1).map_or(0.0, |r| edges.vertical_at(r, col).width);
++                        let down = (line < edges.rows).then(|| edges.vertical_at(line, col).width).unwrap_or(0.0);
++                        up.max(down) as f64
++                    };
++                    let (a, b) = (across(c), across(end));
++                    let x0 = snap_x(xs[c] - a / 2.0);
++                    let x1 = snap_x(xs[end] - b / 2.0) + b;
++                    let y0 = snap_y(ys[line] - width / 2.0);
++                    fill(x0, y0, x1, y0 + width, edge.color);
++                }
++                c = end;
++            }
++        }
++        for line in 0..=edges.columns {
++            let mut r = 0;
++            while r < edges.rows {
++                let edge = *edges.vertical_at(r, line);
++                let mut end = r + 1;
++                while end < edges.rows && same_edge(edges.vertical_at(end, line), &edge) {
++                    end += 1;
++                }
++                if edge.width > 0.0 {
++                    let width = edge.width as f64;
++                    let x0 = snap_x(xs[line] - width / 2.0);
++                    fill(x0, snap_y(ys[r]), x0 + width, snap_y(ys[end]), edge.color);
++                }
++                r = end;
++            }
++        }
++    }
++
+     /// ❌ dotted - Defines a dotted border
+     /// ❌ dashed - Defines a dashed border
+     /// ✅ solid - Defines a solid border
+@@ -629,4 +711,17 @@
+ 
+         scene.fill(Fill::NonZero, self.transform, color, None, &path);
+     }
++}
++
++fn same_edge(a: &blitz_dom::CollapsedEdge, b: &blitz_dom::CollapsedEdge) -> bool {
++    a.width == b.width && a.color == b.color
++}
++
++/// The grid lines around `tracks`, in physical order.
++fn line_positions(tracks: &PhysicalTracks<'_>) -> Vec<f64> {
++    let mut lines: Vec<f64> = tracks.iter().map(|track| track.start as f64).collect();
++    if let Some(last) = tracks.iter().last() {
++        lines.push(last.end as f64);
++    }
++    lines
+ }
+diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/render.rs
+--- a/packages/blitz-paint/src/render.rs
++++ b/packages/blitz-paint/src/render.rs
+@@ -28,6 +28,7 @@
+ use blitz_dom::{BaseDocument, ElementData, Node, NodeId, local_name};
+ use blitz_traits::devtools::DevtoolSettings;
+ 
++use style::logical_geometry::WritingMode;
+ use style::values::computed::{BorderCornerRadius, ColorOrAuto};
+ use style::{
+     dom::TElement,
+@@ -140,6 +141,11 @@
+     pub(crate) draw_text_context: RefCell<DrawTextContext>,
+     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
+     pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
++    /// Paint background colors and images (false: printing without them).
++    pub backgrounds: bool,
++    /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
++    /// inline axis). Screenshots keep the box's x.
++    pub fractional_text_x: bool,
+ 
+     // Pre-computed `Scene`s for each CustomWidget
+     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
+@@ -186,6 +192,8 @@
+             layer_manager,
+             draw_text_context: RefCell::new(DrawTextContext::default()),
+             selection_ranges,
++            backgrounds: true,
++            fractional_text_x: false,
+             custom_widget_scenes,
+         }
+     }
+@@ -243,7 +251,7 @@
+             }
+         };
+ 
+-        if let Some(bg_color) = background_color {
++        if let Some(bg_color) = background_color.filter(|_| self.backgrounds) {
+             let bg_color = bg_color.as_srgb_color();
+             let rect = Rect::from_origin_size(
+                 (self.initial_x, self.initial_y),
+@@ -463,8 +471,10 @@
+                 || element.and_then(|e| e.sub_doc_data()).is_some()
+                 || element.and_then(|e| e.text_input_data()).is_some()
+                 || contain_paint
+-                || !matches!(box_style.overflow_x, Overflow::Visible)
+-                || !matches!(box_style.overflow_y, Overflow::Visible))
++                // lightningpanda: `overflow` on `body` is the viewport's, not body's.
++                || ((!matches!(box_style.overflow_x, Overflow::Visible)
++                    || !matches!(box_style.overflow_y, Overflow::Visible))
++                    && !self.dom.as_ref().body_overflow_goes_to_viewport(node.id)))
+     }
+ 
+     fn draw_text_mask(
+@@ -524,7 +534,9 @@
+                         brush_override: Some(Color::BLACK),
+                     },
+                     node.id,
++                    None,
+                     &mut self.draw_text_context.borrow_mut(),
++                    None,
+                 );
+             }
+         }
+@@ -798,10 +810,14 @@
+                     backdrop_filter,
+                     |scene| {
+                         if paints_own_box {
+-                            cx.draw_background(scene);
++                            if cx.context.backgrounds {
++                                cx.draw_background(scene);
++                            }
+                             cx.draw_inset_box_shadow(scene);
+                         }
+-                        cx.draw_table_row_backgrounds(scene);
++                        if cx.context.backgrounds {
++                            cx.draw_table_row_backgrounds(scene);
++                        }
+                         cx.draw_table_borders(scene);
+                         if paints_own_box {
+                             cx.draw_border(scene);
+@@ -879,9 +895,11 @@
+         let node = &self.dom.as_ref().tree()[node_id];
+ 
+         match &node.data {
+-            NodeData::Element(_) | NodeData::AnonymousBlock(_) => {
++            // lightningpanda: once per tree level; a tree of any depth paints on a stack grown on
++            // demand (blitz-dom `util::ensure_stack`).
++            NodeData::Element(_) | NodeData::AnonymousBlock(_) => blitz_dom::util::ensure_stack(|| {
+                 self.render_element(scene, node_id, parent_style_transform, clip_rect)
+-            }
++            }),
+             NodeData::Text(TextNodeData { .. }) => {
+                 // Text nodes should never be rendered directly
+                 // (they should always be rendered as part of an inline layout)
+@@ -1131,6 +1149,11 @@
+                     panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
+                 });
+ 
++            if let Some(block_lr) = self.node.vertical_block_axis() {
++                self.draw_vertical_inline_layout(scene, text_layout, pos, block_lr);
++                return;
++            }
++
+             // Text keeps its unrounded position; only box edges are snapped to whole pixels.
+             let subpixel_offset = text_layout.content_box_subpixel_offset;
+             let pos = Point {
+@@ -1142,20 +1165,23 @@
+ 
+             // Render inline element backgrounds (e.g. `<span style="background: ...">`)
+             // behind the text and selection highlight.
+-            crate::text::draw_inline_backgrounds(
+-                scene,
+-                text_layout.layout.lines(),
+-                self.context.dom,
+-                transform,
+-                self.node.id,
+-            );
++            if self.context.backgrounds {
++                crate::text::draw_inline_backgrounds(
++                    scene,
++                    text_layout.layout.lines(),
++                    self.context.dom,
++                    transform,
++                    self.node.id,
++                    None,
++                );
++            }
+ 
+             // Render text selection highlight (if any) using cached selection ranges
+             if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
+                 crate::text::draw_text_selection(
+                     scene,
+                     &text_layout.layout,
+-                    transform,
++                    |_| transform,
+                     sel_start,
+                     sel_end,
+                 );
+@@ -1163,6 +1189,7 @@
+ 
+             // Render text
+             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
++            draw_text_context.text_shift = self.fractional_text_x_of_node();
+             crate::text::stroke_text(
+                 scene,
+                 text_layout.layout.lines(),
+@@ -1173,7 +1200,109 @@
+                     brush_override: None,
+                 },
+                 self.node.id,
++                Some(&text_layout.text),
+                 &mut draw_text_context,
++                None,
++            );
++            draw_text_context.text_shift = 0.0;
++        }
++    }
++
++    /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
++    fn fractional_text_x_of_node(&self) -> f64 {
++        if !self.context.fractional_text_x {
++            return 0.0;
++        }
++        let (position, layout) = self.context.dom.physical_unrounded_geometry(self.node.id);
++        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
++        let painted = self.node.final_layout();
++        let painted = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
++        ((start * 64.0).floor() / 64.0 - painted) * self.scale
++    }
++
++    /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the
++    /// inline axis and y the block axis, running from the content box's top and its block-start edge.
++    /// Each line is drawn rotated a quarter turn clockwise (`vertical-*`'s sideways glyphs have their
++    /// tops to the right), which takes y to -x. In `vertical-rl` that also runs the lines the right
++    /// way. In `vertical-lr` they run the other way, so a line's slot is found first and the line is
++    /// rotated within it.
++    fn draw_vertical_inline_layout(
++        &self,
++        scene: &mut impl PaintScene,
++        text_layout: &blitz_dom::node::TextLayout,
++        pos: Point,
++        block_lr: bool,
++    ) {
++        let block_offset = text_layout.block_offset as f64;
++        let layout = self.node.final_layout();
++        let content_width = (layout.size.width
++            - layout.border.left
++            - layout.border.right
++            - layout.padding.left
++            - layout.padding.right) as f64;
++        let origin = if block_lr { pos.x + block_offset } else { pos.x + content_width - block_offset };
++        // Boxes are painted at whole pixels. Chromium rounds text only in the block axis, so a
++        // line starts where it was laid out in the inline axis.
++        let inline_start = self.context.dom.physical_unrounded_geometry(self.node.id).0.y as f64;
++        let top = pos.y + inline_start - inline_start.round();
++        let line_transform = |index: usize| {
++            let flip = if block_lr {
++                text_layout.layout.get(index).map_or(0.0, |line| {
++                    let metrics = line.metrics();
++                    (metrics.block_min_coord + metrics.block_max_coord) as f64
++                })
++            } else {
++                0.0
++            };
++            self.transform
++                * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
++        };
++
++        let wm = self.style.writing_mode;
++        let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
++        let all_upright = wm.contains(WritingMode::UPRIGHT);
++        let vertical = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
++            Some(crate::text::VerticalLine::new(line, sideways, all_upright))
++        };
++
++        if self.context.backgrounds {
++            for (index, line) in text_layout.layout.lines().enumerate() {
++                let vertical = vertical(&line);
++                crate::text::draw_inline_backgrounds(
++                    scene,
++                    std::iter::once(line),
++                    self.context.dom,
++                    line_transform(index),
++                    self.node.id,
++                    vertical,
++                );
++            }
++        }
++        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
++            crate::text::draw_text_selection(
++                scene,
++                &text_layout.layout,
++                line_transform,
++                sel_start,
++                sel_end,
++            );
++        }
++        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
++        for (index, line) in text_layout.layout.lines().enumerate() {
++            let vertical = vertical(&line);
++            crate::text::stroke_text(
++                scene,
++                std::iter::once(line),
++                self.context.dom,
++                line_transform(index),
++                TextPaintOptions {
++                    scale: self.scale,
++                    brush_override: None,
++                },
++                self.node.id,
++                Some(&text_layout.text),
++                &mut draw_text_context,
++                vertical,
+             );
+         }
+     }
+@@ -1243,7 +1372,9 @@
+                     brush_override: None,
+                 },
+                 self.node.id,
++                None,
+                 &mut draw_text_context,
++                None,
+             );
+         }
+     }
+@@ -1302,7 +1433,9 @@
+                     brush_override: None,
+                 },
+                 self.node.id,
++                None,
+                 &mut draw_text_context,
++                None,
+             );
+         }
+     }
+diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
+--- a/packages/blitz-paint/src/text.rs
++++ b/packages/blitz-paint/src/text.rs
+@@ -14,6 +14,96 @@
+ use crate::color::{Color, ToColorColor as _};
+ use crate::{FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
+ 
++/// How the runs of one line of a vertical writing mode sit in it. The line is drawn turned a quarter
++/// clockwise (see `ElementCx::draw_vertical_inline_layout`), so a run's block offset moves it across the line.
++#[derive(Clone, Copy)]
++pub(crate) struct VerticalLine {
++    /// The line's central baseline, which `text-orientation: mixed` and `upright` align runs to; `sideways`
++    /// keeps the alphabetic baseline.
++    central: Option<f32>,
++    /// `text-orientation: upright`: every glyph stands upright.
++    all_upright: bool,
++}
++
++impl VerticalLine {
++    pub(crate) fn new(line: &Line<'_, TextBrush>, sideways: bool, all_upright: bool) -> Self {
++        // A fragment's box is its whole-pixel ascent and descent, around the middle of which the
++        // tallest fragment in the line (the one that sets its height) has the central baseline.
++        let central = (!sideways)
++            .then(|| {
++                line.items()
++                    .filter_map(|item| match item {
++                        PositionedLayoutItem::GlyphRun(run) => Some(run),
++                        _ => None,
++                    })
++                    .max_by_key(|run| {
++                        let metrics = run.run().font_metrics();
++                        (metrics.ascent.round() + metrics.descent.round()) as i64
++                    })
++                    .map(|run| {
++                        let metrics = run.run().font_metrics();
++                        run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
++                    })
++            })
++            .flatten();
++        Self { central, all_upright }
++    }
++
++    /// Moves a run's fragment box from the alphabetic baseline to the central one.
++    fn fragment_shift(self, run: &parley::GlyphRun<'_, TextBrush>) -> Affine {
++        let Some(central) = self.central else {
++            return Affine::IDENTITY;
++        };
++        let metrics = run.run().font_metrics();
++        let at = run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0;
++        Affine::translate((0.0, (central - at) as f64))
++    }
++
++    /// Where a run's glyphs go: the shift of the run, and for one standing upright each glyph's
++    /// transform. An upright glyph is turned back around the middle of its em box. Its advance is the one shaped horizontally: right for the full-width glyphs of CJK text,
++    /// not for Latin (which in Chromium advances by the font's height), and glyphs have no `vert` forms.
++    fn run_placement(
++        self,
++        run: &parley::GlyphRun<'_, TextBrush>,
++        source: Option<&str>,
++    ) -> (Affine, Option<Affine>) {
++        let Some(central) = self.central else {
++            return (Affine::IDENTITY, None);
++        };
++        let metrics = run.run().font_metrics();
++        let upright = self.all_upright
++            || source
++                .and_then(|text| text.get(run.run().text_range())?.chars().next())
++                .is_some_and(is_upright_char);
++        if !upright {
++            return (self.fragment_shift(run), None);
++        }
++        let em = run.run().font_size();
++        let height = (metrics.ascent + metrics.descent).max(1.0);
++        let ascent = (em * metrics.ascent / height) as f64;
++        (
++            Affine::translate((0.0, (central + em / 2.0 - run.baseline()) as f64)),
++            Some(Affine::new([0.0, -1.0, 1.0, 0.0, ascent, 0.0])),
++        )
++    }
++}
++
++/// Whether `text-orientation: mixed` stands a character upright (UTR #50's `Vertical_Orientation`
++/// other than R, by block).
++fn is_upright_char(c: char) -> bool {
++    matches!(c as u32,
++        0x1100..=0x11FF
++        | 0x2E80..=0x4DBF
++        | 0x4E00..=0xA4CF
++        | 0xAC00..=0xD7FF
++        | 0xF900..=0xFAFF
++        | 0xFE30..=0xFE4F
++        | 0xFF00..=0xFF60
++        | 0xFFE0..=0xFFE6
++        | 0x1F000..=0x1FAFF
++        | 0x20000..=0x3FFFF)
++}
++
+ /// Draw the backgrounds of inline elements (e.g. `<span style="background: ...">`).
+ ///
+ /// Each glyph run carries the node id of the innermost inline element it belongs to
+@@ -29,30 +119,59 @@
+     doc: &BaseDocument,
+     transform: Affine,
+     inline_root_id: NodeId,
++    vertical: Option<VerticalLine>,
+ ) {
+     for line in lines {
+         for item in line.items() {
+             let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                 continue;
+             };
++            let transform = match vertical {
++                Some(vertical) => transform * vertical.fragment_shift(&glyph_run),
++                None => transform,
++            };
+ 
+             let node_id = glyph_run.style().brush.id;
+             if node_id == inline_root_id {
+                 continue;
+             }
+ 
+-            let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
++            // Text brushes point at the innermost inline. Its transparent
++            // background must not hide backgrounds on enclosing inline boxes.
++            let mut backgrounds = Vec::new();
++            let mut current = Some(node_id);
++            while let Some(id) = current {
++                if id == inline_root_id {
++                    break;
++                }
++                let Some(node) = doc.get_node(id) else {
++                    break;
++                };
++                if let Some(styles) = node.primary_styles() {
++                    let display = styles.clone_display();
++                    if display.is_contents() {
++                        current = node.parent;
++                        continue;
++                    }
++                    // Anonymous inline roots are not in the DOM parent chain.
++                    // Stop at the first block/atomic box instead of repainting it.
++                    if !display.is_inline_flow() {
++                        break;
++                    }
++                    let current_color = styles.clone_color();
++                    let color = styles
++                        .get_background()
++                        .background_color
++                        .resolve_to_absolute(&current_color)
++                        .as_srgb_color();
++                    if color != Color::TRANSPARENT {
++                        backgrounds.push(color);
++                    }
++                }
++                current = node.parent;
++            }
++            if backgrounds.is_empty() {
+                 continue;
+-            };
+-
+-            let current_color = styles.clone_color();
+-            let bg_color = styles
+-                .get_background()
+-                .background_color
+-                .resolve_to_absolute(&current_color)
+-                .as_srgb_color();
+-            if bg_color == Color::TRANSPARENT {
+-                continue;
+             }
+ 
+             let metrics = glyph_run.run().font_metrics();
+@@ -63,7 +182,9 @@
+             let y1 = baseline + metrics.descent as f64;
+             let rect = Rect::new(x, y0, x + w, y1);
+ 
+-            scene.fill(Fill::NonZero, transform, bg_color, None, &rect);
++            for color in backgrounds.into_iter().rev() {
++                scene.fill(Fill::NonZero, transform, color, None, &rect);
++            }
+         }
+     }
+ }
+@@ -254,6 +375,10 @@
+     path_scratch: Vec<NodeId>,
+     deco_boxes: Vec<LineDecoration>,
+     win_ascent_ratios: WinAscentCache,
++    /// The glyph runs drawn, when recording ([`crate::paint_scene_recording_text`]).
++    pub(crate) runs: Option<Vec<crate::TextRun>>,
++    /// How far the next `stroke_text` moves its text along x (device px; 0 unless printing).
++    pub(crate) text_shift: f64,
+ }
+ 
+ /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
+@@ -577,6 +702,15 @@
+     }
+ }
+ 
++/// `transform` with its content moved `shift` along the x axis of the text.
++fn shifted(transform: Affine, shift: f64) -> Affine {
++    if shift == 0.0 {
++        transform
++    } else {
++        transform * Affine::translate((shift, 0.0))
++    }
++}
++
+ pub(crate) fn stroke_text<'a>(
+     scene: &mut impl PaintScene,
+     lines: impl Iterator<Item = Line<'a, TextBrush>>,
+@@ -584,7 +718,9 @@
+     transform: Affine,
+     options: TextPaintOptions,
+     inline_root_id: NodeId,
++    source: Option<&str>,
+     context: &mut DrawTextContext,
++    vertical: Option<VerticalLine>,
+ ) {
+     let TextPaintOptions {
+         scale,
+@@ -595,7 +731,10 @@
+         path_scratch,
+         deco_boxes,
+         win_ascent_ratios,
++        runs,
++        text_shift,
+     } = context;
++    let shift = *text_shift;
+     stack.clear();
+     path_scratch.clear();
+     deco_boxes.clear();
+@@ -625,6 +764,18 @@
+                 let glyph_xform = synthesis
+                     .skew()
+                     .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
++                let (transform, glyph_xform) = match vertical {
++                    Some(vertical) => {
++                        let (shift, upright) = vertical.run_placement(&glyph_run, source);
++                        let glyph_xform = match (upright, glyph_xform) {
++                            (Some(upright), Some(skew)) => Some(upright * skew),
++                            (Some(upright), None) => Some(upright),
++                            (None, skew) => skew,
++                        };
++                        (transform * shift, glyph_xform)
++                    }
++                    None => (transform, glyph_xform),
++                };
+ 
+                 let css_font_size = font_size as f64 / scale;
+ 
+@@ -662,8 +813,15 @@
+                 };
+ 
+                 let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
++                let unshifted = transform;
++                let transform = shifted(transform, shift);
+                 // Zero-size text is invisible, but hinting can give its glyphs ink.
+                 if font_size > 0.0 {
++                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
++                    // next recorded one, so a run recorded but not drawn would stop the matching.
++                    if let Some(runs) = runs.as_mut() {
++                        runs.push(crate::TextRun::new(&glyph_run, source, unshifted));
++                    }
+                     scene.draw_glyphs(
+                         font,
+                         font_size,
+@@ -737,7 +895,7 @@
+ 
+         flush_line_decorations(
+             scene,
+-            transform,
++            shifted(transform, shift),
+             options,
+             deco_boxes,
+             win_ascent_ratios,
+@@ -752,7 +910,7 @@
+ pub(crate) fn draw_text_selection(
+     scene: &mut impl PaintScene,
+     layout: &Layout<TextBrush>,
+-    transform: Affine,
++    line_transform: impl Fn(usize) -> Affine,
+     selection_start: usize,
+     selection_end: usize,
+ ) {
+@@ -760,9 +918,9 @@
+     let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
+     let selection = Selection::new(anchor, focus);
+ 
+-    selection.geometry_with(layout, |rect, _line_idx| {
++    selection.geometry_with(layout, |rect, line_idx| {
+         let rect = kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1);
+-        scene.fill(Fill::NonZero, transform, SELECTION_COLOR, None, &rect);
++        scene.fill(Fill::NonZero, line_transform(line_idx), SELECTION_COLOR, None, &rect);
+     });
+ }
+ 

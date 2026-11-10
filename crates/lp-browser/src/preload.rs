@@ -7,8 +7,12 @@
 //! A modulepreload also keeps the module's source per document, the way
 //! Chromium's preload fills the module map: an `import()` (or a second
 //! modulepreload) of that URL takes it from there instead of requesting it
-//! again, waiting for the preload when it is still in flight. `rel=preload
-//! as=script` stays a plain fetch into the HTTP cache.
+//! again, waiting for the preload when it is still in flight. The import
+//! takes the source itself: the engine's module map has the module from
+//! then on, so the document keeps no second copy (a mid-size SPA's chunks
+//! are megabytes of text), only a marker that answers a later modulepreload
+//! of the URL without a request. `rel=preload as=script` stays a plain
+//! fetch into the HTTP cache.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -23,7 +27,7 @@ use crate::{Browser, FetchRequest, ResourceKind};
 #[derive(Default)]
 pub(crate) struct Preloads {
     entries: HashMap<NodeId, String>,
-    /// Module sources fetched (or being fetched) by modulepreload: URL → source.
+    /// Module sources fetched (or being fetched) by preload or import: URL → source.
     modules: HashMap<String, ModuleEntry>,
 }
 
@@ -31,48 +35,120 @@ pub(crate) struct Preloads {
 pub(crate) type ModuleWaiter = Box<dyn FnOnce(&mut Browser, Result<String, String>)>;
 
 enum ModuleEntry {
-    Pending(Vec<ModuleWaiter>),
+    /// The waiters, each with whether it imports the module (else it is a
+    /// modulepreload link waiting for its `load` event).
+    Pending(Vec<(ModuleWaiter, bool)>),
+    /// Fetched, not imported yet.
     Done(String),
+    /// Fetched and imported: the engine's module map has the module, and
+    /// the document keeps no source. A later modulepreload link of the URL
+    /// loads at once, as one answered from the module map; an import (the
+    /// engine asks only for a module it does not have) requests it.
+    Imported,
 }
 
 /// Preloads started per document, at most (a page's own chunks number far fewer).
 const MAX_PRELOADS: usize = 2048;
 
 impl Browser {
-    /// Hands `waiter` the source a modulepreload fetched (or fetches) for
-    /// `url` in this document; gives it back when there is no such preload,
-    /// so the caller requests the module itself.
-    pub(crate) fn preloaded_module(&mut self, page: FrameKey, url: &str, waiter: ModuleWaiter) -> Option<ModuleWaiter> {
-        let Some(mut doc) = self.doc_mut(page) else { return Some(waiter) };
-        match doc.preloads.modules.get_mut(url) {
-            Some(ModuleEntry::Pending(waiters)) => {
-                waiters.push(waiter);
-                None
+    /// Imports and modulepreloads share one document fetch, regardless of which starts first.
+    pub(crate) fn fetch_imported_module(&mut self, page: FrameKey, url: String, waiter: ModuleWaiter) {
+        let Some(waiter) = self.preloaded_module_for(page, &url, waiter, true) else { return };
+        let Some(mut doc) = self.doc_mut(page) else {
+            self.fetch_text(page, url, ResourceKind::ModuleScript, waiter);
+            return;
+        };
+        let bindings = doc.main_frame.page_dom.clone();
+        let document = bindings.as_ref().map(|bindings| bindings.document());
+        let loader = doc.main_frame.loader_id.clone();
+        doc.preloads.modules.insert(url.clone(), ModuleEntry::Pending(Vec::new()));
+        drop(doc);
+        self.fetch_text(page, url.clone(), ResourceKind::ModuleScript, move |browser, result| {
+            if browser.doc(page).is_none_or(|doc| doc.main_frame.loader_id != loader)
+                || bindings
+                    .as_ref()
+                    .is_some_and(|bindings| bindings.is_disposed() || Some(bindings.document()) != document)
+            {
+                waiter(browser, result);
+                return;
             }
-            Some(ModuleEntry::Done(source)) => {
-                let source = source.clone();
-                drop(doc);
-                waiter(self, Ok(source));
-                None
+            if let Some(mut doc) = browser.doc_mut(page) {
+                match doc.preloads.modules.get_mut(&url) {
+                    Some(ModuleEntry::Pending(waiters)) => waiters.insert(0, (waiter, true)),
+                    _ => {
+                        doc.preloads.modules.insert(url.clone(), ModuleEntry::Pending(vec![(waiter, true)]));
+                    }
+                }
             }
-            None => Some(waiter),
-        }
+            browser.module_preloaded(page, &url, result);
+        });
     }
 
-    /// A modulepreload's fetch finished: keep the source for imports and
-    /// wake what waited for it.
+    /// The shared module map for an importer (`import`), which takes
+    /// the source out of the document, or for a modulepreload link, which
+    /// only learns whether the fetch succeeded (its waiter gets an empty
+    /// source).
+    fn preloaded_module_for(
+        &mut self,
+        page: FrameKey,
+        url: &str,
+        waiter: ModuleWaiter,
+        import: bool,
+    ) -> Option<ModuleWaiter> {
+        let Some(mut doc) = self.doc_mut(page) else { return Some(waiter) };
+        let source = match doc.preloads.modules.get_mut(url) {
+            Some(ModuleEntry::Pending(waiters)) => {
+                waiters.push((waiter, import));
+                return None;
+            }
+            // A link: the module was fetched (and is kept, or imported).
+            Some(ModuleEntry::Done(_) | ModuleEntry::Imported) if !import => String::new(),
+            // The import takes the source and leaves the marker.
+            Some(entry @ ModuleEntry::Done(_)) => {
+                let ModuleEntry::Done(source) = std::mem::replace(entry, ModuleEntry::Imported) else {
+                    unreachable!("matched Done")
+                };
+                source
+            }
+            Some(ModuleEntry::Imported) | None => return Some(waiter),
+        };
+        drop(doc);
+        waiter(self, Ok(source));
+        None
+    }
+
+    /// A modulepreload's fetch finished: wake what waited for it, and keep
+    /// the source for an import when none took it.
     fn module_preloaded(&mut self, page: FrameKey, url: &str, result: Result<String, String>) {
         let Some(mut doc) = self.doc_mut(page) else { return };
-        let waiters = match doc.preloads.modules.remove(url) {
-            Some(ModuleEntry::Pending(waiters)) => waiters,
-            Some(ModuleEntry::Done(_)) | None => Vec::new(),
+        let (key, waiters) = match doc.preloads.modules.remove_entry(url) {
+            Some((key, ModuleEntry::Pending(waiters))) => (key, waiters),
+            Some((key, ModuleEntry::Done(_) | ModuleEntry::Imported)) => (key, Vec::new()),
+            None => (url.to_owned(), Vec::new()),
         };
-        if let Ok(source) = &result {
-            doc.preloads.modules.insert(url.to_owned(), ModuleEntry::Done(source.clone()));
-        }
+        let last_import = waiters.iter().rposition(|(_, import)| *import);
+        // What the importers get: the last one the source itself, the
+        // others a copy. With none, the document keeps it.
+        let mut source = match result {
+            Ok(source) if last_import.is_none() => {
+                doc.preloads.modules.insert(key, ModuleEntry::Done(source));
+                Ok(None)
+            }
+            Ok(source) => {
+                doc.preloads.modules.insert(key, ModuleEntry::Imported);
+                Ok(Some(source))
+            }
+            Err(e) => Err(e),
+        };
         drop(doc);
-        for waiter in waiters {
-            waiter(self, result.clone());
+        for (i, (waiter, import)) in waiters.into_iter().enumerate() {
+            let outcome = match &mut source {
+                Err(e) => Err(e.clone()),
+                Ok(_) if !import => Ok(String::new()),
+                Ok(source) if Some(i) == last_import => Ok(source.take().unwrap_or_default()),
+                Ok(source) => Ok(source.clone().unwrap_or_default()),
+            };
+            waiter(self, outcome);
         }
     }
 
@@ -90,7 +166,8 @@ impl Browser {
             (connected && (module || preload))
                 .then(|| {
                     let href = attr("href").filter(|v| !v.trim().is_empty())?;
-                    let url = url::Url::parse(&frame.base_url).ok()?.join(href.trim()).ok()?.to_string();
+                    let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| frame.base_url.clone());
+                    let url = url::Url::parse(&base).ok()?.join(href.trim()).ok()?.to_string();
                     let kind = if module {
                         ResourceKind::ModuleScript
                     } else {
@@ -100,13 +177,14 @@ impl Browser {
                             _ => ResourceKind::Image,
                         }
                     };
-                    Some((url, kind, attr("crossorigin")))
+                    let integrity = attr("integrity").filter(|v| !lp_webapi::sri::is_empty(v));
+                    Some((url, kind, attr("crossorigin"), integrity))
                 })
                 .flatten()
         };
         let current = state.preloads.entries.get(&node).cloned();
         drop(state);
-        let Some((url, kind, crossorigin)) = config else {
+        let Some((url, kind, crossorigin, integrity)) = config else {
             if let Some(mut doc) = self.doc_mut(page) {
                 doc.preloads.entries.remove(&node);
             }
@@ -139,20 +217,39 @@ impl Browser {
                 }
                 lp_webapi::lifecycle::resource_loaded(&bindings, node, result.is_ok());
             });
-            match self.preloaded_module(page, &url, waiter) {
+            match self.preloaded_module_for(page, &url, waiter, false) {
                 None => return,
                 Some(waiter) => {
                     if let Some(mut doc) = self.doc_mut(page) {
-                        doc.preloads.modules.insert(url.clone(), ModuleEntry::Pending(vec![waiter]));
+                        doc.preloads.modules.insert(url.clone(), ModuleEntry::Pending(vec![(waiter, false)]));
                     }
                 }
             }
         }
         let finish_url = url.clone();
+        let cors = module || crossorigin.is_some();
         let finish = move |b: &mut Browser, result: Result<crate::Resource, String>| {
             let _hold = hold;
             let result = match result {
-                Ok(r) if (200..300).contains(&r.status) => Ok(r.text()),
+                Ok(r) if (200..300).contains(&r.status) => {
+                    // SRI: a mismatching (or opaque) response is a network error.
+                    let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                    match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
+                        Some(e) => {
+                            b.report_console_error(page, &e);
+                            Err(e)
+                        }
+                        // A modulepreload is a JavaScript module script:
+                        // strict MIME check, UTF-8 whatever the charset.
+                        None if module => {
+                            match lp_webapi::module_script::mime_error(lp_js::ModuleType::JavaScript, &r.mime, &r.url) {
+                                Some(e) => Err(e),
+                                None => Ok(lp_webapi::module_script::utf8_decode(&r.body)),
+                            }
+                        }
+                        None => Ok(r.text()),
+                    }
+                }
                 Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
                 Err(e) => Err(e),
             };
@@ -179,7 +276,12 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin,
+            initiator: Some(lp_webapi::resource_timing::Initiator::Link),
+            module: None,
+            part: None,
         };
-        resource_loader.fetch(self, request, Box::new(finish));
+        if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish)) {
+            cancel.disarm();
+        }
     }
 }

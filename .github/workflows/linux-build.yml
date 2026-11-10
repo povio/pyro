@@ -1,0 +1,116 @@
+name: Linux build
+
+# Builds the render-enabled browser and comparison worker for Linux x64 and
+# arm64 against the patched JavaScriptCore (jsc.yml's linux job), bundles that
+# library and its ICU beside the browser (scripts/release/bundle-jsc-linux.sh),
+# smoke-tests the bundle and runs the client's test suite against it.
+#
+# Artifacts: native-linux-<arch> (the npm package's browser) and
+# archive-linux-<arch> (the GitHub release archive's binaries).
+
+on:
+  workflow_call:
+    inputs:
+      jsc-dir:
+        description: jsc.yml's `dir` output
+        required: true
+        type: string
+      release:
+        description: Build from the release job's stamped manifests and check the version
+        type: boolean
+        default: false
+      version:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      CC: clang
+      CXX: clang++
+      JSC_DIR: ${{ inputs.jsc-dir }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        if: inputs.release
+        with:
+          name: release-manifests
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-jsc-linux-${{ matrix.arch }}
+          path: patched-jsc
+      - name: Install build dependencies
+        run: scripts/linux/setup.sh
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update
+      - name: Build browser and comparison worker against the patched JavaScriptCore
+        run: |
+          # At the path it was built at: its SONAME is absolute.
+          export LP_JSC_DIR="$HOME/.cache/lightningpanda/jsc/$JSC_DIR"
+          mkdir -p "$(dirname "$LP_JSC_DIR")"
+          mv patched-jsc "$LP_JSC_DIR"
+          cargo +stable build --locked --release --package lightningpanda --package lp-render --features render
+      - name: Bundle the patched JavaScriptCore and check the bundle
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          stage="archive/linux-$ARCH"
+          mkdir -p "$stage"
+          cp target/release/lightningpanda target/release/lp-snapshot-compare "$stage/"
+          # Release debug information makes the combined npm payload too large.
+          # Strip only staged copies; retain symbols and untouched build outputs.
+          strip --strip-debug "$stage/lightningpanda" "$stage/lp-snapshot-compare"
+          jsc="$HOME/.cache/lightningpanda/jsc/$JSC_DIR"
+          scripts/release/bundle-jsc-linux.sh "$stage" "$jsc/lib/libJavaScriptCore.so"
+          # Moved, so nothing can load the build cache's copy instead.
+          mv "$jsc" "$RUNNER_TEMP/jsc-moved"
+          ldd "$stage/lightningpanda"
+          ldd "$stage/lightningpanda" | grep -F "$PWD/$stage/lib/libJavaScriptCore.so"
+          ! ldd "$stage/lightningpanda" "$stage/lib/libJavaScriptCore.so" | grep -E 'not found|/usr/lib/.*libicu'
+          "$stage/lightningpanda" version
+          "$stage/lightningpanda" version | grep -q 'fork: true'
+          if [[ -n "$VERSION" ]]; then
+            "$stage/lightningpanda" version | grep -Fx "lightningpanda $VERSION"
+          fi
+          "$stage/lightningpanda" eval -e 'console.log("linux-smoke-ok")' | grep -Fx linux-smoke-ok
+          mkdir -p "native/linux-$ARCH/lib"
+          cp "$stage/lightningpanda" "native/linux-$ARCH/"
+          cp "$stage"/lib/* "native/linux-$ARCH/lib/"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - name: Test the client against the bundled browser
+        env:
+          ARCH: ${{ matrix.arch }}
+        working-directory: packages/lightning-panda
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+          LIGHTNINGPANDA_BIN="$GITHUB_WORKSPACE/archive/linux-$ARCH/lightningpanda" bun test ./test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-${{ matrix.arch }}
+          path: native/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-linux-${{ matrix.arch }}
+          path: archive/linux-${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 7

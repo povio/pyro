@@ -146,23 +146,23 @@ fn call_filter(s: &Scope<'_>, filter: Object<'_>, node: Value<'_>) -> JsResult<u
     let cs = realm.scope()?;
     // A callback of a document that left its browsing context (a removed
     // iframe) is no longer runnable: it throws without being called.
-    let runnable =
-        crate::target::page_of(&cs).is_ok_and(|p| !p.is_disposed() && p.hooks().is_none_or(|h| h.focus_document_is_live()));
+    let runnable = crate::target::page_of(&cs)
+        .is_ok_and(|p| !p.is_disposed() && p.hooks().is_none_or(|h| h.focus_document_is_live()));
     if !runnable {
         return Err(JsError::Type(
             "Failed to execute 'acceptNode' on 'NodeFilter': The provided callback is no longer runnable.".into(),
         ));
     }
-    let Some(filter) = lp_js::Persistent::new(s, filter.value()).get(&cs).as_object() else {
+    let Some(filter) = cs.rehome(filter.value()).as_object() else {
         return Ok(FILTER_ACCEPT);
     };
-    let node = lp_js::Persistent::new(s, node).get(&cs);
+    let node = cs.rehome(node);
     run_filter(&cs, filter, node)
 }
 
 /// A TypeError of `s`'s realm, whichever realm the native caller runs in.
 fn type_error_of(s: &Scope<'_>, message: &str) -> JsError {
-    JsError::Thrown(lp_js::Persistent::new(s, JsError::Type(message.into()).to_value(s)))
+    JsError::thrown(lp_js::Persistent::new(s, JsError::Type(message.into()).to_value(s)))
 }
 
 /// Whether `o` is a revoked Proxy. Calling one throws a TypeError of the
@@ -172,8 +172,12 @@ fn is_revoked_proxy(s: &Scope<'_>, o: Object<'_>) -> bool {
     if !o.value().has_proxy_target().unwrap_or(false) {
         return false;
     }
-    let is_array = s.global().get("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get("isArray").ok());
-    is_array.and_then(|f| f.as_object()).filter(|f| f.is_function()).is_some_and(|f| f.call(None, &[o.value()]).is_err())
+    let is_array =
+        s.global().get_atom("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get_atom("isArray").ok());
+    is_array
+        .and_then(|f| f.as_object())
+        .filter(|f| f.is_function())
+        .is_some_and(|f| f.call(None, &[o.value()]).is_err())
 }
 
 fn run_filter(s: &Scope<'_>, filter: Object<'_>, node: Value<'_>) -> JsResult<u16> {
@@ -185,7 +189,7 @@ fn run_filter(s: &Scope<'_>, filter: Object<'_>, node: Value<'_>) -> JsResult<u1
         filter.call(None, &[node])?
     } else {
         // Get(O, "acceptNode"): an exception of the getter is rethrown as is.
-        let method = match filter.get("acceptNode") {
+        let method = match filter.get_atom("acceptNode") {
             Ok(m) => m,
             Err(JsError::Thrown(e)) => return Err(JsError::Thrown(e)),
             Err(e) => return Err(type_error_of(s, &e.to_string())),

@@ -18,10 +18,11 @@ see [PARITY.md](PARITY.md) for what exists today.
 | `lightningpanda` (bin) | W1 | all | CLI: `version`, `eval`; `serve`/`fetch` once CDP/loading land. |
 | `lp-dom` | W2 DOM/net | — (no JS) | Arena DOM, `NodeId`, html5ever parsing, selectors, events, serialization. Unit-testable without JS. |
 | `lp-net` | W2 | — (no JS) | hyper/tokio HTTP client on an I/O thread, cookies, CORS, fetch model, request observers. |
-| `lp-webapi` | W2 | lp-js, lp-dom, lp-net | JS bindings for DOM/network WebAPIs using `lp_js::JsClass`. |
+| `lp-webapi` | W2 | lp-js, lp-dom, lp-net, lp-canvas | JS bindings for DOM/network WebAPIs using `lp_js::JsClass`. |
+| `lp-canvas` | W2 | — (no JS, no lp crate) | Canvas 2D surfaces rasterized with vello_cpu (batched source-over, per-pixel compositing for the other operators, shadows, clip masks), canvas text with Parley, image decode/encode, and the process's system fonts (shared with lp-render). |
 | `lp-cdp-protocol` | W3 automation | lp-net | CDP wire protocol without the engine: WebSocket/HTTP server, messages, `Target` domain, `Network`/`Fetch`/`Runtime` translation helpers. Builds in parallel with lp-dom/lp-webapi/lp-browser. |
 | `lp-cdp` | W3 automation | lp-cdp-protocol, lp-browser, lp-js, lp-webapi | CDP domains on the engine (`engine/`), the per-connection browser thread (`serve`, `conn`); re-exports lp-cdp-protocol's modules. Runtime remote objects implemented natively. |
-| `lp-render` | W3 automation | — (no JS, no lp crate) | Screenshots: a page snapshot (HTML with form state, live sheets, viewport) rendered by Blitz (html5ever, Stylo, Taffy, Parley; vello_cpu, optional vello/wgpu) on a render thread per connection; display-list hash, pixel compare, PNG. Built only with the `render` feature. |
+| `lp-render` | W3 automation | lp-canvas (fonts) | Screenshots: a page snapshot (HTML with form state, live sheets, viewport) rendered by Blitz (html5ever, Stylo, Taffy, Parley; vello_cpu, optional vello/wgpu) on a render thread per connection; display-list hash, pixel compare, PNG. Built only with the `render` feature. |
 | `tests/e2e`, `bench/` | W3 | binary | Real TOS E2E compatibility and benchmarks. |
 
 W1 owns the root `Cargo.toml`, `Cargo.lock`, `.cargo/config.toml` and integration branches. Workers add dependencies
@@ -192,9 +193,21 @@ impl JsClass for Node {
      pending, a callback's `Ok` result is converted to `Terminated` as well.
    - Back at depth 0, the call returns `JsError::Terminated`, and JSC's pending termination state is flushed so it
      cannot abort the next entry.
+   - Each watchdog poll is a VM trap. `webkit/patches/0021-vmtraps-walk-only-after-breakpoints.patch` stops
+     `VMTraps::handleTraps` from walking every code block of the heap on each trap: the walk jettisons code blocks
+     carrying trap breakpoints, which only the signal sender installs (never with the polling traps lightningpanda
+     uses), so it now runs only after one was installed. With a 2 MB bundle loaded, that walk was about 10% of a
+     paginating document's script time.
 9. **Heap-collected call arguments** (for example CDP `callFunctionOn` converting arguments one by one, where each
    conversion can GC) must use `RootedVec` with `Object::call_rooted` or `Scope::call_function_rooted`, never a
    `Vec<Value>`.
+10. **`Number.prototype.toLocaleString(locales, options)`:** JSC built a new ICU formatter per call, and the first
+    format on one loads `DecimalFormatSymbols` from the system ICU's locale data: about 176 µs a call, against
+    Chrome's 12 µs with its trimmed ICU (pdfgen formats every amount this way). `webkit/patches/0022-to-locale-string-shares-number-formatters.patch`
+    still reads the options on every call, as the spec requires (getters and proxies observe the reads), but formats
+    with the ICU formatter of one of the last four calls whose options resolved to the same skeleton and data
+    locale, as JSC already did for `toLocaleString()` and `toLocaleString(locale)`: 2 µs a call. Formatting does not
+    observe which formatter formats. A language change (the `languagesEpoch`) drops them.
 
 ### Private SPI (runtime-resolved, capability-gated)
 
@@ -234,6 +247,16 @@ Optional extras: `JSReportExtraMemoryCost` and `JSSynchronousGarbageCollectForDe
   - **Bare specifiers and import maps:** `webkit/patches/0005-import-maps.patch` adds `JSGlobalContextAddImportMap`, which
     feeds JSC's own `ImportMap` (HTML parse, resolve and merge), and consults it in `moduleLoaderResolve` once a context
     has a map. It also adds `import.meta.resolve`. The system framework has no such hook: there these stay unsupported.
+  - **Import attributes (JSON and CSS module scripts):** `webkit/patches/0020-module-import-attributes.patch` adds
+    `JSGlobalContextSetTypedModuleLoader`, whose fetch callback gets the request's `type` attribute (JSC keys its
+    module map by URL and type), and `JSModuleSourceCreateWithType` for JSON sources. A CSS request is resolved with
+    the embedder's `CSSStyleSheet`, which becomes the module's `default` export; JSC's `moduleTypeIsAllowed` host hook
+    allows `css`, and the patch flips the generated JSC option defaults so `css` parses (`useCSSModuleScripts`) and
+    `text` does not (`useImportText`, not an HTML module type). `ModuleRequest::module_type` carries the type to the
+    fetchers (`lp-browser` `PageModuleFetcher`, `lp-webapi` `WorkerModuleFetcher`), which check the response MIME type
+    (`lp_webapi::module_script`) and complete with `resolve`, `resolve_json` or `resolve_object`. The system framework's
+    delegate never sees the attribute: every request looks like JavaScript, and a JSON or CSS response fails the MIME
+    check with a message naming the missing patch.
   - **Inline modules:** the registry is keyed by URL, so each inline module script needs a distinct URL. The browser
     appends a fragment.
   - **Linux:** WebKitGTK's JSC has no module loader, so **ESM on Linux is unsupported** until a tested alternative
@@ -297,6 +320,27 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
 - Patch `0006` adds `JSContextGroupSetTimeZone(group, id)`, behind `Emulation.setTimezoneOverride`. `DateCache` is per  VM, and `Intl` and `Temporal` read their default zone from it, so one override field there covers them; setting it  marks the cache stale, and JSC's own host-zone-change path applies it at the next outermost entry (date caches  flushed, cached local times in `Date` objects dropped). The default formats a global object keeps are bypassed while  an override is set. The scope is one VM, so one connection: a per-context zone would mean moving this state from the  VM to the global object, through every `vm.dateCache` user including the DFG.`0004` adds `JSGlobalContextInstallNamedProperties(ctx, filter, getter)`, for named access on the Window object.  The global's prototype is immutable to JavaScript and to `JSObjectSetPrototype`, so a page realm gets the object  when its context is created (`resetPrototype` replaces the global proxy, so nothing may hold it yet). A `JSClass`  object was measured first and made misses and new globals much slower (OpaqueJSString per lookup, dropped locks, a  put hook that sends every new global down the receiver path), so it is a native object like WebCore's  `JSDOMWindowProperties`: the global's own properties never reach it and stay inline cached; a name the global lacks  costs one call to `filter`, which `Dom::window_name_may_exist` answers from a hash set kept current from the change  journal, so a miss does not walk the tree after each mutation.
 - Patch `0008` marks code from `lightpanda://internal/` (`helpers.js`) as never optimized. It runs at realm setup, and
   each realm otherwise compiled `makeInterface`, `lazyInterface` and `accessor` in the DFG again.
+- Patch `0023` interns `JSObjectSetFastGetter`'s shared DOMJIT getters (patch `0013`) in a hash map keyed by
+  (getter, fast callback, context, result type, readsOnly). It was a linear search of every fast getter the process
+  had made, so defining a class's attributes on a realm's first use was quadratic: `CSSStyleDeclaration`'s ~1,600
+  attributes cost each realm ~1.5 ms, and were installed as plain custom accessors to dodge it. They are JIT getters
+  again.
+- Patch `0024` adds `JSClassSetOwnPropertyNames` (`ClassDef::own_property_name`): names a class's wrappers have as
+  own properties while the prototype's accessors serve reads. Chrome has computed-style properties as named
+  properties of the object, so `hasOwnProperty('color')`, `Object.keys`, spread, `JSON.stringify` and
+  `getOwnPropertyDescriptor` see them there. JSC lists the names in `getOwnPropertyNames` (as a realm's identifiers,
+  made once on its first listing) and answers an own-property lookup (`InternalMethodType::GetOwnProperty`) with a
+  custom value: `hasOwnProperty`, `Object.hasOwn` and `propertyIsEnumerable` (patched to read the slot's attributes,
+  not a descriptor) answer without computing it, so they never restyle or lay out; a descriptor or a copy reads it
+  through the class's `getValue` callback (`ClassDef::own_property_value`: the property's value whatever the
+  prototype chain holds now, as in Chrome). The answer is not cached in `HasOwnPropertyCache`, because wrappers of
+  different classes share a structure when they share a prototype. A `[[Get]]` never consults the names (a cacheable
+  wrapper skips `getOwnPropertySlot` altogether), so reads stay inline-cached. The same patch makes the indexed
+  callbacks' properties enumerable, as WebIDL's are.
+- Patch `0025`: `JSObjectMakeWrapper`, `JSObjectGet/SetProperty` and `JSObjectGet/SetPrivateProperty` skip
+  `JSLockHolder` when the thread already holds the VM's lock (every call from inside a callback). An API string that
+  remembered its atom per VM (to skip the atom-table probe for constant names) was tried and dropped: its gain was
+  within noise, and an atom reference outlives its table, which leaked ~270 KB per CDP connection.
 
 Navigating or closing a page no longer always collects: `Engine::release_closed` runs `settle` only once the process's
 physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. That collection runs inside the
@@ -385,6 +429,25 @@ Document may start to answer: an embed, form, iframe, img or object entering a t
 img, an `id`). What a hook answers is never cached. Stock JavaScriptCore ignores the attribute and keeps such
 wrappers uncacheable.
 
+Patch `0016` makes strings from host characters in one step. `JSValueMakeString` takes a `JSStringRef`, so every
+string a getter returned was built twice: `JSStringCreateWithUTF8CString` (a NUL-terminated copy, `strlen`, UTF-8
+decoding, a `StringImpl` and an `OpaqueJSString`), then `JSValueMakeString`, which takes the API lock and copies the
+characters again (`OpaqueJSString::string()` is an isolated copy), then the release. `JSValueMakeStringLatin1` and
+`JSValueMakeStringUTF16` build the value from a pointer and a length: one `StringImpl`, one copy, none for the empty
+and single-character strings the VM keeps, and the lock only when the caller does not hold it (C API callbacks keep
+it, patch `0009`). `Scope::string` passes an ASCII `&str` as it is and transcodes other text once, to Latin-1 when every
+scalar fits (as JSC keeps parsed text) and to UTF-16 otherwise, on the stack when short. `JSStringCreateWithLatin1Characters`
+does the same for `JsString::new` (property names, script sources), and `JSStringGetStoredCharacters` reads a
+`JSStringRef` without `JSStringGetCharactersPtr`'s UTF-16 widening of an 8-bit string (JSON results, property names).
+`JSValueGetStringCharacters` (patch `0012`) was only called inside callbacks; `0016` makes it safe anywhere, so
+`Value::to_string` reads a string's own characters anywhere, CDP serialization included, instead of copying them into
+a `JSStringRef` and widening them. A flat string is read with no lock and no exception check (the check would also run
+the VM's traps, outside the VM too). Only a rope takes the lock, when the caller does not hold it, and there an
+out-of-memory error from resolving it is cleared, since nothing above the call would see it; inside a callback it stays
+pending and reaches the script. With the system framework (or an older build) all of this falls back to the
+`JSStringRef` path. The functions are declared in `JSFork.cpp`, not `JSForkPrivate.h`, which every precompiled
+header includes.
+
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
@@ -411,6 +474,16 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   `<root socket>.<id>`; it runs only the profile's `setup` on its copy of the base page, relabels the page, and
   serves forks itself. Clients ask for a snapshot with `ws://host/?profile=<id>`: the root forwards that
   connection's fds to the template holding it. Registrations always go to the root, which assigns every id.
+  A derive whose base's template is not listening yet (it forks once its own base is ready) waits in the root
+  and is sent when it is, for up to 90 s; so do connections for that profile.
+- **Shared profiles**: the root keeps profiles by name for every client of the server (`registerPreparedPage
+  {name}`, `adoptPreparedPage {name}`, `unregisterPreparedPage {name}`, `preparedProfiles`). A client's
+  connection process opens a **lease** with its first named profile, a Unix stream to the root that it keeps
+  until it exits: the root holds each name for the leases that registered or adopted it and drops a lease's
+  holds when the stream reads EOF, however the process ended. A profile is retired once no lease holds any of
+  its names and no active profile derives from it (then its base is checked). The same definition under a name
+  finds the profile booted; a different one is refused while the name is held, and moves the name when it is
+  not. Profiles registered without a name (and `--prepare`'s) stay until unregistered by id.
 - **Spares** take the fork off a test's path: each template keeps `LIGHTNINGPANDA_FORK_SPARES` (default 2) forked
   children waiting, pages running. They accept connections themselves on the template's connection socket
   (`<socket>.conn`), so a test never waits for a template that is busy forking; a spare that took one closes its
@@ -418,14 +491,29 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   spares (their pages are out of date). Measured on the 8 MB test app: 3.6 ms from connect to an evaluated
   expression in a booted page.
 - The template stops when the server does: its stdin is a pipe only the server writes to.
+- The server stops with the process it runs for (`--parent-pid`, which `Lightningpanda.launch()` passes; a
+  kqueue `NOTE_EXIT` or pidfd wait, `lp_cdp::lifetime`). On that, and on SIGTERM, SIGINT or SIGHUP, it kills the
+  template and removes every `lightningpanda-<pid>.sock*` file; a server starting removes those of servers that
+  are gone (killed with SIGKILL).
 - Dedicated workers are threads, so a template holds them: they start in the child that takes a connection
   (`lp_webapi::hold_for_fork`, `release_after_fork`). A thread entering a VM in a child cannot register with JSC's
   mach exception port, which a fork does not inherit, so a template runs with `JSC_useMachForExceptions=false`: faults
   go through POSIX signal handlers, which a fork does inherit.
 - The source JavaScriptCore's timers run on WTF's run loop, so the CoreFoundation run-loop service
   (`enable_native_runloop_service`) is off with it; CoreFoundation must not be used in a fork child.
+- **What a forked page costs** (`LIGHTNINGPANDA_FORK_STATS=<file>` logs each fork, each child's CPU, page faults
+  and instructions at each step of its life, and each reaped child, as JSON lines). The template runs with its
+  own JavaScriptCore defaults (`FORK_JSC_DEFAULTS`, over the server's own unless the user set them): a 32 MB JIT
+  pool, since macOS's `fork()` walks the whole `MAP_JIT` reservation (15 ms per fork at JSC's 512 MB, 3.5 ms at
+  32 MB; pages of a mid-size SPA use about 6 MB, and at 16 MB JSC already compiles less), and JSC's own heap
+  growth (`heapGrowthMaxIncrease=3`), so that most pages never collect: a collection in a fork marks memory it
+  shares with the template, for a process that exits seconds later. A child whose connection ends runs its
+  pages' unload handlers, closes the socket and `_exit`s: no realm disposal, collection or engine teardown
+  (`LIGHTNINGPANDA_FORK_FAST_EXIT=0` tears down as a shared process does). Measured on the ToS suite (M1 Max,
+  `-j 16`): a page's test costs about 3.4 G instructions, 0.55 s user and 0.08 s system time, mostly the test's
+  own work, with about 18k page faults (5k of them copy-on-write).
 - Measured on an M1 Max with a release build: an app whose startup runs 0.8 s of JavaScript is handed to a new
-  connection, booted, in about 20 ms (the fork itself takes 12-18 ms).
+  connection, booted, in about 20 ms (the fork itself took 12-18 ms with the 512 MB JIT pool).
 
 ## Platform support
 
@@ -434,7 +522,7 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
 | macOS 27.0.1 (26A434) arm64, SDK 27.0, JavaScriptCore 22625.1.29.11.28 (dylib 625.1.29), rustc 1.99.1 | system framework | builds; all tests pass |
 | macOS 27.0.1 arm64, Command Line Tools only (no Xcode), WebKit `0e0dd70` JSCOnly + `webkit/patches` | source dylib | builds; all tests pass |
 | other macOS versions | system framework | untested. Deployment target is 14.0; SPI is probed at runtime |
-| Linux | WebKitGTK `libjavascriptcoregtk` (C API only) | **not supported yet** (`build.rs` panics). No module loader exists there |
+| Linux x64/arm64, Ubuntu 24.04 (glibc 2.39), clang 21 | source `.so` (JSCOnly + `webkit/patches`) | built in CI (`linux-build.yml`); no system fallback (WebKitGTK has no module loader). Release bundles the library and ICU in `lib/` |
 
 On some hosts the default SDK hits a linker/TAPI mismatch (`unknown arm64e.x1`). Worker 3 worked around it with a
 command-scoped `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`. Do not hardcode that path.

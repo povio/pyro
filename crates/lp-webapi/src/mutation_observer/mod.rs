@@ -169,7 +169,7 @@ fn links<'s>(s: &Scope<'s>, object: Object<'s>, create: bool) -> JsResult<Option
 fn link(s: &Scope<'_>, page: &PageDom, node: NodeId, observer: Object<'_>) -> JsResult<()> {
     let node = crate::node::wrap_node(s, page, node)?;
     let array = links(s, node, true)?.unwrap();
-    let len = array.get("length")?.to_number()? as u32;
+    let len = array.get_atom("length")?.to_number()? as u32;
     let mut free = len;
     for i in 0..len {
         let value = array.get_index(i)?;
@@ -186,7 +186,7 @@ fn unlink(s: &Scope<'_>, page: &PageDom, node: NodeId, identity: IdentityKey) ->
     let Some(node) = page.node_wrapper(s, node) else { return Ok(()) };
     let Some(array) = links(s, node, false)? else { return Ok(()) };
     let Some(observer) = s.lookup_identity(identity) else { return Ok(()) };
-    let len = array.get("length")?.to_number()? as u32;
+    let len = array.get_atom("length")?.to_number()? as u32;
     for i in 0..len {
         if array.get_index(i)?.strict_equals(observer.value()) {
             array.set_index(i, s.undefined())?;
@@ -218,7 +218,7 @@ fn parse_options(s: &Scope<'_>, page: &PageDom, value: Value<'_>) -> JsResult<Ob
         None
     } else {
         let list = filter.as_object().unwrap();
-        let n = list.get("length")?.to_number()? as u32;
+        let n = list.get_atom("length")?.to_number()? as u32;
         Some((0..n).map(|i| list.get_index(i)?.to_string()).collect::<JsResult<Vec<_>>>()?)
     };
     Ok(ObserveInit {
@@ -271,8 +271,7 @@ pub fn checkpoint(page: &Rc<PageDom>) {
             scheduling_realm = Some(realm.clone());
         }
     }
-    if (!page.mutations.pending_roots.borrow().is_empty() || slots_signaled) && page.mutations.queued.get().is_none()
-    {
+    if (!page.mutations.pending_roots.borrow().is_empty() || slots_signaled) && page.mutations.queued.get().is_none() {
         let realm = scheduling_realm
             .or_else(|| {
                 page.mutations
@@ -363,11 +362,12 @@ fn notify(page: &Rc<PageDom>) {
     page.mutations.queued.set(None);
     page.mutations.rooted.set(0);
     page.mutations.touch();
-    // "Signal a slot change": slotchange at each signaled slot first.
+    // "Notify mutation observers": the signal set is taken now (slot
+    // changes made by the callbacks join the next compound microtask), and
+    // its slots get `slotchange` after every observer callback has run.
     let slots = page.dom.borrow_mut().take_signaled_slots();
-    for slot in slots {
-        crate::input::fire_simple(page, slot, "slotchange", true, false);
-    }
+    // The signal set holds its slots strongly across the callbacks.
+    let slot_holds = if slots.is_empty() { None } else { crate::collections::NodeHolds::new(page, slots.clone()).ok() };
     let pending = page.dom.borrow_mut().take_pending_observers();
     let roots = page.mutations.pending_roots.take();
     // Snapshot binding identities as well as native ids: a callback can dispose
@@ -415,6 +415,13 @@ fn notify(page: &Rc<PageDom>) {
         }
     }
     drop(roots);
+    // A callback may have disposed the page (a navigation).
+    if !page.is_disposed() {
+        for slot in slots {
+            crate::input::fire_simple(page, slot, "slotchange", true, false);
+        }
+    }
+    drop(slot_holds);
     // Native-only embedders can cause mutations inside a callback without a
     // runtime hook; make sure those also get a subsequent notification.
     checkpoint(page);
@@ -425,24 +432,19 @@ pub(crate) fn after_task(page: &PageDom) {
         checkpoint(&page)
     }
 }
-pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+/// `helper` converts a MutationObserverInit (install.js `mutationOptions`).
+pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>, helper: lp_js::Value<'_>) -> JsResult<()> {
     *page.mutations.owner.borrow_mut() = Rc::downgrade(page);
-    let helper=s.eval(r#"(()=>{const str=String, TypeError_=TypeError, create=Object.create;
-        return options=>{
-            if(options==null)options={};
-            if(typeof options!=='object'&&typeof options!=='function')throw new TypeError_('Observer options must be a dictionary');
-            let filter=options.attributeFilter;
-            if(filter!==undefined){
-                if(filter===null||(typeof filter!=='object'&&typeof filter!=='function'))throw new TypeError_('attributeFilter must be a sequence');
-                const list=create(null);let n=0;for(const item of filter){if(typeof item==='symbol')throw new TypeError_('Cannot convert symbol to string');list[n++]=str(item);}list.length=n;filter=list;
-            }
-            const old=options.attributeOldValue, attributes=options.attributes, chars=options.characterData, charOld=options.characterDataOldValue;
-            return [filter,old===undefined?undefined:!!old,attributes===undefined?undefined:!!attributes,chars===undefined?undefined:!!chars,charOld===undefined?undefined:!!charOld,!!options.childList,!!options.subtree];
-        };})()"#,None,1)?;
     page.mutations.helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
     let weak = Rc::downgrade(page);
-    s.realm().set_native_callback_hook(Some(Rc::new(move |_| {
+    s.realm().set_native_callback_hook(Some(Rc::new(move |s| {
         if let Some(page) = weak.upgrade() {
+            // First: the payloads of finalized wrappers, whose destructors
+            // release DOM nodes the sweep below then frees.
+            if s.realm().pending_finalizers() >= FINALIZER_DRAIN && s.drain_finalized_in_outermost_callback().is_some()
+            {
+                page.sweep_released_nodes();
+            }
             page.flush_iframe_events();
             page.update_render_blocking();
             crate::custom::run_reactions(&page);
@@ -451,10 +453,21 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
         }
     })))?;
     let weak = Rc::downgrade(page);
-    s.realm()
-        .set_native_callback_pending(Some(Rc::new(move || weak.upgrade().is_some_and(|page| hook_pending(&page)))))?;
+    let realm = s.realm().downgrade();
+    s.realm().set_native_callback_pending(Some(Rc::new(move || {
+        weak.upgrade().is_some_and(|page| hook_pending(&page))
+            || realm.upgrade().is_some_and(|realm| realm.pending_finalizers() >= FINALIZER_DRAIN)
+    })))?;
     Ok(())
 }
+
+/// Finalized wrappers whose payloads wait for a safe point, from which the
+/// hook drains them inside the task instead of after it (`Browser::checkpoint`):
+/// a task that creates and drops wrappers by the million (an `innerHTML`
+/// rebuild loop, a big render) otherwise keeps every payload and DOM node
+/// until it ends. A collection finalizes wrappers by the tens of thousands,
+/// so a drain follows nearly every collection and costs nothing between.
+const FINALIZER_DRAIN: usize = 4096;
 
 /// Whether the native callback hook (iframe events, then [`checkpoint`]) has
 /// anything to do. Conservative: true whenever either could act.
@@ -464,12 +477,14 @@ fn hook_pending(page: &PageDom) -> bool {
     }
     let Ok(dom) = page.dom.try_borrow() else { return true };
     let m = &page.mutations;
-    // Every condition below changes only with `Dom::hook_epoch` (mutations,
-    // queued observers, iframe events) or `epoch` (this struct), so a pair
-    // the hook already found quiet needs no second look. Native callbacks
-    // come in bursts of tens of thousands with no change in between.
+    // Every condition below changes only with `Dom::hook_epoch` (an entry in
+    // one of the queues the hook drains), `epoch` (this struct) or, for the
+    // two passes that follow every mutation, `Dom::version`: a pair the hook
+    // already found quiet needs no second look while neither pass looks at
+    // the tree. Native callbacks come in bursts of tens of thousands, most
+    // of them mutating nothing the hook drains.
     let now = (dom.hook_epoch(), m.epoch.get());
-    if m.quiet.get() == Some(now) {
+    if m.quiet.get() == Some(now) && !follows_version(page, &dom, m) {
         return false;
     }
     let pending = hook_pending_slow(page, &dom, m);
@@ -479,8 +494,18 @@ fn hook_pending(page: &PageDom) -> bool {
     pending
 }
 
+/// Whether a pass of the hook that runs after any mutation would look at the
+/// tree again: the render-blocking evaluation while the set can change, and
+/// the reconcile pass of `checkpoint` while observers or pins exist.
+fn follows_version(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool {
+    page.render_blocking_follows_version(dom)
+        || (m.version.get() != Some(dom.version()) && (!m.observers.borrow().is_empty() || !m.pins.borrow().is_empty()))
+}
+
 fn hook_pending_slow(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool {
     dom.has_iframe_events()
+        || dom.has_details_toggles()
+        || dom.has_media_events()
         || page.render_blocking_pending(dom)
         || dom.has_custom_reactions_for(page.document())
         || dom.has_upgrade_candidates()

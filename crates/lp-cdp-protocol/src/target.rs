@@ -35,8 +35,18 @@ pub type WorkerKey = u64;
 
 /// A dedicated worker started or ended ([`Host::take_worker_changes`]).
 pub enum WorkerChange {
-    Started { worker: WorkerKey, page: PageKey, url: String },
-    Stopped { worker: WorkerKey },
+    /// `service`: a service worker version, a `service_worker` target of the
+    /// page's browser context (attached by the browser-level auto-attach)
+    /// rather than a `worker` below the page.
+    Started {
+        worker: WorkerKey,
+        page: PageKey,
+        url: String,
+        service: bool,
+    },
+    Stopped {
+        worker: WorkerKey,
+    },
 }
 
 /// Receives encoded protocol messages in emission order.
@@ -210,6 +220,12 @@ pub struct PreparedProfile {
     pub base: Option<usize>,
 }
 
+/// The `name` of a shared profile (`serve --fork`) in `Lightningpanda.*` params.
+#[derive(Deserialize)]
+struct ProfileName {
+    name: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewportSize {
     pub width: u32,
@@ -220,9 +236,46 @@ fn default_pool() -> usize {
     1
 }
 
-/// `serve --fork`: hands a profile to the template process; its id there.
-pub type RegisterPrepared = Box<dyn Fn(&PreparedProfile) -> Result<usize, String>>;
-pub type UnregisterPrepared = Box<dyn Fn(usize) -> Result<bool, String>>;
+/// `serve --fork`: the template process's profile registry, as a connection
+/// reaches it. Profiles live in the template, so every connection (every
+/// client of the server) shares them. A named profile is held by the
+/// connections that registered or adopted it and retired once none holds it
+/// and no other profile derives from it; a connection's holds end with it.
+pub trait ForkProfiles {
+    /// Boots `profile` for every later connection, or finds the same one:
+    /// its id. With `name`, this connection also holds it under that name.
+    fn register(&self, profile: &PreparedProfile, name: Option<&str>) -> Result<usize, String>;
+    /// Holds the profile some connection registered as `name`: its id and definition.
+    fn adopt(&self, name: &str) -> Result<(usize, PreparedProfile), String>;
+    /// Drops this connection's hold on `name`.
+    fn release(&self, name: &str) -> Result<ProfileRelease, String>;
+    /// Retires profile `id` (one registered without a name); whether it was.
+    fn unregister(&self, id: usize) -> Result<bool, String>;
+    /// The named profiles.
+    fn list(&self) -> Result<Vec<NamedProfile>, String>;
+}
+
+/// What releasing a named profile did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileRelease {
+    /// This connection held the name.
+    pub released: bool,
+    /// The profile was retired with it (no other holder, nothing derived from it).
+    pub retired: bool,
+}
+
+/// A profile the template keeps under a name (`Lightningpanda.preparedProfiles`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedProfile {
+    pub name: String,
+    pub profile_id: usize,
+    /// Connections holding it.
+    pub holders: usize,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<usize>,
+}
 
 /// At most this many pages booting ahead per profile.
 pub const MAX_POOL: usize = 8;
@@ -304,6 +357,9 @@ struct WorkerEntry {
     page: PageKey,
     target_id: String,
     url: String,
+    service: bool,
+    /// The browser context, kept: a service worker outlives the page.
+    context_id: Option<String>,
 }
 
 /// Per-connection browser protocol state.
@@ -323,6 +379,8 @@ pub struct Browser<H: Host> {
     workers: Vec<WorkerEntry>,
     sessions: HashMap<String, SessionEntry>,
     browser_sessions: HashSet<String>,
+    /// The last handled message polled the prepared-page pool.
+    pool_poll: bool,
     next_id: u64,
     prepared_profiles: Vec<PreparedProfile>,
     retired_profiles: HashSet<usize>,
@@ -331,10 +389,9 @@ pub struct Browser<H: Host> {
     /// the next acquisition before trying again.
     refill_blocked: bool,
     /// `serve --fork`: this connection is a fork of the template process
-    /// (see [`crate::fork`]), which boots prepared pages for every later
+    /// (see `lp_cdp::fork`), which boots prepared pages for every later
     /// connection. Nothing is booted here; registrations go to the template.
-    fork: Option<RegisterPrepared>,
-    fork_unregister: Option<UnregisterPrepared>,
+    fork: Option<Box<dyn ForkProfiles>>,
 }
 
 #[derive(Serialize)]
@@ -368,24 +425,21 @@ impl<H: Host> Browser<H> {
             workers: Vec::new(),
             sessions: HashMap::new(),
             browser_sessions: HashSet::new(),
+            pool_poll: false,
             next_id: 1,
             prepared_profiles: Vec::new(),
             retired_profiles: HashSet::new(),
             prepared: Vec::new(),
             refill_blocked: false,
             fork: None,
-            fork_unregister: None,
         }
     }
 
     /// Makes this connection a fork child (see the `fork` field): no
-    /// refills, and `registerPreparedPage` goes through `register`.
-    pub fn set_fork_child(&mut self, register: RegisterPrepared) {
-        self.fork = Some(register);
-    }
-
-    pub fn set_fork_unregister(&mut self, unregister: UnregisterPrepared) {
-        self.fork_unregister = Some(unregister);
+    /// refills, and profiles are registered with (and shared through) the
+    /// template's `registry`.
+    pub fn set_fork_child(&mut self, registry: Box<dyn ForkProfiles>) {
+        self.fork = Some(registry);
     }
 
     pub fn prepared_profile_active(&self, id: usize) -> bool {
@@ -645,6 +699,7 @@ impl<H: Host> Browser<H> {
         match action {
             "registerPreparedPage" => {
                 let profile: PreparedProfile = cmd.params()?;
+                let ProfileName { name } = cmd.params()?;
                 if lp_net::Url::parse(&profile.url).is_err() {
                     return Err(CdpError::invalid_params("url is not an absolute URL"));
                 }
@@ -654,11 +709,17 @@ impl<H: Host> Browser<H> {
                 if (!profile.setup.is_empty() || profile.base.is_some()) && self.fork.is_none() {
                     return Err(CdpError::invalid_params("setup and base need serve --fork"));
                 }
-                if let Some(register) = &self.fork {
+                if name.as_deref() == Some("") {
+                    return Err(CdpError::invalid_params("name must not be empty"));
+                }
+                if let Some(registry) = &self.fork {
                     // The template boots it; connections forked from then on have it.
-                    let profile_id = register(&profile).map_err(CdpError::server)?;
+                    let profile_id = registry.register(&profile, name.as_deref()).map_err(CdpError::server)?;
                     out.send(msg::result_frame(id, &serde_json::json!({ "profileId": profile_id }), cmd.session_id()));
                     return Ok(());
+                }
+                if name.is_some() {
+                    return Err(CdpError::invalid_params("profile names need serve --fork"));
                 }
                 self.prepared_profiles.push(profile);
                 self.refill_blocked = false;
@@ -670,17 +731,54 @@ impl<H: Host> Browser<H> {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
                 struct P {
-                    profile_id: usize,
+                    profile_id: Option<usize>,
+                    name: Option<String>,
                 }
                 let p: P = cmd.params()?;
-                let removed = if let Some(unregister) = &self.fork_unregister {
-                    unregister(p.profile_id).map_err(CdpError::server)?
-                } else if self.fork.is_some() {
-                    return Err(CdpError::server("Profile retirement is unavailable on this fork connection"));
+                let result = if let Some(name) = p.name {
+                    // This connection's hold on a shared profile: retired with the last one.
+                    let Some(registry) = &self.fork else {
+                        return Err(CdpError::invalid_params("profile names need serve --fork"));
+                    };
+                    let r = registry.release(&name).map_err(CdpError::server)?;
+                    serde_json::json!({ "removed": r.released, "retired": r.retired })
+                } else if let Some(profile_id) = p.profile_id {
+                    let removed = match &self.fork {
+                        Some(registry) => registry.unregister(profile_id).map_err(CdpError::server)?,
+                        None => self.unregister_prepared_profile(profile_id)?,
+                    };
+                    serde_json::json!({ "removed": removed })
                 } else {
-                    self.unregister_prepared_profile(p.profile_id)?
+                    return Err(CdpError::invalid_params("profileId or name is required"));
                 };
-                out.send(msg::result_frame(id, &serde_json::json!({ "removed": removed }), cmd.session_id()));
+                out.send(msg::result_frame(id, &result, cmd.session_id()));
+            }
+            "adoptPreparedPage" => {
+                let Some(registry) = &self.fork else {
+                    return Err(CdpError::invalid_params("adopting a profile needs serve --fork"));
+                };
+                let ProfileName { name } = cmd.params()?;
+                let name = name.ok_or_else(|| CdpError::invalid_params("name is required"))?;
+                let (profile_id, profile) = registry.adopt(&name).map_err(CdpError::server)?;
+                out.send(msg::result_frame(
+                    id,
+                    &serde_json::json!({
+                        "profileId": profile_id,
+                        "url": profile.url,
+                        "initScripts": profile.init_scripts,
+                        "viewport": profile.viewport,
+                        "setup": profile.setup,
+                        "base": profile.base,
+                    }),
+                    cmd.session_id(),
+                ));
+            }
+            "preparedProfiles" => {
+                let profiles = match &self.fork {
+                    Some(registry) => registry.list().map_err(CdpError::server)?,
+                    None => Vec::new(),
+                };
+                out.send(msg::result_frame(id, &serde_json::json!({ "profiles": profiles }), cmd.session_id()));
             }
             "acquirePreparedPage" => {
                 #[derive(Deserialize)]
@@ -765,7 +863,13 @@ impl<H: Host> Browser<H> {
                 self.refill_blocked = false;
             }
             "capabilities" => {
-                out.send(msg::result_frame(id, &serde_json::json!({ "fork": self.fork.is_some() }), cmd.session_id()));
+                // `sharedProfiles`: profiles have names every client of this server can adopt.
+                let fork = self.fork.is_some();
+                out.send(msg::result_frame(
+                    id,
+                    &serde_json::json!({ "fork": fork, "sharedProfiles": fork }),
+                    cmd.session_id(),
+                ));
             }
             "preparedPages" => {
                 let pages: Vec<serde_json::Value> = self
@@ -812,11 +916,17 @@ impl<H: Host> Browser<H> {
                 return;
             }
         };
-        let session_id = command.session_id().map(str::to_owned);
+        self.pool_poll = command.method == "Lightningpanda.preparedPages";
         let _t = crate::perf::span_with(|| format!("cdp.dispatch {}", command.method));
         if let Err(error) = self.dispatch(&command, out) {
-            out.send(msg::error_frame(Some(command.id), &error, session_id.as_deref()));
+            out.send(msg::error_frame(Some(command.id), &error, command.session_id()));
         }
+    }
+
+    /// Whether the last message [`Browser::handle_text`] handled was a
+    /// `Lightningpanda.preparedPages` status poll (not client activity).
+    pub fn last_was_pool_poll(&self) -> bool {
+        self.pool_poll
     }
 
     fn dispatch(&mut self, cmd: &Command<'_>, out: &mut dyn Sink) -> CdpResult<()> {
@@ -911,13 +1021,14 @@ impl<H: Host> Browser<H> {
         if let Some(worker) = session.worker {
             return self.worker_session_command(session_id, worker, cmd, out);
         }
-        let target = self
+        let index = self
             .targets
             .iter()
-            .find(|t| t.id == session.target_id)
+            .position(|t| t.id == session.target_id)
             .ok_or_else(|| CdpError::server("target of session is gone"))?;
-        let (page, target_id) = (target.page, target.id.clone());
+        let page = self.targets[index].page;
         if session.tab {
+            let target_id = self.targets[index].id.clone();
             return self.tab_session_command(session_id, &target_id, cmd, out);
         }
         match cmd.method.as_ref() {
@@ -933,16 +1044,18 @@ impl<H: Host> Browser<H> {
                     session.auto_attach_workers = wanted;
                 }
                 if wanted {
-                    let existing: Vec<usize> =
-                        (0..self.workers.len()).filter(|i| self.workers[*i].page == page).collect();
+                    let existing: Vec<usize> = (0..self.workers.len())
+                        .filter(|i| self.workers[*i].page == page && !self.workers[*i].service)
+                        .collect();
                     for index in existing {
-                        self.attach_worker(index, session_id, out);
+                        self.attach_worker(index, Some(session_id), out);
                     }
                 }
             }
             "Target.getTargetInfo" => {
                 let url = self.host.page_url(page);
                 let title = self.host.page_title(page);
+                let target_id = self.targets[index].id.clone();
                 let target = self.target(&target_id)?;
                 let info = self.info(target, &url, &title, true);
                 out.send(msg::result_frame(cmd.id, &serde_json::json!({ "targetInfo": info }), Some(session_id)));
@@ -950,9 +1063,14 @@ impl<H: Host> Browser<H> {
             "Runtime.runIfWaitingForDebugger" => {
                 // Only popups start paused; resuming starts their navigation.
                 out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id)));
+                let target_id = self.targets[index].id.clone();
                 self.release_popup(&target_id, out);
             }
-            _ => self.host.page_command(PageCommand { page, target_id: &target_id, session_id, command: cmd }, out),
+            // The target id is borrowed: no copy per page command.
+            _ => {
+                let target_id = &self.targets[index].id;
+                self.host.page_command(PageCommand { page, target_id, session_id, command: cmd }, out)
+            }
         }
         Ok(())
     }
@@ -1136,6 +1254,13 @@ impl<H: Host> Browser<H> {
                 if self.auto_attach || self.tab_attach {
                     for target_id in unattached {
                         self.auto_attach_new(&target_id, false, out)?;
+                    }
+                    if self.auto_attach {
+                        let services: Vec<usize> =
+                            (0..self.workers.len()).filter(|i| self.workers[*i].service).collect();
+                        for index in services {
+                            self.attach_worker(index, None, out);
+                        }
                     }
                 } else {
                     // Tab sessions first detach their pages' sessions.
@@ -1650,13 +1775,22 @@ impl<H: Host> Browser<H> {
 
     fn worker_changed(&mut self, change: WorkerChange, out: &mut dyn Sink) {
         match change {
-            WorkerChange::Started { worker, page, url } => {
-                let target_id = self.mint("");
-                self.workers.push(WorkerEntry { key: worker, page, target_id, url });
+            WorkerChange::Started { worker, page, url, service } => {
+                // A service worker's target is a browser-level one, beside the
+                // pages, whose ids the host picks: a prefix keeps them apart.
+                let target_id = self.mint(if service { "SW" } else { "" });
+                let context_id = self.targets.iter().find(|t| t.page == page).map(|t| t.context_id.clone());
+                self.workers.push(WorkerEntry { key: worker, page, target_id, url, service, context_id });
                 let index = self.workers.len() - 1;
                 if self.discover {
                     let params = serde_json::json!({ "targetInfo": self.worker_info(index, false) });
                     out.send(msg::event_frame("Target.targetCreated", &params, None));
+                }
+                if service {
+                    if self.auto_attach {
+                        self.attach_worker(index, None, out);
+                    }
+                    return;
                 }
                 let Some(target_id) = self.targets.iter().find(|t| t.page == page).map(|t| t.id.clone()) else {
                     return;
@@ -1668,7 +1802,7 @@ impl<H: Host> Browser<H> {
                     .map(|(id, _)| id.clone())
                     .collect();
                 for parent in parents {
-                    self.attach_worker(index, &parent, out);
+                    self.attach_worker(index, Some(&parent), out);
                 }
             }
             WorkerChange::Stopped { worker } => {
@@ -1689,18 +1823,19 @@ impl<H: Host> Browser<H> {
 
     fn worker_info(&self, index: usize, attached: bool) -> serde_json::Value {
         let worker = &self.workers[index];
-        let context = self.targets.iter().find(|t| t.page == worker.page).map(|t| t.context_id.as_str());
         serde_json::json!({
-            "targetId": worker.target_id, "type": "worker", "title": "", "url": worker.url,
-            "attached": attached, "canAccessOpener": false, "browserContextId": context,
+            "targetId": worker.target_id, "type": if worker.service { "service_worker" } else { "worker" },
+            "title": "", "url": worker.url,
+            "attached": attached, "canAccessOpener": false, "browserContextId": worker.context_id,
         })
     }
 
-    /// Attaches `parent`, a session of the worker's page, once. Past the session
-    /// limit the worker simply has no session there.
-    fn attach_worker(&mut self, index: usize, parent: &str, out: &mut dyn Sink) {
+    /// Attaches `parent`, a session of the worker's page (`None`: the browser
+    /// connection, for a service worker), once. Past the session limit the
+    /// worker simply has no session there.
+    fn attach_worker(&mut self, index: usize, parent: Option<&str>, out: &mut dyn Sink) {
         let worker = self.workers[index].key;
-        if self.sessions.values().any(|s| s.worker == Some(worker) && s.parent.as_deref() == Some(parent))
+        if self.sessions.values().any(|s| s.worker == Some(worker) && s.parent.as_deref() == parent)
             || self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS
         {
             return;
@@ -1710,7 +1845,7 @@ impl<H: Host> Browser<H> {
             session_id.clone(),
             SessionEntry {
                 target_id: self.workers[index].target_id.clone(),
-                parent: Some(parent.to_owned()),
+                parent: parent.map(str::to_owned),
                 auto_attached: true,
                 tab: false,
                 worker: Some(worker),
@@ -1722,7 +1857,7 @@ impl<H: Host> Browser<H> {
         let params = serde_json::json!({
             "sessionId": session_id, "targetInfo": self.worker_info(index, true), "waitingForDebugger": false,
         });
-        out.send(msg::event_frame("Target.attachedToTarget", &params, Some(parent)));
+        out.send(msg::event_frame("Target.attachedToTarget", &params, parent));
     }
 
     fn detach_worker_sessions(&mut self, parent: &str, out: &mut dyn Sink) {

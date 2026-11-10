@@ -26,5 +26,21 @@ for (const arch of ['arm64', 'x64']) {
     throw new Error(`Missing or not an arm64 library: ${fileURLToPath(lib)}. The arm64 browser must be the fork build with its patched JavaScriptCore (see docs/NPM_PUBLISHING.md).`);
   }
 }
+// Linux browsers are fork builds too, with the patched JavaScriptCore and its
+// ICU in lib/ beside them (scripts/release/bundle-jsc-linux.sh).
+for (const [arch, machine] of [['x64', 62], ['arm64', 183]]) {
+  for (const rel of [`native/linux-${arch}/lightningpanda`, `native/linux-${arch}/lib/libJavaScriptCore.so`]) {
+    const file = new URL(rel, pkg);
+    if (!statSync(file, { throwIfNoEntry: false })?.isFile()) {
+      throw new Error(`Missing ${fileURLToPath(file)}. Build both Linux browsers before packing (see docs/NPM_PUBLISHING.md).`);
+    }
+    const header = readFileSync(file).subarray(0, 20);
+    // ELF magic, 64-bit, little-endian, then e_machine at offset 18.
+    if (header.length < 20 || header.readUInt32BE(0) !== 0x7f454c46 || header[4] !== 2 || header[5] !== 1 || header.readUInt16LE(18) !== machine) {
+      throw new Error(`Expected a Linux ${arch} ELF file: ${fileURLToPath(file)}`);
+    }
+  }
+  chmodSync(new URL(`native/linux-${arch}/lightningpanda`, pkg), 0o755);
+}
 for (const name of ['LICENSE', 'NOTICE']) copyFileSync(new URL(name, root), new URL(name, pkg));
 chmodSync(new URL('dist/cli.js', pkg), 0o755);

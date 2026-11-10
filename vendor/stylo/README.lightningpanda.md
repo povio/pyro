@@ -1,6 +1,7 @@
-# stylo 0.22.0, patched
+# stylo 0.23.0, patched
 
-This is the published `stylo` 0.22.0 crate (crates.io), used through `[patch.crates-io]` in the
+This is the published `stylo` 0.23.0 crate (crates.io, servo/stylo commit
+`2dca34592ced37c6aa01733e94206a767194cf9d`, the one Blitz main pins), used through `[patch.crates-io]` in the
 workspace `Cargo.toml`. License: MPL-2.0, as upstream. Only `.cargo_vcs_info.json`, `.cargo-ok` and
 `Cargo.toml.orig` were left out of the copy. `UPSTREAM.patch` is the whole diff against the published
 crate (`diff -ruN`).
@@ -29,6 +30,61 @@ crate (`diff -ruN`).
 - `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
   are added (upstream has neither; both were counted unknown properties), inherited, in
   `inherited_text`. lp-render's PDF output reads them to place page cuts of paper-cut documents.
+
+- `stylist.rs`, `style_resolver.rs`: each origin's `CascadeData` also files its single-level
+  `::before`/`::after` rules that declare `content`, `display` or `animation-name` (on the
+  block's longhand set, so `all`, `var()` and CSS-wide keywords count; `content: normal | none`
+  and `animation-name: none` do not, so lightningpanda's UA
+  `*::before, *::after { animation: none !important }` stays out) in a second pair of
+  `SelectorMap`s, filled by `add_styles` next to `normal_rules` and cleared with it.
+  `match_pseudo` (unvisited pass, not `PseudoElementResolution::Force`) matches only those first
+  and returns `None` when none matches: every other rule leaves `content` at `normal` without
+  setting `DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE`, so the matched and cascaded style was
+  dropped by `eager_pseudo_is_definitely_not_generated` anyway. Universal resets
+  (`*, ::before, ::after { box-sizing: ... }`, Tailwind's `--tw-*` block) made every element
+  match and cascade both pseudo-elements. Elements that shadow-tree, `::slotted()`, `:host` or
+  `::part()` rules for the pseudo-element can reach take the full path. A CSSOM declaration
+  edit rebuilds the index with the rules (`RuleChangeKind::StyleRuleDeclarations` is
+  `FullyInvalid`); debug builds check, on every skip, that no matched rule could generate a box.
+
+- `invalidation/element/invalidation_map.rs`: `AdditionalRelativeSelectorInvalidationMap::state_dependencies`
+  is the union of the element states the relative selector map depends on (every `:has()` argument's
+  pseudo-classes), kept as dependencies are added and reset by `clear`. Blitz reads it to tell with one
+  flag test that a state change cannot change any `:has()` match before it runs the relative selector
+  invalidation (`vendor/blitz-dom/src/has_invalidation.rs`).
+
+- `servo/selector_parser.rs`: `:in-range` parses (upstream has the pseudo-class, its state flag and
+  serialization, but left it out of the parser, so a rule using it was dropped).
+
+- `properties/data.py`: a longhand without an explicit `servo_restyle_damage` gets the damage its `affects` implies
+  (`layout` → `rebuild_box`, `overflow` → `recalculate_overflow`, `paint` and `""` → `repaint`). Upstream gave every
+  such property `rebuild_box`, so a change of `border-top-color`, `visibility`, `box-shadow`, a border radius, a mask
+  or `scrollbar-color` was relayout damage (`RELAYOUT`), and Blitz relaid out and rebuilt boxes for it. Explicit
+  annotations are unchanged. `servo/restyle_damage.rs`: `backdrop-filter` (now `recalculate_overflow`) makes a
+  containing block for fixed boxes as `filter` does, so a change between none and some stays `RELAYOUT`
+  (`augmented_restyle_damage_rebuild_box`). A `mask-image` (now `repaint`) makes a stacking context in Blitz's paint tree
+  (`applies_atomic_paint_effect`), so a change between none and some is `REBUILD_STACKING_CONTEXT`
+  (`augmented_restyle_damage_rebuild_stacking_context`, `has_mask_image`). Blitz's `compute_layout_damage` runs only on `RELAYOUT`, so this is what
+  lets a paint-only restyle of a table cell run no layout (`vendor/blitz-dom/README.lightningpanda.md`, "Paint-only
+  restyles run no layout and shape no text").
+
+## Container queries, typed values
+
+- `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules
+  and the `container` shorthand are parsed for servo too (upstream: gecko only). The shorthand's
+  `servo_pref` is `layout.css.container-queries.enabled`: upstream names a pref that no longer exists in
+  0.23 (`layout.container-queries.enabled`), which only compiles while the shorthand is gecko-only.
+- `stylist.rs`: `Stylist::has_container_queries` tells blitz-dom whether a restyle has container
+  conditions to evaluate.
+- `values/generics/mod.rs`: `GreaterThanOrEqualToOne` derives `ToTyped` (for `orphans`/`widows`).
+
+## Moving from 0.22 to 0.23
+
+The patch applied to 0.23.0 with offsets only. Two adjustments: 0.23 names the by-value getters of
+non-`Copy` values `slow_clone_*`, so the rule cache's inherited resets (`rule_cache.rs`,
+`properties/helpers.mako.rs`) call `slow_clone_box_sizing` and friends; and the `container` shorthand's
+pref name above. The `::before`/`::after` index (`stylist.rs`, `style_resolver.rs`) was written
+on 0.22 and ported onto 0.23's `stylist.rs` as is.
 
 ## Updating or dropping the patch
 

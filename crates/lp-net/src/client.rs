@@ -9,6 +9,7 @@
 //! 2-3 copies per body (HttpClient.zig:4241 -> Fetch.zig:302 / captured
 //! responses).
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,9 +28,17 @@ use url::Url;
 use crate::auth::auth_challenge;
 use crate::cookies::{site_context, CookieJar, SiteContext};
 use crate::cors::{self, PreflightCache};
+use crate::h2_probe::{H2Sessions, ProbeConnector};
+use crate::inflate::{Format as InflateFormat, Inflater};
 use crate::proxy::{basic_authorization, ProxyConfig, ProxyConnector, ProxyError, ProxyState};
+use crate::referrer::FetchSite;
 use crate::request::*;
-use crate::subscription::{NetSubscription, NetWake, SubscriptionLimits, Subscriptions};
+use crate::subscription::{
+    flush_deferred_wakes, DeferredWakes, NetSubscription, NetWake, SubscriptionLimits, Subscriptions,
+};
+
+#[path = "websocket.rs"]
+pub mod websocket;
 
 /// Consumer of one request's events; wrap it to post to the browser loop.
 ///
@@ -80,6 +89,11 @@ pub struct NetConfig {
     /// HTTP forward proxy for this client's requests (`serve --proxy`,
     /// `Target.createBrowserContext proxyServer`).
     pub proxy: Option<ProxyConfig>,
+    /// Serve `file:` URLs from the local filesystem (navigations and the
+    /// subresources of `file:` documents), as Chrome does. Default true;
+    /// `LIGHTNINGPANDA_FILE_URLS=0` turns it off (`file:` then fails with
+    /// `net::ERR_UNKNOWN_URL_SCHEME`).
+    pub file_urls: bool,
 }
 
 impl Default for NetConfig {
@@ -100,6 +114,7 @@ impl Default for NetConfig {
             static_files: Default::default(),
             static_direct: std::env::var("LIGHTNINGPANDA_STATIC_DIRECT").map_or(true, |v| v != "0"),
             proxy: None,
+            file_urls: std::env::var("LIGHTNINGPANDA_FILE_URLS").map_or(true, |v| v != "0"),
         }
     }
 }
@@ -167,6 +182,13 @@ pub enum NetEvent {
         error: NetError,
         canceled: bool,
         destination: Destination,
+        timestamp: f64,
+    },
+    /// A WebSocket connection's progress (`Network.webSocket*`).
+    WebSocket {
+        id: RequestId,
+        /// Boxed: `NetEvent`s of every request stay their size.
+        activity: Box<websocket::WebSocketActivity>,
         timestamp: f64,
     },
 }
@@ -273,8 +295,10 @@ pub trait Interceptor: Send + Sync {
 }
 
 enum Cmd {
-    Fetch(RequestId, Box<Request>, ResponseSink),
+    /// The request, its sink and when the caller started it.
+    Fetch(RequestId, Box<Request>, ResponseSink, Instant),
     Cancel(RequestId),
+    WebSocket(Box<websocket::Start>),
 }
 
 struct Inner {
@@ -487,8 +511,9 @@ impl NetClient {
             Some(loader) => self.track(loader, sink),
             None => sink,
         };
-        if let Err(mpsc::error::SendError(Cmd::Fetch(_, _, mut sink))) =
-            self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Fetch(id, Box::new(req), sink))
+        let start = Instant::now();
+        if let Err(mpsc::error::SendError(Cmd::Fetch(_, _, mut sink, _))) =
+            self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Fetch(id, Box::new(req), sink, start))
         {
             sink(ResponseEvent::Failed(NetError::Other("network thread stopped".into())));
         }
@@ -579,7 +604,7 @@ impl NetClient {
 // ---------------------------------------------------------------------------
 // I/O thread
 
-type HttpClient = Client<hyper_rustls::HttpsConnector<ProxyConnector>, Full<Bytes>>;
+type HttpClient = Client<ProbeConnector<hyper_rustls::HttpsConnector<ProxyConnector>>, Full<Bytes>>;
 
 /// The TLS settings of every client: Mozilla's root certificates (webpki-roots),
 /// rustls on ring. Plain data, built once per process (a fork child keeps it;
@@ -656,9 +681,15 @@ impl rustls::client::danger::ServerCertVerifier for AnyCertificate {
     }
 }
 
-/// An HTTP(S) client over `tls`, with this context's connect settings.
-fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc<ProxyState>>) -> HttpClient {
-    let mut connector = HttpConnector::new();
+/// An HTTP(S) client over `tls`, with this context's connect settings. Its
+/// HTTP/2 connections are registered in `sessions` (WebSockets over HTTP/2).
+fn http_client(
+    config: &NetConfig,
+    tls: &rustls::ClientConfig,
+    proxy: Option<Arc<ProxyState>>,
+    sessions: Arc<H2Sessions>,
+) -> HttpClient {
+    let mut connector = HttpConnector::new_with_resolver(crate::timing::TimedResolver::new());
     connector.set_connect_timeout(Some(config.connect_timeout));
     connector.set_nodelay(true);
     connector.enforce_http(false);
@@ -669,11 +700,77 @@ fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc
         .enable_http1()
         .enable_http2()
         .wrap_connector(connector);
+    let connector = ProbeConnector::new(connector, sessions);
     Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector)
 }
 
 /// Every client of the process, for [`suspend_for_fork`].
 static CLIENTS: Mutex<Vec<std::sync::Weak<Inner>>> = Mutex::new(Vec::new());
+
+/// Run on an I/O thread once it has been quiet for [`IO_IDLE_RELEASE`]
+/// ([`set_idle_release`]).
+static IDLE_RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// How long an I/O thread stays quiet (no command, no request finishing)
+/// before it runs the [`set_idle_release`] hook.
+const IO_IDLE_RELEASE: Duration = Duration::from_secs(1);
+
+/// Registers what an I/O thread runs once a second has passed since its
+/// last command or finished request: an allocator with per-thread heaps
+/// (the executable's) returns the pages of the response buffers the browser
+/// freed, which only the thread that allocated them can (a loaded mid-size
+/// SPA: 3 MB less).
+pub fn set_idle_release(release: fn()) {
+    let _ = IDLE_RELEASE.set(release);
+}
+
+/// Runs the [`set_idle_release`] hook once per quiet spell of an I/O
+/// thread, [`IO_IDLE_RELEASE`] after its last activity, whether or not a
+/// request is still open (a long poll or a stream may stay open for good;
+/// the hook only returns what is already free). No timer runs while the
+/// thread stays quiet after that.
+struct IdleRelease {
+    /// The thread's last command or finished request.
+    last: std::cell::Cell<tokio::time::Instant>,
+    /// Whether a release is due (activity since the last one).
+    due: std::cell::Cell<bool>,
+    wake: tokio::sync::Notify,
+}
+
+impl IdleRelease {
+    /// Starts the releasing task on this thread's `LocalSet`.
+    fn start(release: fn()) -> std::rc::Rc<IdleRelease> {
+        let idle = std::rc::Rc::new(IdleRelease {
+            last: std::cell::Cell::new(tokio::time::Instant::now()),
+            due: std::cell::Cell::new(false),
+            wake: tokio::sync::Notify::new(),
+        });
+        let task = idle.clone();
+        tokio::task::spawn_local(async move {
+            loop {
+                task.wake.notified().await;
+                loop {
+                    let at = task.last.get() + IO_IDLE_RELEASE;
+                    if at <= tokio::time::Instant::now() {
+                        break;
+                    }
+                    tokio::time::sleep_until(at).await;
+                }
+                task.due.set(false);
+                release();
+            }
+        });
+        idle
+    }
+
+    /// A command came or a request finished.
+    fn touch(&self) {
+        self.last.set(tokio::time::Instant::now());
+        if !self.due.replace(true) {
+            self.wake.notify_one();
+        }
+    }
+}
 
 /// Stops the I/O thread of every client in the process, so that the process
 /// can `fork()` (only the calling thread survives a fork). Requests still in
@@ -716,10 +813,17 @@ struct Io {
     client: HttpClient,
     /// Built at the first request made while certificate errors are ignored.
     insecure: std::cell::OnceCell<HttpClient>,
+    /// The HTTP/2 connections of `client` and of `insecure`.
+    sessions: Arc<H2Sessions>,
+    insecure_sessions: Arc<H2Sessions>,
     preflight: Mutex<PreflightCache>,
-    per_origin: Mutex<HashMap<String, Arc<Semaphore>>>,
+    per_origin: Mutex<HashMap<url::Origin, Arc<Semaphore>>>,
     /// Origins whose semaphore grew to `max_per_h2_origin`.
-    h2_origins: Mutex<HashSet<String>>,
+    h2_origins: Mutex<HashSet<url::Origin>>,
+    /// The configured `User-Agent` and `Accept-Language` as header values,
+    /// built once (a request without overrides sends them as they are).
+    default_user_agent: Option<HeaderValue>,
+    default_accept_language: Option<HeaderValue>,
 }
 
 fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: Arc<Mutex<CookieJar>>) {
@@ -732,32 +836,49 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         }
     }
     let _close_observers = CloseObservers(shared.clone());
-    let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-        Ok(rt) => rt,
-        Err(_) => return,
-    };
+    // Observer wakes of this thread go out once per turn: when the runtime
+    // is about to park (nothing left to run until I/O arrives) and before a
+    // request's terminal event reaches its sink (`deliver`). Dropped before
+    // the observers close.
+    let _deferred_wakes = DeferredWakes::enter();
+    let rt =
+        match tokio::runtime::Builder::new_current_thread().enable_all().on_thread_park(flush_deferred_wakes).build() {
+            Ok(rt) => rt,
+            Err(_) => return,
+        };
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async move {
-        let client = http_client(&shared.config, &tls_config(), shared.proxy.clone());
+        let sessions = Arc::new(H2Sessions::default());
+        let client = http_client(&shared.config, &tls_config(), shared.proxy.clone(), sessions.clone());
         let io = std::rc::Rc::new(Io {
+            default_user_agent: HeaderValue::from_str(&shared.config.user_agent).ok(),
+            default_accept_language: HeaderValue::from_str(&shared.config.accept_language).ok(),
             shared,
             cookies,
             client,
             insecure: std::cell::OnceCell::new(),
+            sessions,
+            insecure_sessions: Arc::new(H2Sessions::default()),
             preflight: Mutex::new(PreflightCache::default()),
             per_origin: Mutex::new(HashMap::new()),
             h2_origins: Mutex::new(HashSet::new()),
         });
         let tasks: std::rc::Rc<std::cell::RefCell<HashMap<RequestId, Task>>> = Default::default();
+        let idle = IDLE_RELEASE.get().map(|release| IdleRelease::start(*release));
         while let Some(cmd) = rx.recv().await {
+            if let Some(idle) = &idle {
+                idle.touch();
+            }
             match cmd {
-                Cmd::Fetch(id, req, sink) => {
+                Cmd::Fetch(id, req, sink, start) => {
                     let destination = req.destination;
                     let sink = std::rc::Rc::new(std::cell::RefCell::new(Some(sink)));
-                    let (io2, tasks2, sink2) = (io.clone(), tasks.clone(), sink.clone());
+                    let (io2, tasks2, sink2, idle2) = (io.clone(), tasks.clone(), sink.clone(), idle.clone());
                     let handle = tokio::task::spawn_local(async move {
                         let dest = req.destination;
-                        let result = io2.run(id, *req, &sink2).await;
+                        let timing = crate::timing::NetTiming { start: Some(start), ..Default::default() };
+                        let running = io2.run(id, *req, &sink2);
+                        let result = crate::timing::FETCH_TIMING.scope(std::cell::Cell::new(timing), running).await;
                         if let Err(e) = result {
                             io2.shared.emit(NetEvent::LoadingFailed {
                                 id,
@@ -770,8 +891,14 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                         }
                         sink2.borrow_mut().take();
                         tasks2.borrow_mut().remove(&id);
+                        if let Some(idle) = idle2 {
+                            idle.touch();
+                        }
                     });
                     tasks.borrow_mut().insert(id, Task { handle, sink, destination });
+                }
+                Cmd::WebSocket(start) => {
+                    tokio::task::spawn_local(io.clone().websocket(*start));
                 }
                 Cmd::Cancel(id) => {
                     // Release the map borrow before awaiting task destruction.
@@ -812,6 +939,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             deliver(&t.sink, ResponseEvent::Failed(NetError::Aborted));
             t.sink.borrow_mut().take();
         }
+        flush_deferred_wakes();
     });
 }
 
@@ -824,6 +952,14 @@ struct Task {
 type SharedSink = std::rc::Rc<std::cell::RefCell<Option<ResponseSink>>>;
 
 fn deliver(sink: &SharedSink, ev: ResponseEvent) {
+    // A terminal event completes the request on the consumer's loop: the
+    // observers' wake (of this and the events before it, deferred since the
+    // thread last parked) is posted first, so an owner task publishes them
+    // ahead of what the completion causes, as when every event woke at once;
+    // the completion's post then finds that loop awake (one wake-up for both).
+    if matches!(ev, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+        flush_deferred_wakes();
+    }
     if let Some(s) = sink.borrow_mut().as_mut() {
         s(ev);
     }
@@ -839,57 +975,184 @@ fn default_accept(d: Destination) -> &'static str {
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
         }
         Destination::Style => "text/css,*/*;q=0.1",
+        Destination::Json => "application/json,*/*;q=0.5",
         Destination::Image => "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         Destination::EventSource => "text/event-stream",
         _ => "*/*",
     }
 }
 
-enum Decoder {
-    Identity,
-    Gzip(flate2::write::GzDecoder<Vec<u8>>),
-    Deflate(flate2::write::ZlibDecoder<Vec<u8>>),
+/// One content coding of a response body.
+enum Stage {
+    /// `gzip`; `deflate` as a zlib stream (RFC 9110), or sent without its
+    /// zlib wrapper (legacy IIS and others), which Chromium also accepts.
+    Inflate(Inflater),
+    /// `deflate` until its first two bytes show a zlib header or not: the
+    /// bytes so far, and an output that stays empty.
+    Sniff(Vec<u8>, Vec<u8>),
     Brotli(Box<brotli_decompressor::DecompressorWriter<Vec<u8>>>),
 }
 
+/// A zlib stream header (RFC 1950): method 8 with a window of at most
+/// 32 KiB, and a check value that makes the pair a multiple of 31.
+fn is_zlib_header(cmf: u8, flg: u8) -> bool {
+    cmf & 0x0f == 8 && cmf >> 4 <= 7 && (u16::from(cmf) << 8 | u16::from(flg)) % 31 == 0
+}
+
+impl Stage {
+    fn write_all(&mut self, chunk: &[u8]) -> std::io::Result<()> {
+        match self {
+            Stage::Inflate(d) => d.write_all(chunk),
+            Stage::Brotli(d) => d.write_all(chunk),
+            Stage::Sniff(head, _) => {
+                head.extend_from_slice(chunk);
+                if head.len() < 2 {
+                    return Ok(());
+                }
+                let head = std::mem::take(head);
+                *self = Stage::Inflate(Inflater::new(if is_zlib_header(head[0], head[1]) {
+                    InflateFormat::Zlib
+                } else {
+                    InflateFormat::Raw
+                }));
+                self.write_all(&head)
+            }
+        }
+    }
+
+    /// The decoded output written so far, which the caller empties.
+    fn out(&mut self) -> &mut Vec<u8> {
+        match self {
+            Stage::Inflate(d) => d.out(),
+            Stage::Brotli(d) => d.get_mut(),
+            Stage::Sniff(_, out) => out,
+        }
+    }
+
+    fn finish(self) -> Result<Vec<u8>, NetError> {
+        let err = |e: std::io::Error| NetError::Decode(e.to_string());
+        match self {
+            Stage::Inflate(d) => d.finish().map_err(err),
+            Stage::Brotli(d) => d.into_inner().map_err(|_| NetError::Decode("truncated brotli stream".into())),
+            Stage::Sniff(head, _) if head.is_empty() => Ok(Vec::new()),
+            // A one-byte body: no zlib stream, so raw deflate decides.
+            Stage::Sniff(head, _) => {
+                let mut d = Inflater::new(InflateFormat::Raw);
+                d.write_all(&head).map_err(err)?;
+                d.finish().map_err(err)
+            }
+        }
+    }
+}
+
+/// A response body's content decoding: its codings in decoding order (the
+/// reverse of the header's), none for an identity body.
+struct Decoder {
+    stages: Vec<Stage>,
+}
+
 impl Decoder {
-    fn for_encoding(enc: Option<&str>) -> Result<Self, NetError> {
-        Ok(match enc.map(|e| e.trim().to_ascii_lowercase()).as_deref() {
-            None | Some("") | Some("identity") => Decoder::Identity,
-            Some("gzip") | Some("x-gzip") => Decoder::Gzip(flate2::write::GzDecoder::new(Vec::new())),
-            Some("deflate") => Decoder::Deflate(flate2::write::ZlibDecoder::new(Vec::new())),
-            Some("br") => Decoder::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new(Vec::new(), 4096))),
-            Some(other) => return Err(NetError::Decode(format!("unsupported content-encoding {other}"))),
+    const IDENTITY: Decoder = Decoder { stages: Vec::new() };
+
+    /// The decoder for a `Content-Encoding` value (its header lines joined
+    /// by commas). Like Chromium, a list decodes in reverse order, and a
+    /// list naming `identity` or a coding not supported passes the body
+    /// through undecoded instead of failing the request.
+    fn for_encoding(enc: Option<&str>) -> Self {
+        let Some(enc) = enc else { return Decoder::IDENTITY };
+        let mut stages = Vec::new();
+        for token in enc.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            let stage = if token.eq_ignore_ascii_case("gzip") || token.eq_ignore_ascii_case("x-gzip") {
+                Stage::Inflate(Inflater::new(InflateFormat::Gzip))
+            } else if token.eq_ignore_ascii_case("deflate") {
+                Stage::Sniff(Vec::new(), Vec::new())
+            } else if token.eq_ignore_ascii_case("br") {
+                Stage::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new(Vec::new(), 4096)))
+            } else {
+                return Decoder::IDENTITY;
+            };
+            stages.push(stage);
+        }
+        stages.reverse();
+        Decoder { stages }
+    }
+
+    /// Feeds an encoded chunk. Its decoded output is the chunk itself
+    /// (`None`, identity) or what the last coding wrote to its output
+    /// vector, which the caller empties.
+    fn write(&mut self, chunk: &[u8]) -> Result<Option<&mut Vec<u8>>, NetError> {
+        let err = |e: std::io::Error| NetError::Decode(e.to_string());
+        let Some((first, rest)) = self.stages.split_first_mut() else { return Ok(None) };
+        first.write_all(chunk).map_err(err)?;
+        let mut prev = first;
+        for next in rest {
+            // The previous coding's output feeds the next; its vector keeps
+            // its capacity.
+            let mut buf = std::mem::take(prev.out());
+            next.write_all(&buf).map_err(err)?;
+            buf.clear();
+            *prev.out() = buf;
+            prev = next;
+        }
+        Ok(Some(prev.out()))
+    }
+
+    /// Feeds an encoded chunk, returning the decoded output in an
+    /// allocation of exactly its size, which the response's readers then
+    /// share (the sink, the Network body store, the HTTP caches). A network
+    /// chunk is a slice of the connection's read buffer, all of which stays
+    /// allocated while the slice lives (a SPA's 3.5 MB of bodies held
+    /// 7.2 MB of read buffers); copied, the buffer is free for the next
+    /// read at once. The decoder's output vector grows by doubling and
+    /// stays the decoder's.
+    fn push(&mut self, chunk: &[u8]) -> Result<Bytes, NetError> {
+        Ok(match self.write(chunk)? {
+            None => Bytes::copy_from_slice(chunk),
+            Some(out) => {
+                let decoded = Bytes::copy_from_slice(out);
+                out.clear();
+                decoded
+            }
         })
     }
-    /// Feeds an encoded chunk, returning any decoded output.
-    fn push(&mut self, chunk: Bytes) -> Result<Bytes, NetError> {
-        let err = |e: std::io::Error| NetError::Decode(e.to_string());
-        let out = match self {
-            Decoder::Identity => return Ok(chunk),
-            Decoder::Gzip(d) => {
-                d.write_all(&chunk).map_err(err)?;
-                std::mem::take(d.get_mut())
-            }
-            Decoder::Deflate(d) => {
-                d.write_all(&chunk).map_err(err)?;
-                std::mem::take(d.get_mut())
-            }
-            Decoder::Brotli(d) => {
-                d.write_all(&chunk).map_err(err)?;
-                std::mem::take(d.get_mut())
-            }
-        };
-        Ok(Bytes::from(out))
+
+    /// Feeds an encoded chunk, appending the decoded output to `out`.
+    fn push_into(&mut self, chunk: &[u8], out: &mut Vec<u8>) -> Result<(), NetError> {
+        match self.write(chunk)? {
+            None => out.extend_from_slice(chunk),
+            Some(decoded) => out.append(decoded),
+        }
+        Ok(())
     }
-    fn finish(self) -> Result<Bytes, NetError> {
+
+    /// The output the decoder still held at the end of the stream: each
+    /// coding's tail runs through the codings after it.
+    fn finish(self) -> Result<Vec<u8>, NetError> {
         let err = |e: std::io::Error| NetError::Decode(e.to_string());
-        Ok(Bytes::from(match self {
-            Decoder::Identity => Vec::new(),
-            Decoder::Gzip(d) => d.finish().map_err(err)?,
-            Decoder::Deflate(d) => d.finish().map_err(err)?,
-            Decoder::Brotli(d) => d.into_inner().map_err(|_| NetError::Decode("truncated brotli stream".into()))?,
-        }))
+        let mut tail: Option<Vec<u8>> = None;
+        for mut stage in self.stages {
+            if let Some(t) = tail.take() {
+                stage.write_all(&t).map_err(err)?;
+            }
+            tail = Some(stage.finish()?);
+        }
+        Ok(tail.unwrap_or_default())
+    }
+}
+
+const SEC_FETCH_SITE: header::HeaderName = header::HeaderName::from_static("sec-fetch-site");
+const SEC_FETCH_MODE: header::HeaderName = header::HeaderName::from_static("sec-fetch-mode");
+const SEC_FETCH_DEST: header::HeaderName = header::HeaderName::from_static("sec-fetch-dest");
+const SEC_FETCH_USER: header::HeaderName = header::HeaderName::from_static("sec-fetch-user");
+
+/// The `Sec-Fetch-Site` relation of one hop: to the requesting document's
+/// origin, else (a navigation a document started) its referrer, else none
+/// (one the browser or automation started).
+fn hop_site(req: &Request, origin_url: Option<&Url>) -> FetchSite {
+    match (&req.origin, &req.referrer) {
+        (Some(_), _) => FetchSite::of(origin_url, &req.url),
+        (None, Some(referrer)) => FetchSite::of(Some(referrer), &req.url),
+        (None, None) => FetchSite::None,
     }
 }
 
@@ -962,34 +1225,52 @@ fn classify(e: &hyper_util::client::legacy::Error) -> SendError {
 
 impl Io {
     fn origin_semaphore(&self, url: &Url) -> Arc<Semaphore> {
-        let key = url.origin().ascii_serialization();
+        // Keyed by the origin itself (`Hash + Eq`), not its serialization.
         let mut m = self.per_origin.lock().unwrap();
-        m.entry(key).or_insert_with(|| Arc::new(Semaphore::new(self.shared.config.max_per_origin))).clone()
+        m.entry(url.origin()).or_insert_with(|| Arc::new(Semaphore::new(self.shared.config.max_per_origin))).clone()
     }
 
     /// An origin that answered over HTTP/2 multiplexes one connection: the
     /// six-connection limit no longer applies to it.
     fn multiplexing(&self, url: &Url) {
-        let key = url.origin().ascii_serialization();
-        if self.h2_origins.lock().unwrap().insert(key.clone()) {
+        let key = url.origin();
+        let mut h2_origins = self.h2_origins.lock().unwrap();
+        if !h2_origins.contains(&key) {
             let cfg = &self.shared.config;
             if let Some(semaphore) = self.per_origin.lock().unwrap().get(&key) {
                 semaphore.add_permits(cfg.max_per_h2_origin.saturating_sub(cfg.max_per_origin));
             }
+            h2_origins.insert(key);
         }
     }
 
-    fn build_headers(&self, req: &Request, origin_url: Option<&Url>, cors_cross: bool) -> HeaderMap {
-        let settings = self.shared.settings.lock().unwrap().clone();
-        let cfg = &self.shared.config;
+    /// The request headers of one hop; `site` is its `Sec-Fetch-Site`,
+    /// `same_origin` whether the hop is same-origin to the requester.
+    fn build_headers(
+        &self,
+        req: &Request,
+        origin_url: Option<&Url>,
+        cors_cross: bool,
+        site: FetchSite,
+        same_origin: bool,
+    ) -> HeaderMap {
+        // Read under the lock: the settings are a header map and strings a
+        // request would otherwise copy to read them once.
+        let settings = self.shared.settings.lock().unwrap();
         let mut h = req.headers.clone();
-        let ua = settings.user_agent.as_deref().unwrap_or(&cfg.user_agent);
-        if let Some(v) = req.defaults.user_agent.clone().or_else(|| HeaderValue::from_str(ua).ok()) {
+        let ua = match &settings.user_agent {
+            Some(ua) => HeaderValue::from_str(ua).ok(),
+            None => self.default_user_agent.clone(),
+        };
+        if let Some(v) = req.defaults.user_agent.clone().or(ua) {
             h.entry(header::USER_AGENT).or_insert(v);
         }
         h.entry(header::ACCEPT).or_insert(HeaderValue::from_static(default_accept(req.destination)));
-        let lang = settings.accept_language.as_deref().unwrap_or(&cfg.accept_language);
-        if let Some(v) = req.defaults.accept_language.clone().or_else(|| HeaderValue::from_str(lang).ok()) {
+        let lang = match &settings.accept_language {
+            Some(lang) => HeaderValue::from_str(lang).ok(),
+            None => self.default_accept_language.clone(),
+        };
+        if let Some(v) = req.defaults.accept_language.clone().or(lang) {
             h.entry(header::ACCEPT_LANGUAGE).or_insert(v);
         }
         if let Some(hints) = &req.defaults.client_hints {
@@ -1008,25 +1289,26 @@ impl Io {
             }
         }
         if let Some(r) = &req.referrer {
-            let mut r = r.clone();
-            r.set_fragment(None);
-            let _ = r.set_username("");
-            let _ = r.set_password(None);
-            // strict-origin-when-cross-origin.
-            let value = if origin_url.is_some_and(|o| !cors::same_origin(o, &req.url)) || r.origin() != req.url.origin()
+            // A serialized URL is ASCII: the value takes the string as it is.
+            if let Some(v) = crate::referrer::referrer_for(r, &req.url, req.referrer_policy)
+                .and_then(|v| HeaderValue::from_maybe_shared(Bytes::from(v)).ok())
             {
-                r.origin().ascii_serialization() + "/"
-            } else {
-                r.to_string()
-            };
-            if let Ok(v) = HeaderValue::from_str(&value) {
                 h.entry(header::REFERER).or_insert(v);
+            }
+        }
+        // Fetch Metadata, to potentially trustworthy URLs as in Chrome.
+        if crate::cookies::is_trustworthy(&req.url) {
+            h.insert(SEC_FETCH_SITE, HeaderValue::from_static(site.as_str()));
+            h.insert(SEC_FETCH_MODE, HeaderValue::from_static(crate::referrer::fetch_mode(req.mode, req.destination)));
+            h.insert(SEC_FETCH_DEST, HeaderValue::from_static(crate::referrer::fetch_dest(req.destination)));
+            if site == FetchSite::None && req.destination == Destination::Document {
+                h.insert(SEC_FETCH_USER, HeaderValue::from_static("?1"));
             }
         }
         // Cookies.
         let send_cookies = match req.credentials {
             Credentials::Include => true,
-            Credentials::SameOrigin => cors::is_same_origin_request(req),
+            Credentials::SameOrigin => same_origin,
             Credentials::Omit => false,
         };
         if send_cookies && !h.contains_key(header::COOKIE) {
@@ -1093,31 +1375,72 @@ impl Io {
             *h = headers;
         }
         let r = b.body(Full::new(body.unwrap_or_default())).map_err(|_| SendError::Net(NetError::InvalidUrl))?;
-        let client = if self.shared.ignore_certificate_errors.load(Ordering::Relaxed) {
-            self.insecure
-                .get_or_init(|| http_client(&self.shared.config, &tls_config_insecure(), self.shared.proxy.clone()))
+        self.pooled().0.request(r).await.map_err(|e| classify(&e))
+    }
+
+    /// The pooled client for the context's current certificate mode, and the
+    /// registry of its HTTP/2 connections.
+    fn pooled(&self) -> (&HttpClient, &Arc<H2Sessions>) {
+        if self.shared.ignore_certificate_errors.load(Ordering::Relaxed) {
+            let client = self.insecure.get_or_init(|| {
+                http_client(
+                    &self.shared.config,
+                    &tls_config_insecure(),
+                    self.shared.proxy.clone(),
+                    self.insecure_sessions.clone(),
+                )
+            });
+            (client, &self.insecure_sessions)
         } else {
-            &self.client
-        };
-        client.request(r).await.map_err(|e| classify(&e))
+            (&self.client, &self.sessions)
+        }
     }
 
     async fn run(&self, id: RequestId, mut req: Request, sink: &SharedSink) -> Result<(), NetError> {
         let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
         let max_body = req.max_body.unwrap_or(self.shared.config.max_body);
         let mut redirects = 0u32;
+        // `Sec-Fetch-Site`: the most cross-site relation of the chain so far.
+        let mut site = FetchSite::None;
         let mut redirect_response: Option<ResponseHead> = None;
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
         let mut unconditional = false; // a 304 no longer matched its entry: refetch without validators
         let mut pause_response: Option<RequestInfo> = None; // set by `PauseResponse`: the final hop's response is paused
+
+        // Resource Timing's TAO check runs against the requesting document's
+        // origin. An iframe's navigation is checked against its parent, as
+        // the loader names it (else the referrer), never `req.origin`: that
+        // is the Origin header's, for a form POST the frame's own document.
+        // An iframe whose parent is unknown fails closed (an opaque origin).
+        let timing_origin = if req.destination == Destination::Iframe {
+            Some(req.timing_origin.clone().unwrap_or_else(|| {
+                req.referrer.as_ref().map_or_else(|| "null".into(), |r| r.origin().ascii_serialization())
+            }))
+        } else {
+            req.timing_origin.clone().or_else(|| req.origin.clone())
+        };
         loop {
+            crate::timing::note(|t| {
+                t.fetch_start = if redirects == 0 { t.start } else { Some(Instant::now()) };
+                t.connection = None;
+                t.request_start = None;
+                t.response_start = None;
+            });
             if tainted {
                 req.origin = Some("null".into());
             }
-            let cors_cross = self.shared.config.enforce_cors && cors::is_cors_request(&req, origin_url.as_ref());
-            let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross);
+            // Same-origin to the requester (`cors::is_same_origin_request`),
+            // once per hop: a request without an initiator is browser-owned;
+            // a tainted ("null") or unparsable one is never same-origin.
+            let same_origin = req.origin.is_none()
+                || (!tainted && origin_url.as_ref().is_some_and(|o| cors::same_origin(o, &req.url)));
+            let cors_cross = self.shared.config.enforce_cors && req.mode == RequestMode::Cors && !same_origin;
+            site = site.max(hop_site(&req, origin_url.as_ref()));
+            let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross, site, same_origin);
             let cache_mode = self.cache_mode(&req, &mut headers);
-            let info = RequestInfo {
+            // The request as sent, made for each consumer (the observers here,
+            // an interceptor below) instead of copied for both up front.
+            let info = |headers: &HeaderMap| RequestInfo {
                 url: req.url.clone(),
                 method: req.method.clone(),
                 headers: headers.clone(),
@@ -1128,7 +1451,7 @@ impl Io {
             };
             self.shared.emit(NetEvent::RequestWillBeSent {
                 id,
-                request: Box::new(info.clone()),
+                request: Box::new(info(&headers)),
                 redirect_response: redirect_response.take().map(Box::new),
                 timestamp: self.shared.now(),
                 wall_time: wall_time(),
@@ -1142,6 +1465,13 @@ impl Io {
             if req.url.scheme() == "blob" {
                 return self.serve_blob(id, &req, sink);
             }
+            if req.url.scheme() == "file" && self.shared.config.file_urls {
+                // Chrome refuses redirects into local files.
+                if redirects > 0 {
+                    return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                }
+                return self.serve_file(id, &req, sink).await;
+            }
             match req.url.scheme() {
                 "http" | "https" => {}
                 s => return Err(NetError::UnsupportedScheme(s.to_owned())),
@@ -1149,16 +1479,17 @@ impl Io {
             if self.shared.settings.lock().unwrap().offline {
                 return Err(NetError::Blocked("net::ERR_INTERNET_DISCONNECTED".into()));
             }
-            if req.mode == RequestMode::SameOrigin && !cors::is_same_origin_request(&req) {
+            if req.mode == RequestMode::SameOrigin && !same_origin {
                 return Err(NetError::Cors("Cross-origin request in same-origin mode".into()));
             }
 
             // CDP Fetch interception (request stage).
             let interceptor =
                 if req.skip_interception { None } else { self.shared.interceptor.lock().unwrap().clone() };
+            let paused = interceptor.as_ref().map(|_| info(&headers));
             let (mut method, mut url, mut headers, mut body) =
                 (req.method.clone(), req.url.clone(), headers, req.body.clone());
-            if let Some(i) = &interceptor {
+            if let (Some(i), Some(info)) = (&interceptor, paused) {
                 let (tx, rx) = oneshot::channel();
                 let paused_info = info.clone();
                 i.paused(PausedRequest { id, request: info }, tx);
@@ -1193,7 +1524,7 @@ impl Io {
             if (method == Method::GET || method == Method::HEAD) && !self.shared.config.static_files.is_empty() {
                 let document = req.destination == Destination::Document;
                 if let Some(hit) = self.shared.config.static_files.resolve(&url, document) {
-                    return self.serve_static(id, &req, sink, &url, &method, hit, cors_cross).await;
+                    return self.serve_static(id, &req, sink, &url, &method, hit, cors_cross, same_origin).await;
                 }
             }
 
@@ -1202,7 +1533,12 @@ impl Io {
                 let origin = req.origin.clone().unwrap_or_else(|| "null".into());
                 let covered = self.preflight.lock().unwrap().covers(&req, &origin);
                 if !covered {
-                    let ph = cors::preflight_request_headers(&req, &origin);
+                    let mut ph = cors::preflight_request_headers(&req, &origin);
+                    for name in [header::REFERER, SEC_FETCH_SITE, SEC_FETCH_MODE, SEC_FETCH_DEST] {
+                        if let Some(v) = headers.get(&name) {
+                            ph.insert(name, v.clone());
+                        }
+                    }
                     let _permit = self.origin_semaphore(&url).acquire_owned().await;
                     let resp = self.send(Method::OPTIONS, &url, ph, None).await?;
                     let status = resp.status().as_u16();
@@ -1226,7 +1562,10 @@ impl Io {
                 let lookup = self.shared.cache.lock().unwrap().lookup(&url, &headers, cache_mode, request_time);
                 match lookup {
                     crate::cache::Lookup::Hit(cached) => {
-                        return self.serve_cached(id, &req, sink, &url, cached, cors_cross, redirects > 0, true, 0);
+                        // A stored response passes the TAO check a network one would.
+                        crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
+                        let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                        return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                     }
                     crate::cache::Lookup::Revalidate(cached) if !unconditional => {
                         for (name, value) in cached.validators() {
@@ -1248,7 +1587,9 @@ impl Io {
             if let (Some(store), None) = (shared_assets, revalidating.as_ref()) {
                 let lookup = store.with(|c| c.lookup(&url, &headers, cache_mode, request_time));
                 if let crate::cache::Lookup::Hit(cached) = lookup {
-                    return self.serve_cached(id, &req, sink, &url, cached, cors_cross, redirects > 0, true, 0);
+                    crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
+                    let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                    return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                 }
             }
             if cache_mode == CacheMode::OnlyIfCached && revalidating.is_none() {
@@ -1256,6 +1597,7 @@ impl Io {
             }
 
             let permit = self.origin_semaphore(&url).acquire_owned().await;
+            let request_start = Instant::now();
             let mut auth_attempts = 0;
             let auth_interceptor = interceptor.as_ref().filter(|i| i.handles_auth());
             let resp = loop {
@@ -1342,12 +1684,25 @@ impl Io {
             let status = resp.status();
             let resp_headers = resp.headers().clone();
             let protocol = resp.version();
+            // A connection opened for this request reports its phases; the
+            // request went out once it was ready.
+            let connection = resp
+                .extensions()
+                .get::<crate::timing::ConnInfo>()
+                .map(crate::timing::ConnInfo::timing)
+                .filter(|c| c.start >= request_start);
+            crate::timing::note(|t| {
+                t.response_start = Some(Instant::now());
+                t.connection = connection;
+                t.request_start = Some(connection.map_or(request_start, |c| c.end.max(request_start)));
+            });
+            crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
             if protocol == Version::HTTP_2 {
                 self.multiplexing(&url);
             }
             let cookies_allowed = match req.credentials {
                 Credentials::Include => true,
-                Credentials::SameOrigin => cors::is_same_origin_request(&req),
+                Credentials::SameOrigin => same_origin,
                 Credentials::Omit => false,
             };
             self.store_cookies(&url, &resp_headers, cookies_allowed);
@@ -1370,17 +1725,8 @@ impl Io {
                     );
                     match updated {
                         Some(updated) => {
-                            return self.serve_cached(
-                                id,
-                                &req,
-                                sink,
-                                &url,
-                                updated,
-                                cors_cross,
-                                redirects > 0,
-                                false,
-                                0,
-                            )
+                            let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                            return self.serve_cached(id, &req, sink, &url, updated, hop, false, 0);
                         }
                         None => {
                             unconditional = true;
@@ -1414,6 +1760,12 @@ impl Io {
                     if redirects > self.shared.config.max_redirects {
                         return Err(NetError::TooManyRedirects);
                     }
+                    let cross_origin = !cors::same_origin(&url, &target);
+                    crate::timing::note(|t| {
+                        t.redirect_end = Some(Instant::now());
+                        t.redirect_count = t.redirect_count.saturating_add(1);
+                        t.cross_origin_redirect |= cross_origin;
+                    });
                     let head = self
                         .head(&url, status, resp_headers.clone(), ResponseKind::Basic, redirects > 1)
                         .over(protocol);
@@ -1447,6 +1799,12 @@ impl Io {
                             tainted = true;
                         }
                     }
+                    // Referrer Policy: a redirect's header sets the next hop's.
+                    if let Some(policy) = crate::referrer::ReferrerPolicy::from_header(
+                        head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
+                    ) {
+                        req.referrer_policy = policy;
+                    }
                     req.url = target;
                     redirect_response = Some(head);
                     continue;
@@ -1457,12 +1815,12 @@ impl Io {
                 cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                     .map_err(NetError::Cors)?;
                 ResponseKind::Cors
-            } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(&req) {
+            } else if req.mode == RequestMode::NoCors && !same_origin {
                 ResponseKind::Opaque
             } else {
                 ResponseKind::Basic
             };
-            let encoding = resp_headers.get(header::CONTENT_ENCODING).and_then(|v| v.to_str().ok()).map(str::to_owned);
+            let encoding = content_encoding(&resp_headers);
             if let (Some(request), Some(interceptor)) = (pause_response.take(), interceptor.as_ref()) {
                 let body = read_whole_body(resp, encoding.as_deref(), max_body).await?;
                 drop(permit);
@@ -1488,6 +1846,8 @@ impl Io {
                 let head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
                 return self.deliver_body(id, &req, sink, head, body);
             }
+            // Before the head takes the headers: the coding borrows them.
+            let mut decoder = Decoder::for_encoding(encoding.as_deref());
             let (store, mut max_entry) = {
                 let cache = self.shared.cache.lock().unwrap();
                 let store = sent.as_ref().is_some_and(|s| cache.storable(status, &resp_headers, s, cache_mode));
@@ -1513,7 +1873,6 @@ impl Io {
             deliver(sink, ResponseEvent::Response(head));
 
             // Body.
-            let mut decoder = Decoder::for_encoding(encoding.as_deref())?;
             let mut body = resp.into_body();
             let (mut encoded, mut decoded) = (0u64, 0u64);
             let observed = self.shared.observed();
@@ -1521,7 +1880,8 @@ impl Io {
                 let frame = frame.map_err(|e| NetError::Other(e.to_string()))?;
                 let Ok(data) = frame.into_data() else { continue };
                 encoded += data.len() as u64;
-                let out = decoder.push(data)?;
+                let out = decoder.push(&data)?;
+                drop(data);
                 if !out.is_empty() {
                     decoded += out.len() as u64;
                     if decoded as usize > max_body {
@@ -1543,7 +1903,7 @@ impl Io {
                     deliver(sink, ResponseEvent::Data(out));
                 }
             }
-            let tail = decoder.finish()?;
+            let tail = Bytes::copy_from_slice(&decoder.finish()?);
             if !tail.is_empty() {
                 decoded += tail.len() as u64;
                 if decoded as usize > max_body {
@@ -1635,16 +1995,15 @@ impl Io {
         sink: &SharedSink,
         url: &Url,
         cached: crate::cache::Cached,
-        cors_cross: bool,
-        redirected: bool,
+        hop: Hop,
         from_cache: bool,
         encoded_len: u64,
     ) -> Result<(), NetError> {
-        let kind = if cors_cross {
+        let kind = if hop.cors_cross {
             cors::cors_check(&cached.headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                 .map_err(NetError::Cors)?;
             ResponseKind::Cors
-        } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(req) {
+        } else if req.mode == RequestMode::NoCors && !hop.same_origin {
             ResponseKind::Opaque
         } else {
             ResponseKind::Basic
@@ -1653,7 +2012,8 @@ impl Io {
         if body.len() > req.max_body.unwrap_or(self.shared.config.max_body) {
             return Err(NetError::TooLarge);
         }
-        let mut head = self.head(url, cached.status, cached.headers, kind, redirected).over(cached.protocol);
+        crate::timing::served_locally();
+        let mut head = self.head(url, cached.status, cached.headers, kind, hop.redirected).over(cached.protocol);
         head.from_cache = from_cache;
         self.shared.emit(NetEvent::ResponseReceived {
             id,
@@ -1698,6 +2058,7 @@ impl Io {
             kind,
             remote_addr: None,
             protocol: Version::HTTP_11,
+            timing: crate::timing::current(),
         }
     }
 
@@ -1767,7 +2128,9 @@ impl Io {
         method: &Method,
         hit: crate::static_files::StaticHit,
         cors_cross: bool,
+        same_origin: bool,
     ) -> Result<(), NetError> {
+        crate::timing::served_locally();
         let document = req.destination == Destination::Document;
         let body = match self.shared.config.static_files.lookup(url, document) {
             Some(memory) if memory.file.path == hit.path => memory.file.body.clone(),
@@ -1789,7 +2152,7 @@ impl Io {
             cors::cors_check(&headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                 .map_err(NetError::Cors)?;
             ResponseKind::Cors
-        } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(req) {
+        } else if req.mode == RequestMode::NoCors && !same_origin {
             ResponseKind::Opaque
         } else {
             ResponseKind::Basic
@@ -1809,6 +2172,7 @@ impl Io {
         body: Bytes,
     ) -> Result<(), NetError> {
         let status = StatusCode::from_u16(status).map_err(|_| NetError::Other("invalid status".into()))?;
+        crate::timing::served_locally();
         let head = self.head(&req.url, status, headers, ResponseKind::Basic, false);
         self.deliver_body(id, req, sink, head, body)
     }
@@ -1828,6 +2192,58 @@ impl Io {
         let head = self.head(&req.url, StatusCode::OK, headers, ResponseKind::Basic, false);
         // A HEAD response has no body, as for any other scheme.
         let body = if req.method == Method::HEAD { Bytes::new() } else { body };
+        self.deliver_body(id, req, sink, head, body)
+    }
+
+    /// `file:` from the local filesystem, as Chrome serves it: a 200 typed
+    /// by the file's extension. Like Chrome, web pages cannot reach local
+    /// files (a request made for an `http(s)` document is denied), `fetch`,
+    /// XHR, EventSource and WebSocket do not support the scheme, and module
+    /// scripts (CORS mode, opaque `null` origin) are refused. A missing file
+    /// or a directory is `net::ERR_FILE_NOT_FOUND`.
+    async fn serve_file(&self, id: RequestId, req: &Request, sink: &SharedSink) -> Result<(), NetError> {
+        let web_requester = req
+            .origin
+            .as_deref()
+            .and_then(|o| Url::parse(o).ok())
+            .or_else(|| req.referrer.clone())
+            .is_some_and(|u| matches!(u.scheme(), "http" | "https"));
+        if web_requester {
+            return Err(NetError::Blocked("net::ERR_ACCESS_DENIED".into()));
+        }
+        if matches!(
+            req.destination,
+            Destination::Fetch | Destination::Xhr | Destination::EventSource | Destination::WebSocket
+        ) {
+            return Err(NetError::UnsupportedScheme("file".into()));
+        }
+        if req.mode == RequestMode::Cors
+            && matches!(req.destination, Destination::Script | Destination::Style | Destination::Json)
+        {
+            return Err(NetError::Cors("Cross origin requests are not supported for the file: scheme".into()));
+        }
+        if req.method != Method::GET && req.method != Method::HEAD {
+            return Err(NetError::Other("file: URLs can only be fetched with GET".into()));
+        }
+        let not_found = || NetError::Blocked("net::ERR_FILE_NOT_FOUND".into());
+        let path = req.url.to_file_path().map_err(|_| not_found())?;
+        let meta = tokio::fs::metadata(&path).await.map_err(|_| not_found())?;
+        if !meta.is_file() {
+            return Err(not_found());
+        }
+        let max_body = req.max_body.unwrap_or(self.shared.config.max_body);
+        if meta.len() > max_body as u64 {
+            return Err(NetError::TooLarge);
+        }
+        let body = if req.method == Method::HEAD {
+            Bytes::new()
+        } else {
+            Bytes::from(tokio::fs::read(&path).await.map_err(|_| not_found())?)
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(crate::static_files::content_type(&path)));
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(meta.len()));
+        let head = self.head(&req.url, StatusCode::OK, headers, ResponseKind::Basic, false);
         self.deliver_body(id, req, sink, head, body)
     }
 
@@ -1861,30 +2277,49 @@ impl Io {
     }
 }
 
+/// The response's `Content-Encoding`, its header lines joined by commas
+/// (borrowed when there is one line, as there nearly always is).
+fn content_encoding(headers: &HeaderMap) -> Option<Cow<'_, str>> {
+    let mut lines = headers.get_all(header::CONTENT_ENCODING).iter().filter_map(|v| v.to_str().ok());
+    let first = lines.next()?;
+    Some(lines.fold(Cow::Borrowed(first), |all, line| {
+        let mut all = all.into_owned();
+        all.push(',');
+        all.push_str(line);
+        Cow::Owned(all)
+    }))
+}
+
+/// What of a hop a locally answered response (a cache hit, a static file)
+/// is served under: its CORS mode, same-origin relation and redirect history.
+#[derive(Clone, Copy)]
+struct Hop {
+    cors_cross: bool,
+    same_origin: bool,
+    redirected: bool,
+}
+
 /// Reads and decodes a whole response body (at most `max_body` bytes).
 async fn read_whole_body(
     resp: http::Response<hyper::body::Incoming>,
     encoding: Option<&str>,
     max_body: usize,
 ) -> Result<Bytes, NetError> {
-    let mut decoder = Decoder::for_encoding(encoding)?;
+    let mut decoder = Decoder::for_encoding(encoding);
     let mut body = resp.into_body();
     let mut out = Vec::new();
-    let push = |out: &mut Vec<u8>, chunk: Bytes| {
-        out.extend_from_slice(&chunk);
-        if out.len() > max_body {
-            return Err(NetError::TooLarge);
-        }
-        Ok(())
-    };
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|e| NetError::Other(e.to_string()))?;
         let Ok(data) = frame.into_data() else { continue };
-        let decoded = decoder.push(data)?;
-        push(&mut out, decoded)?;
+        decoder.push_into(&data, &mut out)?;
+        if out.len() > max_body {
+            return Err(NetError::TooLarge);
+        }
     }
-    let tail = decoder.finish()?;
-    push(&mut out, tail)?;
+    out.append(&mut decoder.finish()?);
+    if out.len() > max_body {
+        return Err(NetError::TooLarge);
+    }
     Ok(Bytes::from(out))
 }
 
@@ -1922,10 +2357,50 @@ impl NetClient {
         config.static_files.lookup(&req.url, req.destination == Destination::Document)
     }
 
+    /// Observe a request handled by a service worker without issuing another network fetch.
+    pub fn observe_service_worker_response(&self, id: RequestId, request: &Request, mut sink: ResponseSink) -> ResponseSink {
+        let shared = self.inner.shared.clone();
+        if !shared.observed() { return sink; }
+        let destination = request.destination;
+        let frame_id = request.frame_id.clone();
+        let loader_id = request.loader_id.clone();
+        shared.emit(NetEvent::RequestWillBeSent {
+            id,
+            request: Box::new(RequestInfo {
+                url: request.url.clone(), method: request.method.clone(), headers: request.headers.clone(),
+                post_data: request.body.clone(), destination, frame_id: frame_id.clone(), loader_id: loader_id.clone(),
+            }),
+            redirect_response: None, timestamp: shared.now(), wall_time: wall_time(),
+        });
+        Box::new(move |event| {
+            let timestamp = shared.now();
+            match &event {
+                ResponseEvent::Response(head) => shared.emit(NetEvent::ResponseReceived {
+                    id, head: Box::new(head.clone()), destination, frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp,
+                }),
+                ResponseEvent::Data(data) => shared.emit(NetEvent::DataReceived { id, data: data.clone(), timestamp }),
+                ResponseEvent::Finished { encoded_len, .. } => shared.emit(NetEvent::LoadingFinished { id, encoded_len: *encoded_len, timestamp }),
+                ResponseEvent::Failed(error) => shared.emit(NetEvent::LoadingFailed { id, error: error.clone(), canceled: matches!(error, NetError::Aborted), destination, timestamp }),
+                ResponseEvent::Redirect { .. } => {},
+            }
+            sink(event);
+        })
+    }
+
     /// Publishes the `NetEvent`s of a request the embedder answered from a
     /// `static_direct` hit (on the caller's thread, in order, all at once)
     /// and returns the response head to build the resource from.
     pub fn report_local(&self, req: &Request, hit: &crate::static_files::StaticMemoryHit) -> ResponseHead {
+        self.report_local_with_id(req, hit).1
+    }
+
+    /// Also returns the request identity so a same-thread loader can report
+    /// observation and response-delivery boundaries without waiting for I/O.
+    pub fn report_local_with_id(
+        &self,
+        req: &Request,
+        hit: &crate::static_files::StaticMemoryHit,
+    ) -> (RequestId, ResponseHead) {
         let shared = &self.inner.shared;
         let id = self.next_request_id();
         let body = &hit.file.body;
@@ -1943,9 +2418,10 @@ impl NetClient {
             kind: ResponseKind::Basic,
             remote_addr: None,
             protocol: Version::HTTP_11,
+            timing: Default::default(),
         };
         if !shared.observed() {
-            return head;
+            return (id, head);
         }
         let info = RequestInfo {
             url: req.url.clone(),
@@ -1976,7 +2452,7 @@ impl NetClient {
             shared.emit(NetEvent::DataReceived { id, data: body.clone(), timestamp: now });
         }
         shared.emit(NetEvent::LoadingFinished { id, encoded_len: body.len() as u64, timestamp: now });
-        head
+        (id, head)
     }
 }
 
@@ -1998,4 +2474,101 @@ fn cdp_reason(r: &str) -> String {
         _ => "net::ERR_FAILED",
     }
     .to_owned()
+}
+
+#[cfg(test)]
+mod decoder_tests {
+    use super::*;
+
+    /// A network chunk leaves the decoder in an allocation of its own, so
+    /// what keeps the output does not keep the connection's read buffer.
+    #[test]
+    fn decoded_output_does_not_share_the_chunk() {
+        let read_buffer = Bytes::from(vec![7u8; 4096]);
+        let chunk = read_buffer.slice(100..200);
+        let out = Decoder::for_encoding(None).push(&chunk).unwrap();
+        assert_eq!(out, chunk);
+        assert!(!read_buffer.as_ptr_range().contains(&out.as_ptr()));
+
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&[b'a'; 100_000]).unwrap();
+        let encoded = gz.finish().unwrap();
+        let mut decoder = Decoder::for_encoding(Some("gzip"));
+        let mut decoded = Vec::new();
+        for part in encoded.chunks(1000) {
+            decoded.extend_from_slice(&decoder.push(part).unwrap());
+        }
+        decoded.extend_from_slice(&decoder.finish().unwrap());
+        assert_eq!(decoded, vec![b'a'; 100_000]);
+    }
+
+    fn decode(enc: &str, body: &[u8], chunk: usize) -> Result<Vec<u8>, NetError> {
+        let mut decoder = Decoder::for_encoding(Some(enc));
+        let mut out = Vec::new();
+        for part in body.chunks(chunk.max(1)) {
+            decoder.push_into(part, &mut out)?;
+        }
+        out.append(&mut decoder.finish()?);
+        Ok(out)
+    }
+
+    fn zlib(data: &[u8]) -> Vec<u8> {
+        let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    fn raw_deflate(data: &[u8]) -> Vec<u8> {
+        let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    /// `deflate` accepts both the zlib-wrapped stream (RFC 9110) and the
+    /// raw deflate some servers send, in any chunking.
+    #[test]
+    fn deflate_accepts_zlib_and_raw_streams() {
+        let text = b"hello deflate hello deflate hello deflate".repeat(50);
+        for chunk in [1, 2, 7, 4096] {
+            assert_eq!(decode("deflate", &zlib(&text), chunk).unwrap(), text);
+            assert_eq!(decode("Deflate", &raw_deflate(&text), chunk).unwrap(), text);
+        }
+        assert_eq!(decode("deflate", b"", 1).unwrap(), b"");
+    }
+
+    /// Stacked codings decode in reverse order of the header list.
+    #[test]
+    fn stacked_codings_decode_in_reverse() {
+        let text = b"stacked codings".repeat(100);
+        let body = gzip(&zlib(&text)); // deflate applied first, then gzip
+        for chunk in [1, 3, 64, 100_000] {
+            assert_eq!(decode("deflate, gzip", &body, chunk).unwrap(), text);
+            assert_eq!(decode("deflate,gzip", &body, chunk).unwrap(), text);
+        }
+        assert!(decode("gzip, deflate", &body, 64).is_err());
+        // Header lines joined like one list.
+        let mut headers = HeaderMap::new();
+        headers.append(header::CONTENT_ENCODING, HeaderValue::from_static("deflate"));
+        headers.append(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        assert_eq!(content_encoding(&headers).as_deref(), Some("deflate,gzip"));
+        assert_eq!(content_encoding(&HeaderMap::new()), None);
+    }
+
+    /// Like Chromium: a coding not supported (or `identity`) anywhere in
+    /// the list passes the body through undecoded instead of failing.
+    #[test]
+    fn unknown_codings_pass_through() {
+        let gz = gzip(b"abc");
+        for enc in ["UTF-8", "none", "text", "zstd", "gzip, bogus", "identity", "identity, gzip", "", " , "] {
+            assert_eq!(decode(enc, &gz, 5).unwrap(), gz, "{enc}");
+        }
+        assert_eq!(decode(" GZIP ", &gz, 5).unwrap(), b"abc");
+        assert_eq!(decode("x-gzip", &gz, 5).unwrap(), b"abc");
+    }
 }

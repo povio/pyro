@@ -1,18 +1,24 @@
-//! Web Crypto subset: `crypto.getRandomValues`, `crypto.randomUUID` and
-//! `crypto.subtle.digest` (SHA-1/256/384/512). Other SubtleCrypto
-//! operations reject with NotSupportedError (upstream implements more,
-//! src/browser/webapi/SubtleCrypto.zig; not ported yet).
+//! Web Crypto: `crypto.getRandomValues`, `crypto.randomUUID`,
+//! `crypto.subtle.digest` (SHA-1/256/384/512, native) and the other
+//! SubtleCrypto operations with `CryptoKey`, which run in subtle.js over the
+//! primitives of crypto_subtle.rs. That script is made on a realm's first
+//! SubtleCrypto call other than `digest` or its first read of `CryptoKey`, so
+//! realms that never use keys pay one global accessor.
 //!
 //! `getRandomValues` writes into the caller's typed array through the JSC C
 //! API (backing store pointer + byteOffset); the pointer is obtained and
 //! used with no intervening JS call.
 
 use lp_js::sys;
-use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Scope, Value};
+use std::rc::Rc;
+
+use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
+use crate::page::PageDom;
 use crate::util::*;
+use crate::window::WindowHost;
 
 /// QuotaExceededError limit of `getRandomValues` (Web Crypto §10.1.1).
 const MAX_RANDOM_BYTES: usize = 65536;
@@ -23,7 +29,7 @@ fn check_exc(s: &Scope<'_>, exc: sys::JSValueRef) -> JsResult<()> {
     }
     // SAFETY: `exc` is the live exception JSC just returned for this context.
     let v = unsafe { Value::from_raw(s.ctx(), exc) };
-    Err(JsError::Thrown(lp_js::Persistent::new(s, v)))
+    Err(JsError::thrown(lp_js::Persistent::new(s, v)))
 }
 
 fn fill_random(buf: &mut [u8]) -> JsResult<()> {
@@ -120,7 +126,7 @@ impl JsClass for Crypto {
 
 fn digest_name(s: &Scope<'_>, v: Value<'_>) -> JsResult<String> {
     let name = match v.as_object() {
-        Some(o) if !v.is_string() => o.get("name")?,
+        Some(o) if !v.is_string() => o.get_atom("name")?,
         _ => v,
     };
     if name.is_undefined() {
@@ -169,27 +175,123 @@ impl JsClass for SubtleCrypto {
                 Err(e) => rejected(s, e),
             }
         });
-        macro_rules! unsupported {
-            ($($m:literal),*) => {$(
-                def.method($m, 0, |s, _d, _a| {
-                    rejected(s, JsError::dom("NotSupportedError", concat!("SubtleCrypto.", $m, " is not implemented by lightningpanda")))
-                });
+        macro_rules! operations {
+            ($($m:literal: $length:literal),*) => {$(
+                def.method($m, $length, |s, _d, a| subtle_call(s, $m, a));
             )*};
         }
-        unsupported!(
-            "encrypt",
-            "decrypt",
-            "sign",
-            "verify",
-            "generateKey",
-            "deriveKey",
-            "deriveBits",
-            "importKey",
-            "exportKey",
-            "wrapKey",
-            "unwrapKey"
+        operations!(
+            "encrypt": 3,
+            "decrypt": 3,
+            "sign": 3,
+            "verify": 4,
+            "generateKey": 3,
+            "deriveKey": 5,
+            "deriveBits": 2,
+            "importKey": 5,
+            "exportKey": 2,
+            "wrapKey": 4,
+            "unwrapKey": 7
         );
     }
+}
+
+/// Kept on the realm's `navigator` (a hidden property), itself kept per realm.
+const SUBTLE_KEY: &str = "lpSubtle";
+
+fn unavailable() -> JsError {
+    JsError::Type("Web Crypto is unavailable in this realm".into())
+}
+
+/// This realm's subtle.js module, made on first use.
+fn subtle_module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
+    let holder = crate::worker_scope::module_holder(s, page)?;
+    if let Some(module) = s.get_hidden(holder, SUBTLE_KEY)?.and_then(|v| v.as_object()) {
+        return Ok(module);
+    }
+    let natives = Persistent::new(s, crate::crypto_subtle::natives(s)?.value());
+    let factory = s.eval(include_str!("subtle.js"), Some("lightningpanda://internal/subtle.js"), 1)?;
+    let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[natives.get(s)])?;
+    s.set_hidden(holder, SUBTLE_KEY, module)?;
+    module.as_object().ok_or_else(unavailable)
+}
+
+/// `crypto.subtle.<name>(...)`: a promise; argument errors reject it.
+fn subtle_call<'s>(s: &Scope<'s>, name: &'static str, a: Args<'s>) -> JsResult<Value<'s>> {
+    let result = (|| -> JsResult<Value<'s>> {
+        let page = crate::target::page_of(s)?;
+        let module = subtle_module(s, &page)?;
+        let args: Vec<Value<'s>> = a.iter().collect();
+        let args = s.array(&args)?;
+        module.get_atom("call")?.as_object().ok_or_else(unavailable)?.call(None, &[s.string(name), args.value()])
+    })();
+    match result {
+        Err(JsError::Terminated) => Err(JsError::Terminated),
+        Err(JsError::ContextDestroyed) => Err(JsError::ContextDestroyed),
+        Err(e) => rejected(s, e),
+        ok => ok,
+    }
+}
+
+/// Adds the lazy `CryptoKey` interface name to a window or worker global.
+pub(crate) fn define_globals<W>(def: &mut ClassDef<W>)
+where
+    W: JsClass,
+    W::Data: WindowHost,
+{
+    def.global_value_accessor("CryptoKey", |s, w| crypto_key(s, w.page()), |s, w, value| replace(s, w.page(), value));
+}
+
+fn crypto_key<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+    let value = subtle_module(s, page)?.get_atom("CryptoKey")?;
+    replace(s, page, value)?;
+    Ok(value)
+}
+
+/// Shadows the accessor with the interface object's usual data property.
+fn replace(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> JsResult<()> {
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let define = define.and_then(|v| v.as_object()).ok_or_else(unavailable)?;
+    let desc = s.object();
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
+    define.call(None, &[s.global().value(), s.string("CryptoKey"), desc.value()])?;
+    Ok(())
+}
+
+/// Structured clone of a platform object the clone script does not know:
+/// a copy when `value` is a CryptoKey of this realm, else undefined. A realm
+/// that never made subtle.js has no CryptoKey, so this costs it one lookup.
+pub(crate) fn clone_platform_object<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let holder = crate::worker_scope::module_holder(s, &page)?;
+    let Some(module) = s.get_hidden(holder, SUBTLE_KEY)?.and_then(|v| v.as_object()) else {
+        return Ok(s.undefined());
+    };
+    module.get_atom("cloneKey")?.as_object().ok_or_else(unavailable)?.call(None, &[value])
+}
+
+/// The cross-VM form of a CryptoKey of this realm (`worker_wire.js`):
+/// `[type, extractable, algorithm, usages, key bytes]` as plain data, or
+/// `None` when `value` is not one. Costs a realm without subtle.js one lookup.
+pub(crate) fn serialize_key<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Option<Value<'s>>> {
+    let page = crate::target::page_of(s)?;
+    let holder = crate::worker_scope::module_holder(s, &page)?;
+    let Some(module) = s.get_hidden(holder, SUBTLE_KEY)?.and_then(|v| v.as_object()) else {
+        return Ok(None);
+    };
+    let parts = module.get_atom("serializeKey")?.as_object().ok_or_else(unavailable)?.call(None, &[value])?;
+    Ok((!parts.is_undefined()).then_some(parts))
+}
+
+/// The CryptoKey, in this realm, of parts made by [`serialize_key`]
+/// (making the realm's subtle.js if it has none yet).
+pub(crate) fn deserialize_key<'s>(s: &Scope<'s>, parts: Value<'s>) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let module = subtle_module(s, &page)?;
+    module.get_atom("deserializeKey")?.as_object().ok_or_else(unavailable)?.call(None, &[parts])
 }
 
 /// `window.crypto` (one Crypto object per realm).

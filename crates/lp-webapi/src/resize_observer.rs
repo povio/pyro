@@ -246,7 +246,7 @@ impl JsClass for ResizeObserver {
             let id = o.element(s, args.get(0))?;
             let mut observed = ObservedBox::Content;
             if let Some(opts) = args.get(1).as_object() {
-                let b = opts.get("box")?;
+                let b = opts.get_atom("box")?;
                 if !b.is_undefined() {
                     let b = crate::util::dom_string(b)?;
                     observed = match b.as_str() {
@@ -256,7 +256,7 @@ impl JsClass for ResizeObserver {
                         _ => {
                             return Err(JsError::Type(format!(
                                 "The provided value '{b}' is not a valid ResizeObserverBoxOptions"
-                            )))
+                            ).into()))
                         }
                     };
                 }
@@ -326,7 +326,7 @@ impl JsClass for ResizeObserverSize {
 fn sizes<'s>(s: &Scope<'s>, size: (f64, f64)) -> JsResult<Value<'s>> {
     let item = s.wrap::<ResizeObserverSize>(size, None)?;
     let list = s.array(&[item.value()])?;
-    let freeze = s.global().get("Object")?.as_object().expect("Object").get("freeze")?;
+    let freeze = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("freeze")?;
     freeze.as_object().expect("Object.freeze").call(None, &[list.value()])
 }
 

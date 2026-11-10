@@ -35,10 +35,10 @@ impl JsClass for TestWindow {
     }
 }
 
-struct Env {
+pub(crate) struct Env {
     engine: Engine,
     page: Rc<PageDom>,
-    main: Realm,
+    pub(crate) main: Realm,
 }
 
 /// Loads no sub-resources (the layout tests' pages have none).
@@ -49,7 +49,7 @@ impl lp_render::Fetcher for NoFetch {
     }
 }
 
-fn env(html: &str) -> Env {
+pub(crate) fn env(html: &str) -> Env {
     lp_layout::install(std::sync::Arc::new(NoFetch));
     let engine = Engine::new().expect("engine");
     register(&engine);
@@ -96,7 +96,7 @@ fn new_realm_with_origin(
     realm
 }
 
-fn eval(realm: &Realm, src: &str) -> String {
+pub(crate) fn eval(realm: &Realm, src: &str) -> String {
     let s = realm.scope().unwrap();
     match s.eval(src, Some("test.js"), 1) {
         Ok(v) => v.to_string().unwrap(),
@@ -431,10 +431,10 @@ fn arrow_up_and_down_move_the_caret_in_text_controls() {
     press("ArrowDown", false);
     assert_eq!(sel("t"), "2,2");
 
-    // Number inputs step values in browsers (not modelled): untouched here.
+    // Number inputs step their value instead.
     eval(r, "document.getElementById('n').focus();");
     press("ArrowUp", false);
-    assert_eq!(eval(r, "document.getElementById('n').value"), "5");
+    assert_eq!(eval(r, "document.getElementById('n').value"), "6");
 }
 
 #[test]
@@ -1285,11 +1285,128 @@ fn disposal_scenario() -> (Engine, std::rc::Weak<PageDom>) {
     assert!(dropped.get(), "embedder hook cycle was not broken");
     assert_eq!(page.pinned_count(), 0);
     assert_eq!(eval(&main, "window.dispatchEvent(new Event('test')); document.querySelector('#target').dispatchEvent(new Event('test')); fired"), "0");
+    // Script of the disposed page fills per-realm caches of it again (Event
+    // `isTrusted`, Headers, URLSearchParams, TextDecoder, window listeners):
+    // they go with the page once its realm is disposed, which releases the
+    // global's `document` (the page's way back to them).
+    eval(
+        &main,
+        "try { new Headers({a: '1'}).get('a'); new URLSearchParams('a=1').get('a'); \
+         new TextDecoder().decode(new DataView(new ArrayBuffer(2))); window.addEventListener('late', () => {}); } catch {}",
+    );
     assert!(install(&main.scope().unwrap(), page.clone()).is_err());
     main.dispose();
     drop(main);
     drop(page);
     (engine, weak)
+}
+
+#[test]
+fn a_held_window_of_a_torn_down_page_keeps_neither_its_document_nor_its_page() {
+    // Another realm keeps the window's global (a stale `iframe.contentWindow`
+    // after a navigation): the global's `document` goes with its realm, so the
+    // old tree is freed, and reading it throws as on any disposed window.
+    let (engine, dom, holder, weak, live) = held_window_scenario();
+    overwrite_dead_stack();
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+        dom.borrow_mut().collect_garbage();
+    }
+    assert!(weak.upgrade().is_none(), "a held window kept its PageDom alive");
+    let left = dom.borrow().live_nodes();
+    assert!(left < live / 10, "a held window kept its document: {left} of {live} nodes left");
+    assert_eq!(
+        eval(&holder, "try { held.document; 'read' } catch (e) { e.message }"),
+        "Execution context was destroyed."
+    );
+}
+
+#[inline(never)]
+fn held_window_scenario() -> (Engine, DomRef, Realm, std::rc::Weak<PageDom>, usize) {
+    let Env { engine, page, main } = env(&format!("<body>{}</body>", "<div><p>x</p></div>".repeat(500)));
+    // Hot enough for the optimizing JIT to fold `document`.
+    assert_eq!(
+        eval(
+            &main,
+            "let n = 0; for (let i = 0; i < 200000; i++) n += document.nodeType; document.body.children.length"
+        ),
+        "500"
+    );
+    let holder = engine.create_realm(RealmOptions::default()).unwrap();
+    {
+        let s = main.scope().unwrap();
+        let global = lp_js::Persistent::new(&s, s.global().value());
+        let hs = holder.scope().unwrap();
+        hs.global().set("held", global.get(&hs)).unwrap();
+    }
+    assert_eq!(eval(&holder, "held.document.body.children.length"), "500");
+    let dom = page.dom.clone();
+    let live = dom.borrow().live_nodes();
+    assert!(live > 1500, "{live}");
+    let weak = Rc::downgrade(&page);
+    // Navigation's teardown of a frame (lp-browser `frames.rs`).
+    page.dispose();
+    lifecycle::realm_disposed(&page, main.id());
+    main.dispose();
+    dom.borrow_mut().set_document_active(page.document(), false).unwrap();
+    drop(main);
+    drop(page);
+    (engine, dom, holder, weak, live)
+}
+
+#[test]
+fn a_windows_document_has_one_getter_from_install_to_teardown() {
+    // [LegacyUnforgeable] `document` is the global's own accessor, its value
+    // made on the first read. Its `get` stays one function throughout (before
+    // that read, after it, after the realm is torn down), so descriptors
+    // taken early apply again as they are: the snapshot and restore of a
+    // global's properties that sandboxes and test harnesses do.
+    let Env { engine, page, main } = env("<body><p></p></body>");
+    if !window::has_window_constants() {
+        // The system framework serves `document` from Window.prototype.
+        return;
+    }
+    let holder = engine.create_realm(RealmOptions::default()).unwrap();
+    {
+        let s = main.scope().unwrap();
+        let global = lp_js::Persistent::new(&s, s.global().value());
+        let hs = holder.scope().unwrap();
+        hs.global().set("held", global.get(&hs)).unwrap();
+    }
+    eval(&holder, "globalThis.early = Object.getOwnPropertyDescriptor(held, 'document').get");
+    assert_eq!(
+        eval(
+            &main,
+            "globalThis.snap = Object.getOwnPropertyDescriptors(globalThis); \
+             [typeof snap.document.get, snap.document.set, snap.document.enumerable, snap.document.configurable, \
+              'document' in Window.prototype].join()"
+        ),
+        "function,,true,false,false"
+    );
+    assert_eq!(
+        eval(
+            &main,
+            "const first = document.body.firstChild.nodeName; \
+             const failed = Object.keys(snap).filter(k => { try { Object.defineProperty(globalThis, k, snap[k]); return false; } \
+               catch { return true; } }); \
+             [first, Object.getOwnPropertyDescriptor(globalThis, 'document').get === snap.document.get, \
+              snap.document.get.call(window) === document, failed.join('|')].join()"
+        ),
+        "P,true,true,"
+    );
+    // Navigation's teardown of a frame (lp-browser `frames.rs`).
+    page.dispose();
+    lifecycle::realm_disposed(&page, main.id());
+    main.dispose();
+    assert_eq!(
+        eval(
+            &holder,
+            "[Object.getOwnPropertyDescriptor(held, 'document').get === early, \
+              (() => { try { held.document; return 'read'; } catch (e) { return e.message; } })()].join()"
+        ),
+        "true,Execution context was destroyed."
+    );
 }
 
 /// Overwrites the stack below the caller's frame (see the test above).
@@ -1333,9 +1450,6 @@ fn indexeddb_empty_restore_preserves_context_and_origin_isolation() {
     );
     eval(&realm, "indexedDB.databases().then(a=>{a.push({name:'injected',version:1});return indexedDB.databases()}).then(a=>result=String(a.length))");
     assert_eq!(eval(&realm, "result"), "0");
-    // The unsupported nonempty restore must fail before clearing existing data.
-    eval(&realm, "restore({indexedDB:[{name:'db',version:1,stores:[]}],localStorage:[]}).then(()=>result='WRONG',e=>result=e.name)");
-    assert_eq!(eval(&realm, "result+':'+localStorage.getItem('auth-test')"), "NotSupportedError:synthetic");
     let (_next, navigated) =
         storage_page(&engine, "http://example.test/next", local.clone(), StorageNamespace::default());
     assert_eq!(eval(&navigated, "localStorage.getItem('auth-test')"), "synthetic");
@@ -1362,7 +1476,7 @@ fn indexeddb_opaque_origin_rejects_and_nonempty_operations_are_explicit() {
     assert_eq!(eval(&realm, "try{indexedDB.open('db')}catch(e){e.name}"), "SecurityError");
     let (_page, realm) =
         storage_page(&engine, "http://example.test", StorageNamespace::default(), StorageNamespace::default());
-    assert_eq!(eval(&realm, "try{indexedDB.deleteDatabase('db')}catch(e){e.name}"), "NotSupportedError");
+    assert_eq!(eval(&realm, "indexedDB.deleteDatabase('db') instanceof IDBOpenDBRequest"), "true");
     assert_eq!(eval(&realm, "try{new IDBFactory()}catch(e){e.name}"), "TypeError");
 }
 
@@ -2016,10 +2130,10 @@ fn structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment
           getPrototypeOf(){traps++;throw 3}});
         const revoked=Proxy.revocable({},{});revoked.revoke();
         const values=[proxy,revoked.proxy,document,window,()=>{},Symbol('x'),new WeakMap(),Promise.resolve(1),
-          new URL('https://example.test/'),new Error('not yet supported')];
+          new URL('https://example.test/')];
         const errors=values.map(v=>{try{structuredClone(v);return 'accepted'}catch(e){return e.name}});
         const buffer=new ArrayBuffer(4);let transfer;
-        try {structuredClone({buffer},{transfer:[buffer]})}catch(e){transfer=e.name}
+        try {structuredClone({buffer,f(){}},{transfer:[buffer]})}catch(e){transfer=e.name}
         let custom=0;const tagged={get [Symbol.toStringTag](){custom++;return 'Object'}};
         let customError;try{structuredClone(tagged)}catch(e){customError=e.name}
         return [errors.every(n=>n==='DataCloneError'),traps,transfer,buffer.byteLength,
@@ -2027,7 +2141,7 @@ fn structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment
       })()
     "#
         ),
-        "true|0|NotSupportedError|4|1|0|NotSupportedError"
+        "true|0|DataCloneError|4|1|0|NotSupportedError"
     );
 }
 
@@ -2581,7 +2695,8 @@ fn web_crypto_random_and_digest() {
     assert_eq!(out, "started");
     assert_eq!(
         eval(r, "res"),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|NotSupportedError|NotSupportedError|true"
+        // sign() without arguments: a WebIDL argument error rejects the promise.
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|NotSupportedError|TypeError|true"
     );
 }
 
@@ -2783,10 +2898,10 @@ fn svg_graphics_elements_report_get_bbox() {
 }
 
 #[test]
-fn canvas_2d_measures_text_without_pixels() {
+fn canvas_2d_measures_and_draws_text() {
     // TOS terms-layout sizes Days inputs with canvas measureText. The 2D
-    // context measures with the flow layout's text measure; there is no
-    // rasterizer, so pixel readback is explicitly unsupported.
+    // context measures and draws text with the system fonts (Parley); the
+    // text it draws has pixels.
     let e = env("<body><canvas id=c></canvas><input id=i style='font: 600 15px system-ui'></body>");
     assert_eq!(
         eval(
@@ -2807,10 +2922,7 @@ fn canvas_2d_measures_text_without_pixels() {
         "true,true,true,true"
     );
     assert_eq!(eval(&e.main, "x.save(); x.font = '20px monospace'; x.restore(); x.font"), "32px system-ui");
-    assert_eq!(
-        eval(&e.main, "try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"),
-        "NotSupportedError"
-    );
+    assert_eq!(eval(&e.main, "x.fillText('9', 0, 30); x.getImageData(0, 0, 40, 40).data.some(v => v > 0)"), "true");
     // The TOS pattern: drawing.font = getComputedStyle(input).font.
     assert_eq!(
         eval(&e.main, "x.font = getComputedStyle(document.getElementById('i')).font; x.font"),
@@ -3397,16 +3509,21 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
     let base = e.page.pinned_count();
-    // These fail before a worker exists; `SharedWorker` and `ServiceWorker` stay absent.
+    // These fail before a worker exists; `SharedWorker` stays absent (`ServiceWorker` is the
+    // service worker interface, made on first use).
     assert_eq!(
         eval(
             r,
             "const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
              [err(() => new Worker('http://[')), err(() => new Worker()), err(() => Worker('w.js')),
-              err(() => new Worker('w.js', {type: 'module'})), err(() => new Worker('w.js', {type: 'other'})),
-              err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, typeof ServiceWorker].join()",
+              err(() => new Worker('w.js', {type: 'module'}).terminate()), err(() => new Worker('w.js', {type: 'other'})),
+              err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, 'ServiceWorker' in window].join()",
         ),
-        "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,undefined"
+        if lp_js::Capabilities::detect().modules {
+            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,undefined,true"
+        } else {
+            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,true"
+        }
     );
     assert_eq!(e.page.pinned_count(), base, "a rejected construction leaves nothing behind");
     // This embedder has no network: the error comes in a later task, as a plain trusted Event.
@@ -3422,7 +3539,7 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
              [w instanceof Worker, w instanceof EventTarget, typeof w.onerror, err(() => w.postMessage()),
               err(() => w.postMessage(() => 1)), err(() => w.postMessage(1, [{}])), b.byteLength, log.length].join()",
         ),
-        "true,true,function,TypeError,DataCloneError,NotSupportedError,0,0"
+        "true,true,function,TypeError,DataCloneError,DataCloneError,0,0"
     );
     assert_eq!(e.page.pinned_count(), base + 1);
     tasks.drain();
@@ -3446,6 +3563,8 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
+    // The realm's document wrapper, kept while connected.
+    let base = e.page.pinned_count();
     let more = MAX_WORKERS_PER_DOCUMENT + 4;
     eval(
         r,
@@ -3453,7 +3572,7 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     );
     tasks.drain();
     assert_eq!(eval(r, "errors"), more.to_string());
-    assert_eq!(e.page.pinned_count(), 0);
+    assert_eq!(e.page.pinned_count(), base);
 }
 
 #[test]
@@ -3499,7 +3618,8 @@ fn message_port_start_close_transfer_and_clone_errors() {
     eval(r, "log = []; a.port1.onmessage = (ev) => log.push('back:' + ev.data); a.port2.postMessage('b'); a.port1.postMessage('pending'); a.port2.close(); a.port1.postMessage('after'); a.port2.postMessage('afterClose');");
     tasks.drain();
     assert_eq!(eval(r, "log.join()"), "back:b");
-    // Transfers are explicitly unsupported; non-cloneable data and ports throw.
+    // Transfers work (posting the peer port loses the channel); non-cloneable
+    // data and ports as data throw.
     assert_eq!(
         eval(
             r,
@@ -3508,7 +3628,7 @@ fn message_port_start_close_transfer_and_clone_errors() {
               err(() => c.port1.postMessage(() => 1)), err(() => c.port1.postMessage({p: c.port2})), err(() => c.port1.postMessage()),
               err(() => c.port1.postMessage(1, [])), err(() => c.port1.postMessage(1, {}))].join()",
         ),
-        "NotSupportedError,NotSupportedError,DataCloneError,DataCloneError,TypeError,ok,ok"
+        "ok,ok,DataCloneError,DataCloneError,TypeError,ok,ok"
     );
     // Page reassignment of structuredClone does not affect port cloning.
     eval(r, "log = []; structuredClone = () => { throw Error('page clone'); }; const d = new MessageChannel(); d.port2.onmessage = (ev) => log.push(ev.data.k); d.port1.postMessage({k: 'native'});");
@@ -4310,7 +4430,10 @@ fn dom_parser_xml_types_case_cdata_errors_and_inert_adoption() {
     );
     // A DOCTYPE (without entity declarations) is a DocumentType node.
     assert_eq!(
-        eval(&e.main, r#"const dt=new DOMParser().parseFromString("<!DOCTYPE r SYSTEM 'file:///unused'><r/>",'text/xml'); dt.doctype.name+':'+dt.doctype.systemId+':'+dt.documentElement.localName"#),
+        eval(
+            &e.main,
+            r#"const dt=new DOMParser().parseFromString("<!DOCTYPE r SYSTEM 'file:///unused'><r/>",'text/xml'); dt.doctype.name+':'+dt.doctype.systemId+':'+dt.documentElement.localName"#
+        ),
         "r:file:///unused:r"
     );
     assert_eq!(
@@ -5133,7 +5256,8 @@ fn reflected_urls_follow_attributes_bases_adoption_and_document_replacement() {
     assert_eq!(eval(&e.main, "r.href"), "https://moved.example/relative.js");
     e.page.set_document(other);
     assert_eq!(
-        eval(&e.main, "[r.href,document.getElementById('new').href].join('|')"),
+        // The realm keeps its document; the replacement is `r`'s now.
+        eval(&e.main, "[r.href,r.ownerDocument.getElementById('new').href].join('|')"),
         "https://moved.example/relative.js|https://moved.example/new.js"
     );
     e.page.dom.borrow_mut().adopt_node(doc, node).unwrap();
@@ -5737,6 +5861,29 @@ fn removing_the_focused_element_fires_blur_and_focusout_first() {
     assert_eq!(
         eval(r, "const h = make('h'); h.addEventListener('blur', () => document.getElementById('other').appendChild(h), { once: true }); let err = ''; try { h.parentNode.removeChild(h); } catch (x) { err = x.name; } [err, h.parentNode.id].join(':')"),
         "NotFoundError:other"
+    );
+}
+
+/// `textContent =` converts its value before the focused element inside
+/// loses focus (an object's `toString` runs first), and reads a string's
+/// characters only after the blur handlers ran. A handler that uses the
+/// string as a property key while an equal atom exists swaps the string's
+/// buffer for the atom's; a collection keeps the old buffer only while it
+/// finds the string on the stack, so a read of it can't be relied on. This
+/// checks the text after such a handler and its allocations; it can't force
+/// the collection to drop the old buffer.
+#[test]
+fn text_content_converts_before_the_blur_and_reads_the_string_after() {
+    let e = env("<body><div id=cell></div></body>");
+    let r = &e.main;
+    eval(r, "window.log = []; window.cell = document.getElementById('cell'); window.focusIn = (onBlur) => { const i = document.createElement('input'); cell.appendChild(i); i.focus(); i.addEventListener('blur', () => { log.push('blur'); onBlur(); }, { once: true }); };");
+    assert_eq!(
+        eval(r, "focusIn(() => {}); cell.textContent = { toString() { log.push('toString'); return 'object'; } }; log.join() + '|' + cell.textContent"),
+        "toString,blur|object"
+    );
+    assert_eq!(
+        eval(r, "log.length = 0; const tail = 'x'.repeat(4000) + Math.random(); window.atom = 'text-' + tail; ({})[atom] = 1; window.key = 'text-' + tail; focusIn(() => { ({})[key] = 1; let a; for (let n = 0; n < 200000; n++) a = [n, n]; }); cell.textContent = key; [log.join(), cell.textContent === atom, cell.firstChild.data.length === atom.length].join()"),
+        "blur,true,true"
     );
 }
 
@@ -6643,37 +6790,84 @@ fn removing_one_of_many_expando_rows_unpins_only_its_subtree() {
 
 #[test]
 fn attr_nodes_aria_token_lists_and_named_properties() {
-    let e = env(
-        "<!doctype html><html><body><div id=app class='a b' aria-label=hi></div>\
-         <form name=f1></form><img id=pic name=picname><iframe name=fr></iframe></body></html>",
-    );
+    let e = env("<!doctype html><html><body><div id=app class='a b' aria-label=hi></div>\
+         <form name=f1></form><img id=pic name=picname><iframe name=fr></iframe></body></html>");
     let r = &e.main;
     // Attr nodes keep their identity, move between elements and detach.
     assert_eq!(eval(r, "const app = document.getElementById('app'); app.getAttributeNode('class') === app.attributes.getNamedItem('class') && app.attributes[0].name === 'id'"), "true");
-    assert_eq!(eval(r, "const at = document.createAttribute('data-x'); at.value = '1'; String(at.ownerElement) + at.name"), "nulldata-x");
-    assert_eq!(eval(r, "app.setAttributeNode(at) === null && app.getAttributeNode('data-x') === at && at.ownerElement === app"), "true");
-    assert_eq!(eval(r, "const other = document.createElement('b'); try { other.setAttributeNode(at); 'no' } catch (e) { e.name }"), "InUseAttributeError");
-    assert_eq!(eval(r, "app.removeAttributeNode(at) === at && at.ownerElement === null && at.value + app.hasAttribute('data-x')"), "1false");
-    assert_eq!(eval(r, "const ns = document.createAttributeNS('urn:x', 'p:q'); ns.prefix + ns.localName + ns.namespaceURI"), "pqurn:x");
+    assert_eq!(
+        eval(r, "const at = document.createAttribute('data-x'); at.value = '1'; String(at.ownerElement) + at.name"),
+        "nulldata-x"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "app.setAttributeNode(at) === null && app.getAttributeNode('data-x') === at && at.ownerElement === app"
+        ),
+        "true"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "const other = document.createElement('b'); try { other.setAttributeNode(at); 'no' } catch (e) { e.name }"
+        ),
+        "InUseAttributeError"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "app.removeAttributeNode(at) === at && at.ownerElement === null && at.value + app.hasAttribute('data-x')"
+        ),
+        "1false"
+    );
+    assert_eq!(
+        eval(r, "const ns = document.createAttributeNS('urn:x', 'p:q'); ns.prefix + ns.localName + ns.namespaceURI"),
+        "pqurn:x"
+    );
     // ARIAMixin reflects every attribute as a nullable string.
     assert_eq!(eval(r, "app.ariaLabel + ':' + String(app.ariaBusy)"), "hi:null");
-    assert_eq!(eval(r, "app.ariaBusy = 'true'; app.ariaBusy = undefined; String(app.ariaBusy) + app.hasAttribute('aria-busy')"), "nullfalse");
+    assert_eq!(
+        eval(
+            r,
+            "app.ariaBusy = 'true'; app.ariaBusy = undefined; String(app.ariaBusy) + app.hasAttribute('aria-busy')"
+        ),
+        "nullfalse"
+    );
     assert_eq!(eval(r, "app.ariaRowIndexText = 'x'; app.getAttribute('aria-rowindextext')"), "x");
     // DOMTokenList update steps and supports().
-    assert_eq!(eval(r, "const d = document.createElement('div'); d.classList.remove('a'); String(d.getAttribute('class'))"), "null");
+    assert_eq!(
+        eval(r, "const d = document.createElement('div'); d.classList.remove('a'); String(d.getAttribute('class'))"),
+        "null"
+    );
     assert_eq!(eval(r, "d.classList.add('a'); d.classList.replace('a', 'a'); d.getAttribute('class')"), "a");
     assert_eq!(eval(r, "try { d.classList.replace(' ', '') } catch (e) { e.name }"), "SyntaxError");
     assert_eq!(eval(r, "try { d.classList.supports('a') } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "d.classList = 'x y'; d.className"), "x y");
     // Document named properties and collections.
-    assert_eq!(eval(r, "document.f1 === document.forms[0] && 'f1' in document && document.picname === document.pic"), "true");
+    assert_eq!(
+        eval(r, "document.f1 === document.forms[0] && 'f1' in document && document.picname === document.pic"),
+        "true"
+    );
     assert_eq!(eval(r, "Object.getOwnPropertyNames(document).includes('picname') && document.embeds.length === 0 && document.applets.length === 0"), "true");
-    assert_eq!(eval(r, "typeof document.fr === 'object' && document.fr !== null"), "true", "an iframe by name is its window");
+    assert_eq!(
+        eval(r, "typeof document.fr === 'object' && document.fr !== null"),
+        "true",
+        "an iframe by name is its window"
+    );
     // Namespace lookups, textContent and moveBefore.
-    assert_eq!(eval(r, "String(app.lookupPrefix('http://www.w3.org/1999/xhtml')) + app.lookupNamespaceURI('xml')"), "nullhttp://www.w3.org/XML/1998/namespace");
+    assert_eq!(
+        eval(r, "String(app.lookupPrefix('http://www.w3.org/1999/xhtml')) + app.lookupNamespaceURI('xml')"),
+        "nullhttp://www.w3.org/XML/1998/namespace"
+    );
     assert_eq!(eval(r, "app.textContent = undefined; JSON.stringify(app.textContent)"), "\"\"");
-    assert_eq!(eval(r, "const f = document.forms[0]; document.body.moveBefore(f, app); document.body.firstElementChild === f"), "true");
-    assert_eq!(eval(r, "try { document.body.moveBefore(document.createElement('x'), null); 'no' } catch (e) { e.name }"), "HierarchyRequestError");
+    assert_eq!(
+        eval(r, "const f = document.forms[0]; document.body.moveBefore(f, app); document.body.firstElementChild === f"),
+        "true"
+    );
+    assert_eq!(
+        eval(r, "try { document.body.moveBefore(document.createElement('x'), null); 'no' } catch (e) { e.name }"),
+        "HierarchyRequestError"
+    );
 }
 
 #[test]
@@ -6686,11 +6880,23 @@ fn legacy_events_request_and_observable() {
     assert_eq!(eval(r, "try { new UIEvent('x', {view: {}}); 'no' } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "const se = document.createEvent('StorageEvent'); se.initStorageEvent('storage', false, false, 'k', null, 'v'); se.key + se.oldValue + se.newValue"), "knullv");
     assert_eq!(eval(r, "window.onblur = null; document.body.setAttribute('onblur', 'return'); typeof window.onblur + (window.onblur === document.body.onblur)"), "functiontrue");
-    assert_eq!(eval(r, "'remove' in Element.prototype[Symbol.unscopables] && 'append' in Document.prototype[Symbol.unscopables]"), "true");
+    assert_eq!(
+        eval(
+            r,
+            "'remove' in Element.prototype[Symbol.unscopables] && 'append' in Document.prototype[Symbol.unscopables]"
+        ),
+        "true"
+    );
     // Request: fields, headers guard, body and fetch input.
     assert_eq!(eval(r, "const rq = new Request('/x?y', {method: 'post', body: 'hi', headers: {'X-A': '1', 'Cookie': 'no'}}); rq.method + rq.url + rq.headers.get('x-a') + String(rq.headers.get('cookie')) + rq.headers.get('content-type')"), "POSThttp://localhost:5173/x?y1nulltext/plain;charset=UTF-8");
-    assert_eq!(eval(r, "rq.mode + rq.credentials + rq.cache + rq.redirect + rq.referrer + rq.bodyUsed"), "corssame-origindefaultfollowabout:clientfalse");
-    assert_eq!(eval(r, "try { new Request('/x', {method: 'TRACE'}); 'no' } catch (e) { e.constructor.name }"), "TypeError");
+    assert_eq!(
+        eval(r, "rq.mode + rq.credentials + rq.cache + rq.redirect + rq.referrer + rq.bodyUsed"),
+        "corssame-origindefaultfollowabout:clientfalse"
+    );
+    assert_eq!(
+        eval(r, "try { new Request('/x', {method: 'TRACE'}); 'no' } catch (e) { e.constructor.name }"),
+        "TypeError"
+    );
     assert_eq!(eval(r, "try { new Request('http://u:p@h/'); 'no' } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "const c = rq.clone(); c.bodyUsed + ':' + (c.headers !== rq.headers)"), "false:true");
     assert_eq!(eval(r, "new Request(rq).bodyUsed + ':' + rq.bodyUsed"), "false:true");
@@ -6700,4 +6906,118 @@ fn legacy_events_request_and_observable() {
     assert_eq!(eval(r, "const o3 = []; const ac = new AbortController(); new Observable(s => { s.addTeardown(() => o3.push('a')); s.addTeardown(() => o3.push('b')) }).subscribe({}, {signal: ac.signal}); ac.abort(); o3.join()"), "b,a");
     assert_eq!(eval(r, "const o4 = []; document.getElementById('t').when('click').subscribe(ev => o4.push(ev.type)); document.getElementById('t').dispatchEvent(new Event('click')); o4.join()"), "click");
     assert_eq!(eval(r, "typeof Subscriber + ':' + (() => { try { new Subscriber(); return 'no' } catch (e) { return e.constructor.name } })()"), "function:TypeError");
+}
+
+#[test]
+fn atom_valued_reads_follow_every_change() {
+    let e = env("<!doctype html><html><body><div id=a class='x y'>t</div></body></html>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const d = document.getElementById('a'); [d.id, d.className, d.localName, d.getAttribute('id'), d.getAttribute('class'), d.classList.value, d.classList[1], d.classList.item(0), String(d.prefix), d.namespaceURI].join('|')"),
+        "a|x y|div|a|x y|x y|y|x|null|http://www.w3.org/1999/xhtml"
+    );
+    // Writes through every path read back at once.
+    assert_eq!(eval(r, "d.id = 'b'; d.id + '|' + d.getAttribute('id')"), "b|b");
+    assert_eq!(eval(r, "d.setAttribute('id', 'a-much-longer-identifier'); d.id"), "a-much-longer-identifier");
+    assert_eq!(eval(r, "d.getAttributeNode('id').value = 'c'; d.id"), "c");
+    assert_eq!(eval(r, "d.removeAttribute('id'); JSON.stringify([d.id, d.getAttribute('id')])"), r#"["",null]"#);
+    assert_eq!(
+        eval(r, "d.className = 'z'; [d.className, d.getAttribute('class'), d.classList.value, d.classList[0]].join()"),
+        "z,z,z,z"
+    );
+    assert_eq!(eval(r, "d.classList.add('w'); d.className + '|' + d.classList"), "z w|z w");
+    assert_eq!(
+        eval(r, "d.className = '  z  '; JSON.stringify([d.className, d.classList.length, d.classList[0]])"),
+        r#"["  z  ",1,"z"]"#
+    );
+    assert_eq!(
+        eval(r, "d.className = 'q q r'; [...d.classList].join() + '|' + d.classList[1] + '|' + d.classList[2]"),
+        "q,r|r|undefined"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "d.removeAttribute('class'); JSON.stringify([d.className, d.classList.value, d.getAttribute('class')])"
+        ),
+        r#"["","",null]"#
+    );
+    assert_eq!(
+        eval(r, "d.className = 'k'; const c = d.cloneNode(); d.className = 'm'; c.className + '|' + d.className"),
+        "k|m"
+    );
+    // Values of the same length one after another (the new value may take
+    // the old one's allocation), read between writes.
+    assert_eq!(
+        eval(r, "const seen = []; for (const v of ['aa bb', 'cc dd', 'aa bb', 'ee ff']) { d.className = v; seen.push(d.className, d.getAttribute('class'), d.classList.value); } seen.join()"),
+        "aa bb,aa bb,aa bb,cc dd,cc dd,cc dd,aa bb,aa bb,aa bb,ee ff,ee ff,ee ff"
+    );
+    assert_eq!(
+        eval(r, "const dx = []; for (const v of ['one two', 'one twx', '', 'x']) { d.setAttribute('data-x', v); dx.push(d.getAttribute('data-x'), d.getAttribute('data-x')); } d.removeAttribute('data-x'); dx.push(d.getAttribute('data-x')); JSON.stringify(dx)"),
+        r#"["one two","one two","one twx","one twx","","","x","x",null]"#
+    );
+    // Long values (no table entry over 1 KB) and non-ASCII text.
+    assert_eq!(
+        eval(r, "const out = []; for (const v of ['y'.repeat(1024), 'z'.repeat(1025), 'z'.repeat(1024) + 'w', '\\u00e9t\\u00e9 \\u65e5\\u672c', '\\u00e9t\\u00e9 \\u65e5\\u672d']) { d.setAttribute('data-v', v); const a = d.getAttribute('data-v'), b = d.getAttribute('data-v'); out.push(a === v && b === v); } out.join()"),
+        "true,true,true,true,true"
+    );
+    assert_eq!(
+        eval(r, "d.className = 'solo'; d.className + '|' + d.getAttribute('class') + '|' + d.classList.value"),
+        "solo|solo|solo"
+    );
+    // getAttribute('id') is the first attribute with that qualified name: here
+    // a namespaced one, not the element's id.
+    assert_eq!(
+        eval(r, "const n = document.createElement('p'); n.setAttributeNS('urn:x', 'id', 'ns'); n.setAttributeNS(null, 'id', 'plain'); n.id + '|' + n.getAttribute('id')"),
+        "plain|ns"
+    );
+    assert_eq!(
+        eval(r, "n.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', 'u'); n.getAttributeNames().join()"),
+        "id,id,xlink:href"
+    );
+    assert_eq!(
+        eval(r, "[...n.attributes].map(a => [a.name, a.localName, a.prefix, a.namespaceURI].join(' ')).join()"),
+        "id id  urn:x,id id  ,xlink:href href xlink http://www.w3.org/1999/xlink"
+    );
+    assert_eq!(
+        eval(r, "const g = document.createElementNS('http://www.w3.org/2000/svg', 'x:svg'); [g.localName, g.prefix, g.namespaceURI, g.tagName].join()"),
+        "svg,x,http://www.w3.org/2000/svg,x:svg"
+    );
+    assert_eq!(
+        eval(r, "const h = document.createElementNS('http://www.w3.org/1999/xhtml', 'h:Div'); [h.tagName, h.nodeName, h.tagName, h.localName, document.body.tagName, document.body.nodeName].join()"),
+        "H:DIV,H:DIV,H:DIV,Div,BODY,BODY"
+    );
+    // Strings are per realm; the isolated world reads the same values.
+    let iso = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    assert_eq!(
+        eval(&iso, "const o = document.querySelector('div'); o.id + '|' + o.className + '|' + o.localName"),
+        "|solo|div"
+    );
+    assert_eq!(eval(r, "d.id = 'from-main'; d.id"), "from-main");
+    assert_eq!(eval(&iso, "o.id"), "from-main");
+}
+
+#[test]
+fn ids_read_once_do_not_accumulate() {
+    let e = env("<!doctype html><html><body><main id=list></main></body></html>");
+    let r = &e.main;
+    // 20000 distinct ids and class values, each read once and dropped, with
+    // collections in between.
+    for batch in 0..10 {
+        eval(
+            r,
+            &format!(
+                "(() => {{ const list = document.getElementById('list'); list.textContent = ''; for (let i = 0; i < 2000; i++) {{ const d = document.createElement('div'); d.id = 'row-{batch}-' + i; d.className = 'cell cell-{batch}-' + i; list.appendChild(d); }} let n = 0; for (const d of list.children) n += d.id.length + d.className.length; return n; }})()"
+            ),
+        );
+        e.engine.collect_garbage_now();
+    }
+    let n = e.main.interned_string_count();
+    assert!(n <= 6000, "{n} interned strings for 40000 distinct values read once");
+    assert_eq!(
+        eval(r, "const last = document.getElementById('list').lastChild; last.id + '|' + last.className"),
+        "row-9-1999|cell cell-9-1999"
+    );
+    lp_webapi::lifecycle::realm_disposed(&e.page, e.main.id());
+    e.main.dispose();
+    assert_eq!(e.main.interned_string_count(), 0);
 }

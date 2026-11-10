@@ -4,9 +4,9 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{
     compare, decode_png, diff_image, encode_jpeg, encode_png, Area, Backend, Fetcher, Renderer, RgbaImage, Snapshot,
@@ -65,17 +65,23 @@ pub struct MatchOptions {
     /// Largest per-channel difference a pixel may have and still match.
     pub tolerance: u8,
     /// Differing pixels allowed.
-    pub max_diff_pixels: u64,
-    /// Differing pixels allowed as a fraction of the image (the larger of
-    /// the two limits applies).
-    pub max_diff_ratio: f64,
+    pub max_diff_pixels: Option<u64>,
+    /// Differing pixels allowed as a fraction of the image. With both set,
+    /// the smaller limit applies (Playwright's comparators.js); with
+    /// neither, no pixel may differ.
+    pub max_diff_ratio: Option<f64>,
     pub backend: Backend,
 }
 
 impl MatchOptions {
-    fn allowed(&self, width: u32, height: u32) -> u64 {
-        let by_ratio = (self.max_diff_ratio.clamp(0.0, 1.0) * width as f64 * height as f64).floor() as u64;
-        self.max_diff_pixels.max(by_ratio)
+    /// Playwright fails when `count > limit` with an unfloored ratio limit;
+    /// for an integer count that is `count > floor(limit)`.
+    pub fn allowed(&self, width: u32, height: u32) -> u64 {
+        let by_ratio = self.max_diff_ratio.map(|r| (r.clamp(0.0, 1.0) * width as f64 * height as f64).floor() as u64);
+        match (self.max_diff_pixels, by_ratio) {
+            (Some(p), Some(r)) => p.min(r),
+            (p, r) => p.or(r).unwrap_or(0),
+        }
     }
 }
 
@@ -151,14 +157,55 @@ pub struct RenderWorker {
     tx: Sender<Job>,
 }
 
+/// Run on the render thread a second after its last job ([`set_idle_release`]).
+static IDLE_RELEASE: OnceLock<fn()> = OnceLock::new();
+
+/// How long the render thread waits without a job before it runs the
+/// [`set_idle_release`] hook.
+const IDLE_RELEASE_AFTER: Duration = Duration::from_secs(1);
+
+/// Registers what the render thread runs once a second has passed since its
+/// last job: an allocator with per-thread heaps (the executable's) returns
+/// the pages of what the render freed and of the images the browser thread
+/// freed since, which only the thread that allocated them can (a closed SPA
+/// after one screenshot: about 2 MB).
+pub fn set_idle_release(release: fn()) {
+    let _ = IDLE_RELEASE.set(release);
+}
+
+/// The render thread's stack: a main thread's, as the browser threads have.
+const RENDER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
 impl RenderWorker {
     pub fn spawn() -> std::io::Result<RenderWorker> {
         let (tx, rx) = channel::<Job>();
-        std::thread::Builder::new().name("lp-render".into()).spawn(move || {
+        // The browser thread's stack (lp-cdp `BROWSER_STACK_BYTES`): the render lays the page out
+        // again, once per tree level as there, and paints it recursively. Those recursions grow the
+        // stack on demand (blitz-dom `util::ensure_stack`), so no depth overflows it; 8 MB keeps
+        // pages up to about 3,000 levels on the thread's own stack, without mapping segments.
+        std::thread::Builder::new().name("lp-render".into()).stack_size(RENDER_STACK_BYTES).spawn(move || {
             let mut renderer = None;
-            while let Ok(job) = rx.recv() {
+            // A job ran since the idle hook did.
+            let mut due = false;
+            loop {
+                let job = match (due, IDLE_RELEASE.get()) {
+                    (true, Some(release)) => match rx.recv_timeout(IDLE_RELEASE_AFTER) {
+                        Ok(job) => job,
+                        Err(RecvTimeoutError::Timeout) => {
+                            release();
+                            due = false;
+                            continue;
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    },
+                    _ => match rx.recv() {
+                        Ok(job) => job,
+                        Err(_) => break,
+                    },
+                };
                 let r = renderer.get_or_insert_with(Renderer::new);
                 run(r, job);
+                due = true;
             }
         })?;
         Ok(RenderWorker { tx })

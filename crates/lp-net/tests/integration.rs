@@ -6,8 +6,13 @@ mod auth;
 mod cache;
 mod client;
 mod h2;
+mod idle_release;
 mod proxy;
 mod static_files;
+mod timing;
+mod websocket;
+mod websocket_deflate;
+mod websocket_h2;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor
 /// its own `[[test]]` target would silently never run.

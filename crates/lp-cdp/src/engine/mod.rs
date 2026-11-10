@@ -8,7 +8,10 @@
 
 #[cfg(feature = "render")]
 mod accessibility;
+mod aria_snapshot;
 mod blitz_geometry;
+mod coverage;
+mod fn_names;
 #[cfg(feature = "render")]
 pub(crate) use blitz_geometry::set_fork_template;
 mod dialog;
@@ -83,6 +86,8 @@ pub(crate) enum Queued {
     Frame(OutFrame),
     Console {
         realm: RealmId,
+        /// The page the realm's window belongs to ([`realm_page`]).
+        page: Option<PageId>,
         level: ConsoleLevel,
         args: Vec<Persistent>,
         timestamp: f64,
@@ -91,11 +96,13 @@ pub(crate) enum Queued {
     },
     Exception {
         realm: RealmId,
+        page: Option<PageId>,
         exception: JsException,
         timestamp: f64,
     },
     BindingCalled {
         realm: RealmId,
+        page: Option<PageId>,
         name: String,
         payload: String,
     },
@@ -240,6 +247,11 @@ impl PageObserver for Collector {
     }
 }
 
+/// The page of a realm's window, read from the realm itself.
+fn realm_page(realm: &Realm) -> Option<PageId> {
+    lp_browser::realm_page(&realm.scope().ok()?)
+}
+
 impl EngineHooks for Collector {
     fn console_api(&self, realm: &Realm, level: ConsoleLevel, args: &[Value<'_>]) {
         if !self.runtime_wanted.get() || self.out.is_exceeded() {
@@ -250,26 +262,35 @@ impl EngineHooks for Collector {
         // Chrome reports the caller's stack with every console call
         // (Playwright's ConsoleMessage.location() reads it).
         let stack = scope.current_stack().ok();
-        self.push(Queued::Console { realm: realm.id(), level, args, timestamp: epoch_ms(), stack });
+        let page = lp_browser::realm_page(&scope);
+        self.push(Queued::Console { realm: realm.id(), page, level, args, timestamp: epoch_ms(), stack });
     }
 
     fn exception_thrown(&self, realm: &Realm, exception: &JsException) {
         if !self.runtime_wanted.get() {
             return;
         }
-        self.push(Queued::Exception { realm: realm.id(), exception: exception.clone(), timestamp: epoch_ms() });
+        let page = realm_page(realm);
+        self.push(Queued::Exception { realm: realm.id(), page, exception: exception.clone(), timestamp: epoch_ms() });
     }
 
     // Only pages a session added a binding to call this.
     fn binding_called(&self, realm: &Realm, name: &str, payload: &str) {
-        self.push(Queued::BindingCalled { realm: realm.id(), name: name.to_owned(), payload: payload.to_owned() });
+        let page = realm_page(realm);
+        self.push(Queued::BindingCalled {
+            realm: realm.id(),
+            page,
+            name: name.to_owned(),
+            payload: payload.to_owned(),
+        });
     }
 
     fn unhandled_rejection(&self, realm: &Realm, exception: &JsException) {
         if !self.runtime_wanted.get() {
             return;
         }
-        self.push(Queued::Exception { realm: realm.id(), exception: exception.clone(), timestamp: epoch_ms() });
+        let page = realm_page(realm);
+        self.push(Queued::Exception { realm: realm.id(), page, exception: exception.clone(), timestamp: epoch_ms() });
     }
 }
 
@@ -286,13 +307,15 @@ pub(crate) struct Session {
     pub(crate) extra_headers: http::HeaderMap,
     /// `Network.setCacheDisabled` of this session (page-scoped in Chrome).
     pub(crate) cache_disabled: bool,
+    /// `Network.setBypassServiceWorker` of this session (page-scoped in Chrome).
+    pub(crate) bypass_service_worker: bool,
     /// Page.setInterceptFileChooserDialog: file inputs report
     /// Page.fileChooserOpened to this session.
     pub(crate) intercept_file_chooser: bool,
     /// Runtime.addBinding names: their calls are reported to this session.
     pub(crate) bindings: Vec<String>,
     fetch: fetch::FetchSession,
-    pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
+    pub(crate) handles: Rc<remote::Handles>,
 }
 
 pub(crate) struct PageState {
@@ -419,6 +442,8 @@ pub struct EngineHost {
     /// The time zone in effect in this connection's VM: that of the pages
     /// which set one (None: the host's).
     timezone: Option<String>,
+    /// JavaScript and CSS coverage of the pages (`coverage.rs`).
+    coverage: coverage::Coverage,
 }
 
 /// A page booted on a thread before any connection, with its context.
@@ -610,6 +635,7 @@ impl EngineHost {
             waiters: driver::Waiters::default(),
             virtual_time: None,
             virtual_ticks_base: 0.0,
+            coverage: coverage::Coverage::default(),
         })
     }
 
@@ -749,8 +775,11 @@ impl EngineHost {
         !self.collector.is_empty() || self.network_wake.ready() || self.renders.ready()
     }
 
+    /// The protocol key of an engine page: its id (`register_page`).
     pub(crate) fn page_key(&self, id: PageId) -> Option<PageKey> {
-        self.pages.iter().find(|(_, p)| p.id == id).map(|(k, _)| *k)
+        let key = PageKey::from(id.0);
+        debug_assert!(self.pages.get(&key).is_none_or(|p| p.id == id));
+        self.pages.contains_key(&key).then_some(key)
     }
 
     pub(crate) fn realm(&self, page: PageKey, realm: RealmId) -> Option<Realm> {
@@ -758,24 +787,19 @@ impl EngineHost {
         self.thread.browser.realm_in_page(id, realm)
     }
 
-    fn frame_for_realm(&self, page: PageKey, realm: RealmId) -> Option<Frame> {
+    /// Reads the live frame of `page` showing `document`, without cloning it.
+    fn with_frame_of_document<R>(
+        &self,
+        page: PageKey,
+        document: &Rc<lp_webapi::PageDom>,
+        f: impl FnOnce(&Frame) -> R,
+    ) -> Option<R> {
         let id = self.pages.get(&page)?.id;
-        self.thread.browser.frames(id).into_iter().find_map(|info| {
-            let frame = self.thread.browser.frame(id, &info.id)?;
-            frame.realms.iter().any(|r| r.realm.id() == realm).then_some(frame)
-        })
-    }
-
-    fn frame_for_document(&self, page: PageKey, document: &Rc<lp_webapi::PageDom>) -> Option<Frame> {
-        let id = self.pages.get(&page)?.id;
-        self.thread.browser.frames(id).into_iter().find_map(|info| {
-            let frame = self.thread.browser.frame(id, &info.id)?;
-            frame.page_dom.as_ref().is_some_and(|dom| Rc::ptr_eq(dom, document)).then_some(frame)
-        })
+        self.thread.browser.with_frame_of_document(id, document, f)
     }
 
     fn owns_frame(&self, page: PageId, frame: Option<&String>) -> bool {
-        frame.is_some_and(|id| self.thread.browser.frame(page, &FrameId(id.clone())).is_some())
+        frame.is_some_and(|id| self.thread.browser.has_frame(page, id))
     }
 
     pub(crate) fn main_realm(&self, page: PageKey) -> Option<Realm> {
@@ -793,6 +817,21 @@ impl EngineHost {
         self.out.push(msg::event_frame(method, params, Some(session_id)));
     }
 
+    /// One event to several sessions: `params` is serialized once and its
+    /// JSON text copied into each session's frame.
+    pub(crate) fn event_to<T: serde::Serialize + ?Sized>(&self, method: &str, params: &T, sessions: &[String]) {
+        match sessions {
+            [] => {}
+            [one] => self.event(method, params, one),
+            many => {
+                let raw = serde_json::value::to_raw_value(params).expect("CDP params serialize");
+                for session_id in many {
+                    self.event(method, &*raw, session_id);
+                }
+            }
+        }
+    }
+
     /// Translates queued engine notifications into CDP events, in order.
     pub fn flush(&mut self) {
         self.flush_renders();
@@ -800,6 +839,7 @@ impl EngineHost {
         self.drain_collector();
         self.flush_network();
         self.flush_fetch();
+        self.poll_coverage();
         // `LP.run` request steps wait on the log these observations fill.
         if self.waiters.log_changed {
             self.service_waiters();
@@ -819,11 +859,21 @@ impl EngineHost {
                 }
                 Queued::Network(context, event) => self.on_network_event(context, event.event),
                 Queued::Frame(frame) => self.out.push(frame),
-                Queued::Console { realm, level, args, timestamp, stack } => {
-                    self.on_console(realm, level, args, timestamp, stack)
+                Queued::Console { realm, page, level, args, timestamp, stack } => {
+                    if let Some(page) = self.page_of_realm(realm, page) {
+                        self.on_console(page, realm, level, args, timestamp, stack)
+                    }
                 }
-                Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),
-                Queued::BindingCalled { realm, name, payload } => self.on_binding_called(realm, name, payload),
+                Queued::Exception { realm, page, exception, timestamp } => {
+                    if let Some(page) = self.page_of_realm(realm, page) {
+                        self.on_exception(page, realm, exception, timestamp)
+                    }
+                }
+                Queued::BindingCalled { realm, page, name, payload } => {
+                    if let Some(page) = self.page_of_realm(realm, page) {
+                        self.on_binding_called(page, realm, name, payload)
+                    }
+                }
                 Queued::Worker(page, event) => {
                     let key = self.page_key(page);
                     self.on_worker_event(key, event);
@@ -832,9 +882,16 @@ impl EngineHost {
         }
     }
 
-    /// Page owning `realm`, if any.
-    pub(crate) fn page_of_realm(&self, realm: RealmId) -> Option<PageKey> {
-        self.pages.keys().copied().find(|key| self.frame_for_realm(*key, realm).is_some())
+    /// Page owning `realm` (in a live frame), if any. `hint` is the page the
+    /// realm's window named when the notification was queued; realms without
+    /// one (none are expected) fall back to asking every page.
+    pub(crate) fn page_of_realm(&self, realm: RealmId, hint: Option<PageId>) -> Option<PageKey> {
+        let browser = &self.thread.browser;
+        let owns = |key: &PageKey| self.pages.get(key).is_some_and(|p| browser.has_live_realm(p.id, realm));
+        match hint {
+            Some(page) => self.page_key(page).filter(owns),
+            None => self.pages.keys().copied().find(owns),
+        }
     }
 
     fn reply<T: serde::Serialize + ?Sized>(&self, cmd: &PageCommand<'_, '_>, result: &T) {
@@ -857,9 +914,15 @@ impl EngineHost {
             "Input" => self.input_domain(action, cmd),
             "Security" => self.security_domain(action, cmd),
             "Accessibility" => self.accessibility_domain(action, cmd),
+            "Profiler" => self.profiler_domain(action, cmd),
+            "Debugger" => self.debugger_domain(action, cmd),
+            "CSS" => self.css_domain(action, cmd),
             // Blitz-backed layout queries since the last call.
             #[cfg(feature = "render")]
             "LP" if action == "geometryStats" => {
+                // The timers run from the first call on; its durations cover
+                // only what ran since (callers reset with a first call).
+                lp_render::profiling::enable();
                 let (layouts, deltas, snapshot_ms, layout_ms, read_ms) = blitz_geometry::take_stats();
                 let (mirror_ms, settle_ms, resolve_ms) = lp_render::sync_profile::take();
                 // Blitz counters are cumulative on this browser thread. Unlike
@@ -902,6 +965,12 @@ impl EngineHost {
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             // puppeteer enables both on every page; there are no issues to
             // report.
+            // `Performance.getMetrics` reports durations, timed from here on.
+            #[cfg(feature = "render")]
+            "Performance" if action == "enable" => {
+                lp_render::profiling::enable();
+                Ok(Some(serde_json::json!({})))
+            }
             "Audits" | "Performance" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             #[cfg(feature = "render")]
             "Performance" if action == "getMetrics" => self.performance_metrics(cmd).map(Some),
@@ -1344,6 +1413,7 @@ impl Host for EngineHost {
     }
 
     fn close_page(&mut self, page: PageKey) {
+        self.coverage_page_closed(page);
         let Some(state) = self.pages.remove(&page) else { return };
         // The last page with an override gives the VM back its host zone.
         if state.timezone_override.is_some() && !self.pages.values().any(|s| s.timezone_override.is_some()) {
@@ -1390,6 +1460,7 @@ impl Host for EngineHost {
                 network_enabled: false,
                 extra_headers: http::HeaderMap::new(),
                 cache_disabled: false,
+                bypass_service_worker: false,
                 intercept_file_chooser: false,
                 bindings: Vec::new(),
                 fetch: fetch::FetchSession::default(),
@@ -1448,6 +1519,7 @@ impl Host for EngineHost {
         // pending promise reactions are still referenced by JavaScript.
         self.pending.cancel_session(session_id);
         self.disable_fetch(session_id);
+        self.coverage_session_detached(page, session_id);
         if let Some(session) = self.sessions.remove(session_id) {
             session.handles.borrow_mut().clear();
         }

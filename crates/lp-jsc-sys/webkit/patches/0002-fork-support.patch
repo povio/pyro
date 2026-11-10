@@ -592,10 +592,13 @@ index bc7e6dc8..f7718ef8 100644
      if (thread_suspend_data->is_scavenger_itself)
          return;
  
-@@ -911,6 +912,18 @@ static void suspend(pas_thread_local_cache* cache, scavenger_thread_suspend_data
+@@ -911,6 +912,22 @@ static void suspend(pas_thread_local_cache* cache, scavenger_thread_suspend_data
      }
  }
  
++#endif /* PAS_OS(DARWIN) */
++
++/* Defined everywhere; only Darwin's scavenger suspends threads and reads is_orphaned. */
 +void pas_thread_local_cache_did_fork_in_child(void)
 +{
 +    pas_thread_local_cache_node* node;
@@ -608,6 +611,7 @@ index bc7e6dc8..f7718ef8 100644
 +    pas_heap_lock_unlock();
 +}
 +
++#if PAS_OS(DARWIN)
  static void resume(pas_thread_local_cache* cache, scavenger_thread_suspend_data* thread_suspend_data)
  {
      static const bool verbose = false;

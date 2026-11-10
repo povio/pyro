@@ -5,13 +5,15 @@
 //! image data" (a relevant mutation when a `<picture>` parent or a `<source>`
 //! sibling changed).
 
+use markup5ever::local_name;
+
 use crate::dom::Dom;
 use crate::node::NIL;
 use crate::script::{ResourceKind, ResourceReason};
 
 impl Dom {
-    fn is_html_named(&self, idx: u32, local: &str) -> bool {
-        idx != NIL && self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == local)
+    fn is_html_named(&self, idx: u32, local: &markup5ever::LocalName) -> bool {
+        idx != NIL && self.n(idx).element().is_some_and(|e| e.name.local == *local && e.is_html())
     }
 
     /// The elements of `root`'s subtree (shadow trees included) that are
@@ -30,13 +32,14 @@ impl Dom {
     /// mutation for the `<img>` children of a `<picture>`.
     pub(crate) fn picture_images_changed(&mut self, picture: u32, moved: u32) {
         if !self.resources.enabled
-            || !self.is_html_named(picture, "picture")
-            || !self.is_html_named(moved, "source")
+            || !self.is_html_named(picture, &local_name!("picture"))
+            || !self.is_html_named(moved, &local_name!("source"))
             || !self.is_connected_idx(picture)
         {
             return;
         }
-        let images: Vec<u32> = self.child_idx_iter(picture).filter(|&c| self.is_html_named(c, "img")).collect();
+        let images: Vec<u32> =
+            self.child_idx_iter(picture).filter(|&c| self.is_html_named(c, &local_name!("img"))).collect();
         for img in images {
             self.push_resource(img, ResourceKind::Img, ResourceReason::AttrChanged);
         }

@@ -571,6 +571,9 @@ impl Xhr {
             return Err(invalid("XHR was reopened during body conversion"));
         }
         let page = self.page()?;
+        // Referrer "client": the document, under its referrer policy.
+        request.referrer = page.document_url_parsed();
+        request.referrer_policy = page.referrer_policy();
         let limits = page.xhr_state.limits.get();
         if page.xhr_state.jobs.borrow().len() >= limits.max_requests {
             return Err(JsError::dom("QuotaExceededError", "Too many pending XHR requests"));
@@ -624,11 +627,16 @@ impl Xhr {
             }
         }
         let page_id = page.id();
-        net.fetch_with_id(
-            id,
-            request,
-            Box::new(move |event| delivery::receive(&wire, page_id, id, &poster, limits, event)),
+        let sink: lp_net::ResponseSink =
+            Box::new(move |event| delivery::receive(&wire, page_id, id, &poster, limits, event));
+        let sink = crate::resource_timing::timed_sink(
+            &page,
+            crate::resource_timing::Initiator::XmlHttpRequest,
+            &request.url,
+            false,
+            sink,
         );
+        crate::service_worker::route(&page, &net, id, request, sink);
         Ok(())
     }
     /// The synchronous flag of `send()`: parks this thread until the I/O thread
@@ -654,11 +662,16 @@ impl Xhr {
         });
         let sink = wire.clone();
         let page_id = page.id();
-        net.fetch_with_id(
-            id,
-            request,
-            Box::new(move |event| delivery::receive(&sink, page_id, id, &poster, limits, event)),
+        let sink: lp_net::ResponseSink =
+            Box::new(move |event| delivery::receive(&sink, page_id, id, &poster, limits, event));
+        let sink = crate::resource_timing::timed_sink(
+            page,
+            crate::resource_timing::Initiator::XmlHttpRequest,
+            &request.url,
+            false,
+            sink,
         );
+        net.fetch_with_id(id, request, sink);
         let timeout = Some(self.timeout.get()).filter(|t| *t != 0).map(|t| Duration::from_millis(t as u64));
         let deadline = Instant::now() + timeout.unwrap_or(SYNC_WAIT).min(SYNC_WAIT);
         let watch = page.xhr_state.sync_watch.borrow().is_some();
@@ -859,7 +872,7 @@ impl Xhr {
     fn clear_timer(&self, s: &Scope<'_>) {
         if let Some(id) = self.timer.take() {
             if let Some(functions) = self.timer_functions(s) {
-                if let Ok(Some(clear)) = functions.get("clear").map(|v| v.as_object()) {
+                if let Ok(Some(clear)) = functions.get_atom("clear").map(|v| v.as_object()) {
                     let _ = clear.call(Some(s.global()), &[s.number(id)]);
                 }
             }
@@ -885,7 +898,7 @@ impl Xhr {
             Ok(s.undefined())
         })?;
         let timer = funcs
-            .get("set")?
+            .get_atom("set")?
             .as_object()
             .unwrap()
             .call(Some(s.global()), &[callback.value(), s.number(remaining.as_secs_f64() * 1000.)])?
@@ -905,12 +918,12 @@ impl Xhr {
 }
 
 pub(crate) fn install(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
-    let set = s.global().get("setTimeout")?;
-    let clear = s.global().get("clearTimeout")?;
+    let set = s.global().get_atom("setTimeout")?;
+    let clear = s.global().get_atom("clearTimeout")?;
     if set.as_object().is_some_and(|o| o.is_function()) && clear.as_object().is_some_and(|o| o.is_function()) {
         let object = s.object();
-        object.set("set", set)?;
-        object.set("clear", clear)?;
+        object.set_atom("set", set)?;
+        object.set_atom("clear", clear)?;
         page.xhr_state.timers.borrow_mut().insert(s.realm_id(), Persistent::new(s, object.value()));
     }
     Ok(())

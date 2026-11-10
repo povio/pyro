@@ -341,7 +341,7 @@ index fba6f82286..79c3f43e1a 100644
  #include <bmalloc/pas_scavenger.h>
  #include <bmalloc/pas_thread_local_cache.h>
  #endif
-@@ -98,6 +103,117 @@ void JSSetWrapperPropertyAddedCallback(void (*callback)(JSContextRef, JSObjectRe
+@@ -98,6 +103,122 @@ void JSSetWrapperPropertyAddedCallback(void (*callback)(JSContextRef, JSObjectRe
      JSC::wrapperPropertyAddedCallback = callback;
  }
  
@@ -419,7 +419,12 @@ index fba6f82286..79c3f43e1a 100644
 +
 +void JSSetDecommitReplacesPages(bool enable)
 +{
++#if OS(DARWIN)
 +    pas_page_malloc_decommit_remap = enable;
++#else
++    // Elsewhere decommit already uses madvise(MADV_DONTNEED), which drops the pages at once.
++    UNUSED_PARAM(enable);
++#endif
 +}
 +
 +const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_t* length, bool* is8Bit)

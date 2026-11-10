@@ -151,10 +151,36 @@ index 0000000..ccc79cb
 +    }
 +}
 diff --git a/src/builder.rs b/src/builder.rs
-index 4d5dcf2..dbb6a96 100644
+index 4d5dcf2..5f443ed 100644
 --- a/src/builder.rs
 +++ b/src/builder.rs
-@@ -355,6 +355,24 @@ fn build_into_layout<B: Brush>(
+@@ -334,6 +334,25 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+         let text = self.build_into(&mut layout);
+         (layout, text)
+     }
++
++    /// Like [`Self::build_into`], building `layout` again, but keeps the lines of its last
++    /// break that the same break of the new content would produce again: those over the
++    /// beginning the old and new content share (see [`crate::layout::resume`]).
++    /// [`BreakLines::resume`](crate::layout::BreakLines::resume) continues breaking after them.
++    pub fn build_into_keeping_lines(self, layout: &mut Layout<B>) -> String {
++        let text = self
++            .lcx
++            .tree_style_builder
++            .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
++
++        // Build into the scratch's buffers, keeping the old data to compare with.
++        core::mem::swap(&mut layout.data, &mut self.lcx.previous_layout);
++        build_into_layout(layout, &text, self.lcx, self.fcx, self.options);
++        crate::layout::resume::adopt_line_prefix(&mut layout.data, &self.lcx.previous_layout);
++        self.lcx.previous_layout.clear();
++
++        text
++    }
+ }
+ 
+ fn build_into_layout<B: Brush>(
+@@ -355,6 +374,24 @@ fn build_into_layout<B: Brush>(
          "at least one style run is required"
      );
  
@@ -179,7 +205,23 @@ index 4d5dcf2..dbb6a96 100644
      crate::analysis::analyze_text(
          lcx,
          text,
-@@ -422,6 +440,10 @@ fn build_into_layout<B: Brush>(
+@@ -406,6 +443,7 @@ fn build_into_layout<B: Brush>(
+             text,
+             layout,
+             &lcx.analysis_data_sources,
++            &mut lcx.style_first_fonts,
+         );
+     }
+ 
+@@ -415,6 +453,7 @@ fn build_into_layout<B: Brush>(
+         fcx,
+         &lcx.style_table,
+         &layout.data.shaped_text,
++        &lcx.style_first_fonts,
+         options.quantize,
+         &mut layout.data.style_metrics,
+     );
+@@ -422,6 +461,10 @@ fn build_into_layout<B: Brush>(
      // Move inline boxes into the layout
      layout.data.inline_boxes.clear();
      core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
@@ -191,24 +233,38 @@ index 4d5dcf2..dbb6a96 100644
  
  fn resolve_range(range: impl RangeBounds<usize>, len: usize) -> Range<usize> {
 diff --git a/src/context.rs b/src/context.rs
-index 9aa2c89..ee1f6e0 100644
+index 9aa2c89..1f0ee21 100644
 --- a/src/context.rs
 +++ b/src/context.rs
-@@ -43,6 +43,9 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
+@@ -40,9 +40,21 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
+     /// Style index for each character, parallel to [`Analysis::char_info`].
+     pub(crate) char_style_indices: Vec<u16>,
+     pub(crate) scx: Shaper,
++    /// Per style of the layout being built, the first available font the shaper's font selector
++    /// found (lightningpanda; see `shape::FontSelector`), for the style metrics.
++    pub(crate) style_first_fonts: Vec<Option<parley_engine::FontInstance>>,
  
      // Unicode analysis data sources (provided by icu)
      pub(crate) analysis_data_sources: AnalysisDataSources,
 +
 +    /// Built layouts by their inputs (see [`crate::builder`]).
 +    pub(crate) build_cache: crate::build_cache::BuildCache<B>,
++
++    /// Scratch for [`TreeBuilder::build_into_keeping_lines`]: the layout data being built
++    /// again, while the new data is built and compared with it. Empty between builds.
++    ///
++    /// [`TreeBuilder::build_into_keeping_lines`]: crate::TreeBuilder::build_into_keeping_lines
++    pub(crate) previous_layout: crate::layout::data::LayoutData<B>,
  }
  
  impl<B: Brush> LayoutContext<B> {
-@@ -61,9 +64,16 @@ impl<B: Brush> LayoutContext<B> {
+@@ -61,9 +73,18 @@ impl<B: Brush> LayoutContext<B> {
              char_style_indices: vec![],
              analysis_data_sources: AnalysisDataSources::new(),
              scx: Shaper::default(),
++            style_first_fonts: vec![],
 +            build_cache: Default::default(),
++            previous_layout: Default::default(),
          }
      }
  
@@ -221,6 +277,48 @@ index 9aa2c89..ee1f6e0 100644
      fn resolve_style_set(
          &mut self,
          font_ctx: &mut FontContext,
+diff --git a/src/layout/data.rs b/src/layout/data.rs
+index e6ab383..e9031cd 100644
+--- a/src/layout/data.rs
++++ b/src/layout/data.rs
+@@ -4,6 +4,7 @@
+ use crate::inline_box::{InlineBox, LayoutInlineBox};
+ use crate::layout::spacing::{Justification, Spacing};
+ use crate::layout::style_metrics::{BoxMetrics, StyleMetrics};
++use crate::layout::resume::{AdoptedLines, LineStart};
+ use crate::layout::whitespace::whitespace_hangs;
+ use crate::layout::{ContentWidths, LineMetrics, Style};
+ use crate::resolve::ResolvedStyle;
+@@ -220,6 +221,11 @@ pub(crate) struct LayoutData<B: Brush> {
+     ///
+     /// Each line owns a contiguous slice ([`LineData::aligned_subtree_offsets`]).
+     pub(crate) aligned_subtree_offsets: Vec<AlignedSubtreeOffset>,
++    /// The line breaker's state at the start of each line, or empty when the break cannot be
++    /// repeated from it (see [`crate::layout::resume`]).
++    pub(crate) line_starts: Vec<LineStart>,
++    /// Lines of the previous build kept for the next break to continue after.
++    pub(crate) adopted: AdoptedLines,
+     /// The width constraint that was used to line break the layout
+     pub(crate) layout_max_advance: f32,
+     /// The computed width of the layout excluding hanging whitespace
+@@ -257,6 +263,8 @@ impl<B: Brush> Default for LayoutData<B> {
+             lines: Vec::new(),
+             line_items: Vec::new(),
+             aligned_subtree_offsets: Vec::new(),
++            line_starts: Vec::new(),
++            adopted: AdoptedLines::default(),
+             alignment: None,
+             layout_max_advance: 0.0,
+             indent_amount: 0.0,
+@@ -286,6 +294,8 @@ impl<B: Brush> LayoutData<B> {
+         self.lines.clear();
+         self.line_items.clear();
+         self.aligned_subtree_offsets.clear();
++        self.line_starts.clear();
++        self.adopted.clear();
+         self.alignment = None;
+     }
+ 
 diff --git a/src/layout/line.rs b/src/layout/line.rs
 index 1569071..c3b1e35 100644
 --- a/src/layout/line.rs
@@ -268,10 +366,18 @@ index 1569071..c3b1e35 100644
      ///
      /// See also [`Self::style_index`].
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..1bde9f7 100644
+index 3c3798c..f49024d 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
-@@ -31,6 +31,11 @@ use parley_engine::Atom;
+@@ -11,6 +11,7 @@ use core_maths::CoreFloat;
+ use parlance::BidiLevel;
+ 
+ use crate::layout::data::{AlignedSubtreeOffset, run_box_metrics};
++use crate::layout::resume::{BreakInputs, LineStart};
+ use crate::layout::spacing::{EffectiveSpacing, Justification, is_word_separator};
+ use crate::layout::style_metrics::{
+     BoxMetrics, InlineBoxPlacement, StyleMetrics, inline_box_placement,
+@@ -31,11 +32,17 @@ use parley_engine::Atom;
  use parley_engine::shape::{Character, Whitespace};
  use smallvec::SmallVec;
  
@@ -283,7 +389,248 @@ index 3c3798c..1bde9f7 100644
  #[derive(Default)]
  struct LineLayout {
      lines: Vec<LineData>,
-@@ -1103,15 +1108,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+     line_items: Vec<LineItemData>,
+     aligned_subtree_offsets: Vec<AlignedSubtreeOffset>,
++    line_starts: Vec<LineStart>,
+ }
+ 
+ impl LineLayout {
+@@ -46,6 +53,14 @@ impl LineLayout {
+             &mut self.aligned_subtree_offsets,
+             &mut layout.aligned_subtree_offsets,
+         );
++        core::mem::swap(&mut self.line_starts, &mut layout.line_starts);
++    }
++
++    fn clear(&mut self) {
++        self.lines.clear();
++        self.line_items.clear();
++        self.aligned_subtree_offsets.clear();
++        self.line_starts.clear();
+     }
+ 
+     /// Drops the lines from `len` onwards, along with their aligned subtree offsets.
+@@ -768,6 +783,33 @@ impl BreakerState {
+         self.subtrees.restore(prev_state.subtrees_len);
+     }
+ 
++    /// The state at the start of the current line, for [`BreakLines::resume`].
++    fn line_start(&self) -> LineStart {
++        LineStart {
++            item_idx: self.item_idx,
++            run_idx: self.run_idx,
++            cluster_idx: self.cluster_idx,
++            items: self.line.items.clone(),
++            clusters: self.line.clusters.clone(),
++            text_wrap_mode: self.line.text_wrap_mode,
++            line_x: self.line_x,
++            line_y: self.line_y,
++            layout_max_advance: self.layout_max_advance,
++            line_max_advance: self.line_max_advance,
++            line_max_height: self.line_max_height,
++            read_end: 0,
++        }
++    }
++
++    /// Whether a line that started at `start` had the line geometry this state gives the
++    /// current line (all but its block position).
++    fn same_geometry(&self, start: &LineStart) -> bool {
++        start.line_x.to_bits() == self.line_x.to_bits()
++            && start.layout_max_advance.to_bits() == self.layout_max_advance.to_bits()
++            && start.line_max_advance.to_bits() == self.line_max_advance.to_bits()
++            && start.line_max_height.to_bits() == self.line_max_height.to_bits()
++    }
++
+     #[inline(always)]
+     fn update_max_height_exceeded(&mut self) {
+         self.line.max_height_exceeded = self.line_max_height != f32::MAX
+@@ -838,6 +880,17 @@ pub struct BreakLines<'a, B: Brush> {
+     state: BreakerState,
+     prev_state: Option<BreakerState>,
+     done: bool,
++    /// The inputs of the break that produced the lines kept from the layout's previous build,
++    /// which `lines` holds until [`Self::resume`] continues after them or breaking starts over.
++    adopted: Option<BreakInputs>,
++    /// Whether the current line's start has been recorded in `lines.line_starts`.
++    line_open: bool,
++    /// Whether this break can be repeated from its recorded line starts: the caller neither
++    /// placed boxes nor reverted mid-line. When not, no line starts are kept.
++    resumable: bool,
++    /// The end of the shaped clusters the breaker has read so far (exclusive): every line ended
++    /// so far was decided by clusters before it. Recorded in each [`LineStart`].
++    read_end: u32,
+ }
+ 
+ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -846,20 +899,97 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+         layout.data.height = 0.;
+         let mut lines = LineLayout::default();
+         lines.swap(&mut layout.data);
+-        lines.lines.clear();
+-        lines.line_items.clear();
+-        lines.aligned_subtree_offsets.clear();
++        lines.clear();
++        // Lines kept from the previous build stay until `resume` or the first line.
++        let adopted = layout.data.adopted.inputs.take();
++        if adopted.is_some() {
++            let kept = &mut layout.data.adopted;
++            core::mem::swap(&mut lines.lines, &mut kept.lines);
++            core::mem::swap(&mut lines.line_items, &mut kept.line_items);
++            core::mem::swap(
++                &mut lines.aligned_subtree_offsets,
++                &mut kept.aligned_subtree_offsets,
++            );
++            core::mem::swap(&mut lines.line_starts, &mut kept.line_starts);
++        }
+         let mut this = Self {
+             layout,
+             lines,
+             state: BreakerState::default(),
+             prev_state: None,
+             done: false,
++            adopted,
++            line_open: false,
++            resumable: true,
++            read_end: 0,
+         };
+         this.reset_line();
+         this
+     }
+ 
++    /// Continues breaking after the lines kept when the layout was built again from text with
++    /// the same beginning (see [`crate::layout::resume`]), and returns how many lines were kept.
++    ///
++    /// Call it once the state is set up for the first line, before the first
++    /// [`Self::break_next`], with the line x and max advance the caller gives every later line
++    /// (it must give them all the same, as without floats). The kept lines are used only if the
++    /// break that produced them had the layout max advance, text indent and max line height this
++    /// one has, started the first line where the state now starts it, and gave the first line
++    /// the geometry the state now gives it and every later line `line_x` and `line_max_advance`.
++    /// Otherwise, and when nothing was kept, this returns 0 and breaking starts from the first
++    /// line.
++    pub fn resume(&mut self, line_x: f32, line_max_advance: f32) -> usize {
++        let Some(inputs) = self.adopted.take() else {
++            return 0;
++        };
++        let kept = self.lines.lines.len();
++        let data = &self.layout.data;
++        let starts = &self.lines.line_starts;
++        let same_inputs = kept > 0
++            && starts.len() == kept + 1
++            && !self.line_open
++            && inputs.layout_max_advance.to_bits() == self.state.layout_max_advance.to_bits()
++            && inputs.indent_amount.to_bits() == data.indent_amount.to_bits()
++            && inputs.indent_options == data.indent_options
++            && starts[0].line_y.to_bits() == self.state.line_y.to_bits()
++            && self.state.same_geometry(&starts[0])
++            && starts[1..].iter().all(|start| {
++                start.line_x.to_bits() == line_x.to_bits()
++                    && start.line_max_advance.to_bits() == line_max_advance.to_bits()
++                    && start.layout_max_advance.to_bits()
++                        == self.state.layout_max_advance.to_bits()
++                    && start.line_max_height.to_bits() == self.state.line_max_height.to_bits()
++            });
++        if !same_inputs {
++            self.lines.clear();
++            return 0;
++        }
++        let start = self.lines.line_starts.pop().unwrap();
++        let state = &mut self.state;
++        state.item_idx = start.item_idx;
++        state.run_idx = start.run_idx;
++        state.cluster_idx = start.cluster_idx;
++        state.line.items = start.items;
++        state.line.clusters = start.clusters;
++        state.line.text_wrap_mode = start.text_wrap_mode;
++        state.line_x = start.line_x;
++        state.line_y = start.line_y;
++        state.line_max_advance = start.line_max_advance;
++        state.items = self.lines.line_items.len();
++        state.lines = kept;
++        self.read_end = start.read_end;
++        self.reset_line();
++        kept
++    }
++
++    /// Drops the lines kept from the previous build unless [`Self::resume`] took them.
++    #[inline(always)]
++    fn discard_adopted(&mut self) {
++        if self.adopted.take().is_some() {
++            self.lines.clear();
++        }
++    }
++
+     /// Reset the per-line running state in preparation for building a new line.
+     ///
+     /// The line starts out containing the root span box (the "strut", CSS 2 §10.8).
+@@ -929,6 +1059,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+ 
+         self.state.items = self.lines.line_items.len();
+         self.state.lines = self.lines.lines.len();
++        self.line_open = false;
+         self.state.prev_boundary = None;
+         self.state.emergency_boundary = None;
+ 
+@@ -987,6 +1118,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+     // than blink, for reasons which haven't been fully understood.
+     #[doc(hidden)]
+     pub fn set_prior_line_width(&mut self, advance: f32) {
++        self.resumable = false;
+         if let Some(line) = self.lines.lines.last_mut() {
+             line.metrics.inline_max_coord = line.metrics.inline_min_coord + advance;
+         }
+@@ -994,6 +1126,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+ 
+     /// Reverts the to an externally saved state.
+     pub fn revert_to(&mut self, state: BreakerState) {
++        self.resumable = false;
+         self.state = state;
+         self.lines.truncate(self.state.lines);
+         self.lines.line_items.truncate(self.state.items);
+@@ -1026,6 +1159,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+     /// Computes the next line in the paragraph. Returns the advance and size
+     /// (width and height for horizontal layouts) of the line.
+     pub fn break_next(&mut self) -> Option<YieldData> {
++        let yielded = self.break_next_inner();
++        // A line the caller placed boxes on, or that went past its max height, cannot be
++        // broken again from its start without the caller.
++        if !matches!(yielded, None | Some(YieldData::LineBreak(_))) {
++            self.resumable = false;
++        }
++        yielded
++    }
++
++    #[inline(always)]
++    fn break_next_inner(&mut self) -> Option<YieldData> {
++        self.discard_adopted();
+         assert!(
+             self.state.layout_max_advance == f32::INFINITY
+                 || self.state.line_max_advance - self.state.layout_max_advance < 1.0
+@@ -1035,6 +1180,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+         if self.done {
+             return None;
+         }
++        if !self.line_open {
++            self.line_open = true;
++            if self.resumable {
++                let mut start = self.state.line_start();
++                start.read_end = self.read_end;
++                self.lines.line_starts.push(start);
++            }
++        }
+         match &mut self.prev_state {
+             Some(prev_state) => prev_state.clone_from(&self.state),
+             None => self.prev_state = Some(self.state.clone()),
+@@ -1060,6 +1213,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+ 
+             match item.kind {
+                 LayoutItemKind::InlineBox => {
++                    // Inline boxes are sized by the caller: no line is kept past one.
++                    self.read_end = u32::MAX;
+                     let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
+ 
+                     // In-flow boxes are aligned relative to their containing style's span box
+@@ -1103,15 +1258,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
                              self.state.mark_line_break_opportunity();
                          }
@@ -307,7 +654,17 @@ index 3c3798c..1bde9f7 100644
                      }
                  }
                  LayoutItemKind::TextRun => {
-@@ -1188,7 +1193,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1126,6 +1281,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+ 
+                     // Iterate over the remaining atoms in the Run
+                     for atom in slice.atoms_from(self.state.cluster_idx) {
++                        // The breaker reads the atom and, to find where it ends, the first
++                        // cluster after it.
++                        self.read_end = self.read_end.max(atom.shaped_clusters_range().end + 1);
+                         // Retrieve metadata about the atom
+                         let first_character = &atom.characters()[0];
+                         let whitespace = first_character.whitespace;
+@@ -1188,7 +1346,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          // If the content fits (the x position does NOT exceed max_advance)
                          //
                          // We simply append the atom to the current line
@@ -316,7 +673,7 @@ index 3c3798c..1bde9f7 100644
                              if max_height_exceeded {
                                  return self.max_height_break_data(line_height);
                              }
-@@ -1216,7 +1221,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1216,7 +1374,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  spacing,
                                  item.bidi_level.is_rtl(),
                              );
@@ -325,7 +682,25 @@ index 3c3798c..1bde9f7 100644
                                  if max_height_exceeded {
                                      return self.max_height_break_data(line_height);
                                  }
-@@ -1617,6 +1622,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1283,6 +1441,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+         if self.state.line.items.end == 0 {
+             self.state.line.items.end = 1;
+         }
++        // The end of the content was read.
++        self.read_end = u32::MAX;
+         self.done = true;
+         self.start_new_line(BreakReason::None, max_advance, line_indent)
+     }
+@@ -1300,6 +1460,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+     /// ligature or a multi-character grapheme), the whole atom is placed on the line before
+     /// breaking.
+     pub fn break_next_with_length(&mut self, max_chars: u32) -> Option<()> {
++        self.discard_adopted();
++        self.resumable = false;
+         if self.done {
+             return None;
+         }
+@@ -1617,6 +1779,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          } else {
              line.metrics.baseline + line_box_extents.under
          };
@@ -335,11 +710,304 @@ index 3c3798c..1bde9f7 100644
          line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
          line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
  
+@@ -1628,6 +1793,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+ 
+ impl<B: Brush> Drop for BreakLines<'_, B> {
+     fn drop(&mut self) {
++        self.discard_adopted();
++        if !self.resumable || self.lines.line_starts.len() != self.lines.lines.len() {
++            self.lines.line_starts.clear();
++        }
+         // Compute the overall width and height of the entire layout
+         // The "width" excludes hanging whitespace. The "full_width" includes it.
+         let mut layout_width = 0_f32;
+diff --git a/src/layout/mod.rs b/src/layout/mod.rs
+index 6e2baba..56e8bd1 100644
+--- a/src/layout/mod.rs
++++ b/src/layout/mod.rs
+@@ -7,6 +7,7 @@ mod alignment;
+ mod cluster;
+ mod line;
+ mod line_break;
++pub(crate) mod resume;
+ mod run;
+ mod spacing;
+ pub(crate) mod style_metrics;
+diff --git a/src/layout/resume.rs b/src/layout/resume.rs
+new file mode 100644
+index 0000000..75dffe5
+--- /dev/null
++++ b/src/layout/resume.rs
+@@ -0,0 +1,226 @@
++// Copyright 2026 the Parley Authors
++// SPDX-License-Identifier: Apache-2.0 OR MIT
++
++//! Resuming line breaking after the text of a layout changed.
++//!
++//! Breaking is greedy: a line's break depends only on the content up to the atom that overflowed
++//! it. When a layout is built again from text that shares a prefix with the text it had (text
++//! appended, truncated or inserted after the start), the lines its last break produced over that
++//! prefix are still the lines a new break would produce, provided the shaped content the breaker
++//! read for them is the same. [`adopt_line_prefix`] keeps those lines when the layout is built
++//! again, and [`BreakLines::resume`](super::BreakLines::resume) continues breaking from the first
++//! line after them, at the breaker state recorded at that line's start.
++
++use alloc::vec::Vec;
++use core::ops::Range;
++
++use parlance::BidiLevel;
++
++use crate::IndentOptions;
++use crate::TextWrapMode;
++use crate::layout::data::{
++    AlignedSubtreeOffset, LayoutData, LayoutItemKind, LineData, LineItemData,
++};
++use crate::style::Brush;
++
++/// The line breaker's state at the start of a line, recorded as the line is broken.
++///
++/// [`LayoutData::line_starts`] holds one per line of the last break, or none when the caller
++/// adjusted the breaker in a way a resumed break cannot repeat.
++#[derive(Clone, Debug, PartialEq)]
++pub(crate) struct LineStart {
++    pub(crate) item_idx: usize,
++    pub(crate) run_idx: usize,
++    pub(crate) cluster_idx: u32,
++    pub(crate) items: Range<usize>,
++    pub(crate) clusters: Range<u32>,
++    /// The `text-wrap-mode` the breaker lags by one atom.
++    pub(crate) text_wrap_mode: TextWrapMode,
++    pub(crate) line_x: f32,
++    pub(crate) line_y: f64,
++    pub(crate) layout_max_advance: f32,
++    pub(crate) line_max_advance: f32,
++    pub(crate) line_max_height: f32,
++    /// The end of the shaped clusters the breaker had read before this line (exclusive): all
++    /// earlier lines were decided by the clusters before it.
++    pub(crate) read_end: u32,
++}
++
++/// The inputs of the break that produced adopted lines, besides the per-line geometry in their
++/// [`LineStart`]s.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub(crate) struct BreakInputs {
++    pub(crate) layout_max_advance: f32,
++    pub(crate) indent_amount: f32,
++    pub(crate) indent_options: IndentOptions,
++}
++
++/// Lines kept from the layout's previous build by [`adopt_line_prefix`], until the next break
++/// continues after them ([`BreakLines::resume`](super::BreakLines::resume)) or drops them.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub(crate) struct AdoptedLines {
++    /// `Some` iff lines were adopted.
++    pub(crate) inputs: Option<BreakInputs>,
++    pub(crate) lines: Vec<LineData>,
++    pub(crate) line_items: Vec<LineItemData>,
++    pub(crate) aligned_subtree_offsets: Vec<AlignedSubtreeOffset>,
++    /// One more than `lines`: the last is the start of the first line to break again.
++    pub(crate) line_starts: Vec<LineStart>,
++}
++
++impl AdoptedLines {
++    pub(crate) fn clear(&mut self) {
++        self.inputs = None;
++        self.lines.clear();
++        self.line_items.clear();
++        self.aligned_subtree_offsets.clear();
++        self.line_starts.clear();
++    }
++}
++
++/// The number of leading shaped clusters of `new` that the line breaker reads exactly as it read
++/// them in `old`, along with everything else it reads for them (characters, glyphs, runs, items,
++/// styles). `0` when the layouts differ in anything that applies to every line.
++fn equal_cluster_prefix<B: Brush>(old: &LayoutData<B>, new: &LayoutData<B>) -> u32 {
++    // LTR text without inline boxes only: bidi text reorders lines, `dir=auto` resolves the base
++    // level from the text, and inline boxes are sized by the caller.
++    if old.base_level != BidiLevel::new(0)
++        || new.base_level != BidiLevel::new(0)
++        || old.scale != new.scale
++        || old.quantize != new.quantize
++        || !old.inline_boxes.is_empty()
++        || !new.inline_boxes.is_empty()
++        || old.styles != new.styles
++        || old.style_metrics != new.style_metrics
++    {
++        return 0;
++    }
++    let (ot, nt) = (&old.shaped_text, &new.shaped_text);
++    let (oc, nc) = (ot.shaped_clusters(), nt.shaped_clusters());
++    let (ochars, nchars) = (ot.characters(), nt.characters());
++    let (og, ng) = (ot.glyphs(), nt.glyphs());
++    let mut equal = 0_u32;
++    for (i, (orun, nrun)) in ot.runs().iter().zip(nt.runs()).enumerate() {
++        // Everything about the run but where it ends (and so its total advance). Run-wide data
++        // (`RunData`'s box metrics, font fallback) must be the same too.
++        let same_run = orun.bidi_level == BidiLevel::new(0)
++            && nrun.bidi_level == BidiLevel::new(0)
++            && orun.range.byte_range.start == nrun.range.byte_range.start
++            && orun.range.char_range.start == nrun.range.char_range.start
++            && orun.font_size == nrun.font_size
++            && orun.font_index == nrun.font_index
++            && ot.fonts().get(orun.font_index) == nt.fonts().get(nrun.font_index)
++            && orun.characters_range.start == nrun.characters_range.start
++            && orun.shaped_clusters_range.start == nrun.shaped_clusters_range.start
++            && orun.glyphs_range.start == nrun.glyphs_range.start
++            && ot.normalized_coords().get(orun.normalized_coords_range.clone())
++                == nt.normalized_coords().get(nrun.normalized_coords_range.clone())
++            && orun.font_metrics == nrun.font_metrics
++            && old.runs.get(i) == new.runs.get(i)
++            && old.items.get(i) == new.items.get(i)
++            && old
++                .items
++                .get(i)
++                .is_some_and(|item| item.kind == LayoutItemKind::TextRun && item.index == i);
++        if !same_run {
++            return equal;
++        }
++        let end = orun
++            .shaped_clusters_range
++            .end
++            .min(nrun.shaped_clusters_range.end);
++        while equal < end {
++            let (a, b) = (&oc[equal as usize], &nc[equal as usize]);
++            if a != b {
++                return equal;
++            }
++            let chars = a.chars_range();
++            let chars = chars.start as usize..chars.end as usize;
++            if ochars.get(chars.clone()) != nchars.get(chars) {
++                return equal;
++            }
++            if !a.has_inline_glyph() {
++                let glyphs =
++                    a.glyph_offset as usize..a.glyph_offset as usize + a.glyph_len() as usize;
++                if og.get(glyphs.clone()) != ng.get(glyphs) {
++                    return equal;
++                }
++            }
++            equal += 1;
++        }
++        if orun.shaped_clusters_range.end != nrun.shaped_clusters_range.end {
++            return equal;
++        }
++    }
++    equal
++}
++
++/// The end of `line`'s shaped clusters (its items are all text runs here).
++#[cfg(debug_assertions)]
++fn line_cluster_end(line: &LineData, line_items: &[LineItemData]) -> u32 {
++    line_items[line.item_range.clone()]
++        .iter()
++        .map(|item| item.shaped_cluster_range.end)
++        .max()
++        .unwrap_or(0)
++}
++
++/// Keeps, in `new.adopted`, the leading lines of `old`'s last break that a break of `new` with
++/// the same inputs would produce again, and returns how many.
++///
++/// The breaker decides a line's end once an atom overflowed it, and that atom can lie many lines
++/// on (a long word broken at emergency opportunities over lines narrower than the one it did not
++/// fit on). So each recorded line start says how far the breaker had read before it
++/// ([`LineStart::read_end`]), and line `k` is resumed from when everything read before it is the
++/// same in both layouts. The breaker state at the start of that line is kept with the lines
++/// before it, so that breaking can continue from there.
++pub(crate) fn adopt_line_prefix<B: Brush>(new: &mut LayoutData<B>, old: &LayoutData<B>) -> usize {
++    new.adopted.clear();
++    let line_count = old.lines.len();
++    // `line_starts` is only complete when the old break can be repeated.
++    if line_count < 2
++        || old.line_starts.len() != line_count
++        || old.text_len == 0
++        || new.text_len == 0
++        || !old.layout_max_advance.is_finite()
++        || old.layout_max_advance >= f32::MAX
++    {
++        return 0;
++    }
++    let equal = equal_cluster_prefix(old, new);
++    if equal == 0 {
++        return 0;
++    }
++    // The line starts after the first that the breaker reached reading only the equal prefix
++    // (`read_end` only grows from line to line).
++    let kept = old.line_starts[1..]
++        .iter()
++        .take_while(|start| start.read_end <= equal)
++        .count();
++    if kept == 0 {
++        return 0;
++    }
++    #[cfg(debug_assertions)]
++    debug_assert!(
++        line_cluster_end(&old.lines[kept - 1], &old.line_items) <= equal,
++        "a kept line ends past what was read before the next one"
++    );
++    let last = &old.lines[kept - 1];
++    let adopted = &mut new.adopted;
++    adopted.inputs = Some(BreakInputs {
++        layout_max_advance: old.layout_max_advance,
++        indent_amount: old.indent_amount,
++        indent_options: old.indent_options,
++    });
++    adopted.lines.extend_from_slice(&old.lines[..kept]);
++    adopted
++        .line_items
++        .extend_from_slice(&old.line_items[..last.item_range.end]);
++    adopted.aligned_subtree_offsets.extend_from_slice(
++        &old.aligned_subtree_offsets[..last.aligned_subtree_offsets.end as usize],
++    );
++    adopted
++        .line_starts
++        .extend_from_slice(&old.line_starts[..=kept]);
++    kept
++}
 diff --git a/src/layout/style_metrics.rs b/src/layout/style_metrics.rs
-index 7b7b147..c00b359 100644
+index 7b7b147..74e7b8b 100644
 --- a/src/layout/style_metrics.rs
 +++ b/src/layout/style_metrics.rs
-@@ -231,7 +231,10 @@ impl BoxMetrics {
+@@ -101,11 +101,14 @@ pub(crate) struct StyleMetrics {
+ /// Relies on the style table being ordered parent-first (`style.parent <= index`), which both
+ /// style builders guarantee. `shaped_text` is the already shaped text of the layout, whose run
+ /// metrics are reused where a style's first available font was also used for shaping.
++/// `first_fonts` holds, per style, the first available font the shaper's font selector found
++/// (lightningpanda; see `shape::FontSelector`); a style without one is queried here.
+ pub(crate) fn resolve_style_metrics<B: Brush>(
+     rcx: &ResolveContext,
+     fcx: &mut FontContext,
+     styles: &[ResolvedStyle<B>],
+     shaped_text: &ShapedText,
++    first_fonts: &[Option<FontInstance>],
+     quantize: bool,
+     out: &mut Vec<StyleMetrics>,
+ ) {
+@@ -115,11 +118,19 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
+     let mut query = fcx.collection.query(&mut fcx.source_cache);
+ 
+     for (index, style) in styles.iter().enumerate() {
+-        let font_metrics = first_available_font(&mut query, rcx, style)
++        let queried;
++        let font = match first_fonts.get(index).and_then(Option::as_ref) {
++            Some(font) => Some(font),
++            None => {
++                queried = first_available_font(&mut query, rcx, style);
++                queried.as_ref()
++            }
++        };
++        let font_metrics = font
+             .and_then(|font| {
+                 let variations = rcx.variations(style.font_variations).unwrap_or(&[]);
+-                shaped_run_metrics(shaped_text, &font, style.font_size, variations)
+-                    .or_else(|| FontMetrics::from_font_instance(&font, style.font_size, variations))
++                shaped_run_metrics(shaped_text, font, style.font_size, variations)
++                    .or_else(|| FontMetrics::from_font_instance(font, style.font_size, variations))
+             })
+             .unwrap_or_else(|| FontMetrics::fallback(style.font_size));
+ 
+@@ -231,7 +242,10 @@ impl BoxMetrics {
          };
          let half_leading = (line_height - (ascent + descent)) / 2.;
          let over = if quantize {
@@ -363,3 +1031,113 @@ index e967f50..ae51e02 100644
  mod builder;
  mod context;
  mod font;
+diff --git a/src/shape/mod.rs b/src/shape/mod.rs
+index 060a32d..cbbd406 100644
+--- a/src/shape/mod.rs
++++ b/src/shape/mod.rs
+@@ -54,7 +54,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
+     mut text: &str,
+     layout: &mut Layout<B>,
+     analysis_data_sources: &AnalysisDataSources,
++    first_fonts: &mut Vec<Option<FontInstance>>,
+ ) {
++    // lightningpanda: one slot per style for the first available font the selector saw.
++    first_fonts.clear();
++    first_fonts.resize(styles.len(), None);
++
+     // If we have both empty text and no inline boxes, shape with a fake space
+     // to generate metrics that can be used to size a cursor.
+     if text.is_empty() && inline_boxes.is_empty() {
+@@ -179,7 +184,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
+         })
+     };
+ 
+-    let font_selector = FontSelector::new(&mut fq, rcx, styles, analysis_data_sources);
++    let font_selector =
++        FontSelector::new(&mut fq, rcx, styles, analysis_data_sources, first_fonts);
+ 
+     scx.shape_text(
+         text,
+@@ -259,6 +265,15 @@ enum LastResortFont {
+ 
+ struct FontSelector<'a, 'b, B: Brush> {
+     query: &'b mut Query<'a>,
++    /// lightningpanda: per style, the first font [`Self::query`] yields for the style's own
++    /// families and attributes whose `unicode-range` includes U+0020 (its CSS first available
++    /// font), recorded when the style's fonts are first queried; `None` where its families yield
++    /// no such font or the style shaped no text.
++    /// The style metrics take their font from here instead of querying again.
++    first_fonts: &'b mut Vec<Option<FontInstance>>,
++    /// The first available font of the current query, if it comes from the current style's own
++    /// families.
++    current_first: Option<FontInstance>,
+     fonts_id: Option<usize>,
+     rcx: &'a ResolveContext,
+     styles: &'a [ResolvedStyle<B>],
+@@ -284,11 +299,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+         rcx: &'a ResolveContext,
+         styles: &'a [ResolvedStyle<B>],
+         analysis_data_sources: &'a AnalysisDataSources,
++        first_fonts: &'b mut Vec<Option<FontInstance>>,
+     ) -> Self {
+         let attrs = fontique::Attributes::default();
+ 
+         Self {
+             query,
++            first_fonts,
++            current_first: None,
+             fonts_id: None,
+             rcx,
+             styles,
+@@ -360,12 +378,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+         // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
+         // this check and do the last-resort scan after the failed query:
+         // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
++        // lightningpanda: this pass also finds the style's first available font, which the style
++        // metrics need: the first font the query yields for the current families and attributes
++        // whose `unicode-range` includes U+0020, if it comes from the style's own families (not
++        // the script fallbacks or the emoji family, which the query yields after them). Fonts
++        // without a charmap count here, as there.
++        let families = self
++            .rcx
++            .stack(self.styles[style_index as usize].font_family)
++            .unwrap_or(&[]);
+         let query = &mut *self.query;
++        let current_first = &mut self.current_first;
+         let query_yields_font = *self.query_yields_font.get_or_insert_with(|| {
+             let mut yields_font = false;
++            let mut seeking_first = true;
++            *current_first = None;
+             query.matches_with(|font| {
+-                if font.charmap().is_some() {
+-                    yields_font = true;
++                if seeking_first && !families.contains(&font.family.0) {
++                    seeking_first = false;
++                } else if seeking_first && font.unicode_range.contains(0x20) {
++                    seeking_first = false;
++                    *current_first = Some(FontInstance {
++                        font: FontData {
++                            data: font.blob.clone(),
++                            index: font.index,
++                        },
++                        synthesis: font.synthesis,
++                    });
++                }
++                yields_font |= font.charmap().is_some();
++                if yields_font && !seeking_first {
+                     fontique::QueryStatus::Stop
+                 } else {
+                     fontique::QueryStatus::Continue
+@@ -373,6 +415,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+             });
+             yields_font
+         });
++        if let Some(font) = &self.current_first {
++            let slot = &mut self.first_fonts[style_index as usize];
++            if slot.is_none() {
++                *slot = Some(font.clone());
++            }
++        }
+         if !query_yields_font {
+             if matches!(self.last_resort_font, LastResortFont::Unresolved) {
+                 if let Some(font) = any_font(self.query) {
