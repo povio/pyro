@@ -72,6 +72,9 @@ jobs:
           stage="archive/linux-$ARCH"
           mkdir -p "$stage"
           cp target/release/lightningpanda target/release/lp-snapshot-compare "$stage/"
+          # Release debug information makes the combined npm payload too large.
+          # Strip only staged copies; retain symbols and untouched build outputs.
+          strip --strip-debug "$stage/lightningpanda" "$stage/lp-snapshot-compare"
           jsc="$HOME/.cache/lightningpanda/jsc/$JSC_DIR"
           scripts/release/bundle-jsc-linux.sh "$stage" "$jsc/lib/libJavaScriptCore.so"
           # Moved, so nothing can load the build cache's copy instead.
