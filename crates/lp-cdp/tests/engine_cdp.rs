@@ -6077,6 +6077,42 @@ fn driver_run_turns_the_event_loop_between_input_events_and_steps() {
     assert_eq!(r["result"]["reads"]["saves"], "a=1,b=2", "{r}");
 }
 
+const DRIVER_SHIFT_PAGE: &str = r#"<!doctype html><body style="margin:0">
+<div id="list"></div>
+<button id="archive" style="width:160px;height:30px"><span>Archive Department</span></button>
+<div id="section" style="height:400px">You will not be able to undo this</div>
+<script>
+  const log = [];
+  document.getElementById('archive').addEventListener('pointerdown', () => setTimeout(() => {
+    document.getElementById('list').innerHTML = '<div style="height:200px">rows that loaded late</div>';
+    log.push('shifted');
+  }, 0));
+  for (const t of ['pointerdown', 'pointerup', 'click']) {
+    document.addEventListener(t, (e) => log.push(t + ':' + (e.target.closest('[id]')?.id ?? e.target.tagName)), true);
+  }
+  window.getLog = () => log.join(',');
+</script>"#;
+
+/// Page work that runs between a click's press and release (an async list
+/// above the button finished loading) can move the pressed element: the
+/// release follows it, so the click lands on what was pressed instead of on
+/// whatever moved under the pointer (react-aria cancels a press released
+/// elsewhere).
+#[test]
+fn driver_click_release_follows_an_element_that_moved_after_the_press() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_SHIFT_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 1000, "steps": [
+            {"act": {"locator": {"css": "#archive"}, "action": "click"}},
+            {"eval": {"expression": "getLog()", "as": "log"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["log"], "pointerdown:archive,shifted,pointerup:archive,click:archive", "{r}");
+}
+
 const DRIVER_BLUR_PAGE: &str = r#"<!doctype html><body>
 <input id="f"><input id="g">
 <script>
