@@ -252,6 +252,67 @@ fn by_value_results_keep_key_order_as_on_the_wire() {
     assert!(reply.contains(r#""value":{"b":1,"a":[3,1],"c":{"z":1e+21,"y":"q","x":null},"":true}"#), "{reply}");
 }
 
+/// A double crosses CDP unchanged, as with Chrome, in results
+/// (`Runtime.evaluate` by value, `LP.run` `eval` reads) and in arguments
+/// (`Runtime.callFunctionOn`, `LP.run` `eval` `arg`), checked against
+/// `String(x)` in the page. JSON numbers the engine parses must round
+/// correctly (serde_json's `float_roundtrip`, set in the workspace
+/// manifest): without it 0.9591810769706007 read as 0.9591810769706008,
+/// and about one random double in ten was one ulp off.
+#[test]
+fn doubles_cross_cdp_unchanged() {
+    let mut h = Harness::new();
+    let setup = "globalThis.doubles = [0.9591810769706007, 0.011425316439999667, 0.11370447987098531, \
+        0.9333951639905637, 123456.78901234567, -0.1, 1e21, 1e-7, 5e-324, 2.2250738585072014e-308, \
+        1.7976931348623157e308].concat(Array.from({length: 1000}, Math.random)); doubles.map(String)";
+    let r = h.page("Runtime.evaluate", json!({"expression": setup, "returnByValue": true}));
+    let texts: Vec<String> = r["result"]["result"]["value"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{r}"))
+        .iter()
+        .map(|t| t.as_str().unwrap().to_owned())
+        .collect();
+    // The double each text names (`str::parse` rounds correctly).
+    let doubles: Vec<f64> = texts.iter().map(|t| t.parse().unwrap()).collect();
+    let same = |what: &str, got: &[Value]| {
+        assert_eq!(got.len(), texts.len(), "{what}");
+        for ((got, want), text) in got.iter().zip(&doubles).zip(&texts) {
+            assert_eq!(got.as_f64(), Some(*want), "{what}: {got} for the page's {text}");
+        }
+    };
+
+    let scalars: Vec<Value> = (0..texts.len())
+        .map(|i| {
+            let r = h.page("Runtime.evaluate", json!({"expression": format!("doubles[{i}]"), "returnByValue": true}));
+            r["result"]["result"]["value"].clone()
+        })
+        .collect();
+    same("Runtime.evaluate number", &scalars);
+    let r = h.page("Runtime.evaluate", json!({"expression": "doubles", "returnByValue": true}));
+    same("Runtime.evaluate array", r["result"]["result"]["value"].as_array().unwrap_or_else(|| panic!("{r}")));
+
+    let mut steps: Vec<Value> =
+        (0..texts.len()).map(|i| json!({"eval": {"expression": format!("doubles[{i}]")}})).collect();
+    steps.push(json!({"eval": {"expression": "doubles", "as": "all"}}));
+    steps.push(json!({"eval": {"expression": "(xs) => xs.map(String)", "call": true, "arg": doubles, "as": "texts"}}));
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    same("LP.run eval number", &results[..texts.len()]);
+    same("LP.run eval array", r["result"]["reads"]["all"].as_array().unwrap_or_else(|| panic!("{r}")));
+    assert_eq!(r["result"]["reads"]["texts"], json!(texts), "LP.run eval arg");
+
+    let global = h.page("Runtime.evaluate", json!({"expression": "globalThis"}));
+    let global = global["result"]["result"]["objectId"].as_str().unwrap().to_owned();
+    for (want, text) in doubles.iter().zip(&texts) {
+        let r = h.page(
+            "Runtime.callFunctionOn",
+            json!({"functionDeclaration": "function(x) { return String(x); }", "objectId": global,
+                "arguments": [{"value": want}], "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"], text.as_str(), "Runtime.callFunctionOn argument");
+    }
+}
+
 #[test]
 fn evaluate_call_function_and_handles() {
     let mut h = Harness::new();

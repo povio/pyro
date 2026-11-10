@@ -242,6 +242,18 @@ mod tests {
         assert_eq!(cmd.params::<P>().unwrap().url, "http://x/");
     }
 
+    /// Params parse doubles correctly rounded: serde_json's `float_roundtrip`
+    /// (workspace manifest). Without it this one reads as 0.9591810769706008.
+    #[test]
+    fn params_parse_doubles_exactly() {
+        #[derive(Deserialize)]
+        struct P {
+            x: f64,
+        }
+        let cmd = parse_command(r#"{"id":1,"method":"X.y","params":{"x":0.9591810769706007}}"#).unwrap();
+        assert_eq!(cmd.params::<P>().unwrap().x, 0.9591810769706007);
+    }
+
     #[test]
     fn missing_params_deserialize_from_empty_object() {
         #[derive(Deserialize)]
