@@ -197,8 +197,8 @@ pub struct Template {
 ///   connection usually ends before that code pays for itself. Baseline JIT
 ///   and LLInt stay on. `JSC_useDFGJIT=true` gets the default tiers back.
 /// - `jitMemoryReservationSize` 32 MB instead of 512 MB: macOS's `fork()`
-///   walks the whole `MAP_JIT` reservation (and copies its code), so a fork
-///   of the 512 MB one took 15 ms of the template's time, 3.5 ms at 32 MB.
+///   walks the whole `MAP_JIT` reservation and copies the code in it, so a
+///   fork took 15 ms of the template's time with 512 MB, 3.5 ms with 32 MB.
 ///   Pages of a mid-size SPA use about 6 MB of it; at 16 MB JavaScriptCore
 ///   already compiles less (it raises its tier-up thresholds as the pool
 ///   fills: 2.6% more instructions per page).

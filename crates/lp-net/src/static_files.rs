@@ -212,8 +212,7 @@ impl StaticFiles {
         let origin = origin.ascii_serialization();
         let root = self.roots.iter().find(|r| r.origin == origin)?;
         let relative = relative_path(url.path())?;
-        // A file read at startup needs no file system call (requests for an
-        // app's assets are most of what reaches here).
+        // A file read at startup is answered without a file system call.
         if let Some(file) = root.files.ready().as_deref().and_then(|files| memory_file(files, &relative)) {
             return Some(StaticHit { path: file.path.clone(), spa_fallback: false });
         }
