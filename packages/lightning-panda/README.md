@@ -44,6 +44,19 @@ test.concurrent('closes a position', async () => {
   starts from their result. `base: 'otherProfile'` builds a snapshot on top of
   another one: only its own `setup` runs, on a fork of that snapshot (boot on
   the login page once, sign in once, then one snapshot per test file).
+- **One server, many workers.** A fork-mode server keeps profiles by name
+  for all its clients. Launch it once (`Lightningpanda.launch({ args:
+  ['--fork'] })` in the process that starts `bun test`), register the shared
+  profiles there, and hand `lp.wsEndpoint` to the workers, which
+  `Lightningpanda.connect()` to it. A worker's `lp.page({ as: 'app' })` or
+  `base: 'app'` then uses the profile the launcher booted (`lp.adopt(name)`
+  does it explicitly); `lp.profile(name, def)` with the same definition
+  adopts instead of booting again, and a different definition under a name
+  another client holds is refused. A client holds the profiles it registered
+  or adopted until `releaseProfile(name)` or until it disconnects, and the
+  server retires a profile once no client holds it and no other profile
+  derives from it. A launched server exits with the process that launched
+  it, however that process ends.
 - **Locators** are data: `css`, `testId`, `text`, `label`, `placeholder`,
   `role` (and `button`, `dialog`, `link`, …), chained inside one another
   (`dialog().button('OK')`), filtered (`.visible()`, `.hasText()`,

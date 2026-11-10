@@ -474,6 +474,16 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   `<root socket>.<id>`; it runs only the profile's `setup` on its copy of the base page, relabels the page, and
   serves forks itself. Clients ask for a snapshot with `ws://host/?profile=<id>`: the root forwards that
   connection's fds to the template holding it. Registrations always go to the root, which assigns every id.
+  A derive whose base's template is not listening yet (it forks once its own base is ready) waits in the root
+  and is sent when it is, for up to 90 s; so do connections for that profile.
+- **Shared profiles**: the root keeps profiles by name for every client of the server (`registerPreparedPage
+  {name}`, `adoptPreparedPage {name}`, `unregisterPreparedPage {name}`, `preparedProfiles`). A client's
+  connection process opens a **lease** with its first named profile, a Unix stream to the root that it keeps
+  until it exits: the root holds each name for the leases that registered or adopted it and drops a lease's
+  holds when the stream reads EOF, however the process ended. A profile is retired once no lease holds any of
+  its names and no active profile derives from it (then its base is checked). The same definition under a name
+  finds the profile booted; a different one is refused while the name is held, and moves the name when it is
+  not. Profiles registered without a name (and `--prepare`'s) stay until unregistered by id.
 - **Spares** take the fork off a test's path: each template keeps `LIGHTNINGPANDA_FORK_SPARES` (default 2) forked
   children waiting, pages running. They accept connections themselves on the template's connection socket
   (`<socket>.conn`), so a test never waits for a template that is busy forking; a spare that took one closes its
@@ -481,6 +491,10 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   spares (their pages are out of date). Measured on the 8 MB test app: 3.6 ms from connect to an evaluated
   expression in a booted page.
 - The template stops when the server does: its stdin is a pipe only the server writes to.
+- The server stops with the process it runs for (`--parent-pid`, which `Lightningpanda.launch()` passes; a
+  kqueue `NOTE_EXIT` or pidfd wait, `lp_cdp::lifetime`). On that, and on SIGTERM, SIGINT or SIGHUP, it kills the
+  template and removes every `lightningpanda-<pid>.sock*` file; a server starting removes those of servers that
+  are gone (killed with SIGKILL).
 - Dedicated workers are threads, so a template holds them: they start in the child that takes a connection
   (`lp_webapi::hold_for_fork`, `release_after_fork`). A thread entering a VM in a child cannot register with JSC's
   mach exception port, which a fork does not inherit, so a template runs with `JSC_useMachForExceptions=false`: faults

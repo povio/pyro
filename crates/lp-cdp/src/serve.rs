@@ -75,6 +75,9 @@ options:
                                         pay for it (~3 MB while idle). Default: on with
                                         --prepare, off otherwise;
                                         env LIGHTNINGPANDA_RENDER_PREWARM=on|off
+  --parent-pid <PID>                    exit when process PID exits, however it ends
+                                        (env LIGHTNINGPANDA_PARENT_PID; the SDK's
+                                        Lightningpanda.launch() sets it to its own pid)
 
 HTTP and data: document loading are supported; browser API coverage is partial.
 --experimental-features and --load-resources are accepted for CLI compatibility;
@@ -120,6 +123,17 @@ Each template keeps LIGHTNINGPANDA_FORK_SPARES (default 2) forks waiting, so a
 connection does not wait for its fork. Forks run without JavaScriptCore's
 DFG/FTL tiers (connections are too short for them to pay off) unless
 JSC_useDFGJIT is set.
+
+Shared profiles (--fork): several clients (test workers in other processes)
+can use one server. registerPreparedPage {name, ...} registers a profile
+under a name every client of the server shares: the same definition under
+the same name finds the profile already booted, a different one is refused
+while another client holds it. Lightningpanda.adoptPreparedPage {name} ->
+{profileId, url, initScripts, viewport, setup, base} holds a profile another
+client registered, unregisterPreparedPage {name} releases this connection's
+hold, and Lightningpanda.preparedProfiles lists the names with their holders.
+A connection's holds end when it closes; a profile is retired once no
+connection holds it and no other profile is derived from it.
 ";
 
 /// How long a spare thread keeps booting prepared pages before it just waits.
@@ -193,6 +207,9 @@ pub struct ServeOptions {
     /// renderer's process-wide state at startup. `None` follows the mode
     /// like `spare_engine`.
     pub render_prewarm: Option<bool>,
+    /// `--parent-pid` (or `LIGHTNINGPANDA_PARENT_PID`): exit with this
+    /// process ([`crate::lifetime`]).
+    pub parent_pid: Option<libc::pid_t>,
 }
 
 impl ServeOptions {
@@ -259,7 +276,18 @@ impl Default for ServeOptions {
             render_prewarm: std::env::var(RENDER_PREWARM_ENV)
                 .ok()
                 .and_then(|v| parse_switch(RENDER_PREWARM_ENV, &v).ok()),
+            parent_pid: std::env::var(PARENT_PID_ENV).ok().and_then(|v| parse_pid(&v).ok()),
         }
+    }
+}
+
+/// Environment equivalent of `--parent-pid`.
+pub const PARENT_PID_ENV: &str = "LIGHTNINGPANDA_PARENT_PID";
+
+fn parse_pid(value: &str) -> Result<libc::pid_t, String> {
+    match value.trim().parse::<libc::pid_t>() {
+        Ok(pid) if pid > 0 => Ok(pid),
+        _ => Err(format!("--parent-pid: '{value}' is not a process id")),
     }
 }
 
@@ -356,6 +384,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             "--fork" => o.fork = true,
             "--spare-engine" => o.spare_engine = Some(parse_switch("--spare-engine", &value()?)?),
             "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
+            "--parent-pid" => o.parent_pid = Some(parse_pid(&value()?)?),
             "--template" => o.template = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown option '{other}'")),
         }
@@ -442,6 +471,13 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     if let Some(socket) = &options.template {
         return crate::fork::template_main(&options, socket);
     }
+    // Before anything that can take a while: the process may already be gone.
+    if let Some(pid) = options.parent_pid {
+        if let Err(e) = crate::lifetime::exit_with(pid, crate::fork::cleanup_for_exit) {
+            eprintln!("lightningpanda serve: --parent-pid: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
     let profile = match browser_profile(&options) {
         Ok(p) => p,
         Err(e) => {
@@ -455,7 +491,13 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
         match crate::fork::Template::spawn(args) {
-            Ok(t) => Some(Arc::new(t)),
+            Ok(t) => {
+                // Killed by a signal, the server still removes its templates' sockets.
+                if let Err(e) = crate::lifetime::cleanup_on_signals(crate::fork::cleanup_for_exit) {
+                    eprintln!("lightningpanda serve: --fork: {e}");
+                }
+                Some(Arc::new(t))
+            }
             Err(e) => {
                 eprintln!("lightningpanda serve: --fork: {e}");
                 return ExitCode::FAILURE;
@@ -596,7 +638,7 @@ impl ThreadPerConnection {
                 }
             };
             let _finished = a.finished;
-            run_browser_thread(prepared, &profile, a.socket, &a.buffered, a.config, None);
+            run_browser_thread(prepared, &profile, a.socket, &a.buffered, a.config);
         })?;
         Ok(tx)
     }
@@ -685,14 +727,12 @@ const FLUSH_EVERY: usize = 16;
 
 /// Serves one connection on this (browser) thread until it ends: the
 /// connection's socket is read and written here (see [`crate::conn`]).
-/// `fork_register` makes it a fork child of the template (`serve --fork`).
 pub(crate) fn run_browser_thread(
     prepared: Result<(lp_browser::BrowserThread, Vec<crate::engine::Prebooted>), crate::msg::CdpError>,
     profile: &BrowserProfile,
     socket: std::net::TcpStream,
     buffered: &[u8],
     config: ServerConfig,
-    fork_register: Option<crate::target::RegisterPrepared>,
 ) {
     let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
     let host = match prepared.and_then(|(t, prebooted)| {
@@ -710,10 +750,7 @@ pub(crate) fn run_browser_thread(
             return;
         }
     };
-    let mut browser = Browser::with_prepared(host, profile.prepared.clone());
-    if let Some(register) = fork_register {
-        browser.set_fork_child(register);
-    }
+    let browser = Browser::with_prepared(host, profile.prepared.clone());
     serve_browser(browser, outbox, outbound, socket, buffered, config);
 }
 

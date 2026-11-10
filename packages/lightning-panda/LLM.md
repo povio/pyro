@@ -76,6 +76,38 @@ test.concurrent('closes a position', async () => {
   open: an open page stops its connection from refilling).
 - One profile per kind of user (`as`). Several profiles are fine.
 
+### One fork-mode server for every worker
+
+With `lightningpanda serve --fork`, start one server for the whole run and
+let every `bun test` worker connect to it: profiles boot once per server,
+not once per worker.
+
+```ts
+// launcher (the process that runs `bun test`)
+const lp = await Lightningpanda.launch({ args: ['--fork', '--cdp-max-connections', '64'] });
+await lp.profile('app', { url: `${APP}/`, setup: signIn });   // boots once
+await lp.warm('app');
+const tests = Bun.spawn(['bun', 'test', '--parallel'], { env: { ...process.env, LIGHTNINGPANDA_WS: lp.wsEndpoint } });
+await tests.exited;
+lp.close();
+
+// each worker
+const lp = await Lightningpanda.connect(process.env.LIGHTNINGPANDA_WS!);
+await lp.profile(`feature-${process.pid}-${file}`, { base: 'app', url, setup });  // 'app' is the launcher's
+await using page = await lp.page({ as: 'app' });                                   // adopts it too
+```
+
+- Names are shared: the same definition under the same name adopts the
+  booted profile; a different one is refused while another client holds the
+  name (give per-worker profiles unique names).
+- `lp.adopt(name)` holds a profile explicitly; `lp.page({ as })` and
+  `base: name` adopt a name they do not know by themselves.
+- A client holds what it registered or adopted until `releaseProfile(name)`
+  or until it disconnects; a profile is retired once nobody holds it and no
+  profile derives from it.
+- `Lightningpanda.launch()` passes its pid to the server, which exits when
+  that process does (even when a runner stops it without exit handlers).
+
 ## Locators
 
 Build them with the exported helpers; they are data, so build them once and
