@@ -101,8 +101,9 @@ subtests changed, since a `fail` entry does not name its passes.
 ## Before making it a required check
 
 The gate's false failures come from pages whose results depend on load. `flaky.json` starts with the six such pages
-found in four full local runs and isolated reruns. To find the rest on the CI runners: start three manual runs
-(`full`), one more with `runner-args: --jobs 1`, download their `wpt-shard-*` artifacts, and compare them:
+found in four full local runs and isolated reruns, plus three from the first CI runs (three runs without a baseline,
+each running every page twice). To find the rest on the CI runners: start three manual runs (`full`), one more with
+`runner-args: --jobs 1`, download their `wpt-shard-*` artifacts, and compare them:
 
 ```sh
 bun bench/wpt/gate.mjs diff r1/*.json r2/*.json r3/*.json r4/*.json --suggest   # comma-separate a run's shards
