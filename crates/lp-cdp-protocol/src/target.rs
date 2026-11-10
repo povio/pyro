@@ -220,6 +220,12 @@ pub struct PreparedProfile {
     pub base: Option<usize>,
 }
 
+/// The `name` of a shared profile (`serve --fork`) in `Lightningpanda.*` params.
+#[derive(Deserialize)]
+struct ProfileName {
+    name: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewportSize {
     pub width: u32,
@@ -230,9 +236,46 @@ fn default_pool() -> usize {
     1
 }
 
-/// `serve --fork`: hands a profile to the template process; its id there.
-pub type RegisterPrepared = Box<dyn Fn(&PreparedProfile) -> Result<usize, String>>;
-pub type UnregisterPrepared = Box<dyn Fn(usize) -> Result<bool, String>>;
+/// `serve --fork`: the template process's profile registry, as a connection
+/// reaches it. Profiles live in the template, so every connection (every
+/// client of the server) shares them. A named profile is held by the
+/// connections that registered or adopted it and retired once none holds it
+/// and no other profile derives from it; a connection's holds end with it.
+pub trait ForkProfiles {
+    /// Boots `profile` for every later connection, or finds the same one:
+    /// its id. With `name`, this connection also holds it under that name.
+    fn register(&self, profile: &PreparedProfile, name: Option<&str>) -> Result<usize, String>;
+    /// Holds the profile some connection registered as `name`: its id and definition.
+    fn adopt(&self, name: &str) -> Result<(usize, PreparedProfile), String>;
+    /// Drops this connection's hold on `name`.
+    fn release(&self, name: &str) -> Result<ProfileRelease, String>;
+    /// Retires profile `id` (one registered without a name); whether it was.
+    fn unregister(&self, id: usize) -> Result<bool, String>;
+    /// The named profiles.
+    fn list(&self) -> Result<Vec<NamedProfile>, String>;
+}
+
+/// What releasing a named profile did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileRelease {
+    /// This connection held the name.
+    pub released: bool,
+    /// The profile was retired with it (no other holder, nothing derived from it).
+    pub retired: bool,
+}
+
+/// A profile the template keeps under a name (`Lightningpanda.preparedProfiles`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedProfile {
+    pub name: String,
+    pub profile_id: usize,
+    /// Connections holding it.
+    pub holders: usize,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<usize>,
+}
 
 /// At most this many pages booting ahead per profile.
 pub const MAX_POOL: usize = 8;
@@ -346,10 +389,9 @@ pub struct Browser<H: Host> {
     /// the next acquisition before trying again.
     refill_blocked: bool,
     /// `serve --fork`: this connection is a fork of the template process
-    /// (see [`crate::fork`]), which boots prepared pages for every later
+    /// (see `lp_cdp::fork`), which boots prepared pages for every later
     /// connection. Nothing is booted here; registrations go to the template.
-    fork: Option<RegisterPrepared>,
-    fork_unregister: Option<UnregisterPrepared>,
+    fork: Option<Box<dyn ForkProfiles>>,
 }
 
 #[derive(Serialize)]
@@ -390,18 +432,14 @@ impl<H: Host> Browser<H> {
             prepared: Vec::new(),
             refill_blocked: false,
             fork: None,
-            fork_unregister: None,
         }
     }
 
     /// Makes this connection a fork child (see the `fork` field): no
-    /// refills, and `registerPreparedPage` goes through `register`.
-    pub fn set_fork_child(&mut self, register: RegisterPrepared) {
-        self.fork = Some(register);
-    }
-
-    pub fn set_fork_unregister(&mut self, unregister: UnregisterPrepared) {
-        self.fork_unregister = Some(unregister);
+    /// refills, and profiles are registered with (and shared through) the
+    /// template's `registry`.
+    pub fn set_fork_child(&mut self, registry: Box<dyn ForkProfiles>) {
+        self.fork = Some(registry);
     }
 
     pub fn prepared_profile_active(&self, id: usize) -> bool {
@@ -661,6 +699,7 @@ impl<H: Host> Browser<H> {
         match action {
             "registerPreparedPage" => {
                 let profile: PreparedProfile = cmd.params()?;
+                let ProfileName { name } = cmd.params()?;
                 if lp_net::Url::parse(&profile.url).is_err() {
                     return Err(CdpError::invalid_params("url is not an absolute URL"));
                 }
@@ -670,11 +709,17 @@ impl<H: Host> Browser<H> {
                 if (!profile.setup.is_empty() || profile.base.is_some()) && self.fork.is_none() {
                     return Err(CdpError::invalid_params("setup and base need serve --fork"));
                 }
-                if let Some(register) = &self.fork {
+                if name.as_deref() == Some("") {
+                    return Err(CdpError::invalid_params("name must not be empty"));
+                }
+                if let Some(registry) = &self.fork {
                     // The template boots it; connections forked from then on have it.
-                    let profile_id = register(&profile).map_err(CdpError::server)?;
+                    let profile_id = registry.register(&profile, name.as_deref()).map_err(CdpError::server)?;
                     out.send(msg::result_frame(id, &serde_json::json!({ "profileId": profile_id }), cmd.session_id()));
                     return Ok(());
+                }
+                if name.is_some() {
+                    return Err(CdpError::invalid_params("profile names need serve --fork"));
                 }
                 self.prepared_profiles.push(profile);
                 self.refill_blocked = false;
@@ -686,17 +731,54 @@ impl<H: Host> Browser<H> {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
                 struct P {
-                    profile_id: usize,
+                    profile_id: Option<usize>,
+                    name: Option<String>,
                 }
                 let p: P = cmd.params()?;
-                let removed = if let Some(unregister) = &self.fork_unregister {
-                    unregister(p.profile_id).map_err(CdpError::server)?
-                } else if self.fork.is_some() {
-                    return Err(CdpError::server("Profile retirement is unavailable on this fork connection"));
+                let result = if let Some(name) = p.name {
+                    // This connection's hold on a shared profile: retired with the last one.
+                    let Some(registry) = &self.fork else {
+                        return Err(CdpError::invalid_params("profile names need serve --fork"));
+                    };
+                    let r = registry.release(&name).map_err(CdpError::server)?;
+                    serde_json::json!({ "removed": r.released, "retired": r.retired })
+                } else if let Some(profile_id) = p.profile_id {
+                    let removed = match &self.fork {
+                        Some(registry) => registry.unregister(profile_id).map_err(CdpError::server)?,
+                        None => self.unregister_prepared_profile(profile_id)?,
+                    };
+                    serde_json::json!({ "removed": removed })
                 } else {
-                    self.unregister_prepared_profile(p.profile_id)?
+                    return Err(CdpError::invalid_params("profileId or name is required"));
                 };
-                out.send(msg::result_frame(id, &serde_json::json!({ "removed": removed }), cmd.session_id()));
+                out.send(msg::result_frame(id, &result, cmd.session_id()));
+            }
+            "adoptPreparedPage" => {
+                let Some(registry) = &self.fork else {
+                    return Err(CdpError::invalid_params("adopting a profile needs serve --fork"));
+                };
+                let ProfileName { name } = cmd.params()?;
+                let name = name.ok_or_else(|| CdpError::invalid_params("name is required"))?;
+                let (profile_id, profile) = registry.adopt(&name).map_err(CdpError::server)?;
+                out.send(msg::result_frame(
+                    id,
+                    &serde_json::json!({
+                        "profileId": profile_id,
+                        "url": profile.url,
+                        "initScripts": profile.init_scripts,
+                        "viewport": profile.viewport,
+                        "setup": profile.setup,
+                        "base": profile.base,
+                    }),
+                    cmd.session_id(),
+                ));
+            }
+            "preparedProfiles" => {
+                let profiles = match &self.fork {
+                    Some(registry) => registry.list().map_err(CdpError::server)?,
+                    None => Vec::new(),
+                };
+                out.send(msg::result_frame(id, &serde_json::json!({ "profiles": profiles }), cmd.session_id()));
             }
             "acquirePreparedPage" => {
                 #[derive(Deserialize)]
@@ -781,7 +863,13 @@ impl<H: Host> Browser<H> {
                 self.refill_blocked = false;
             }
             "capabilities" => {
-                out.send(msg::result_frame(id, &serde_json::json!({ "fork": self.fork.is_some() }), cmd.session_id()));
+                // `sharedProfiles`: profiles have names every client of this server can adopt.
+                let fork = self.fork.is_some();
+                out.send(msg::result_frame(
+                    id,
+                    &serde_json::json!({ "fork": fork, "sharedProfiles": fork }),
+                    cmd.session_id(),
+                ));
             }
             "preparedPages" => {
                 let pages: Vec<serde_json::Value> = self

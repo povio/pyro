@@ -19,7 +19,8 @@
 //! `crates/lp-jsc-sys/webkit/patches/0002-fork-support.patch`), and both
 //! restart afterwards in the parent and in the child.
 
-use std::collections::{HashMap, VecDeque};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -35,7 +36,7 @@ use crate::engine::EngineHost;
 use crate::outbox::{Outbound, OutboundRx, Outbox, DEFAULT_OUTBOUND_BUDGET};
 use crate::serve::ServeOptions;
 use crate::server::ServerConfig;
-use crate::target::{Browser, Host, PreparedProfile};
+use crate::target::{Browser, ForkProfiles, Host, NamedProfile, PreparedProfile, ProfileRelease};
 use crate::ws::OutFrame;
 
 /// A connection waits at most this long for loaded pages to go quiet: a
@@ -48,6 +49,11 @@ const LOAD_WAIT: Duration = Duration::from_secs(30);
 
 /// A profile's setup steps must finish within this.
 const SETUP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A derived profile's template is forked off its base's once that one is
+/// up (and set up): connections for it, and profiles derived from it, wait
+/// at most this long for it.
+const DERIVE_WAIT: Duration = Duration::from_secs(90);
 
 /// Forked children each template keeps waiting for a connection
 /// (`LIGHTNINGPANDA_FORK_SPARES`), so that a connection does not wait for its
@@ -74,10 +80,30 @@ enum Message {
         buffered: Vec<u8>,
         profile: Option<usize>,
     },
-    /// Boot a profile for later connections (root only); replies `{"profileId": n}`.
+    /// Boot a profile for later connections (root only); replies `Registered`.
+    /// With a name, `lease` holds the profile under that name.
     Register {
         profile: PreparedProfile,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        lease: Option<u64>,
     },
+    /// Hold the profile registered as `name` (root only); replies `Adopted`.
+    Adopt {
+        name: String,
+        lease: u64,
+    },
+    /// Drop `lease`'s hold on `name` (root only); replies `Released`.
+    Release {
+        name: String,
+        lease: u64,
+    },
+    /// Open a lease (root only); replies `Leased`. The connection's process
+    /// keeps this stream open while it lives: its holds end with it.
+    Lease,
+    /// List the named profiles (root only); replies `Listed`.
+    Profiles,
     Unregister {
         profile_id: usize,
     },
@@ -109,6 +135,30 @@ struct Unregistered {
     error: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Adopted {
+    profile_id: Option<usize>,
+    profile: Option<PreparedProfile>,
+    error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Released {
+    release: Option<ProfileRelease>,
+    error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Leased {
+    lease: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Listed {
+    profiles: Vec<NamedProfile>,
+}
+
 // ---- Server side ---------------------------------------------------------
 
 /// The template process of a `serve --fork` server; killed (and its socket
@@ -135,8 +185,10 @@ impl Template {
     /// Starts `lightningpanda serve --template <socket> <args>` and waits
     /// until it listens.
     pub fn spawn(args: &[String]) -> std::io::Result<Template> {
-        let socket = std::env::temp_dir().join(format!("lightningpanda-{}.sock", std::process::id()));
-        let _ = std::fs::remove_file(&socket);
+        // Servers that were killed could not remove theirs.
+        remove_stale_sockets();
+        remove_socket_files(std::process::id());
+        let socket = socket_path(std::process::id());
         let exe = std::env::current_exe()?;
         let mut command = std::process::Command::new(exe);
         command
@@ -144,13 +196,16 @@ impl Template {
             .arg("--template")
             .arg(&socket)
             .args(args.iter().filter(|a| a.as_str() != "--fork"))
-            .stdin(std::process::Stdio::piped());
+            .stdin(std::process::Stdio::piped())
+            // The template ends with this server (its stdin), not with our parent.
+            .env_remove(crate::serve::PARENT_PID_ENV);
         for (name, value) in FORK_JSC_DEFAULTS {
             if std::env::var_os(name).is_none() {
                 command.env(name, value);
             }
         }
         let child = command.spawn()?;
+        TEMPLATE_PID.store(child.id() as i32, std::sync::atomic::Ordering::Relaxed);
         let mut template = Template { child, socket };
         let deadline = Instant::now() + Duration::from_secs(30);
         while UnixStream::connect(&template.socket).is_err() {
@@ -172,10 +227,74 @@ impl Template {
 
 impl Drop for Template {
     fn drop(&mut self) {
+        TEMPLATE_PID.store(0, std::sync::atomic::Ordering::Relaxed);
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let _ = std::fs::remove_file(&self.socket);
-        let _ = std::fs::remove_file(conn_socket(&self.socket));
+        // Derived templates' sockets too (`<socket>.<id>`, `.conn`).
+        remove_socket_files(std::process::id());
+    }
+}
+
+/// The template process of this server, for [`cleanup_for_exit`].
+static TEMPLATE_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// For a server process that exits without dropping its [`Template`] (a
+/// signal, or the process it runs for exited): ends the template (the
+/// templates derived from it and their spares follow) and removes every
+/// socket file of this server. Callable from any thread.
+pub fn cleanup_for_exit() {
+    let pid = TEMPLATE_PID.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if pid > 0 {
+        // SAFETY: our own child, not reaped yet (only the Template reaps it).
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    remove_socket_files(std::process::id());
+}
+
+/// The root template's control socket of the server with pid `server`.
+/// Derived templates listen beside it on `<socket>.<id>`, and every
+/// template's connection socket is `<control>.conn`.
+fn socket_path(server: u32) -> PathBuf {
+    std::env::temp_dir().join(format!("lightningpanda-{server}.sock"))
+}
+
+/// The server pid in a socket file name of [`socket_path`]'s form.
+fn socket_server(name: &str) -> Option<u32> {
+    let (pid, rest) = name.strip_prefix("lightningpanda-")?.split_once(".sock")?;
+    (rest.is_empty() || rest.starts_with('.')).then_some(())?;
+    pid.parse().ok()
+}
+
+/// Socket files (by name) in the temporary directory.
+fn socket_files() -> impl Iterator<Item = (String, PathBuf)> {
+    use std::os::unix::fs::FileTypeExt;
+    std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten().filter_map(|entry| {
+        let socket = entry.file_type().is_ok_and(|t| t.is_socket());
+        let name = entry.file_name().into_string().ok()?;
+        socket.then(|| (name, entry.path()))
+    })
+}
+
+/// Removes every socket file of the server with pid `server`.
+fn remove_socket_files(server: u32) {
+    for (name, path) in socket_files() {
+        if socket_server(&name) == Some(server) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Removes the socket files of servers that are gone (killed before they
+/// could remove them).
+fn remove_stale_sockets() {
+    for (name, path) in socket_files() {
+        let Some(pid) = socket_server(&name).and_then(|p| libc::pid_t::try_from(p).ok()) else { continue };
+        // SAFETY: signal 0 only checks that the process exists.
+        let gone =
+            unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        if gone {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -261,11 +380,19 @@ type Waiting = VecDeque<(Vec<u8>, Vec<OwnedFd>, Instant)>;
 type Forward = (PathBuf, Vec<u8>, Option<usize>, Vec<OwnedFd>, Instant);
 
 /// A snapshot to fork off as a template of its own.
+#[derive(Clone)]
 struct Derive {
     base: usize,
     id: usize,
     profile: PreparedProfile,
     socket: PathBuf,
+}
+
+/// A profile shared under a name (root only).
+struct Named {
+    id: usize,
+    /// Leases holding it. None while profiles derived from it keep it.
+    holders: HashSet<u64>,
 }
 
 /// One template process: the root (spawned by the server) or a derived one
@@ -290,7 +417,23 @@ struct TemplateProcess {
     /// Root only: where each profile's snapshot is served (`None`: here).
     holders: Vec<Option<PathBuf>>,
     derived_pids: HashMap<usize, libc::pid_t>,
+    /// Retired derived templates told to exit, not reaped yet, with when
+    /// they get SIGKILL instead. Nothing waits for them: a large process can
+    /// take a while to exit, and this loop serves every other profile.
+    terminating: Vec<(libc::pid_t, Instant, bool)>,
     is_root: bool,
+    /// Root only: profiles shared by name, retired with their last holder.
+    names: HashMap<String, Named>,
+    /// Root only: profiles registered without a name (and `--prepare`'s),
+    /// kept until unregistered by id.
+    pinned: HashSet<usize>,
+    /// Root only: open leases, the streams that connections' processes keep
+    /// open while they live.
+    leases: HashMap<u64, UnixStream>,
+    next_lease: u64,
+    /// Root only: derives for a base whose template is not listening yet
+    /// (it is forked once its own base is ready), with where and since when.
+    pending_derives: VecDeque<(PathBuf, Derive, Instant)>,
     /// Forked children waiting for a connection (accepting on `conns`), as
     /// our end of a pair: the spare closes its end once it has taken one,
     /// and we close ours to drop it. Forked at `spares_generation`.
@@ -336,6 +479,8 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     host.adopt_prebooted(pages);
     let states = profiles.iter().map(ProfileState::new).collect();
     let holders = vec![None; profiles.len()];
+    // `--prepare`'s profiles stay for the server's lifetime.
+    let pinned = (0..profiles.len()).collect();
     let browser = Browser::with_prepared(host, profiles);
     let snapshot = Snapshot { browser, outbox, outbound, profiles: states, generation: 0 };
 
@@ -355,7 +500,13 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
         derives: VecDeque::new(),
         holders,
         derived_pids: HashMap::new(),
+        terminating: Vec::new(),
         is_root: true,
+        names: HashMap::new(),
+        pinned,
+        leases: HashMap::new(),
+        next_lease: 1,
+        pending_derives: VecDeque::new(),
         spares: VecDeque::new(),
         spares_generation: 0,
     };
@@ -365,12 +516,14 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     'serve: loop {
         t.reap_children();
         t.accept_all();
+        t.end_leases();
         // Spares that took a connection have closed their end.
         t.spares.retain(|spare| !readable(spare.as_raw_fd()));
         if t.spares.is_empty() {
             t.accept_conns();
         }
         t.forward_waiting();
+        t.deliver_pending_derives();
         let ready = ready_to_fork(&mut t.snapshot, t.waiting.front().map(|w| w.2));
         if ready {
             while let Some(derive) = t.derives.pop_front() {
@@ -389,7 +542,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
             }
         }
         // Boot what is booting; wake for the next message.
-        let busy = !ready || !t.forwards.is_empty();
+        let busy = !ready || !t.forwards.is_empty() || !t.pending_derives.is_empty() || !t.terminating.is_empty();
         let deadline = Instant::now() + Duration::from_millis(if busy { 20 } else { 1000 });
         t.watch_listener();
         let watch = t.watch.clone();
@@ -399,6 +552,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
         if matches!(outcome, lp_runtime::RunOutcome::Idle) {
             let mut fds = vec![t.listener.as_raw_fd(), t.conns.as_raw_fd(), 0];
             fds.extend(t.spares.iter().map(|s| s.as_raw_fd()));
+            fds.extend(t.leases.values().map(|s| s.as_raw_fd()));
             poll_readable(&fds, if busy { 20 } else { -1 });
         }
         if server_gone() {
@@ -431,12 +585,37 @@ impl TemplateProcess {
                     self.take_connection(buffered, profile, fds)
                 }
                 Message::Connect { .. } => {}
-                Message::Register { profile } => {
-                    let reply = match self.register(profile) {
+                Message::Register { profile, name, lease } => {
+                    let reply = match self.register(profile, name, lease) {
                         Ok(id) => Registered { profile_id: Some(id), error: None },
                         Err(e) => Registered { profile_id: None, error: Some(e) },
                     };
                     let _ = send(&mut stream, &reply, &[]);
+                }
+                Message::Adopt { name, lease } => {
+                    let reply = match self.adopt(&name, lease) {
+                        Ok((id, profile)) => Adopted { profile_id: Some(id), profile: Some(profile), error: None },
+                        Err(e) => Adopted { profile_id: None, profile: None, error: Some(e) },
+                    };
+                    let _ = send(&mut stream, &reply, &[]);
+                }
+                Message::Release { name, lease } => {
+                    let reply = match self.release(&name, lease) {
+                        Ok(release) => Released { release: Some(release), error: None },
+                        Err(e) => Released { release: None, error: Some(e) },
+                    };
+                    let _ = send(&mut stream, &reply, &[]);
+                }
+                Message::Lease if self.is_root => {
+                    let lease = self.next_lease;
+                    self.next_lease += 1;
+                    if send(&mut stream, &Leased { lease }, &[]).is_ok() && stream.set_nonblocking(true).is_ok() {
+                        self.leases.insert(lease, stream);
+                    }
+                }
+                Message::Lease => {}
+                Message::Profiles => {
+                    let _ = send(&mut stream, &Listed { profiles: self.named_profiles() }, &[]);
                 }
                 Message::Unregister { profile_id } | Message::RetireDerived { profile_id } => {
                     let result = if matches!(message, Message::Unregister { .. }) {
@@ -489,29 +668,86 @@ impl TemplateProcess {
     fn forward_waiting(&mut self) {
         for _ in 0..self.forwards.len() {
             let Some((path, buffered, profile, fds, since)) = self.forwards.pop_front() else { break };
+            if profile.is_some_and(|id| !self.snapshot.browser.prepared_profile_active(id)) {
+                continue; // retired meanwhile: dropping it closes the connection
+            }
             let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
             let sent = UnixStream::connect(conn_socket(&path))
                 .and_then(|mut s| send(&mut s, &Message::Connect { buffered: buffered.clone(), profile }, &raw));
-            if sent.is_err() && since.elapsed() < LOAD_WAIT {
+            if sent.is_err() && since.elapsed() < DERIVE_WAIT {
                 self.forwards.push_back((path, buffered, profile, fds, since));
             }
         }
     }
 
-    /// Adds a profile (or finds the same one): a plain one boots here, a
-    /// derived one is forked off the template holding its base.
-    fn register(&mut self, profile: PreparedProfile) -> Result<usize, String> {
+    /// Passes on derives whose base's template has started listening.
+    fn deliver_pending_derives(&mut self) {
+        for _ in 0..self.pending_derives.len() {
+            let Some((holder, derive, since)) = self.pending_derives.pop_front() else { break };
+            if !self.snapshot.browser.prepared_profile_active(derive.id) {
+                continue; // retired meanwhile
+            }
+            if deliver_derive(&holder, &derive) {
+                continue;
+            }
+            if since.elapsed() < DERIVE_WAIT {
+                self.pending_derives.push_back((holder, derive, since));
+            } else {
+                eprintln!(
+                    "lightningpanda: template: profile {}: the template of its base {} did not start",
+                    derive.id, derive.base
+                );
+            }
+        }
+    }
+
+    /// Adds a profile, or finds the same one. With a name, `lease` holds it
+    /// under that name, which every connection shares: registering the same
+    /// definition again (from any client) finds the profile booted.
+    fn register(
+        &mut self,
+        profile: PreparedProfile,
+        name: Option<String>,
+        lease: Option<u64>,
+    ) -> Result<usize, String> {
         if !self.is_root {
             return Err("registrations go to the root template".into());
         }
         let profile = one_page(&profile);
-        if let Some(id) = self
-            .snapshot
-            .browser
+        let Some(name) = name else {
+            let id = self.boot(profile)?;
+            self.pinned.insert(id);
+            return Ok(id);
+        };
+        let lease = self.live_lease(lease)?;
+        if let Some(named) = self.names.get_mut(&name) {
+            if self.snapshot.browser.prepared_profiles()[named.id] == profile {
+                named.holders.insert(lease);
+                return Ok(named.id);
+            }
+            if !named.holders.is_empty() {
+                return Err(format!("profile {name} is registered with a different definition (release it first)"));
+            }
+            // Nobody holds the name (profiles derived from it keep the old
+            // profile): it moves to the new definition.
+            let old = named.id;
+            self.names.remove(&name);
+            self.retire_unused(old);
+        }
+        let id = self.boot(profile)?;
+        self.names.insert(name, Named { id, holders: HashSet::from([lease]) });
+        Ok(id)
+    }
+
+    /// The active profile with this definition, else a new one: a plain one
+    /// boots here, a derived one is forked off the template holding its base.
+    fn boot(&mut self, profile: PreparedProfile) -> Result<usize, String> {
+        let browser = &self.snapshot.browser;
+        if let Some(id) = browser
             .prepared_profiles()
             .iter()
             .enumerate()
-            .find_map(|(id, p)| (self.snapshot.browser.prepared_profile_active(id) && *p == profile).then_some(id))
+            .find_map(|(id, p)| (browser.prepared_profile_active(id) && *p == profile).then_some(id))
         {
             return Ok(id);
         }
@@ -521,13 +757,18 @@ impl TemplateProcess {
             }
         }
         self.snapshot.profiles.push(ProfileState::new(&profile));
-        self.snapshot.generation += 1;
-        // Before the reply: a spare forked earlier must not take a connection that wants this profile.
-        self.spares.clear();
+        if profile.base.is_none() {
+            // Before the reply: a spare forked earlier must not take a
+            // connection that wants this profile. A derived profile's page is
+            // not here: spares pass on connections for ids they do not know.
+            self.snapshot.generation += 1;
+            self.spares.clear();
+        }
         let id = self.snapshot.browser.add_prepared_profile(profile.clone());
         self.holders.resize(id + 1, None);
         let Some(base) = profile.base else {
             if !self.snapshot.browser.prepared_pages().iter().any(|(p, _)| *p == id) {
+                let _ = self.snapshot.browser.unregister_prepared_profile(id);
                 return Err(format!("cannot boot a page at {}", profile.url));
             }
             return Ok(id);
@@ -538,14 +779,107 @@ impl TemplateProcess {
         let derive = Derive { base, id, profile, socket };
         match self.holders[base].clone() {
             None => self.derives.push_back(derive),
+            // That template may not be listening yet: it is forked once its
+            // own base is ready, and only then can it take derives.
             Some(holder) => {
-                let Derive { base, id, profile, socket } = derive;
-                let mut stream = UnixStream::connect(&holder).map_err(|e| format!("template of {base}: {e}"))?;
-                send(&mut stream, &Message::Derive { base, id, profile, socket }, &[]).map_err(|e| e.to_string())?;
-                let _: (Registered, _) = recv(&mut stream).map_err(|e| e.to_string())?;
+                if !deliver_derive(&holder, &derive) {
+                    self.pending_derives.push_back((holder, derive, Instant::now()));
+                }
             }
         }
         Ok(id)
+    }
+
+    /// `lease` if it is open (its connection has not ended).
+    fn live_lease(&self, lease: Option<u64>) -> Result<u64, String> {
+        lease.filter(|l| self.leases.contains_key(l)).ok_or_else(|| "the connection's lease has ended".to_owned())
+    }
+
+    /// Holds the profile registered as `name`: its id and definition.
+    fn adopt(&mut self, name: &str, lease: u64) -> Result<(usize, PreparedProfile), String> {
+        if !self.is_root {
+            return Err("adoptions go to the root template".into());
+        }
+        let lease = self.live_lease(Some(lease))?;
+        let named = self.names.get_mut(name).ok_or_else(|| format!("no profile {name}"))?;
+        named.holders.insert(lease);
+        Ok((named.id, self.snapshot.browser.prepared_profiles()[named.id].clone()))
+    }
+
+    /// Drops `lease`'s hold on `name`; the profile is retired once nothing uses it.
+    fn release(&mut self, name: &str, lease: u64) -> Result<ProfileRelease, String> {
+        if !self.is_root {
+            return Err("releases go to the root template".into());
+        }
+        let Some(named) = self.names.get_mut(name) else { return Ok(ProfileRelease::default()) };
+        if !named.holders.remove(&lease) {
+            return Ok(ProfileRelease::default());
+        }
+        let id = named.id;
+        Ok(ProfileRelease { released: true, retired: self.retire_unused(id) })
+    }
+
+    /// Ends the holds of connections whose process has exited: their lease
+    /// stream reads EOF (however the process ended).
+    fn end_leases(&mut self) {
+        let ended: Vec<u64> = self.leases.iter().filter(|(_, s)| lease_ended(s)).map(|(l, _)| *l).collect();
+        for lease in ended {
+            self.leases.remove(&lease);
+            let held: Vec<String> =
+                self.names.iter().filter(|(_, n)| n.holders.contains(&lease)).map(|(name, _)| name.clone()).collect();
+            for name in held {
+                let _ = self.release(&name, lease);
+            }
+        }
+    }
+
+    /// Retires profile `id` once nothing uses it: no connection holds it by
+    /// name, it was not registered without one, and no profile derives from
+    /// it. Its base is checked next. Whether it was retired.
+    fn retire_unused(&mut self, id: usize) -> bool {
+        let browser = &self.snapshot.browser;
+        if !browser.prepared_profile_active(id) || self.pinned.contains(&id) {
+            return false;
+        }
+        if self.names.values().any(|n| n.id == id && !n.holders.is_empty()) {
+            return false;
+        }
+        if !matches!(browser.check_profile_retirement(id), Ok(true)) {
+            return false; // a profile still derives from it
+        }
+        let base = browser.prepared_profiles()[id].base;
+        match self.retire(id) {
+            Ok(true) => {
+                self.names.retain(|_, n| n.id != id);
+                if let Some(base) = base {
+                    self.retire_unused(base);
+                }
+                true
+            }
+            Ok(false) => false,
+            Err(e) => {
+                eprintln!("lightningpanda: template: retiring profile {id}: {e}");
+                false
+            }
+        }
+    }
+
+    /// The named profiles, by name.
+    fn named_profiles(&self) -> Vec<NamedProfile> {
+        let profiles = self.snapshot.browser.prepared_profiles();
+        let mut list: Vec<NamedProfile> = self
+            .names
+            .iter()
+            .map(|(name, n)| NamedProfile {
+                name: name.clone(),
+                profile_id: n.id,
+                holders: n.holders.len(),
+                url: profiles[n.id].url.clone(),
+                base: profiles[n.id].base,
+            })
+            .collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        list
     }
 
     fn reap_children(&mut self) {
@@ -558,6 +892,15 @@ impl TemplateProcess {
                 break;
             }
             self.derived_pids.retain(|_, child| *child != pid);
+            self.terminating.retain(|(child, _, _)| *child != pid);
+        }
+        let now = Instant::now();
+        for (pid, deadline, killed) in &mut self.terminating {
+            if !*killed && now >= *deadline {
+                // SAFETY: our child, not reaped yet (reaping removes it from this list).
+                unsafe { libc::kill(*pid, libc::SIGKILL) };
+                *killed = true;
+            }
         }
     }
 
@@ -565,9 +908,10 @@ impl TemplateProcess {
         let before = self.derives.len();
         self.derives.retain(|derive| derive.id != id);
         let mut removed = self.derives.len() != before;
-        if let Some(pid) = self.derived_pids.get(&id).copied() {
-            terminate_owned_child(pid)?;
-            self.derived_pids.remove(&id);
+        if let Some(pid) = self.derived_pids.remove(&id) {
+            // SAFETY: our child, not reaped yet (reaping removes it from derived_pids).
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+            self.terminating.push((pid, Instant::now() + Duration::from_millis(500), false));
             removed = true;
         }
         let path = PathBuf::from(format!("{}.{id}", self.root.display()));
@@ -576,27 +920,51 @@ impl TemplateProcess {
         Ok(removed)
     }
 
+    /// Retires profile `id` by id (`unregisterPreparedPage {profileId}`): a
+    /// profile some connection still holds by name stays until it is released.
     fn unregister(&mut self, id: usize) -> Result<bool, String> {
         if !self.is_root {
             return Err("profile retirement goes to the root template".into());
         }
+        self.pinned.remove(&id);
+        if self.names.values().any(|n| n.id == id) {
+            return Ok(self.retire_unused(id));
+        }
+        let base = self.snapshot.browser.prepared_profiles().get(id).and_then(|p| p.base);
+        let retired = self.retire(id)?;
+        if let (true, Some(base)) = (retired, base) {
+            self.retire_unused(base);
+        }
+        Ok(retired)
+    }
+
+    /// Retires profile `id` (its derived template too) unless profiles derive from it.
+    fn retire(&mut self, id: usize) -> Result<bool, String> {
         if !self.snapshot.browser.check_profile_retirement(id).map_err(|e| e.message)? {
             return Ok(false);
         }
-        if let Some(base) = self.snapshot.browser.prepared_profiles()[id].base {
-            match self.holders.get(base).cloned().flatten() {
-                Some(holder) => {
-                    retire_with(&holder, Message::RetireDerived { profile_id: id })?;
-                }
-                None => {
-                    self.retire_derived(id)?;
+        let derived = self.snapshot.browser.prepared_profiles()[id].base;
+        if let Some(base) = derived {
+            let pending = self.pending_derives.len();
+            self.pending_derives.retain(|(_, derive, _)| derive.id != id);
+            if self.pending_derives.len() == pending {
+                match self.holders.get(base).cloned().flatten() {
+                    // Not waiting for that template: it may be running a setup.
+                    Some(holder) => notify(&holder, &Message::RetireDerived { profile_id: id }),
+                    None => {
+                        self.retire_derived(id)?;
+                    }
                 }
             }
         }
         self.snapshot.browser.unregister_prepared_profile(id).map_err(|e| e.message)?;
         self.holders[id] = None;
-        self.snapshot.generation += 1;
-        self.spares.clear();
+        if derived.is_none() {
+            // Spares still have its page. (They pass connections for a derived
+            // profile on to this template, which refuses a retired one.)
+            self.snapshot.generation += 1;
+            self.spares.clear();
+        }
         Ok(true)
     }
 
@@ -626,10 +994,15 @@ impl TemplateProcess {
                 self.is_root = false;
                 self.holders.clear();
                 self.derived_pids.clear();
+                self.terminating.clear();
                 self.waiting.clear();
                 self.forwards.clear();
                 self.derives.clear();
                 self.spares.clear(); // the parent's: closing our copies lets them see the parent go
+                self.names.clear();
+                self.pinned.clear();
+                self.leases.clear(); // the root's ends: only the root watches them
+                self.pending_derives.clear();
                 self.watch_listener();
                 let profiles = &mut self.snapshot.profiles;
                 while profiles.len() <= derive.id {
@@ -748,6 +1121,9 @@ impl TemplateProcess {
         self.forwards.clear();
         self.spares.clear();
         self.derives.clear();
+        self.leases.clear();
+        self.pending_derives.clear();
+        self.terminating.clear();
         // `holders` stays: a spare of the root passes on connections for derived snapshots.
         unsafe { libc::close(self.listener.as_raw_fd()) };
     }
@@ -767,10 +1143,7 @@ impl TemplateProcess {
                 std::ptr::read(&self.snapshot.outbound),
             )
         };
-        let retire_root = root.clone();
-        browser.set_fork_child(Box::new(move |p: &PreparedProfile| register_with(&root, p)));
-        browser
-            .set_fork_unregister(Box::new(move |id| retire_with(&retire_root, Message::Unregister { profile_id: id })));
+        browser.set_fork_child(Box::new(RootRegistry { root, lease: RefCell::new(None) }));
         lp_webapi::release_after_fork();
         crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone());
         drop(finished);
@@ -970,59 +1343,6 @@ fn install_child_notifications() {
     }
 }
 
-fn terminate_owned_child(pid: libc::pid_t) -> Result<(), String> {
-    // Only a still-waitable child can be signalled; a reused unrelated PID is never touched.
-    let status = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
-    if status == pid {
-        return Ok(());
-    }
-    if status < 0 {
-        let error = std::io::Error::last_os_error();
-        return if error.raw_os_error() == Some(libc::ECHILD) { Ok(()) } else { Err(error.to_string()) };
-    }
-    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ESRCH) {
-            return Err(error.to_string());
-        }
-    }
-    let deadline = Instant::now() + Duration::from_millis(500);
-    loop {
-        let result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
-        if result == pid {
-            return Ok(());
-        }
-        if result < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ECHILD) {
-                return Ok(());
-            }
-            if error.raw_os_error() != Some(libc::EINTR) {
-                return Err(error.to_string());
-            }
-        }
-        if Instant::now() >= deadline {
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
-            loop {
-                let result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
-                if result == pid {
-                    return Ok(());
-                }
-                let error = std::io::Error::last_os_error();
-                if error.raw_os_error() == Some(libc::ECHILD) {
-                    return Ok(());
-                }
-                if error.raw_os_error() != Some(libc::EINTR) {
-                    return Err(error.to_string());
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-}
-
 fn retire_with(template: &Path, message: Message) -> Result<bool, String> {
     let mut stream = UnixStream::connect(template).map_err(|e| format!("template: {e}"))?;
     stream.set_read_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
@@ -1035,14 +1355,107 @@ fn retire_with(template: &Path, message: Message) -> Result<bool, String> {
     }
 }
 
-/// Sends a registration to the template; its profile id there.
-fn register_with(template: &Path, profile: &PreparedProfile) -> Result<usize, String> {
-    let mut stream = UnixStream::connect(template).map_err(|e| format!("template: {e}"))?;
-    send(&mut stream, &Message::Register { profile: profile.clone() }, &[]).map_err(|e| e.to_string())?;
-    let (reply, _): (Registered, _) = recv(&mut stream).map_err(|e| e.to_string())?;
-    match (reply.profile_id, reply.error) {
-        (Some(id), _) => Ok(id),
-        (None, e) => Err(e.unwrap_or_else(|| "registration failed".into())),
+/// Sends `derive` to the template holding its base, without waiting for a
+/// reply (that template may be running a setup); false when that template is
+/// not listening (yet).
+fn deliver_derive(holder: &Path, derive: &Derive) -> bool {
+    let Ok(mut stream) = UnixStream::connect(holder) else { return false };
+    let message = Message::Derive {
+        base: derive.base,
+        id: derive.id,
+        profile: derive.profile.clone(),
+        socket: derive.socket.clone(),
+    };
+    send(&mut stream, &message, &[]).is_ok()
+}
+
+/// Sends `message` to a template without waiting for its reply; a template
+/// that is gone has nothing left to do.
+fn notify(template: &Path, message: &Message) {
+    if let Ok(mut stream) = UnixStream::connect(template) {
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+        let _ = send(&mut stream, message, &[]);
+    }
+}
+
+/// Whether a lease stream reads EOF: the process that opened it has exited.
+fn lease_ended(stream: &UnixStream) -> bool {
+    if !readable(stream.as_raw_fd()) {
+        return false;
+    }
+    let mut bytes = [0u8; 16];
+    match (&*stream).read(&mut bytes) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted),
+    }
+}
+
+/// A forked connection's way to the root template's profile registry.
+struct RootRegistry {
+    root: PathBuf,
+    /// Opened with the first named profile and kept until this process
+    /// exits: the root holds this connection's profiles while it is open.
+    lease: RefCell<Option<(u64, UnixStream)>>,
+}
+
+impl RootRegistry {
+    fn request<R: for<'de> Deserialize<'de>>(&self, message: &Message) -> Result<R, String> {
+        let mut stream = UnixStream::connect(&self.root).map_err(|e| format!("template: {e}"))?;
+        send(&mut stream, message, &[]).map_err(|e| e.to_string())?;
+        recv(&mut stream).map(|(reply, _)| reply).map_err(|e| e.to_string())
+    }
+
+    fn lease(&self) -> Result<u64, String> {
+        if let Some((lease, _)) = &*self.lease.borrow() {
+            return Ok(*lease);
+        }
+        let mut stream = UnixStream::connect(&self.root).map_err(|e| format!("template: {e}"))?;
+        send(&mut stream, &Message::Lease, &[]).map_err(|e| e.to_string())?;
+        let (Leased { lease }, _) = recv(&mut stream).map_err(|e| e.to_string())?;
+        *self.lease.borrow_mut() = Some((lease, stream));
+        Ok(lease)
+    }
+}
+
+impl ForkProfiles for RootRegistry {
+    fn register(&self, profile: &PreparedProfile, name: Option<&str>) -> Result<usize, String> {
+        let lease = name.map(|_| self.lease()).transpose()?;
+        let message = Message::Register { profile: profile.clone(), name: name.map(str::to_owned), lease };
+        let reply: Registered = self.request(&message)?;
+        match (reply.profile_id, reply.error) {
+            (Some(id), _) => Ok(id),
+            (None, e) => Err(e.unwrap_or_else(|| "registration failed".into())),
+        }
+    }
+
+    fn adopt(&self, name: &str) -> Result<(usize, PreparedProfile), String> {
+        let lease = self.lease()?;
+        let reply: Adopted = self.request(&Message::Adopt { name: name.to_owned(), lease })?;
+        match (reply.profile_id, reply.profile, reply.error) {
+            (Some(id), Some(profile), _) => Ok((id, profile)),
+            (_, _, e) => Err(e.unwrap_or_else(|| "adoption failed".into())),
+        }
+    }
+
+    fn release(&self, name: &str) -> Result<ProfileRelease, String> {
+        let Some(lease) = self.lease.borrow().as_ref().map(|(lease, _)| *lease) else {
+            return Ok(ProfileRelease::default()); // this connection never held a name
+        };
+        let reply: Released = self.request(&Message::Release { name: name.to_owned(), lease })?;
+        match (reply.release, reply.error) {
+            (Some(release), _) => Ok(release),
+            (None, e) => Err(e.unwrap_or_else(|| "release failed".into())),
+        }
+    }
+
+    fn unregister(&self, id: usize) -> Result<bool, String> {
+        retire_with(&self.root, Message::Unregister { profile_id: id })
+    }
+
+    fn list(&self) -> Result<Vec<NamedProfile>, String> {
+        let reply: Listed = self.request(&Message::Profiles)?;
+        Ok(reply.profiles)
     }
 }
 
@@ -1242,10 +1655,16 @@ fn recv<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> std::io::Resul
 mod tests {
     use super::*;
 
+    /// Held while a test spawns a process, and while one relies on a socket
+    /// it closed being gone: macOS cannot create a socket close-on-exec
+    /// atomically, so a child spawned meanwhile may inherit (and keep) it.
+    static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn interrupted_framed_reads_preserve_message_and_descriptors() {
         const CHILD: &str = "LP_FORK_INTERRUPTED_RECV_TEST";
         if std::env::var_os(CHILD).is_none() {
+            let _spawn = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
@@ -1297,6 +1716,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn socket_file_names_carry_their_server_pid() {
+        assert_eq!(socket_server("lightningpanda-123.sock"), Some(123));
+        assert_eq!(socket_server("lightningpanda-123.sock.conn"), Some(123));
+        assert_eq!(socket_server("lightningpanda-123.sock.7"), Some(123));
+        assert_eq!(socket_server("lightningpanda-123.sock.7.conn"), Some(123));
+        assert_eq!(socket_server("lightningpanda-123.socket"), None);
+        assert_eq!(socket_server("lightningpanda-abc.sock"), None);
+        assert_eq!(socket_server("other-123.sock"), None);
+    }
+
+    #[test]
+    fn stale_sockets_of_dead_servers_are_removed() {
+        // A pid no process has (spawning one here would let it inherit other
+        // tests' sockets, which macOS cannot create close-on-exec atomically).
+        let dead = (2..99_999u32)
+            .rev()
+            .find(|&pid| {
+                let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+                !alive && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            })
+            .unwrap();
+        let dir = std::env::temp_dir();
+        let stale = dir.join(format!("lightningpanda-{dead}.sock.7.conn"));
+        let live = dir.join(format!("lightningpanda-{}.sock.99", std::process::id()));
+        let not_a_socket = dir.join(format!("lightningpanda-{dead}.sock.8"));
+        drop(UnixListener::bind(&stale).unwrap()); // the file stays
+        drop(UnixListener::bind(&live).unwrap());
+        std::fs::write(&not_a_socket, b"").unwrap();
+        remove_stale_sockets();
+        assert!(!stale.exists());
+        assert!(live.exists(), "a live server's socket is kept");
+        assert!(not_a_socket.exists(), "only sockets are removed");
+        remove_socket_files(std::process::id());
+        assert!(!live.exists());
+        std::fs::remove_file(not_a_socket).unwrap();
+    }
+
     struct SocketFiles(PathBuf);
 
     impl Drop for SocketFiles {
@@ -1306,7 +1763,9 @@ mod tests {
     }
 
     fn connection_fixture() -> (SocketFiles, PathBuf, UnixListener, std::net::TcpStream) {
-        let suffix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        // Tests run in parallel, and the clock can read the same for two of them.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let suffix = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = PathBuf::from(format!("/tmp/lp-fork-{}-{suffix}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         let template = dir.join("root");
@@ -1321,6 +1780,7 @@ mod tests {
 
     #[test]
     fn refused_derived_socket_forwards_connection_to_root() {
+        let _spawn = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
         let (_files, template, root, socket) = connection_fixture();
         let derived = conn_socket(&PathBuf::from(format!("{}.7", template.display())));
         drop(UnixListener::bind(&derived).unwrap());

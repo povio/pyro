@@ -1070,6 +1070,12 @@ enum At {
     Element,
     /// The last point.
     Here,
+    /// A press's release: the last point while the pressed element is still
+    /// under it. When page work that ran between the press and the release
+    /// (a list above it finished loading) moved the element away, the
+    /// element's new center instead, so the click stays on what was pressed;
+    /// when something now covers it, the last point.
+    Release,
     Point(f64, f64),
 }
 
@@ -1161,6 +1167,19 @@ impl Sequence {
                         }
                     }
                     At::Here => {}
+                    At::Release => {
+                        let connected = page.dom.borrow().is_connected(self.id).unwrap_or(false);
+                        // Hit testing lays the page out: no DOM borrow across it.
+                        let hit =
+                            if connected { lp_webapi::layout_api::hit_test(&page, self.m.x, self.m.y) } else { None };
+                        let moved = connected && !hit.is_some_and(|hit| contains(&page.dom.borrow(), self.id, hit));
+                        if moved {
+                            if let Ok((x, y)) = pointer_target(&page, self.id, self.opts) {
+                                self.m.x = x;
+                                self.m.y = y;
+                            }
+                        }
+                    }
                     At::Point(x, y) => {
                         self.m.x = x;
                         self.m.y = y;
@@ -3224,9 +3243,14 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer, opts: PointerOpts) -> 
     };
     // Hover-dependent layout (a tooltip the move hid, a menu it opened) can
     // shift the element between events: a move or press goes where it is
-    // then; a release or wheel where the pointer is.
+    // then; a wheel where the pointer is, and a release there too unless the
+    // pressed element moved away from under it (see `At::Release`).
     let events = pointer_events(what, opts.button).into_iter().map(|(kind, button, count)| {
-        let at = if matches!(kind, MouseKind::Moved | MouseKind::Pressed) { At::Element } else { At::Here };
+        let at = match kind {
+            MouseKind::Moved | MouseKind::Pressed => At::Element,
+            MouseKind::Released => At::Release,
+            _ => At::Here,
+        };
         let buttons = if kind == MouseKind::Pressed { buttons_mask(button) } else { 0 };
         Input::Mouse { kind, button, buttons, count, at }
     });

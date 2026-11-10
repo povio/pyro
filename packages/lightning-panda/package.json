@@ -33,6 +33,11 @@
       "types": "./dist/playwright/index.d.ts",
       "bun": "./src/playwright/index.ts",
       "default": "./dist/playwright/index.js"
+    },
+    "./e2e": {
+      "types": "./dist/e2e/index.d.ts",
+      "bun": "./src/e2e/index.ts",
+      "default": "./dist/e2e/index.js"
     }
   },
   "files": [
@@ -45,7 +50,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "bun build src/index.ts src/cli.ts src/playwright/test.ts src/playwright/index.ts src/playwright/cli.ts --root src --outdir dist --target node --format esm --external bun:test --splitting && tsc -p tsconfig.json",
+    "build": "bun build src/index.ts src/cli.ts src/playwright/test.ts src/playwright/index.ts src/playwright/cli.ts src/e2e/index.ts src/e2e/cli.ts --root src --outdir dist --target node --format esm --external bun:test --external @povio/lightning-panda --splitting && tsc -p tsconfig.json",
     "prepack": "bun run build && node ../../scripts/npm/prepare-package.mjs",
     "test:package": "bun test test/binary.test.ts && node --test ../../scripts/npm/release.test.mjs",
     "test": "bun test ./test",
