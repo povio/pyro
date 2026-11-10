@@ -76,6 +76,34 @@ test.concurrent('closes a position', async () => {
   open: an open page stops its connection from refilling).
 - One profile per kind of user (`as`). Several profiles are fine.
 
+### A whole suite in one process: `lightningpanda e2e`
+
+Prefer this over `bun test --parallel` for large suites: specs import
+`describe`/`test`/hooks/`expect` from `@povio/lightning-panda/e2e` instead of
+`bun:test`, and the run uses one browser and one case queue across files.
+
+```ts
+import { beforeAll, browser, defer, describe, test } from '@povio/lightning-panda/e2e';
+describe('feature', () => {
+  beforeAll(async () => {
+    const lp = await browser();
+    await lp.profile('feature', { base: 'app', url, setup });
+    defer(() => lp.releaseProfile('feature')); // retire it when the describe is done
+  });
+  test('does it', async () => {
+    await using page = await (await browser()).page({ as: 'feature' });
+    await page.run(steps);
+  });
+});
+```
+
+- Run: `lightningpanda e2e <dirs|files|globs> --setup setup.ts -j 16 --timeout 30000`.
+- `setup.ts` exports `setup()` (servers, seed; result via `setupResult()`),
+  `browser(result)` (`{ args: ['--static', ...] }`) and `teardown(result)`.
+- Register a profile shared by many files once (memoize the promise), and
+  per-describe profiles in that describe's `beforeAll` with `defer` to release.
+- Module state is shared by every file (one process): no per-file globals.
+
 ### One fork-mode server for every worker
 
 With `lightningpanda serve --fork`, start one server for the whole run and

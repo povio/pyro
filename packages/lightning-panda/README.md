@@ -92,6 +92,65 @@ test.concurrent('closes a position', async () => {
   Baselines come from lightningpanda's renderer: Chromium screenshots do not
   match them pixel for pixel.
 
+## One process for the whole suite: `lightningpanda e2e`
+
+`bun test` runs one file's tests after another's in a process, so overlapping
+cases of different files takes worker processes, each with its own browser
+and profiles. `lightningpanda e2e` runs every spec file in one process
+instead: tests of all files share one queue (up to `--concurrency` at a time)
+and one fork-mode browser, so every profile boots once and every case forks.
+
+```ts
+// positions.test.ts
+import { beforeAll, browser, defer, describe, expect, test } from '@povio/lightning-panda/e2e';
+import { button, check, text } from '@povio/lightning-panda';
+
+describe('positions', () => {
+  beforeAll(async () => {
+    const lp = await browser();                        // the run's browser
+    await lp.profile('positions', { url, setup });     // once, for this describe
+    defer(() => lp.releaseProfile('positions'));       // after its last test
+  });
+  test('closes a position', async () => {
+    await using page = await (await browser()).page({ as: 'positions' });
+    await page.run([button('Settings').click(), check(text('Closed')).visible()]);
+  }, 30_000);
+});
+```
+
+```sh
+lightningpanda e2e apps/fe/e2e --setup e2e/setup.ts --concurrency 16 --timeout 30000 \
+  --shard 1/4 --timings e2e/timings.json --junit junit.xml
+```
+
+- `describe`, `test` (`.serial`, `.skip`, `.todo`, `.only`, `.if`, `.skipIf`),
+  `beforeAll`, `afterAll`, `beforeEach`, `afterEach` and `setDefaultTimeout`
+  take `bun:test`'s arguments; `expect` is Bun's. A describe's `beforeAll`
+  runs before its first test and `afterAll` after its last; a `test.serial`
+  runs alone in its describe, after the tests declared before it and before
+  those after it (`describe.serial`: all of them).
+- `browser()` is the run's `lightningpanda serve --fork`, launched on first
+  use and closed when the run ends, also on SIGINT/SIGTERM. Pages a test
+  opens through it are closed when the test ends, a timed-out test included.
+- `defer(fn)` runs `fn` when what runs now is done: after the test, or after
+  the describe (or file) whose `beforeAll` called it.
+- `--setup <module>`: its `setup()` runs before any spec loads (start servers,
+  seed data); specs read the result with `setupResult()`; `browser(result)`
+  returns the browser's options (`args`, `bin`); `teardown(result)` runs at
+  the end, also when the run is interrupted. A default export with those
+  names works too (`satisfies Setup<T>`).
+- `-j`/`--concurrency` caps the tests running at once across all files,
+  `--max-concurrency` those of one file (as in `bun test`), so
+  `-j 8 --max-concurrency 1` runs like `bun test --parallel=8
+  --max-concurrency=1`, with one browser instead of eight.
+- Paths are files, directories (`*.test.*`, `*.spec.*`), globs or path
+  filters. `-t` filters by name, `--only` runs `.only` tests, `--bail [n]`
+  stops after n failures, `-u` writes screenshot baselines.
+- `--shard i/n` splits the files by their durations in `--timings`
+  (`{"version": 1, "files": {"<path>": ms}}`), longest first onto the least
+  loaded shard; `--update-timings` records this run's. `--junit <file>` (or
+  `--reporter junit --reporter-outfile <file>`) writes a JUnit report.
+
 ## Playwright tests, unchanged
 
 Playwright tests run on Lightningpanda by replacing the imports of
