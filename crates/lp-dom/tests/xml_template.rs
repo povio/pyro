@@ -81,13 +81,24 @@ fn cloning_an_xhtml_template_copies_its_contents() {
 
 #[test]
 fn navigated_xhtml_scripts_inside_template_contents_do_not_run() {
-    // `parse_into` (a navigation) returns the runnable HTML `<script>`
+    // The parser of a navigation stops at the runnable HTML `<script>`
     // elements; those in template contents belong to the inert document and
     // are not among them.
-    let mut dom = Dom::new();
-    let doc = dom.create_document(lp_dom::DocumentKind::Html, "https://example.test/page.xhtml");
-    let source = format!("<html xmlns='{XHTML}'><body><template><script>1</script></template><script>2</script></body></html>");
-    let scripts = xml::parse_into(&mut dom, doc, source.as_bytes(), None, "application/xhtml+xml");
+    use lp_dom::parse::{DocumentParser, ParseStep};
+    let dom = std::rc::Rc::new(std::cell::RefCell::new(Dom::new()));
+    let doc = dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, "https://example.test/page.xhtml");
+    let source =
+        format!("<html xmlns='{XHTML}'><body><template><script>1</script></template><script>2</script></body></html>");
+    let mut parser = DocumentParser::new_xml(dom.clone(), doc, "application/xhtml+xml").unwrap();
+    assert_eq!(parser.feed_bytes(source.as_bytes()), ParseStep::NeedInput);
+    let mut scripts = Vec::new();
+    let mut step = parser.finish_bytes();
+    while let ParseStep::Script(script) = step {
+        scripts.push(script);
+        step = parser.resume();
+    }
+    parser.end();
+    let dom = dom.borrow();
     let html = dom.document_element(doc).unwrap().unwrap();
     let body = dom.first_child(html).unwrap().unwrap();
     assert_eq!(local_names(&dom, body), ["template", "script"]);

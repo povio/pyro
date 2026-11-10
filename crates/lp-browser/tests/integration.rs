@@ -56,6 +56,7 @@ mod subresources;
 mod user_agent;
 mod viewport;
 mod web_animations;
+mod xml_script_order;
 
 /// Loads nothing: the pages' sub-resources come from the loader.
 struct NoFetch;

@@ -344,51 +344,150 @@ fn choose_encoding(bytes: &[u8], charset: Option<&str>) -> &'static encoding_rs:
         .unwrap_or(encoding_rs::UTF_8)
 }
 
-/// Parses a navigated XML resource into `document` (an empty document the
-/// browsing context created): its tree, or a `parsererror` element on
-/// malformed input. Returns the document's HTML `<script>` elements in tree
-/// order, which may run (XHTML).
-pub fn parse_into(
-    dom: &mut Dom,
-    document: NodeId,
-    bytes: &[u8],
-    charset: Option<&str>,
-    content_type: &str,
-) -> Vec<NodeId> {
-    let encoding = choose_encoding(bytes, charset);
-    let (source, _, _) = encoding.decode(bytes);
-    let _ = dom.set_document_kind(document, DocumentKind::Xml, content_type, encoding.name());
-    match prepare_with(&source, true) {
-        Ok(nodes) => {
-            attach(dom, document, nodes);
-            run_insertion_steps(dom, document);
-        }
-        Err(message) => {
-            let error =
-                dom.create_element_ns(document, Some(PARSERERROR), "parsererror").expect("fixed parsererror name");
-            let text = dom.create_text(document, message).expect("live document");
-            dom.append_child(document, error).expect("new document");
-            dom.append_child(error, text).expect("new element");
-        }
-    }
-    dom.descendants(document)
-        .map(|d| d.filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && &*e.name.local == "script")).collect())
-        .unwrap_or_default()
+/// An element the tree builder of a navigated document has open.
+struct Open {
+    /// Its index among the prepared nodes.
+    index: usize,
+    node: u32,
+    /// Where its children are linked (`create`).
+    target: u32,
+    /// An HTML `<script>` of the document: the builder stops at its end tag.
+    script: bool,
+    /// The parser holds a reference to it (it was open at a script).
+    pinned: bool,
 }
 
-/// What the HTML parser does node by node, for a navigated XML document once
-/// its whole tree is attached: `on*` attributes are queued for compilation
-/// and the insertion steps run, so iframes get their browsing contexts and
-/// style sheets and images load. (Scripts are the caller's: `parse_into`.)
-fn run_insertion_steps(dom: &mut Dom, document: NodeId) {
-    let elements: Vec<u32> = dom.descendants(document).map(|d| d.map(|n| n.index()).collect()).unwrap_or_default();
-    for i in elements {
-        dom.note_inline_handlers(i);
+/// The tree builder of a navigated XML resource (XHTML, SVG, generic XML).
+///
+/// The whole resource is validated first: a malformed one becomes a
+/// `parsererror` element and runs no script. Its nodes are then attached in
+/// document order up to the end tag of each HTML `<script>` of the document,
+/// where the builder stops until that script has run (HTML "parsing XML
+/// documents"). So a script does not find the content after it, and nothing
+/// after it loads or fires events before it has run: an `<iframe onload>`
+/// further down cannot call a function the scripts above have yet to define.
+pub(crate) struct Load {
+    document: NodeId,
+    /// The nodes not attached yet, in document order.
+    nodes: std::iter::Peekable<std::vec::IntoIter<Prepared>>,
+    /// How many are attached: the next one's index among the prepared nodes.
+    attached: usize,
+    /// The open elements, outermost first.
+    open: Vec<Open>,
+    /// What is attached has had its insertion steps: from the first stop at
+    /// a script (or the end) on. Nothing can observe the tree before that,
+    /// so it is linked as `attach` links it and the steps run once over all
+    /// of it. Afterwards scripts may have run, and each node is inserted as
+    /// a script would insert it.
+    live: bool,
+}
+
+impl Load {
+    /// Decodes and validates the resource for `document`, an empty document
+    /// the browsing context created.
+    pub(crate) fn new(
+        dom: &mut Dom,
+        document: NodeId,
+        bytes: &[u8],
+        charset: Option<&str>,
+        content_type: &str,
+    ) -> Self {
+        let encoding = choose_encoding(bytes, charset);
+        let (source, _, _) = encoding.decode(bytes);
+        let _ = dom.set_document_kind(document, DocumentKind::Xml, content_type, encoding.name());
+        let (nodes, live) = match prepare_with(&source, true) {
+            Ok(nodes) => (nodes, false),
+            Err(message) => {
+                parser_error(dom, document, message);
+                (Vec::new(), true)
+            }
+        };
+        Load { document, nodes: nodes.into_iter().peekable(), attached: 0, open: Vec::new(), live }
     }
-    let top: Vec<u32> = dom.child_idx_iter(document.index()).collect();
-    for node in top {
-        dom.resources_after_insert(node);
+
+    /// Attaches the nodes up to the end tag of the next script and returns
+    /// that script, for the caller to prepare before the next call; `None`
+    /// once the rest is attached. The elements open at a script get a
+    /// reference each, added to `pins` for the caller to release: the script
+    /// may remove them, and the nodes that follow still go into them.
+    pub(crate) fn step(&mut self, dom: &mut Dom, pins: &mut Vec<NodeId>) -> Option<NodeId> {
+        let document = self.document.index();
+        loop {
+            // End tags: of every open element the next node is not a child of.
+            let parent = self.nodes.peek().map(|node| node.parent);
+            while let Some(open) = self.open.pop() {
+                if parent == Some(Some(open.index)) {
+                    self.open.push(open);
+                    break;
+                }
+                if !open.script {
+                    continue;
+                }
+                self.go_live(dom);
+                for held in self.open.iter_mut().filter(|held| !held.pinned) {
+                    held.pinned = pin(dom, held.node, pins);
+                }
+                if !open.pinned {
+                    pin(dom, open.node, pins);
+                }
+                return Some(dom.id_of(open.node));
+            }
+            let Some(node) = self.nodes.next() else { break };
+            let index = self.attached;
+            self.attached += 1;
+            // The parent as it is now: a script may have moved it to another
+            // document, whose nodes its children then are.
+            let (parent, owner) = match self.open.last() {
+                Some(open) => (open.target, dom.n(open.target).owner_doc),
+                None => (document, document),
+            };
+            let (is_element, script) = match &node.kind {
+                NodeKind::Element(e) => (true, owner == document && e.is_html() && &*e.name.local == "script"),
+                _ => (false, false),
+            };
+            let (id, target) = create(dom, node.kind, owner);
+            if self.live {
+                dom.note_inline_handlers(id);
+                dom.append_parsed(id, parent);
+            } else {
+                dom.link_raw(id, parent, NIL);
+            }
+            if is_element {
+                self.open.push(Open { index, node: id, target, script, pinned: false });
+            }
+        }
+        self.go_live(dom);
+        None
     }
+
+    /// What the HTML parser does node by node, for the part of the document
+    /// attached before any of its scripts ran: `on*` attributes are queued
+    /// for compilation and the insertion steps run, so iframes get their
+    /// browsing contexts and style sheets and images load.
+    fn go_live(&mut self, dom: &mut Dom) {
+        if std::mem::replace(&mut self.live, true) {
+            return;
+        }
+        let elements: Vec<u32> =
+            dom.descendants(self.document).map(|d| d.map(|n| n.index()).collect()).unwrap_or_default();
+        for i in elements {
+            dom.note_inline_handlers(i);
+        }
+        let top: Vec<u32> = dom.child_idx_iter(self.document.index()).collect();
+        for node in top {
+            dom.resources_after_insert(node);
+        }
+    }
+}
+
+/// References `node` for a parser: true when `pins` got it.
+fn pin(dom: &mut Dom, node: u32, pins: &mut Vec<NodeId>) -> bool {
+    let id = dom.id_of(node);
+    let pinned = dom.add_ref(id).is_ok();
+    if pinned {
+        pins.push(id);
+    }
+    pinned
 }
 
 fn new_document(dom: &mut Dom, url: &str, content_type: &str) -> NodeId {
@@ -399,34 +498,48 @@ fn new_document(dom: &mut Dom, url: &str, content_type: &str) -> NodeId {
     document
 }
 
+/// Allocates a prepared node for the document `owner`, unlinked. Returns it
+/// and where its children are linked: those of an XHTML `<template>` go into
+/// its template contents, a fragment in the inert document (HTML "parsing
+/// XHTML documents"); templates in other namespaces keep their children.
+fn create(dom: &mut Dom, kind: NodeKind, owner: u32) -> (u32, u32) {
+    let is_template = match &kind {
+        NodeKind::Element(e) if e.is_html() => {
+            // `<base>` elements make `document_base_url` look for one.
+            dom.base_seen |= &*e.name.local == "base";
+            &*e.name.local == "template"
+        }
+        _ => false,
+    };
+    let id = dom.alloc_raw(kind, owner);
+    if !is_template {
+        return (id, id);
+    }
+    let inert = dom.inert_doc_for_pub(owner);
+    let frag = dom.alloc_raw(NodeKind::Fragment(FragmentData::new(id, None, 0)), inert);
+    dom.n_mut(id).element_mut().expect("template element").template_contents = frag;
+    (id, frag)
+}
+
 fn attach(dom: &mut Dom, document: NodeId, nodes: Vec<Prepared>) {
     let owner = document.index();
     // Per prepared node: where its children are linked and which document
-    // owns them. The children of an XHTML `<template>` go into its template
-    // contents, a fragment in the inert document (HTML "parsing XHTML
-    // documents"); templates in other namespaces keep their children.
+    // owns them.
     let mut targets: Vec<(u32, u32)> = Vec::with_capacity(nodes.len());
     for node in nodes {
-        let is_template = match &node.kind {
-            NodeKind::Element(e) if e.is_html() => {
-                // `<base>` elements make `document_base_url` look for one.
-                dom.base_seen |= &*e.name.local == "base";
-                &*e.name.local == "template"
-            }
-            _ => false,
-        };
         let (parent, child_owner) = node.parent.map_or((owner, owner), |index| targets[index]);
-        let id = dom.alloc_raw(node.kind, child_owner);
+        let (id, target) = create(dom, node.kind, child_owner);
         dom.link_raw(id, parent, NIL);
-        if is_template {
-            let inert = dom.inert_doc_for_pub(child_owner);
-            let frag = dom.alloc_raw(NodeKind::Fragment(FragmentData::new(id, None, 0)), inert);
-            dom.n_mut(id).element_mut().expect("template element").template_contents = frag;
-            targets.push((frag, inert));
-        } else {
-            targets.push((id, child_owner));
-        }
+        targets.push((target, dom.n(target).owner_doc));
     }
+}
+
+/// The document of a resource that is not well-formed XML.
+fn parser_error(dom: &mut Dom, document: NodeId, message: &str) {
+    let error = dom.create_element_ns(document, Some(PARSERERROR), "parsererror").expect("fixed parsererror name");
+    let text = dom.create_text(document, message).expect("live document");
+    dom.append_child(document, error).expect("new document");
+    dom.append_child(error, text).expect("new element");
 }
 
 /// Returns an inert XML document, or a parsererror document on malformed input
@@ -437,13 +550,7 @@ pub fn parse_document(dom: &mut Dom, url: &str, source: &str, content_type: &str
     let document = new_document(dom, url, content_type);
     match prepared {
         Ok(nodes) => attach(dom, document, nodes),
-        Err(message) => {
-            let error =
-                dom.create_element_ns(document, Some(PARSERERROR), "parsererror").expect("fixed parsererror name");
-            let text = dom.create_text(document, message).expect("live document");
-            dom.append_child(document, error).expect("new document");
-            dom.append_child(error, text).expect("new element");
-        }
+        Err(message) => parser_error(dom, document, message),
     }
     document
 }

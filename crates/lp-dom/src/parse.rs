@@ -534,17 +534,18 @@ pub struct DocumentParser {
     /// input consumed meanwhile is only measurable then, as written input
     /// is consumed before it.
     written_low_mark: Option<isize>,
-    /// An XML document: the response is parsed whole at end of input, then
-    /// its scripts are yielded one by one.
+    /// An XML document: the response is validated whole at end of input,
+    /// then its tree is built up to each script in turn (`xml::Load`).
     xml: Option<XmlLoad>,
 }
 
 /// State of an XML (XHTML, SVG, generic XML) document load.
 struct XmlLoad {
     content_type: String,
+    /// The response so far, until the end of input.
     bytes: Vec<u8>,
-    parsed: bool,
-    scripts: std::collections::VecDeque<NodeId>,
+    /// The tree builder, from the end of input on.
+    load: Option<crate::xml::Load>,
 }
 
 /// Whether a navigation response of this MIME type is an XML document.
@@ -621,16 +622,13 @@ impl DocumentParser {
         })
     }
 
-    /// An XML document (`is_xml_mime`): parsed whole once the response has
-    /// arrived; XHTML scripts run in tree order afterwards.
+    /// An XML document (`is_xml_mime`): validated whole once the response
+    /// has arrived, then built up to each XHTML script's end tag in turn
+    /// (`ParseStep::Script`, as for HTML), so content after a script is not
+    /// in the document until the script has run.
     pub fn new_xml(dom: DomRef, doc: NodeId, content_type: &str) -> DomResult<Self> {
         let mut parser = Self::new(dom, doc, false)?;
-        parser.xml = Some(XmlLoad {
-            content_type: content_type.to_owned(),
-            bytes: Vec::new(),
-            parsed: false,
-            scripts: Default::default(),
-        });
+        parser.xml = Some(XmlLoad { content_type: content_type.to_owned(), bytes: Vec::new(), load: None });
         Ok(parser)
     }
 
@@ -663,7 +661,7 @@ impl DocumentParser {
     /// locale-dependent default is replaced by UTF-8 — documented deviation).
     pub fn feed_bytes(&mut self, bytes: &[u8]) -> ParseStep {
         if let Some(xml) = &mut self.xml {
-            if !xml.parsed {
+            if xml.load.is_none() {
                 xml.bytes.extend_from_slice(bytes);
             }
             return ParseStep::NeedInput;
@@ -708,13 +706,12 @@ impl DocumentParser {
     /// `end`; resume on `Script` as usual).
     pub fn finish_bytes(&mut self) -> ParseStep {
         if let Some(xml) = &mut self.xml {
-            if !xml.parsed {
-                xml.parsed = true;
+            if xml.load.is_none() && !self.ended {
                 let bytes = std::mem::take(&mut xml.bytes);
                 let charset = self.transport_charset.map(|e| e.name());
-                let scripts =
-                    crate::xml::parse_into(&mut self.dom.borrow_mut(), self.doc, &bytes, charset, &xml.content_type);
-                xml.scripts.extend(scripts);
+                let load =
+                    crate::xml::Load::new(&mut self.dom.borrow_mut(), self.doc, &bytes, charset, &xml.content_type);
+                xml.load = Some(load);
             }
             return self.resume();
         }
@@ -852,10 +849,15 @@ impl DocumentParser {
             return ParseStep::NeedInput;
         }
         if let Some(xml) = &mut self.xml {
-            return match xml.scripts.pop_front() {
-                Some(script) => ParseStep::Script(script),
-                None => ParseStep::NeedInput,
-            };
+            let Some(load) = &mut xml.load else { return ParseStep::NeedInput };
+            let script = load.step(&mut self.dom.borrow_mut(), &mut self.tok.sink.sink.pins.borrow_mut());
+            // What the insertions left for the document's custom elements
+            // runs before the script does (no DOM borrow is held here).
+            let hooks = self.dom.borrow().parser_custom_work(self.doc.index());
+            if let Some(hooks) = hooks {
+                hooks.run_reactions();
+            }
+            return script.map_or(ParseStep::NeedInput, ParseStep::Script);
         }
         loop {
             match self.tok.feed(&self.input) {
@@ -873,7 +875,12 @@ impl DocumentParser {
     pub fn end(&mut self) {
         if !self.ended {
             self.ended = true;
-            self.tok.end();
+            // The HTML tokenizer of an XML document was fed nothing: its end
+            // of file would append `<html><head><body>` to the document and
+            // put it in quirks mode.
+            if self.xml.is_none() {
+                self.tok.end();
+            }
             self.tok.sink.sink.release_pins();
         }
     }
