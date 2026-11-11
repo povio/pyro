@@ -75,6 +75,35 @@ int lp_jsc_import_maps_available(void) { return 0; }
 // one, and the embedder rejects JSON and CSS responses to those.
 int lp_jsc_typed_modules_available(void) { return 0; }
 
+// Precompiled modules are the source-built JavaScriptCore's (patch 0027).
+struct lp_module_precompile_stats {
+    size_t modules;
+    size_t functions;
+    size_t characters;
+    size_t record_hits;
+    size_t record_misses;
+    size_t code_hits;
+    size_t function_compiles;
+};
+
+int lp_jsc_module_precompile_available(void) { return 0; }
+
+int lp_jsc_module_precompile(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *url, size_t url_len,
+                             int functions) {
+    (void)ctx;
+    (void)src;
+    (void)src_len;
+    (void)url;
+    (void)url_len;
+    (void)functions;
+    return 0;
+}
+
+void lp_jsc_module_precompile_stats(JSContextGroupRef group, struct lp_module_precompile_stats *stats) {
+    (void)group;
+    *stats = (struct lp_module_precompile_stats){0};
+}
+
 int lp_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *base, size_t base_len,
                           JSStringRef *messages) {
     (void)ctx;

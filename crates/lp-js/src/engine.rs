@@ -10,6 +10,7 @@ use std::os::raw::c_void;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+pub use sys::modules::ModulePrecompileStats;
 
 /// Optional engine features, detected at runtime. Missing private SPI never
 /// crashes: the dependent operation reports `JsError::Unsupported`.
@@ -1073,6 +1074,48 @@ impl Engine {
         // SAFETY: the group is alive and used by this thread only; the string
         // is NUL-terminated and read during the call.
         Ok(unsafe { set(self.inner.group, id.as_ref().map_or(std::ptr::null(), |id| id.as_ptr())) })
+    }
+
+    /// Whether this JavaScriptCore precompiles modules (patch 0027).
+    pub fn has_module_precompile() -> bool {
+        // SAFETY: plain capability probe without arguments.
+        unsafe { sys::modules::lp_jsc_module_precompile_available() == 1 }
+    }
+
+    /// Parses and compiles, ahead of any load, the module that a fetch of
+    /// `url` answered with `source` gives a realm ([`crate::ModuleRequest::resolve`]),
+    /// with the code of every function in it when `functions`, and keeps it
+    /// for the engine's lifetime. A realm of this engine that later loads the
+    /// same text from `url`, here or in a process forked from this one,
+    /// parses and compiles nothing for it; a load of another text is not
+    /// affected. Nothing of the module runs. `false`, keeping nothing, for a
+    /// source that is no module (a syntax error), and without the patched
+    /// JavaScriptCore.
+    pub fn precompile_module(&self, source: &str, url: &str, functions: bool) -> bool {
+        if !Self::has_module_precompile() {
+            return false;
+        }
+        let text = crate::realm::module_source_with_url(source, url);
+        // SAFETY: the root context is alive and used by this thread only; the
+        // slices outlive the call, which copies them.
+        unsafe {
+            sys::modules::lp_jsc_module_precompile(
+                self.inner.root,
+                text.as_ptr().cast(),
+                text.len(),
+                url.as_ptr().cast(),
+                url.len(),
+                std::os::raw::c_int::from(functions),
+            ) == 1
+        }
+    }
+
+    /// What [`Engine::precompile_module`] keeps and how loads have used it.
+    pub fn module_precompile_stats(&self) -> ModulePrecompileStats {
+        let mut stats = ModulePrecompileStats::default();
+        // SAFETY: the group is alive and used by this thread only.
+        unsafe { sys::modules::lp_jsc_module_precompile_stats(self.inner.group, &mut stats) };
+        stats
     }
 
     /// Whether this JavaScriptCore has block coverage (patch 0019).

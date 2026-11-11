@@ -62,6 +62,64 @@ fn spares_wanted() -> usize {
     std::env::var("LIGHTNINGPANDA_FORK_SPARES").ok().and_then(|v| v.parse().ok()).unwrap_or(2)
 }
 
+/// What the root template does with the module scripts of the static roots
+/// before its first page (`LIGHTNINGPANDA_FORK_PRECOMPILE`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Precompile {
+    /// `off`: nothing; every process parses and compiles what it loads.
+    Off,
+    /// `modules` (the default): each module is parsed and its top-level code
+    /// compiled; its functions are compiled at their first call, in the
+    /// process that calls.
+    Modules,
+    /// `functions`: the code of every function too. Measured on the ToS suite
+    /// it saves a page 2% more instructions than `modules` and costs it a
+    /// third more page faults and 50 MB: a page calls a few hundred of the
+    /// 70,000 functions, each on a page of memory it then touches.
+    Functions,
+}
+
+fn precompile_mode() -> Precompile {
+    match std::env::var("LIGHTNINGPANDA_FORK_PRECOMPILE").as_deref() {
+        Ok("off" | "0") => Precompile::Off,
+        Ok("functions") => Precompile::Functions,
+        _ => Precompile::Modules,
+    }
+}
+
+/// Source bytes of module scripts the root template precompiles at most.
+const PRECOMPILE_BUDGET: usize = 64 * 1024 * 1024;
+
+/// Parses and compiles the static roots' module scripts in the root
+/// template's VM before its first page (`Engine::precompile_module`). The
+/// template and every process forked from it, at any depth, then load those
+/// modules without parsing or compiling them: the code is part of the heap
+/// they share. A file that does not parse as a module is skipped.
+fn precompile_static_modules(engine: &lp_js::Engine, files: &lp_net::StaticFiles) {
+    let mode = precompile_mode();
+    if mode == Precompile::Off || files.is_empty() || !lp_js::Engine::has_module_precompile() {
+        return;
+    }
+    let started = Instant::now();
+    let (mut tried, mut kept, mut bytes) = (0usize, 0usize, 0usize);
+    for (url, file) in files.memory_files() {
+        // `.cjs` has the JavaScript MIME type and is never a module.
+        let module = file.content_type.starts_with("text/javascript")
+            && file.path.extension().is_none_or(|e| !e.eq_ignore_ascii_case("cjs"));
+        if !module || bytes + file.body.len() > PRECOMPILE_BUDGET {
+            continue;
+        }
+        tried += 1;
+        // The text a page's fetch of the file hands to the engine.
+        let source = lp_webapi::module_script::utf8_decode(&file.body);
+        if engine.precompile_module(&source, url.as_str(), mode == Precompile::Functions) {
+            kept += 1;
+            bytes += file.body.len();
+        }
+    }
+    crate::fork_stats::precompiled(tried, kept, bytes, engine.module_precompile_stats().functions, started.elapsed());
+}
+
 /// Whether a forked connection's process leaves its teardown to the exit
 /// (`LIGHTNINGPANDA_FORK_FAST_EXIT=0` tears down as a shared process does).
 fn fast_exit() -> bool {
@@ -506,6 +564,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     }
 
     let mut thread = EngineHost::prepare_thread_with(&profile).map_err(|e| e.message)?;
+    precompile_static_modules(&thread.browser.engine, &profile.net.static_files);
     let profiles: Vec<PreparedProfile> = profile.prepared.iter().map(one_page).collect();
     let pages = EngineHost::preboot(&mut thread, &profiles);
     let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
@@ -1240,6 +1299,9 @@ fn fork_process(snapshot: &Snapshot, kind: &str) -> Forked {
         }
     }
     engine.did_fork(pid == 0);
+    if pid == 0 && crate::fork_stats::init() {
+        crate::fork_stats::child_modules(engine.module_precompile_stats());
+    }
     install_child_notifications();
     if let Err(e) = lp_net::client::resume_after_fork() {
         eprintln!("lightningpanda: network restart failed: {e}");

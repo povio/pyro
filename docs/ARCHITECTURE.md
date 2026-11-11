@@ -523,6 +523,17 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   (`LIGHTNINGPANDA_FORK_FAST_EXIT=0` tears down as a shared process does). Measured on the ToS suite (M1 Max,
   `-j 16`): a page's test costs about 3.4 G instructions, 0.55 s user and 0.08 s system time, mostly the test's
   own work, with about 18k page faults (5k of them copy-on-write).
+- **Modules compiled once** (JavaScriptCore patch 0027, `Engine::precompile_module`). Before its first page the
+  root template parses every JavaScript file of the static roots as a module and compiles its top-level code
+  (`precompile_static_modules`; 1,348 files, 16 MB, in 0.3 s for the ToS build). The VM keeps each module's record
+  (imports, exports) and unlinked code in a table keyed by the source text and its URL, which every fork inherits:
+  a page that loads the same text takes both from the table, with no parse and no code generation, and compiles
+  only the functions it calls. Another text at the URL, or the text from another origin, is parsed as before;
+  `VM::deleteAllCode` (an idle process, coverage) drops the table. `LIGHTNINGPANDA_FORK_PRECOMPILE=off` turns it
+  off; `functions` also compiles every function, which costs a page more memory touched than it saves in work.
+  Measured on the ToS suite (2,160 tests, three passes each): 3,079 M instructions a page without, 2,816 M with
+  (-8.5%), and 6% more page faults. The two thirds of the pages that load the app go from 4,218 M to 3,883 M;
+  a page that only navigates inside its prepared app loads no module and gains nothing (580 M to 598 M).
 - Measured on an M1 Max with a release build: an app whose startup runs 0.8 s of JavaScript is handed to a new
   connection, booted, in about 20 ms (the fork itself took 12-18 ms with the 512 MB JIT pool).
 
