@@ -739,5 +739,12 @@ Main pins Stylo 0.23.0; this copy builds against the vendored 0.24.0.
   hints depend on its own attributes only and cells of one table push the same blocks.
 - `src/stylo.rs`: `pseudo_style` passes its `AnimationDeclarations` by reference;
   `:-moz-topmost-modal` never matches.
+- `src/has_invalidation.rs`: given snapshots, 0.24 drops a `:has()` dependency whose compound matches
+  the changed element as it did per its snapshot (`RelativeSelectorDependencyCollector::add_dependency`).
+  `run_relative_invalidation` passes them only when the element has a snapshot and the change is not one
+  of custom states: an element never styled (below `display: none`) gets no snapshot
+  (`snapshot_node_impl`), and Servo's snapshot keeps no custom states, so both read as unchanged and the
+  anchor kept its style (WPT `css/selectors/invalidation/has-unstyled.html`, `state-in-has.html`). Test:
+  `has_anchors_follow_changes_stylo_has_no_snapshot_for` in lp-render.
 - `src/stylo_device.rs`: `Device::new` takes the submit button's default label.
 - `src/document.rs`: the pref is `layout.css.text-underline-position.enabled` now.

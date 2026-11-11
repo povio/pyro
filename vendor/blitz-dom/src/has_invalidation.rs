@@ -250,10 +250,18 @@ impl BaseDocument {
             return;
         }
         let snapshots = Snapshots::new(&self.snapshots);
+        // Given snapshots, Stylo (0.24 on) drops a dependency whose compound
+        // matches the element as it did per its snapshot. That holds only
+        // when the snapshot has what changed: an element never styled (in a
+        // `display: none` subtree) has none (`snapshot_node_impl`), and
+        // Servo's snapshot keeps no custom states. Both would read as
+        // unchanged.
+        let comparable =
+            node.has_snapshot() && !attr.is_some_and(|attr| matches!(attr.kind, AttrKind::CustomStates));
         let invalidator = RelativeSelectorInvalidator {
             element: node,
             quirks_mode: self.stylist.quirks_mode(),
-            snapshots: Some(&snapshots),
+            snapshots: comparable.then_some(&snapshots),
             invalidated: anchor_invalidated,
             sibling_traversal_map: SiblingTraversalMap::default(),
         };

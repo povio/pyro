@@ -92,6 +92,12 @@ The patch applied to 0.24.0 but for one hunk: `:in-range` parses upstream now, s
 debug check in `style_resolver.rs` passes its `AnimationDeclarations` by reference. blitz-dom's side of
 the move (presentational hints the element owns) is in `vendor/blitz-dom/README.lightningpanda.md`.
 
+`invalidation/viewport_units.rs`: the walk that invalidates styles using viewport units skips an element
+that has no primary style yet (blitz-dom gives every element its data up front, so one inserted since the
+last cascade, or below `display: none`, has data and no style). The 0.23 copy here had this check;
+0.24.0 as published unwraps the primary style (`ElementStyles::viewport_unit_usage`) and panics on a
+viewport resize. Test: `a_viewport_resize_with_elements_not_styled_yet` in lp-render.
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

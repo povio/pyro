@@ -1,6 +1,6 @@
 diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
---- a/invalidation/element/invalidation_map.rs	2026-11-11 20:04:29
-+++ b/invalidation/element/invalidation_map.rs	2026-11-11 20:04:29
+--- a/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
++++ b/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
 @@ -399,6 +399,11 @@
      pub used: bool,
      /// Flag indicating if invalidating a relative selector requires ancestor traversal.
@@ -75,9 +75,26 @@ diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/inva
      }
  
      fn attribute_map(&mut self) -> &mut LocalNameDependencyMap {
+diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
+--- a/invalidation/viewport_units.rs	2026-11-11 19:55:57
++++ b/invalidation/viewport_units.rs	2026-11-11 20:50:48
+@@ -33,6 +33,13 @@
+         return false;
+     }
+ 
++    // lightningpanda: an element not styled yet (Blitz gives every element its
++    // data up front) has nothing to invalidate: its first styling uses the
++    // new viewport. `viewport_unit_usage` unwraps the primary style.
++    if data.styles.get_primary().is_none() {
++        return false;
++    }
++
+     let usage = data.styles.viewport_unit_usage();
+     let uses_viewport_units = usage != ViewportUnitUsage::None;
+     if uses_viewport_units {
 diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
---- a/properties/counted_unknown_properties.py	2026-11-11 20:04:29
-+++ b/properties/counted_unknown_properties.py	2026-11-11 20:04:29
+--- a/properties/counted_unknown_properties.py	2026-11-11 19:55:57
++++ b/properties/counted_unknown_properties.py	2026-11-11 19:55:57
 @@ -7,8 +7,6 @@
      "speak",
      "text-size-adjust",
@@ -88,8 +105,8 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-margin-before",
      "-webkit-margin-after",
 diff -ruN a/properties/data.py b/properties/data.py
---- a/properties/data.py	2026-11-11 20:04:29
-+++ b/properties/data.py	2026-11-11 20:04:29
+--- a/properties/data.py	2026-11-11 19:55:57
++++ b/properties/data.py	2026-11-11 20:10:18
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -112,8 +129,8 @@ diff -ruN a/properties/data.py b/properties/data.py
              self,
              name=name,
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
---- a/properties/helpers.mako.rs	2026-11-11 20:04:29
-+++ b/properties/helpers.mako.rs	2026-11-11 20:04:29
+--- a/properties/helpers.mako.rs	2026-11-11 19:55:57
++++ b/properties/helpers.mako.rs	2026-11-11 19:55:57
 @@ -64,7 +64,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
@@ -133,8 +150,8 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml	2026-11-11 20:04:29
-+++ b/properties/longhands.toml	2026-11-11 20:04:29
+--- a/properties/longhands.toml	2026-11-11 19:55:57
++++ b/properties/longhands.toml	2026-11-11 20:10:18
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -180,8 +197,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [caption-side]
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
---- a/properties/shorthands.rs	2026-11-11 20:04:29
-+++ b/properties/shorthands.rs	2026-11-11 20:04:29
+--- a/properties/shorthands.rs	2026-11-11 19:55:57
++++ b/properties/shorthands.rs	2026-11-11 20:10:18
 @@ -542,7 +542,6 @@
      }
  }
@@ -191,8 +208,8 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml	2026-11-11 20:04:29
-+++ b/properties/shorthands.toml	2026-11-11 20:04:29
+--- a/properties/shorthands.toml	2026-11-11 19:55:57
++++ b/properties/shorthands.toml	2026-11-11 20:10:18
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -223,8 +240,8 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
 diff -ruN a/rule_cache.rs b/rule_cache.rs
---- a/rule_cache.rs	2026-11-11 20:04:29
-+++ b/rule_cache.rs	2026-11-11 20:04:29
+--- a/rule_cache.rs	2026-11-11 19:55:57
++++ b/rule_cache.rs	2026-11-11 19:55:57
 @@ -26,9 +26,53 @@
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
@@ -307,8 +324,8 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
          self.map
              .entry(rules)
 diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
---- a/servo/restyle_damage.rs	2026-11-11 20:04:29
-+++ b/servo/restyle_damage.rs	2026-11-11 20:04:29
+--- a/servo/restyle_damage.rs	2026-11-11 19:55:57
++++ b/servo/restyle_damage.rs	2026-11-11 19:55:57
 @@ -161,6 +161,9 @@
          || old_box.original_display != new_box.original_display
          || old_box.has_transform_or_perspective() != new_box.has_transform_or_perspective()
@@ -339,8 +356,8 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
 diff -ruN a/style_resolver.rs b/style_resolver.rs
---- a/style_resolver.rs	2026-11-11 20:04:29
-+++ b/style_resolver.rs	2026-11-11 20:04:29
+--- a/style_resolver.rs	2026-11-11 19:55:57
++++ b/style_resolver.rs	2026-11-11 20:10:18
 @@ -588,6 +588,47 @@
          );
          matching_context.extra_data.originating_element_style = Some(originating_element_style);
@@ -390,8 +407,8 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          // traversing them.
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
---- a/stylesheets/rule_parser.rs	2026-11-11 20:04:29
-+++ b/stylesheets/rule_parser.rs	2026-11-11 20:04:29
+--- a/stylesheets/rule_parser.rs	2026-11-11 19:55:57
++++ b/stylesheets/rule_parser.rs	2026-11-11 19:55:57
 @@ -282,7 +282,7 @@
              "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
              "media" => Self::Media,
@@ -402,8 +419,8 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
              "keyframes" => Self::Keyframes(None),
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
 diff -ruN a/stylist.rs b/stylist.rs
---- a/stylist.rs	2026-11-11 20:04:29
-+++ b/stylist.rs	2026-11-11 20:04:29
+--- a/stylist.rs	2026-11-11 19:55:57
++++ b/stylist.rs	2026-11-11 20:10:18
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -664,8 +681,8 @@ diff -ruN a/stylist.rs b/stylist.rs
              slotted_rules.clear();
          }
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
---- a/values/generics/mod.rs	2026-11-11 20:04:29
-+++ b/values/generics/mod.rs	2026-11-11 20:04:29
+--- a/values/generics/mod.rs	2026-11-11 19:55:57
++++ b/values/generics/mod.rs	2026-11-11 19:55:57
 @@ -110,6 +110,7 @@
      ToCss,
      ToResolvedValue,
@@ -675,8 +692,8 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
---- a/values/specified/box.rs	2026-11-11 20:04:29
-+++ b/values/specified/box.rs	2026-11-11 20:04:29
+--- a/values/specified/box.rs	2026-11-11 19:55:57
++++ b/values/specified/box.rs	2026-11-11 19:55:57
 @@ -2013,6 +2013,8 @@
      Auto,
      Page,
