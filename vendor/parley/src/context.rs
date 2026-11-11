@@ -7,6 +7,7 @@ use core::ops::Range;
 
 use alloc::{vec, vec::Vec};
 
+use parley_engine::break_overrides::LineBreakOverrideFn;
 use parley_engine::{Analysis, AnalysisDataSources, Analyzer, LineBreakConfig, Shaper};
 
 use super::FontContext;
@@ -55,6 +56,10 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
     ///
     /// [`TreeBuilder::build_into_keeping_lines`]: crate::TreeBuilder::build_into_keeping_lines
     pub(crate) previous_layout: crate::layout::data::LayoutData<B>,
+
+    /// The line-break override every builder of this context starts with
+    /// (lightningpanda; see [`Self::set_line_break_override`]).
+    pub(crate) line_break_override: Option<&'static LineBreakOverrideFn>,
 }
 
 impl<B: Brush> LayoutContext<B> {
@@ -76,7 +81,21 @@ impl<B: Brush> LayoutContext<B> {
             style_first_fonts: vec![],
             build_cache: Default::default(),
             previous_layout: Default::default(),
+            line_break_override: None,
         }
+    }
+
+    /// Sets the line-break override every builder made from this context starts with (a
+    /// builder's own `set_line_break_override` still replaces it). Unlike an override given to
+    /// a builder, this one keeps layouts in the build cache: a `'static` override is part of
+    /// the cache key.
+    pub fn set_line_break_override(&mut self, overrides: Option<&'static LineBreakOverrideFn>) {
+        self.line_break_override = overrides;
+    }
+
+    /// The override set with [`Self::set_line_break_override`].
+    pub fn line_break_override(&self) -> Option<&'static LineBreakOverrideFn> {
+        self.line_break_override
     }
 
     /// Forgets the layouts built so far: the fonts they were shaped with
@@ -130,7 +149,7 @@ impl<B: Brush> LayoutContext<B> {
         fcx.source_cache.prune(128, false);
 
         RangedBuilder {
-            options: BuilderOptions::new(scale, quantize),
+            options: BuilderOptions::new(scale, quantize).with_line_break_override(self.line_break_override),
             lcx: self,
             fcx,
         }
@@ -156,7 +175,7 @@ impl<B: Brush> LayoutContext<B> {
         fcx.source_cache.prune(128, false);
 
         StyleRunBuilder {
-            options: BuilderOptions::new(scale, quantize),
+            options: BuilderOptions::new(scale, quantize).with_line_break_override(self.line_break_override),
             len: text.len(),
             lcx: self,
             fcx,
@@ -198,7 +217,7 @@ impl<B: Brush> LayoutContext<B> {
         fcx.source_cache.prune(128, false);
 
         TreeBuilder {
-            options: BuilderOptions::new(scale, quantize),
+            options: BuilderOptions::new(scale, quantize).with_line_break_override(self.line_break_override),
             lcx: self,
             fcx,
         }

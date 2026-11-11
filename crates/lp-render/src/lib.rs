@@ -630,6 +630,19 @@ const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !importa
 /// zero-sized and never visible or clickable.
 const FILE_INPUT: &str = r#"input[type="file" i] { box-sizing: border-box; width: 253px; height: 21px; }"#;
 
+static HYPHEN_DIGIT_BREAKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sets the [`Renderer::hyphen_digit_breaks`] of every renderer made from now
+/// on, in this process (`serve --hyphen-digit-breaks`). Off by default.
+pub fn set_hyphen_digit_breaks(on: bool) {
+    HYPHEN_DIGIT_BREAKS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The default [`set_hyphen_digit_breaks`] set.
+pub fn hyphen_digit_breaks() -> bool {
+    HYPHEN_DIGIT_BREAKS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
     font_ctx: FontContext,
@@ -653,6 +666,14 @@ pub struct Renderer {
     /// document asked for (a browser's font block period); sheets block it
     /// until `fetch_timeout`.
     pub first_layout_wait: Duration,
+    /// Chrome's soft wrap opportunity between a hyphen and a digit when the
+    /// hyphen follows an ASCII letter or digit (`4b87-|916e`, `10-|20`; UAX
+    /// #14 LB25 has none), while a minus sign stays with its number (`-120`,
+    /// `A -5`): [`parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE`]. Line breaking
+    /// and min/max-content sizes (table columns, flex items) both use it.
+    /// Read when a document is created: a page's persistent document keeps the
+    /// value it was built with. Defaults to [`hyphen_digit_breaks`].
+    pub hyphen_digit_breaks: bool,
 }
 
 impl Default for Renderer {
@@ -676,6 +697,7 @@ impl Renderer {
             sprites: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
+            hyphen_digit_breaks: hyphen_digit_breaks(),
         }
     }
 
@@ -735,6 +757,7 @@ impl Renderer {
             font_ctx: Some(self.font_ctx.clone()),
             style_threading: StyleThreading::Sequential,
             media_type: Some(media_type(snap.print)),
+            line_break_override: self.hyphen_digit_breaks.then_some(parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE),
             ..DocumentConfig::default()
         };
         // Documents are resolved at time 0: a CSS transition or animation
@@ -750,7 +773,13 @@ impl Renderer {
         let key = viewport_key(snap);
         let reason = match self.mirrors.get_mut(&live.page) {
             None => Some(Rebuild::First),
-            Some(m) if m.scope != snap.resource_scope || m.base_url != snap.base_url => Some(Rebuild::Document),
+            Some(m)
+                if m.scope != snap.resource_scope
+                    || m.base_url != snap.base_url
+                    || m.doc.line_break_override().is_some() != self.hyphen_digit_breaks =>
+            {
+                Some(Rebuild::Document)
+            }
             Some(m) => {
                 m.bridge.retarget(snap, fetcher.clone());
                 if m.viewport != key {

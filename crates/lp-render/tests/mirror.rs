@@ -486,6 +486,24 @@ fn the_same_tree_is_not_diffed_again() {
 }
 
 #[test]
+fn the_hyphen_digit_setting_rebuilds_the_persistent_document() {
+    let page = Page::new(
+        "<!doctype html><body style='margin:0;font:16px/100px sans-serif'>\
+         <div style='width:0'>REG-be08b23e-89be-48b8-9a6f-ecb23f7628c6</div>",
+    );
+    let mut r = Renderer::new();
+    let tree = page.tree();
+    let s = Snapshot { height: 10, ..page.snapshot(1, tree) };
+    let full = |r: &mut Renderer| r.paint(&s, Area::FullPage, &fetcher()).unwrap();
+    assert_eq!(full(&mut r).height, 300);
+    r.hyphen_digit_breaks = true;
+    let on = full(&mut r);
+    assert_eq!(on.timings.mirror.and_then(|m| m.rebuilt), Some(Rebuild::Document));
+    assert_eq!(on.height, 600);
+    assert_eq!(full(&mut r).timings.mirror.and_then(|m| m.rebuilt), None);
+}
+
+#[test]
 fn viewport_and_scroll_changes_apply_to_the_persistent_document() {
     let page = Page::new(&PAGE.replace("</body>", "<div style=\"height: 2000px\"></div></body>"));
     let mut r = Renderer::new();

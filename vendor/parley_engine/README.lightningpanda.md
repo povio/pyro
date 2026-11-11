@@ -54,3 +54,12 @@ they depend on — so a run it serves costs no font parse at all. `shape/shaper.
 harfrust shaper (and parses the font) only for a run the glyph cache does not hold; a cached run's
 variation coords are the shaper instance's, which are what the shaper would report. Metric values
 are unchanged: the same `skrifa` computation runs, once per combination instead of once per run.
+
+## Chromium's hyphen-before-digit break on its own
+
+`break_overrides.rs`, `HYPHEN_DIGIT_LINE_BREAK_OVERRIDE`: the hyphen-digit rule of
+`CHROMIUM_LINE_BREAK_OVERRIDE` without the rest of Chromium's ASCII table. A break between `-` and
+an ASCII digit is allowed when the character before the hyphen is an ASCII letter or digit
+(`4b87-|916e`, `10-|20`); every other pair, including a minus sign after a space or at the start of
+the text, is left to ICU (UAX #14 LB25 keeps `HY × NU`). It only adds opportunities, so
+`line-break: anywhere` is unaffected. lp-render uses it for `serve --hyphen-digit-breaks on`.

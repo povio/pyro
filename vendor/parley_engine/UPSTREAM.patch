@@ -525,3 +525,67 @@
  #[inline]
  fn variations_iter<'a>(
      synthesis: &'a fontique::Synthesis,
+--- a/src/break_overrides.rs
++++ b/src/break_overrides.rs
+@@ -90,6 +90,30 @@
+     CHROMIUM_LINE_BREAK_TABLE.lookup(before, after)
+ }
+ 
++/// Only Chromium's hyphen-before-digit rule, every other pair deferring to the default (ICU)
++/// behavior (lightningpanda).
++///
++/// UAX #14 LB25 forbids a break between a hyphen and a digit (`HY × NU`). Chromium allows one
++/// when the character before the hyphen is an ASCII letter or digit (`4b87-|916e`, `10-|20`), and
++/// keeps a hyphen that reads as a minus sign with its number (`-120`, `A -5`), as
++/// [`CHROMIUM_LINE_BREAK_OVERRIDE`] does. Unlike that override, nothing else changes: the pair
++/// either becomes an opportunity or is left to ICU (never suppressed, so `line-break: anywhere`
++/// still breaks everywhere). Only U+002D HYPHEN-MINUS is concerned; U+2011 NON-BREAKING HYPHEN
++/// and soft hyphens are not.
++pub static HYPHEN_DIGIT_LINE_BREAK_OVERRIDE: &LineBreakOverrideFn =
++    &(hyphen_digit_override as fn(LineBreakContext) -> Option<bool>);
++
++fn hyphen_digit_override(cx: LineBreakContext) -> Option<bool> {
++    let LineBreakContext {
++        before_before,
++        before,
++        after,
++        ..
++    } = cx;
++    (before == '-' && after.is_ascii_digit() && before_before.is_some_and(|c| c.is_ascii_alphanumeric()))
++        .then_some(true)
++}
++
+ /// A static table mirroring Chromium's preferred line breaking behavior for `before` / `after`
+ /// printable ASCII code points.
+ static CHROMIUM_LINE_BREAK_TABLE: AsciiLineBreakTable<5> =
+@@ -323,6 +347,7 @@
+     use super::CHROMIUM_LINE_BREAK_TABLE;
+     use super::LineBreakContext;
+     use super::chromium_override;
++    use super::hyphen_digit_override;
+ 
+     fn cx(before_before: Option<char>, before: char, after: char) -> LineBreakContext {
+         LineBreakContext {
+@@ -344,6 +369,22 @@
+         // No preceding character (start of text) behaves like a non-alphanumeric
+         // context, matching Chromium's `last_last_ch == 0`.
+         assert_eq!(chromium_override(cx(None, '-', '1')), Some(false));
++    }
++
++    #[test]
++    fn hyphen_digit_override_only_breaks_after_an_alphanumeric() {
++        assert_eq!(hyphen_digit_override(cx(Some('b'), '-', '9')), Some(true));
++        assert_eq!(hyphen_digit_override(cx(Some('0'), '-', '2')), Some(true));
++        // A minus sign: after a space, punctuation or at the start of the text.
++        assert_eq!(hyphen_digit_override(cx(Some(' '), '-', '5')), None);
++        assert_eq!(hyphen_digit_override(cx(Some('('), '-', '5')), None);
++        assert_eq!(hyphen_digit_override(cx(None, '-', '1')), None);
++        // Other pairs, other hyphens and non-ASCII digits are left to ICU.
++        assert_eq!(hyphen_digit_override(cx(Some('a'), '-', 'b')), None);
++        assert_eq!(hyphen_digit_override(cx(Some('a'), '/', '1')), None);
++        assert_eq!(hyphen_digit_override(cx(Some('a'), '\u{2011}', '1')), None);
++        assert_eq!(hyphen_digit_override(cx(Some('a'), '-', '\u{0661}')), None);
++        assert_eq!(hyphen_digit_override(cx(Some('\u{e9}'), '-', '1')), None);
+     }
+ 
+     #[test]

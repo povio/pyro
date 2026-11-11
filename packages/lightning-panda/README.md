@@ -369,6 +369,16 @@ patched JavaScriptCore included, so `args: ['--fork']` works without a separate
 browser. The Intel browser uses macOS's system JavaScriptCore and has no fork
 mode.
 
+`args` takes any `lightningpanda serve` flag (`lightningpanda serve --help`
+lists them). For screenshots and PDFs that should wrap like Chrome's, pass
+`args: ['--hyphen-digit-breaks', 'on']` (or set
+`LIGHTNINGPANDA_HYPHEN_DIGIT_BREAKS=on`): text may then break between a hyphen
+and a digit when the hyphen follows a letter or digit (`REG-be08b23e-89be-48b8-`
+/ `9a6f-…`, `10-` / `20`), while a minus sign stays with its number (`-120,00`,
+`A -5`). Table columns and other min-content widths follow the same breaks. It
+is off by default: Unicode's line breaking rules (UAX #14 LB25) have no break
+there.
+
 The package is licensed under AGPL-3.0-only; see the included `LICENSE` and
 `NOTICE`. Maintainers: see
 [publishing instructions](https://github.com/povio/lightningpanda/blob/main/docs/NPM_PUBLISHING.md).

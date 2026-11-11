@@ -165,6 +165,10 @@ export class Lightningpanda {
    * is `bin`, else `$LIGHTNINGPANDA_BIN`, else the bundled binary for this
    * platform (or the sibling binary in a legacy release archive). The server
    * exits with this process, however it ends (`close()` ends it sooner).
+   *
+   * `args` are extra `lightningpanda serve` flags (`lightningpanda serve --help`), e.g.
+   * `['--hyphen-digit-breaks', 'on']` to wrap text between a hyphen and a digit as Chrome
+   * does (`4b87-|916e`; off by default).
    */
   static async launch(opts: ConnectOptions & { bin?: string; args?: string[] } = {}): Promise<Lightningpanda> {
     const port = await freePort();

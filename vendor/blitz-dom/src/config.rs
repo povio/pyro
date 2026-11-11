@@ -6,7 +6,7 @@ use blitz_traits::{
     net::{AbortSignal, NetProvider},
     shell::{ShellProvider, Viewport},
 };
-use parley::FontContext;
+use parley::{FontContext, LineBreakOverrideFn};
 use std::sync::Arc;
 use style::media_queries::MediaType;
 
@@ -68,6 +68,11 @@ pub struct DocumentConfig {
     /// How deeply this document is nested within other documents
     /// (0 for a root document). Used to limit `<iframe>` nesting depth.
     pub subdocument_depth: usize,
+    /// Soft wrap opportunities to add or remove from the default (UAX #14, as ICU tailors it),
+    /// e.g. [`parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE`] for Chrome's breaks between a hyphen
+    /// and a digit. Applies to every text layout of the document (line breaking and min/max
+    /// content sizes alike) and is inherited by its iframes. Defaults to `None`.
+    pub line_break_override: Option<&'static LineBreakOverrideFn>,
     /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
     #[cfg(feature = "devtools")]
     pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
@@ -89,6 +94,7 @@ impl Default for DocumentConfig {
             incremental: None,
             abort_signal: None,
             subdocument_depth: 0,
+            line_break_override: None,
             #[cfg(feature = "devtools")]
             devtools_provider: None,
         }
