@@ -1006,6 +1006,28 @@ pub mod modules {
     /// The document base URL as an owned string, or null.
     pub type lp_module_base_url_cb = unsafe extern "C" fn(ctx: JSGlobalContextRef) -> JSStringRef;
 
+    /// Counters of a context group's precompiled modules
+    /// ([`lp_jsc_module_precompile_stats`]). A forked process starts from its
+    /// parent's values.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct ModulePrecompileStats {
+        /// What [`lp_jsc_module_precompile`] keeps: modules, the functions
+        /// compiled with them, and the length of their sources.
+        pub modules: usize,
+        pub functions: usize,
+        pub characters: usize,
+        /// Module loads that found their source precompiled, and those that
+        /// did not, since the group has had a precompiled module.
+        pub record_hits: usize,
+        pub record_misses: usize,
+        /// Module evaluations that took their code from a precompiled module.
+        pub code_hits: usize,
+        /// Functions the group compiled to bytecode, those of
+        /// [`lp_jsc_module_precompile`] included.
+        pub function_compiles: usize,
+    }
+
     unsafe extern "C" {
         /// 1 when the module SPI is present (always check before other calls).
         pub fn lp_jsc_modules_available() -> c_int;
@@ -1046,6 +1068,26 @@ pub mod modules {
             url_len: usize,
             error: *mut JSStringRef,
         ) -> JSValueRef;
+        /// 1 when `lp_jsc_module_precompile` works (source-built JavaScriptCore).
+        pub fn lp_jsc_module_precompile_available() -> c_int;
+        /// Parses and compiles, ahead of its first load, the JavaScript module
+        /// source that `lp_jsc_module_script_create` makes for the same `src`
+        /// and `url` (the code of every function in it too when `functions`
+        /// is not 0), and keeps it for the lifetime of the context's group.
+        /// A load of the same text from a URL of the same host, in any
+        /// context of the group or of a process forked from this one, then
+        /// parses and compiles nothing. Runs nothing of the module. Returns 1
+        /// when the module is kept, 0 for a source that does not parse.
+        pub fn lp_jsc_module_precompile(
+            ctx: JSGlobalContextRef,
+            src: *const c_char,
+            src_len: usize,
+            url: *const c_char,
+            url_len: usize,
+            functions: c_int,
+        ) -> c_int;
+        /// All zero without `lp_jsc_module_precompile_available`.
+        pub fn lp_jsc_module_precompile_stats(group: JSContextGroupRef, stats: *mut ModulePrecompileStats);
     }
 }
 

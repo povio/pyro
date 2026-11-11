@@ -3,7 +3,10 @@
 //! set). Templates log every fork (`"e":"fork"`, with their own use so far)
 //! and every child they reap (`"e":"reaped"`, the kernel's account, exit
 //! included); forked children log their own use at each step of their life
-//! (`"e":"child"`: forked, taken by a connection, served, closed, dropped).
+//! (`"e":"child"`: forked, taken by a connection, served, closed, dropped),
+//! with what their module loads took from the template's precompiled modules
+//! (`"modules"`). The root template logs what it precompiled
+//! (`"e":"precompile"`).
 
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
@@ -129,6 +132,39 @@ impl Usage {
 /// This child's steps so far: (name, when, use).
 static MARKS: Mutex<Vec<(&'static str, Instant, Usage)>> = Mutex::new(Vec::new());
 
+/// This child's module counters at its fork, and when it was served.
+static MODULES: Mutex<(Option<lp_js::ModulePrecompileStats>, Option<lp_js::ModulePrecompileStats>)> =
+    Mutex::new((None, None));
+
+/// In the root template: the module scripts it precompiled before its first
+/// page (`tried` files, `kept` of them with `bytes` of source and
+/// `functions` functions).
+pub(crate) fn precompiled(tried: usize, kept: usize, bytes: usize, functions: usize, took: std::time::Duration) {
+    if file().is_none() {
+        return;
+    }
+    log(json!({
+        "e": "precompile",
+        "pid": std::process::id(),
+        "tried": tried,
+        "kept": kept,
+        "bytes": bytes,
+        "functions": functions,
+        "ms": took.as_secs_f64() * 1000.0,
+        "self": Usage::now().json(),
+    }));
+}
+
+/// In a forked child: its engine's module counters, first right after the
+/// fork (they continue the template's) and again when it has been served.
+pub(crate) fn child_modules(stats: lp_js::ModulePrecompileStats) {
+    let mut modules = MODULES.lock().unwrap_or_else(|e| e.into_inner());
+    match modules.0 {
+        None => modules.0 = Some(stats),
+        Some(_) => modules.1 = Some(stats),
+    }
+}
+
 /// In a template, right after `fork()` returned `child`, which took `fork_us`.
 pub(crate) fn forked(kind: &str, child: libc::pid_t, fork_us: u64) {
     if file().is_none() {
@@ -152,6 +188,7 @@ pub(crate) fn child_started() {
     let mut marks = MARKS.lock().unwrap_or_else(|e| e.into_inner());
     marks.clear();
     marks.push(("fork", Instant::now(), Usage::now()));
+    *MODULES.lock().unwrap_or_else(|e| e.into_inner()) = (None, None);
 }
 
 /// In a forked child: a step of its life (nothing in other processes).
@@ -181,6 +218,17 @@ pub(crate) fn child_done(kind: &str, profile: Option<usize>) {
             v
         })
         .collect();
+    // What this process's own loads did: the counters since its fork.
+    let modules = match *MODULES.lock().unwrap_or_else(|e| e.into_inner()) {
+        (Some(forked), Some(served)) => json!({
+            "precompiled": served.modules,
+            "record_hits": served.record_hits - forked.record_hits,
+            "record_misses": served.record_misses - forked.record_misses,
+            "code_hits": served.code_hits - forked.code_hits,
+            "function_compiles": served.function_compiles - forked.function_compiles,
+        }),
+        _ => Value::Null,
+    };
     log(json!({
         "e": "child",
         "kind": kind,
@@ -188,6 +236,7 @@ pub(crate) fn child_done(kind: &str, profile: Option<usize>) {
         "ppid": unsafe { libc::getppid() },
         "profile": profile,
         "steps": steps,
+        "modules": modules,
     }));
 }
 

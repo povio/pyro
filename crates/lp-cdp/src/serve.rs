@@ -918,6 +918,9 @@ pub(crate) fn serve_browser(
             break;
         }
     }
+    if crate::fork_stats::init() {
+        crate::fork_stats::child_modules(browser.host().thread.browser.engine.module_precompile_stats());
+    }
     crate::fork_stats::mark("served");
     browser.host().thread.browser.engine.set_interrupt_check(None);
     browser.host().set_dialog_pump(None);

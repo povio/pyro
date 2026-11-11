@@ -193,6 +193,30 @@ impl StaticFiles {
         None
     }
 
+    /// Every file held in memory with the URL that requests it, in the order
+    /// of the roots and of the paths in each; waits for the preload.
+    pub fn memory_files(&self) -> Vec<(Url, Arc<StaticFile>)> {
+        let mut out = Vec::new();
+        for root in self.roots.iter() {
+            let Ok(origin) = Url::parse(&root.origin) else { continue };
+            let files = root.files.get();
+            let mut keys: Vec<&String> = files.keys().collect();
+            keys.sort();
+            for key in keys {
+                let mut url = origin.clone();
+                // Each segment percent-encoded, as a URL for the file writes it.
+                match url.path_segments_mut() {
+                    Ok(mut segments) => {
+                        segments.clear().extend(key.split('/'));
+                    }
+                    Err(()) => continue,
+                }
+                out.push((url, files[key].clone()));
+            }
+        }
+        out
+    }
+
     pub fn is_empty(&self) -> bool {
         self.roots.is_empty()
     }

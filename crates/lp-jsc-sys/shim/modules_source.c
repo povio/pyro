@@ -9,6 +9,7 @@
 #include <stdlib.h>
 
 typedef const struct OpaqueJSContext *JSContextRef;
+typedef const struct OpaqueJSContextGroup *JSContextGroupRef;
 typedef struct OpaqueJSContext *JSGlobalContextRef;
 typedef struct OpaqueJSString *JSStringRef;
 typedef const struct OpaqueJSValue *JSValueRef;
@@ -29,6 +30,19 @@ JSObjectRef JSLoadAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRe
 bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef *messages);
 typedef JSStringRef (*lp_module_base_url_cb)(JSGlobalContextRef ctx);
 bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, lp_module_base_url_cb callback);
+
+// Patch 0027-precompiled-modules. The struct is JSModulePrecompileStats.
+struct lp_module_precompile_stats {
+    size_t modules;
+    size_t functions;
+    size_t characters;
+    size_t record_hits;
+    size_t record_misses;
+    size_t code_hits;
+    size_t function_compiles;
+};
+bool JSModuleSourcePrecompile(JSContextRef ctx, JSStringRef source, JSStringRef url, bool functions);
+void JSContextGroupGetModulePrecompileStats(JSContextGroupRef group, struct lp_module_precompile_stats *stats);
 
 typedef void (*lp_module_fetch_cb)(void *userdata, JSGlobalContextRef ctx, JSStringRef identifier, int module_type,
                                    JSObjectRef resolve, JSObjectRef reject);
@@ -107,6 +121,27 @@ JSValueRef lp_jsc_module_script_create(JSGlobalContextRef ctx, const char *src, 
     JSStringRelease(sourceURL);
     if (!script) *error = lp_error(ctx, exception, "module creation failed");
     return script;
+}
+
+// Module sources can be parsed and compiled ahead of their first load.
+int lp_jsc_module_precompile_available(void) { return 1; }
+
+// Precompiles the JavaScript module source that lp_jsc_module_script_create
+// makes for the same `src` and `url`: the two build their strings alike, and
+// a load is served from the precompiled module when its text is the same.
+// Returns 1 when the module is kept, 0 for a source that does not parse.
+int lp_jsc_module_precompile(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *url, size_t url_len,
+                             int functions) {
+    JSStringRef source = lp_string(src, src_len);
+    JSStringRef sourceURL = lp_string(url, url_len);
+    bool kept = JSModuleSourcePrecompile(ctx, source, sourceURL, functions != 0);
+    JSStringRelease(source);
+    JSStringRelease(sourceURL);
+    return kept;
+}
+
+void lp_jsc_module_precompile_stats(JSContextGroupRef group, struct lp_module_precompile_stats *stats) {
+    JSContextGroupGetModulePrecompileStats(group, stats);
 }
 
 // Like the ObjC shim, the top-level module is fetched through the loader by URL;

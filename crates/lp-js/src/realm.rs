@@ -150,7 +150,7 @@ pub struct ModuleRequest {
 
 // JavaScriptCore's module SPI creates an empty import.meta object. Initialize
 // the canonical module key before evaluating source so user code sees its URL.
-fn module_source_with_url(source: &str, url: &str) -> String {
+pub(crate) fn module_source_with_url(source: &str, url: &str) -> String {
     let url = serde_json::to_string(url)
         .expect("a URL string is serializable")
         .replace('\u{2028}', "\\u2028")

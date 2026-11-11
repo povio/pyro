@@ -58,6 +58,13 @@ fn connect_to(port: u16, path: &str) -> TcpStream {
 }
 
 fn call(s: &mut TcpStream, id: u64, method: &str, params: Value, session: Option<&str>) -> Value {
+    let m = call_message(s, id, method, params, session);
+    assert!(m.get("error").is_none(), "{method}: {m}");
+    m["result"].clone()
+}
+
+/// The response to a command, an error response included.
+fn call_message(s: &mut TcpStream, id: u64, method: &str, params: Value, session: Option<&str>) -> Value {
     let mut message = json!({ "id": id, "method": method, "params": params });
     if let Some(session) = session {
         message["sessionId"] = json!(session);
@@ -94,8 +101,7 @@ fn call(s: &mut TcpStream, id: u64, method: &str, params: Value, session: Option
         s.read_exact(&mut p).unwrap();
         let Ok(m) = serde_json::from_slice::<Value>(&p) else { continue };
         if m["id"] == json!(id) {
-            assert!(m.get("error").is_none(), "{method}: {m}");
-            return m["result"].clone();
+            return m;
         }
     }
 }
@@ -285,4 +291,118 @@ fn the_template_takes_the_fork_defaults_unless_the_user_set_them() {
     assert!(pool.contains(&"33554432".to_owned()), "template JIT pool: {pool:?}");
     let (growth, _) = options(Some("2"));
     assert!(growth.contains(&"2".to_owned()) && !growth.contains(&"3".to_owned()), "user's heap growth: {growth:?}");
+}
+
+/// The root template parses and compiles the static roots' module scripts
+/// before its first page. Its forks load them without parsing: after a
+/// navigation of their own, and a module no process had loaded before.
+#[test]
+fn forks_load_the_modules_the_template_compiled() {
+    if !lp_js::Capabilities::detect().fork || !lp_js::Engine::has_module_precompile() {
+        eprintln!("skipped: this JavaScriptCore cannot fork or precompile modules (scripts/jsc/build.sh)");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("lp-fork-modules-{}", std::process::id()));
+    let stats = std::env::temp_dir().join(format!("lp-fork-modules-{}.stats", std::process::id()));
+    let _ = std::fs::remove_file(&stats);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        "<!doctype html><title>modules</title><div id=root>loading</div>\
+         <script type=module src=/assets/main.js></script>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("assets/main.js"),
+        "import { greet } from './dep.js';\n\
+         document.getElementById('root').textContent = greet(location.search || 'main');\n\
+         window.lazy = () => import('./lazy.js').then((m) => m.default(import.meta.url));\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("assets/dep.js"), "export function greet(who) { return `hello ${who}`; }\n").unwrap();
+    std::fs::write(
+        dir.join("assets/lazy.js"),
+        "const made = await Promise.resolve('lazy');\n\
+         export default (from) => `${made} from ${new URL(from).pathname}`;\n",
+    )
+    .unwrap();
+    // A classic script that is no module: tried, not kept.
+    std::fs::write(dir.join("assets/legacy.js"), "with (Math) { var p = PI }\n").unwrap();
+    let port = free_port();
+    let server = Server(
+        Command::new(env!("CARGO_BIN_EXE_lightningpanda"))
+            .args(["serve", "--port", &port.to_string(), "--fork", "--log-level", "warn"])
+            .arg("--static")
+            .arg(format!("http://app.test={}", dir.display()))
+            .args(["--prepare", "http://app.test/"])
+            .env("LIGHTNINGPANDA_FORK_STATS", &stats)
+            .env_remove("LIGHTNINGPANDA_FORK_PRECOMPILE")
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+
+    let mut c = connect(port);
+    let page = call(
+        &mut c,
+        1,
+        "Lightningpanda.acquirePreparedPage",
+        json!({ "url": "http://app.test/", "attach": true }),
+        None,
+    );
+    assert_eq!(page["ready"], json!(true));
+    let session = page["sessionId"].as_str().unwrap().to_owned();
+    let mut id = 1;
+    let mut eval = |c: &mut TcpStream, expression: &str| {
+        id += 1;
+        let params = json!({ "expression": expression, "returnByValue": true, "awaitPromise": true });
+        call(c, id, "Runtime.evaluate", params, Some(&session))["result"]["value"].clone()
+    };
+    assert_eq!(eval(&mut c, "document.getElementById('root').textContent"), json!("hello main"));
+    // The template never imported this one.
+    assert_eq!(eval(&mut c, "window.lazy()"), json!("lazy from /assets/main.js"));
+    // A document of the fork's own loads the page's modules again.
+    call(&mut c, 100, "Page.navigate", json!({ "url": "http://app.test/?again" }), Some(&session));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut id = 100;
+    loop {
+        id += 1;
+        // An error while the new document replaces the old one's context.
+        let params = json!({ "expression": "document.getElementById('root')?.textContent", "returnByValue": true });
+        let shown = call_message(&mut c, id, "Runtime.evaluate", params, Some(&session));
+        if shown["result"]["result"]["value"] == json!("hello ?again") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the second document did not load: {shown}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(c);
+
+    // The fork logs its counters when its connection has closed.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let (precompile, child) = loop {
+        let text = std::fs::read_to_string(&stats).unwrap_or_default();
+        let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+        let precompile = lines.iter().find(|l| l["e"] == json!("precompile")).cloned();
+        let child = lines.iter().find(|l| l["e"] == json!("child") && l["modules"].is_object()).cloned();
+        match (precompile, child) {
+            (Some(precompile), Some(child)) => break (precompile, child),
+            _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            _ => panic!("no precompile and child record in the fork stats: {text}"),
+        }
+    };
+    assert_eq!((&precompile["tried"], &precompile["kept"]), (&json!(4), &json!(3)), "{precompile}");
+    // The default keeps the modules; a function is compiled where it is first called.
+    assert_eq!(precompile["functions"], json!(0), "{precompile}");
+    // lazy.js, then main.js and dep.js of the second document.
+    let modules = &child["modules"];
+    assert_eq!(
+        (&modules["precompiled"], &modules["record_hits"], &modules["record_misses"], &modules["code_hits"]),
+        (&json!(3), &json!(3), &json!(0), &json!(3)),
+        "{child}"
+    );
+
+    drop(server);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&stats);
 }
