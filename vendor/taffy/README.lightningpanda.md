@@ -1,8 +1,8 @@
-# taffy main (4aca4f4), patched
+# taffy main (d0345ba), patched
 
 [DioxusLabs/taffy](https://github.com/DioxusLabs/taffy) main at commit
-`4aca4f4933aa9cb7a3266050c788aad4c90288d2` (#1401, 40 commits past v0.15.1; its `Cargo.toml` still says
-0.15.0), the commit Blitz main pins, used through `[patch.crates-io]` in the workspace `Cargo.toml`.
+`d0345bac609a10b25278ecc0850e862be9504e74` (#1402, 42 commits past v0.15.1; its `Cargo.toml` still says
+0.15.0), two commits past the one Blitz main pins (`4aca4f4`), used through `[patch.crates-io]` in the workspace `Cargo.toml`.
 License: MIT, as upstream. `src/`, `examples/` (without `examples/parley`, a crate of its own), `README.md` and a `Cargo.toml` without the
 workspace, dev-dependency, bench and example sections were copied.
 

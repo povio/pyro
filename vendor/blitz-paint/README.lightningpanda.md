@@ -1,6 +1,6 @@
-# blitz-paint main (be60597), patched
+# blitz-paint main (c27b4ca), patched
 
-`packages/blitz-paint` of DioxusLabs/blitz main at commit `be60597f67b3cece0456d26e8d7ff5a88600bbc5` (see
+`packages/blitz-paint` of DioxusLabs/blitz main at commit `c27b4ca14158dc457f35c78eb32b8c4fec906b7e` (see
 `vendor/blitz-dom/README.lightningpanda.md`), MIT/Apache-2.0. `UPSTREAM.patch` (applies with `git apply`
 from the root of an upstream checkout at that commit) is the whole diff.
 

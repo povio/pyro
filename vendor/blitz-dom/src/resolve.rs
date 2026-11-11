@@ -22,6 +22,7 @@ thread_local! {
 use taffy::AvailableSpace;
 
 use crate::{
+    document::DocumentFlags,
     layout::{
         construct::{
             ConstructionTask, ConstructionTaskData, ConstructionTaskResult,
@@ -190,7 +191,9 @@ impl BaseDocument {
         self.nodes.bump_geometry_generation();
 
         // Resolve transforms
-        self.resolve_transforms(root_node_id);
+        let resolve_all = self.flags.contains(DocumentFlags::RESOLVE_ALL_TRANSFORMS);
+        self.flags.remove(DocumentFlags::RESOLVE_ALL_TRANSFORMS);
+        self.resolve_transforms(root_node_id, resolve_all);
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 
@@ -330,7 +333,7 @@ impl BaseDocument {
     /// `LayoutData::hit_stale`; the next hit test brings their hit bounds up
     /// to date (`ensure_hit_overflow`), so a run of forced layouts with no
     /// hit test in between pays nothing for them.
-    fn resolve_transforms(&mut self, node_id: NodeId) -> Rect {
+    fn resolve_transforms(&mut self, node_id: NodeId, resolve_all: bool) -> Rect {
         if !self.nodes.contains_key(node_id) {
             return Rect::ZERO;
         }
@@ -341,7 +344,7 @@ impl BaseDocument {
         // The cached overflow holds only while nothing in the subtree changed:
         // a descendant's relayout (its overflow shrinking) reaches its
         // ancestors as their damage, not as `RECALCULATE_OVERFLOW`.
-        let unchanged = {
+        let unchanged = !resolve_all && {
             let node = &self.nodes[node_id];
             node.damage().is_some_and(|d| d.is_empty()) && !node.has_damaged_descendants() && !node.is_anonymous()
         };
@@ -363,7 +366,7 @@ impl BaseDocument {
 
         // lightningpanda: a table's cells, transformed again only where its grid placed them or
         // they changed since the last pass (`TableContext::placed`); the others' overflow stands.
-        if let Some(cells_overflow) = self.table_cells_overflow(node_id, scale) {
+        if let Some(cells_overflow) = self.table_cells_overflow(node_id, scale, resolve_all) {
             if let Some(cells_overflow) = cells_overflow {
                 overflow = overflow.union(cells_overflow);
             }
@@ -375,7 +378,7 @@ impl BaseDocument {
                 if self.nodes[child_id].is_out_of_flow() {
                     continue;
                 }
-                let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(child_id));
+                let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all));
                 overflow = unite_overflow(overflow, child_rect_in_self);
             }
         }
@@ -385,7 +388,7 @@ impl BaseDocument {
             if !self.nodes.contains_key(child_id) {
                 continue;
             }
-            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(child_id));
+            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all));
             // lightningpanda: a box fixed to the viewport is not in the
             // document's scrollable overflow, whatever it reaches.
             if viewport_contains_fixed && self.is_fixed(child_id) {
@@ -399,7 +402,7 @@ impl BaseDocument {
             if self.nodes[pseudo].is_out_of_flow() {
                 continue;
             }
-            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(pseudo));
+            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(pseudo, resolve_all));
             overflow = unite_overflow(overflow, child_rect_in_self);
         }
 
@@ -986,11 +989,13 @@ impl BaseDocument {
     /// The union of the overflow of `table`'s cells in it (see `resolve_transforms`; `None` inside:
     /// none has any), or `None` if `table` is not a table whose cells it keeps (its layout children
     /// are visited as any others').
-    fn table_cells_overflow(&mut self, table: NodeId, scale: f64) -> Option<Option<Rect>> {
+    fn table_cells_overflow(&mut self, table: NodeId, scale: f64, resolve_all: bool) -> Option<Option<Rect>> {
         let ctx = self.kept_cells_table(table)?;
         let cells = ctx.cells.len();
         let mut placed = ctx.placed.borrow_mut();
-        let again = placed.take_transform().filter(|_| placed.overflow.len() == cells && placed.overflow_scale == scale);
+        let again = placed
+            .take_transform()
+            .filter(|_| !resolve_all && placed.overflow.len() == cells && placed.overflow_scale == scale);
         // lightningpanda: the next hit test brings these cells' hit contributions up to date
         // (`table_cells_hit`).
         placed.transformed(again.as_deref(), cells);
@@ -999,13 +1004,13 @@ impl BaseDocument {
         match again {
             Some(again) => {
                 for index in again {
-                    overflow[index] = crate::util::ensure_stack(|| self.resolve_transforms(ctx.cells[index].node_id));
+                    overflow[index] = crate::util::ensure_stack(|| self.resolve_transforms(ctx.cells[index].node_id, resolve_all));
                 }
             }
             None => {
                 overflow.clear();
                 for cell in &ctx.cells {
-                    overflow.push(crate::util::ensure_stack(|| self.resolve_transforms(cell.node_id)));
+                    overflow.push(crate::util::ensure_stack(|| self.resolve_transforms(cell.node_id, resolve_all)));
                 }
             }
         }

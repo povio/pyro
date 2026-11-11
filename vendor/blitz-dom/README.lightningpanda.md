@@ -1,7 +1,7 @@
-# blitz-dom main (be60597), patched
+# blitz-dom main (c27b4ca), patched
 
 `packages/blitz-dom` of [DioxusLabs/blitz](https://github.com/dioxuslabs/blitz) main at commit
-`be60597f67b3cece0456d26e8d7ff5a88600bbc5` (#1456, 124 commits past 0.3.0-beta.4 = `92b11f1b`; its version
+`c27b4ca14158dc457f35c78eb32b8c4fec906b7e` (#1525, 142 commits past 0.3.0-beta.4 = `92b11f1b`; its version
 is still 0.3.0-beta.4), used through `[patch.crates-io]` in the workspace `Cargo.toml`. License: MIT OR
 Apache-2.0, as upstream. `src/` and `assets/` are copied; `Cargo.toml` is the package manifest with the
 workspace's dependency versions written in, git dependencies replaced by their crates.io releases (Taffy and
