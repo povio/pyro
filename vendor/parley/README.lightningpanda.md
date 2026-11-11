@@ -14,8 +14,8 @@ workspace `Cargo.toml`. License: Apache-2.0 OR MIT, as upstream. `.cargo_vcs_inf
 scale and the base direction; the styles' brushes only matter when painting. `build_into_layout`
 keys each build on those inputs (brushes left out; resolved families, variations and features by
 value) and a build with the same inputs copies the cached `LayoutData` and swaps in its own styles.
-Layouts with inline boxes or a line-break override are not cached. Bounded at 4096 layouts, emptied
-when full; `LayoutContext::clear_build_cache` empties it, and blitz-dom calls it when fonts or the
+Layouts with inline boxes or a builder's own line-break override are not cached (see
+`set_line_break_override` below). Bounded at 4096 layouts, emptied when full; `LayoutContext::clear_build_cache` empties it, and blitz-dom calls it when fonts or the
 scale change (`invalidate_inline_contexts`).
 
 `layout/line_break.rs`: an in-flow inline box wider than the line at the start of a line is appended
@@ -81,6 +81,14 @@ and `resolve_style_metrics` takes a style's font from there, querying only a sty
 query (`Query::first_available_font`) would yield, so the metrics are unchanged. The fonts'
 `unicode-range` comes from fontique (`vendor/fontique/README.lightningpanda.md`), whose charmaps
 the selector's coverage check reads limited to it.
+
+`LayoutContext::set_line_break_override` (`context.rs`, `builder.rs`, `build_cache.rs`): a `'static`
+line-break override every builder of the context starts with (a builder's own
+`set_line_break_override` still replaces it). Layouts built with it stay in the build cache: its
+address is part of the build key (0 without an override), so a context whose override changes never
+gets a layout broken under the other. An override given only to a builder still bypasses the cache.
+blitz-dom sets it from `DocumentConfig::line_break_override`. Covered by
+`the_override_is_part_of_the_build_cache_key` in `crates/lp-render/tests/hyphen_digit_breaks.rs`.
 
 ## Updating or dropping the patch
 

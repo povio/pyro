@@ -641,6 +641,16 @@ parser is not capped (Chrome caps parser depth at 512; a cap would change DOM re
 `deep_nesting_of_each_algorithm_lays_out_on_any_stack` (5,000 levels of ten kinds on a 256 KB thread) and
 lp-render `deep_trees_lay_out_paint_and_print_on_a_small_stack`.
 
+## A line-break override per document
+
+`src/config.rs` (`DocumentConfig::line_break_override`), `src/document.rs`, `src/iframe.rs`, `src/resolve.rs`: a
+document can be given a `'static` parley line-break override (lp-render passes
+`parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE` for `serve --hyphen-digit-breaks on`). It is set on the document's
+parley `LayoutContext` (and on the per-thread contexts of `parallel-construct`), so every text layout of the
+document, its line breaking and its min/max-content widths, uses the same opportunities, and an iframe's document
+inherits it. `BaseDocument::line_break_override` reads it back (lp-render rebuilds a persistent document whose
+setting differs). Covered by `crates/lp-render/tests/hyphen_digit_breaks.rs`.
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were

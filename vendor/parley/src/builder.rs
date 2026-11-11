@@ -35,6 +35,11 @@ impl BuilderOptions<'_> {
             line_break_override: None,
         }
     }
+
+    pub(crate) fn with_line_break_override(mut self, overrides: Option<&'static LineBreakOverrideFn>) -> Self {
+        self.line_break_override = overrides;
+        self
+    }
 }
 
 /// Builder for constructing a text layout with ranged attributes.
@@ -377,8 +382,19 @@ fn build_into_layout<B: Brush>(
     // A layout built before from the same text and styles (cloned content,
     // the same paragraph built again) is reused: only the styles' brushes,
     // which nothing before line breaking depends on, are its own.
-    let cache_key = (options.line_break_override.is_none() && lcx.inline_boxes.is_empty())
-        .then(|| crate::build_cache::BuildKey::new(&lcx.rcx, &lcx.style_table, &lcx.style_runs, text, options.scale, options.quantize, options.base_direction));
+    // A layout built with a line-break override is cached only for the context's own `'static`
+    // override, whose address is part of the key; another one may not be the same function next
+    // time.
+    let line_break_override = match options.line_break_override {
+        None => Some(0),
+        Some(o) => lcx
+            .line_break_override
+            .filter(|d| core::ptr::addr_eq(*d, o))
+            .map(|d| core::ptr::from_ref(d).cast::<()>() as usize),
+    };
+    let cache_key = line_break_override.filter(|_| lcx.inline_boxes.is_empty()).map(|line_break_override| {
+        crate::build_cache::BuildKey::new(&lcx.rcx, &lcx.style_table, &lcx.style_runs, text, options.scale, options.quantize, options.base_direction, line_break_override)
+    });
     if let Some(key) = &cache_key
         && let Some(data) = lcx.build_cache.get(key)
     {

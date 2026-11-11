@@ -655,7 +655,11 @@ impl BaseDocument {
             font_ctx,
             #[cfg(feature = "parallel-construct")]
             thread_font_contexts: ThreadLocal::new(),
-            layout_ctx: parley::LayoutContext::new(),
+            layout_ctx: {
+                let mut layout_ctx = parley::LayoutContext::new();
+                layout_ctx.set_line_break_override(config.line_break_override);
+                layout_ctx
+            },
 
             hover_node_id: None,
             hover_hit_node_id: None,
@@ -2600,6 +2604,12 @@ impl BaseDocument {
 
     pub fn get_viewport(&self) -> Viewport {
         self.viewport.clone()
+    }
+
+    /// The line-break override the document was created with
+    /// ([`crate::DocumentConfig::line_break_override`]).
+    pub fn line_break_override(&self) -> Option<&'static parley::LineBreakOverrideFn> {
+        self.layout_ctx.line_break_override()
     }
 
     /// Returns whether incremental layout is currently enabled for this document.

@@ -856,6 +856,8 @@ impl BaseDocument {
                     #[cfg(feature = "parallel-construct")]
                     let mut layout_ctx = LAYOUT_CTX.take().unwrap_or_else(|| Box::new(LayoutContext::new()));
                     #[cfg(feature = "parallel-construct")]
+                    layout_ctx.set_line_break_override(self.layout_ctx.line_break_override());
+                    #[cfg(feature = "parallel-construct")]
                     let layout_ctx_mut = &mut layout_ctx;
 
                     #[cfg(feature = "parallel-construct")]

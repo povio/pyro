@@ -75,6 +75,13 @@ options:
                                         pay for it (~3 MB while idle). Default: on with
                                         --prepare, off otherwise;
                                         env LIGHTNINGPANDA_RENDER_PREWARM=on|off
+  --hyphen-digit-breaks <on|off>        allow a line break between a hyphen and a digit
+                                        when the hyphen follows a letter or digit
+                                        (4b87-|916e, 10-|20), as Chrome does; a minus
+                                        sign stays with its number (-120, A -5).
+                                        Applies to line breaking and min-content
+                                        widths (table columns). Default: off;
+                                        env LIGHTNINGPANDA_HYPHEN_DIGIT_BREAKS=on|off
   --parent-pid <PID>                    exit when process PID exits, however it ends
                                         (env LIGHTNINGPANDA_PARENT_PID; the SDK's
                                         Lightningpanda.launch() sets it to its own pid)
@@ -207,6 +214,10 @@ pub struct ServeOptions {
     /// renderer's process-wide state at startup. `None` follows the mode
     /// like `spare_engine`.
     pub render_prewarm: Option<bool>,
+    /// `--hyphen-digit-breaks` (or `LIGHTNINGPANDA_HYPHEN_DIGIT_BREAKS`):
+    /// Chrome's line break between a hyphen and a digit
+    /// (`lp_render::set_hyphen_digit_breaks`). Off by default.
+    pub hyphen_digit_breaks: bool,
     /// `--parent-pid` (or `LIGHTNINGPANDA_PARENT_PID`): exit with this
     /// process ([`crate::lifetime`]).
     pub parent_pid: Option<libc::pid_t>,
@@ -276,10 +287,17 @@ impl Default for ServeOptions {
             render_prewarm: std::env::var(RENDER_PREWARM_ENV)
                 .ok()
                 .and_then(|v| parse_switch(RENDER_PREWARM_ENV, &v).ok()),
+            hyphen_digit_breaks: std::env::var(HYPHEN_DIGIT_BREAKS_ENV)
+                .ok()
+                .and_then(|v| parse_switch(HYPHEN_DIGIT_BREAKS_ENV, &v).ok())
+                .unwrap_or(false),
             parent_pid: std::env::var(PARENT_PID_ENV).ok().and_then(|v| parse_pid(&v).ok()),
         }
     }
 }
+
+/// Environment equivalent of `--hyphen-digit-breaks` (`on`/`off`).
+pub const HYPHEN_DIGIT_BREAKS_ENV: &str = "LIGHTNINGPANDA_HYPHEN_DIGIT_BREAKS";
 
 /// Environment equivalent of `--parent-pid`.
 pub const PARENT_PID_ENV: &str = "LIGHTNINGPANDA_PARENT_PID";
@@ -384,6 +402,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             "--fork" => o.fork = true,
             "--spare-engine" => o.spare_engine = Some(parse_switch("--spare-engine", &value()?)?),
             "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
+            "--hyphen-digit-breaks" => o.hyphen_digit_breaks = parse_switch("--hyphen-digit-breaks", &value()?)?,
             "--parent-pid" => o.parent_pid = Some(parse_pid(&value()?)?),
             "--template" => o.template = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown option '{other}'")),
@@ -468,6 +487,10 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Before any renderer exists, in the template process too (it gets the
+    // same arguments): every renderer takes the default when it is made.
+    #[cfg(feature = "render")]
+    lp_render::set_hyphen_digit_breaks(options.hyphen_digit_breaks);
     if let Some(socket) = &options.template {
         return crate::fork::template_main(&options, socket);
     }
@@ -952,6 +975,18 @@ mod tests {
             .unwrap()
             .local_storage
             .is_empty());
+    }
+
+    #[test]
+    fn hyphen_digit_breaks_flag() {
+        let args = |a: &[&str]| parse_args(&a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        if std::env::var_os(HYPHEN_DIGIT_BREAKS_ENV).is_none() {
+            assert!(!args(&[]).unwrap().hyphen_digit_breaks);
+        }
+        assert!(args(&["--hyphen-digit-breaks", "on"]).unwrap().hyphen_digit_breaks);
+        assert!(!args(&["--hyphen-digit-breaks", "off"]).unwrap().hyphen_digit_breaks);
+        assert!(args(&["--hyphen-digit-breaks", "maybe"]).is_err());
+        assert!(args(&["--hyphen-digit-breaks"]).is_err());
     }
 
     #[test]
