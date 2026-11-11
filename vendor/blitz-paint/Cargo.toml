@@ -27,7 +27,7 @@ anyrender = { version = "0.14.0" }
 anyrender_svg = { optional = true, version = "0.15.0" }
 blitz-traits = { version = "=0.3.0-beta.4", default-features = false }
 blitz-dom = { version = "=0.3.0-beta.4", default-features = false }
-style = { version = "0.23.0", package = "stylo" }
+style = { version = "0.24.0", package = "stylo" }
 taffy = { default-features = false, features = ["std", "flexbox", "flexbox_balance", "grid", "block_layout", "content_size", "calc", "detailed_layout_info"], version = "0.15" }
 parley = { version = "0.12", default-features = false, features = ["std", "bytemuck"] }
 skrifa = { version = "0.44", default-features = false, features = ["std"] }

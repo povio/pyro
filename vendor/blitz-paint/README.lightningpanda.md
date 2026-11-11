@@ -66,3 +66,8 @@ covered by `crates/lp-render/tests/mirror.rs`.
   mask (#1340) passes none.
 - Font embolden (#1357, #1361, #1364, #1444) stays off: lightningpanda enables neither `font-embolden`
   feature.
+
+## From be60597 to c27b4ca
+
+- `src/text.rs`: main skips text whose fill is fully transparent; a recording paint (the PDF's, `runs` given)
+  keeps it as invisible text, so it stays selectable and searchable.

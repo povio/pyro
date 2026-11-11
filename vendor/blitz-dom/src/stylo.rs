@@ -24,6 +24,8 @@ use style::CaseSensitivityExt;
 use style::animation::AnimationSetKey;
 use style::animation::AnimationState;
 use style::applicable_declarations::ApplicableDeclarationBlock;
+use style::rule_tree::StyleSourceBorrow;
+use crate::node::ElementData;
 use style::bloom::each_relevant_element_hash;
 use style::color::AbsoluteColor;
 use style::data::{ElementDataMut, ElementDataRef};
@@ -349,13 +351,14 @@ impl crate::document::BaseDocument {
                 MatchingForInvalidation::No,
             );
             matching.extra_data.originating_element_style = Some(&primary);
+            let animation_declarations = style::properties::AnimationDeclarations::default();
             let mut declarations = style::applicable_declarations::ApplicableDeclarationList::new();
             self.stylist.push_applicable_declarations(
                 node,
                 Some(pseudo),
                 None,
                 None,
-                Default::default(),
+                &animation_declarations,
                 RuleInclusion::All,
                 &mut declarations,
                 &mut matching,
@@ -731,6 +734,7 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::MozMeterOptimum => false,
             NonTSPseudoClass::MozMeterSubOptimum => false,
             NonTSPseudoClass::MozMeterSubSubOptimum => false,
+            NonTSPseudoClass::MozTopmostModal => false,
         }
     }
 
@@ -1119,27 +1123,168 @@ impl<'a> TElement for BlitzNode<'a> {
         root_element.children.contains(&self.id)
     }
 
-    fn synthesize_presentational_hints_for_legacy_attributes<V>(
+    fn synthesize_presentational_hints_for_legacy_attributes<'h, V>(
         &self,
         _visited_handling: VisitedHandlingMode,
         hints: &mut V,
     ) where
-        V: Push<style::applicable_declarations::ApplicableDeclarationBlock>,
+        V: Push<style::applicable_declarations::ApplicableDeclarationBlock<'h>>,
+        Self: 'h,
     {
-        let Some(elem) = self.data.downcast_element() else {
+        // lightningpanda: Stylo 0.24 borrows the declaration blocks for the
+        // cascade, so the element owns them (`Attributes::presentational_hints`).
+        let node: &'h Node = self;
+        let Some(elem) = node.data.downcast_element() else {
             return;
         };
-
-        let tag = &elem.name.local;
-
-        let mut push_style = |decl: PropertyDeclaration| {
+        let mut push = |block: &'h Arc<Locked<PropertyDeclarationBlock>>| {
             hints.push(ApplicableDeclarationBlock::from_declarations(
-                Arc::new(
-                    self.guard()
-                        .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
-                ),
+                StyleSourceBorrow::from_declarations(block.borrow_arc()),
                 CascadeLevel::new(CascadeOrigin::PresHints),
                 LayerOrder::root(),
+            ));
+        };
+        let own = elem.attrs.presentational_hints(|| node.build_presentational_hints(elem));
+        own.own.iter().for_each(&mut push);
+        let tag = &elem.name.local;
+        if *tag == local_name!("td") || *tag == local_name!("th") {
+            let table = node.cell_table().and_then(|table| Some((table, table.data.downcast_element()?)));
+            if let Some((table, table_elem)) = table {
+                let of_table = table_elem.attrs.presentational_hints(|| table.build_presentational_hints(table_elem));
+                of_table.cells.iter().for_each(&mut push);
+            }
+        }
+    }
+
+    fn local_name(&self) -> &LocalName {
+        &self.element_data().expect("Not an element").name.local
+    }
+
+    fn namespace(&self) -> &Namespace {
+        &self.element_data().expect("Not an element").name.ns
+    }
+
+    fn query_container_size(
+        &self,
+        display: &style::values::specified::Display,
+    ) -> euclid::default::Size2D<Option<app_units::Au>> {
+        if !self.flags.is_in_document() || display.is_none() || display.is_contents() || display.is_inline_flow() {
+            return Default::default();
+        }
+        // Stylo can call while holding this element's mutable style data for
+        // a pseudo. Eligibility comes from its fresh originating-element style;
+        // axes and content-box dimensions are updated after traversal instead.
+        self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
+    }
+
+    fn each_custom_state<F>(&self, mut callback: F)
+    where
+        F: FnMut(&AtomIdent),
+    {
+        // lightningpanda: lp-dom's render tree lists them (`has_lp_custom_state`).
+        let value = self.attrs().and_then(|attrs| {
+            attrs
+                .iter()
+                .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "custom-states")
+        });
+        if let Some(attr) = value {
+            for state in crate::has_invalidation::lp_custom_states(Some(&attr.value)) {
+                callback(AtomIdent::cast(&style::Atom::from(state)));
+            }
+        }
+    }
+
+    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
+        self.selector_flags().get().contains(flags)
+    }
+
+    fn relative_selector_search_direction(&self) -> ElementSelectorFlags {
+        let flags = self.selector_flags().get();
+        if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING)
+        {
+            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING
+        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR)
+        {
+            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
+        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING) {
+            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
+        } else {
+            ElementSelectorFlags::empty()
+        }
+    }
+
+    fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
+        compute_layout_damage(old, new)
+        // ALL_DAMAGE
+    }
+
+    // fn update_animations(
+    //     &self,
+    //     before_change_style: Option<Arc<ComputedValues>>,
+    //     tasks: style::context::UpdateAnimationsTasks,
+    // ) {
+    //     todo!()
+    // }
+
+    // fn process_post_animation(&self, tasks: style::context::PostAnimationTasks) {
+    //     todo!()
+    // }
+
+    // fn needs_transitions_update(
+    //     &self,
+    //     before_change_style: &ComputedValues,
+    //     after_change_style: &ComputedValues,
+    // ) -> bool {
+    //     todo!()
+    // }
+}
+
+pub struct Traverser<'a> {
+    // dom: &'a Slab<Node>,
+    parent: BlitzNode<'a>,
+    child_index: usize,
+}
+
+impl<'a> Iterator for Traverser<'a> {
+    type Item = BlitzNode<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node_id = self.parent.children.get(self.child_index)?;
+        let node = self.parent.with(*node_id);
+
+        self.child_index += 1;
+
+        Some(node)
+    }
+}
+
+impl std::hash::Hash for BlitzNode<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.id.as_u64())
+    }
+}
+
+/// Handle custom painters like images for layouting
+///
+/// todo: actually implement this
+pub struct RegisteredPaintersImpl;
+impl RegisteredSpeculativePainters for RegisteredPaintersImpl {
+    fn get(&self, _name: &Atom) -> Option<&dyn RegisteredSpeculativePainter> {
+        None
+    }
+}
+
+impl Node {
+    /// The declaration blocks the element's legacy attributes map to, one
+    /// per declaration.
+    fn build_presentational_hints(&self, elem: &ElementData) -> crate::node::PresentationalHints {
+        let tag = &elem.name.local;
+        let mut own = Vec::new();
+
+        let mut push_style = |decl: PropertyDeclaration| {
+            own.push(Arc::new(
+                self.guard()
+                    .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
             ));
         };
 
@@ -1575,163 +1720,59 @@ impl<'a> TElement for BlitzNode<'a> {
             }
         }
 
+        if let Some(lang) = lang {
+            push_style(PropertyDeclaration::XLang(XLang(Atom::from(lang))));
+        }
+
         // A table's `cellpadding` attribute maps to the padding of its cells (not
-        // those of nested tables), as a pixel length. The table is the first
-        // ancestor that isn't a row or row group.
+        // those of nested tables), as a pixel length. The table owns the
+        // declarations and its cells borrow them.
         // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
-        if *tag == local_name!("td") || *tag == local_name!("th") {
-            let mut ancestor = self.parent_node();
-            let mut cellpadding = None;
-            while let Some(node) = ancestor {
-                let Some(elem) = node.data.downcast_element() else {
-                    break;
-                };
-                let name = &elem.name.local;
-                let is_table_internal = *name == local_name!("tr")
-                    || *name == local_name!("tbody")
-                    || *name == local_name!("thead")
-                    || *name == local_name!("tfoot");
-                if !is_table_internal {
-                    if *name == local_name!("table") {
-                        cellpadding = elem.attr(local_name!("cellpadding")).and_then(|value| {
-                            style::servo::attr::parse_unsigned_integer(value.chars()).ok()
-                        });
-                    }
-                    break;
-                }
-                ancestor = node.parent_node();
-            }
+        let mut cells = Vec::new();
+        if *tag == local_name!("table") {
+            let cellpadding = elem
+                .attr(local_name!("cellpadding"))
+                .and_then(|value| style::servo::attr::parse_unsigned_integer(value.chars()).ok());
             if let Some(px) = cellpadding {
                 use style::values::generics::NonNegative;
                 use style::values::specified::{LengthPercentage, NoCalcLength};
                 let padding =
                     NonNegative(LengthPercentage::Length(NoCalcLength::from_px(px as f32)));
-                push_style(PropertyDeclaration::PaddingTop(padding.clone()));
-                push_style(PropertyDeclaration::PaddingRight(padding.clone()));
-                push_style(PropertyDeclaration::PaddingBottom(padding.clone()));
-                push_style(PropertyDeclaration::PaddingLeft(padding));
+                for decl in [
+                    PropertyDeclaration::PaddingTop(padding.clone()),
+                    PropertyDeclaration::PaddingRight(padding.clone()),
+                    PropertyDeclaration::PaddingBottom(padding.clone()),
+                    PropertyDeclaration::PaddingLeft(padding),
+                ] {
+                    cells.push(Arc::new(
+                        self.guard()
+                            .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
+                    ));
+                }
             }
         }
 
-        if let Some(lang) = lang {
-            push_style(PropertyDeclaration::XLang(XLang(Atom::from(lang))));
+        crate::node::PresentationalHints {
+            own: own.into_boxed_slice(),
+            cells: cells.into_boxed_slice(),
         }
     }
 
-    fn local_name(&self) -> &LocalName {
-        &self.element_data().expect("Not an element").name.local
-    }
-
-    fn namespace(&self) -> &Namespace {
-        &self.element_data().expect("Not an element").name.ns
-    }
-
-    fn query_container_size(
-        &self,
-        display: &style::values::specified::Display,
-    ) -> euclid::default::Size2D<Option<app_units::Au>> {
-        if !self.flags.is_in_document() || display.is_none() || display.is_contents() || display.is_inline_flow() {
-            return Default::default();
-        }
-        // Stylo can call while holding this element's mutable style data for
-        // a pseudo. Eligibility comes from its fresh originating-element style;
-        // axes and content-box dimensions are updated after traversal instead.
-        self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
-    }
-
-    fn each_custom_state<F>(&self, mut callback: F)
-    where
-        F: FnMut(&AtomIdent),
-    {
-        // lightningpanda: lp-dom's render tree lists them (`has_lp_custom_state`).
-        let value = self.attrs().and_then(|attrs| {
-            attrs
-                .iter()
-                .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "custom-states")
-        });
-        if let Some(attr) = value {
-            for state in crate::has_invalidation::lp_custom_states(Some(&attr.value)) {
-                callback(AtomIdent::cast(&style::Atom::from(state)));
+    /// The table a cell takes its `cellpadding` from: the first ancestor
+    /// that isn't a row or row group, when that is a table.
+    fn cell_table(&self) -> Option<&Node> {
+        let mut ancestor = self.parent_node();
+        while let Some(node) = ancestor {
+            let name = &node.data.downcast_element()?.name.local;
+            let is_table_internal = *name == local_name!("tr")
+                || *name == local_name!("tbody")
+                || *name == local_name!("thead")
+                || *name == local_name!("tfoot");
+            if !is_table_internal {
+                return (*name == local_name!("table")).then_some(node);
             }
+            ancestor = node.parent_node();
         }
-    }
-
-    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
-        self.selector_flags().get().contains(flags)
-    }
-
-    fn relative_selector_search_direction(&self) -> ElementSelectorFlags {
-        let flags = self.selector_flags().get();
-        if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING)
-        {
-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING
-        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR)
-        {
-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
-        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING) {
-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
-        } else {
-            ElementSelectorFlags::empty()
-        }
-    }
-
-    fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
-        compute_layout_damage(old, new)
-        // ALL_DAMAGE
-    }
-
-    // fn update_animations(
-    //     &self,
-    //     before_change_style: Option<Arc<ComputedValues>>,
-    //     tasks: style::context::UpdateAnimationsTasks,
-    // ) {
-    //     todo!()
-    // }
-
-    // fn process_post_animation(&self, tasks: style::context::PostAnimationTasks) {
-    //     todo!()
-    // }
-
-    // fn needs_transitions_update(
-    //     &self,
-    //     before_change_style: &ComputedValues,
-    //     after_change_style: &ComputedValues,
-    // ) -> bool {
-    //     todo!()
-    // }
-}
-
-pub struct Traverser<'a> {
-    // dom: &'a Slab<Node>,
-    parent: BlitzNode<'a>,
-    child_index: usize,
-}
-
-impl<'a> Iterator for Traverser<'a> {
-    type Item = BlitzNode<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let node_id = self.parent.children.get(self.child_index)?;
-        let node = self.parent.with(*node_id);
-
-        self.child_index += 1;
-
-        Some(node)
-    }
-}
-
-impl std::hash::Hash for BlitzNode<'_> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.id.as_u64())
-    }
-}
-
-/// Handle custom painters like images for layouting
-///
-/// todo: actually implement this
-pub struct RegisteredPaintersImpl;
-impl RegisteredSpeculativePainters for RegisteredPaintersImpl {
-    fn get(&self, _name: &Atom) -> Option<&dyn RegisteredSpeculativePainter> {
         None
     }
 }

@@ -4,7 +4,6 @@
 //! engine's cascade (Blitz), whose `ComputedValues` are Stylo's too.
 
 pub mod declarations;
-mod hints;
 mod node;
 pub mod select;
 
@@ -56,7 +55,7 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
         style_config::set_pref!("layout.css.text-overflow.enabled", true);
-        style_config::set_pref!("layout.css.text-underline.enabled", true);
+        style_config::set_pref!("layout.css.text-underline-position.enabled", true);
         style_config::set_pref!("layout.css.view-transitions.enabled", true);
         style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
         style_config::set_pref!("layout.css.zoom.enabled", true);
@@ -319,8 +318,19 @@ pub fn validate_property_registration(
         Some(text) => {
             let mut parser = cssparser::Parser::new(text);
             let url = url_data();
+            let context = style::parser::ParserContext::new(
+                style::stylesheets::Origin::Author,
+                &url,
+                None,
+                style_traits::ParsingMode::DEFAULT,
+                style::context::QuirksMode::NoQuirks,
+                Default::default(),
+                None,
+                None,
+                Default::default(),
+            );
             let value = parser
-                .parse_entirely(|p| style::custom_properties::SpecifiedValue::parse(p, None, &url))
+                .parse_entirely(|p| style::custom_properties::SpecifiedValue::parse(&context, p))
                 .map_err(|_| "The initial value provided does not parse for the given syntax.")?;
             Some(value)
         }

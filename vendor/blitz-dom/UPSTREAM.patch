@@ -265,7 +265,12 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/document.rs
 --- a/packages/blitz-dom/src/document.rs
 +++ b/packages/blitz-dom/src/document.rs
-@@ -124,6 +124,18 @@
+@@ -120,10 +120,22 @@
+         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
+         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
+         style_config::set_pref!("layout.css.text-overflow.enabled", true);
+-        style_config::set_pref!("layout.css.text-underline.enabled", true);
++        style_config::set_pref!("layout.css.text-underline-position.enabled", true);
          style_config::set_pref!("layout.css.view-transitions.enabled", true);
          style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
          style_config::set_pref!("layout.css.zoom.enabled", true);
@@ -9832,6 +9837,101 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
+diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/node/attributes.rs
+--- a/packages/blitz-dom/src/node/attributes.rs
++++ b/packages/blitz-dom/src/node/attributes.rs
+@@ -1,6 +1,10 @@
+ use std::ops::{Deref, DerefMut};
++use std::sync::OnceLock;
+ 
+ use markup5ever::QualName;
++use style::properties::PropertyDeclarationBlock;
++use style::servo_arc::Arc as ServoArc;
++use style::shared_lock::Locked;
+ use thin_vec::ThinVec;
+ 
+ /// A tag attribute, e.g. `class="test"` in `<div class="test" ...>`.
+@@ -12,15 +16,46 @@
+     pub value: String,
+ }
+ 
+-#[derive(Clone, Debug)]
++/// lightningpanda: the declaration blocks of an element's presentational
++/// hints, which Stylo 0.24 borrows from the element for the length of a
++/// cascade (`TElement::synthesize_presentational_hints_for_legacy_attributes`).
++pub struct PresentationalHints {
++    /// What the element's own attributes map to, one block per declaration.
++    pub own: Box<[ServoArc<Locked<PropertyDeclarationBlock>>]>,
++    /// A table's `cellpadding`: the padding of its cells, which borrow it.
++    pub cells: Box<[ServoArc<Locked<PropertyDeclarationBlock>>]>,
++}
++
+ pub struct Attributes {
+     inner: ThinVec<Attribute>,
++    /// lightningpanda: the hints these attributes map to, built at the
++    /// first cascade that asks and dropped by every write (`set`, `remove`,
++    /// `DerefMut`). They depend on the attributes and the element's name
++    /// only.
++    presentational_hints: OnceLock<Box<PresentationalHints>>,
++}
++
++impl Clone for Attributes {
++    /// The copy may belong to another element: it builds its own hints.
++    fn clone(&self) -> Self {
++        Self {
++            inner: self.inner.clone(),
++            presentational_hints: OnceLock::new(),
++        }
++    }
++}
++
++impl std::fmt::Debug for Attributes {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("Attributes").field("inner", &self.inner).finish()
++    }
+ }
+ 
+ impl Attributes {
+     pub fn new(inner: Vec<Attribute>) -> Self {
+         Self {
+             inner: inner.into_iter().collect(),
++            presentational_hints: OnceLock::new(),
+         }
+     }
+ 
+@@ -29,6 +64,7 @@
+     }
+ 
+     pub fn set(&mut self, name: QualName, value: &str) {
++        self.presentational_hints.take();
+         let existing_attr = self.inner.iter_mut().find(|a| a.name == name);
+         if let Some(existing_attr) = existing_attr {
+             existing_attr.value.clear();
+@@ -42,9 +78,16 @@
+     }
+ 
+     pub fn remove(&mut self, name: &QualName) -> Option<Attribute> {
++        self.presentational_hints.take();
+         let idx = self.inner.iter().position(|attr| attr.name == *name);
+         idx.map(|idx| self.inner.remove(idx))
+     }
++
++    /// lightningpanda: the cached presentational hints, built by `build`
++    /// when no cascade asked since the last write.
++    pub fn presentational_hints(&self, build: impl FnOnce() -> PresentationalHints) -> &PresentationalHints {
++        self.presentational_hints.get_or_init(|| Box::new(build()))
++    }
+ }
+ 
+ impl Deref for Attributes {
+@@ -55,6 +98,7 @@
+ }
+ impl DerefMut for Attributes {
+     fn deref_mut(&mut self) -> &mut Self::Target {
++        self.presentational_hints.take();
+         &mut self.inner
+     }
+ }
 diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/node/element.rs
 --- a/packages/blitz-dom/src/node/element.rs
 +++ b/packages/blitz-dom/src/node/element.rs
@@ -9914,6 +10014,15 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 diff --git a/packages/blitz-dom/src/node/mod.rs b/packages/blitz-dom/src/node/mod.rs
 --- a/packages/blitz-dom/src/node/mod.rs
 +++ b/packages/blitz-dom/src/node/mod.rs
+@@ -12,7 +12,7 @@
+ mod svg;
+ mod text;
+ 
+-pub use attributes::{Attribute, Attributes};
++pub use attributes::{Attribute, Attributes, PresentationalHints};
+ #[cfg(feature = "custom-widget")]
+ pub use custom_widget::{
+     ComputedStyles, CustomWidgetData, CustomWidgetStatus, ProxyRenderContext, Widget,
 @@ -26,6 +26,7 @@
  pub use node::*;
  pub use scrollbar::{ScrollbarColor, ScrollbarRef, ScrollbarWidth};
@@ -12333,7 +12442,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  use markup5ever::{LocalName, LocalNameStaticSet, Namespace, NamespaceStaticSet, local_name, ns};
  use selectors::bloom::BLOOM_HASH_MASK;
  use selectors::{
-@@ -38,6 +40,9 @@
+@@ -22,6 +24,8 @@
+ use style::animation::AnimationSetKey;
+ use style::animation::AnimationState;
+ use style::applicable_declarations::ApplicableDeclarationBlock;
++use style::rule_tree::StyleSourceBorrow;
++use crate::node::ElementData;
+ use style::bloom::each_relevant_element_hash;
+ use style::color::AbsoluteColor;
+ use style::data::{ElementDataMut, ElementDataRef};
+@@ -38,6 +42,9 @@
  use style::properties::{Importance, PropertyDeclaration};
  use style::rule_tree::CascadeLevel;
  use style::rule_tree::CascadeOrigin;
@@ -12343,7 +12461,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  use style::selector_parser::PseudoElement;
  use style::selector_parser::RestyleDamage;
  use style::stylesheets::layer_rule::LayerOrder;
-@@ -66,9 +71,38 @@
+@@ -66,9 +73,38 @@
  
  use style::values::computed::text::TextAlign as StyloTextAlign;
  
@@ -12383,7 +12501,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
          let guard = &self.guard;
          let guards = StylesheetGuards {
-@@ -150,9 +184,11 @@
+@@ -150,9 +186,11 @@
          let token = RecalcStyle::pre_traverse(root, &context);
  
          let mut nodes_needing_style_image_flush = Vec::new();
@@ -12395,7 +12513,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `Sequential` bypasses Stylo's global pool. See `StyleThreading`.
              let parallel = matches!(self.style_threading, StyleThreading::Parallel);
              let _traversal_lock = parallel.then(|| {
-@@ -165,9 +201,27 @@
+@@ -165,9 +203,27 @@
              style::driver::traverse_dom(&traverser, token, rayon_pool);
              nodes_needing_style_image_flush =
                  std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
@@ -12423,7 +12541,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
          for opaque in self.snapshots.keys() {
              let id = NodeId::from_u64(opaque.id() as u64);
-@@ -210,8 +264,6 @@
+@@ -210,8 +266,6 @@
  
          // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
          self.stylist.rule_tree().maybe_gc();
@@ -12432,7 +12550,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      /// Compute the style of an element which the regular style traversal
-@@ -223,12 +275,148 @@
+@@ -223,12 +277,149 @@
      /// (styling any unstyled ancestors along the way) without storing it on the
      /// node. Returns `None` for non-elements and elements outside the document.
      pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
@@ -12463,10 +12581,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        pseudo: &style::selector_parser::PseudoElement,
 +        generated_only: bool,
 +    ) -> Option<Arc<ComputedValues>> {
-+        let node = self.nodes.get(node_id)?;
-+        if !node.is_element() || !node.flags.is_in_document() {
-+            return None;
-+        }
+         let node = self.nodes.get(node_id)?;
+         if !node.is_element() || !node.flags.is_in_document() {
+             return None;
+         }
 +        let stored = node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| {
 +            let primary = d.styles.get_primary()?.clone();
 +            let eager = if pseudo.is_eager() { d.styles.pseudos.get(pseudo).cloned() } else { None };
@@ -12510,13 +12628,14 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                MatchingForInvalidation::No,
 +            );
 +            matching.extra_data.originating_element_style = Some(&primary);
++            let animation_declarations = style::properties::AnimationDeclarations::default();
 +            let mut declarations = style::applicable_declarations::ApplicableDeclarationList::new();
 +            self.stylist.push_applicable_declarations(
 +                node,
 +                Some(pseudo),
 +                None,
 +                None,
-+                Default::default(),
++                &animation_declarations,
 +                RuleInclusion::All,
 +                &mut declarations,
 +                &mut matching,
@@ -12568,21 +12687,21 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            .build(),
 +        )
 +    }
-+
+ 
+-        style::thread_state::enter(ThreadState::LAYOUT);
 +    /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
 +    /// cascaded pseudo-elements included.
 +    fn resolve_undisplayed_styles(&self, node_id: NodeId) -> Option<style::data::ElementStyles> {
-         let node = self.nodes.get(node_id)?;
-         if !node.is_element() || !node.flags.is_in_document() {
-             return None;
-         }
- 
--        style::thread_state::enter(ThreadState::LAYOUT);
++        let node = self.nodes.get(node_id)?;
++        if !node.is_element() || !node.flags.is_in_document() {
++            return None;
++        }
++
 +        let _layout_thread_scope = LayoutThreadScope::enter();
  
          let guard = &self.guard;
          let guards = StylesheetGuards {
-@@ -256,9 +444,7 @@
+@@ -256,9 +447,7 @@
              resolve_style(&mut context, node, RuleInclusion::All, None, None)
          };
  
@@ -12593,7 +12712,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  }
  
-@@ -501,41 +687,47 @@
+@@ -501,44 +690,51 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
@@ -12661,7 +12780,11 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              NonTSPseudoClass::MozMeterOptimum => false,
              NonTSPseudoClass::MozMeterSubOptimum => false,
              NonTSPseudoClass::MozMeterSubSubOptimum => false,
-@@ -641,6 +833,16 @@
++            NonTSPseudoClass::MozTopmostModal => false,
+         }
+     }
+ 
+@@ -641,6 +837,16 @@
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
@@ -12678,15 +12801,58 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -1426,17 +1628,32 @@
+@@ -917,27 +1123,168 @@
+         root_element.children.contains(&self.id)
+     }
  
-     fn query_container_size(
+-    fn synthesize_presentational_hints_for_legacy_attributes<V>(
++    fn synthesize_presentational_hints_for_legacy_attributes<'h, V>(
          &self,
--        _display: &style::values::specified::Display,
+         _visited_handling: VisitedHandlingMode,
+         hints: &mut V,
+     ) where
+-        V: Push<style::applicable_declarations::ApplicableDeclarationBlock>,
++        V: Push<style::applicable_declarations::ApplicableDeclarationBlock<'h>>,
++        Self: 'h,
+     {
+-        let Some(elem) = self.data.downcast_element() else {
++        // lightningpanda: Stylo 0.24 borrows the declaration blocks for the
++        // cascade, so the element owns them (`Attributes::presentational_hints`).
++        let node: &'h Node = self;
++        let Some(elem) = node.data.downcast_element() else {
+             return;
+         };
++        let mut push = |block: &'h Arc<Locked<PropertyDeclarationBlock>>| {
++            hints.push(ApplicableDeclarationBlock::from_declarations(
++                StyleSourceBorrow::from_declarations(block.borrow_arc()),
++                CascadeLevel::new(CascadeOrigin::PresHints),
++                LayerOrder::root(),
++            ));
++        };
++        let own = elem.attrs.presentational_hints(|| node.build_presentational_hints(elem));
++        own.own.iter().for_each(&mut push);
++        let tag = &elem.name.local;
++        if *tag == local_name!("td") || *tag == local_name!("th") {
++            let table = node.cell_table().and_then(|table| Some((table, table.data.downcast_element()?)));
++            if let Some((table, table_elem)) = table {
++                let of_table = table_elem.attrs.presentational_hints(|| table.build_presentational_hints(table_elem));
++                of_table.cells.iter().for_each(&mut push);
++            }
++        }
++    }
++
++    fn local_name(&self) -> &LocalName {
++        &self.element_data().expect("Not an element").name.local
++    }
++
++    fn namespace(&self) -> &Namespace {
++        &self.element_data().expect("Not an element").name.ns
++    }
++
++    fn query_container_size(
++        &self,
 +        display: &style::values::specified::Display,
-     ) -> euclid::default::Size2D<Option<app_units::Au>> {
--        // FIXME: Implement container queries. For now this effectively disables them without panicking.
--        Default::default()
++    ) -> euclid::default::Size2D<Option<app_units::Au>> {
 +        if !self.flags.is_in_document() || display.is_none() || display.is_contents() || display.is_inline_flow() {
 +            return Default::default();
 +        }
@@ -12694,14 +12860,12 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        // a pseudo. Eligibility comes from its fresh originating-element style;
 +        // axes and content-box dimensions are updated after traversal instead.
 +        self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
-     }
- 
--    fn each_custom_state<F>(&self, _callback: F)
++    }
++
 +    fn each_custom_state<F>(&self, mut callback: F)
-     where
-         F: FnMut(&AtomIdent),
-     {
--        todo!()
++    where
++        F: FnMut(&AtomIdent),
++    {
 +        // lightningpanda: lp-dom's render tree lists them (`has_lp_custom_state`).
 +        let value = self.attrs().and_then(|attrs| {
 +            attrs
@@ -12713,10 +12877,298 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                callback(AtomIdent::cast(&style::Atom::from(state)));
 +            }
 +        }
++    }
++
++    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
++        self.selector_flags().get().contains(flags)
++    }
+ 
++    fn relative_selector_search_direction(&self) -> ElementSelectorFlags {
++        let flags = self.selector_flags().get();
++        if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING)
++        {
++            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING
++        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR)
++        {
++            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
++        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING) {
++            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
++        } else {
++            ElementSelectorFlags::empty()
++        }
++    }
++
++    fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
++        compute_layout_damage(old, new)
++        // ALL_DAMAGE
++    }
++
++    // fn update_animations(
++    //     &self,
++    //     before_change_style: Option<Arc<ComputedValues>>,
++    //     tasks: style::context::UpdateAnimationsTasks,
++    // ) {
++    //     todo!()
++    // }
++
++    // fn process_post_animation(&self, tasks: style::context::PostAnimationTasks) {
++    //     todo!()
++    // }
++
++    // fn needs_transitions_update(
++    //     &self,
++    //     before_change_style: &ComputedValues,
++    //     after_change_style: &ComputedValues,
++    // ) -> bool {
++    //     todo!()
++    // }
++}
++
++pub struct Traverser<'a> {
++    // dom: &'a Slab<Node>,
++    parent: BlitzNode<'a>,
++    child_index: usize,
++}
++
++impl<'a> Iterator for Traverser<'a> {
++    type Item = BlitzNode<'a>;
++
++    fn next(&mut self) -> Option<Self::Item> {
++        let node_id = self.parent.children.get(self.child_index)?;
++        let node = self.parent.with(*node_id);
++
++        self.child_index += 1;
++
++        Some(node)
++    }
++}
++
++impl std::hash::Hash for BlitzNode<'_> {
++    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
++        state.write_u64(self.id.as_u64())
++    }
++}
++
++/// Handle custom painters like images for layouting
++///
++/// todo: actually implement this
++pub struct RegisteredPaintersImpl;
++impl RegisteredSpeculativePainters for RegisteredPaintersImpl {
++    fn get(&self, _name: &Atom) -> Option<&dyn RegisteredSpeculativePainter> {
++        None
++    }
++}
++
++impl Node {
++    /// The declaration blocks the element's legacy attributes map to, one
++    /// per declaration.
++    fn build_presentational_hints(&self, elem: &ElementData) -> crate::node::PresentationalHints {
+         let tag = &elem.name.local;
++        let mut own = Vec::new();
+ 
+         let mut push_style = |decl: PropertyDeclaration| {
+-            hints.push(ApplicableDeclarationBlock::from_declarations(
+-                Arc::new(
+-                    self.guard()
+-                        .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
+-                ),
+-                CascadeLevel::new(CascadeOrigin::PresHints),
+-                LayerOrder::root(),
++            own.push(Arc::new(
++                self.guard()
++                    .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
+             ));
+         };
+ 
+@@ -1373,148 +1720,59 @@
+             }
+         }
+ 
++        if let Some(lang) = lang {
++            push_style(PropertyDeclaration::XLang(XLang(Atom::from(lang))));
++        }
++
+         // A table's `cellpadding` attribute maps to the padding of its cells (not
+-        // those of nested tables), as a pixel length. The table is the first
+-        // ancestor that isn't a row or row group.
++        // those of nested tables), as a pixel length. The table owns the
++        // declarations and its cells borrow them.
+         // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
+-        if *tag == local_name!("td") || *tag == local_name!("th") {
+-            let mut ancestor = self.parent_node();
+-            let mut cellpadding = None;
+-            while let Some(node) = ancestor {
+-                let Some(elem) = node.data.downcast_element() else {
+-                    break;
+-                };
+-                let name = &elem.name.local;
+-                let is_table_internal = *name == local_name!("tr")
+-                    || *name == local_name!("tbody")
+-                    || *name == local_name!("thead")
+-                    || *name == local_name!("tfoot");
+-                if !is_table_internal {
+-                    if *name == local_name!("table") {
+-                        cellpadding = elem.attr(local_name!("cellpadding")).and_then(|value| {
+-                            style::servo::attr::parse_unsigned_integer(value.chars()).ok()
+-                        });
+-                    }
+-                    break;
+-                }
+-                ancestor = node.parent_node();
+-            }
++        let mut cells = Vec::new();
++        if *tag == local_name!("table") {
++            let cellpadding = elem
++                .attr(local_name!("cellpadding"))
++                .and_then(|value| style::servo::attr::parse_unsigned_integer(value.chars()).ok());
+             if let Some(px) = cellpadding {
+                 use style::values::generics::NonNegative;
+                 use style::values::specified::{LengthPercentage, NoCalcLength};
+                 let padding =
+                     NonNegative(LengthPercentage::Length(NoCalcLength::from_px(px as f32)));
+-                push_style(PropertyDeclaration::PaddingTop(padding.clone()));
+-                push_style(PropertyDeclaration::PaddingRight(padding.clone()));
+-                push_style(PropertyDeclaration::PaddingBottom(padding.clone()));
+-                push_style(PropertyDeclaration::PaddingLeft(padding));
++                for decl in [
++                    PropertyDeclaration::PaddingTop(padding.clone()),
++                    PropertyDeclaration::PaddingRight(padding.clone()),
++                    PropertyDeclaration::PaddingBottom(padding.clone()),
++                    PropertyDeclaration::PaddingLeft(padding),
++                ] {
++                    cells.push(Arc::new(
++                        self.guard()
++                            .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
++                    ));
++                }
+             }
+         }
+ 
+-        if let Some(lang) = lang {
+-            push_style(PropertyDeclaration::XLang(XLang(Atom::from(lang))));
++        crate::node::PresentationalHints {
++            own: own.into_boxed_slice(),
++            cells: cells.into_boxed_slice(),
+         }
      }
  
-     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
-@@ -1527,6 +1744,16 @@
+-    fn local_name(&self) -> &LocalName {
+-        &self.element_data().expect("Not an element").name.local
+-    }
+-
+-    fn namespace(&self) -> &Namespace {
+-        &self.element_data().expect("Not an element").name.ns
+-    }
+-
+-    fn query_container_size(
+-        &self,
+-        _display: &style::values::specified::Display,
+-    ) -> euclid::default::Size2D<Option<app_units::Au>> {
+-        // FIXME: Implement container queries. For now this effectively disables them without panicking.
+-        Default::default()
+-    }
+-
+-    fn each_custom_state<F>(&self, _callback: F)
+-    where
+-        F: FnMut(&AtomIdent),
+-    {
+-        todo!()
+-    }
+-
+-    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
+-        self.selector_flags().get().contains(flags)
+-    }
+-
+-    fn relative_selector_search_direction(&self) -> ElementSelectorFlags {
+-        let flags = self.selector_flags().get();
+-        if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING)
+-        {
+-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING
+-        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR)
+-        {
+-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
+-        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING) {
+-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
+-        } else {
+-            ElementSelectorFlags::empty()
++    /// The table a cell takes its `cellpadding` from: the first ancestor
++    /// that isn't a row or row group, when that is a table.
++    fn cell_table(&self) -> Option<&Node> {
++        let mut ancestor = self.parent_node();
++        while let Some(node) = ancestor {
++            let name = &node.data.downcast_element()?.name.local;
++            let is_table_internal = *name == local_name!("tr")
++                || *name == local_name!("tbody")
++                || *name == local_name!("thead")
++                || *name == local_name!("tfoot");
++            if !is_table_internal {
++                return (*name == local_name!("table")).then_some(node);
++            }
++            ancestor = node.parent_node();
+         }
+-    }
+-
+-    fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
+-        compute_layout_damage(old, new)
+-        // ALL_DAMAGE
+-    }
+-
+-    // fn update_animations(
+-    //     &self,
+-    //     before_change_style: Option<Arc<ComputedValues>>,
+-    //     tasks: style::context::UpdateAnimationsTasks,
+-    // ) {
+-    //     todo!()
+-    // }
+-
+-    // fn process_post_animation(&self, tasks: style::context::PostAnimationTasks) {
+-    //     todo!()
+-    // }
+-
+-    // fn needs_transitions_update(
+-    //     &self,
+-    //     before_change_style: &ComputedValues,
+-    //     after_change_style: &ComputedValues,
+-    // ) -> bool {
+-    //     todo!()
+-    // }
+-}
+-
+-pub struct Traverser<'a> {
+-    // dom: &'a Slab<Node>,
+-    parent: BlitzNode<'a>,
+-    child_index: usize,
+-}
+-
+-impl<'a> Iterator for Traverser<'a> {
+-    type Item = BlitzNode<'a>;
+-
+-    fn next(&mut self) -> Option<Self::Item> {
+-        let node_id = self.parent.children.get(self.child_index)?;
+-        let node = self.parent.with(*node_id);
+-
+-        self.child_index += 1;
+-
+-        Some(node)
+-    }
+-}
+-
+-impl std::hash::Hash for BlitzNode<'_> {
+-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+-        state.write_u64(self.id.as_u64())
+-    }
+-}
+-
+-/// Handle custom painters like images for layouting
+-///
+-/// todo: actually implement this
+-pub struct RegisteredPaintersImpl;
+-impl RegisteredSpeculativePainters for RegisteredPaintersImpl {
+-    fn get(&self, _name: &Atom) -> Option<&dyn RegisteredSpeculativePainter> {
+         None
+     }
+ }
+@@ -1527,6 +1785,16 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -12733,7 +13185,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +1761,175 @@
+@@ -1534,11 +1802,175 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -12909,7 +13361,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,16 +1937,108 @@
+@@ -1546,16 +1978,108 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -13018,7 +13470,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if !data.damage.is_empty() {
                  // Mark the ancestor chain so that the damage propagation pass
                  // visits this element.
-@@ -1597,6 +2080,12 @@
+@@ -1597,6 +2121,12 @@
      }
  }
  
@@ -13031,7 +13483,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2158,41 @@
+@@ -1669,12 +2199,41 @@
                      .push(pe_node_id);
              }
          }
@@ -13073,7 +13525,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1737,3 +2255,688 @@
+@@ -1737,3 +2296,688 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -13778,6 +14230,14 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
      let viewport_size = euclid::Size2D::new(width, height);
      let device_size = euclid::Size2D::new(width, height) * viewport.scale();
      let device_pixel_ratio = euclid::Scale::new(viewport.scale());
+@@ -74,6 +75,7 @@
+     Device::new(
+         ComputedValues::initial_values_with_font_override(Font::initial_values()),
+         Box::new(BlitzFontMetricsProvider { font_ctx }),
++        "Submit".into(),
+         MediaData {
+             media_type,
+             viewport_size,
 diff --git a/packages/blitz-dom/src/traversal.rs b/packages/blitz-dom/src/traversal.rs
 --- a/packages/blitz-dom/src/traversal.rs
 +++ b/packages/blitz-dom/src/traversal.rs

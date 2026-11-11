@@ -6,7 +6,7 @@
 
 use crate::color::AbsoluteColor;
 use crate::context::QuirksMode;
-use crate::custom_properties::CssEnvironment;
+use crate::substitution::env::CssEnvironment;
 use crate::font_metrics::FontMetrics;
 use crate::logical_geometry::WritingMode;
 use crate::media_queries::MediaType;
@@ -33,6 +33,7 @@ use mime::Mime;
 use parking_lot::RwLock;
 use servo_arc::Arc;
 use std::fmt::Debug;
+use std::hash::{DefaultHasher, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use style_traits::{CSSPixel, DevicePixel};
 
@@ -92,6 +93,7 @@ impl Device {
     pub fn new(
         default_values: Arc<ComputedValues>,
         font_metrics_provider: Box<dyn FontMetricsProvider>,
+        submit_string: Box<str>,
         media_data: MediaData,
     ) -> Device {
         let root_style = RwLock::new(Arc::clone(&default_values));
@@ -112,6 +114,7 @@ impl Device {
             environment: CssEnvironment,
             default_values,
             body_text_color: RwLock::new(AbsoluteColor::BLACK),
+            submit_string,
             extra: ExtraDeviceData {
                 media_data,
                 font_metrics_provider,
@@ -142,12 +145,12 @@ impl Device {
         self.extra.media_data.quirks_mode
     }
 
-    /// Returns a value that identifies this document, used to vary the random
+    /// Returns a hasher specific to this document, used to vary the random
     /// base values of `random()` functions between document instances.
     #[inline]
-    pub fn document_random_seed(&self) -> u64 {
-        // TODO: Implement a document-specific value.
-        0
+    pub fn document_random_hasher(&self) -> impl Hasher {
+        // TODO: Implement a document-specific hasher (like Gecko in Bug 2081781).
+        DefaultHasher::new()
     }
 
     /// Gets the base size given a generic font family.

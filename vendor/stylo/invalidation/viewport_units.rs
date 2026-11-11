@@ -28,12 +28,6 @@ where
         None => return false,
     };
 
-    // DOM mutations can allocate data before the first style is computed.
-    // Initial styling will resolve this subtree against the new viewport.
-    if data.styles.get_primary().is_none() {
-        return false;
-    }
-
     if data.hint.will_recascade_subtree() {
         debug!("invalidate_recursively: {:?} was already invalid", element);
         return false;

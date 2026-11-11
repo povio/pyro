@@ -352,3 +352,39 @@ fn a_repaint_only_change_to_collapsed_table_borders_rebuilds_the_table() {
         assert_eq!(tables, 1, "{what}");
     }
 }
+
+#[test]
+fn presentational_attributes_written_after_the_first_cascade() {
+    // The element owns the declarations its legacy attributes map to (Stylo
+    // borrows them): every attribute write must drop them, and a cell's
+    // padding follows the table it is in.
+    let html = r##"<!doctype html><style>body{margin:0;font:14px sans-serif}</style>
+<table id=t1 cellpadding=4><tr><td id=c1 bgcolor="#ff0000" width=80>one</td><td>two</td></tr></table>
+<table id=t2 cellpadding=12><tr id=r2><td>three</td></tr></table><div id=d hidden>shown later</div>"##;
+    check("a bgcolor and a width replaced", html, &|p| {
+        let c1 = p.find("#c1");
+        let mut d = p.dom.borrow_mut();
+        d.set_attribute(c1, "bgcolor", "#0000ff").unwrap();
+        d.set_attribute(c1, "width", "140").unwrap();
+    });
+    check("a width removed", html, &|p| {
+        let c1 = p.find("#c1");
+        p.dom.borrow_mut().remove_attribute(c1, "width").unwrap();
+    });
+    check("hidden removed", html, &|p| {
+        let el = p.find("#d");
+        p.dom.borrow_mut().remove_attribute(el, "hidden").unwrap();
+    });
+    check("a table's cellpadding replaced", html, &|p| {
+        let t1 = p.find("#t1");
+        p.dom.borrow_mut().set_attribute(t1, "cellpadding", "20").unwrap();
+    });
+    check("a table's cellpadding removed", html, &|p| {
+        let t1 = p.find("#t1");
+        p.dom.borrow_mut().remove_attribute(t1, "cellpadding").unwrap();
+    });
+    check("a cell moved to a table with another cellpadding", html, &|p| {
+        let (c1, r2) = (p.find("#c1"), p.find("#r2"));
+        p.dom.borrow_mut().append_child(r2, c1).unwrap();
+    });
+}

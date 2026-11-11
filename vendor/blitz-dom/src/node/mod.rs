@@ -12,7 +12,7 @@ mod stylo_data;
 mod svg;
 mod text;
 
-pub use attributes::{Attribute, Attributes};
+pub use attributes::{Attribute, Attributes, PresentationalHints};
 #[cfg(feature = "custom-widget")]
 pub use custom_widget::{
     ComputedStyles, CustomWidgetData, CustomWidgetStatus, ProxyRenderContext, Widget,
