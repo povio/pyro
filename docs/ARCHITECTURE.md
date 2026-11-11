@@ -341,6 +341,17 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
   `JSLockHolder` when the thread already holds the VM's lock (every call from inside a callback). An API string that
   remembered its atom per VM (to skip the atom-table probe for constant names) was tried and dropped: its gain was
   within noise, and an atom reference outlives its table, which leaked ~270 KB per CDP connection.
+- Patch `0026` closes two gaps of `0002` around the one JSC thread a fork does not stop, the VMTraps queue's, which
+  fires watchdog timers. It kept running through the fork, so a lock it held at that instant stayed locked in the
+  child: a watchdog's (the child's timers never notify its VM), a VM's trap lock (the child hangs handling its first
+  trap), a ParkingLot bucket (a thread that parks there later hangs) or an allocator lock (the child aborts on it).
+  `JSPrepareForFork` now holds that thread between two of its functions, where it has no lock, until `JSDidFork`.
+  The forking thread waits for it in 10 µs sleeps, which adds about 30 µs to a fork (55 µs on a loaded machine): no
+  `Thread::yield()`, which on Darwin depresses the thread for a millisecond, and no spinning, which measured worse
+  under load. And a watchdog skips arming a timer while one that fires early enough is pending: a child inherited
+  that state for a timer on the parent's queue, so its first VM entry within the parent's remaining time ran without
+  a watchdog (no termination, no CDP polling while script runs). A watchdog now remembers the queue its timer is on.
+  `crates/lp-jsc-sys/tests/fork.rs` covers both.
 
 Navigating or closing a page no longer always collects: `Engine::release_closed` runs `settle` only once the process's
 physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. That collection runs inside the

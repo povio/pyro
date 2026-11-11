@@ -1218,8 +1218,9 @@ fn fork_process(snapshot: &Snapshot, kind: &str) -> Forked {
         let _ = lp_net::client::resume_after_fork();
         return Forked::Failed;
     }
-    // JSC's VMTraps queue thread is the one expected survivor: it holds no
-    // lock while idle, and JSDidFork starts a new one in the child.
+    // JSC's VMTraps queue thread (it fires watchdog timers) is the one expected
+    // survivor: JSPrepareForFork holds it where it has no lock (patch 0026),
+    // and JSDidFork starts a new one in the child.
     let others: Vec<String> = other_threads().into_iter().filter(|n| n != "JSC VMTraps Signal Sender").collect();
     if !others.is_empty() {
         eprintln!("lightningpanda: template: threads alive at fork: {others:?}");
