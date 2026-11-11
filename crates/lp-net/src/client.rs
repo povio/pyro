@@ -396,7 +396,12 @@ impl Drop for Inner {
         let (dead, _) = mpsc::unbounded_channel();
         *self.tx.get_mut().unwrap_or_else(|e| e.into_inner()) = dead;
         if let Some(t) = self.thread.lock().unwrap().take() {
-            let _ = t.join();
+            // The last handle may go on the I/O thread itself (a sink or an
+            // upgraded `RequestCanceller` there owned it). A thread cannot
+            // join itself: its loop ends once it is back at the closed channel.
+            if t.thread().id() != std::thread::current().id() {
+                let _ = t.join();
+            }
         }
     }
 }
@@ -406,6 +411,25 @@ impl Drop for Inner {
 #[derive(Clone)]
 pub struct NetClient {
     inner: Arc<Inner>,
+}
+
+/// Cancels a client's requests without keeping the client alive. For what a
+/// request's sink owns: the I/O thread holds a sink until its request ends,
+/// so a [`NetClient`] in it would keep that thread, and every request of the
+/// client, running after the last handle elsewhere is gone.
+#[derive(Clone)]
+pub struct RequestCanceller {
+    inner: std::sync::Weak<Inner>,
+}
+
+impl RequestCanceller {
+    /// [`NetClient::cancel`]. Nothing once the client is gone: its requests
+    /// failed with `Aborted` then.
+    pub fn cancel(&self, id: RequestId) {
+        if let Some(inner) = self.inner.upgrade() {
+            NetClient { inner }.cancel(id);
+        }
+    }
 }
 
 impl NetClient {
@@ -572,6 +596,11 @@ impl NetClient {
     /// already finished.
     pub fn cancel(&self, id: RequestId) {
         let _ = self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Cancel(id));
+    }
+
+    /// [`NetClient::cancel`] for a request's own sink (see [`RequestCanceller`]).
+    pub fn canceller(&self) -> RequestCanceller {
+        RequestCanceller { inner: Arc::downgrade(&self.inner) }
     }
 
     /// Blocking fetch for synchronous XHR. Must not be used while the

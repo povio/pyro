@@ -429,7 +429,9 @@ impl ResourceLoader for NetLoader {
         let mut total: Option<u64> = None;
         let mut checked = lp_webapi::BodyPart::FIRST_CHECK;
         let mut cut = false;
-        let net = self.client.clone();
+        // Not the client itself: lp-net owns the sink until the request ends,
+        // and the client stops when its last handle goes.
+        let net = self.client.canceller();
         let sink: lp_net::ResponseSink = Box::new(move |ev| match ev {
             // A cut body was delivered: the rest (and the cancellation's
             // failure) is dropped.
