@@ -824,7 +824,8 @@ fn jpeg_quality_extremes_and_limits() {
     let sizes: Vec<usize> = [0u8, 1, 2, 50, 99, 100, 255].iter().map(|&q| encode_jpeg(&img, q).unwrap().len()).collect();
     assert_eq!(sizes[0], sizes[1], "quality 0 is clamped to 1");
     assert_eq!(sizes[5], sizes[6], "quality 255 is clamped to 100");
-    assert!(sizes[1] <= sizes[2] && sizes[2] < sizes[3] && sizes[3] < sizes[4] && sizes[4] < sizes[5], "{sizes:?}");
+    // Qualities 1 and 2 give nearly the same tables: which file is the smaller depends on the image.
+    assert!(sizes[1] < sizes[3] && sizes[2] < sizes[3] && sizes[3] < sizes[4] && sizes[4] < sizes[5], "{sizes:?}");
     for q in [1u8, 50, 100] {
         let bytes = encode_jpeg(&img, q).unwrap();
         let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();

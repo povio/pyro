@@ -810,8 +810,11 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
     }
     /// Nothing: this crate matches selectors and never cascades (the
     /// cascade, with its presentational hints, is blitz-dom's).
-    fn synthesize_presentational_hints_for_legacy_attributes<'h, V>(&self, _visited: VisitedHandlingMode, _hints: &mut V)
-    where
+    fn synthesize_presentational_hints_for_legacy_attributes<'h, V>(
+        &self,
+        _visited: VisitedHandlingMode,
+        _hints: &mut V,
+    ) where
         V: Push<ApplicableDeclarationBlock<'h>>,
         Self: 'h,
     {
