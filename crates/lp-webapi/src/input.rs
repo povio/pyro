@@ -378,6 +378,55 @@ pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
     }
 }
 
+/// Runs `f` the way a DOM method called by page script runs: inside a native
+/// function (named `name`) called from the page's main world. JavaScriptCore
+/// runs microtasks when the outermost call into it returns. Dispatched from
+/// Rust, each listener of an event is such a call, with a microtask
+/// checkpoint of its own; here the listeners are nested calls, and the
+/// microtasks they queue run once, after `f`. Without a live main world `f`
+/// runs directly.
+fn as_script(page: &Rc<PageDom>, name: &str, f: impl Fn(&Rc<PageDom>) + 'static) {
+    let f = Rc::new(f);
+    let ran = Rc::new(std::cell::Cell::new(false));
+    let call = || -> lp_js::JsResult<()> {
+        let realm = page.main_world_realm().filter(|r| !r.is_disposed()).ok_or(lp_js::JsError::ContextDestroyed)?;
+        let s = realm.scope()?;
+        // Weak: the function object lives until it is collected.
+        let (weak, f, ran) = (Rc::downgrade(page), f.clone(), ran.clone());
+        let native = s.function(name, move |s, _, _| {
+            if let Some(page) = weak.upgrade() {
+                ran.set(true);
+                f(&page);
+            }
+            Ok(s.undefined())
+        })?;
+        native.call(None, &[]).map(|_| ())
+    };
+    let _ = call();
+    if !ran.get() {
+        f(page);
+    }
+}
+
+/// [`focus_element`] as a script's `el.focus()` runs it (see [`as_script`]):
+/// what a client's bare focus is. A user's focus comes with a pointer or key
+/// event, dispatched by the browser, whose listeners each get a microtask
+/// checkpoint. A focus without one exists only in script (Playwright's
+/// `focus`, and the focus its `fill`, `press` and `type` start with, call
+/// `focus()` from an injected script), where the listeners of `focus` and
+/// `focusin` run back to back. A page that renders in a microtask and
+/// replaces the focused control (React) would otherwise do so between two
+/// listeners of one `focusin`, whose later listeners then see a detached
+/// target (react-aria's focus scope takes that for focus leaving the scope).
+pub fn script_focus(page: &Rc<PageDom>, el: NodeId) {
+    as_script(page, "focus", move |page| focus_element(page, el));
+}
+
+/// [`blur_element`] as a script's `el.blur()` runs it (see [`script_focus`]).
+pub fn script_blur(page: &Rc<PageDom>, el: NodeId) {
+    as_script(page, "blur", move |page| blur_element(page, el));
+}
+
 pub fn focus_window(page: &Rc<PageDom>) {
     if let Some(token) = request_focus(page, FocusTarget::Window, false) {
         focus_window_with_transition(page, &token);

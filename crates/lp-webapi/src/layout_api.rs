@@ -170,6 +170,22 @@ fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
     );
 }
 
+/// The scroll steps of a rendering update that runs ahead of the frame
+/// interval ([`PageDom::request_rendering_update`]): the re-clamp a DOM
+/// change owes, then the queued scroll events.
+pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    let (checked, queued) = page.scroll_clamp.get();
+    if queued {
+        // The delayed task that was to do it finds nothing owed.
+        page.scroll_clamp.set((checked, false));
+        clamp_scrolls(page, true);
+    }
+    flush_pending_scrolls(page);
+}
+
 /// Runs queued scroll steps before animation-frame callbacks in a rendering update.
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
@@ -244,8 +260,10 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
     page.post_delayed_task(
         std::time::Duration::from_millis(16),
         Box::new(move || {
-            p.scroll_clamp.set((p.scroll_clamp.get().0, false));
-            if !p.is_disposed() {
+            // Not owed any more when a rendering update ran ahead of it.
+            let (checked, queued) = p.scroll_clamp.get();
+            p.scroll_clamp.set((checked, false));
+            if queued && !p.is_disposed() {
                 clamp_scrolls(&p, true);
             }
         }),

@@ -71,8 +71,11 @@ test.concurrent('closes a position', async () => {
 - **Waiting** happens in the browser. A step that does not hold yet is tried
   again when the DOM changes; an action settles before the next step (the
   page goes quiet: no queued task, no request the action started, no timeout
-  due within 50 ms, no pending animation frame or navigation); a request
-  check waits for the request log. Each step has its own timeout (5 s default,
+  due within 50 ms, no pending animation frame, `scroll` event, ResizeObserver
+  callback or navigation); `focus()`, `blur()` and an action with
+  `{ settle: false }` get one turn of the event loop instead, in which the
+  `scroll` events they caused are delivered too; a request check waits for
+  the request log. Each step has its own timeout (5 s default,
   `page.run(steps, { timeout })` or per step).
 - **The reply** has `values` (reads), `results` (per step), `requests` (every
   request the page made during the run), `screenshots` and `ms`. A failure

@@ -265,7 +265,7 @@ fn established_event_stream_is_quiet_but_still_blocks_network_idle() {
     run_for(&mut thread, 2 * QUIET);
     let work = thread.browser.page_work(page).unwrap();
     assert_eq!((work.requests, work.event_streams), (0, 1));
-    assert!(work.quiet(0), "{work:?}");
+    assert!(work.quiet(), "{work:?}");
     let context = thread.browser.page(page).unwrap().context;
     assert_eq!(thread.browser.context_net(context).unwrap().activity(&loader.0).unwrap().inflight, 1);
     assert!(events.at("idle", &loader).is_none());

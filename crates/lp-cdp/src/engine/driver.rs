@@ -18,20 +18,32 @@
 //! events.
 //!
 //! Settle: after an action (unless `settle: false`), the next step waits until
-//! the page is quiet (`Browser::page_work`): no queued task, no `setTimeout`
-//! due within `TIMER_HORIZON`, no pending animation frame, no navigation short
-//! of DOMContentLoaded, and no more requests in flight than before the action.
-//! Readiness is checked between loop tasks, so the step goes on right after
-//! the last piece of work. It gives up after [`SETTLE_MAX`], carries on, and
-//! reports what was still pending. An `idle` step (`LP.idle`) waits the same
-//! way with no requests allowed, up to its timeout.
+//! the page is quiet (`Browser::page_work_since`): no queued task, no
+//! `setTimeout` due within `TIMER_HORIZON`, no pending animation frame, no
+//! navigation short of DOMContentLoaded, and no request in flight that was
+//! started after the action began (one older than the action, a long poll,
+//! is not waited for, whatever else completes meanwhile). Readiness is checked
+//! between loop tasks, so the step goes on right after the last piece of work.
+//! What the next rendering update owes is work too: `scroll` events to fire,
+//! ResizeObservers that have yet to gather or deliver. When that is all that
+//! is left, the settle runs the update at once instead of waiting out the
+//! frame interval ([`SETTLE_UPDATES`]). It gives up after [`SETTLE_MAX`],
+//! carries on, and reports what was still pending. An `idle` step (`LP.idle`)
+//! waits the same way for every request, up to its timeout.
+//!
+//! `release`: a held reply that goes straight to the page (not a request
+//! released to the network) is delivered, and the page gets an event-loop
+//! turn to act on it, before the next step starts ([`Phase::Deliver`]).
 //!
 //! Turns: each input event of a pointer action (`click`, `dblclick`, `hover`,
 //! `drag`) is dispatched in its own task, with an event-loop turn (the frame
 //! interval, then a marker task: queued tasks, due timers, animation frames)
 //! between two of them, as Chromium delivers input events ([`Phase::Act`]). An
-//! action that does not settle, and an `eval`, gets one such turn before the
-//! next step starts.
+//! action that does not settle gets one such turn before the next step starts,
+//! and so does an `eval` unless its script left the page nothing to run (it
+//! only read: `Browser::work_stamp`). That turn runs the scroll steps the page
+//! owes as well, so a step's own `scroll` event (a `focus` that revealed its
+//! element) does not arrive a frame interval later, inside another step.
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::{Rc, Weak};
@@ -208,6 +220,9 @@ struct Filter {
 enum Action {
     Click,
     Fill,
+    /// Focus the element as a script's `focus()` does
+    /// ([`input::script_focus`]): its listeners run back to back, microtasks
+    /// after them. `Fill`, `Press` and `Type` start with the same focus.
     Focus,
     Check,
     Uncheck,
@@ -218,7 +233,8 @@ enum Action {
     Hover,
     /// Two clicks at the center, the second with click count 2.
     DblClick,
-    /// Remove focus from the element (`blur()`).
+    /// Remove focus from the element as a script's `blur()` does
+    /// ([`input::script_blur`]).
     Blur,
     /// Focus, then one key press per character of `value` (`pressSequentially`).
     Type,
@@ -773,6 +789,87 @@ struct RunStepTrace {
     attempts_completed: Cell<u64>,
     attempt_ms: Cell<f64>,
     post_eval_turn: Cell<Option<Instant>>,
+    waits: WaitTrace,
+}
+
+/// Where a step's time went (`lp-run-wait`, one record per step): the time
+/// the driver itself ran (`drive`), and the time the run was parked, by the
+/// phase it waited in and what the page still had to do then (`settle
+/// requests`: settling, a request in flight). Sampled between loop tasks, so
+/// each interval is one task, or one sleep of the loop. Wall and thread CPU
+/// time per bucket: CPU far below wall is a loop that slept (or a machine
+/// with no CPU to give).
+#[derive(Default)]
+struct WaitTrace {
+    /// The interval running now: its bucket, start, and the thread's CPU time then.
+    open: Cell<Option<(WaitBucket, Instant, Duration)>>,
+    /// Per bucket: intervals, wall time, CPU time.
+    buckets: RefCell<Vec<(WaitBucket, u64, Duration, Duration)>>,
+    /// The thread's CPU time when the step started.
+    step: Cell<Option<Duration>>,
+}
+
+/// (phase, what the page had pending).
+type WaitBucket = (&'static str, &'static str);
+
+impl WaitTrace {
+    /// Ends the interval running now and starts one in `next`.
+    fn mark(&self, next: Option<WaitBucket>, now: Instant) {
+        let cpu = crate::fork_stats::thread_cpu();
+        if let Some((bucket, since, cpu_then)) = self.open.take() {
+            let wall = now.saturating_duration_since(since);
+            let used = cpu.saturating_sub(cpu_then);
+            let mut buckets = self.buckets.borrow_mut();
+            match buckets.iter_mut().find(|(b, ..)| *b == bucket) {
+                Some((_, n, w, c)) => {
+                    *n += 1;
+                    *w += wall;
+                    *c += used;
+                }
+                None => buckets.push((bucket, 1, wall, used)),
+            }
+        }
+        self.open.set(next.map(|bucket| (bucket, now, cpu)));
+    }
+
+    fn start_step(&self, now: Instant) {
+        self.open.set(None);
+        self.buckets.borrow_mut().clear();
+        self.step.set(Some(crate::fork_stats::thread_cpu()));
+        self.mark(Some(("drive", "")), now);
+    }
+
+    /// The step's record fields; the driver keeps running in `drive`.
+    fn finish_step(&self, record: &mut Value) {
+        let now = Instant::now();
+        self.mark(Some(("drive", "")), now);
+        let ms = |d: Duration| (d.as_secs_f64() * 1e6).round() / 1e3;
+        let mut waits = serde_json::Map::new();
+        for (bucket, n, wall, cpu) in self.buckets.borrow_mut().drain(..) {
+            let name = if bucket.1.is_empty() { bucket.0.to_owned() } else { format!("{} {}", bucket.0, bucket.1) };
+            waits.insert(name, json!([n, ms(wall), ms(cpu)]));
+        }
+        record["waits"] = Value::Object(waits);
+        if let Some(cpu) = self.step.take() {
+            record["cpuMs"] = json!(ms(crate::fork_stats::thread_cpu().saturating_sub(cpu)));
+        }
+    }
+}
+
+/// What holds a page's work up, most immediate first (a queued task runs
+/// before the loop sleeps on a request or a timer).
+fn waiting_on(work: Option<lp_browser::PageWork>) -> &'static str {
+    match work {
+        None => "gone",
+        Some(w) if w.tasks > 0 => "tasks",
+        Some(w) if w.navigations > 0 => "navigation",
+        Some(w) if w.requests > 0 => "requests",
+        Some(w) if w.scrolls > 0 => "scrolls",
+        Some(w) if w.observers > 0 => "observers",
+        Some(w) if w.frames > 0 => "frames",
+        Some(w) if w.timers > 0 => "timers",
+        Some(_) => "idle",
+    }
 }
 
 impl RunStepTrace {
@@ -923,7 +1020,28 @@ impl Job {
         trace.attempts_completed.set(0);
         trace.attempt_ms.set(0.0);
         trace.post_eval_turn.set(None);
+        trace.waits.start_step(Instant::now());
         trace.emit(self, step.trace_kind(), "start");
+    }
+
+    /// The driver runs this job's step from `now` on (it was parked).
+    fn trace_driving(&self, now: Instant) {
+        if let Some(trace) = &self.trace {
+            trace.waits.mark(Some(("drive", "")), now);
+        }
+    }
+
+    /// A settle ended: how long it took and what was still pending.
+    fn trace_settle(&self, ms: f64, pending: Option<&lp_browser::PageWork>) {
+        if let Some(context) = self.trace_stage_context() {
+            let mut record = context.record("settle", "end");
+            record["durationMs"] = json!(ms);
+            record["outcome"] = json!(if pending.is_some() { "gaveUp" } else { "quiet" });
+            if let Some(work) = pending {
+                record["pending"] = pending_json(work);
+            }
+            emit_run_stage(record);
+        }
     }
 
     fn trace_stage_context(&self) -> Option<RunStageContext> {
@@ -960,6 +1078,13 @@ impl Job {
         }
     }
 
+    /// An `eval` that left the page nothing to run goes on without a turn.
+    fn trace_post_eval_turn_skipped(&self) {
+        if let Some(context) = self.trace_stage_context() {
+            emit_run_stage(context.record("post_eval_turn", "skipped"));
+        }
+    }
+
     fn trace_post_eval_turn_finish(&self, event: &'static str) {
         if let (Some(trace), Some(context)) = (&self.trace, self.trace_stage_context()) {
             if let Some(started) = trace.post_eval_turn.take() {
@@ -992,6 +1117,13 @@ impl Job {
                 record["recordedAttempts"] = json!(trace.attempts_started.get().min(TRACE_ATTEMPT_LIMIT));
                 record["truncated"] = json!(trace.attempts_started.get() > TRACE_ATTEMPT_LIMIT);
                 emit_run_stage(record);
+            }
+            let mut record = json!({ "pid": trace.process_id, "runId": self.id, "step": self.index,
+                "kind": step.trace_kind(), "event": event });
+            trace.waits.finish_step(&mut record);
+            {
+                use std::io::Write;
+                let _ = std::io::stderr().lock().write_all(format!("lp-run-wait {record}\n").as_bytes());
             }
             trace.emit(self, step.trace_kind(), event);
         }
@@ -1027,8 +1159,15 @@ enum Phase {
     /// `goto` started; waits for the new document's `load` (or DOMContentLoaded).
     Load { loader: String, dom_ready: bool },
     /// The step's action ran (or an `idle` step started); waits until the
-    /// page is quiet with at most `requests` requests in flight.
-    Settle { requests: usize, since: Instant, until: Instant },
+    /// page is quiet, counting the requests started after the mark `after`
+    /// (`Browser::request_mark`, taken before the action; 0 for all of them).
+    /// `updates`: how many more times it may run the page's rendering update
+    /// ahead of the frame interval ([`SETTLE_UPDATES`]).
+    Settle { after: u64, since: Instant, until: Instant, updates: u8 },
+    /// `release` let held replies go straight to the page (`requests`);
+    /// waits until they are delivered, at most until `until`. The page then
+    /// gets a turn to act on them.
+    Deliver { requests: Vec<lp_net::RequestId>, until: Instant },
     /// `eval` returned a promise; waits for it to settle.
     Await(Settlement),
     /// A `matchScreenshot` render runs on the render thread.
@@ -1036,8 +1175,9 @@ enum Phase {
     /// An action's input events still to dispatch (`seq`), one per
     /// event-loop turn; with none left, the turn after a non-settling step.
     /// A turn: the frame interval passes (`at`), then a marker task posted
-    /// behind the tasks and timers due by then (`hop`) runs.
-    Act { seq: Option<Box<Sequence>>, before: Option<usize>, hop: Option<Rc<Cell<bool>>>, at: Instant },
+    /// behind the tasks and timers due by then (`hop`) runs. `before`: the
+    /// request mark taken before the action, when it settles.
+    Act { seq: Option<Box<Sequence>>, before: Option<u64>, hop: Option<Rc<Cell<bool>>>, at: Instant },
 }
 
 /// Where a promise an `eval` step returned lands once it settles: its JSON
@@ -1060,6 +1200,16 @@ enum Evaluated {
 /// run as soon as the loop is idle while a client acts,
 /// `lp_browser::note_client_activity`).
 const TURN: Duration = Duration::from_millis(1);
+
+/// How many times one settle runs the page's rendering update at once when
+/// that is all the page still waits for (`Browser::update_rendering`): its
+/// queued `scroll` events fire and its ResizeObservers gather. Both are paced
+/// (16 ms or more apart) so that a busy page does not lay out after every
+/// task; a page with nothing else to do would only sleep the interval out,
+/// once per round of handlers that scroll or resize something again. Past
+/// this many rounds (observers that keep resizing each other, a scroll
+/// handler that keeps scrolling) the pacing applies again.
+const SETTLE_UPDATES: u8 = 4;
 
 /// Where a mouse event of a [`Sequence`] goes.
 #[derive(Clone, Copy)]
@@ -1308,12 +1458,12 @@ const URL_POLL: Duration = Duration::from_millis(25);
 impl Waiter {
     fn deadline(&self) -> Instant {
         let step = match &self.phase {
-            Phase::Settle { until, .. } => *until,
+            Phase::Settle { until, .. } | Phase::Deliver { until, .. } => *until,
             Phase::Act { hop: None, at, .. } => *at,
             _ => self.step_deadline,
         };
         match self.poll_at {
-            Some(at) if matches!(self.phase, Phase::Try) => step.min(at),
+            Some(at) if matches!(self.phase, Phase::Try | Phase::Deliver { .. }) => step.min(at),
             _ => step,
         }
     }
@@ -1326,6 +1476,23 @@ impl Waiter {
                 self.job.steps.get(self.job.index),
                 Some((Step::Request(_) | Step::Download { .. } | Step::Popup { .. }, _))
             )
+    }
+
+    /// `LP_RUN_STEP_TRACE`: the run is parked from `now` on (or still is,
+    /// one loop task later); what it waits in and what the page has pending.
+    fn trace_wait(&self, browser: &Browser, now: Instant) {
+        let Some(trace) = &self.job.trace else { return };
+        let (phase, after) = match &self.phase {
+            Phase::Try => ("try", 0),
+            Phase::Load { .. } => ("load", 0),
+            Phase::Settle { after, .. } => ("settle", *after),
+            Phase::Deliver { .. } => ("deliver", 0),
+            Phase::Await(_) => ("await", 0),
+            Phase::Render(_) => ("render", 0),
+            Phase::Act { seq: None, .. } => ("turn", 0),
+            Phase::Act { .. } => ("act", 0),
+        };
+        trace.waits.mark(Some((phase, waiting_on(browser.page_work_since(self.job.pid, after)))), now);
     }
 
     /// Whether driving it can make progress.
@@ -1341,7 +1508,12 @@ impl Waiter {
                 None => true,
             },
             Phase::Load { loader, dom_ready } => load_reached(browser, self.job.pid, loader, *dom_ready),
-            Phase::Settle { requests, .. } => browser.page_work(self.job.pid).is_none_or(|w| w.quiet(*requests)),
+            // Quiet, or held by nothing but a paced rendering update that
+            // driving it brings forward.
+            Phase::Settle { after, updates, .. } => browser
+                .page_work_since(self.job.pid, *after)
+                .is_none_or(|w| w.quiet() || (*updates > 0 && w.only_rendering())),
+            Phase::Deliver { requests, .. } => !undelivered(browser, self.job.pid, requests),
             Phase::Await(settled) => settled.borrow().is_some(),
             Phase::Render(settled) => settled.borrow().is_some(),
             Phase::Act { hop, at, seq, .. } => match hop {
@@ -1368,6 +1540,9 @@ impl Waiters {
             return false;
         }
         let now = Instant::now();
+        for w in &self.list {
+            w.trace_wait(browser, now);
+        }
         self.list.iter().any(|w| w.ready(browser, now))
     }
 
@@ -1390,6 +1565,7 @@ impl Waiters {
                             && work.requests == 0
                             && work.event_streams == 0
                             && work.observers == 0
+                            && work.scrolls == 0
                             && work.navigations == 0
                     })
             })
@@ -1440,8 +1616,12 @@ fn loader_to_wait_for(browser: &Browser, pid: PageId) -> String {
     p.pending_loader().map_or_else(|| p.main_frame.loader_id.0.clone(), |l| l.0.clone())
 }
 
-fn requests_of(browser: &Browser, pid: PageId) -> usize {
-    browser.page_work(pid).map_or(0, |w| w.requests)
+/// Whether one of `requests` (replies a `release` let through to the page)
+/// has yet to be handed to the page: its completion is queued on the page's
+/// loop, if it has not run already, once this is false.
+fn undelivered(browser: &Browser, pid: PageId, requests: &[lp_net::RequestId]) -> bool {
+    let net = browser.page(pid).and_then(|p| browser.context_net(p.context));
+    net.is_some_and(|net| requests.iter().any(|id| net.in_flight(*id)))
 }
 
 /// `{"tasks": 1, "requests": 2, ...}`: the kinds of work still pending.
@@ -1452,6 +1632,7 @@ fn pending_json(work: &lp_browser::PageWork) -> Value {
         ("timers", work.timers),
         ("frames", work.frames),
         ("observers", work.observers),
+        ("scrolls", work.scrolls),
         ("navigations", work.navigations),
     ];
     Value::Object(all.into_iter().filter(|(_, n)| *n > 0).map(|(k, n)| (k.to_owned(), json!(n))).collect())
@@ -2948,7 +3129,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
                 return Attempt::Retry(format!("unknown key {value:?}"));
             };
             if input::key_target(page) != Some(id) {
-                input::focus_element(page, id);
+                input::script_focus(page, id);
             }
             for (kind, k) in keys {
                 input::dispatch_key(page, kind, &k);
@@ -2956,11 +3137,11 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
             Attempt::Done(json!({}))
         }
         Action::Focus => {
-            input::focus_element(page, id);
+            input::script_focus(page, id);
             Attempt::Done(json!({}))
         }
         Action::Blur => {
-            input::blur_element(page, id);
+            input::script_blur(page, id);
             Attempt::Done(json!({}))
         }
         Action::Hover => pointer(page, id, Pointer::Hover, opts),
@@ -2969,7 +3150,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
         Action::Upload | Action::DropFiles | Action::Drag => unreachable!("handled by the host"),
         Action::Type => {
             if input::key_target(page) != Some(id) {
-                input::focus_element(page, id);
+                input::script_focus(page, id);
             }
             for c in value.chars() {
                 let name = c.to_string();
@@ -2990,7 +3171,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
                 }
                 matches!(local(&dom, id), Some("input" | "textarea"))
             };
-            input::focus_element(page, id);
+            input::script_focus(page, id);
             {
                 let dom = page.dom.borrow();
                 if dom.root_node(id, true).ok() != Some(page.document())
@@ -4542,6 +4723,10 @@ impl EngineHost {
             }
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         };
+        if !single {
+            // Requests the net thread announced before the run are not its own.
+            self.flush_network();
+        }
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
         let pid = state.id;
         let downloads_from = state.downloads.len();
@@ -4578,6 +4763,7 @@ impl EngineHost {
                     attempts_completed: Cell::new(0),
                     attempt_ms: Cell::new(0.0),
                     post_eval_turn: Cell::new(None),
+                    waits: WaitTrace::default(),
                 }
             }),
             log_from,
@@ -4601,6 +4787,7 @@ impl EngineHost {
                 if self.waiters.list.len() >= MAX_WAITERS {
                     return Err(CdpError::server("too many waiting LP commands"));
                 }
+                w.trace_wait(&self.thread.browser, Instant::now());
                 self.waiters.list.push(*w);
                 // Replied by `service_waiters`.
                 Ok(None)
@@ -4615,13 +4802,23 @@ impl EngineHost {
             let now = Instant::now();
             let pid = w.job.pid;
             match std::mem::replace(&mut w.phase, Phase::Try) {
-                Phase::Settle { requests, since, until } => {
-                    let work = self.thread.browser.page_work(pid);
-                    let quiet = work.is_none_or(|w| w.quiet(requests));
+                Phase::Settle { after, since, until, mut updates } => {
+                    let mut work = self.thread.browser.page_work_since(pid, after);
+                    if updates > 0 && now < until && work.is_some_and(|w| w.only_rendering()) {
+                        // Only the frame interval holds the page: its
+                        // rendering update runs now. The scroll events it
+                        // fires and the sizes it finds changed are run by
+                        // tasks, which the settle then waits for.
+                        updates -= 1;
+                        self.thread.browser.update_rendering(pid);
+                        work = self.thread.browser.page_work_since(pid, after);
+                    }
+                    let quiet = work.is_none_or(|w| w.quiet());
                     if !quiet && now < until {
-                        w.phase = Phase::Settle { requests, since, until };
+                        w.phase = Phase::Settle { after, since, until, updates };
                         return Ok(Drive::Park(Box::new(w)));
                     }
+                    w.job.trace_settle(since.elapsed().as_secs_f64() * 1e3, work.as_ref().filter(|_| !quiet));
                     if let Some(Value::Object(r)) = w.job.results.last_mut() {
                         r.insert("settleMs".into(), json!(since.elapsed().as_secs_f64() * 1e3));
                         if let (false, Some(work)) = (quiet, work) {
@@ -4631,12 +4828,26 @@ impl EngineHost {
                     }
                     self.next_step(&mut w);
                 }
+                Phase::Deliver { requests, until } => {
+                    if now < until && undelivered(&self.thread.browser, pid, &requests) {
+                        // Woken by the replies' completion tasks. A request
+                        // stops counting as in flight a moment after its
+                        // last one is posted, so look again shortly in case
+                        // that task ran first and nothing else wakes the loop.
+                        w.poll_at = Some(now + URL_POLL);
+                        w.phase = Phase::Deliver { requests, until };
+                        return Ok(Drive::Park(Box::new(w)));
+                    }
+                    // The turn in which the page handles the replies.
+                    w.poll_at = None;
+                    w.phase = Phase::Act { seq: None, before: None, hop: None, at: self.turn_end(pid) };
+                }
                 Phase::Await(settled) => {
                     let outcome = settled.borrow_mut().take();
                     match outcome {
                         Some(Ok(value)) => {
                             let step = w.job.steps[w.job.index].0.clone();
-                            self.finish_step(&mut w, &step, value, None);
+                            self.finish_step(&mut w, &step, value, None, true);
                         }
                         Some(Err(message)) => {
                             return Err(w.job.fail(CdpError::server(format!("rejected: {message}"))));
@@ -4659,7 +4870,7 @@ impl EngineHost {
                     match outcome {
                         Some(Ok(value)) => {
                             let step = w.job.steps[w.job.index].0.clone();
-                            self.finish_step(&mut w, &step, value, None);
+                            self.finish_step(&mut w, &step, value, None, true);
                         }
                         Some(Err(error)) => return Err(w.job.fail(error)),
                         None => {
@@ -4718,7 +4929,7 @@ impl EngineHost {
                         }
                         Ok(Some(value)) => {
                             let step = w.job.steps[w.job.index].0.clone();
-                            self.finish_step(&mut w, &step, value, before);
+                            self.finish_step(&mut w, &step, value, before, true);
                         }
                         Err(reason) => {
                             let (step, timeout) = w.job.steps[w.job.index].clone();
@@ -4758,6 +4969,11 @@ impl EngineHost {
                 }
                 Phase::Try => {
                     let Some((step, timeout)) = w.job.steps.get(w.job.index) else {
+                        // The loop serves the waiters before it reads what the
+                        // net thread announced: a request sent in the turn that
+                        // ended the run (a `held` step may have read its parked
+                        // response already) is one of the run's.
+                        self.flush_network();
                         let requests = self.logged_requests(&w.job);
                         return Ok(Drive::Done(w.job.reply(requests)));
                     };
@@ -4779,7 +4995,8 @@ impl EngineHost {
                     }
                     if let Step::Idle = step {
                         w.job.results.push(json!({}));
-                        w.phase = Phase::Settle { requests: 0, since: now, until: w.step_deadline };
+                        w.phase =
+                            Phase::Settle { after: 0, since: now, until: w.step_deadline, updates: SETTLE_UPDATES };
                         continue;
                     }
                     if let Step::Reload = step {
@@ -4806,7 +5023,10 @@ impl EngineHost {
                             | Step::Viewport { .. }
                             | Step::Media(_)
                     )
-                    .then(|| requests_of(&self.thread.browser, pid));
+                    .then(|| self.thread.browser.request_mark(pid));
+                    // Whether a step that does not settle gets its turn: not an
+                    // `eval` whose script left the page nothing to run.
+                    let mut turn = true;
                     let (attempt, page) = match &step {
                         Step::Request(m) => {
                             let span = w.job.trace_attempt("request_attempt");
@@ -4847,7 +5067,19 @@ impl EngineHost {
                             (Attempt::Done(json!({ "removed": removed })), None)
                         }
                         Step::Release { hold, body } => {
-                            (self.release_hold(w.job.page, hold, body.as_deref()).map_err(|e| w.job.fail(e))?, None)
+                            match self.release_hold(w.job.page, hold, body.as_deref()).map_err(|e| w.job.fail(e))? {
+                                Some((released, delivered)) => {
+                                    w.job.results.push(json!({ "released": released }));
+                                    if delivered.is_empty() {
+                                        // Sent on to the network: nothing reaches the page yet.
+                                        self.next_step(&mut w);
+                                    } else {
+                                        w.phase = Phase::Deliver { requests: delivered, until: now + SETTLE_MAX };
+                                    }
+                                    continue;
+                                }
+                                None => (Attempt::Retry(format!("nothing is held under {hold:?} yet")), None),
+                            }
                         }
                         Step::Held { hold, count, status, .. } => {
                             let context =
@@ -4907,11 +5139,15 @@ impl EngineHost {
                                     (doc, nodes)
                                 }
                             };
+                            let stamp = self.thread.browser.work_stamp(pid);
                             match self
                                 .call_step(w.job.page, &doc, expression, call, &nodes)
                                 .map_err(|e| w.job.fail(e))?
                             {
-                                Evaluated::Value(value) => (Attempt::Done(value), None),
+                                Evaluated::Value(value) => {
+                                    turn = stamp.is_none() || self.thread.browser.work_stamp(pid) != stamp;
+                                    (Attempt::Done(value), None)
+                                }
                                 Evaluated::Pending(settled) => {
                                     w.phase = Phase::Await(settled);
                                     continue;
@@ -4919,11 +5155,15 @@ impl EngineHost {
                             }
                         }
                         Step::Eval { expression, .. } => {
+                            let stamp = self.thread.browser.work_stamp(pid);
                             match self
                                 .eval_step(pid, expression, w.job.trace_stage_context())
                                 .map_err(|e| w.job.fail(e))?
                             {
-                                Evaluated::Value(value) => (Attempt::Done(value), None),
+                                Evaluated::Value(value) => {
+                                    turn = stamp.is_none() || self.thread.browser.work_stamp(pid) != stamp;
+                                    (Attempt::Done(value), None)
+                                }
                                 Evaluated::Pending(settled) => {
                                     w.phase = Phase::Await(settled);
                                     continue;
@@ -5002,7 +5242,7 @@ impl EngineHost {
                         }
                     };
                     match attempt {
-                        Attempt::Done(value) => self.finish_step(&mut w, &step, value, before),
+                        Attempt::Done(value) => self.finish_step(&mut w, &step, value, before, turn),
                         Attempt::Continue(seq) => {
                             w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: self.turn_end(pid) };
                             return Ok(Drive::Park(Box::new(w)));
@@ -5025,9 +5265,11 @@ impl EngineHost {
 
     /// A step's result is in: settle after an action (and a `route`), or
     /// give an action or `eval` that does not settle one event-loop turn so
-    /// what it queued (a `setTimeout(save, 0)` from a blur) runs before the
-    /// next step; other steps go straight on.
-    fn finish_step(&mut self, w: &mut Waiter, step: &Step, value: Value, before: Option<usize>) {
+    /// what it queued (a `setTimeout(save, 0)` from a blur, the `scroll`
+    /// event of a focus that revealed its element) runs before the next
+    /// step, unless it queued nothing (`turn` is false: an `eval` that only
+    /// read); other steps go straight on.
+    fn finish_step(&mut self, w: &mut Waiter, step: &Step, value: Value, before: Option<u64>, turn: bool) {
         if let Step::Read { key: Some(key), .. }
         | Step::Eval { key: Some(key), .. }
         | Step::Download { key: Some(key), .. }
@@ -5044,18 +5286,32 @@ impl EngineHost {
         w.job.results.push(value);
         let now = Instant::now();
         match before {
-            Some(requests) => {
+            Some(after) => {
                 // Frames the action's follow-up work asks for run once idle.
                 lp_browser::note_client_activity();
-                w.phase = Phase::Settle { requests, since: now, until: now + SETTLE_MAX };
+                w.phase = Phase::Settle { after, since: now, until: now + SETTLE_MAX, updates: SETTLE_UPDATES };
             }
-            None if matches!(step, Step::Act { .. } | Step::Eval { .. } | Step::AdvanceTime { .. }) => {
-                w.phase = Phase::Act { seq: None, before: None, hop: None, at: self.turn_end(w.job.pid) };
+            None if turn && matches!(step, Step::Act { .. } | Step::Eval { .. } | Step::AdvanceTime { .. }) => {
+                // The scroll steps the page owes run in this turn instead of
+                // at the frame interval: the `scroll` event of a `focus` that
+                // revealed its element is the step's own, and 16 ms later it
+                // would arrive inside a later step (after that one opened a
+                // popover that closes when its trigger's container scrolls).
+                let pid = w.job.pid;
+                if self.thread.browser.page_work(pid).is_some_and(|work| work.scrolls > 0) {
+                    self.thread.browser.update_rendering(pid);
+                }
+                w.phase = Phase::Act { seq: None, before: None, hop: None, at: self.turn_end(pid) };
                 if matches!(step, Step::Eval { .. }) {
                     w.job.trace_post_eval_turn_start();
                 }
             }
-            None => self.next_step(w),
+            None => {
+                if !turn {
+                    w.job.trace_post_eval_turn_skipped();
+                }
+                self.next_step(w)
+            }
         }
     }
 
@@ -5089,19 +5345,21 @@ impl EngineHost {
         Ok(Drive::Park(Box::new(w)))
     }
 
-    /// A marker set from a task posted behind the tasks queued now.
     /// When the event-loop turn starting now may end (the marker task goes
-    /// in then): after [`TURN`] when the page has an animation frame,
-    /// observer callbacks or a timer due soon that the turn must let run;
-    /// at once otherwise, the marker still running behind every queued task.
+    /// in then): after [`TURN`] when the page has an animation frame or a
+    /// timer due soon that the turn must let run; at once otherwise, the
+    /// marker still running behind every queued task. ResizeObserver work
+    /// does not lengthen it: a delivery is a queued task, and a gather that
+    /// waits out its pacing interval is not due within the turn.
     fn turn_end(&self, pid: PageId) -> Instant {
         let now = Instant::now();
         match self.thread.browser.page_work(pid) {
-            Some(w) if w.frames == 0 && w.observers == 0 && w.timers == 0 => now,
+            Some(w) if w.frames == 0 && w.timers == 0 => now,
             _ => now + TURN,
         }
     }
 
+    /// A marker set from a task posted behind the tasks queued now.
     fn marker(&self) -> Rc<Cell<bool>> {
         let done = Rc::new(Cell::new(false));
         post_marker(self.thread.browser.scheduler(), done.clone(), MARKER_HOPS);
@@ -5211,20 +5469,21 @@ impl EngineHost {
         Ok(Attempt::Done(json!({ "mockId": id, "mocks": mocks.len() })))
     }
 
-    /// Releases what the context's mocks hold under `name`; waits (polling)
-    /// until something is held.
-    fn release_hold(&mut self, page: PageKey, name: &str, body: Option<&str>) -> CdpResult<Attempt> {
+    /// Releases what the context's mocks hold under `name`: how many
+    /// replies, and the requests among them whose response goes straight to
+    /// the page. `None` while nothing is held (the step polls).
+    fn release_hold(
+        &mut self,
+        page: PageKey,
+        name: &str,
+        body: Option<&str>,
+    ) -> CdpResult<Option<(usize, Vec<lp_net::RequestId>)>> {
         let context = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.context;
         let mocks = &self.contexts.get(&context).ok_or_else(|| CdpError::server("context is gone"))?.mocks;
-        Ok(
-            match mocks
-                .release(name, body.map(|body| bytes::Bytes::copy_from_slice(body.as_bytes())).as_ref())
-                .map_err(CdpError::invalid_params)?
-            {
-                0 => Attempt::Retry(format!("nothing is held under {name:?} yet")),
-                n => Attempt::Done(json!({ "released": n })),
-            },
-        )
+        let released = mocks
+            .release(name, body.map(|body| bytes::Bytes::copy_from_slice(body.as_bytes())).as_ref())
+            .map_err(CdpError::invalid_params)?;
+        Ok(Some(released).filter(|(count, _)| *count > 0))
     }
 
     fn remove_mocks(&mut self, page: PageKey, url: Option<&Pattern>) -> CdpResult<usize> {
@@ -5498,8 +5757,10 @@ impl EngineHost {
         self.waiters.list = waiting;
         for w in ready {
             let (id, session) = (w.job.id, w.job.session.clone());
+            w.job.trace_driving(Instant::now());
             let frame = match self.drive(w) {
                 Ok(Drive::Park(w)) => {
+                    w.trace_wait(&self.thread.browser, Instant::now());
                     self.waiters.list.push(*w);
                     continue;
                 }

@@ -1359,7 +1359,7 @@ fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> boo
     for (id, page) in snapshot.browser.prepared_pages() {
         let host = snapshot.browser.host();
         let loaded = host.page_loaded(page);
-        let quiet = host.page_work(page).is_none_or(|w| w.quiet(0));
+        let quiet = host.page_work(page).is_none_or(|w| w.quiet());
         let waited = snapshot.profiles[id].started.elapsed();
         if !(loaded && (quiet || waited_enough) || waited > LOAD_WAIT) {
             ready = false;

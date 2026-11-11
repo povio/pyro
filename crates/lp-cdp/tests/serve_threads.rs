@@ -466,3 +466,47 @@ async fn terminate_execution_stops_a_running_script() {
     assert_eq!(next["result"]["result"]["value"], 2, "only that script stopped: {next}");
     let _ = s.shutdown().await;
 }
+
+/// A driver command parked on its page is the client waiting for the page,
+/// not a quiet client: the collection a replaced document left pending runs
+/// a quiet second after the run's reply, not a second after the run arrived.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_parked_run_is_not_a_quiet_moment() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    let run =
+        |id: u64, steps: Value| json!({"id": id, "method": "LP.run", "params": {"steps": steps}, "sessionId": session});
+    // A loaded document replaced by another leaves its collection pending.
+    for (id, body) in [(10, "one"), (11, "two")] {
+        let r = call(&mut s, run(id, json!([{"goto": {"url": format!("data:text/html,<p>{body}</p>")}}]))).await;
+        assert!(r.get("error").is_none(), "{r}");
+    }
+    // Objects nothing holds, seen through weak references: a full collection
+    // clears them. The run then waits 1.6 s for an element a timer adds.
+    let alive = "refs.filter((ref) => ref.deref()).length";
+    let waited = call(
+        &mut s,
+        run(
+            12,
+            json!([
+                {"eval": {"expression": "globalThis.refs = Array.from({ length: 2000 }, () => new WeakRef({})); \
+                    setTimeout(() => document.body.insertAdjacentHTML('beforeend', '<i id=late>late</i>'), 1600); 0"}},
+                {"check": {"locator": {"css": "#late"}, "assert": "visible"}},
+                {"eval": {"expression": alive, "as": "alive"}},
+            ]),
+        ),
+    )
+    .await;
+    assert_eq!(waited["result"]["reads"]["alive"], 2000, "collected while the run waited: {waited}");
+    // The client goes quiet: the pending collection runs.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let after = call(
+        &mut s,
+        json!({"id": 13, "method": "Runtime.evaluate", "params": {"expression": alive, "returnByValue": true}, "sessionId": session}),
+    )
+    .await;
+    let left = after["result"]["result"]["value"].as_u64().unwrap_or_else(|| panic!("{after}"));
+    assert!(left < 100, "{left} of 2000 left after a quiet moment: {after}");
+    let _ = s.shutdown().await;
+}

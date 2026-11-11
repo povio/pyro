@@ -63,6 +63,13 @@ export interface StepLike {
   toStep(): Step;
 }
 
+/**
+ * `settle: false` skips the wait for the page to go quiet after the action
+ * (`focus()` and `blur()` never wait). The next step still starts after one
+ * turn of the page's event loop: the tasks the action queued have run and the
+ * `scroll` events it caused (a focus that had to reveal its element) are
+ * delivered.
+ */
 export type ActOptions = { settle?: boolean; timeout?: number };
 /**
  * Pointer options of `click`, `dblclick`, `hover` and `wheel` (engine 0.0.10):
@@ -435,8 +442,11 @@ export const route = (url: string, opts: ActOptions = {}): StepLike => ({ toStep
 /**
  * Evaluates an expression in the page; its JSON value lands in `values[as]`.
  * A returned promise is awaited (within `timeout`); a rejection fails the step.
+ * The next step starts after one turn of the page's event loop when the
+ * expression left the page something to run (a task, timer, request or DOM
+ * change), and directly when it only read.
  */
-export const evaluate = (expression: string, as?: string, opts: CheckOpts = {}): StepLike => ({
+export const evaluate =(expression: string, as?: string, opts: CheckOpts = {}): StepLike => ({
   toStep: () => ({ eval: { expression, ...(as ? { as } : {}), ...opts } }),
 });
 /**
@@ -447,8 +457,9 @@ export const evaluate = (expression: string, as?: string, opts: CheckOpts = {}):
 export const loaded = (opts: CheckOpts = {}): StepLike => ({ toStep: () => ({ loaded: opts }) });
 /**
  * Waits until the page is quiet: no queued task, request in flight, timeout due
- * within 50 ms, pending animation frame or unfinished navigation. Never fails;
- * when `timeout` passes first its result has `settled: false` and `pending`.
+ * within 50 ms, pending animation frame, queued `scroll` event or
+ * ResizeObserver callback, or unfinished navigation. Never fails; when
+ * `timeout` passes first its result has `settled: false` and `pending`.
  */
 export const idle = (opts: { timeout?: number } = {}): StepLike => ({
   toStep: () => ({ idle: opts.timeout === undefined ? {} : { timeout: opts.timeout } }),
@@ -496,7 +507,12 @@ export const mock = (url: TextMatch, opts: MockOptions = {}): StepLike => ({
 export const unmock = (url?: TextMatch): StepLike => ({
   toStep: () => ({ unmock: url === undefined ? {} : { url: pattern(url) } }),
 });
-/** Lets the requests held by `mock(url, { hold: name })` go on (engine 0.0.10). */
+/**
+ * Lets the requests held by `mock(url, { hold: name })` go on (engine 0.0.10).
+ * The next step starts once the page has the replies released to it (a
+ * mocked answer, a held real response) and had a turn of its event loop to
+ * act on them; a held request that goes on to the backend is not waited for.
+ */
 export const release = (hold: string): StepLike => ({ toStep: () => ({ release: { hold } }) });
 
 // ---- emulation ----
