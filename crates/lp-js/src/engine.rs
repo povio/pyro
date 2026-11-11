@@ -1002,8 +1002,9 @@ impl Engine {
 
     /// Makes a `fork()` of this process safe for JavaScriptCore: finishes a
     /// collection under way (it starts none: [`Engine::settle`] first for a
-    /// compact parent) and JIT work, and parks every JSC helper thread.
-    /// Call on the engine's thread, with no other thread running JavaScript,
+    /// compact parent) and JIT work, parks every JSC helper thread and holds
+    /// its timer thread until [`Engine::did_fork`]. Call on the engine's
+    /// thread, outside of script, with no other thread running JavaScript,
     /// right before `fork()`, then [`Engine::did_fork`] in both processes.
     /// The child keeps this engine with all of its state, shared
     /// copy-on-write with the parent.
