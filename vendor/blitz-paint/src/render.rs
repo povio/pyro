@@ -125,6 +125,12 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) initial_y: f64,
     /// The id of the document's root element (cached to avoid re-resolving it for every element)
     pub(crate) root_element_id: Option<NodeId>,
+    /// lightningpanda: the document's top layer, bottom first (usually
+    /// empty). Its elements are skipped where the tree puts them and painted
+    /// above everything, each over its `::backdrop`.
+    pub(crate) top_layer: Vec<NodeId>,
+    /// The top-layer element being painted as such (not skipped).
+    pub(crate) top_layer_root: std::cell::Cell<Option<NodeId>>,
     /// Scrollbar hover/drag state, resolved once per scene like the root element
     #[cfg(feature = "scrollbars")]
     pub(crate) hovered_scrollbar: Option<blitz_dom::node::ScrollbarRef>,
@@ -173,6 +179,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             initial_x,
             initial_y,
             root_element_id,
+            top_layer: if dom.has_top_layer() {
+                dom.top_layer_nodes().collect()
+            } else {
+                Vec::new()
+            },
+            top_layer_root: std::cell::Cell::new(None),
             #[cfg(feature = "scrollbars")]
             hovered_scrollbar: dom.hovered_scrollbar(),
             #[cfg(feature = "scrollbars")]
@@ -263,6 +275,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             viewport_clip_rect,
         );
 
+        if !self.top_layer.is_empty() {
+            self.paint_top_layer(scene, root_id, viewport_scroll, viewport_clip_rect);
+        }
+
         // Render debug overlay
         if self.dom.devtools().highlight_hover {
             if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
@@ -294,6 +310,136 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 );
             }
         }
+    }
+
+    /// lightningpanda: paints the top layer above the document, bottom
+    /// first: each element's `::backdrop` (a viewport-sized box: its
+    /// background color, `opacity` and `backdrop-filter`), then the element
+    /// in its own root stacking context, positioned as a box hoisted to the
+    /// root element, unclipped and unaffected by its ancestors' effects.
+    fn paint_top_layer(
+        &self,
+        scene: &mut impl PaintScene,
+        root_id: NodeId,
+        viewport_scroll: blitz_dom::Point<f64>,
+        clip_rect: Rect,
+    ) {
+        let tree = self.dom.as_ref().tree();
+        let root = &tree[root_id];
+        let root_location = root.final_layout().location;
+        // The transform `paint_scene` gives the root element.
+        let root_transform = Affine::translate(Vec2 {
+            x: self.initial_x - (viewport_scroll.x * self.scale),
+            y: self.initial_y - (viewport_scroll.y * self.scale),
+        });
+        // The transform `draw_children` gives the root element's children.
+        let root_children = (root_transform * Affine::translate(Vec2::new(
+            root_location.x as f64 * self.scale,
+            root_location.y as f64 * self.scale,
+        )) * root.transform().as_deref().copied().unwrap_or_default())
+        .then_translate(Vec2 {
+            x: -root.scroll_offset().x * self.scale,
+            y: -root.scroll_offset().y * self.scale,
+        });
+        for &id in &self.top_layer {
+            let node = &tree[id];
+            // An element not rendered (its own or an ancestor's `display:
+            // none`, which the layout gives no box) has no backdrop either.
+            if matches!(node.taffy_display(), taffy::Display::None)
+                || node.primary_styles().is_none()
+                || !self.rendered(id)
+            {
+                continue;
+            }
+            self.paint_backdrop(scene, id);
+            // The root element paints where the document pass would have
+            // put it (`render_element` applies its own location, transform
+            // and scroll); anything else is hoisted to the root element.
+            let transform = if id == root_id {
+                root_transform
+            } else {
+                let position = self.dom.top_layer_position(id);
+                root_children.pre_translate(Vec2::new(
+                    position.x as f64 * self.scale,
+                    position.y as f64 * self.scale,
+                ))
+            };
+            self.top_layer_root.set(Some(id));
+            self.render_element(scene, id, transform, clip_rect);
+            self.top_layer_root.set(None);
+        }
+    }
+
+    /// Whether `id` and its ancestors are styled and not `display: none`
+    /// (the style traversal keeps stale styles under a `display: none`
+    /// ancestor).
+    fn rendered(&self, id: NodeId) -> bool {
+        let mut cur = self.dom.get_node(id);
+        while let Some(node) = cur {
+            if node.is_element() {
+                match node.primary_styles() {
+                    Some(s) if s.get_box().display.is_none() => return false,
+                    Some(_) => {}
+                    None => return false,
+                }
+            }
+            cur = node.parent.and_then(|p| self.dom.get_node(p));
+        }
+        true
+    }
+
+    /// The `::backdrop` of top-layer element `id`: a box filling the painted
+    /// area below the element (UA style: `position: fixed; inset: 0`).
+    fn paint_backdrop(&self, scene: &mut impl PaintScene, id: NodeId) {
+        use style::selector_parser::PseudoElement;
+        let Some(style) = self
+            .dom
+            .pseudo_element_style(id, &PseudoElement::Backdrop, false)
+        else {
+            return;
+        };
+        if style.get_box().display.is_none()
+            || style.get_inherited_box().visibility != StyloVisibility::Visible
+        {
+            return;
+        }
+        let effects = style.get_effects();
+        let opacity = effects.opacity;
+        let color = style
+            .slow_clone_background_color()
+            .resolve_to_absolute(&style.clone_color());
+        let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
+        let visible_color = color.alpha > 0.0 && self.backgrounds;
+        if opacity <= 0.0 || (!visible_color && backdrop_filter.is_none()) {
+            return;
+        }
+        let rect = Rect::new(
+            self.initial_x,
+            self.initial_y,
+            self.initial_x + self.width as f64,
+            self.initial_y + self.height as f64,
+        );
+        self.layer_manager.maybe_with_layer(
+            scene,
+            opacity < 1.0 || backdrop_filter.is_some(),
+            BlendMode::default(),
+            opacity,
+            Affine::IDENTITY,
+            &rect,
+            None,
+            backdrop_filter,
+            |scene| {
+                if visible_color {
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        color.as_srgb_color(),
+                        None,
+                        &rect,
+                    );
+                }
+            },
+        );
     }
 
     fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
@@ -428,6 +574,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
         // Early return if the element is hidden
         if matches!(node.taffy_display(), taffy::Display::None) {
+            return;
+        }
+
+        // lightningpanda: a top-layer element paints above the document
+        // (`paint_top_layer`), not here.
+        if !self.top_layer.is_empty()
+            && self.top_layer_root.get() != Some(node_id)
+            && self.dom.is_in_top_layer(node_id)
+        {
             return;
         }
 
@@ -1045,9 +1200,109 @@ impl ElementCx<'_, '_> {
                     brush_override: None,
                 },
                 self.node.id,
-                None,
+                Some(&text_layout.text),
                 &mut draw_text_context,
                 None,
+            );
+            draw_text_context.text_shift = 0.0;
+        }
+    }
+
+    /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
+    fn fractional_text_x_of_node(&self) -> f64 {
+        if !self.context.fractional_text_x {
+            return 0.0;
+        }
+        let (position, layout) = self.context.dom.physical_unrounded_geometry(self.node.id);
+        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
+        let painted = self.node.final_layout();
+        let painted = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
+        ((start * 64.0).floor() / 64.0 - painted) * self.scale
+    }
+
+    /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the
+    /// inline axis and y the block axis, running from the content box's top and its block-start edge.
+    /// Each line is drawn rotated a quarter turn clockwise (`vertical-*`'s sideways glyphs have their
+    /// tops to the right), which takes y to -x. In `vertical-rl` that also runs the lines the right
+    /// way. In `vertical-lr` they run the other way, so a line's slot is found first and the line is
+    /// rotated within it.
+    fn draw_vertical_inline_layout(
+        &self,
+        scene: &mut impl PaintScene,
+        text_layout: &blitz_dom::node::TextLayout,
+        pos: Point,
+        block_lr: bool,
+    ) {
+        let block_offset = text_layout.block_offset as f64;
+        let layout = self.node.final_layout();
+        let content_width = (layout.size.width
+            - layout.border.left
+            - layout.border.right
+            - layout.padding.left
+            - layout.padding.right) as f64;
+        let origin = if block_lr { pos.x + block_offset } else { pos.x + content_width - block_offset };
+        // Boxes are painted at whole pixels. Chromium rounds text only in the block axis, so a
+        // line starts where it was laid out in the inline axis.
+        let inline_start = self.context.dom.physical_unrounded_geometry(self.node.id).0.y as f64;
+        let top = pos.y + inline_start - inline_start.round();
+        let line_transform = |index: usize| {
+            let flip = if block_lr {
+                text_layout.layout.get(index).map_or(0.0, |line| {
+                    let metrics = line.metrics();
+                    (metrics.block_min_coord + metrics.block_max_coord) as f64
+                })
+            } else {
+                0.0
+            };
+            self.transform
+                * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
+        };
+
+        let wm = self.style.writing_mode;
+        let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
+        let all_upright = wm.contains(WritingMode::UPRIGHT);
+        let vertical = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
+            Some(crate::text::VerticalLine::new(line, sideways, all_upright))
+        };
+
+        if self.context.backgrounds {
+            for (index, line) in text_layout.layout.lines().enumerate() {
+                let vertical = vertical(&line);
+                crate::text::draw_inline_backgrounds(
+                    scene,
+                    std::iter::once(line),
+                    self.context.dom,
+                    line_transform(index),
+                    self.node.id,
+                    vertical,
+                );
+            }
+        }
+        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
+            crate::text::draw_text_selection(
+                scene,
+                &text_layout.layout,
+                line_transform,
+                sel_start,
+                sel_end,
+            );
+        }
+        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        for (index, line) in text_layout.layout.lines().enumerate() {
+            let vertical = vertical(&line);
+            crate::text::stroke_text(
+                scene,
+                std::iter::once(line),
+                self.context.dom,
+                line_transform(index),
+                TextPaintOptions {
+                    scale: self.scale,
+                    brush_override: None,
+                },
+                self.node.id,
+                Some(&text_layout.text),
+                &mut draw_text_context,
+                vertical,
             );
         }
     }
@@ -1178,109 +1433,9 @@ impl ElementCx<'_, '_> {
                     brush_override: None,
                 },
                 self.node.id,
-                Some(&text_layout.text),
+                None,
                 &mut draw_text_context,
                 None,
-            );
-            draw_text_context.text_shift = 0.0;
-        }
-    }
-
-    /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
-    fn fractional_text_x_of_node(&self) -> f64 {
-        if !self.context.fractional_text_x {
-            return 0.0;
-        }
-        let (position, layout) = self.context.dom.physical_unrounded_geometry(self.node.id);
-        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
-        let painted = self.node.final_layout();
-        let painted = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
-        ((start * 64.0).floor() / 64.0 - painted) * self.scale
-    }
-
-    /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the
-    /// inline axis and y the block axis, running from the content box's top and its block-start edge.
-    /// Each line is drawn rotated a quarter turn clockwise (`vertical-*`'s sideways glyphs have their
-    /// tops to the right), which takes y to -x. In `vertical-rl` that also runs the lines the right
-    /// way. In `vertical-lr` they run the other way, so a line's slot is found first and the line is
-    /// rotated within it.
-    fn draw_vertical_inline_layout(
-        &self,
-        scene: &mut impl PaintScene,
-        text_layout: &blitz_dom::node::TextLayout,
-        pos: Point,
-        block_lr: bool,
-    ) {
-        let block_offset = text_layout.block_offset as f64;
-        let layout = self.node.final_layout();
-        let content_width = (layout.size.width
-            - layout.border.left
-            - layout.border.right
-            - layout.padding.left
-            - layout.padding.right) as f64;
-        let origin = if block_lr { pos.x + block_offset } else { pos.x + content_width - block_offset };
-        // Boxes are painted at whole pixels. Chromium rounds text only in the block axis, so a
-        // line starts where it was laid out in the inline axis.
-        let inline_start = self.context.dom.physical_unrounded_geometry(self.node.id).0.y as f64;
-        let top = pos.y + inline_start - inline_start.round();
-        let line_transform = |index: usize| {
-            let flip = if block_lr {
-                text_layout.layout.get(index).map_or(0.0, |line| {
-                    let metrics = line.metrics();
-                    (metrics.block_min_coord + metrics.block_max_coord) as f64
-                })
-            } else {
-                0.0
-            };
-            self.transform
-                * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
-        };
-
-        let wm = self.style.writing_mode;
-        let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
-        let all_upright = wm.contains(WritingMode::UPRIGHT);
-        let vertical = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
-            Some(crate::text::VerticalLine::new(line, sideways, all_upright))
-        };
-
-        if self.context.backgrounds {
-            for (index, line) in text_layout.layout.lines().enumerate() {
-                let vertical = vertical(&line);
-                crate::text::draw_inline_backgrounds(
-                    scene,
-                    std::iter::once(line),
-                    self.context.dom,
-                    line_transform(index),
-                    self.node.id,
-                    vertical,
-                );
-            }
-        }
-        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
-            crate::text::draw_text_selection(
-                scene,
-                &text_layout.layout,
-                line_transform,
-                sel_start,
-                sel_end,
-            );
-        }
-        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-        for (index, line) in text_layout.layout.lines().enumerate() {
-            let vertical = vertical(&line);
-            crate::text::stroke_text(
-                scene,
-                std::iter::once(line),
-                self.context.dom,
-                line_transform(index),
-                TextPaintOptions {
-                    scale: self.scale,
-                    brush_override: None,
-                },
-                self.node.id,
-                Some(&text_layout.text),
-                &mut draw_text_context,
-                vertical,
             );
         }
     }
