@@ -58,6 +58,12 @@ fn main() {
         for lib in ["icui18n", "icuuc", "icudata", "stdc++"] {
             println!("cargo:rustc-link-lib=dylib={lib}");
         }
+        // libpas uses 16-byte atomics, which clang leaves to libatomic on
+        // x86-64 (the shared library linked it itself). Its archive comes with
+        // the compiler, so the binary gains no run-time dependency.
+        if env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "x86_64" {
+            println!("cargo:rustc-link-lib=static:-bundle=atomic");
+        }
         cc::Build::new().file("shim/modules_source.c").flag("-Wall").flag("-Werror").compile("lp_jsc_shim");
         return;
     }
