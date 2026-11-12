@@ -613,14 +613,25 @@ impl SelectorCache {
     }
 
     /// `f` on the query of a selector given as Latin-1 characters, without
-    /// taking it out of the cache.
+    /// taking it out of the cache. The repeat of the last selector is the
+    /// whole of the inlined part: one compare of the characters.
+    #[inline]
     pub fn with_latin1<R>(&mut self, chars: &[u8], f: impl FnOnce(&Query) -> R) -> DomResult<R> {
         if let Some((key, q)) = &self.last {
             if **key == *chars {
                 return Ok(f(q));
             }
         }
-        let (key, q) = match self.latin1.get_key_value(chars) {
+        let (key, q) = self.latin1_entry(chars)?;
+        let r = f(&q);
+        self.last = Some((key, q));
+        Ok(r)
+    }
+
+    /// The entry of `chars`, parsed and stored when the cache has none.
+    #[inline(never)]
+    fn latin1_entry(&mut self, chars: &[u8]) -> DomResult<(Rc<[u8]>, Rc<Query>)> {
+        Ok(match self.latin1.get_key_value(chars) {
             Some((key, q)) => (key.clone(), q.clone()),
             None => {
                 let q = Rc::new(self.get(&chars.iter().map(|&c| char::from(c)).collect::<String>())?);
@@ -629,10 +640,7 @@ impl SelectorCache {
                 self.latin1.insert(key.clone(), q.clone());
                 (key, q)
             }
-        };
-        let r = f(&q);
-        self.last = Some((key, q));
-        Ok(r)
+        })
     }
 
     /// [`SelectorCache::with_latin1`] for UTF-16 code units.
