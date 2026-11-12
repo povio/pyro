@@ -708,6 +708,11 @@ pub mod spi {
     pub type JSObjectGetFunctionDataFn = unsafe extern "C" fn(object: JSObjectRef) -> *mut c_void;
     pub type JSContextGroupReleaseFreeMemoryFn = unsafe extern "C" fn(group: JSContextGroupRef);
     pub type JSContextGroupDeleteAllCodeFn = unsafe extern "C" fn(group: JSContextGroupRef);
+    /// `JSGetMemoryUsageStatistics` (JSContextRefPrivate.h): an object with
+    /// `heapSize`, `heapCapacity`, `extraMemorySize`, `objectCount`,
+    /// `protectedObjectCount`, `globalObjectCount` and
+    /// `protectedGlobalObjectCount` of the context's VM.
+    pub type JSGetMemoryUsageStatisticsFn = unsafe extern "C" fn(ctx: JSContextRef) -> JSObjectRef;
     /// Freed allocator pages are replaced by fresh mappings (they leave the
     /// resident set at once) instead of being `madvise`d.
     pub type JSSetDecommitReplacesPagesFn = unsafe extern "C" fn(enable: bool);
@@ -840,6 +845,7 @@ pub mod spi {
         pub get_function_data: Option<JSObjectGetFunctionDataFn>,
         pub release_free_memory: Option<JSContextGroupReleaseFreeMemoryFn>,
         pub delete_all_code: Option<JSContextGroupDeleteAllCodeFn>,
+        pub memory_usage_statistics: Option<JSGetMemoryUsageStatisticsFn>,
         pub set_decommit_replaces_pages: Option<JSSetDecommitReplacesPagesFn>,
         pub value_string_characters: Option<JSValueGetStringCharactersFn>,
         pub make_string_latin1: Option<JSValueMakeStringLatin1Fn>,
@@ -973,6 +979,7 @@ pub mod spi {
             get_function_data: resolve!("JSObjectGetFunctionData"),
             release_free_memory: resolve!("JSContextGroupReleaseFreeMemory"),
             delete_all_code: resolve!("JSContextGroupDeleteAllCode"),
+            memory_usage_statistics: resolve!("JSGetMemoryUsageStatistics"),
             set_decommit_replaces_pages: resolve!("JSSetDecommitReplacesPages"),
             value_string_characters: resolve!("JSValueGetStringCharacters"),
             make_string_latin1: resolve!("JSValueMakeStringLatin1"),
