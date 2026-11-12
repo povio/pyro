@@ -20,6 +20,12 @@
 #   LP_WEBKIT_SRC  WebKit checkout, created if missing (default $LP_JSC_CACHE/../webkit-src)
 #   LP_JSC_BUILD   ninja build dir (default $LP_JSC_CACHE/../webkit-build)
 #   JOBS           parallel jobs (default: number of CPUs)
+#   CC, CXX        compilers (Linux: default clang; macOS: default the Command Line
+#                  Tools', which compile against the SDK's libc++ headers, as a
+#                  compiler set here does too)
+#   LP_JSC_CFLAGS  extra C and C++ flags (scripts/pgo: profile instrumentation and
+#                  use). The output directory's name does not cover the compiler or
+#                  flags: a build with others needs its own LP_JSC_CACHE and LP_JSC_BUILD.
 #
 # Static since 2026-11: the 48 MB dylib cost dyld 1.2 ms of every launch on the
 # M1 Max (process start to main 7.2-7.7 ms, 6.0-6.1 ms with the archive linked
@@ -87,11 +93,24 @@ done
 ruby_bin="$(ruby -e 'print RbConfig.ruby' 2>/dev/null || echo /usr/bin/ruby)"
 
 platform_flags=()
+cflags="${LP_JSC_CFLAGS:-}"
+cxxflags="$cflags"
 if [[ "$os" == Darwin ]]; then
     platform_flags+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0)
+    if [[ -n "${CC:-}${CXX:-}" ]]; then
+        # Another clang (an LLVM release for scripts/pgo) would take its own libc++
+        # headers, newer than the system's libc++ the binary links.
+        sdk="$(xcrun --show-sdk-path)"
+        platform_flags+=(-DCMAKE_C_COMPILER="${CC:-clang}" -DCMAKE_CXX_COMPILER="${CXX:-clang++}"
+                         -DCMAKE_OSX_SYSROOT="$sdk")
+        cxxflags="-nostdinc++ -isystem $sdk/usr/include/c++/v1 $cxxflags"
+    fi
 else
     platform_flags+=(-DCMAKE_C_COMPILER="${CC:-clang}" -DCMAKE_CXX_COMPILER="${CXX:-clang++}")
 fi
+# Only when set: otherwise CMake reads CFLAGS and CXXFLAGS as before.
+if [[ -n "$cflags" ]]; then platform_flags+=(-DCMAKE_C_FLAGS="$cflags"); fi
+if [[ -n "$cxxflags" ]]; then platform_flags+=(-DCMAKE_CXX_FLAGS="$cxxflags"); fi
 
 cmake -G Ninja -S "$src" -B "$build" \
     -DRuby_EXECUTABLE="$ruby_bin" \

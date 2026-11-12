@@ -101,11 +101,12 @@ codegen-units = 16
 # target/<host>/release-pgo). Same settings as `release`; the PGO flags come
 # from RUSTFLAGS in those scripts, so a plain `cargo build --profile
 # release-pgo` is just a release build in another directory. Not the default:
-# it takes an instrumented build, a training run and a second build, and a
-# profile belongs to the sources it was trained on. Measured on the M1 Max
-# against `release` (instructions per operation, binaries alternated):
-# cdp-perf -9% with the Rust profile; README "Profile-guided optimization"
-# has the rest. Fat LTO on top of PGO measured 0..+3% against
+# it takes an instrumented build, a training run and a second build (with
+# LP_PGO_LLVM two more JavaScriptCore builds), and a profile belongs to the
+# sources it was trained on. Measured on the M1 Max against `release`
+# (instructions per operation, binaries alternated): cdp-perf -9% with the
+# Rust profile, -14% with JavaScriptCore's too (LP_PGO_LLVM); README
+# "Profile-guided optimization" has the rest. Fat LTO on top of PGO measured 0..+3% against
 # plain `release` (it undoes most of the PGO gain), so the profile keeps thin
 # LTO.
 [profile.release-pgo]

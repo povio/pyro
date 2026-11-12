@@ -86,20 +86,24 @@ sccache passes through, so edit rebuilds are unchanged (lp-dom edit: 4.6-5.3 s w
 separately: `generate.sh` (instrumented build), `train.sh` (`bench/scripts/cdp-perf.mjs`, every scenario
 once against `serve` and again against `serve --fork`, one profile file per process), `use.sh` (the build
 with the profile). It needs rustup's `llvm-tools` component and bun. `LP_PGO_EXTRA=<script>` adds a
-workload of your own, for example an application's E2E suite against `LP_WS`. The `release-pgo` profile
-is `release` in another directory and `release` stays the default: the flow costs two release builds and
-the training, and a profile belongs to the sources it was trained on. Measured on an M1 Max against the
-release binary (instructions per operation, binaries alternated; cdp-perf geomean over 63 scenarios, then
-the ToS SPA load and the pages after it; each plain / fork):
+workload of your own, for example an application's E2E suite against `LP_WS`. `LP_PGO_LLVM=<dir>`, an
+LLVM release of the major version rustc is built on, takes JavaScriptCore along: the archive is built
+with its clang, instrumented for the same training run and then with the same profile. The `release-pgo`
+profile is `release` in another directory and `release` stays the default: the full flow costs two
+release builds, two JavaScriptCore builds and the training, and a profile belongs to the sources it was
+trained on. Measured on an M1 Max against the release binary (instructions per operation, binaries
+alternated; cdp-perf geomean over 63 scenarios, then the ToS SPA load and the pages after it; each plain
+/ fork):
 
 | | cdp-perf | SPA load | SPA pages |
 |---|---|---|---|
 | Rust PGO | -9% / -9% | 0% / -3% | -6% / -6% |
+| + `LP_PGO_LLVM` | -14% / -13% | -4% / -8% | -11% / -13% |
 
-`bench/scripts/css-bench.mjs`, which the training does not run, gains 10-18%. RSS is unchanged. Training
-with an application's own workload as well (`LP_PGO_EXTRA`, weighted 10) made its pages 3-6 points faster
-without costing cdp-perf. Fat LTO on top of PGO and a thin-LTO JavaScriptCore were measured and not
-adopted; see the notes in `Cargo.toml` and `scripts/jsc/build.sh`.
+`bench/scripts/css-bench.mjs`, which the training does not run, gains 10-18% and 12-21%. RSS is
+unchanged. Training with an application's own workload as well (`LP_PGO_EXTRA`, weighted 10) made its
+pages 3-6 points faster without costing cdp-perf. Fat LTO on top of PGO and a thin-LTO JavaScriptCore
+were measured and not adopted; see the notes in `Cargo.toml` and `scripts/jsc/build.sh`.
 
 ## Usage
 
