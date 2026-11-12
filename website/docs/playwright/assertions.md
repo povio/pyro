@@ -66,7 +66,7 @@ Matchers that need one element fail with a strict mode violation when the locato
 | `toHaveId(id)` | `timeout` | |
 | `toHaveJSProperty(name, value)` | `timeout` | Compared as JSON. |
 | `toHaveRole(role)` | `timeout` | Reads the `role` attribute only. Implicit roles (`<button>` is a button) do not match. |
-| `toHaveScreenshot(name?, options?)` | see [Snapshots](/playwright/snapshots) | Rendered by Lightningpanda. `.not` is not supported. |
+| `toHaveScreenshot(name?, options?)` | see [Snapshots](/playwright/snapshots) | Rendered by Pyro. `.not` is not supported. |
 | `toHaveText(text)` | `ignoreCase`, `useInnerText`, `timeout` | A string, RegExp, or a list (one per element, in order). Whitespace is normalized. |
 | `toHaveValue(value)` | `timeout` | |
 | `toHaveValues(values)` | `timeout` | Selected options of a `<select multiple>`. |

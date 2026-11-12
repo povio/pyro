@@ -1,6 +1,6 @@
-# Lightningpanda CDP domain
+# Pyro CDP domain
 
-`Lightningpanda.*` is a browser-level CDP domain that Lightningpanda adds to the standard protocol. It manages **prepared pages**: pages booted ahead of a test in their own browser context, so a test takes a page that has already loaded the app instead of waiting for it. In fork mode it also manages **shared profiles** that every client of one server can use.
+`Lightningpanda.*` is a browser-level CDP domain that Pyro adds to the standard protocol. It manages **prepared pages**: pages booted ahead of a test in their own browser context, so a test takes a page that has already loaded the app instead of waiting for it. In fork mode it also manages **shared profiles** that every client of one server can use.
 
 The SDK ([`lp.profile()`, `lp.page()`, `lp.adopt()`](/reference/sdk)) and the Playwright drop-in ([boot pools](/playwright/boot-pools)) call these commands for you. Use them directly from Puppeteer, raw CDP or another client. For the concepts, see [Profiles and pre-booted pages](/guide/profiles) and [Connections and fork mode](/guide/fork-mode).
 

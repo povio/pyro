@@ -1,6 +1,6 @@
 # Web platform support
 
-What a page running in Lightningpanda can use: JavaScript language features, DOM and HTML, CSS and layout, networking, storage, workers, media and the other Web APIs, with the known gaps. Lightningpanda follows headless Chrome where Chrome and the specification differ.
+What a page running in Pyro can use: JavaScript language features, DOM and HTML, CSS and layout, networking, storage, workers, media and the other Web APIs, with the known gaps. Pyro follows headless Chrome where Chrome and the specification differ.
 
 This page summarizes the repository's own records (`docs/PARITY.md`, `docs/COMPATIBILITY.md`, `docs/webapi/*`, `docs/browser/*`). Where those records are older than the code, the presence of an interface was checked against the published 0.0.33 browser, and the newer result is given. For the CDP protocol surface see [CDP coverage](/reference/cdp); for the Playwright API surface see [API coverage](/playwright/api-coverage).
 

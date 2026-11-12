@@ -157,7 +157,7 @@ lightningpanda serve --proxy http://user:secret@proxy.corp:3128 --proxy-bypass '
 
 ## Prepared pages {#prepared-pages}
 
-Pages booted ahead of the test that takes them. Guide: [Profiles and pre-booted pages](/guide/profiles); protocol: [Lightningpanda CDP domain](/reference/cdp-domain).
+Pages booted ahead of the test that takes them. Guide: [Profiles and pre-booted pages](/guide/profiles); protocol: [Pyro CDP domain](/reference/cdp-domain).
 
 ### `--prepare` {#prepare}
 

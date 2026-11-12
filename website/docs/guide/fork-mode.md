@@ -1,6 +1,6 @@
 # Connections and fork mode
 
-By default a Lightningpanda server runs one browser thread per CDP connection, and every connection boots its own pages. **Fork mode** (`serve --fork`) changes that: a template process boots each profile once, and every connection is served by a `fork()` of it. A test then starts with the app already booted, in about 20 ms however long the app takes to boot, and shares nothing with other tests.
+By default a Pyro server runs one browser thread per CDP connection, and every connection boots its own pages. **Fork mode** (`serve --fork`) changes that: a template process boots each profile once, and every connection is served by a `fork()` of it. A test then starts with the app already booted, in about 20 ms however long the app takes to boot, and shares nothing with other tests.
 
 ## Thread mode: the default
 

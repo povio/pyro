@@ -67,7 +67,7 @@ The SDK's `lp.profile` sends this command. Any CDP client can:
               "pool": 2 } }
 ```
 
-It replies with a `profileId`. `Lightningpanda.preparedPages` lists what is waiting, and `Lightningpanda.unregisterPreparedPage` removes a profile. The parameters are described in the [Lightningpanda CDP domain](/reference/cdp-domain).
+It replies with a `profileId`. `Lightningpanda.preparedPages` lists what is waiting, and `Lightningpanda.unregisterPreparedPage` removes a profile. The parameters are described in the [Pyro CDP domain](/reference/cdp-domain).
 
 For the Playwright module, the equivalent is `use: { lightningpanda: { boot: [...] } }` in the config. See [Booting pages ahead](/playwright/boot-pools).
 

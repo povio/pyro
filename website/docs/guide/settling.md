@@ -1,6 +1,6 @@
 # Settling and auto-waiting
 
-Lightningpanda tests contain no sleeps, no polling loops and no `waitForResponse`. Two mechanisms replace them, both running inside the browser: **steps that wait for their condition**, and **actions that settle**. This page states the rules precisely, because knowing them tells you exactly when a test can rely on the page being up to date.
+Pyro tests contain no sleeps, no polling loops and no `waitForResponse`. Two mechanisms replace them, both running inside the browser: **steps that wait for their condition**, and **actions that settle**. This page states the rules precisely, because knowing them tells you exactly when a test can rely on the page being up to date.
 
 ## Steps wait for their condition
 
@@ -83,7 +83,7 @@ The Playwright module sends each awaited call as one `LP.run`, so the same rules
 
 ### Compared with Playwright's auto-waiting
 
-| | Playwright on Chrome | Lightningpanda |
+| | Playwright on Chrome | Pyro |
 | --- | --- | --- |
 | Before an action | actionability checks (attached, visible, stable, enabled, receives events), retried by the client | the same checks, retried in the browser on DOM changes |
 | After an action | returns once the input is dispatched; it does not wait for the app to react | returns once the page is quiet, as defined above |
@@ -97,7 +97,7 @@ The practical difference: code written for Playwright that adds `waitForLoadStat
 Because an action returns only after the app has reacted, a state that exists only **between** the action and its result can be over by the time the next step runs. The common case is a loading spinner:
 
 ```ts
-// Playwright on Chrome: usually sees the spinner. On Lightningpanda the click
+// Playwright on Chrome: usually sees the spinner. On Pyro the click
 // settles after the request finishes, so the spinner is already gone.
 await page.getByRole('button', { name: 'Save' }).click();
 await expect(page.getByRole('progressbar')).toBeVisible(); // can fail

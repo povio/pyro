@@ -139,7 +139,7 @@ Not captured:
 - `:hover` and `:focus` styles, the text caret
 - running animations
 
-Pixels come from Lightningpanda's own renderer (Blitz, rasterized on the CPU). They never match Chromium screenshots pixel for pixel: record baselines with Lightningpanda.
+Pixels come from Pyro's own renderer (Blitz, rasterized on the CPU). They never match Chromium screenshots pixel for pixel: record baselines with Pyro.
 
 ## Baselines per operating system
 

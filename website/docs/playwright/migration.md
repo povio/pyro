@@ -1,6 +1,6 @@
 # Migrating a suite
 
-This page moves an existing Playwright suite to Lightningpanda: install the package, rewrite the imports, point the runner at your config, update scripts and CI, then fix the first failures. Most suites need no changes beyond the imports. Plan time for re-baselining screenshots and for the [behaviour differences](/playwright/differences).
+This page moves an existing Playwright suite to Pyro: install the package, rewrite the imports, point the runner at your config, update scripts and CI, then fix the first failures. Most suites need no changes beyond the imports. Plan time for re-baselining screenshots and for the [behaviour differences](/playwright/differences).
 
 ## 1. Install
 
@@ -72,7 +72,7 @@ A `lightningpanda.config.ts` beside it takes precedence. That is how both runner
 
 Things to check in the config:
 
-- **Projects for other browsers.** All projects run on Lightningpanda, and `lightningpanda test` runs each file once, under the first project whose `testDir` / `testMatch` include it. A config with `chromium`, `firefox` and `webkit` projects therefore runs each test once, with the `chromium` project's `use`. Select one with `--project`.
+- **Projects for other browsers.** All projects run on Pyro, and `lightningpanda test` runs each file once, under the first project whose `testDir` / `testMatch` include it. A config with `chromium`, `firefox` and `webkit` projects therefore runs each test once, with the `chromium` project's `use`. Select one with `--project`.
 - **`devices`.** Only five descriptors exist: `Desktop Chrome`, `Desktop Chrome HiDPI`, `Desktop Edge`, `Pixel 7` and `iPhone 15`. Any other name is `undefined`, and spreading it adds nothing. Of a descriptor, `viewport` and `userAgent` take effect; `deviceScaleFactor`, `isMobile` and `hasTouch` do not.
 - **`reporter`** is ignored. Pass `--reporter list|line|dot` on the command line.
 - **`use.trace`, `use.video`, `use.screenshot`** are accepted and do nothing.
@@ -147,7 +147,7 @@ For more CI patterns see [CI recipes](/e2e/ci).
 
 ## 8. Re-baseline screenshots
 
-Lightningpanda renders pages with its own CPU renderer. Screenshots differ from Chromium's at the pixel level, so every existing `toHaveScreenshot` baseline will fail. Write new ones once, review them, and commit them:
+Pyro renders pages with its own CPU renderer. Screenshots differ from Chromium's at the pixel level, so every existing `toHaveScreenshot` baseline will fail. Write new ones once, review them, and commit them:
 
 ```sh
 bunx lightningpanda test -u all
@@ -194,7 +194,7 @@ export const test: typeof lp.test = stock ? (stock.test as any) : lp.test;
 export const expect: typeof lp.expect = stock ? (stock.expect as any) : lp.expect;
 ```
 
-`PW_STOCK=1 npx playwright test` runs the suite on Playwright and Chromium; `bunx lightningpanda test` runs it on Lightningpanda. Comparing the two runs shows which failures come from the migration.
+`PW_STOCK=1 npx playwright test` runs the suite on Playwright and Chromium; `bunx lightningpanda test` runs it on Pyro. Comparing the two runs shows which failures come from the migration.
 
 ## Typical first failures
 
@@ -207,12 +207,12 @@ export const expect: typeof lp.expect = stock ? (stock.expect as any) : lp.expec
 | A `confirm()` dialog acts as if Cancel was pressed | A dialog with no `page.on('dialog')` listener is dismissed. | Register a listener before the action, as Playwright requires. |
 | `toHaveRole('button')` fails on a `<button>` | `toHaveRole` reads the `role` attribute only, not implicit roles. | Use `getByRole('button')` to find it, or drop the assertion. |
 | An element inside an open shadow root is not found | CSS and `getByRole` locators do not enter shadow roots (measured on 0.0.33); `getByText` does. | Locate by text, or test through the host element's API. |
-| Each test runs once although there are three browser projects | All projects run on Lightningpanda, each file once. | Expected. Use `--project` to pick one. |
+| Each test runs once although there are three browser projects | All projects run on Pyro, each file once. | Expected. Use `--project` to pick one. |
 | `await page.goto(url)` returns `null`, or its response has no headers | Pooled pages turn `goto` into a route change, which returns `null`; a normal `goto` response carries status and URL only. | Check status with `waitForResponse`, or read headers from `page.request`. |
 | `afterEach` that takes a screenshot when `testInfo.status !== testInfo.expectedStatus` never fires | `testInfo.status` stays `'passed'` during hooks. | See [Behaviour differences](/playwright/differences#test-runner). |
 | `getByTestId(/regex/)` or `click({ clickCount: 3 })` throws "not supported yet" | Not implemented. | Use a string test id; use `dblclick()` or `evaluate` for triple clicks. |
 | `lightningpanda test: unknown option --shard` | Flag not supported. | Remove it (see step 7). |
-| App code reports an unsupported browser, or a web API is undefined | Lightningpanda is not Chromium: its UA and API surface differ. | See [Web platform support](/reference/web-platform). |
+| App code reports an unsupported browser, or a web API is undefined | Pyro is not Chromium: its UA and API surface differ. | See [Web platform support](/reference/web-platform). |
 
 ## Checklist
 

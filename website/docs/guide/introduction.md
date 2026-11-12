@@ -1,8 +1,12 @@
-# What is Lightningpanda?
+# What is Pyro?
 
-Lightningpanda is a headless browser written in Rust. It runs JavaScript on JavaScriptCore, the engine behind Safari, and never uses V8. Clients drive it over the Chrome DevTools Protocol (CDP). It is built for one job above all others: running browser end-to-end tests quickly and with little memory.
+Pyro is a headless browser written in Rust. It runs JavaScript on JavaScriptCore, the engine behind Safari, and never uses V8. Clients drive it over the Chrome DevTools Protocol (CDP). It is built for one job above all others: running browser end-to-end tests quickly and with little memory.
 
 It ships as one npm package, `@povio/lightning-panda`. The package holds the browser binaries for macOS and Linux, the `lightningpanda` CLI, a typed client, a Playwright-compatible test API and a suite runner. You do not need a Rust toolchain, Chrome or Playwright to use it.
+
+::: info Names in code
+Pyro is the product name. The package, command and APIs keep their current names: the npm package `@povio/lightning-panda`, the `lightningpanda` command, the `Lightningpanda` class, the `Lightningpanda.*` CDP domain and the `LIGHTNINGPANDA_*` environment variables. Use those names in code and scripts.
+:::
 
 ## Who it is for
 
@@ -34,17 +38,17 @@ The three paths share one browser and can be mixed in the same project. [Choosin
 - **It is not Chrome.** It speaks CDP and reports a Chrome-like version string to CDP clients, but the DOM, networking, layout and event loop are its own. Behaviour can differ from Chromium, and some web APIs are missing.
 - **It does not run V8.** JavaScript runs on JavaScriptCore. Code that depends on V8-specific behaviour, such as the text of stack traces, may behave differently.
 - **Web API coverage is partial.** Common application APIs work: DOM, events, fetch and XHR, Web Storage, IndexedDB, workers, WebSocket, Canvas 2D, custom elements, shadow DOM, observers. Others are absent, for example WebGL, WebGPU, WebRTC and `SharedWorker`. See [Web platform support](/reference/web-platform).
-- **Screenshots are not Chromium pixels.** Rendering uses Blitz (Stylo, Taffy, Parley) and a CPU rasterizer. Baselines must come from Lightningpanda itself. See [Rendering](/guide/rendering).
+- **Screenshots are not Chromium pixels.** Rendering uses Blitz (Stylo, Taffy, Parley) and a CPU rasterizer. Baselines must come from Pyro itself. See [Rendering](/guide/rendering).
 - **It has no headed mode, trace viewer, video recording or Playwright HTML report.**
 - **It does not run on Windows.** Windows machines can connect to a browser running on macOS or Linux. See [Platforms](/guide/platforms).
 
 ## Status
 
-Lightningpanda is young and moves quickly. Versions are `0.0.x`; release candidates are published under the npm `next` tag. Expect behaviour differences from Chrome and check [Behaviour differences](/playwright/differences) and [Troubleshooting](/guide/troubleshooting) when a test fails only here. Every pull request runs a Web Platform Tests gate in CI that fails when a previously passing subtest regresses.
+Pyro is young and moves quickly. Versions are `0.0.x`; release candidates are published under the npm `next` tag. Expect behaviour differences from Chrome and check [Behaviour differences](/playwright/differences) and [Troubleshooting](/guide/troubleshooting) when a test fails only here. Every pull request runs a Web Platform Tests gate in CI that fails when a previously passing subtest regresses.
 
 ## Origins and license
 
-Lightningpanda is a Rust rewrite of [Lightpanda](https://github.com/lightpanda-io/browser), a headless browser written in Zig on V8. It is a derivative work and keeps Lightpanda's license, **AGPL-3.0-only**. The patched JavaScriptCore it links is LGPL, and its source is published with each GitHub release. The project is built by [Povio](https://github.com/povio/lightningpanda).
+Pyro is a Rust rewrite of [Lightpanda](https://github.com/lightpanda-io/browser), a headless browser written in Zig on V8. It is a derivative work and keeps Lightpanda's license, **AGPL-3.0-only**. The patched JavaScriptCore it links is LGPL, and its source is published with each GitHub release. The project is built by [Povio](https://github.com/povio/lightningpanda).
 
 ## Next steps
 

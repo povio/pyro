@@ -1,6 +1,6 @@
 # Environment variables
 
-Every environment variable Lightningpanda reads, by the component that reads it. The browser binary reads the `LIGHTNINGPANDA_*` and `JSC_*` variables, the SDK and the runners read `LIGHTNINGPANDA_BIN`, `LIGHTNINGPANDA_WS` and the `LP_*` variables. Variables marked *diagnostic* or *tuning* exist to measure or compare behaviour. They are stable enough to use, but you should not need them.
+Every environment variable Pyro reads, by the component that reads it. The browser binary reads the `LIGHTNINGPANDA_*` and `JSC_*` variables, the SDK and the runners read `LIGHTNINGPANDA_BIN`, `LIGHTNINGPANDA_WS` and the `LP_*` variables. Variables marked *diagnostic* or *tuning* exist to measure or compare behaviour. They are stable enough to use, but you should not need them.
 
 ## Quick reference {#quick-reference}
 
@@ -205,9 +205,9 @@ A positive integer turns on a process-wide cache of public static assets shared 
 
 ## JavaScriptCore options {#jsc}
 
-JavaScriptCore reads `JSC_<option>` variables once, when it creates its first VM. Lightningpanda sets some defaults for itself unless the variable is already set in the environment:
+JavaScriptCore reads `JSC_<option>` variables once, when it creates its first VM. Pyro sets some defaults for itself unless the variable is already set in the environment:
 
-| Variable | Lightningpanda's default | Why |
+| Variable | Pyro's default | Why |
 | --- | --- | --- |
 | `JSC_usePollingTraps` | `true` | The watchdog (`--timeout-ms`, termination) must reach JIT-compiled loops |
 | `JSC_heapGrowthMaxIncrease` | `1` (`3` in fork-mode forks) | Lower heap peaks. In forks, fewer collections for short-lived processes |
@@ -216,4 +216,4 @@ JavaScriptCore reads `JSC_<option>` variables once, when it creates its first VM
 | `JSC_useDFGJIT` | `false` in fork-mode forks | DFG/FTL compilation rarely pays off in a short connection. `JSC_useDFGJIT=true` restores the default tiers |
 | `JSC_jitMemoryReservationSize` | `33554432` in fork-mode forks | 32 MB JIT pool instead of 512 MB, so `fork()` is faster on macOS |
 
-Any other `JSC_*` option reaches JavaScriptCore unchanged. Options you set this way are outside what Lightningpanda tests.
+Any other `JSC_*` option reaches JavaScriptCore unchanged. Options you set this way are outside what Pyro tests.

@@ -86,7 +86,7 @@ test.afterAll(async ({ browser }) => {
 
 ## Fork mode
 
-Lightningpanda's fork mode (`lightningpanda serve --fork`) serves each connection from a fork of a process that booted the profiles once. The Playwright layer opens one connection per worker and keeps it, so it does not get a fork per test.
+Pyro's fork mode (`lightningpanda serve --fork`) serves each connection from a fork of a process that booted the profiles once. The Playwright layer opens one connection per worker and keeps it, so it does not get a fork per test.
 
 Measured with version 0.0.33: with `use: { lightningpanda: { args: ['--fork'], boot: [...] } }`, every page was fresh (`{ pooled: 0, fresh: 4 }` for four tests that took booted pages without `--fork`). Do not combine `boot` with `--fork`.
 

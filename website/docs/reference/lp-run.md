@@ -548,4 +548,4 @@ console.log(reply.result.reads.first, reply.result.ms);
 ws.close();
 ```
 
-For pages booted ahead (`Lightningpanda.acquirePreparedPage`), see [Lightningpanda CDP domain](/reference/cdp-domain).
+For pages booted ahead (`Lightningpanda.acquirePreparedPage`), see [Pyro CDP domain](/reference/cdp-domain).

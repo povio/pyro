@@ -1,6 +1,6 @@
 # Network, routes and HAR
 
-Request interception, network events, HAR replay and recording, API requests and storage state work with Playwright's API. Routes intercept in the browser (CDP `Fetch`), so a mocked response never leaves the machine. This page covers each feature and the places where Lightningpanda differs.
+Request interception, network events, HAR replay and recording, API requests and storage state work with Playwright's API. Routes intercept in the browser (CDP `Fetch`), so a mocked response never leaves the machine. This page covers each feature and the places where Pyro differs.
 
 ## Routes
 
@@ -191,4 +191,4 @@ export default defineConfig({ use: { storageState: 'e2e/.auth/user.json' } });
 - `context.storageState({ path })` returns cookies and the `localStorage` of the origins of the context's open pages. Origins with no open page are not included. `indexedDB` is not saved.
 - `context.addCookies()`, `context.cookies(urls?)` and `context.clearCookies()` work. A cookie needs `url` or `domain`. Before the context's first page exists, cookies are held and set when the page gets its target. `clearCookies` options are ignored; it clears all cookies.
 
-To set up storage once for the whole run, use `globalSetup`, since project `dependencies` do not run (see [Config and the test runner](/playwright/runner#accepted-and-ignored)). Lightningpanda also has its own way to keep signed-in pages booted; see [Booting pages ahead](/playwright/boot-pools) and, for the native API, [Profiles and page pools](/e2e/profiles).
+To set up storage once for the whole run, use `globalSetup`, since project `dependencies` do not run (see [Config and the test runner](/playwright/runner#accepted-and-ignored)). Pyro also has its own way to keep signed-in pages booted; see [Booting pages ahead](/playwright/boot-pools) and, for the native API, [Profiles and page pools](/e2e/profiles).

@@ -1,6 +1,6 @@
 # Config and the test runner
 
-`lightningpanda test` is the counterpart of `playwright test`. It reads your config, finds each project's test files, starts web servers and global setup once, then runs the files in worker processes. Each worker is a `bun test` process with its own Lightningpanda browser. This page lists every flag, every config field that is honoured, and how workers split the work.
+`lightningpanda test` is the counterpart of `playwright test`. It reads your config, finds each project's test files, starts web servers and global setup once, then runs the files in worker processes. Each worker is a `bun test` process with its own Pyro browser. This page lists every flag, every config field that is honoured, and how workers split the work.
 
 ## Usage
 
@@ -31,7 +31,7 @@ The command needs [Bun](https://bun.sh) on `PATH`. When the CLI is started by No
 | `--list` | List the tests without running them. |
 | `-q, --quiet` | Do not print the tests' own output. |
 | `-h, --help` | Print the help. |
-| `--headed`, `--debug`, `--ui` | Print a warning and have no effect: Lightningpanda is headless. |
+| `--headed`, `--debug`, `--ui` | Print a warning and have no effect: Pyro is headless. |
 
 Any other flag (`--shard`, `--trace`, `--repeat-each`, `--last-failed`, `--forbid-only`, `--output`, ...) is an error: the command prints the help and exits with status 2.
 

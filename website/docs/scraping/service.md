@@ -200,10 +200,10 @@ The server's own checks (the `Host` header must be an IP or `localhost`, WebSock
 
 ## License
 
-Lightningpanda is AGPL-3.0-only, a derivative of Lightpanda; the package includes `LICENSE` and `NOTICE`. The facts that matter for a service:
+Pyro is AGPL-3.0-only, a derivative of Lightpanda; the package includes `LICENSE` and `NOTICE`. The facts that matter for a service:
 
 - You may run it, including as part of a commercial service.
-- If you **modify** Lightningpanda and let users interact with the modified program over a network, AGPL section 13 requires you to offer those users the corresponding source code of your version.
+- If you **modify** Pyro and let users interact with the modified program over a network, AGPL section 13 requires you to offer those users the corresponding source code of your version.
 - If you **distribute** it (in an image you ship to others, for example), the usual GPL conditions apply: pass on the license and the source, or an offer of it.
 - Your scraping scripts are separate programs that talk to the browser over the CDP protocol.
 

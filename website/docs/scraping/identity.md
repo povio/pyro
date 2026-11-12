@@ -1,6 +1,6 @@
 # Proxies, user agents, headers
 
-What a site sees of your browser: the IP address it connects from, the `User-Agent` and other request headers, and what scripts read from `navigator`, `Intl` and the screen. This page lists every setting Lightningpanda has for those, which API sets it, and what is not supported.
+What a site sees of your browser: the IP address it connects from, the `User-Agent` and other request headers, and what scripts read from `navigator`, `Intl` and the screen. This page lists every setting Pyro has for those, which API sets it, and what is not supported.
 
 ## Quick reference
 
@@ -62,12 +62,12 @@ await page.send('Emulation.setUserAgentOverride', {
 });
 ```
 
-A Chrome user agent changes only what the site is told. The engine is still JavaScriptCore, and a script that probes engine behaviour can tell. Lightningpanda has no anti-detection mode.
+A Chrome user agent changes only what the site is told. The engine is still JavaScriptCore, and a script that probes engine behaviour can tell. Pyro has no anti-detection mode.
 
 `/json/version` and CDP `Browser.getVersion` report a Chrome 124 user agent string. That string is for CDP clients, so Playwright and Puppeteer take their Chrome code paths. Sites never see it.
 
 ::: tip Google Fonts and the user agent
-Google Fonts picks the font files by user agent. For Lightningpanda's default user agent it serves one TTF file per weight, without `unicode-range`. For a Chrome user agent it serves variable WOFF2 files split by script (latin, cyrillic, ...). Text renders either way, but screenshots and PDFs embed different font files. If you compare output with Chrome's, use a Chrome user agent.
+Google Fonts picks the font files by user agent. For Pyro's default user agent it serves one TTF file per weight, without `unicode-range`. For a Chrome user agent it serves variable WOFF2 files split by script (latin, cyrillic, ...). Text renders either way, but screenshots and PDFs embed different font files. If you compare output with Chrome's, use a Chrome user agent.
 :::
 
 ## Request headers
@@ -86,7 +86,7 @@ Extra headers go to every origin the page talks to, third parties included. Do n
 
 ## Proxies
 
-Lightningpanda supports HTTP forward proxies: `http://[user:pass@]host[:port]` (port 80 by default). HTTPS requests go through a `CONNECT` tunnel, plain HTTP requests in absolute form. **SOCKS proxies (`socks4`, `socks5`, `socks5h`) and HTTPS proxies (`https://` proxy URLs) are not supported**, and are refused with an error rather than silently ignored. Per-scheme lists (`http=a;https=b`) are refused too. `direct://` means no proxy.
+Pyro supports HTTP forward proxies: `http://[user:pass@]host[:port]` (port 80 by default). HTTPS requests go through a `CONNECT` tunnel, plain HTTP requests in absolute form. **SOCKS proxies (`socks4`, `socks5`, `socks5h`) and HTTPS proxies (`https://` proxy URLs) are not supported**, and are refused with an error rather than silently ignored. Per-scheme lists (`http=a;https=b`) are refused too. `direct://` means no proxy.
 
 ### One proxy for the whole server
 
@@ -163,7 +163,7 @@ Digest, NTLM and other schemes are not supported.
 
 ### Proxies that inspect TLS
 
-Lightningpanda trusts Mozilla's root certificates, built in. It does not read the operating system's certificate store. A proxy that re-signs HTTPS traffic with its own CA fails with `net::ERR_CERT_AUTHORITY_INVALID`. To accept it, turn certificate checks off for the context with CDP `Security.setIgnoreCertificateErrors { ignore: true }` on a page session (that page's context), or on the browser session for every context. Only do this for a proxy you control.
+Pyro trusts Mozilla's root certificates, built in. It does not read the operating system's certificate store. A proxy that re-signs HTTPS traffic with its own CA fails with `net::ERR_CERT_AUTHORITY_INVALID`. To accept it, turn certificate checks off for the context with CDP `Security.setIgnoreCertificateErrors { ignore: true }` on a page session (that page's context), or on the browser session for every context. Only do this for a proxy you control.
 
 ## Locale
 

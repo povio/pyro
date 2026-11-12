@@ -4,7 +4,7 @@ const guide = [
   {
     text: 'Getting started',
     items: [
-      { text: 'What is Lightningpanda?', link: '/guide/introduction' },
+      { text: 'What is Pyro?', link: '/guide/introduction' },
       { text: 'Installation', link: '/guide/installation' },
       { text: 'Quick start', link: '/guide/quick-start' },
       { text: 'Choosing an API', link: '/guide/choosing-an-api' },
@@ -100,7 +100,7 @@ const reference = [
       { text: 'CLI', link: '/reference/cli' },
       { text: 'serve options', link: '/reference/serve' },
       { text: 'Environment variables', link: '/reference/env' },
-      { text: 'SDK: Lightningpanda and Page', link: '/reference/sdk' },
+      { text: 'SDK: Lightningpanda class and Page', link: '/reference/sdk' },
       { text: 'SDK: locators and steps', link: '/reference/steps' },
       { text: 'LP.run wire format', link: '/reference/lp-run' },
       { text: 'Lightningpanda CDP domain', link: '/reference/cdp-domain' },
@@ -112,7 +112,7 @@ const reference = [
 ];
 
 export default defineConfig({
-  title: 'Lightningpanda',
+  title: 'Pyro',
   description:
     'A headless browser on JavaScriptCore for fast E2E tests, Playwright suites and scraping.',
   lang: 'en-US',
@@ -121,7 +121,7 @@ export default defineConfig({
   outDir: '../dist',
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
-    ['meta', { name: 'theme-color', content: '#f5b400' }],
+    ['meta', { name: 'theme-color', content: '#dc1f26' }],
   ],
   markdown: { lineNumbers: false },
   themeConfig: {

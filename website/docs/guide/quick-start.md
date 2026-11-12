@@ -1,6 +1,6 @@
 # Quick start
 
-Three short starts, one per way of using Lightningpanda. Each is complete: copy the files, run the command, and it passes. None of them needs a web server, because the browser serves a local directory in place of a real origin with `--static`.
+Three short starts, one per way of using Pyro. Each is complete: copy the files, run the command, and it passes. None of them needs a web server, because the browser serves a local directory in place of a real origin with `--static`.
 
 Install the package first ([Installation](/guide/installation)) in an empty directory:
 
@@ -40,7 +40,7 @@ All three starts use the same small app. Save it as `site/index.html`:
 
 ## 1. Run a Playwright test unchanged
 
-A Playwright test runs on Lightningpanda when it imports from `@povio/lightning-panda/playwright` instead of `@playwright/test`. Nothing else changes, and Playwright is not installed.
+A Playwright test runs on Pyro when it imports from `@povio/lightning-panda/playwright` instead of `@playwright/test`. Nothing else changes, and Playwright is not installed.
 
 `playwright.config.ts`:
 

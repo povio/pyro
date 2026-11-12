@@ -90,7 +90,7 @@ Do not fix a `RunError` by raising the timeout. A step waits only for its own co
 
 ## Missing web APIs
 
-A page that works in Chrome throws `ReferenceError: X is not defined`, or a feature silently does nothing. Lightningpanda's web API coverage is partial. Known absences include WebGL, WebGPU, WebRTC and `SharedWorker`. Check [Web platform support](/reference/web-platform). Options:
+A page that works in Chrome throws `ReferenceError: X is not defined`, or a feature silently does nothing. Pyro's web API coverage is partial. Known absences include WebGL, WebGPU, WebRTC and `SharedWorker`. Check [Web platform support](/reference/web-platform). Options:
 
 - Feature-detect in the app and fall back, as you would for an older browser.
 - Stub the API with an init script (`initScripts` in a profile, `page.addInitScript`) when the test does not depend on it.
@@ -102,7 +102,7 @@ CDP commands that are not implemented return an explicit error (`… is not supp
 
 ### Every screenshot fails against my baselines
 
-Baselines taken with Chromium never match: pixels come from Lightningpanda's renderer. Regenerate them with Lightningpanda (`LP_UPDATE_SNAPSHOTS=1`, `bun test -u`, or `lightningpanda test -u`). See [Rendering](/guide/rendering).
+Baselines taken with Chromium never match: pixels come from Pyro's renderer. Regenerate them with Pyro (`LP_UPDATE_SNAPSHOTS=1`, `bun test -u`, or `lightningpanda test -u`). See [Rendering](/guide/rendering).
 
 ### Screenshots differ between my machine and CI
 

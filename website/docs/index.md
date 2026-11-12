@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: Lightningpanda
+  name: Pyro
   text: The headless browser built for tests
   tagline: A Rust browser on JavaScriptCore. Run your Playwright suite unchanged, write E2E tests that finish in milliseconds, or drive signed-in scrapers from stored profiles.
   image:
     src: /logo.svg
-    alt: Lightningpanda
+    alt: Pyro
   actions:
     - theme: brand
       text: Get started

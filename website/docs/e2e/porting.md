@@ -1,6 +1,6 @@
 # Porting from Playwright
 
-You do not have to port anything to run a Playwright suite on Lightningpanda: replace the `playwright` and `@playwright/test` imports with `@povio/lightning-panda/playwright` and run `lightningpanda test` (see [Migrating a suite](/playwright/migration)). Port a test to the native driver when its last milliseconds matter: the hot tests that run on every commit, the long tail of short flows, the ones that dominate a suite's wall time. This page maps Playwright code to native steps and shows complete before and after examples.
+You do not have to port anything to run a Playwright suite on Pyro: replace the `playwright` and `@playwright/test` imports with `@povio/lightning-panda/playwright` and run `lightningpanda test` (see [Migrating a suite](/playwright/migration)). Port a test to the native driver when its last milliseconds matter: the hot tests that run on every commit, the long tail of short flows, the ones that dominate a suite's wall time. This page maps Playwright code to native steps and shows complete before and after examples.
 
 ## Where porting pays off
 

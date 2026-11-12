@@ -1,6 +1,6 @@
 # Platforms and limits
 
-Lightningpanda's browser runs on macOS and Linux. The client runs anywhere Node 22+ or Bun runs, and can drive a browser on another machine.
+Pyro's browser runs on macOS and Linux. The client runs anywhere Node 22+ or Bun runs, and can drive a browser on another machine.
 
 ## Supported platforms
 

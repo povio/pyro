@@ -1,8 +1,8 @@
 # CDP coverage
 
-Lightningpanda speaks the Chrome DevTools Protocol over WebSocket. It implements the subset that Playwright's Chromium driver and Puppeteer send, over its own engine (JavaScriptCore, a Rust DOM and Blitz layout). This page lists every method the dispatcher handles, by domain, and the events it emits.
+Pyro speaks the Chrome DevTools Protocol over WebSocket. It implements the subset that Playwright's Chromium driver and Puppeteer send, over its own engine (JavaScriptCore, a Rust DOM and Blitz layout). This page lists every method the dispatcher handles, by domain, and the events it emits.
 
-Every method not listed here returns an explicit error. Nothing is faked as a success (see [Unknown and unsupported methods](#unknown-and-unsupported-methods)). For Lightningpanda's own domains, see [Lightningpanda CDP domain](/reference/cdp-domain) (prepared pages, browser level) and [LP.run wire format](/reference/lp-run) (`LP.*`, page level).
+Every method not listed here returns an explicit error. Nothing is faked as a success (see [Unknown and unsupported methods](#unknown-and-unsupported-methods)). For Pyro's own domains, see [Pyro CDP domain](/reference/cdp-domain) (prepared pages, browser level) and [LP.run wire format](/reference/lp-run) (`LP.*`, page level).
 
 **Status key**
 
@@ -93,9 +93,9 @@ These are sent without a `sessionId`, or on a browser session from `Target.attac
 | `Security.setIgnoreCertificateErrors` | implemented | On the browser session (Puppeteer `acceptInsecureCerts`), it covers every context, later ones included. On a page session, it covers that page's context. Handshake signatures are still verified. Otherwise an untrusted certificate fails with `net::ERR_CERT_AUTHORITY_INVALID`. |
 | `Runtime.runIfWaitingForDebugger` | accepted | On a browser session. |
 
-### Lightningpanda
+### Pyro
 
-`Lightningpanda.capabilities`, `registerPreparedPage`, `acquirePreparedPage`, `preparedPages`, `unregisterPreparedPage`, `adoptPreparedPage`, `preparedProfiles`. See [Lightningpanda CDP domain](/reference/cdp-domain).
+`Lightningpanda.capabilities`, `registerPreparedPage`, `acquirePreparedPage`, `preparedPages`, `unregisterPreparedPage`, `adoptPreparedPage`, `preparedProfiles`. See [Pyro CDP domain](/reference/cdp-domain).
 
 ## Page-session methods
 
@@ -114,7 +114,7 @@ These are sent with the `sessionId` of an attached page.
 | `Page.createIsolatedWorld` | implemented | Named isolated worlds per frame. |
 | `Page.getNavigationHistory` | implemented | Main-frame history. Only the current entry has a `title`. `transitionType` is always `other`. |
 | `Page.navigateToHistoryEntry` | implemented | Same-document entries fire `popstate`. Others re-fetch (no bfcache). |
-| `Page.getLayoutMetrics` | implemented | CSS px from Lightningpanda's layout. No pinch zoom: the visual viewport equals the layout viewport. |
+| `Page.getLayoutMetrics` | implemented | CSS px from Pyro's layout. No pinch zoom: the visual viewport equals the layout viewport. |
 | `Page.captureScreenshot` | implemented | Rendered on the CPU by the Blitz renderer. `png` and `jpeg` (`quality`), `clip` with `scale`, `captureBeyondViewport`. `webp`, `fromSurface: false` and `optimizeForSpeed` are ignored or refused. Pixels differ from Chromium's. See [Rendering](/guide/rendering). |
 | `Page.printToPDF` | implemented | Paper size, `landscape`, margins, `scale` (0.1–2), `printBackground`, `pageRanges`, `generateTaggedPDF`, links, `transferMode: ReturnAsStream`. Paged by `.pz-page` boxes (Paprize) or by cutting the document at Chrome-like break points. `displayHeaderFooter` and its templates, `preferCSSPageSize` and `generateDocumentOutline` are accepted and ignored. The page prints with its emulated media (screen unless set to `print`), not Chrome's print media. See [Rendering](/guide/rendering). |
 | `Page.handleJavaScriptDialog` | implemented | `alert`, `confirm`, `prompt` and `beforeunload` block while a session has Page enabled. During `LP.*` driver commands dialogs are dismissed instead, unless `LP.dialogs {block: true}` is set. |
@@ -243,7 +243,7 @@ These are sent with the `sessionId` of an attached page.
 | `Audits.enable` / `disable` | accepted | No issues are reported. |
 | `Security.*` | see [Browser, Storage, Security](#browser-storage-security) | |
 | `Target.getTargets`, `Target.getTargetInfo`, `Target.setAutoAttach` | implemented | On a page session, `setAutoAttach` attaches the page's dedicated workers. Iframes are frames of the page, not separate targets. |
-| `LP.run`, `LP.idle`, `LP.act`, `LP.expect`, `LP.query`, `LP.dialogs` | implemented | Lightningpanda's native driver. See [LP.run wire format](/reference/lp-run). |
+| `LP.run`, `LP.idle`, `LP.act`, `LP.expect`, `LP.query`, `LP.dialogs` | implemented | Pyro's native driver. See [LP.run wire format](/reference/lp-run). |
 
 ### Worker sessions
 

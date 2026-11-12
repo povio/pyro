@@ -23,7 +23,7 @@ This page lists Playwright's library API class by class and marks what `@povio/l
 
 | Method | Status | Notes |
 | --- | --- | --- |
-| `launch(options)` | Partial | Launches the bundled Lightningpanda. Takes `bin`, `args` (serve flags) and `boot`. Playwright's launch options (`headless`, `executablePath`, `proxy`, ...) are ignored. |
+| `launch(options)` | Partial | Launches the bundled Pyro. Takes `bin`, `args` (serve flags) and `boot`. Playwright's launch options (`headless`, `executablePath`, `proxy`, ...) are ignored. |
 | `connectOverCDP(endpoint)` | Supported | A `ws://` URL or `http://host:port` of a running `lightningpanda serve`. `timeout` and `headers` are ignored. |
 | `connect(wsEndpoint)` | Partial | Same as `connectOverCDP`; there is no Playwright server protocol. |
 | `name()` | Supported | `'chromium'`. |
@@ -56,7 +56,7 @@ This page lists Playwright's library API class by class and marks what `@povio/l
 | `exposeFunction()`, `exposeBinding()` | Supported | Binding source `frame` is the main frame. |
 | `setExtraHTTPHeaders()` | Supported | |
 | `setDefaultTimeout()`, `setDefaultNavigationTimeout()` | Supported | |
-| `newCDPSession(pageOrFrame)` | Supported | Lightningpanda's CDP. |
+| `newCDPSession(pageOrFrame)` | Supported | Pyro's CDP. |
 | `request` | Partial | Does not share cookies with the context. |
 | `clock` | Supported | |
 | `tracing` | No-op | `start`, `stop`, `startChunk`, `stopChunk`, `group`, `groupEnd`. |
@@ -103,7 +103,7 @@ This page lists Playwright's library API class by class and marks what `@povio/l
 | `setExtraHTTPHeaders()` | Supported | |
 | `setViewportSize()`, `viewportSize()` | Supported | |
 | `emulateMedia()` | Partial | `colorScheme`, `reducedMotion`, `media`; `forcedColors` is ignored. |
-| `screenshot()` | Partial | `path`, `fullPage`, `clip`, `type`, `quality`. Rendered by Lightningpanda. |
+| `screenshot()` | Partial | `path`, `fullPage`, `clip`, `type`, `quality`. Rendered by Pyro. |
 | `pdf()` | Partial | Options go to CDP `Page.printToPDF` unchanged (`paperWidth`, `marginTop`, ... in inches). |
 | `ariaSnapshot()` | Supported | Includes `mode: 'ai'`. |
 | `workers()` | Supported | |
@@ -292,7 +292,7 @@ This page lists Playwright's library API class by class and marks what `@povio/l
 
 | Method | Status | Notes |
 | --- | --- | --- |
-| `send()`, `on()`, `once()`, `off()`, `addListener()`, `removeListener()`, `detach()` | Supported | Lightningpanda's CDP domains. See [CDP coverage](/reference/cdp). |
+| `send()`, `on()`, `once()`, `off()`, `addListener()`, `removeListener()`, `detach()` | Supported | Pyro's CDP domains. See [CDP coverage](/reference/cdp). |
 
 ## Not present at all
 

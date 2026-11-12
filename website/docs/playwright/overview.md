@@ -1,6 +1,6 @@
 # Coming from Playwright
 
-`@povio/lightning-panda/playwright` is Playwright's test API and library API implemented on Lightningpanda. You replace the imports of `@playwright/test` and `playwright` with it, run `lightningpanda test` instead of `playwright test`, and keep your tests. Playwright itself is not installed or used.
+`@povio/lightning-panda/playwright` is Playwright's test API and library API implemented on Pyro. You replace the imports of `@playwright/test` and `playwright` with it, run `lightningpanda test` instead of `playwright test`, and keep your tests. Playwright itself is not installed or used.
 
 This section is for teams with an existing Playwright suite. It covers what carries over unchanged, what behaves differently, and what is missing.
 
@@ -63,9 +63,9 @@ test('closes a position', async ({ page }) => {
 
 ## What changes
 
-- **The browser is Lightningpanda, not Chromium.** Every project runs on it, whatever `browserName` says. Its user agent is `Mozilla/5.0 (compatible; lightningpanda/<version>)`. Its web platform support is broad but partial. See [Web platform support](/reference/web-platform).
+- **The browser is Pyro, not Chromium.** Every project runs on it, whatever `browserName` says. Its user agent is `Mozilla/5.0 (compatible; lightningpanda/<version>)`. Its web platform support is broad but partial. See [Web platform support](/reference/web-platform).
 - **Actions settle before they return.** A click returns once the page is quiet: no queued task, no request the action started, no timer due within 50 ms. An assertion on a transient state between the action and its result (a spinner, a "Saving..." label) can miss it. See [Behaviour differences](/playwright/differences).
-- **Screenshots come from Lightningpanda's CPU renderer.** Chromium baselines do not match. Re-baseline once when you migrate. See [Screenshots and snapshots](/playwright/snapshots).
+- **Screenshots come from Pyro's CPU renderer.** Chromium baselines do not match. Re-baseline once when you migrate. See [Screenshots and snapshots](/playwright/snapshots).
 - **Tests run on `bun test`.** `lightningpanda test` needs [Bun](https://bun.sh) on `PATH`. The library API (`chromium.launch()` in a script) also runs on Node.js 22+.
 - **Each awaited call is one command to the browser.** Locating, actionability checks, waiting and settling run inside the browser, in one round trip, instead of the many CDP calls Playwright makes per action.
 - **Some Playwright APIs are left out.** The selector-first page methods (`page.click(selector)`, `page.fill(selector, value)`, ...) are not implemented; use locators. Deprecated APIs are type errors. See [API coverage](/playwright/api-coverage).
@@ -76,8 +76,8 @@ The package's README reports this measurement for TOS's "close a position" flow 
 
 | How the flow runs | Time per test |
 | --- | --- |
-| `@povio/lightning-panda/playwright` on Lightningpanda | 14.7 ms (median of 40, fresh page) |
-| Stock Playwright driving the same Lightningpanda over CDP | 41-44 ms |
+| `@povio/lightning-panda/playwright` on Pyro | 14.7 ms (median of 40, fresh page) |
+| Stock Playwright driving the same Pyro over CDP | 41-44 ms |
 
 The flow seeds a position over HTTP, opens a context, navigates, clicks through a dialog and waits for two responses. The gain comes from sending each awaited call as one browser command.
 
@@ -98,14 +98,14 @@ These numbers come from one flow on one machine. Run your suite both ways and co
 | Video, `video` option | Not available. `page.video()` returns `null`. |
 | Screenshot on failure, `screenshot` option | Accepted, no effect. |
 | Sharding (`--shard`) | Not available in `lightningpanda test` (unknown option). The native suite runner `lightningpanda e2e` has `--shard`; see [Suite runner](/e2e/runner). |
-| UI mode, `--headed`, `--debug` | Print a warning and have no effect. Lightningpanda is headless. |
+| UI mode, `--headed`, `--debug` | Print a warning and have no effect. Pyro is headless. |
 | Codegen, inspector, `page.pause()` | Not available. `page.pause()` returns at once. |
-| Firefox and WebKit | Every project runs on Lightningpanda. |
+| Firefox and WebKit | Every project runs on Pyro. |
 | Custom selector engines (`selectors.register`) | Throws. |
 | Component testing | Not available. |
 | JUnit / JSON reporters | Not in `lightningpanda test`. |
 
-If one of these is essential, keep Playwright for that job. Lightningpanda and Playwright can run side by side during a migration; see [Migrating a suite](/playwright/migration#running-both-side-by-side).
+If one of these is essential, keep Playwright for that job. Pyro and Playwright can run side by side during a migration; see [Migrating a suite](/playwright/migration#running-both-side-by-side).
 
 ## Next steps
 

@@ -5,7 +5,7 @@ A stored profile is one identity on disk: the cookies and `localStorage` of a si
 This page uses the Playwright library (`@povio/lightning-panda/playwright`) and its `storageState` format, which is the same JSON Playwright writes. For profiles that the server boots and signs in once and then forks per job, see [Profiles booted once (fork)](/scraping/fork-profiles).
 
 ::: warning There is no persistent profile directory
-Lightningpanda keeps all browser storage in memory: cookies, `localStorage`, `sessionStorage`, IndexedDB and the HTTP cache live in a browser context and are gone when it closes. There is no `--user-data-dir` flag and no `launchPersistentContext`. A profile persists only as the JSON file you save with `context.storageState()`.
+Pyro keeps all browser storage in memory: cookies, `localStorage`, `sessionStorage`, IndexedDB and the HTTP cache live in a browser context and are gone when it closes. There is no `--user-data-dir` flag and no `launchPersistentContext`. A profile persists only as the JSON file you save with `context.storageState()`.
 :::
 
 ## What a profile file holds
@@ -243,7 +243,7 @@ await browser.close();
 
 Run `chmod 600 profiles/alice.json` afterwards; `storageState({ path })` writes with your default permissions.
 
-Sites with captchas, two-factor prompts or device checks at sign-in cannot always be signed in by a script. Lightningpanda is headless only and has no window to sign in by hand. Sign in where you can (a script with the code from your authenticator app, or a one-time manual step in another tool that exports the same `storageState` JSON, such as Playwright with a headed Chrome), then load the file here.
+Sites with captchas, two-factor prompts or device checks at sign-in cannot always be signed in by a script. Pyro is headless only and has no window to sign in by hand. Sign in where you can (a script with the code from your authenticator app, or a one-time manual step in another tool that exports the same `storageState` JSON, such as Playwright with a headed Chrome), then load the file here.
 
 ## Expiry and refresh
 

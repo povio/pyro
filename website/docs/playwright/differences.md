@@ -1,10 +1,10 @@
 # Behaviour differences
 
-Most Playwright tests pass unchanged, but a few behaviours differ, either because Lightningpanda is not Chromium or because the API is implemented differently. This page lists every known difference with its consequence and the fix. Read it before debugging the first failures of a migrated suite.
+Most Playwright tests pass unchanged, but a few behaviours differ, either because Pyro is not Chromium or because the API is implemented differently. This page lists every known difference with its consequence and the fix. Read it before debugging the first failures of a migrated suite.
 
 ## Actions settle before they return
 
-In Playwright, `click()` returns once the click has been dispatched. In Lightningpanda, an action returns once the page has **settled**: no queued task, no request the action started still running, no timer due within 50 ms, no pending animation frame or navigation. The browser waits for this itself, in the same command as the action. See [Settling and auto-waiting](/guide/settling).
+In Playwright, `click()` returns once the click has been dispatched. In Pyro, an action returns once the page has **settled**: no queued task, no request the action started still running, no timer due within 50 ms, no pending animation frame or navigation. The browser waits for this itself, in the same command as the action. See [Settling and auto-waiting](/guide/settling).
 
 Things that do not hold up settling: an open WebSocket, timers on a paused [fake clock](/playwright/advanced#clock), and timers due more than 50 ms later.
 
@@ -42,11 +42,11 @@ Register the listener **before** the action. If a listener answers a dialog that
 ## The browser is not Chromium
 
 - **User agent.** `navigator.userAgent` is `Mozilla/5.0 (compatible; lightningpanda/<version>)`. Apps that sniff the user agent may show an "unsupported browser" screen or take a different code path. Set `userAgent` in `use` if needed (note that this disables [booted pages](/playwright/boot-pools)).
-- **Every project runs on Lightningpanda.** `browserName: 'firefox'` or `'webkit'` changes the `browserName` fixture, not the browser. Each file runs once, under its first project.
+- **Every project runs on Pyro.** `browserName: 'firefox'` or `'webkit'` changes the `browserName` fixture, not the browser. Each file runs once, under its first project.
 - **Web APIs.** Coverage is broad (DOM, fetch, XHR, WebSocket, workers, IndexedDB, Web Crypto, Canvas 2D, observers, ...) but partial. See [Web platform support](/reference/web-platform). A missing API shows up as `undefined` in app code or a page error.
-- **JavaScript engine.** Lightningpanda runs JavaScriptCore, not V8. Error messages and stack traces are worded the way JavaScriptCore words them. Code that parses V8 stack traces sees a different format.
-- **Fonts and rendering.** Pages are rendered by Lightningpanda's CPU renderer with the operating system's fonts. Screenshots differ from Chromium's, and between macOS and Linux. See [Screenshots and snapshots](/playwright/snapshots).
-- **Layout.** Layout is computed by Lightningpanda's engine. Element sizes and positions (`boundingBox`, `toBeInViewport`, scroll positions) can differ slightly from Chromium's.
+- **JavaScript engine.** Pyro runs JavaScriptCore, not V8. Error messages and stack traces are worded the way JavaScriptCore words them. Code that parses V8 stack traces sees a different format.
+- **Fonts and rendering.** Pages are rendered by Pyro's CPU renderer with the operating system's fonts. Screenshots differ from Chromium's, and between macOS and Linux. See [Screenshots and snapshots](/playwright/snapshots).
+- **Layout.** Layout is computed by Pyro's engine. Element sizes and positions (`boundingBox`, `toBeInViewport`, scroll positions) can differ slightly from Chromium's.
 
 ## Shadow DOM
 

@@ -1,6 +1,6 @@
 # Screenshots and snapshots
 
-`toHaveScreenshot`, `toMatchSnapshot` and `page.screenshot()` work with Playwright's API and file paths. The pixels are Lightningpanda's: pages are rendered by its own CPU renderer, not by Chromium. Baselines from a Playwright suite will not match, so re-baseline once when you migrate.
+`toHaveScreenshot`, `toMatchSnapshot` and `page.screenshot()` work with Playwright's API and file paths. The pixels are Pyro's: pages are rendered by its own CPU renderer, not by Chromium. Baselines from a Playwright suite will not match, so re-baseline once when you migrate.
 
 ## toHaveScreenshot
 
@@ -43,7 +43,7 @@ export default defineConfig({
 LP.run: step 0: unknown field `animations`, expected one of `name`, `baseline`, `sceneHash`, `threshold`, ...
 ```
 
-Remove them when you migrate. Lightningpanda renders a still frame, so there is no animation or caret to disable.
+Remove them when you migrate. Pyro renders a still frame, so there is no animation or caret to disable.
 :::
 
 `expect(...).not.toHaveScreenshot()` is not supported.
@@ -97,11 +97,11 @@ With plain `bun test`, `-u` means `changed`. These modes also apply to `toMatchS
 
 ## Re-baselining on migration
 
-Chromium and Lightningpanda draw text, anti-aliasing, form controls and some layout details differently. The renderer is described in [Rendering: screenshots and PDF](/guide/rendering). Expect every Chromium baseline to fail.
+Chromium and Pyro draw text, anti-aliasing, form controls and some layout details differently. The renderer is described in [Rendering: screenshots and PDF](/guide/rendering). Expect every Chromium baseline to fail.
 
 1. Remove the old baseline images, or keep them on a branch for reference.
 2. Run `bunx lightningpanda test -u all` on the platform where CI runs. Fonts come from the operating system, and the file name carries the platform, so macOS and Linux need their own baselines.
-3. Look at the new images. A rendering problem in Lightningpanda would otherwise become the new truth.
+3. Look at the new images. A rendering problem in Pyro would otherwise become the new truth.
 4. Commit the `.png` and `.json` files.
 5. In CI, run with `-u none` or without `-u`, so a missing baseline fails.
 

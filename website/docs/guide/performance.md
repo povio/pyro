@@ -6,7 +6,7 @@ This page collects the measurements the project has published, says where each c
 
 ### Per test
 
-The reference flow is the "closes an open position" test of TOS, the application Lightningpanda was first built to test, run against a TOS-shaped app in the repository's benchmark site. Median wall time per test:
+The reference flow is the "closes an open position" test of TOS, the application Pyro was first built to test, run against a TOS-shaped app in the repository's benchmark site. Median wall time per test:
 
 | How the test is driven | Time per test | Source |
 | --- | ---: | --- |
@@ -40,7 +40,7 @@ From `docs/ARCHITECTURE.md`, M1 Max, release build:
 
 A matched HTTP workload (50 navigations and 20 context cycles, three fresh processes per binary, 2026-10-17) in `bench/results/http-cpu-d673567`:
 
-| Median of 3 | Lightpanda (upstream) | Lightningpanda |
+| Median of 3 | Lightpanda (upstream) | Pyro |
 | --- | ---: | ---: |
 | 50 navigations, browser CPU | 283.5 ms | 77.9 ms |
 | 20 context cycles, browser CPU | 73.2 ms | 49.5 ms |

@@ -1,6 +1,6 @@
 # Rendering: screenshots and PDF
 
-Lightningpanda has no GPU and no compositor. When you ask for pixels or a PDF, it renders the page's live DOM on the CPU with [Blitz](https://github.com/DioxusLabs/blitz): Stylo for styles, Taffy for flex, grid and block layout, Parley for text, and Vello's CPU rasterizer for pixels. The result is deterministic, and it is not Chromium's.
+Pyro has no GPU and no compositor. When you ask for pixels or a PDF, it renders the page's live DOM on the CPU with [Blitz](https://github.com/DioxusLabs/blitz): Stylo for styles, Taffy for flex, grid and block layout, Parley for text, and Vello's CPU rasterizer for pixels. The result is deterministic, and it is not Chromium's.
 
 Every bundled browser in the npm package is built with rendering enabled.
 
@@ -42,7 +42,7 @@ Known gaps in Blitz's painting: no synthetic bold, synthetic italic slants the w
 
 ## Screenshots versus Chromium
 
-Pixels come from Blitz, not Chromium. A Chromium screenshot is never a usable baseline: on the project's prototype fixtures, 8 to 44% of pixels differed, and 4 to 5% differed by more than 32 per color channel. Record baselines with Lightningpanda and keep them separate from any Chromium baselines.
+Pixels come from Blitz, not Chromium. A Chromium screenshot is never a usable baseline: on the project's prototype fixtures, 8 to 44% of pixels differed, and 4 to 5% differed by more than 32 per color channel. Record baselines with Pyro and keep them separate from any Chromium baselines.
 
 ## Determinism
 
@@ -92,12 +92,12 @@ Variable fonts are embedded once per instance a run used, so a `font-weight: 700
 ## Fonts
 
 - Fonts come from `@font-face` rules the page loads, then from the system. `@font-face` `unicode-range` decides which face draws each character.
-- **Google Fonts serves different files by User-Agent.** Lightningpanda's default page User-Agent is `Mozilla/5.0 (compatible; lightningpanda/<version>)`. For it, Google Fonts returns one TrueType file per weight with no `unicode-range`. For a Chrome User-Agent it returns variable WOFF2 files split into script subsets. To render with the same font files Chrome gets, set a Chrome User-Agent before navigating (Playwright's `userAgent` context option, or CDP `Emulation.setUserAgentOverride`).
+- **Google Fonts serves different files by User-Agent.** Pyro's default page User-Agent is `Mozilla/5.0 (compatible; lightningpanda/<version>)`. For it, Google Fonts returns one TrueType file per weight with no `unicode-range`. For a Chrome User-Agent it returns variable WOFF2 files split into script subsets. To render with the same font files Chrome gets, set a Chrome User-Agent before navigating (Playwright's `userAgent` context option, or CDP `Emulation.setUserAgentOverride`).
 - On Linux, system fonts are found through fontconfig. A minimal container may have no fonts at all; see [Installation](/guide/installation#ci).
 
 ## Line breaks between a hyphen and a digit
 
-Unicode's line breaking rules keep a hyphen together with a following digit, so by default Lightningpanda never wraps `REG-be08b23e-89be-48b8-9a6f-…` after a hyphen followed by a digit. Chrome does. To wrap like Chrome in screenshots and PDFs:
+Unicode's line breaking rules keep a hyphen together with a following digit, so by default Pyro never wraps `REG-be08b23e-89be-48b8-9a6f-…` after a hyphen followed by a digit. Chrome does. To wrap like Chrome in screenshots and PDFs:
 
 ```sh
 lightningpanda serve --hyphen-digit-breaks on

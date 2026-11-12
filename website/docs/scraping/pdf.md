@@ -1,6 +1,6 @@
 # Screenshots and PDFs
 
-Lightningpanda renders pages itself, on the CPU: Stylo computes styles, Taffy and Blitz lay out, Parley shapes text and Vello's CPU rasterizer paints. No GPU, no Chrome and no display server are needed, so PDFs and screenshots work on a plain Linux server or in a container. The browsers in the npm package are built with rendering included.
+Pyro renders pages itself, on the CPU: Stylo computes styles, Taffy and Blitz lay out, Parley shapes text and Vello's CPU rasterizer paints. No GPU, no Chrome and no display server are needed, so PDFs and screenshots work on a plain Linux server or in a container. The browsers in the npm package are built with rendering included.
 
 The output is close to Chrome's, not identical. PDF page geometry follows Chrome's measured rules, but layout can differ by a few pixels, and screenshots do not match Chromium's pixel for pixel. For background, see [Rendering: screenshots and PDF](/guide/rendering).
 
@@ -72,7 +72,7 @@ Paper is rounded as Chrome does: an A4 page comes out as 595.92 x 841.92 pt, the
 
 ### Print media
 
-Lightningpanda prints with the page's emulated media, which is `screen` unless you set it, so `@media print` rules do not apply by default. Chrome prints with print media. To match Chrome, emulate print first:
+Pyro prints with the page's emulated media, which is `screen` unless you set it, so `@media print` rules do not apply by default. Chrome prints with print media. To match Chrome, emulate print first:
 
 ```ts
 await page.emulateMedia({ media: 'print' }); // CDP: Emulation.setEmulatedMedia { media: 'print' }
@@ -100,7 +100,7 @@ The first PDF or screenshot of a server scans the system fonts and warms the ren
 
 ### Hyphens and digits: `--hyphen-digit-breaks`
 
-Long identifiers such as `REG-be08b23e-89be-48b8-9a6f-...` break differently in Chrome and in the Unicode line breaking rules: Chrome allows a break between a hyphen and a digit, Unicode does not. Lightningpanda follows Unicode by default, so such a string can overflow a narrow table cell where Chrome would wrap it. To wrap like Chrome:
+Long identifiers such as `REG-be08b23e-89be-48b8-9a6f-...` break differently in Chrome and in the Unicode line breaking rules: Chrome allows a break between a hyphen and a digit, Unicode does not. Pyro follows Unicode by default, so such a string can overflow a narrow table cell where Chrome would wrap it. To wrap like Chrome:
 
 ```sh
 lightningpanda serve --hyphen-digit-breaks on
@@ -152,7 +152,7 @@ The Playwright library passes `path`, `type` (`png` or `jpeg`, also taken from t
 
 Over CDP the command is `Page.captureScreenshot`: `format` `png` or `jpeg` (`webp` is refused), `quality`, `clip` with `scale`, and `captureBeyondViewport` for the whole document. `Emulation.setDefaultBackgroundColorOverride` sets the background behind transparent pages. Puppeteer's `page.screenshot()` uses it and works.
 
-The picture is rendered from a snapshot of the live DOM, off the browser thread, and includes the hover and focus styles of where the pointer and focus are. Pixels differ from Chromium's (no font hinting, a different layout engine), so do not compare them with Chrome screenshots. For visual regression tests against Lightningpanda's own baselines, see [Visual tests](/e2e/screenshots).
+The picture is rendered from a snapshot of the live DOM, off the browser thread, and includes the hover and focus styles of where the pointer and focus are. Pixels differ from Chromium's (no font hinting, a different layout engine), so do not compare them with Chrome screenshots. For visual regression tests against Pyro's own baselines, see [Visual tests](/e2e/screenshots).
 
 ## Related
 

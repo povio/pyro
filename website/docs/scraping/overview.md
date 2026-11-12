@@ -1,6 +1,6 @@
 # Scraping and automation
 
-Lightningpanda is a headless browser. It loads a page, runs its JavaScript, and lets you read the result. This section covers using it for scraping, signed-in automation, and making PDFs and screenshots. It does not cover testing.
+Pyro is a headless browser. It loads a page, runs its JavaScript, and lets you read the result. This section covers using it for scraping, signed-in automation, and making PDFs and screenshots. It does not cover testing.
 
 The browser speaks the Chrome DevTools Protocol (CDP). You can drive it in four ways:
 
@@ -13,7 +13,7 @@ The browser speaks the Chrome DevTools Protocol (CDP). You can drive it in four 
 
 ## Use cases
 
-**Crawling pages rendered by JavaScript.** A single-page app sends an almost empty HTML shell, and its scripts fetch the data and build the DOM. `curl` sees only the shell. Lightningpanda runs the scripts, waits until the page is quiet, and gives you the DOM as the user would see it. See [Extracting data](/scraping/extracting).
+**Crawling pages rendered by JavaScript.** A single-page app sends an almost empty HTML shell, and its scripts fetch the data and build the DOM. `curl` sees only the shell. Pyro runs the scripts, waits until the page is quiet, and gives you the DOM as the user would see it. See [Extracting data](/scraping/extracting).
 
 **Signed-in scraping, one identity per account.** Sign in once per account and save the cookies and `localStorage` to a file. Later runs load that file into a fresh browser context and start signed in. Each identity can also keep its own proxy and user agent. This is the main topic of [Stored profiles](/scraping/profiles). With fork mode, the server can sign in once and give every job a fresh copy of that signed-in page. See [Profiles booted once (fork)](/scraping/fork-profiles).
 
@@ -23,7 +23,7 @@ The browser speaks the Chrome DevTools Protocol (CDP). You can drive it in four 
 
 ## How it compares with Chrome
 
-Lightningpanda is not Chromium. It is a Rust browser on JavaScriptCore (Safari's JavaScript engine) with its own DOM and network stack, and Blitz/Stylo for layout and painting. Most sites that work in Chrome work here. Some do not.
+Pyro is not Chromium. It is a Rust browser on JavaScriptCore (Safari's JavaScript engine) with its own DOM and network stack, and Blitz/Stylo for layout and painting. Most sites that work in Chrome work here. Some do not.
 
 What works:
 
@@ -42,7 +42,7 @@ What does not work, or works differently:
 - **Layout and pixels are not Chromium's.** Positions can differ by a few pixels, and screenshots do not match Chrome's pixel for pixel. Text extraction is not affected.
 - **No video, no tracing, no trace viewer, no `Page.startScreencast`.**
 - **Other gaps.** Some web APIs are partial. A site that depends on one of them may break. [Web platform support](/reference/web-platform) and [CDP coverage](/reference/cdp) list the details.
-- **Browser fingerprint.** The default user agent says `lightningpanda`, and the JavaScript engine is JavaScriptCore, not V8. Sites that block automated or non-Chrome browsers can tell. Lightningpanda has no stealth mode or captcha solving.
+- **Browser fingerprint.** The default user agent says `lightningpanda`, and the JavaScript engine is JavaScriptCore, not V8. Sites that block automated or non-Chrome browsers can tell. Pyro has no stealth mode or captcha solving.
 
 When a site fails, check it with Chrome first. If it works there and not here, see [Troubleshooting](/guide/troubleshooting).
 
@@ -61,7 +61,7 @@ The JavaScript API runs on Node.js 22+ and on Bun. On other systems, run the bro
 
 ## Scraping responsibly
 
-Lightningpanda does what you tell it, as fast as you tell it. It does not read `robots.txt`, does not rate-limit, and does not identify you to a site beyond the user agent you send. Those are your job.
+Pyro does what you tell it, as fast as you tell it. It does not read `robots.txt`, does not rate-limit, and does not identify you to a site beyond the user agent you send. Those are your job.
 
 - **Read `robots.txt`** and follow it. Fetch it yourself before a crawl and skip disallowed paths. Respect `Crawl-delay` if the site sets one.
 - **Rate-limit per site.** Fast start and many connections make it easy to send hundreds of requests a second. Cap concurrency per host, add delays, and back off on `429` and `503` responses. Block images, fonts and media you do not need (see [Extracting data](/scraping/extracting#cut-what-you-do-not-need)).
@@ -73,4 +73,4 @@ This is not legal advice. When in doubt, ask the site owner or a lawyer.
 
 ## License
 
-Lightningpanda is licensed under AGPL-3.0-only. It is a derivative of Lightpanda. The AGPL adds one condition to the GPL: if you modify the program and let users interact with your modified version over a network, you must offer those users its source code (section 13). Your scripts run as separate programs and talk to the browser over CDP. See [Running as a service](/scraping/service#license) for more, and read the license itself or ask a lawyer for your case.
+Pyro is licensed under AGPL-3.0-only. It is a derivative of Lightpanda. The AGPL adds one condition to the GPL: if you modify the program and let users interact with your modified version over a network, you must offer those users its source code (section 13). Your scripts run as separate programs and talk to the browser over CDP. See [Running as a service](/scraping/service#license) for more, and read the license itself or ask a lawyer for your case.

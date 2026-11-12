@@ -1,6 +1,6 @@
 # Changelog and versions
 
-Lightningpanda ships as one npm package, `@povio/lightning-panda`, that holds the SDK, the `lightningpanda` CLI and the native browsers. Every release is cut from a Git tag; this page lists the channels, the platforms, how to pin a version and what changed in recent releases.
+Pyro ships as one npm package, `@povio/lightning-panda`, that holds the SDK, the `lightningpanda` CLI and the native browsers. Every release is cut from a Git tag; this page lists the channels, the platforms, how to pin a version and what changed in recent releases.
 
 ## Package
 
@@ -157,7 +157,7 @@ On `main` after v0.0.33:
 
 ### 0.0.22 (2026-11-08)
 
-- Playwright suites run on Lightningpanda by swapping the import (#278). See [Coming from Playwright](/playwright/overview).
+- Playwright suites run on Pyro by swapping the import (#278). See [Coming from Playwright](/playwright/overview).
 - Web-platform gaps found by the WPT survey filled.
 - PDF pagination at Chrome's speed (#282); incremental tables and upstream Blitz/Taffy/Stylo (#279); whole-program performance passes (#283-#286).
 

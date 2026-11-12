@@ -1,4 +1,4 @@
-# SDK: Lightningpanda and Page
+# SDK: Pyro and Page
 
 The TypeScript API of `@povio/lightning-panda`: launching or connecting to a browser, declaring profiles, opening pages, and running steps in one `LP.run` round trip. It runs on Bun and on Node 22 or later, using the runtime's global `WebSocket` and `fetch`. Locators and step builders are documented in [SDK: locators and steps](/reference/steps).
 
@@ -28,7 +28,7 @@ lp.close();
 
 Under Bun the package's `bun` export condition loads the TypeScript sources directly. Other runtimes load the built `dist/*.js`.
 
-## Lightningpanda {#lightningpanda}
+## Pyro {#lightningpanda}
 
 A client of one `lightningpanda serve`: one or more CDP connections, the profiles this client declared, and, when it launched the server, the server process.
 

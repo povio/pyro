@@ -96,7 +96,7 @@ The suite numbers are wall time for an app whose own JavaScript dominates the co
 
 - **You need Playwright's HTML report, trace viewer or video.** Neither layer provides them.
 - **You must assert a transient state between an action and its result**, such as a spinner that shows only while a request is in flight. An action settles before the next step runs, so the spinner may be gone by then. Hold the request with a [mock](/e2e/network#holding-a-request) to keep the state on screen while you check it.
-- **The test needs Chromium-specific behaviour or pixels.** Lightningpanda is its own engine. See [Behaviour differences](/playwright/differences) and [Web platform support](/reference/web-platform).
+- **The test needs Chromium-specific behaviour or pixels.** Pyro is its own engine. See [Behaviour differences](/playwright/differences) and [Web platform support](/reference/web-platform).
 
 ## Where to go next
 

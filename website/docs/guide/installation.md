@@ -1,6 +1,10 @@
 # Installation
 
-Lightningpanda is one npm package, `@povio/lightning-panda`. It contains the browser binaries, the `lightningpanda` CLI and the TypeScript client. Installing it runs no install scripts and downloads nothing else.
+Pyro is one npm package, `@povio/lightning-panda`. It contains the browser binaries, the `lightningpanda` CLI and the TypeScript client. Installing it runs no install scripts and downloads nothing else.
+
+::: info Names in code
+Pyro is the product name. The package, command and APIs keep their current names: the npm package `@povio/lightning-panda`, the `lightningpanda` command, the `Lightningpanda` class, the `Lightningpanda.*` CDP domain and the `LIGHTNINGPANDA_*` environment variables. Use those names in code and scripts.
+:::
 
 ## Install the package
 
@@ -114,7 +118,7 @@ The macOS binaries are signed ad hoc with the `com.apple.security.cs.allow-jit` 
 
 ## Remote browsers
 
-You can run the browser on one machine and the client on another. This is how Windows machines, and containers without a supported glibc, use Lightningpanda.
+You can run the browser on one machine and the client on another. This is how Windows machines, and containers without a supported glibc, use Pyro.
 
 On the browser host, listen on an address the client can reach:
 

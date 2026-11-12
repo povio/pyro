@@ -1,6 +1,6 @@
 # Choosing an API
 
-Lightningpanda has four ways in: the Playwright module, the native SDK, the `lightningpanda e2e` suite runner, and raw CDP (which includes Puppeteer and other CDP clients). They all talk to the same browser. This page compares them and shows when to pick each.
+Pyro has four ways in: the Playwright module, the native SDK, the `lightningpanda e2e` suite runner, and raw CDP (which includes Puppeteer and other CDP clients). They all talk to the same browser. This page compares them and shows when to pick each.
 
 ## At a glance
 
@@ -84,7 +84,7 @@ console.log(await page.$eval('h1', (e) => e.textContent));
 await browser.disconnect();
 ```
 
-Lightningpanda implements most of the CDP commands Playwright 1.59 sends (stock Playwright's `chromium.connectOverCDP` works against it), plus its own `Lightningpanda.*` and `LP.*` domains. A basic Puppeteer flow (connect, new page, `goto`, `$eval`, `click`) works with `puppeteer-core` 25, but Puppeteer is not part of the project's tested matrix, and commands outside the implemented set return an explicit error rather than a fake success. Every round trip costs a hop over the socket, so raw CDP is the slowest way to drive a test. See [Puppeteer and raw CDP](/scraping/cdp), [CDP coverage](/reference/cdp) and the [Lightningpanda CDP domain](/reference/cdp-domain).
+Pyro implements most of the CDP commands Playwright 1.59 sends (stock Playwright's `chromium.connectOverCDP` works against it), plus its own `Lightningpanda.*` and `LP.*` domains. A basic Puppeteer flow (connect, new page, `goto`, `$eval`, `click`) works with `puppeteer-core` 25, but Puppeteer is not part of the project's tested matrix, and commands outside the implemented set return an explicit error rather than a fake success. Every round trip costs a hop over the socket, so raw CDP is the slowest way to drive a test. See [Puppeteer and raw CDP](/scraping/cdp), [CDP coverage](/reference/cdp) and the [Pyro CDP domain](/reference/cdp-domain).
 
 ## Mixing them
 
@@ -92,7 +92,7 @@ All four share one browser and one protocol, so you can mix them:
 
 - **Port a Playwright suite gradually.** Run it unchanged with the Playwright module, then rewrite the slowest tests to `page.run` one at a time. The native client and the Playwright module can live in the same repository.
 - **Drop to CDP from the SDK.** `page.send(method, params)` sends any CDP command on a native page, for example `Page.printToPDF` or `Emulation.setUserAgentOverride`.
-- **Drop to CDP from Playwright.** `context.newCDPSession(page)` returns a raw session on Lightningpanda's CDP.
+- **Drop to CDP from Playwright.** `context.newCDPSession(page)` returns a raw session on Pyro's CDP.
 - **Share one fork-mode server.** A launcher can start `serve --fork`, register profiles, and hand `lp.wsEndpoint` to worker processes, which `Lightningpanda.connect()` to it. See [One server, many workers](/e2e/shared-server).
 
 ## A rule of thumb

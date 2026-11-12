@@ -99,11 +99,11 @@ console.log(await page.ariaSnapshot());
 
 An agent can then act on an element by its reference: `page.locator('aria-ref=e4').click()` finds the element that ref named in the last AI snapshot of its frame. `locator.ariaSnapshot()` takes the snapshot of one part of the page. Iframes appear nested in AI mode, with refs like `f1e5`.
 
-The tree is built in the browser from the same role and name code `getByRole` uses. Over raw CDP, `Accessibility.getFullAXTree` returns Chrome's node format instead. For writing agents against Lightningpanda, see [Writing tests with AI agents](/e2e/ai-agents).
+The tree is built in the browser from the same role and name code `getByRole` uses. Over raw CDP, `Accessibility.getFullAXTree` returns Chrome's node format instead. For writing agents against Pyro, see [Writing tests with AI agents](/e2e/ai-agents).
 
 ## Waiting for data
 
-Lightningpanda settles after each action: `goto`, `click`, `fill` and the rest return once the page is quiet. Quiet means no queued task, no request the action started still in flight, no timer due within 50 ms, no pending animation frame, and no navigation short of `DOMContentLoaded`. Data a page fetches right after it loads is usually in the DOM when `goto` returns. See [Settling and auto-waiting](/guide/settling).
+Pyro settles after each action: `goto`, `click`, `fill` and the rest return once the page is quiet. Quiet means no queued task, no request the action started still in flight, no timer due within 50 ms, no pending animation frame, and no navigation short of `DOMContentLoaded`. Data a page fetches right after it loads is usually in the DOM when `goto` returns. See [Settling and auto-waiting](/guide/settling).
 
 Settling does not wait for everything. A timer set for 2 seconds, a poll, a WebSocket message or a request started by a later timer can come after it. Wait for what you need, in order of preference:
 

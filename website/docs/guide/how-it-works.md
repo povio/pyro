@@ -1,6 +1,6 @@
 # How it works
 
-This page explains the parts of Lightningpanda a test author or script writer runs into: the engine, the threads, where a test's steps run, and why that makes tests fast. It is a user's view of the architecture; the full module contract is `docs/ARCHITECTURE.md` in the repository.
+This page explains the parts of Pyro a test author or script writer runs into: the engine, the threads, where a test's steps run, and why that makes tests fast. It is a user's view of the architecture; the full module contract is `docs/ARCHITECTURE.md` in the repository.
 
 ## The pieces
 
@@ -59,7 +59,7 @@ The Playwright module uses the same machinery: each awaited Playwright call is o
 
 ## Why it is fast
 
-A Playwright test against Chrome sends many CDP messages per action: resolve a selector, check visibility, scroll, compute a click point, dispatch mouse events, then poll for an assertion. Each message crosses a socket and wakes two processes. Lightningpanda removes most of that:
+A Playwright test against Chrome sends many CDP messages per action: resolve a selector, check visibility, scroll, compute a click point, dispatch mouse events, then poll for an assertion. Each message crosses a socket and wakes two processes. Pyro removes most of that:
 
 - **Fewer round trips.** A native test is usually one command. A Playwright-module test is one command per awaited call.
 - **No polling.** Waiting steps resume on DOM changes, from inside the browser.

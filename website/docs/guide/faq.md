@@ -4,7 +4,7 @@ Short answers to common questions, with links to the details.
 
 ## Is it Chrome?
 
-No. Lightningpanda is its own browser, written in Rust. It speaks the Chrome DevTools Protocol, and to CDP clients it reports a Chrome version (`Chrome/124.0.6367.29` in `/json/version`) so that Playwright takes its normal code paths. The DOM, network stack, layout and event loop are not Chromium's, and behaviour can differ. See [How it works](/guide/how-it-works).
+No. Pyro is its own browser, written in Rust. It speaks the Chrome DevTools Protocol, and to CDP clients it reports a Chrome version (`Chrome/124.0.6367.29` in `/json/version`) so that Playwright takes its normal code paths. The DOM, network stack, layout and event loop are not Chromium's, and behaviour can differ. See [How it works](/guide/how-it-works).
 
 ## Does it run V8?
 
@@ -24,7 +24,7 @@ Yes. `chromium.connectOverCDP('ws://127.0.0.1:9222/')` from the real `playwright
 
 ## Can I use Puppeteer?
 
-Basic flows work: `puppeteer.connect({ browserWSEndpoint: 'ws://127.0.0.1:9222/' })`, new page, `goto`, `$eval` and `click` were checked with `puppeteer-core` 25. Puppeteer is not in the project's tested matrix, and CDP commands Lightningpanda does not implement return an explicit error. See [Puppeteer and raw CDP](/scraping/cdp).
+Basic flows work: `puppeteer.connect({ browserWSEndpoint: 'ws://127.0.0.1:9222/' })`, new page, `goto`, `$eval` and `click` were checked with `puppeteer-core` 25. Puppeteer is not in the project's tested matrix, and CDP commands Pyro does not implement return an explicit error. See [Puppeteer and raw CDP](/scraping/cdp).
 
 ## Does it work on Windows?
 
@@ -36,7 +36,7 @@ Yes. GitHub-hosted `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15` and `macos-15-
 
 ## Is there a headed mode?
 
-No. Lightningpanda has no window and no GPU. To see a page, take a screenshot (`Page.captureScreenshot`, `page.screenshot()`, or a `matchScreenshot` step).
+No. Pyro has no window and no GPU. To see a page, take a screenshot (`Page.captureScreenshot`, `page.screenshot()`, or a `matchScreenshot` step).
 
 ## Is there a trace viewer, video recording or HTML report?
 
@@ -52,7 +52,7 @@ Actions settle: a click returns only after the page is quiet, including the requ
 
 ## Why does my test pass here but fail in Chrome, or the reverse?
 
-Common causes: a web API Lightningpanda lacks ([Web platform support](/reference/web-platform)), a layout difference that changes what is visible or covered, or a test that relied on timing that settling removes. [Behaviour differences](/playwright/differences) lists the known ones.
+Common causes: a web API Pyro lacks ([Web platform support](/reference/web-platform)), a layout difference that changes what is visible or covered, or a test that relied on timing that settling removes. [Behaviour differences](/playwright/differences) lists the known ones.
 
 ## Do I still need `waitForTimeout`, `waitForResponse` or retry loops?
 
@@ -60,7 +60,7 @@ No. Steps wait in the browser for their condition and actions settle. In native 
 
 ## Can screenshots match my existing Chromium baselines?
 
-No. Pixels come from Lightningpanda's CPU renderer (Blitz and Vello). Regenerate baselines with Lightningpanda and keep them apart from Chromium ones. See [Rendering](/guide/rendering).
+No. Pixels come from Pyro's CPU renderer (Blitz and Vello). Regenerate baselines with Pyro and keep them apart from Chromium ones. See [Rendering](/guide/rendering).
 
 ## Can it generate PDFs?
 
@@ -76,11 +76,11 @@ Fork mode needs the patched JavaScriptCore, which is bundled for Apple silicon a
 
 ## How is it related to Lightpanda?
 
-Lightningpanda is a Rust rewrite of [Lightpanda](https://github.com/lightpanda-io/browser), a headless browser written in Zig on V8. It started from Lightpanda's design and CDP behaviour, replaced V8 with JavaScriptCore, and added the native test driver, profiles, fork mode and rendering. It is a derivative work, credited in the `NOTICE` file, and keeps Lightpanda's license. It is built by Povio and contributors, not by the Lightpanda team.
+Pyro is a Rust rewrite of [Lightpanda](https://github.com/lightpanda-io/browser), a headless browser written in Zig on V8. It started from Lightpanda's design and CDP behaviour, replaced V8 with JavaScriptCore, and added the native test driver, profiles, fork mode and rendering. It is a derivative work, credited in the `NOTICE` file, and keeps Lightpanda's license. It is built by Povio and contributors, not by the Lightpanda team.
 
 ## What does the AGPL license mean for me?
 
-The package, including the TypeScript client, is licensed under AGPL-3.0-only, as Lightpanda is. The bundled JavaScriptCore is LGPL, and its source is published with each GitHub release. The project's `NOTICE` states the key AGPL point: network users of a modified version must be offered its source (AGPL section 13). AGPL's obligations are about distributing the software or offering a modified version of it to users over a network: then you must offer the corresponding source of your version. This is not legal advice; if you plan to modify Lightningpanda, ship it to others, or run it as a service for third parties, check with your legal team.
+The package, including the TypeScript client, is licensed under AGPL-3.0-only, as Lightpanda is. The bundled JavaScriptCore is LGPL, and its source is published with each GitHub release. The project's `NOTICE` states the key AGPL point: network users of a modified version must be offered its source (AGPL section 13). AGPL's obligations are about distributing the software or offering a modified version of it to users over a network: then you must offer the corresponding source of your version. This is not legal advice; if you plan to modify Pyro, ship it to others, or run it as a service for third parties, check with your legal team.
 
 ## Which version should I install?
 

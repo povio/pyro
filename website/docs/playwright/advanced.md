@@ -119,7 +119,7 @@ cdp.on('Network.responseReceived', (e) => console.log(e.response.url));
 await cdp.detach();
 ```
 
-`context.newCDPSession(pageOrFrame)` returns a session on the page's target with `send`, `on`, `once`, `off` and `detach`. It speaks Lightningpanda's CDP: its own domains and a subset of Chrome's. See [CDP coverage](/reference/cdp) and the [Lightningpanda CDP domain](/reference/cdp-domain). `browser.newBrowserCDPSession()` is not implemented.
+`context.newCDPSession(pageOrFrame)` returns a session on the page's target with `send`, `on`, `once`, `off` and `detach`. It speaks Pyro's CDP: its own domains and a subset of Chrome's. See [CDP coverage](/reference/cdp) and the [Pyro CDP domain](/reference/cdp-domain). `browser.newBrowserCDPSession()` is not implemented.
 
 ## Downloads
 

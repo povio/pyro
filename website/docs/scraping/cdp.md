@@ -1,6 +1,6 @@
 # Puppeteer and raw CDP
 
-`lightningpanda serve` is a Chrome DevTools Protocol server. Anything that speaks CDP can drive it: Puppeteer, a WebSocket client in any language, or tools built on either. This page shows Puppeteer, then the protocol by hand, then Lightningpanda's own `Lightningpanda.*` and `LP.*` commands.
+`lightningpanda serve` is a Chrome DevTools Protocol server. Anything that speaks CDP can drive it: Puppeteer, a WebSocket client in any language, or tools built on either. This page shows Puppeteer, then the protocol by hand, then Pyro's own `Lightningpanda.*` and `LP.*` commands.
 
 ## The endpoints
 
@@ -26,7 +26,7 @@ $ curl -s http://127.0.0.1:9222/json/version
 }
 ```
 
-The `Browser` and `User-Agent` fields name Chrome 124 so that clients take their Chrome code paths. Pages send Lightningpanda's own user agent; see [Proxies, user agents, headers](/scraping/identity#user-agent).
+The `Browser` and `User-Agent` fields name Chrome 124 so that clients take their Chrome code paths. Pages send Pyro's own user agent; see [Proxies, user agents, headers](/scraping/identity#user-agent).
 
 Two checks protect the server from web pages, as Chrome's do:
 
@@ -62,7 +62,7 @@ await context.close();
 await browser.disconnect(); // leaves the server running
 ```
 
-Tested with puppeteer-core 25.17.0 against Lightningpanda 0.0.33. These worked:
+Tested with puppeteer-core 25.17.0 against Pyro 0.0.33. These worked:
 
 | Area | Calls |
 | --- | --- |
@@ -78,10 +78,10 @@ Tested with puppeteer-core 25.17.0 against Lightningpanda 0.0.33. These worked:
 
 Things that differ from Chrome:
 
-- `browser.pages()` is empty after connecting. Lightningpanda does not create a placeholder page; call `newPage()`.
+- `browser.pages()` is empty after connecting. Pyro does not create a placeholder page; call `newPage()`.
 - `browser.version()` and `browser.userAgent()` report the Chrome 124 strings from `/json/version`, not the page user agent.
 - Closing the connection (`disconnect()`, or the process ending) disposes every context and page it made.
-- Commands Lightningpanda does not implement fail with `... is not supported by lightningpanda` instead of succeeding silently. Among them: `DOM.getDocument`, `DOM.querySelector`, `DOM.getOuterHTML`, `Tracing.*`, `Page.startScreencast`, `HeapProfiler.collectGarbage`. Puppeteer features built on those (tracing, screencasts, some `ElementHandle` internals) do not work.
+- Commands Pyro does not implement fail with `... is not supported by lightningpanda` instead of succeeding silently. Among them: `DOM.getDocument`, `DOM.querySelector`, `DOM.getOuterHTML`, `Tracing.*`, `Page.startScreencast`, `HeapProfiler.collectGarbage`. Puppeteer features built on those (tracing, screencasts, some `ElementHandle` internals) do not work.
 
 The [CDP coverage](/reference/cdp) page lists every method with its status.
 
@@ -173,7 +173,7 @@ The same pattern works from any language with a WebSocket client: Python's `webs
 
 ## The `LP` and `Lightningpanda` domains
 
-Lightningpanda adds two domains of its own.
+Pyro adds two domains of its own.
 
 **`LP.run`** (on a page session) runs a list of steps in the browser and replies once: navigation, locating elements by CSS, text, role, label or test id, actions (click, fill, type, press, hover, wheel, drag, upload), checks that wait until they hold, reads, network mocks, request checks, downloads and screenshots. Each action settles before the next step. `LP.idle { timeout }` waits until the page is quiet on its own. The reply has `reads`, `results`, `requests` and `ms`. The step format is in [LP.run wire format](/reference/lp-run); the native SDK builds it for you.
 
@@ -189,7 +189,7 @@ Lightningpanda adds two domains of its own.
 | `Lightningpanda.adoptPreparedPage` | Hold a named profile another client registered (`--fork`). |
 | `Lightningpanda.preparedProfiles` | Named profiles and their holders (`--fork`). |
 
-In fork mode, a connection to `ws://host:port/?profile=<profileId>` is forked from that profile's snapshot. The details are in [Lightningpanda CDP domain](/reference/cdp-domain), and the uses in [Profiles booted once (fork)](/scraping/fork-profiles).
+In fork mode, a connection to `ws://host:port/?profile=<profileId>` is forked from that profile's snapshot. The details are in [Pyro CDP domain](/reference/cdp-domain), and the uses in [Profiles booted once (fork)](/scraping/fork-profiles).
 
 ## Related
 

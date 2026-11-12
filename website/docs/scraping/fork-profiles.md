@@ -201,4 +201,4 @@ Fork profiles win when you run many short jobs as the same identity against a he
 
 - [Concurrency at scale](/scraping/concurrency): worker pools and measuring.
 - [Fork mode in tests](/e2e/fork): the same machinery used for test suites.
-- [Lightningpanda CDP domain](/reference/cdp-domain): `registerPreparedPage`, `acquirePreparedPage`, `adoptPreparedPage` on the wire.
+- [Pyro CDP domain](/reference/cdp-domain): `registerPreparedPage`, `acquirePreparedPage`, `adoptPreparedPage` on the wire.

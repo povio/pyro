@@ -1,6 +1,6 @@
 # Concurrency at scale
 
-To scrape many pages at once you need to know where the parallelism comes from. In Lightningpanda it comes from connections: each CDP connection is a browser thread with its own JavaScript engine, and pages on one connection take turns on that thread. This page explains the model, shows a worker pool with one job per identity at a time, and covers timeouts, retries, memory and measuring.
+To scrape many pages at once you need to know where the parallelism comes from. In Pyro it comes from connections: each CDP connection is a browser thread with its own JavaScript engine, and pages on one connection take turns on that thread. This page explains the model, shows a worker pool with one job per identity at a time, and covers timeouts, retries, memory and measuring.
 
 ## The model
 
