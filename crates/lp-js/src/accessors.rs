@@ -14,9 +14,13 @@
 //! dispatcher here. Slots are process-wide, keyed by the class type and the
 //! attribute name: every engine registers the same (class, name) with the same
 //! callbacks, so the first registration's entry serves them all.
-use crate::class::{guard_in, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag, SetHFn};
+use crate::class::{
+    data_of_header, guard_in, GetterFn, GetterResult, GetterThisFn, Header, InvokeHFn, JsClass, Kind, LeanCall,
+    MemberCall, PayloadTag, SetHFn,
+};
 use crate::error::JsError;
-use crate::value::Args;
+use crate::realm::Scope;
+use crate::value::{Args, Object};
 use lp_jsc_sys as sys;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -71,6 +75,14 @@ static RESULT: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 static GETTER_H: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// Each setter's invoker from a payload header (`SetHFn`; 0: none).
 static SETTER_H: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
+/// Each pure getter's entry from the JITs (`FastGetterFn`; 0: the shared
+/// [`fast_getter_dispatch`]).
+static FAST: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
+
+/// A pure getter's entry from the JITs (`JSFastGetterCallback`): context,
+/// receiver, the receiver's private data, the getter's context.
+pub(crate) type FastGetterFn =
+    unsafe extern "C" fn(sys::JSContextRef, sys::JSObjectRef, *mut c_void, *mut c_void) -> sys::JSValueRef;
 
 /// Attributes that found no free slot (see [`slot_usage`]).
 static OVERFLOWED: AtomicUsize = AtomicUsize::new(0);
@@ -103,6 +115,7 @@ pub(crate) fn slot_for(
     result: GetterResult,
     get_h: Option<InvokeHFn>,
     set_h: Option<SetHFn>,
+    fast: Option<FastGetterFn>,
 ) -> Option<u16> {
     if !supported() {
         return None;
@@ -130,6 +143,7 @@ pub(crate) fn slot_for(
     }
     GETTER_H[slot].store(get_h.map_or(0, |f| f as usize), Ordering::Release);
     SETTER_H[slot].store(set_h.map_or(0, |f| f as usize), Ordering::Release);
+    FAST[slot].store(fast.map_or(0, |f| f as usize), Ordering::Release);
     PURE[slot].store(pure, Ordering::Release);
     RESULT[slot].store(
         match result {
@@ -170,10 +184,97 @@ unsafe fn throw(ctx: sys::JSContextRef, exception: sys::JSValueRef) {
     }
 }
 
-/// Whether `slot` is a pure getter, and what it returns (for
-/// `JSObjectSetFastGetter`).
-pub(crate) fn pure_result(slot: u16) -> Option<std::os::raw::c_int> {
-    PURE[usize::from(slot)].load(Ordering::Acquire).then(|| RESULT[usize::from(slot)].load(Ordering::Acquire) as _)
+/// For a pure getter's `slot`, what `JSObjectSetFastGetter` takes: the entry
+/// the JITs call, its context and what the getter returns.
+pub(crate) fn fast_entry(slot: u16) -> Option<(FastGetterFn, *mut c_void, std::os::raw::c_int)> {
+    let slot = usize::from(slot);
+    if !PURE[slot].load(Ordering::Acquire) {
+        return None;
+    }
+    let result = RESULT[slot].load(Ordering::Acquire) as std::os::raw::c_int;
+    Some(match FAST[slot].load(Ordering::Acquire) {
+        0 => (fast_getter_dispatch as FastGetterFn, slot as *mut c_void, result),
+        // SAFETY: stored from a `FastGetterFn` by `slot_for`.
+        f => (
+            unsafe { std::mem::transmute::<usize, FastGetterFn>(f) },
+            &GETTER_CALLS[slot] as *const SlotCall as *mut c_void,
+            result,
+        ),
+    })
+}
+
+/// The JITs' entry to a pure getter of class `C` (`ClassDef::pure_getter`):
+/// one function per class, which knows the brand and the callback's type, so
+/// a read is the checks below and the getter itself. `private_data` is the
+/// receiver's payload header (the compiled code proved the receiver a
+/// callback object, not that it is one of ours: the tag says so) and
+/// `context` the slot's [`SlotCall`]. As in [`lean_getter_h`] the scope is
+/// the receiver's realm, lent without a count; anything else than a value
+/// (not a `C`, a disposed realm, an error, a panic) goes through the full
+/// dispatch.
+pub(crate) unsafe extern "C" fn fast_getter<C: JsClass>(
+    ctx: sys::JSContextRef,
+    this: sys::JSObjectRef,
+    private_data: *mut c_void,
+    context: *mut c_void,
+) -> sys::JSValueRef {
+    unsafe {
+        let h = private_data as *mut Header;
+        if !h.is_null() && (*h).tag == PayloadTag::Wrapper {
+            if let (Some(data), Some((rctx, realm))) = (data_of_header::<C>(h), (*h).core.live()) {
+                // SAFETY: stored by `ClassDef::pure_getter_typed` from this fn-pointer type.
+                let f: GetterFn<C> =
+                    std::mem::transmute::<usize, GetterFn<C>>((*(context as *const SlotCall)).f.load(Ordering::Relaxed));
+                let scope = Scope::new(rctx, realm);
+                let _lean = LeanCall::enter();
+                if let Ok(Ok(v)) = catch_unwind(AssertUnwindSafe(|| f(&scope, data))) {
+                    if !v.raw.is_null() {
+                        return v.raw;
+                    }
+                }
+            }
+        }
+        fast_getter_slow(ctx, this, context)
+    }
+}
+
+/// [`fast_getter`] for a getter that takes its receiver
+/// (`ClassDef::pure_getter_this`).
+pub(crate) unsafe extern "C" fn fast_getter_this<C: JsClass>(
+    ctx: sys::JSContextRef,
+    this: sys::JSObjectRef,
+    private_data: *mut c_void,
+    context: *mut c_void,
+) -> sys::JSValueRef {
+    unsafe {
+        let h = private_data as *mut Header;
+        if !h.is_null() && (*h).tag == PayloadTag::Wrapper {
+            if let (Some(data), Some((rctx, realm))) = (data_of_header::<C>(h), (*h).core.live()) {
+                // SAFETY: stored by `ClassDef::pure_getter_this_typed` from this fn-pointer type.
+                let f: GetterThisFn<C> = std::mem::transmute::<usize, GetterThisFn<C>>(
+                    (*(context as *const SlotCall)).f.load(Ordering::Relaxed),
+                );
+                let scope = Scope::new(rctx, realm);
+                let _lean = LeanCall::enter();
+                // SAFETY: `this` is the wrapper whose payload `h` is, rooted by the caller.
+                if let Ok(Ok(v)) = catch_unwind(AssertUnwindSafe(|| f(&scope, data, Object::from_raw(rctx, this)))) {
+                    if !v.raw.is_null() {
+                        return v.raw;
+                    }
+                }
+            }
+        }
+        fast_getter_slow(ctx, this, context)
+    }
+}
+
+/// What [`fast_getter`] did not answer: the full dispatch of the slot whose
+/// [`SlotCall`] `context` is.
+#[cold]
+#[inline(never)]
+unsafe fn fast_getter_slow(ctx: sys::JSContextRef, this: sys::JSObjectRef, context: *mut c_void) -> sys::JSValueRef {
+    let slot = (context as usize - GETTER_CALLS.as_ptr() as usize) / std::mem::size_of::<SlotCall>();
+    unsafe { custom_getter_dispatch(slot, ctx, this as sys::JSValueRef, ptr::null()) }
 }
 
 /// The JITs' entry to a pure getter (`JSObjectSetFastGetter`): the receiver
