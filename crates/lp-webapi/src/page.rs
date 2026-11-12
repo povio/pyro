@@ -1316,6 +1316,24 @@ impl PageDom {
         }
         if dom.has_gc_candidates() {
             dom.collect_garbage();
+            self.trim_node_wrappers(dom.slot_count() as usize);
+        }
+    }
+
+    /// Ends the wrapper table where the DOM's slots end (`Dom::collect_garbage`
+    /// gives back the free slots past the last node once a large document
+    /// ended): the entries past it are of freed nodes, so empty, apart from a
+    /// wrapper whose payload is not dropped yet, which stays.
+    fn trim_node_wrappers(&self, slots: usize) {
+        let Ok(mut table) = self.node_wrappers.try_borrow_mut() else { return };
+        if table.len() <= slots {
+            return;
+        }
+        let used = table[slots..].iter().rposition(|e| e.iter().any(|(_, raw)| *raw != 0)).map_or(0, |i| i + 1);
+        table.truncate(slots + used);
+        let keep = (table.len() * 2).max(1024);
+        if table.capacity() > keep * 2 {
+            table.shrink_to(keep);
         }
     }
 
@@ -1384,6 +1402,7 @@ impl PageDom {
         }
         crate::target::reconcile_pins(self, &mut dom);
         dom.collect_garbage();
+        self.trim_node_wrappers(dom.slot_count() as usize);
         let released = dom.take_released_listeners();
         drop(dom);
         crate::target::release_listener_slots(self, released);

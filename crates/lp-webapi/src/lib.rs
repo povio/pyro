@@ -166,6 +166,7 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
     engine.register::<cache_storage::CacheHandle>();
+    engine.register::<cache_storage::StoredBody>();
     engine.register::<headers::Headers>();
     engine.register::<url::URL>();
     engine.register::<url_search_params::URLSearchParams>();

@@ -390,6 +390,11 @@ impl ElementData {
     }
     pub(crate) fn push_attr(&mut self, attr: Attr) {
         let refresh = derives(&attr.name).then(|| attr.name.local.clone());
+        // The first two attributes take room for one each: most elements a
+        // script builds get one or two (`Vec` would start at four, 160 bytes).
+        if self.attrs.capacity() < 2 && self.attrs.len() == self.attrs.capacity() {
+            self.attrs.reserve_exact(1);
+        }
         self.attrs.push(attr);
         if let Some(local) = refresh {
             self.refresh(&local);
