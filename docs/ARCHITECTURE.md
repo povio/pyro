@@ -523,10 +523,11 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   own JavaScriptCore defaults (`FORK_JSC_DEFAULTS`, over the server's own unless the user set them): a 32 MB JIT
   pool, since macOS's `fork()` walks the whole `MAP_JIT` reservation (15 ms per fork at JSC's 512 MB, 3.5 ms at
   32 MB; pages of a mid-size SPA use about 6 MB, and at 16 MB JSC already compiles less), and JSC's own heap
-  growth (`heapGrowthMaxIncrease=3`), so that most pages never collect: a collection in a fork marks memory it
-  shares with the template, for a process that exits seconds later. A child whose connection ends runs its
-  pages' unload handlers, closes the socket and `_exit`s: no realm disposal, collection or engine teardown
-  (`LIGHTNINGPANDA_FORK_FAST_EXIT=0` tears down as a shared process does). Measured on the ToS suite (M1 Max,
+  growth (`heapGrowthMaxIncrease=3`), so that pages collect less often (a mid-size SPA's page still collects 5
+  times): a collection in a fork marks memory it shares with the template, for a process that exits seconds later.
+  A child whose connection ends runs its pages' unload handlers, closes the socket and `_exit`s: no realm
+  disposal, collection or engine teardown (`LIGHTNINGPANDA_FORK_FAST_EXIT=0` tears down as a shared process
+  does). Measured on the ToS suite (M1 Max,
   `-j 16`): a page's test costs about 3.4 G instructions, 0.55 s user and 0.08 s system time, mostly the test's
   own work, with about 18k page faults (5k of them copy-on-write).
 - **Modules compiled once** (JavaScriptCore patch 0027, `Engine::precompile_module`). Before its first page the
