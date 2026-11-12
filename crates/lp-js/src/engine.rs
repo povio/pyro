@@ -1164,6 +1164,34 @@ impl Engine {
         }
     }
 
+    /// JavaScriptCore's account of this VM's heap as JSON (a diagnostic):
+    /// `heapSize` (live cells and their out-of-line storage, plus
+    /// `extraMemorySize`), `heapCapacity` (the blocks that hold them, plus
+    /// `extraMemorySize`), `extraMemorySize` (what cells reported they own
+    /// outside the heap: string characters, array buffers, compiled code),
+    /// `objectCount` and `objectTypeCounts` (cells by class). Walks the
+    /// heap; `None` on the system framework.
+    pub fn memory_statistics_json(&self) -> Option<String> {
+        let stats = sys::spi::get().memory_usage_statistics?;
+        let root = self.inner.root_ctx();
+        // SAFETY: the root context is alive and used by this thread only. The
+        // object is a plain one made in the root context with data properties
+        // only (numbers, and one plain object of numbers): serialising it runs
+        // no script.
+        unsafe {
+            let object = stats(root);
+            if object.is_null() {
+                return None;
+            }
+            let mut exc = std::ptr::null();
+            let json = sys::JSValueCreateJSONString(root, object as sys::JSValueRef, 0, &mut exc);
+            if !exc.is_null() || json.is_null() {
+                return None;
+            }
+            Some(crate::string::JsString::from_raw_owned(json).to_string())
+        }
+    }
+
     /// Whether nothing has used this engine since it was made (or since
     /// [`Engine::recycle`] last succeeded): no realm was created in it and
     /// its time zone is the host's. Class registration does not count.
