@@ -631,6 +631,12 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateErr
     lp_webapi::hold_for_fork();
     // Before profile preload, VM and network threads, and every template fork.
     lp_js::prepare_process_for_fork();
+    // What the template compiles goes to the bytecode cache before it goes
+    // on: a writer thread would be alive at a fork, and the template has the
+    // time. The processes forked for connections write on a thread again.
+    if let Some(cache) = lp_js::bytecode_cache::default() {
+        cache.set_write_mode(lp_js::bytecode_cache::WriteMode::Inline);
+    }
     crate::fork_stats::init();
     let profile = crate::serve::browser_profile(options).map_err(TemplateError::Options)?;
     if !supported() {
@@ -1312,6 +1318,9 @@ impl TemplateProcess {
     fn leave_template(&mut self) {
         #[cfg(feature = "render")]
         crate::engine::set_fork_template(false);
+        if let Some(cache) = lp_js::bytecode_cache::default() {
+            cache.set_write_mode(lp_js::bytecode_cache::WriteMode::Background);
+        }
         self.snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
         self.waiting.clear();
         self.forwards.clear();

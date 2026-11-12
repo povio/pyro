@@ -186,8 +186,10 @@ commands:
   eval [--timeout-ms N] (-e CODE | FILE | -)
                                run JavaScript in an about:blank page until idle
   serve [--host H] [--port P]  CDP server (see `serve --help`)
-  fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] URL
-                               load a page (scripts run), dump the DOM after `load`
+  fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] [--bytecode-cache DIR] URL
+                               load a page (scripts run), dump the DOM after `load`.
+                               --bytecode-cache (env LIGHTNINGPANDA_BYTECODE_CACHE):
+                               as for serve, see `serve --help`
 ";
 
 /// PGO training builds (`scripts/pgo/generate.sh`, `--cfg lp_pgo_training`) exit
@@ -434,9 +436,15 @@ fn fetch(args: &[String]) -> ExitCode {
     let mut wait = Duration::ZERO;
     let mut timeout = Duration::from_secs(30);
     let mut url: Option<String> = None;
+    let mut cache_dir =
+        std::env::var_os(lp_js::bytecode_cache::DIR_ENV).filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--bytecode-cache" => match it.next() {
+                Some(dir) => cache_dir = Some(dir.into()),
+                None => return usage_error("--bytecode-cache needs a directory"),
+            },
             "--dump" => match it.next().map(String::as_str) {
                 Some("html") => dump_html = true,
                 Some("none") => dump_html = false,
@@ -455,6 +463,15 @@ fn fetch(args: &[String]) -> ExitCode {
         }
     }
     let Some(url) = url else { return usage_error("fetch needs a URL") };
+    // Before the engine: it takes the cache when it is made.
+    let cache = match cache_dir.as_deref().map(lp_js::bytecode_cache::use_dir) {
+        Some(Err(e)) => {
+            eprintln!("lightningpanda: --bytecode-cache {}: {e}", cache_dir.unwrap_or_default().display());
+            return ExitCode::from(2);
+        }
+        Some(Ok(cache)) => Some(cache),
+        None => None,
+    };
     let mut thread = match BrowserThread::new() {
         Ok(t) => t,
         Err(e) => {
@@ -528,6 +545,13 @@ fn fetch(args: &[String]) -> ExitCode {
         }
     }
     thread.browser.close_all();
+    // The page is out; what it compiled is written for the next run before
+    // the process goes (the first run with a directory pays for this).
+    if let Some(cache) = cache {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        cache.flush(Duration::from_secs(60));
+    }
     ExitCode::SUCCESS
 }
 
