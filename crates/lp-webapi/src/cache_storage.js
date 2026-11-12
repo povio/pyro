@@ -7,6 +7,7 @@
 //   match(handle | null, url | null, method, headers, ignoreSearch,
 //     ignoreMethod, ignoreVary, first) -> new Responses (null: every cache).
 //   keys(handle, url | null, method, headers, ...options) -> [[url, method, [[n, v]]]].
+//   read(response) -> promise of the body for a 'put' operation, or null.
 //   batch(handle, operations) -> whether each delete removed something.
 // Headers cross as flat [name, value, ...] lists.
 (function (native) {
@@ -19,7 +20,6 @@
   const ResponseC = Response;
   const URLC = URL;
   const fetchF = fetch;
-  const arrayBuffer = ResponseC.prototype.arrayBuffer;
   const all = PromiseC.all.bind(PromiseC);
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
   const tag = (C, name) => O.defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
@@ -70,8 +70,8 @@
     'put', r.url, r.method, flat(r.headers), response.type, response.url, response.status, response.statusText,
     flat(response.headers), response.redirected, body,
   ];
-  const readBody = (response) =>
-    response.body === null ? PromiseC.resolve(null) : arrayBuffer.call(response);
+  // The body as the cache keeps it: the bytes the network delivered, shared.
+  const readBody = (response) => PromiseC.resolve(native.read(response));
 
   const handles = new WeakMap();
   const handle = (cache) => {

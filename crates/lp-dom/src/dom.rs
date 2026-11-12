@@ -183,6 +183,13 @@ pub struct Dom {
     /// One [`Walk`] per slot, kept in step with the node in it.
     walk: Vec<Walk>,
     free: Vec<u32>,
+    /// The generation a new slot starts at: above that of every slot the
+    /// store gave back (`release_free_tail`), so a `NodeId` of a node that
+    /// lived at the index before never names the node made there after.
+    gen_floor: u32,
+    /// The most nodes alive at once since a document last ended
+    /// (`release_free_tail`).
+    live_peak: u32,
     /// Bumped on every tree, attribute or character-data mutation. Live
     /// collections compare against it to reuse cached results.
     version: u64,
@@ -300,6 +307,8 @@ impl Dom {
             named_item_hook: None,
             names: std::cell::RefCell::new(NameCache::default()),
             candidates: Vec::new(),
+            gen_floor: 1,
+            live_peak: 0,
             live: 0,
             removals: 0,
             removal_log: VecDeque::new(),
@@ -364,7 +373,7 @@ impl Dom {
     }
     #[inline]
     pub(crate) fn id_of(&self, idx: u32) -> NodeId {
-        NodeId { idx, gen: self.slots[idx as usize].gen }
+        NodeId { idx, gen: self.generation_at(idx) }
     }
     #[inline]
     pub(crate) fn opt_id(&self, idx: u32) -> Option<NodeId> {
@@ -385,16 +394,16 @@ impl Dom {
             _ => Err(DomError::StaleNode),
         }
     }
-    /// Number of slots, live or free (`verify_tree_state`).
-    pub(crate) fn slot_count(&self) -> u32 {
+    /// Number of slots, live or free: no node has an index at or past it
+    /// (`verify_tree_state`; tables kept by node index can end here).
+    pub fn slot_count(&self) -> u32 {
         self.slots.len() as u32
     }
-
     pub(crate) fn generation_at(&self, idx: u32) -> u32 {
         self.slots.get(idx as usize).map_or(0, |s| s.gen)
     }
     pub(crate) fn slot_gen(&self, idx: u32) -> u32 {
-        self.slots[idx as usize].gen
+        self.generation_at(idx)
     }
 
     pub(crate) fn slot_live(&self, idx: u32) -> bool {
@@ -724,11 +733,12 @@ impl Dom {
             idx
         } else {
             let idx = u32::try_from(self.slots.len()).ok().filter(|&i| i != NIL).expect("DOM node limit");
-            self.slots.push(Slot { gen: 1, node: Some(node) });
+            self.slots.push(Slot { gen: self.gen_floor, node: Some(node) });
             self.walk.push(walk);
             idx
         };
         self.live += 1;
+        self.live_peak = self.live_peak.max(self.live);
         if owner_doc != NIL {
             self.doc_data_mut(owner_doc).owned += 1;
         }
@@ -1000,6 +1010,21 @@ impl Dom {
             // XML documents: "application/xhtml+xml" gets the HTML namespace.
             let ns = if &*self.doc_data(owner).content_type == "application/xhtml+xml" { ns!(html) } else { ns!() };
             (LocalName::from(local), ns)
+        };
+        self.create_element_raw(doc, QualName::new(None, ns, local))
+    }
+
+    /// [`Dom::create_element`] for an interned name.
+    pub fn create_element_named(&mut self, doc: NodeId, name: &ScriptName) -> DomResult<NodeId> {
+        if !name.valid_element {
+            return Err(invalid_character());
+        }
+        let owner = self.owner_for(doc)?;
+        let (local, ns) = if self.doc_data(owner).kind == DocumentKind::Html {
+            (name.lower.clone(), ns!(html))
+        } else {
+            let ns = if &*self.doc_data(owner).content_type == "application/xhtml+xml" { ns!(html) } else { ns!() };
+            (name.exact.clone(), ns)
         };
         self.create_element_raw(doc, QualName::new(None, ns, local))
     }
@@ -2611,6 +2636,72 @@ impl Dom {
         let (i, _) = self.el(id)?;
         Ok(self.find_attr_qualified(i, name).is_some())
     }
+    /// The attribute `name` names on element `i`, as `find_attr_qualified`
+    /// finds it for the name's text: the lowercase atom on an HTML element
+    /// of an HTML document. An attribute without a prefix (nearly all) is
+    /// matched by its atom, with no text compared.
+    fn find_attr_named(&self, i: u32, name: &ScriptName) -> Option<usize> {
+        let n = self.n(i);
+        let el = n.element()?;
+        let want = self.script_name_for(el, n.owner_doc, name);
+        el.attrs.iter().position(|a| match &a.name.prefix {
+            Some(p) if !p.is_empty() => {
+                let name: &str = want;
+                name.len() == p.len() + 1 + a.name.local.len()
+                    && name.starts_with(&**p)
+                    && name.as_bytes()[p.len()] == b':'
+                    && name.ends_with(&*a.name.local)
+            }
+            _ => a.name.local == *want,
+        })
+    }
+
+    /// `Dom::html_lower` for an interned name.
+    #[inline]
+    fn script_name_for<'a>(&self, el: &ElementData, owner: u32, name: &'a ScriptName) -> &'a LocalName {
+        if name.has_upper && el.is_html() && self.doc_data(owner).kind == DocumentKind::Html {
+            &name.lower
+        } else {
+            &name.exact
+        }
+    }
+
+    /// [`Dom::get_attribute_qualified_atom`] for an interned name.
+    pub fn get_attribute_named_atom(&self, id: NodeId, name: &ScriptName) -> DomResult<Option<(&str, Option<&Atom>)>> {
+        let (i, el) = self.el(id)?;
+        Ok(self.find_attr_named(i, name).map(|k| (&*el.attrs[k].value, el.attr_atom(k))))
+    }
+    /// [`Dom::has_attribute_qualified`] for an interned name.
+    pub fn has_attribute_named(&self, id: NodeId, name: &ScriptName) -> DomResult<bool> {
+        let (i, _) = self.el(id)?;
+        Ok(self.find_attr_named(i, name).is_some())
+    }
+    /// [`Dom::set_attribute`] for an interned name: validated when it was
+    /// interned, and a new attribute takes the atom.
+    pub fn set_attribute_named(&mut self, id: NodeId, name: &ScriptName, value: &str) -> DomResult<()> {
+        if !name.valid_attribute {
+            return Err(invalid_character());
+        }
+        let (i, n) = self.live(id)?;
+        let el = n.element().ok_or(DomError::Type("not an element"))?;
+        let want = self.script_name_for(el, n.owner_doc, name).clone();
+        match self.find_attr_named(i, name) {
+            Some(k) => self.change_attr(i, k, value),
+            None => self.append_attr(i, QualName::new(None, ns!(), want), value),
+        }
+        Ok(())
+    }
+    /// [`Dom::remove_attribute`] for an interned name.
+    pub fn remove_attribute_named(&mut self, id: NodeId, name: &ScriptName) -> DomResult<bool> {
+        let (i, _) = self.el(id)?;
+        match self.find_attr_named(i, name) {
+            Some(k) => {
+                self.remove_attr_at(i, k);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
     pub fn get_attribute_ns(&self, id: NodeId, ns: Option<&str>, local: &str) -> DomResult<Option<&str>> {
         let (_, el) = self.el(id)?;
         let ns = ns.unwrap_or("");
@@ -3277,7 +3368,7 @@ impl Dom {
 
     /// Counts `firsts` nodes of document `doc` as newly held.
     fn add_held(&mut self, doc: u32, firsts: u32) {
-        if firsts > 0 && doc != NIL && self.slots[doc as usize].node.is_some() {
+        if firsts > 0 && doc != NIL && self.slot_live(doc) {
             self.doc_data_mut(doc).held += firsts;
         }
     }
@@ -3289,7 +3380,7 @@ impl Dom {
         n.ext_refs += 1;
         if n.ext_refs == 1 {
             let owner = n.owner_doc;
-            if owner != NIL && self.slots[owner as usize].node.is_some() {
+            if owner != NIL && self.slot_live(owner) {
                 self.doc_data_mut(owner).held += 1;
             }
         }
@@ -3306,7 +3397,7 @@ impl Dom {
             return false;
         }
         let owner = n.owner_doc;
-        if owner != NIL && self.slots[owner as usize].node.is_some() {
+        if owner != NIL && self.slot_live(owner) {
             let d = self.doc_data_mut(owner);
             d.held = d.held.saturating_sub(1);
         }
@@ -3401,6 +3492,7 @@ impl Dom {
         let mut seen: FxHashSet<u32> = FxHashSet::default();
         let mut last_root = NIL;
         let mut nodes = Vec::new();
+        let mut document_freed = false;
         while let Some(c) = self.candidates.pop() {
             if self.slots.get(c as usize).is_none_or(|s| s.node.is_none()) {
                 continue;
@@ -3446,6 +3538,7 @@ impl Dom {
                     seen.insert(root);
                     continue; // nodes owned by this document are alive elsewhere
                 }
+                document_freed = true;
             }
             freed_total += nodes.len();
             let batch = std::mem::take(&mut nodes);
@@ -3459,7 +3552,56 @@ impl Dom {
             }
             last_root = NIL;
         }
+        if document_freed {
+            self.release_free_tail();
+        }
         freed_total
+    }
+
+    /// Gives back the room of a store sized for documents larger than the
+    /// ones it holds now (a page that went from a large document to small
+    /// ones): the slots past the last live node, and the room of the store,
+    /// its walk table and every table others keep by node index beyond twice
+    /// what the documents since the last one ended needed.
+    ///
+    /// Nothing happens while the room is at most four times that need, as on
+    /// a page that goes from one document to the next of about the same
+    /// size. Otherwise the free list is remade lowest slot last (`alloc` pops
+    /// it), so the nodes of the documents to come gather at the bottom and the
+    /// top can go when the last older node does.
+    ///
+    /// Only when a document was freed: a script that builds and drops trees
+    /// in one document reuses the slots it frees and pays nothing here.
+    fn release_free_tail(&mut self) {
+        /// Below this much room there is nothing worth giving back.
+        const MIN_SLOTS: usize = 4096;
+        let need = (std::mem::replace(&mut self.live_peak, self.live) as usize).max(MIN_SLOTS / 4);
+        if self.slots.capacity() <= need * 4 {
+            return;
+        }
+        let len = self.slots.len();
+        let end = self.slots.iter().rposition(|s| s.node.is_some()).map_or(0, |i| i + 1);
+        if end < len {
+            let floor = self.slots[end..].iter().map(|s| s.gen).max().unwrap_or(1);
+            self.gen_floor = self.gen_floor.max(floor);
+            self.slots.truncate(end);
+            self.walk.truncate(end);
+        }
+        // Every empty slot below the end, highest first.
+        self.free.clear();
+        let slots = &self.slots;
+        self.free.extend((0..end as u32).rev().filter(|&i| slots[i as usize].node.is_none()));
+        let keep = need * 2;
+        self.slots.shrink_to(keep);
+        self.walk.shrink_to(keep);
+        self.free.shrink_to(keep);
+        self.candidates.shrink_to(keep);
+        // The journal of the documents that ended: what reads it starts over
+        // on a new document anyway.
+        if self.journal.capacity() > keep * 2 {
+            self.journal_floor = self.version;
+            self.journal = Vec::new();
+        }
     }
 
     fn free_slot(&mut self, i: u32, component_root: u32) {
@@ -3482,7 +3624,7 @@ impl Dom {
         slot.gen = slot.gen.wrapping_add(1).max(1);
         self.free.push(i);
         self.live -= 1;
-        if owner != i && owner != NIL && self.slots[owner as usize].node.is_some() {
+        if owner != i && owner != NIL && self.slot_live(owner) {
             self.doc_data_mut(owner).owned -= 1;
             // Once per run of nodes of one document (a freed tree's nodes),
             // not once per node: each entry is a look at the document later.
@@ -3490,7 +3632,7 @@ impl Dom {
                 self.candidates.push(owner);
             }
         }
-        if inert != NIL && self.slots[inert as usize].node.is_some() {
+        if inert != NIL && self.slot_live(inert) {
             self.ext_ref_dec(inert);
             self.candidates.push(inert);
         }
@@ -3542,6 +3684,37 @@ impl Iterator for Descendants<'_> {
 /// `body` or `frameset`: the local names of a document's body element.
 pub(crate) fn is_body_name(local: &LocalName) -> bool {
     *local == local_name!("body") || *local == local_name!("frameset")
+}
+
+/// A name script passed as a string (`getAttribute(name)`,
+/// `createElement(name)`), interned once: as written and ASCII-lowercased
+/// (one atom when it has no uppercase letter), with the checks that depend on
+/// its text alone. Whoever keeps one for a JavaScript string resolves that
+/// string's later uses without reading its characters.
+#[derive(Clone, Debug)]
+pub struct ScriptName {
+    pub exact: LocalName,
+    pub lower: LocalName,
+    pub has_upper: bool,
+    /// `validate_attribute_name` accepts it.
+    pub valid_attribute: bool,
+    /// `validate_element_name` accepts it.
+    pub valid_element: bool,
+}
+
+impl ScriptName {
+    pub fn new(name: &str) -> ScriptName {
+        let exact = LocalName::from(name);
+        let has_upper = name.bytes().any(|b| b.is_ascii_uppercase());
+        let lower = if has_upper { LocalName::from(name.to_ascii_lowercase()) } else { exact.clone() };
+        ScriptName {
+            exact,
+            lower,
+            has_upper,
+            valid_attribute: is_valid_attribute_local_name(name),
+            valid_element: is_valid_element_local_name(name),
+        }
+    }
 }
 
 /// The first attribute of `el` whose qualified name is `name`, which is

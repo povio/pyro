@@ -2,6 +2,14 @@
 # Oldest macOS we target. JavaScriptCore entry points newer than this are
 # resolved at runtime (lp_jsc_sys::spi) rather than linked.
 MACOSX_DEPLOYMENT_TARGET = "14.0"
+# mimalloc without its shared 4 MiB pages for blocks of 64 to 512 KiB: each
+# such block gets a run of its own, which goes back to the system when the
+# block is freed. In the shared pages one live block kept the page (after
+# five loads of a large app: 7.8 MB committed for 2.6 MB in use). Cargo does
+# not replace a CFLAGS that the environment already sets: add the define to
+# it. `the_build_gives_a_large_block_a_page_of_its_own` (lightningpanda's
+# tests) fails when the define did not reach the build.
+CFLAGS = "-DMI_ENABLE_LARGE_PAGES=0"
 
 # Sign macOS executables with the JIT entitlement after linking: `cc` takes
 # `ld` from scripts/macos/linker (see scripts/macos/linker/ld). Applies to

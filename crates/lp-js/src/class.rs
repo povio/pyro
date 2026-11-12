@@ -72,8 +72,9 @@ pub(crate) struct MethodSpec {
     pub name: &'static str,
     pub length: u32,
     pub call: MemberCall,
-    /// See [`ClassDef::pure_method`].
-    pub pure: bool,
+    /// See [`ClassDef::pure_method`]. The lean dispatch calls this with the
+    /// receiver's payload header.
+    pub pure: Option<MethodHFn>,
 }
 
 pub(crate) struct AccessorSpec {
@@ -88,6 +89,9 @@ pub(crate) struct AccessorSpec {
     pub result: GetterResult,
     /// A pure getter's invoker from the receiver's payload header.
     pub get_h: Option<InvokeHFn>,
+    /// A pure getter's entry from the JITs (`crate::accessors::fast_getter`):
+    /// one per class and getter kind, like the invokers.
+    pub fast: Option<crate::accessors::FastGetterFn>,
     /// The setter's invoker from the receiver's payload header, for a
     /// setter of the class's own data (`ClassDef::accessor`).
     pub set_h: Option<SetHFn>,
@@ -116,6 +120,12 @@ pub(crate) type InvokeFn = unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *co
 /// receiver's payload header, in a scope of the receiver's realm.
 pub(crate) type InvokeHFn =
     unsafe fn(&Scope<'_>, *mut Header, sys::JSObjectRef, *const ()) -> JsResult<sys::JSValueRef>;
+
+/// A pure operation invoked with its receiver's payload header, in a scope of
+/// the receiver's realm. `None`: the payload is not one of the operation's
+/// class (the full dispatch then decides).
+pub(crate) type MethodHFn =
+    unsafe fn(&Scope<'_>, *mut Header, sys::JSObjectRef, Args<'_>, *const ()) -> Option<JsResult<sys::JSValueRef>>;
 
 /// A setter invoked with its receiver's payload header and the new value,
 /// in a scope of the receiver's realm.
@@ -190,6 +200,59 @@ pub enum GetterResult {
     String,
     /// An object, or null.
     ObjectOrNull,
+}
+
+/// A pure getter that single objects carry as an own accessor property
+/// ([`Scope::define_own_getter`]), with no setter: enumerable and not
+/// configurable, as a WebIDL `[LegacyUnforgeable]` attribute is. One per
+/// class and name for the process; the getter function script can read from
+/// the property is one per realm.
+#[derive(Clone, Copy)]
+pub struct OwnGetter {
+    name: &'static str,
+    slot: Option<u16>,
+}
+
+impl OwnGetter {
+    /// Reserves the custom accessor of `name` on wrappers of `C` (and of the
+    /// classes that inherit from it). `g` must run no script.
+    pub fn new<C: JsClass>(name: &'static str, result: GetterResult, g: GetterFn<C>) -> Self {
+        let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
+        let slot = crate::accessors::slot_for(
+            TypeId::of::<C>(),
+            name,
+            get,
+            None,
+            true,
+            result,
+            Some(getter_invoke_h::<C>),
+            None,
+            None,
+        );
+        Self { name, slot }
+    }
+}
+
+impl<'s> Scope<'s> {
+    /// Defines `getter` on `object` without running script. `false` when it
+    /// cannot be (no patched JavaScriptCore, or no accessor slot left): the
+    /// caller then defines the property the ordinary way.
+    pub fn define_own_getter(&self, object: Object<'s>, getter: &OwnGetter) -> bool {
+        let (Some(install), Some(slot)) = (sys::spi::get().set_custom_accessor, getter.slot) else { return false };
+        let name = crate::string::atom_raw(getter.name);
+        // SAFETY: `object` is live in this scope's context; the slot's
+        // trampoline is a process-lifetime function.
+        unsafe {
+            install(
+                self.ctx,
+                object.raw,
+                name,
+                Some(crate::accessors::GETTERS[usize::from(slot)]),
+                None,
+                sys::kJSPropertyAttributeDontDelete,
+            )
+        }
+    }
 }
 
 /// How a name of [`ClassDef::own_property_name`] shows on the wrappers.
@@ -320,7 +383,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
-            pure: false,
+            pure: None,
         });
         self
     }
@@ -334,7 +397,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
-            pure: true,
+            pure: Some(method_invoke_h::<C>),
         });
         self
     }
@@ -350,6 +413,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: None,
             enumerable: true,
         });
@@ -380,6 +444,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_invoke_h::<C>),
+            fast: Some(crate::accessors::fast_getter::<C>),
             set_h: None,
             enumerable: true,
         });
@@ -397,7 +462,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_this_invoke::<C>, f: f as *const () },
-            pure: false,
+            pure: None,
         });
         self
     }
@@ -408,7 +473,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_this_invoke::<C>, f: f as *const () },
-            pure: true,
+            pure: Some(method_this_invoke_h::<C>),
         });
         self
     }
@@ -424,6 +489,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: None,
             enumerable: true,
         });
@@ -451,6 +517,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_this_invoke_h::<C>),
+            fast: Some(crate::accessors::fast_getter_this::<C>),
             set_h: None,
             enumerable: true,
         });
@@ -469,6 +536,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: Some(setter_invoke_h::<C>),
             enumerable: true,
         });
@@ -493,6 +561,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: Some(setter_invoke_h::<C>),
             enumerable: true,
         });
@@ -519,6 +588,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_invoke_h::<C>),
+            fast: Some(crate::accessors::fast_getter::<C>),
             set_h: Some(setter_invoke_h::<C>),
             enumerable: true,
         });
@@ -553,6 +623,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: None,
             enumerable: true,
         });
@@ -568,7 +639,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: ctor_invoke, f: f as *const () },
-            pure: false,
+            pure: None,
         });
         self
     }
@@ -643,7 +714,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: static_invoke, f: f as *const () },
-            pure: false,
+            pure: None,
         });
         self
     }
@@ -1160,7 +1231,7 @@ fn shared_class<C: JsClass>(parent: Option<&'static ClassDefErased>) -> &'static
     // prototype property it installs last.
     for a in def.accessors.iter_mut().rev() {
         a.slot =
-            crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h, a.set_h);
+            crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h, a.set_h, a.fast);
     }
     let class: &'static ClassShared = Box::leak(Box::new(ClassShared {
         upcast: def.upcast,
@@ -1214,7 +1285,7 @@ pub(crate) struct MemberPayload {
     pub tag: PayloadTag,
     pub call: MemberCall,
     /// See [`ClassDef::pure_method`].
-    pub pure: bool,
+    pub pure: Option<MethodHFn>,
     /// The realm the function was made in, whose context JSC passes to its
     /// calls: the full dispatch's candidate realm. `None` once that realm is
     /// disposed (`RealmInner::member_fns` lists the payloads to clear, so the
@@ -1873,6 +1944,36 @@ unsafe fn method_invoke<C: JsClass>(
         return member_in_receiver_realm(scope, realm, |s| f(s, data, Args { ctx: s.ctx, raw }).map(|v| v.raw));
     }
     f(scope, data, args).map(|v| v.raw)
+}
+
+/// [`method_invoke`] from the receiver's payload header `h`, in the receiver's
+/// realm: the lean dispatch found `h` already.
+unsafe fn method_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    _this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> Option<JsResult<sys::JSValueRef>> {
+    let data = unsafe { data_of_header::<C>(h) }?;
+    // SAFETY: stored by `ClassDef::pure_method` from exactly this fn-pointer type.
+    let f: MethodFn<C> = unsafe { std::mem::transmute(f) };
+    Some(f(scope, data, args).map(|v| v.raw))
+}
+
+/// [`method_this_invoke`] from the receiver's payload header.
+unsafe fn method_this_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> Option<JsResult<sys::JSValueRef>> {
+    let data = unsafe { data_of_header::<C>(h) }?;
+    // SAFETY: stored by `ClassDef::pure_method_this` from exactly this fn-pointer type.
+    let f: MethodThisFn<C> = unsafe { std::mem::transmute(f) };
+    // SAFETY: `this` is the wrapper whose payload `h` is, rooted by the caller.
+    Some(f(scope, data, unsafe { Object::from_raw(scope.ctx, this) }, args).map(|v| v.raw))
 }
 
 /// The data of `C` in the instance payload `h` (the payload's class or a
@@ -2635,8 +2736,8 @@ pub(crate) unsafe extern "C" fn member_call_data(
 ) -> sys::JSValueRef {
     unsafe {
         let payload = data as *const MemberPayload;
-        if !payload.is_null() && (*payload).pure {
-            if let Some(v) = pure_member_call(&*payload, ctx, this, argc, argv, exc) {
+        if let Some(invoke_h) = payload.as_ref().and_then(|p| p.pure) {
+            if let Some(v) = pure_member_call(&*payload, invoke_h, ctx, this, argc, argv, exc) {
                 return v;
             }
         }
@@ -2665,6 +2766,7 @@ pub(crate) unsafe extern "C" fn member_call_data(
 /// the function in).
 unsafe fn pure_member_call(
     payload: &MemberPayload,
+    invoke_h: MethodHFn,
     caller_ctx: sys::JSContextRef,
     this: sys::JSObjectRef,
     argc: usize,
@@ -2676,7 +2778,7 @@ unsafe fn pure_member_call(
             return None;
         }
         let h = sys::JSObjectGetPrivate(this) as *mut Header;
-        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
+        if h.is_null() || (*h).tag != PayloadTag::Wrapper {
             return None;
         }
         // `live` lends the realm without a count: sound only because nothing
@@ -2692,7 +2794,7 @@ unsafe fn pure_member_call(
         let scope = Scope::new(ctx, realm);
         let call = payload.call;
         let _lean = LeanCall::enter();
-        catch_unwind(AssertUnwindSafe(|| match (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f) {
+        catch_unwind(AssertUnwindSafe(|| match invoke_h(&scope, h, this, Args::from_raw(ctx, argc, argv), call.f)? {
             Ok(v) if !v.is_null() => Some(v),
             // The full dispatch would run the same body in the same realm
             // (the one of `caller_ctx`) and throw the same error: throw it

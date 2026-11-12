@@ -20,18 +20,30 @@
 #   LP_WEBKIT_SRC  WebKit checkout, created if missing (default $LP_JSC_CACHE/../webkit-src)
 #   LP_JSC_BUILD   ninja build dir (default $LP_JSC_CACHE/../webkit-build)
 #   JOBS           parallel jobs (default: number of CPUs)
+#   CC, CXX        compilers (Linux: default clang; macOS: default the Command Line
+#                  Tools', which compile against the SDK's libc++ headers, as a
+#                  compiler set here does too)
+#   LP_JSC_CFLAGS  extra C and C++ flags (scripts/pgo: profile instrumentation and
+#                  use). The output directory's name does not cover the compiler or
+#                  flags: a build with others needs its own LP_JSC_CACHE and LP_JSC_BUILD.
+#   LP_JSC_LTO     thin (macOS): an archive of ThinLTO bitcode, which the binary's link
+#                  optimizes (scripts/pgo, LP_PGO_LTO; ld then needs the same LLVM's
+#                  libLTO). CC must be an LLVM release's clang: its llvm-ar,
+#                  llvm-ranlib, llvm-libtool-darwin and libLTO.dylib build the archive.
 #
 # Static since 2026-11: the 48 MB dylib cost dyld 1.2 ms of every launch on the
 # M1 Max (process start to main 7.2-7.7 ms, 6.0-6.1 ms with the archive linked
 # in) and was a second file to ship, sign and find at run time.
 #
-# No LTO on purpose. A -DLTO_MODE=thin build (about twice the build time) was
+# No LTO by default. A -DLTO_MODE=thin build (about twice the build time) was
 # measured against this one on the M1 Max, serve CPU, binaries alternated:
 # Playwright suite -1%/+5%, 1,200-row table loops -3..+6%, PDF templates -4%,
-# ToS SPA load within noise: no reproducible gain. It also needs
-# llint/LowLevelInterpreter.cpp compiled with -fno-lto: the LTO backend moves
-# the offlineasm IPInt handlers and IPInt::initialize()'s alignment
-# RELEASE_ASSERT kills the process at startup.
+# ToS SPA load within noise: no reproducible gain. Together with a profile it
+# pays (scripts/pgo, LP_PGO_LTO; README "Profile-guided optimization"). An LTO
+# build applies webkit/lto/llint-without-lto.patch, which compiles
+# llint/LowLevelInterpreter.cpp without LTO: the LTO backend moves the
+# offlineasm IPInt handlers and IPInt::initialize()'s alignment RELEASE_ASSERT
+# kills the process at startup.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -81,17 +93,47 @@ git -C "$src" clean -fdq Source
 for p in "$inputs"/patches/*.patch; do
     git -C "$src" apply --whitespace=nowarn "$p"
 done
+# LTO only (webkit/lto/, outside the cache key: no-ops without LTO_MODE).
+if [[ -n "${LP_JSC_LTO:-}" ]]; then
+    for p in "$inputs"/lto/*.patch; do
+        git -C "$src" apply --whitespace=nowarn "$p"
+    done
+fi
 
 # Resolve the real interpreter: version-manager shims (asdf) fail in the build
 # directory, which has no .tool-versions.
 ruby_bin="$(ruby -e 'print RbConfig.ruby' 2>/dev/null || echo /usr/bin/ruby)"
 
 platform_flags=()
+cflags="${LP_JSC_CFLAGS:-}"
+cxxflags="$cflags"
 if [[ "$os" == Darwin ]]; then
     platform_flags+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0)
+    if [[ -n "${CC:-}${CXX:-}" ]]; then
+        # Another clang (an LLVM release for scripts/pgo) would take its own libc++
+        # headers, newer than the system's libc++ the binary links.
+        sdk="$(xcrun --show-sdk-path)"
+        platform_flags+=(-DCMAKE_C_COMPILER="${CC:-clang}" -DCMAKE_CXX_COMPILER="${CXX:-clang++}"
+                         -DCMAKE_OSX_SYSROOT="$sdk")
+        cxxflags="-nostdinc++ -isystem $sdk/usr/include/c++/v1 $cxxflags"
+    fi
 else
     platform_flags+=(-DCMAKE_C_COMPILER="${CC:-clang}" -DCMAKE_CXX_COMPILER="${CXX:-clang++}")
 fi
+if [[ -n "${LP_JSC_LTO:-}" ]]; then
+    [[ "$os" == Darwin ]] || { echo "LP_JSC_LTO: macOS only (not tried on Linux)" >&2; exit 1; }
+    llvm_bin="$(dirname "${CC:?LP_JSC_LTO needs CC, an LLVM release clang}")"
+    # Apple's ld with that LLVM's libLTO for the executables the build runs (the
+    # LLInt offset extractors): ld64.lld cannot read the macOS 27 SDK's .tbd files.
+    platform_flags+=(-DLTO_MODE="$LP_JSC_LTO" -DUSE_LD_LLD=OFF
+                     -DCMAKE_AR="$llvm_bin/llvm-ar" -DCMAKE_RANLIB="$llvm_bin/llvm-ranlib"
+                     -DCMAKE_EXE_LINKER_FLAGS="-Wl,-lto_library,$llvm_bin/../lib/libLTO.dylib")
+    # Xcode's libtool cannot index a newer LLVM's bitcode (archive.sh).
+    export LIBTOOL="$llvm_bin/llvm-libtool-darwin"
+fi
+# Only when set: otherwise CMake reads CFLAGS and CXXFLAGS as before.
+if [[ -n "$cflags" ]]; then platform_flags+=(-DCMAKE_C_FLAGS="$cflags"); fi
+if [[ -n "$cxxflags" ]]; then platform_flags+=(-DCMAKE_CXX_FLAGS="$cxxflags"); fi
 
 cmake -G Ninja -S "$src" -B "$build" \
     -DRuby_EXECUTABLE="$ruby_bin" \

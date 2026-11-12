@@ -97,18 +97,19 @@ codegen-units = 16
 [profile.release-fast.package.lp-dom]
 codegen-units = 16
 
-# Profile-guided release build (`scripts/pgo/`, binary in target/release-pgo).
-# Same settings as `release`; the PGO flags come from RUSTFLAGS in those
-# scripts, so a plain `cargo build --profile release-pgo` is just a release
-# build in another directory. Not the default: it needs an instrumented build,
-# a training run and a second build (about 2.5x the build time), and the
-# profile must be regenerated when hot code changes. Measured on the M1 Max
-# with the scripts' own training (suite + css-bench), serve CPU against the
-# same tree at `release`, binaries alternated, two sessions: Playwright suite
-# -5/-7%, 1,200-row table loops -5..-16%, PDF templates -2% and the ToS SPA
-# load within noise; PDF bytes identical. Fat LTO on top of PGO measured
-# 0..+3% against plain `release` (it undoes most of the PGO gain), so the
-# profile keeps thin LTO.
+# Profile-guided release build (`scripts/pgo/`, binary in
+# target/<host>/release-pgo). Same settings as `release`; the PGO flags come
+# from RUSTFLAGS in those scripts, so a plain `cargo build --profile
+# release-pgo` is just a release build in another directory. Not the default:
+# it takes an instrumented build, a training run and a second build (with
+# LP_PGO_LLVM two more JavaScriptCore builds), and a profile belongs to the
+# sources it was trained on. Measured on the M1 Max against `release`
+# (instructions per operation, binaries alternated): cdp-perf -9% with the
+# Rust profile, -14% with JavaScriptCore's too (LP_PGO_LLVM), -17% with
+# JavaScriptCore as ThinLTO (LP_PGO_LTO); README "Profile-guided
+# optimization" has the rest. Fat LTO on top of PGO measured 0..+3% against
+# plain `release` (it undoes most of the PGO gain), so the profile keeps thin
+# LTO.
 [profile.release-pgo]
 inherits = "release"
 

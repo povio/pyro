@@ -89,7 +89,9 @@ impl Budget {
 }
 struct Wire {
     frontier: NetworkDelivery,
-    head: Option<ResponseHead>,
+    /// Boxed: most bodies never get a head (every `Request`'s, a script's
+    /// `Response`), and inline it would be most of the wire's size.
+    head: Option<Box<ResponseHead>>,
     chunks: Vec<Bytes>,
     bytes: usize,
     terminal: Option<Result<(), NetError>>,
@@ -169,6 +171,9 @@ pub(crate) enum ReadKind {
     Bytes,
     Blob,
     FormData,
+    /// The body's pieces as they are, in a `cache_storage::StoredBody`: what
+    /// `cache.put` keeps, without a copy.
+    Chunks,
 }
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
@@ -825,7 +830,7 @@ fn receive(
                 wire.null_body |=
                     matches!(head.kind, lp_net::ResponseKind::Opaque | lp_net::ResponseKind::OpaqueRedirect)
                         || matches!(head.status.as_u16(), 204 | 205 | 304);
-                wire.head = Some(head);
+                wire.head = Some(Box::new(head));
                 true
             }
             ResponseEvent::Data(bytes) => {
@@ -903,7 +908,7 @@ fn pump(page_id: u64, id: RequestId) {
     let (head, terminal, frontier) = {
         let mut wire = job.body.wire.lock().unwrap();
         wire.scheduled = false;
-        (wire.head.take(), wire.terminal.clone(), wire.frontier)
+        (wire.head.take().map(|head| *head), wire.terminal.clone(), wire.frontier)
     };
     if terminal.is_some() {
         // The fetch's Resource Timing entry rides this task (`timed_sink_carried`).
@@ -1008,16 +1013,25 @@ impl Body {
     /// (`new Response(body)`, `Response.json`, `Response.error`). `None` is a
     /// null body. Not tied to a page, request or network budget.
     pub(crate) fn constructed(s: &Scope<'_>, bytes: Option<Bytes>, mime: String) -> Rc<Body> {
-        let len = bytes.as_ref().map_or(0, Bytes::len);
+        Body::constructed_chunks(s, bytes.map(|b| vec![b]), mime)
+    }
+
+    /// [`Body::constructed`] of a body in pieces, which it keeps as they are
+    /// (a response read back from a cache shares the stored bytes).
+    pub(crate) fn constructed_chunks(s: &Scope<'_>, bytes: Option<Vec<Bytes>>, mime: String) -> Rc<Body> {
+        let null_body = bytes.is_none();
+        let mut chunks = bytes.unwrap_or_default();
+        chunks.retain(|b| !b.is_empty());
+        let len = chunks.iter().map(Bytes::len).sum();
         let wire = Wire {
             frontier: NetworkDelivery::default(),
             head: None,
-            chunks: bytes.iter().filter(|b| !b.is_empty()).cloned().collect(),
+            chunks,
             bytes: len,
             terminal: Some(Ok(())),
             closed: true,
             scheduled: false,
-            null_body: bytes.is_none(),
+            null_body,
             streaming: false,
             // Private budget pre-charged with this body so clear_body balances.
             budget: Arc::new(Budget { used: AtomicUsize::new(len), limit: AtomicUsize::new(usize::MAX) }),
@@ -1131,7 +1145,9 @@ impl Body {
             self.release_consumer();
             return;
         }
-        let bytes = {
+        let bytes = if matches!(kind, ReadKind::Chunks) {
+            Vec::new()
+        } else {
             let wire = self.wire.lock().unwrap();
             let mut bytes = Vec::with_capacity(wire.bytes);
             for chunk in &wire.chunks {
@@ -1140,6 +1156,10 @@ impl Body {
             bytes
         };
         let result = match kind {
+            ReadKind::Chunks => {
+                let chunks = self.wire.lock().unwrap().chunks.clone();
+                s.wrap::<crate::cache_storage::StoredBody>(chunks, None).map(|o| o.value())
+            }
             ReadKind::Text => Ok(
                 s.string(String::from_utf8_lossy(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes)).as_ref())
             ),

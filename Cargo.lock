@@ -2024,9 +2024,11 @@ dependencies = [
 name = "lp-js"
 version = "0.0.17"
 dependencies = [
+ "libc",
  "lp-jsc-sys",
  "rustc-hash 2.1.3",
  "serde_json",
+ "xxhash-rust",
 ]
 
 [[package]]

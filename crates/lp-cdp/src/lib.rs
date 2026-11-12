@@ -12,6 +12,8 @@ pub mod engine;
 pub mod fork;
 mod fork_stats;
 pub mod lifetime;
+#[cfg(lp_pgo_training)]
+mod pgo_training;
 pub mod serve;
 
 pub use lp_cdp_protocol::{

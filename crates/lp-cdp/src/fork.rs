@@ -130,6 +130,9 @@ fn fast_exit() -> bool {
 /// library's exit handlers and destructors: nothing in it is needed any more.
 fn exit_child(code: i32) -> ! {
     if fast_exit() {
+        // `_exit` skips the profile runtime's exit hook.
+        #[cfg(lp_pgo_training)]
+        crate::pgo_training::write();
         // SAFETY: ends the process at once; its files close with it.
         unsafe { libc::_exit(code) }
     }
@@ -269,11 +272,12 @@ pub struct Template {
 /// - `heapGrowthMaxIncrease=3` (JavaScriptCore's own default; other
 ///   processes run at 1, see `lp_js::configure_process`): a fork may
 ///   allocate about three times the template's live heap before it collects
-///   instead of once, so most pages never collect. A collection in a fork
-///   marks memory it shares with the template (copying the pages it writes)
-///   for a process that exits seconds later: pages of a mid-size SPA ran
-///   2.5% fewer instructions for 9 MB more memory each on average. The
-///   template still settles (one full collection) before it forks.
+///   instead of once, so pages collect less often (a mid-size SPA's page
+///   still collects 5 times). A collection in a fork marks memory it shares
+///   with the template (copying the pages it writes) for a process that
+///   exits seconds later: pages of a mid-size SPA ran 2.5% fewer
+///   instructions for 9 MB more memory each on average. The template still
+///   settles (one full collection) before it forks.
 const FORK_JSC_DEFAULTS: [(&str, &str); 3] =
     [("JSC_useDFGJIT", "false"), ("JSC_jitMemoryReservationSize", "33554432"), ("JSC_heapGrowthMaxIncrease", "3")];
 
@@ -298,6 +302,8 @@ impl Template {
             return Err(std::io::Error::last_os_error());
         }
         if pid == 0 {
+            #[cfg(lp_pgo_training)]
+            crate::pgo_training::forked();
             drop(ours);
             // SAFETY: both descriptors are ours.
             unsafe { libc::dup2(stdin.as_raw_fd(), 0) };
@@ -402,7 +408,9 @@ static TEMPLATE_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 /// socket file of this server. Callable from any thread.
 pub fn cleanup_for_exit() {
     let pid = TEMPLATE_PID.swap(0, std::sync::atomic::Ordering::Relaxed);
-    if pid > 0 {
+    // A training build lets the template end by itself (it does when this
+    // server's exit closes its stdin), so that it writes its profile.
+    if pid > 0 && !cfg!(lp_pgo_training) {
         // SAFETY: our own child, not reaped yet (only the Template reaps it).
         unsafe { libc::kill(pid, libc::SIGKILL) };
     }
@@ -630,6 +638,12 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateErr
     lp_webapi::hold_for_fork();
     // Before profile preload, VM and network threads, and every template fork.
     lp_js::prepare_process_for_fork();
+    // What the template compiles goes to the bytecode cache before it goes
+    // on: a writer thread would be alive at a fork, and the template has the
+    // time. The processes forked for connections write on a thread again.
+    if let Some(cache) = lp_js::bytecode_cache::default() {
+        cache.set_write_mode(lp_js::bytecode_cache::WriteMode::Inline);
+    }
     crate::fork_stats::init();
     let profile = crate::serve::browser_profile(options).map_err(TemplateError::Options)?;
     if !supported() {
@@ -1311,6 +1325,9 @@ impl TemplateProcess {
     fn leave_template(&mut self) {
         #[cfg(feature = "render")]
         crate::engine::set_fork_template(false);
+        if let Some(cache) = lp_js::bytecode_cache::default() {
+            cache.set_write_mode(lp_js::bytecode_cache::WriteMode::Background);
+        }
         self.snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
         self.waiting.clear();
         self.forwards.clear();
@@ -1348,7 +1365,7 @@ impl TemplateProcess {
         browser.set_fork_child(Box::new(RootRegistry { root, lease: RefCell::new(None) }));
         lp_webapi::release_after_fork();
         let after = if fast_exit() { crate::serve::AfterServe::Exit } else { crate::serve::AfterServe::TearDown };
-        crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone(), after);
+        crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone(), after, None);
         crate::fork_stats::mark("dropped");
         crate::fork_stats::child_done(kind, profile);
         drop(finished);
@@ -1385,6 +1402,8 @@ fn fork_process(snapshot: &Snapshot, kind: &str) -> Forked {
     let pid = unsafe { libc::fork() };
     let fork_us = forking.elapsed().as_micros() as u64;
     if pid == 0 {
+        #[cfg(lp_pgo_training)]
+        crate::pgo_training::forked();
         crate::fork_stats::child_started();
         // SAFETY: the network is stopped and this is the sole surviving thread.
         // Keep inherited handles, but isolate their pipe from sibling readers.
