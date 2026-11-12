@@ -89,7 +89,9 @@ impl Budget {
 }
 struct Wire {
     frontier: NetworkDelivery,
-    head: Option<ResponseHead>,
+    /// Boxed: most bodies never get a head (every `Request`'s, a script's
+    /// `Response`), and inline it would be most of the wire's size.
+    head: Option<Box<ResponseHead>>,
     chunks: Vec<Bytes>,
     bytes: usize,
     terminal: Option<Result<(), NetError>>,
@@ -828,7 +830,7 @@ fn receive(
                 wire.null_body |=
                     matches!(head.kind, lp_net::ResponseKind::Opaque | lp_net::ResponseKind::OpaqueRedirect)
                         || matches!(head.status.as_u16(), 204 | 205 | 304);
-                wire.head = Some(head);
+                wire.head = Some(Box::new(head));
                 true
             }
             ResponseEvent::Data(bytes) => {
@@ -906,7 +908,7 @@ fn pump(page_id: u64, id: RequestId) {
     let (head, terminal, frontier) = {
         let mut wire = job.body.wire.lock().unwrap();
         wire.scheduled = false;
-        (wire.head.take(), wire.terminal.clone(), wire.frontier)
+        (wire.head.take().map(|head| *head), wire.terminal.clone(), wire.frontier)
     };
     if terminal.is_some() {
         // The fetch's Resource Timing entry rides this task (`timed_sink_carried`).
