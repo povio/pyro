@@ -943,19 +943,19 @@ fn root_classes() -> &'static RootClasses {
     ROOT.get_or_init(|| {
         let mut def = sys::JSClassDefinition::EMPTY;
         def.className = c"LightpandaWrapper".as_ptr();
-        def.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
+        def.attributes = sys::kJSClassAttributeNoAutomaticPrototype | sys::kJSClassAttributeImmortal;
         def.finalize = Some(finalize_wrapper);
         // SAFETY: static class name, valid definition.
         let base = unsafe { sys::JSClassCreate(&def) };
         let mut cdef = sys::JSClassDefinition::EMPTY;
         cdef.className = c"Function".as_ptr();
-        cdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
+        cdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype | sys::kJSClassAttributeImmortal;
         cdef.parentClass = base;
         cdef.callAsFunction = Some(crate::realm::closure_call);
         let closure = unsafe { sys::JSClassCreate(&cdef) };
         let mut mdef = sys::JSClassDefinition::EMPTY;
         mdef.className = c"Function".as_ptr();
-        mdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
+        mdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype | sys::kJSClassAttributeImmortal;
         mdef.callAsFunction = Some(member_call);
         mdef.finalize = Some(member_finalize);
         let member = unsafe { sys::JSClassCreate(&mdef) };
@@ -1125,7 +1125,7 @@ fn shared_class<C: JsClass>(parent: Option<&'static ClassDefErased>) -> &'static
     let indexed_callbacks = sys::spi::get().class_set_indexed_callbacks.filter(|_| def.hooks.indexed.is_some());
     let mut jsdef = sys::JSClassDefinition::EMPTY;
     jsdef.className = cname.as_ptr();
-    jsdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
+    jsdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype | sys::kJSClassAttributeImmortal;
     if def.announced_names && sys::spi::get().add_impure_property.is_some() {
         debug_assert!(!def.hooks.override_builtins && def.hooks.indexed.is_none(), "announced names need named(false)");
         jsdef.attributes |= sys::kJSClassAttributeImpureNamedProperties;

@@ -76,6 +76,10 @@ pub const kJSClassAttributeNoAutomaticPrototype: JSClassAttributes = 1 << 1;
 /// class's hooks answer only names announced with `JSAddImpureProperty`, so its wrappers'
 /// lookups stay cacheable. Stock JavaScriptCore ignores the bit.
 pub const kJSClassAttributeImpureNamedProperties: JSClassAttributes = 1 << 30;
+/// Patched JSC only (`JSForkPrivate.h`; the system framework ignores the
+/// bit): the class is never released, so its objects count no reference to
+/// it (one atomic word every thread making or sweeping its wrappers writes).
+pub const kJSClassAttributeImmortal: JSClassAttributes = 1 << 29;
 
 pub type JSRelationCondition = c_uint;
 
