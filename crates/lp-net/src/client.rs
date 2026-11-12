@@ -289,14 +289,22 @@ pub trait Interceptor: Send + Sync {
     fn handles_auth(&self) -> bool {
         false
     }
+    /// Opt-in: `paused` may be called for a request's first hop on the
+    /// thread that starts the request, and the thread that answers then
+    /// delivers a `Fulfill` or a failure itself (no I/O thread, no async
+    /// runtime around either call). Asked once per request.
+    fn pauses_on_caller(&self) -> bool {
+        false
+    }
     fn auth_required(&self, _challenge: AuthChallenge, reply: oneshot::Sender<AuthDecision>) {
         let _ = reply.send(AuthDecision::Default);
     }
 }
 
 enum Cmd {
-    /// The request, its sink and when the caller started it.
-    Fetch(RequestId, Box<Request>, ResponseSink, Instant),
+    /// The request, its sink, when the caller started it, and what the
+    /// caller's thread already did of its first hop ([`Staged`]).
+    Fetch(RequestId, Box<Request>, ResponseSink, Instant, Option<Staged>),
     Cancel(RequestId),
     WebSocket(Box<websocket::Start>),
 }
@@ -309,6 +317,9 @@ struct Inner {
     shared: Arc<Shared>,
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     activity: Arc<Mutex<ActivityMap>>,
+    /// Requests paused at the request stage off the I/O thread
+    /// ([`LocalPause`]), until their decision arrives.
+    local: Mutex<HashMap<RequestId, Arc<LocalPause>>>,
 }
 
 /// Request activity of one loader (document) on this client: requests started
@@ -375,6 +386,10 @@ struct Shared {
     /// verification (handshake signatures are still checked).
     ignore_certificate_errors: std::sync::atomic::AtomicBool,
     proxy: Option<Arc<ProxyState>>,
+    /// The configured `User-Agent` and `Accept-Language` as header values,
+    /// built once (a request without overrides sends them as they are).
+    default_user_agent: Option<HeaderValue>,
+    default_accept_language: Option<HeaderValue>,
 }
 
 impl Shared {
@@ -387,10 +402,207 @@ impl Shared {
     fn observed(&self) -> bool {
         self.observers.observed()
     }
+
+    /// A whole response at once: its events to the observers and to `sink`.
+    fn deliver_body(
+        &self,
+        id: RequestId,
+        req: &Request,
+        head: ResponseHead,
+        body: Bytes,
+        sink: &mut dyn FnMut(ResponseEvent),
+    ) -> Result<(), NetError> {
+        if body.len() > req.max_body.unwrap_or(self.config.max_body) {
+            return Err(NetError::TooLarge);
+        }
+        self.emit(NetEvent::ResponseReceived {
+            id,
+            head: Box::new(head.clone()),
+            destination: req.destination,
+            frame_id: req.frame_id.clone(),
+            loader_id: req.loader_id.clone(),
+            timestamp: self.now(),
+        });
+        sink(ResponseEvent::Response(head));
+        let len = body.len() as u64;
+        if !body.is_empty() {
+            if self.observed() {
+                self.emit(NetEvent::DataReceived { id, data: body.clone(), timestamp: self.now() });
+            }
+            sink(ResponseEvent::Data(body));
+        }
+        self.emit(NetEvent::LoadingFinished { id, encoded_len: len, timestamp: self.now() });
+        sink(ResponseEvent::Finished { encoded_len: len, decoded_len: len });
+        Ok(())
+    }
+
+    /// An interceptor's `Fulfill`: the response it gave, served as it is.
+    fn fulfill(
+        &self,
+        id: RequestId,
+        req: &Request,
+        status: u16,
+        headers: HeaderMap,
+        body: Bytes,
+        sink: &mut dyn FnMut(ResponseEvent),
+    ) -> Result<(), NetError> {
+        let status = StatusCode::from_u16(status).map_err(|_| NetError::Other("invalid status".into()))?;
+        crate::timing::served_locally();
+        let head = response_head(&req.url, status, headers, ResponseKind::Basic, false);
+        self.deliver_body(id, req, head, body, sink)
+    }
+
+    /// The request headers of one hop; `site` is its `Sec-Fetch-Site`,
+    /// `same_origin` whether the hop is same-origin to the requester.
+    fn build_headers(
+        &self,
+        cookies: &Mutex<CookieJar>,
+        req: &Request,
+        origin_url: Option<&Url>,
+        cors_cross: bool,
+        site: FetchSite,
+        same_origin: bool,
+    ) -> HeaderMap {
+        // Read under the lock: the settings are a header map and strings a
+        // request would otherwise copy to read them once.
+        let settings = self.settings.lock().unwrap();
+        let mut h = req.headers.clone();
+        let ua = match &settings.user_agent {
+            Some(ua) => HeaderValue::from_str(ua).ok(),
+            None => self.default_user_agent.clone(),
+        };
+        if let Some(v) = req.defaults.user_agent.clone().or(ua) {
+            h.entry(header::USER_AGENT).or_insert(v);
+        }
+        h.entry(header::ACCEPT).or_insert(HeaderValue::from_static(default_accept(req.destination)));
+        let lang = match &settings.accept_language {
+            Some(lang) => HeaderValue::from_str(lang).ok(),
+            None => self.default_accept_language.clone(),
+        };
+        if let Some(v) = req.defaults.accept_language.clone().or(lang) {
+            h.entry(header::ACCEPT_LANGUAGE).or_insert(v);
+        }
+        if let Some(hints) = &req.defaults.client_hints {
+            if crate::cookies::is_trustworthy(&req.url) {
+                for (name, value) in hints.iter() {
+                    h.entry(name.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
+        h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, br"));
+        if let Some(origin) = &req.origin {
+            if cors_cross || !matches!(req.method, Method::GET | Method::HEAD) {
+                if let Ok(v) = HeaderValue::from_str(origin) {
+                    h.insert(header::ORIGIN, v);
+                }
+            }
+        }
+        if let Some(r) = &req.referrer {
+            // A serialized URL is ASCII: the value takes the string as it is.
+            if let Some(v) = crate::referrer::referrer_for(r, &req.url, req.referrer_policy)
+                .and_then(|v| HeaderValue::from_maybe_shared(Bytes::from(v)).ok())
+            {
+                h.entry(header::REFERER).or_insert(v);
+            }
+        }
+        // Fetch Metadata, to potentially trustworthy URLs as in Chrome.
+        if crate::cookies::is_trustworthy(&req.url) {
+            h.insert(SEC_FETCH_SITE, HeaderValue::from_static(site.as_str()));
+            h.insert(SEC_FETCH_MODE, HeaderValue::from_static(crate::referrer::fetch_mode(req.mode, req.destination)));
+            h.insert(SEC_FETCH_DEST, HeaderValue::from_static(crate::referrer::fetch_dest(req.destination)));
+            if site == FetchSite::None && req.destination == Destination::Document {
+                h.insert(SEC_FETCH_USER, HeaderValue::from_static("?1"));
+            }
+        }
+        // Cookies.
+        let send_cookies = match req.credentials {
+            Credentials::Include => true,
+            Credentials::SameOrigin => same_origin,
+            Credentials::Omit => false,
+        };
+        if send_cookies && !h.contains_key(header::COOKIE) {
+            let top = matches!(req.destination, Destination::Document);
+            let safe = matches!(req.method, Method::GET | Method::HEAD);
+            let ctx = if req.mode == RequestMode::Navigate && req.origin.is_none() {
+                SiteContext::SameSite
+            } else if req.origin.is_some() && origin_url.is_none() {
+                if top && safe {
+                    SiteContext::CrossSiteTopLevelSafe
+                } else {
+                    SiteContext::CrossSite
+                }
+            } else {
+                site_context(origin_url, &req.url, top, safe)
+            };
+            let cookie = cookies.lock().unwrap().header_for(&req.url, ctx, crate::cookies::now_secs());
+            if let Some(c) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
+                h.insert(header::COOKIE, c);
+            }
+        }
+        for (k, v) in settings.extra_headers.iter() {
+            h.insert(k.clone(), v.clone());
+        }
+        for (k, v) in req.defaults.extra_headers.iter() {
+            h.insert(k.clone(), v.clone());
+        }
+        h
+    }
+
+    /// Effective cache mode, applying the Fetch "HTTP-network-or-cache fetch"
+    /// request header rules and Network.setCacheDisabled.
+    fn cache_mode(&self, req: &Request, headers: &mut HeaderMap) -> CacheMode {
+        let disabled = req.defaults.cache_disabled || self.settings.lock().unwrap().cache_disabled;
+        let mut mode = if disabled { CacheMode::NoStore } else { req.cache };
+        let conditional = [
+            header::IF_MODIFIED_SINCE,
+            header::IF_NONE_MATCH,
+            header::IF_UNMODIFIED_SINCE,
+            header::IF_MATCH,
+            header::IF_RANGE,
+        ];
+        if mode == CacheMode::Default && conditional.iter().any(|h| headers.contains_key(h)) {
+            mode = CacheMode::NoStore; // the page's own conditional request passes through untouched
+        }
+        if mode == CacheMode::NoCache && !headers.contains_key(header::CACHE_CONTROL) {
+            headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("max-age=0"));
+        }
+        if matches!(mode, CacheMode::NoStore | CacheMode::Reload) && (disabled || req.cache != CacheMode::Default) {
+            headers.entry(header::PRAGMA).or_insert(HeaderValue::from_static("no-cache"));
+            headers.entry(header::CACHE_CONTROL).or_insert(HeaderValue::from_static("no-cache"));
+        }
+        mode
+    }
+}
+
+/// A response head as the current request task times it ([`crate::timing`]).
+fn response_head(
+    url: &Url,
+    status: StatusCode,
+    headers: HeaderMap,
+    kind: ResponseKind,
+    redirected: bool,
+) -> ResponseHead {
+    let (mime, charset) =
+        headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(parse_content_type).unwrap_or_default();
+    ResponseHead {
+        url: url.clone(),
+        status,
+        status_text: status.canonical_reason().unwrap_or("").to_owned(),
+        headers,
+        mime,
+        charset,
+        redirected,
+        from_cache: false,
+        kind,
+        remote_addr: None,
+        protocol: Version::HTTP_11,
+        timing: crate::timing::current(),
+    }
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
+        self.abort_local();
         // Closing the channel stops the I/O loop, which fails in-flight
         // requests with `Aborted` before exiting.
         let (dead, _) = mpsc::unbounded_channel();
@@ -414,6 +626,8 @@ impl NetClient {
         let cache = crate::cache::HttpCache::new(config.http_cache_max_bytes, config.http_cache_max_entry_bytes);
         let proxy = config.proxy.clone().map(|p| Arc::new(ProxyState::new(p)));
         let shared = Arc::new(Shared {
+            default_user_agent: HeaderValue::from_str(&config.user_agent).ok(),
+            default_accept_language: HeaderValue::from_str(&config.accept_language).ok(),
             suspending: std::sync::atomic::AtomicBool::new(false),
             config,
             settings: Mutex::new(NetSettings::default()),
@@ -434,6 +648,7 @@ impl NetClient {
             shared,
             thread: Mutex::new(Some(thread)),
             activity: Arc::default(),
+            local: Mutex::default(),
         });
         let mut clients = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
         clients.retain(|c| c.strong_count() > 0);
@@ -512,10 +727,10 @@ impl NetClient {
             None => sink,
         };
         let start = Instant::now();
-        if let Err(mpsc::error::SendError(Cmd::Fetch(_, _, mut sink, _))) =
-            self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Fetch(id, Box::new(req), sink, start))
-        {
-            sink(ResponseEvent::Failed(NetError::Other("network thread stopped".into())));
+        let req = Box::new(req);
+        match self.inner.local_interceptor(&req) {
+            Some(interceptor) => LocalPause::start(&self.inner, interceptor, id, req, sink, start),
+            None => self.inner.send_fetch(id, req, sink, start, None),
         }
     }
 
@@ -571,6 +786,10 @@ impl NetClient {
     /// Aborts a request; its sink receives `Failed(Aborted)` unless it
     /// already finished.
     pub fn cancel(&self, id: RequestId) {
+        let local = self.inner.local.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        if local.is_some_and(|pause| pause.abort(&self.inner.shared)) {
+            return;
+        }
         let _ = self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Cancel(id));
     }
 
@@ -599,6 +818,200 @@ impl NetClient {
             }
         }
     }
+}
+
+/// The first hop of a request as its caller's thread left it: the headers
+/// built and published (`RequestWillBeSent`), and the interceptor's
+/// request-stage decision (`None`: it dropped its reply).
+struct Staged {
+    headers: HeaderMap,
+    decision: Option<InterceptDecision>,
+}
+
+impl Inner {
+    /// The interceptor to pause `req` with on the calling thread: one that
+    /// allows it is set and the request's first hop reaches its request stage (an
+    /// `http(s)` URL the checks before it let through). Any other request
+    /// starts on the I/O thread.
+    fn local_interceptor(&self, req: &Request) -> Option<Arc<dyn Interceptor>> {
+        if req.skip_interception || !matches!(req.url.scheme(), "http" | "https") {
+            return None;
+        }
+        let interceptor = self.shared.interceptor.lock().unwrap().clone()?;
+        if !interceptor.pauses_on_caller() || self.shared.settings.lock().unwrap().offline {
+            return None;
+        }
+        Some(interceptor)
+    }
+
+    fn send_fetch(&self, id: RequestId, req: Box<Request>, sink: ResponseSink, start: Instant, staged: Option<Staged>) {
+        let sent = self.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Fetch(id, req, sink, start, staged));
+        if let Err(mpsc::error::SendError(Cmd::Fetch(_, _, mut sink, _, _))) = sent {
+            sink(ResponseEvent::Failed(NetError::Other("network thread stopped".into())));
+        }
+    }
+
+    /// Fails every request paused off the I/O thread with `Aborted`.
+    fn abort_local(&self) {
+        let paused: Vec<Arc<LocalPause>> =
+            self.local.lock().unwrap_or_else(|e| e.into_inner()).drain().map(|(_, pause)| pause).collect();
+        for pause in paused {
+            pause.abort(&self.shared);
+        }
+    }
+}
+
+/// A request paused at the request stage of its first hop without the I/O
+/// thread: the thread that started it built its headers, published its
+/// start and called [`Interceptor::paused`]; the thread that answers runs
+/// what the answer asks for. A response the interceptor gives (`Fulfill`)
+/// or a failure is delivered there and then; a request that goes on to the
+/// network is handed to the I/O thread with its decision ([`Staged`]). An
+/// embedder that pauses every request to match it against its patterns
+/// would otherwise cross to the I/O thread and back for each one.
+///
+/// It is its reply's waker: the reply is polled where it is sent or dropped.
+struct LocalPause {
+    id: RequestId,
+    client: std::sync::Weak<Inner>,
+    /// Taken by whoever ends the pause: the decision, a cancel, or shutdown.
+    state: Mutex<Option<LocalState>>,
+}
+
+struct LocalState {
+    req: Box<Request>,
+    sink: ResponseSink,
+    headers: HeaderMap,
+    start: Instant,
+    reply: oneshot::Receiver<InterceptDecision>,
+}
+
+impl LocalPause {
+    fn start(
+        inner: &Arc<Inner>,
+        interceptor: Arc<dyn Interceptor>,
+        id: RequestId,
+        req: Box<Request>,
+        sink: ResponseSink,
+        start: Instant,
+    ) {
+        let shared = &inner.shared;
+        let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
+        let same_origin = req.origin.is_none() || origin_url.as_ref().is_some_and(|o| cors::same_origin(o, &req.url));
+        if req.mode == RequestMode::SameOrigin && !same_origin {
+            // Refused before its request stage: the I/O thread reports it.
+            return inner.send_fetch(id, req, sink, start, None);
+        }
+        let cors_cross = shared.config.enforce_cors && req.mode == RequestMode::Cors && !same_origin;
+        let site = hop_site(&req, origin_url.as_ref());
+        let mut headers =
+            shared.build_headers(&inner.cookies, &req, origin_url.as_ref(), cors_cross, site, same_origin);
+        shared.cache_mode(&req, &mut headers);
+        let info = || RequestInfo {
+            url: req.url.clone(),
+            method: req.method.clone(),
+            headers: headers.clone(),
+            post_data: req.body.clone(),
+            destination: req.destination,
+            frame_id: req.frame_id.clone(),
+            loader_id: req.loader_id.clone(),
+        };
+        shared.emit(NetEvent::RequestWillBeSent {
+            id,
+            request: Box::new(info()),
+            redirect_response: None,
+            timestamp: shared.now(),
+            wall_time: wall_time(),
+        });
+        let request = info();
+        let (tx, reply) = oneshot::channel();
+        let pause = Arc::new(LocalPause {
+            id,
+            client: Arc::downgrade(inner),
+            state: Mutex::new(Some(LocalState { req, sink, headers, start, reply })),
+        });
+        inner.local.lock().unwrap_or_else(|e| e.into_inner()).insert(id, pause.clone());
+        interceptor.paused(PausedRequest { id, request }, tx);
+        // A decision made inside `paused` goes to the I/O thread whatever it
+        // is: a sink is never called from inside `fetch`.
+        pause.poll(true);
+    }
+
+    /// Polls the reply and, once it is there, acts on it. `starting`: the
+    /// call is the one inside `fetch`.
+    fn poll(self: &Arc<Self>, starting: bool) {
+        // Without the client the request is already aborted, or about to be.
+        let Some(inner) = self.client.upgrade() else { return };
+        let mut slot = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(mut state) = slot.take() else { return };
+        let waker = std::task::Waker::from(self.clone());
+        let mut cx = std::task::Context::from_waker(&waker);
+        let decision = match std::future::Future::poll(std::pin::Pin::new(&mut state.reply), &mut cx) {
+            std::task::Poll::Pending => {
+                *slot = Some(state);
+                return;
+            }
+            std::task::Poll::Ready(decision) => decision.ok(),
+        };
+        let LocalState { req, mut sink, headers, start, .. } = state;
+        let on_io_thread =
+            starting || matches!(decision, Some(InterceptDecision::Continue { .. } | InterceptDecision::PauseResponse));
+        if on_io_thread {
+            // Sent under the lock: a cancel that finds the pause over sends
+            // its command after this one.
+            inner.send_fetch(self.id, req, sink, start, Some(Staged { headers, decision }));
+            drop(slot);
+            inner.local.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+            return;
+        }
+        // The lock is released first: the sink may cancel requests.
+        drop(slot);
+        inner.local.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+        let shared = &inner.shared;
+        let result = match decision {
+            Some(InterceptDecision::Fulfill { status, headers, body }) => {
+                let timing =
+                    crate::timing::NetTiming { start: Some(start), fetch_start: Some(start), ..Default::default() };
+                crate::timing::FETCH_TIMING.sync_scope(std::cell::Cell::new(timing), || {
+                    shared.fulfill(self.id, &req, status, headers, body, &mut sink)
+                })
+            }
+            Some(InterceptDecision::Fail(reason)) => Err(NetError::Blocked(cdp_reason(&reason))),
+            _ => Err(NetError::Other("interception dropped".into())),
+        };
+        if let Err(e) = result {
+            fail_local(shared, self.id, &req, &mut sink, e);
+        }
+    }
+
+    /// Ends the pause with `Aborted`. False when it was over already (the
+    /// I/O thread has the request, or it is finished).
+    fn abort(&self, shared: &Shared) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let Some(LocalState { req, mut sink, reply, .. }) = state else { return false };
+        // A terminal callback must not observe a live interception reply.
+        drop(reply);
+        fail_local(shared, self.id, &req, &mut sink, NetError::Aborted);
+        true
+    }
+}
+
+impl std::task::Wake for LocalPause {
+    fn wake(self: Arc<Self>) {
+        self.poll(false);
+    }
+}
+
+/// The terminal events of a request that failed off the I/O thread.
+fn fail_local(shared: &Shared, id: RequestId, req: &Request, sink: &mut ResponseSink, error: NetError) {
+    shared.emit(NetEvent::LoadingFailed {
+        id,
+        canceled: error == NetError::Aborted,
+        error: error.clone(),
+        destination: req.destination,
+        timestamp: shared.now(),
+    });
+    sink(ResponseEvent::Failed(error));
 }
 
 // ---------------------------------------------------------------------------
@@ -781,6 +1194,7 @@ pub fn suspend_for_fork() {
         CLIENTS.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(|c| c.upgrade()).collect();
     for inner in clients {
         inner.shared.suspending.store(true, Ordering::Relaxed);
+        inner.abort_local();
         let (dead, _) = mpsc::unbounded_channel();
         *inner.tx.lock().unwrap_or_else(|e| e.into_inner()) = dead;
         if let Some(t) = inner.thread.lock().unwrap_or_else(|e| e.into_inner()).take() {
@@ -820,10 +1234,6 @@ struct Io {
     per_origin: Mutex<HashMap<url::Origin, Arc<Semaphore>>>,
     /// Origins whose semaphore grew to `max_per_h2_origin`.
     h2_origins: Mutex<HashSet<url::Origin>>,
-    /// The configured `User-Agent` and `Accept-Language` as header values,
-    /// built once (a request without overrides sends them as they are).
-    default_user_agent: Option<HeaderValue>,
-    default_accept_language: Option<HeaderValue>,
 }
 
 fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: Arc<Mutex<CookieJar>>) {
@@ -851,8 +1261,6 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         let sessions = Arc::new(H2Sessions::default());
         let client = http_client(&shared.config, &tls_config(), shared.proxy.clone(), sessions.clone());
         let io = std::rc::Rc::new(Io {
-            default_user_agent: HeaderValue::from_str(&shared.config.user_agent).ok(),
-            default_accept_language: HeaderValue::from_str(&shared.config.accept_language).ok(),
             shared,
             cookies,
             client,
@@ -870,14 +1278,14 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                 idle.touch();
             }
             match cmd {
-                Cmd::Fetch(id, req, sink, start) => {
+                Cmd::Fetch(id, req, sink, start, staged) => {
                     let destination = req.destination;
                     let sink = std::rc::Rc::new(std::cell::RefCell::new(Some(sink)));
                     let (io2, tasks2, sink2, idle2) = (io.clone(), tasks.clone(), sink.clone(), idle.clone());
                     let handle = tokio::task::spawn_local(async move {
                         let dest = req.destination;
                         let timing = crate::timing::NetTiming { start: Some(start), ..Default::default() };
-                        let running = io2.run(id, *req, &sink2);
+                        let running = io2.run(id, *req, &sink2, staged);
                         let result = crate::timing::FETCH_TIMING.scope(std::cell::Cell::new(timing), running).await;
                         if let Err(e) = result {
                             io2.shared.emit(NetEvent::LoadingFailed {
@@ -1244,101 +1652,6 @@ impl Io {
         }
     }
 
-    /// The request headers of one hop; `site` is its `Sec-Fetch-Site`,
-    /// `same_origin` whether the hop is same-origin to the requester.
-    fn build_headers(
-        &self,
-        req: &Request,
-        origin_url: Option<&Url>,
-        cors_cross: bool,
-        site: FetchSite,
-        same_origin: bool,
-    ) -> HeaderMap {
-        // Read under the lock: the settings are a header map and strings a
-        // request would otherwise copy to read them once.
-        let settings = self.shared.settings.lock().unwrap();
-        let mut h = req.headers.clone();
-        let ua = match &settings.user_agent {
-            Some(ua) => HeaderValue::from_str(ua).ok(),
-            None => self.default_user_agent.clone(),
-        };
-        if let Some(v) = req.defaults.user_agent.clone().or(ua) {
-            h.entry(header::USER_AGENT).or_insert(v);
-        }
-        h.entry(header::ACCEPT).or_insert(HeaderValue::from_static(default_accept(req.destination)));
-        let lang = match &settings.accept_language {
-            Some(lang) => HeaderValue::from_str(lang).ok(),
-            None => self.default_accept_language.clone(),
-        };
-        if let Some(v) = req.defaults.accept_language.clone().or(lang) {
-            h.entry(header::ACCEPT_LANGUAGE).or_insert(v);
-        }
-        if let Some(hints) = &req.defaults.client_hints {
-            if crate::cookies::is_trustworthy(&req.url) {
-                for (name, value) in hints.iter() {
-                    h.entry(name.clone()).or_insert_with(|| value.clone());
-                }
-            }
-        }
-        h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, br"));
-        if let Some(origin) = &req.origin {
-            if cors_cross || !matches!(req.method, Method::GET | Method::HEAD) {
-                if let Ok(v) = HeaderValue::from_str(origin) {
-                    h.insert(header::ORIGIN, v);
-                }
-            }
-        }
-        if let Some(r) = &req.referrer {
-            // A serialized URL is ASCII: the value takes the string as it is.
-            if let Some(v) = crate::referrer::referrer_for(r, &req.url, req.referrer_policy)
-                .and_then(|v| HeaderValue::from_maybe_shared(Bytes::from(v)).ok())
-            {
-                h.entry(header::REFERER).or_insert(v);
-            }
-        }
-        // Fetch Metadata, to potentially trustworthy URLs as in Chrome.
-        if crate::cookies::is_trustworthy(&req.url) {
-            h.insert(SEC_FETCH_SITE, HeaderValue::from_static(site.as_str()));
-            h.insert(SEC_FETCH_MODE, HeaderValue::from_static(crate::referrer::fetch_mode(req.mode, req.destination)));
-            h.insert(SEC_FETCH_DEST, HeaderValue::from_static(crate::referrer::fetch_dest(req.destination)));
-            if site == FetchSite::None && req.destination == Destination::Document {
-                h.insert(SEC_FETCH_USER, HeaderValue::from_static("?1"));
-            }
-        }
-        // Cookies.
-        let send_cookies = match req.credentials {
-            Credentials::Include => true,
-            Credentials::SameOrigin => same_origin,
-            Credentials::Omit => false,
-        };
-        if send_cookies && !h.contains_key(header::COOKIE) {
-            let top = matches!(req.destination, Destination::Document);
-            let safe = matches!(req.method, Method::GET | Method::HEAD);
-            let ctx = if req.mode == RequestMode::Navigate && req.origin.is_none() {
-                SiteContext::SameSite
-            } else if req.origin.is_some() && origin_url.is_none() {
-                if top && safe {
-                    SiteContext::CrossSiteTopLevelSafe
-                } else {
-                    SiteContext::CrossSite
-                }
-            } else {
-                site_context(origin_url, &req.url, top, safe)
-            };
-            let cookie = self.cookies.lock().unwrap().header_for(&req.url, ctx, crate::cookies::now_secs());
-            if let Some(c) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
-                h.insert(header::COOKIE, c);
-            }
-        }
-        for (k, v) in settings.extra_headers.iter() {
-            h.insert(k.clone(), v.clone());
-        }
-        for (k, v) in req.defaults.extra_headers.iter() {
-            h.insert(k.clone(), v.clone());
-        }
-        h
-    }
-
     fn store_cookies(&self, url: &Url, headers: &HeaderMap, allowed: bool) {
         if !allowed {
             return;
@@ -1396,7 +1709,13 @@ impl Io {
         }
     }
 
-    async fn run(&self, id: RequestId, mut req: Request, sink: &SharedSink) -> Result<(), NetError> {
+    async fn run(
+        &self,
+        id: RequestId,
+        mut req: Request,
+        sink: &SharedSink,
+        mut staged: Option<Staged>,
+    ) -> Result<(), NetError> {
         let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
         let max_body = req.max_body.unwrap_or(self.shared.config.max_body);
         let mut redirects = 0u32;
@@ -1436,8 +1755,16 @@ impl Io {
                 || (!tainted && origin_url.as_ref().is_some_and(|o| cors::same_origin(o, &req.url)));
             let cors_cross = self.shared.config.enforce_cors && req.mode == RequestMode::Cors && !same_origin;
             site = site.max(hop_site(&req, origin_url.as_ref()));
-            let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross, site, same_origin);
-            let cache_mode = self.cache_mode(&req, &mut headers);
+            // The first hop of a request its caller's thread paused comes
+            // with its headers built, its start published and its decision.
+            let (mut headers, mut decided) = match staged.take() {
+                Some(staged) => (staged.headers, Some(staged.decision)),
+                None => (
+                    self.shared.build_headers(&self.cookies, &req, origin_url.as_ref(), cors_cross, site, same_origin),
+                    None,
+                ),
+            };
+            let cache_mode = self.shared.cache_mode(&req, &mut headers);
             // The request as sent, made for each consumer (the observers here,
             // an interceptor below) instead of copied for both up front.
             let info = |headers: &HeaderMap| RequestInfo {
@@ -1449,13 +1776,15 @@ impl Io {
                 frame_id: req.frame_id.clone(),
                 loader_id: req.loader_id.clone(),
             };
-            self.shared.emit(NetEvent::RequestWillBeSent {
-                id,
-                request: Box::new(info(&headers)),
-                redirect_response: redirect_response.take().map(Box::new),
-                timestamp: self.shared.now(),
-                wall_time: wall_time(),
-            });
+            if decided.is_none() {
+                self.shared.emit(NetEvent::RequestWillBeSent {
+                    id,
+                    request: Box::new(info(&headers)),
+                    redirect_response: redirect_response.take().map(Box::new),
+                    timestamp: self.shared.now(),
+                    wall_time: wall_time(),
+                });
+            }
 
             // Observers must see a start before every terminal/response path,
             // including local data URLs and requests rejected before I/O.
@@ -1486,37 +1815,44 @@ impl Io {
             // CDP Fetch interception (request stage).
             let interceptor =
                 if req.skip_interception { None } else { self.shared.interceptor.lock().unwrap().clone() };
-            let paused = interceptor.as_ref().map(|_| info(&headers));
             let (mut method, mut url, mut headers, mut body) =
                 (req.method.clone(), req.url.clone(), headers, req.body.clone());
-            if let (Some(i), Some(info)) = (&interceptor, paused) {
-                let (tx, rx) = oneshot::channel();
-                let paused_info = info.clone();
-                i.paused(PausedRequest { id, request: info }, tx);
-                match rx.await {
-                    Ok(InterceptDecision::PauseResponse) => {
-                        pause_response.get_or_insert(paused_info);
-                    }
-                    Ok(InterceptDecision::Continue { url: u, method: m, headers: h, body: b }) => {
-                        if let Some(u) = u {
-                            url = u;
-                        }
-                        if let Some(m) = m {
-                            method = m;
-                        }
-                        if let Some(h) = h {
-                            headers = h;
-                        }
-                        if b.is_some() {
-                            body = b;
-                        }
-                    }
-                    Ok(InterceptDecision::Fulfill { status, headers: h, body: b }) => {
-                        return self.fulfill(id, &req, sink, status, h, b);
-                    }
-                    Ok(InterceptDecision::Fail(reason)) => return Err(NetError::Blocked(cdp_reason(&reason))),
-                    Err(_) => return Err(NetError::Other("interception dropped".into())),
+            // `Some(None)`: the interceptor dropped its reply.
+            let decision = match (decided.take(), &interceptor) {
+                (Some(decision), _) => Some(decision),
+                (None, Some(i)) => {
+                    let (tx, rx) = oneshot::channel();
+                    i.paused(PausedRequest { id, request: info(&headers) }, tx);
+                    Some(rx.await.ok())
                 }
+                (None, None) => None,
+            };
+            match decision {
+                None => {}
+                Some(Some(InterceptDecision::PauseResponse)) => {
+                    if pause_response.is_none() {
+                        pause_response = Some(info(&headers));
+                    }
+                }
+                Some(Some(InterceptDecision::Continue { url: u, method: m, headers: h, body: b })) => {
+                    if let Some(u) = u {
+                        url = u;
+                    }
+                    if let Some(m) = m {
+                        method = m;
+                    }
+                    if let Some(h) = h {
+                        headers = h;
+                    }
+                    if b.is_some() {
+                        body = b;
+                    }
+                }
+                Some(Some(InterceptDecision::Fulfill { status, headers: h, body: b })) => {
+                    return self.fulfill(id, &req, sink, status, h, b);
+                }
+                Some(Some(InterceptDecision::Fail(reason))) => return Err(NetError::Blocked(cdp_reason(&reason))),
+                Some(None) => return Err(NetError::Other("interception dropped".into())),
             }
 
             // Static files for an origin served from disk: after interception
@@ -1938,31 +2274,6 @@ impl Io {
         }
     }
 
-    /// Effective cache mode, applying the Fetch "HTTP-network-or-cache fetch"
-    /// request header rules and Network.setCacheDisabled.
-    fn cache_mode(&self, req: &Request, headers: &mut HeaderMap) -> CacheMode {
-        let disabled = req.defaults.cache_disabled || self.shared.settings.lock().unwrap().cache_disabled;
-        let mut mode = if disabled { CacheMode::NoStore } else { req.cache };
-        let conditional = [
-            header::IF_MODIFIED_SINCE,
-            header::IF_NONE_MATCH,
-            header::IF_UNMODIFIED_SINCE,
-            header::IF_MATCH,
-            header::IF_RANGE,
-        ];
-        if mode == CacheMode::Default && conditional.iter().any(|h| headers.contains_key(h)) {
-            mode = CacheMode::NoStore; // the page's own conditional request passes through untouched
-        }
-        if mode == CacheMode::NoCache && !headers.contains_key(header::CACHE_CONTROL) {
-            headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("max-age=0"));
-        }
-        if matches!(mode, CacheMode::NoStore | CacheMode::Reload) && (disabled || req.cache != CacheMode::Default) {
-            headers.entry(header::PRAGMA).or_insert(HeaderValue::from_static("no-cache"));
-            headers.entry(header::CACHE_CONTROL).or_insert(HeaderValue::from_static("no-cache"));
-        }
-        mode
-    }
-
     /// RFC 9111 §4.4: a non-error response to an unsafe method invalidates the
     /// target URI, and same-origin Location / Content-Location targets.
     fn invalidate_after_unsafe(&self, url: &Url, headers: &HeaderMap) {
@@ -2044,22 +2355,7 @@ impl Io {
         kind: ResponseKind,
         redirected: bool,
     ) -> ResponseHead {
-        let (mime, charset) =
-            headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(parse_content_type).unwrap_or_default();
-        ResponseHead {
-            url: url.clone(),
-            status,
-            status_text: status.canonical_reason().unwrap_or("").to_owned(),
-            headers,
-            mime,
-            charset,
-            redirected,
-            from_cache: false,
-            kind,
-            remote_addr: None,
-            protocol: Version::HTTP_11,
-            timing: crate::timing::current(),
-        }
+        response_head(url, status, headers, kind, redirected)
     }
 
     fn finish_empty(
@@ -2091,28 +2387,7 @@ impl Io {
         head: ResponseHead,
         body: Bytes,
     ) -> Result<(), NetError> {
-        if body.len() > req.max_body.unwrap_or(self.shared.config.max_body) {
-            return Err(NetError::TooLarge);
-        }
-        self.shared.emit(NetEvent::ResponseReceived {
-            id,
-            head: Box::new(head.clone()),
-            destination: req.destination,
-            frame_id: req.frame_id.clone(),
-            loader_id: req.loader_id.clone(),
-            timestamp: self.shared.now(),
-        });
-        deliver(sink, ResponseEvent::Response(head));
-        let len = body.len() as u64;
-        if !body.is_empty() {
-            if self.shared.observed() {
-                self.shared.emit(NetEvent::DataReceived { id, data: body.clone(), timestamp: self.shared.now() });
-            }
-            deliver(sink, ResponseEvent::Data(body));
-        }
-        self.shared.emit(NetEvent::LoadingFinished { id, encoded_len: len, timestamp: self.shared.now() });
-        deliver(sink, ResponseEvent::Finished { encoded_len: len, decoded_len: len });
-        Ok(())
+        self.shared.deliver_body(id, req, head, body, &mut |ev| deliver(sink, ev))
     }
 
     /// Answers a request from a `static_files` root: 200 with the file,
@@ -2171,10 +2446,7 @@ impl Io {
         headers: HeaderMap,
         body: Bytes,
     ) -> Result<(), NetError> {
-        let status = StatusCode::from_u16(status).map_err(|_| NetError::Other("invalid status".into()))?;
-        crate::timing::served_locally();
-        let head = self.head(&req.url, status, headers, ResponseKind::Basic, false);
-        self.deliver_body(id, req, sink, head, body)
+        self.shared.fulfill(id, req, status, headers, body, &mut |ev| deliver(sink, ev))
     }
 
     fn serve_data(
@@ -2358,30 +2630,57 @@ impl NetClient {
     }
 
     /// Observe a request handled by a service worker without issuing another network fetch.
-    pub fn observe_service_worker_response(&self, id: RequestId, request: &Request, mut sink: ResponseSink) -> ResponseSink {
+    pub fn observe_service_worker_response(
+        &self,
+        id: RequestId,
+        request: &Request,
+        mut sink: ResponseSink,
+    ) -> ResponseSink {
         let shared = self.inner.shared.clone();
-        if !shared.observed() { return sink; }
+        if !shared.observed() {
+            return sink;
+        }
         let destination = request.destination;
         let frame_id = request.frame_id.clone();
         let loader_id = request.loader_id.clone();
         shared.emit(NetEvent::RequestWillBeSent {
             id,
             request: Box::new(RequestInfo {
-                url: request.url.clone(), method: request.method.clone(), headers: request.headers.clone(),
-                post_data: request.body.clone(), destination, frame_id: frame_id.clone(), loader_id: loader_id.clone(),
+                url: request.url.clone(),
+                method: request.method.clone(),
+                headers: request.headers.clone(),
+                post_data: request.body.clone(),
+                destination,
+                frame_id: frame_id.clone(),
+                loader_id: loader_id.clone(),
             }),
-            redirect_response: None, timestamp: shared.now(), wall_time: wall_time(),
+            redirect_response: None,
+            timestamp: shared.now(),
+            wall_time: wall_time(),
         });
         Box::new(move |event| {
             let timestamp = shared.now();
             match &event {
                 ResponseEvent::Response(head) => shared.emit(NetEvent::ResponseReceived {
-                    id, head: Box::new(head.clone()), destination, frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp,
+                    id,
+                    head: Box::new(head.clone()),
+                    destination,
+                    frame_id: frame_id.clone(),
+                    loader_id: loader_id.clone(),
+                    timestamp,
                 }),
                 ResponseEvent::Data(data) => shared.emit(NetEvent::DataReceived { id, data: data.clone(), timestamp }),
-                ResponseEvent::Finished { encoded_len, .. } => shared.emit(NetEvent::LoadingFinished { id, encoded_len: *encoded_len, timestamp }),
-                ResponseEvent::Failed(error) => shared.emit(NetEvent::LoadingFailed { id, error: error.clone(), canceled: matches!(error, NetError::Aborted), destination, timestamp }),
-                ResponseEvent::Redirect { .. } => {},
+                ResponseEvent::Finished { encoded_len, .. } => {
+                    shared.emit(NetEvent::LoadingFinished { id, encoded_len: *encoded_len, timestamp })
+                }
+                ResponseEvent::Failed(error) => shared.emit(NetEvent::LoadingFailed {
+                    id,
+                    error: error.clone(),
+                    canceled: matches!(error, NetError::Aborted),
+                    destination,
+                    timestamp,
+                }),
+                ResponseEvent::Redirect { .. } => {}
             }
             sink(event);
         })

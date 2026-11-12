@@ -280,7 +280,15 @@ impl DriverMocks {
                     mocks.release_one(id);
                 });
             }
-            Err(_) => self.release_one(id),
+            // Off the I/O thread (a rule added while a request was on its
+            // way to `paused` on its caller's thread): a thread keeps the time.
+            Err(_) => {
+                let mocks = self.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(delay);
+                    mocks.release_one(id);
+                });
+            }
         }
     }
 
@@ -340,6 +348,13 @@ impl Interceptor for ContextInterceptor {
                 let _ = reply.send(continue_unmodified());
             }
         }
+    }
+
+    /// With `Fetch` enabled every request is paused to be matched against
+    /// the session's patterns: that happens where the request starts. Mock
+    /// rules keep their timers on the I/O thread.
+    fn pauses_on_caller(&self) -> bool {
+        self.fetch.is_some() && self.mocks.rules.lock().unwrap().is_empty()
     }
 
     fn response(&self, resp: PausedResponse, reply: oneshot::Sender<ResponseDecision>) {
