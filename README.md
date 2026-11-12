@@ -82,19 +82,24 @@ sccache passes through, so edit rebuilds are unchanged (lp-dom edit: 4.6-5.3 s w
 
 ### Profile-guided optimization (optional)
 
-`scripts/pgo/build.sh` builds `target/release-pgo/lightningpanda` in three steps that can also run
-separately: `generate.sh` (instrumented build, `-Cprofile-generate`), `train.sh` (one `serve` runs
-`bench/playwright-suite` three times and `bench/scripts/css-bench.mjs`, plus `LP_PGO_EXTRA=<script>` for a
-workload outside the repository, for example an application's own E2E suite against `LP_WS`), `use.sh`
-(`llvm-profdata merge` from rustup's `llvm-tools` component, then `-Cprofile-use`). The `release-pgo` profile
-is `release` in another directory; the flags come from the scripts, and `release` stays the default because
-the flow costs about 2.5 release builds and the profile goes stale as hot code changes. Measured on an M1 Max
-with this training against the same tree at `release` (CPU time of the `serve` process, binaries alternated, two
-sessions of 3-4 runs each): Playwright suite -5% and -7%, 1,200-row table text-edit loop -5% and -12%,
-paragraph-append and mixed layout loops -7% to -16%, PDF generation over 44 templates -2%, a React SPA load within
-noise; PDF output byte-identical. Adding your own workload with `LP_PGO_EXTRA` focuses the profile on it.
-Fat LTO on top of PGO and a thin-LTO JavaScriptCore were measured and not adopted; see the notes
-in `Cargo.toml` and `scripts/jsc/build.sh`.
+`scripts/pgo/build.sh` builds `target/<host>/release-pgo/lightningpanda` in three steps that can also run
+separately: `generate.sh` (instrumented build), `train.sh` (`bench/scripts/cdp-perf.mjs`, every scenario
+once against `serve` and again against `serve --fork`, one profile file per process), `use.sh` (the build
+with the profile). It needs rustup's `llvm-tools` component and bun. `LP_PGO_EXTRA=<script>` adds a
+workload of your own, for example an application's E2E suite against `LP_WS`. The `release-pgo` profile
+is `release` in another directory and `release` stays the default: the flow costs two release builds and
+the training, and a profile belongs to the sources it was trained on. Measured on an M1 Max against the
+release binary (instructions per operation, binaries alternated; cdp-perf geomean over 63 scenarios, then
+the ToS SPA load and the pages after it; each plain / fork):
+
+| | cdp-perf | SPA load | SPA pages |
+|---|---|---|---|
+| Rust PGO | -9% / -9% | 0% / -3% | -6% / -6% |
+
+`bench/scripts/css-bench.mjs`, which the training does not run, gains 10-18%. RSS is unchanged. Training
+with an application's own workload as well (`LP_PGO_EXTRA`, weighted 10) made its pages 3-6 points faster
+without costing cdp-perf. Fat LTO on top of PGO and a thin-LTO JavaScriptCore were measured and not
+adopted; see the notes in `Cargo.toml` and `scripts/jsc/build.sh`.
 
 ## Usage
 
