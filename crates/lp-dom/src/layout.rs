@@ -204,6 +204,204 @@ pub struct Layout {
     /// The `position: sticky` elements' inputs, with the sync they were
     /// read at.
     sticky: RefCell<Option<(u64, Rc<FxHashMap<NodeId, ExternalSticky>>)>>,
+    /// The hit-test index of the current layout and scroll position, and
+    /// what decides when one is built (see [`HitIndex`]).
+    hit_index: RefCell<HitIndexState>,
+}
+
+/// The hit-testable boxes of one layout at one scroll position, in paint
+/// input order, under a spatial index: answers "the topmost box at this
+/// point" from the few boxes around the point, for as long as neither the
+/// layout (DOM, styles, focus/hover, viewport, a loaded resource: one more
+/// sync of the engine) nor a scroll offset changes.
+///
+/// `els`/`rects` list every box with an area in tree order, with the client
+/// rect hit testing gives it; `grid` maps a point to the boxes whose rect
+/// reaches the point's cell. Paint order (stacking contexts, z-index, top
+/// layer), overflow clips and the style predicates of the boxes found are
+/// those of `result`, resolved once per box when a test first meets it
+/// (`LayoutResult::hit`, `geometry`): the selection is the scan's, over
+/// fewer boxes.
+struct HitIndex {
+    result: Rc<LayoutResult>,
+    geometry: RefCell<HitTestGeometry>,
+    els: Vec<NodeId>,
+    rects: Vec<Rect>,
+    grid: HitGrid,
+}
+
+impl HitIndex {
+    /// `hit_select`'s test of a point against a box's rect (edges included).
+    fn holds(r: &Rect, x: f64, y: f64) -> bool {
+        x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height
+    }
+}
+
+/// A uniform grid over the bounds of a list of rects: each cell lists, in
+/// ascending order, the rects reaching it (compressed rows: `starts[c]..
+/// starts[c + 1]` of `items`). A rect holding a point is listed in the
+/// point's cell: the cell of a coordinate never decreases as the coordinate
+/// grows, and a rect is listed from its near edge's cell to its far edge's.
+#[derive(Default)]
+struct HitGrid {
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    /// Cells per CSS pixel.
+    sx: f64,
+    sy: f64,
+    nx: usize,
+    ny: usize,
+    starts: Vec<u32>,
+    items: Vec<u32>,
+    /// Rects with an edge at infinity, in every cell's list by hand.
+    unbounded: Vec<u32>,
+}
+
+impl HitGrid {
+    /// At most this many list entries per rect on average: a coarser grid
+    /// is taken when large boxes (a page's wrappers span every cell) would
+    /// need more.
+    const FILL: usize = 12;
+
+    fn new(rects: &[Rect]) -> HitGrid {
+        let mut g = HitGrid {
+            x0: f64::INFINITY,
+            y0: f64::INFINITY,
+            x1: f64::NEG_INFINITY,
+            y1: f64::NEG_INFINITY,
+            ..Default::default()
+        };
+        let finite = |r: &Rect| r.x.is_finite() && r.y.is_finite() && r.width.is_finite() && r.height.is_finite();
+        let mut bounded = 0usize;
+        for (i, r) in rects.iter().enumerate() {
+            if !finite(r) {
+                g.unbounded.push(i as u32);
+                continue;
+            }
+            bounded += 1;
+            g.x0 = g.x0.min(r.x);
+            g.y0 = g.y0.min(r.y);
+            g.x1 = g.x1.max(r.x + r.width);
+            g.y1 = g.y1.max(r.y + r.height);
+        }
+        if bounded == 0 {
+            // No cell: `cell` answers `unbounded` for every point.
+            (g.x0, g.y0, g.x1, g.y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+            return g;
+        }
+        // About one cell per rect, in the bounds' proportions.
+        let (w, h) = ((g.x1 - g.x0).max(1.0), (g.y1 - g.y0).max(1.0));
+        let cells = bounded.min(1 << 16) as f64;
+        let mut nx = ((cells * w / h).sqrt().round() as usize).clamp(1, 1 << 10);
+        let mut ny = ((cells / nx as f64).round() as usize).clamp(1, 1 << 12);
+        loop {
+            g.nx = nx;
+            g.ny = ny;
+            g.sx = if g.x1 > g.x0 { nx as f64 / (g.x1 - g.x0) } else { 0.0 };
+            g.sy = if g.y1 > g.y0 { ny as f64 / (g.y1 - g.y0) } else { 0.0 };
+            let limit = Self::FILL * bounded + nx * ny;
+            let mut counts = vec![0u32; nx * ny + 1];
+            let mut total = 0usize;
+            for r in rects.iter().filter(|r| finite(r)) {
+                let (cx0, cx1, cy0, cy1) = g.span(r);
+                total += (cx1 - cx0 + 1) * (cy1 - cy0 + 1);
+                if total > limit && nx * ny > 1 {
+                    break;
+                }
+                for cy in cy0..=cy1 {
+                    for c in &mut counts[cy * nx + cx0..=cy * nx + cx1] {
+                        *c += 1;
+                    }
+                }
+            }
+            if total > limit && nx * ny > 1 {
+                nx = nx.div_ceil(2);
+                ny = ny.div_ceil(2);
+                continue;
+            }
+            // Counts to starts, then fill in rect order (ascending lists).
+            let mut sum = 0u32;
+            for c in counts.iter_mut() {
+                let n = *c;
+                *c = sum;
+                sum += n;
+            }
+            let mut next = counts.clone();
+            let mut items = vec![0u32; sum as usize];
+            for (i, r) in rects.iter().enumerate().filter(|(_, r)| finite(r)) {
+                let (cx0, cx1, cy0, cy1) = g.span(r);
+                for cy in cy0..=cy1 {
+                    for cx in cx0..=cx1 {
+                        let at = &mut next[cy * nx + cx];
+                        items[*at as usize] = i as u32;
+                        *at += 1;
+                    }
+                }
+            }
+            if !g.unbounded.is_empty() {
+                // Rare (a box at infinity): merged into every list.
+                let mut merged = Vec::with_capacity(items.len() + g.unbounded.len() * nx * ny);
+                let mut starts = Vec::with_capacity(counts.len());
+                for c in 0..nx * ny {
+                    starts.push(merged.len() as u32);
+                    let mut list: Vec<u32> = items[counts[c] as usize..counts[c + 1] as usize].to_vec();
+                    list.extend_from_slice(&g.unbounded);
+                    list.sort_unstable();
+                    merged.extend(list);
+                }
+                starts.push(merged.len() as u32);
+                (counts, items) = (starts, merged);
+            }
+            g.starts = counts;
+            g.items = items;
+            return g;
+        }
+    }
+
+    fn col(&self, x: f64) -> usize {
+        (((x - self.x0) * self.sx).floor().max(0.0) as usize).min(self.nx - 1)
+    }
+
+    fn row(&self, y: f64) -> usize {
+        (((y - self.y0) * self.sy).floor().max(0.0) as usize).min(self.ny - 1)
+    }
+
+    /// The cells a (finite) rect reaches: columns, then rows, inclusive.
+    fn span(&self, r: &Rect) -> (usize, usize, usize, usize) {
+        (self.col(r.x), self.col(r.x + r.width), self.row(r.y), self.row(r.y + r.height))
+    }
+
+    /// The rects that may hold the point, ascending.
+    fn cell(&self, x: f64, y: f64) -> &[u32] {
+        if x.is_nan() || y.is_nan() {
+            return &[];
+        }
+        if !(x >= self.x0 && x <= self.x1 && y >= self.y0 && y <= self.y1) {
+            // Outside every bounded rect.
+            return &self.unbounded;
+        }
+        let c = self.row(y) * self.nx + self.col(x);
+        &self.items[self.starts[c] as usize..self.starts[c + 1] as usize]
+    }
+}
+
+/// [`Layout`]'s hit-test index and the account that decides when to build
+/// one (see `Layout::hit_index_for`).
+#[derive(Default)]
+struct HitIndexState {
+    /// The sync count and scroll generation the rest is of.
+    epoch: Option<(u64, u64)>,
+    index: Option<Rc<HitIndex>>,
+    /// Tests of this epoch answered without an index, and what they took.
+    tests: u32,
+    rented: std::time::Duration,
+    /// What the last descent took, and the last index to build (`None`:
+    /// none was built yet).
+    descent_cost: std::time::Duration,
+    build_cost: Option<std::time::Duration>,
+    builds: u64,
 }
 
 /// The observation stamp and viewport a geometry source was synced at.
@@ -247,6 +445,7 @@ impl Layout {
             result: RefCell::new(None),
             text: RefCell::new(None),
             sticky: RefCell::new(None),
+            hit_index: RefCell::default(),
         }
     }
 
@@ -259,6 +458,7 @@ impl Layout {
         self.result.borrow_mut().take();
         self.text.borrow_mut().take();
         self.sticky.borrow_mut().take();
+        *self.hit_index.borrow_mut() = HitIndexState::default();
     }
 
     /// The geometry source, brought up to the document (synced when
@@ -1407,6 +1607,152 @@ impl Layout {
     /// descent of its tree reaching the boxes that may hold the point and
     /// their ancestors) or, without that, among every box of the document.
     fn element_from_point_impl(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
+        if ignore_x {
+            // A whole row of the page: nothing a point index narrows.
+            return self.hit_test_descent(dom, x, y, true);
+        }
+        if let Some(index) = self.hit_index_for(dom, false) {
+            return self.hit_test_indexed(dom, &index, x, y);
+        }
+        let started = std::time::Instant::now();
+        let hit = self.hit_test_descent(dom, x, y, false);
+        let took = started.elapsed();
+        let mut state = self.hit_index.borrow_mut();
+        state.rented += took;
+        state.descent_cost = took;
+        hit
+    }
+
+    /// The index of the current layout and scroll position, when there is
+    /// one or it is time to build one (`force`: now).
+    ///
+    /// An index answers any point but reads every box of the document
+    /// once, and lives until the next change of the layout or of a scroll
+    /// offset; a descent of the engine's tree answers one point and reads
+    /// the boxes on its way, with a fixed cost of its own (its candidates'
+    /// boxes, paint order and clips are worked out per test). Which is
+    /// cheaper depends on the size of the document and on how many tests
+    /// come before the next change, which is not known. So, by what each
+    /// last took on this document:
+    ///
+    /// - an index that builds in no more time than one descent takes is
+    ///   built at the first test of every layout (a small document: a
+    ///   click handler writing to the DOM between clicks costs a build per
+    ///   click, less than the descents it replaces);
+    /// - otherwise the descents answer until those of this layout have
+    ///   cost as much as an index, and then it is built: never more than
+    ///   twice the best choice, whatever the page does. A large page that
+    ///   changes between pointer events keeps descending; one clicked or
+    ///   moved over as it stands is indexed after a few tests.
+    ///
+    /// The first index of a document is built at the second test of a
+    /// layout (its price is not known before). The answer is the same by
+    /// either path: only the cost depends on the clock.
+    fn hit_index_for(&self, dom: &Dom, force: bool) -> Option<Rc<HitIndex>> {
+        self.synced_geometry_source(dom)?;
+        let epoch = (self.syncs.get(), self.scroll_generation);
+        {
+            let mut state = self.hit_index.borrow_mut();
+            if state.epoch != Some(epoch) {
+                state.epoch = Some(epoch);
+                state.index = None;
+                state.tests = 0;
+                state.rented = std::time::Duration::ZERO;
+            }
+            if let Some(index) = &state.index {
+                return Some(index.clone());
+            }
+            state.tests += 1;
+            let buy = match state.build_cost {
+                None => state.tests >= 2,
+                Some(build) => build <= state.descent_cost || state.rented >= build,
+            };
+            if !force && !buy {
+                return None;
+            }
+        }
+        let started = std::time::Instant::now();
+        let index = Rc::new(self.build_hit_index(dom));
+        let mut state = self.hit_index.borrow_mut();
+        state.build_cost = Some(started.elapsed());
+        state.builds += 1;
+        state.index = Some(index.clone());
+        Some(index)
+    }
+
+    /// Reads every box of the document into a [`HitIndex`].
+    fn build_hit_index(&self, dom: &Dom) -> HitIndex {
+        let result = self.layout_result(dom);
+        // As `hit_test_scan` sets up, for the life of the index.
+        let mut geometry = HitTestGeometry {
+            has_element_scroll: self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0),
+            has_sticky: self.external.as_ref().is_some_and(|source| source.has_sticky()),
+            ..Default::default()
+        };
+        let mut order: Vec<(u32, NodeId)> = result
+            .boxes
+            .iter()
+            .filter(|(_, b)| !(b.rect.width <= 0.0 && b.rect.height <= 0.0))
+            .map(|(&el, b)| (b.order, el))
+            .collect();
+        order.sort_unstable_by_key(|&(order, _)| order);
+        let mut els = Vec::with_capacity(order.len());
+        let mut rects = Vec::with_capacity(order.len());
+        for (_, el) in order {
+            let r = self.hit_test_client_rect(dom, &result, el, &mut geometry);
+            // A rect no point is inside of (see `HitIndex::holds`).
+            if r.x.is_nan() || r.y.is_nan() || r.width.is_nan() || r.height.is_nan() || r.width < 0.0 || r.height < 0.0
+            {
+                continue;
+            }
+            els.push(el);
+            rects.push(r);
+        }
+        let grid = HitGrid::new(&rects);
+        HitIndex { result, geometry: RefCell::new(geometry), els, rects, grid }
+    }
+
+    /// [`Layout::element_from_point_impl`] from `index`: the boxes of the
+    /// point's cell holding the point, in tree order, are the candidates
+    /// of the same selection as the scan's and the descent's.
+    fn hit_test_indexed(&self, dom: &Dom, index: &HitIndex, x: f64, y: f64) -> Option<NodeId> {
+        let candidates = index
+            .grid
+            .cell(x, y)
+            .iter()
+            .filter(|&&i| HitIndex::holds(&index.rects[i as usize], x, y))
+            .map(|&i| index.els[i as usize]);
+        self.hit_select(dom, &index.result, candidates, x, y, false, &mut index.geometry.borrow_mut())
+    }
+
+    /// `document.elementFromPoint(x, y)` answered from the index, built
+    /// now if this layout has none yet (tests).
+    #[doc(hidden)]
+    pub fn element_from_point_indexed(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        let index = self.hit_index_for(dom, true)?;
+        self.hit_test_indexed(dom, &index, x, y)
+    }
+
+    /// `document.elementFromPoint(x, y)` answered by a descent of the
+    /// engine's tree, whether or not there is an index (tests).
+    #[doc(hidden)]
+    pub fn element_from_point_descent(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        self.hit_test_descent(dom, x, y, false)
+    }
+
+    /// How many hit-test indexes were built so far, and whether the current
+    /// layout has one (tests).
+    #[doc(hidden)]
+    pub fn hit_index_stats(&self, dom: &Dom) -> (u64, bool) {
+        self.synced_geometry_source(dom);
+        let state = self.hit_index.borrow();
+        let current = state.epoch == Some((self.syncs.get(), self.scroll_generation)) && state.index.is_some();
+        (state.builds, current)
+    }
+
+    /// The hit test by the engine's candidates (see
+    /// [`Layout::element_from_point_impl`]).
+    fn hit_test_descent(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
         let source = self.synced_geometry_source(dom)?.clone();
         let has_element_scroll = self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0);
         let sticky = self.sticky_map(dom);
