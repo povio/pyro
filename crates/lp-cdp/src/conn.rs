@@ -364,9 +364,18 @@ impl Conn {
 
     fn read(&mut self, inbox: &mut VecDeque<Inbound>, now: Instant) {
         self.last_read = now;
+        // A read that did not fill the buffer took all there was: asking
+        // again is a system call that answers "nothing yet" for every
+        // command of a client that waits for each reply. What arrives after
+        // it wakes the loop (the descriptor is polled by level).
+        let mut drained = false;
         loop {
             self.decode(inbox);
-            if self.state != State::Open || inbox.len() >= INFLIGHT || self.decoder.buffered() >= self.read_ahead {
+            if drained
+                || self.state != State::Open
+                || inbox.len() >= INFLIGHT
+                || self.decoder.buffered() >= self.read_ahead
+            {
                 break;
             }
             let read = crate::perf::now();
@@ -381,6 +390,7 @@ impl Conn {
                 Ok(n) => {
                     self.decoder.feed(&self.chunk[..n]);
                     crate::perf::record_since("io.ws_read", read);
+                    drained = n < self.chunk.len();
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}

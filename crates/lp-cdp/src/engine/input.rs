@@ -478,6 +478,10 @@ impl EngineHost {
         mut x: f64,
         mut y: f64,
     ) -> (Rc<lp_webapi::PageDom>, f64, f64) {
+        // No frame to descend into: the dispatch does the page's one hit test.
+        if !self.thread.browser.has_child_frames(page_id) {
+            return (page, x, y);
+        }
         for _ in 0..32 {
             let Some(node) = lp_webapi::layout_api::hit_test(&page, x, y) else { break };
             let Some(frame_id) = self.thread.browser.frame_of_owner(page_id, node) else { break };

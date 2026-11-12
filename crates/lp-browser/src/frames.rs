@@ -1185,6 +1185,10 @@ impl Browser {
             self.doc(key).map(|d| d.main_frame.clone())
         }
     }
+    /// Whether `page` has any frame besides its main one.
+    pub fn has_child_frames(&self, page: PageId) -> bool {
+        self.page(page).is_some_and(|p| p.frames.has_children())
+    }
     pub fn frame_of_owner(&self, page: PageId, owner: NodeId) -> Option<FrameId> {
         let host = &self.page(page)?.frames;
         host.owner(owner).and_then(|key| host.with_frame(key, |f| f.id.clone()))
