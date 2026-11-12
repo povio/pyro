@@ -16,7 +16,9 @@
 //! - `event::TIME_ORIGIN`, the thread's first use of an event time stamp,
 //!   read only for a page without a time origin of its own (a detached
 //!   document): it stays, and tells a page nothing but that the thread is
-//!   older than the page.
+//!   older than the page;
+//! - `worker::ENDED`, a note that a worker's end left something to collect:
+//!   forgotten, since the engine it was about is dropped or recycled.
 
 /// The crate's thread-local statics, as `module::NAME`.
 pub const STATICS: &[&str] = &[
@@ -53,6 +55,7 @@ pub const STATICS: &[&str] = &[
     "webaudio::PENDING",
     "websocket::NEXT",
     "websocket::SOCKETS",
+    "worker::ENDED",
     "worker::HELD",
     "worker::LIVE",
     "worker::THREADS",

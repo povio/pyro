@@ -595,6 +595,8 @@ pub(crate) fn register(engine: &lp_js::Engine) {
 /// This module's part of [`crate::thread_state::reset_thread`]: what of its
 /// per-thread state still holds something, if any does.
 pub(crate) fn thread_leftover() -> Option<&'static str> {
+    // What an ended worker left to collect belonged to the pages that are gone.
+    ENDED.with(|ended| ended.set(false));
     LIVE.with(|l| l.borrow_mut().retain(|_, worker| worker.strong_count() > 0));
     if LIVE.with(|l| !l.borrow().is_empty()) {
         return Some("worker::LIVE");
