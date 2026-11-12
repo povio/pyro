@@ -3,13 +3,15 @@
 #
 #   scripts/pgo/build.sh [cargo options, e.g. --locked]
 #   LP_PGO_LLVM=<LLVM release> scripts/pgo/build.sh                # JavaScriptCore profiled too
+#   LP_PGO_LLVM=<LLVM release> LP_PGO_LTO=1 scripts/pgo/build.sh   # and ThinLTO over it (macOS arm64)
 #
 # 1. generate.sh: instrumented build (-Cprofile-generate, --cfg lp_pgo_training); with
 #                 LP_PGO_LLVM against an instrumented JavaScriptCore archive (target/pgo/jsc-generate)
 # 2. train.sh:    bench/scripts/cdp-perf.mjs, every scenario once, `serve` and `serve --fork`;
 #                 profiles merged into target/pgo/merged.profdata
 # 3. use.sh:      optimized build (-Cprofile-use); with LP_PGO_LLVM against the archive rebuilt
-#                 with the same profile (target/pgo/jsc-use)
+#                 with the same profile (target/pgo/jsc-use), with LP_PGO_LTO as ThinLTO bitcode
+#                 that the link optimizes as a whole (target/pgo/jsc-use-lto)
 #
 # Result: target/<host>/release-pgo/lightningpanda (`rustc -vV` names the host): the binary of
 # `cargo build --release` (profile `release-pgo` inherits `release`), optimized by the profile.
@@ -31,7 +33,7 @@
 #
 # Knobs: LP_PGO_DIR (default target/pgo); LP_PGO_EXTRA, LP_PGO_EXTRA_WEIGHT, LP_PGO_PORT (an
 # extra training workload, train.sh); LP_PGO_PROFILE (use.sh: build from a kept profile);
-# LP_PGO_LLVM (common.sh); JOBS (JavaScriptCore build jobs).
+# LP_PGO_LLVM, LP_PGO_LTO (common.sh); JOBS (JavaScriptCore build jobs).
 set -euo pipefail
 here="$(dirname "$0")"
 "$here/generate.sh" "$@"

@@ -42,11 +42,24 @@ if [[ -n "${LP_PGO_LLVM:-}" ]]; then
     JSC_PGO=1
 fi
 
-# Builds the JavaScriptCore archive with LP_PGO_LLVM's clang and extra flags into
-# $PGO_DIR/jsc-NAME (build directory $PGO_DIR/webkit-build-NAME) and prints the directory for
-# LP_JSC_DIR. The WebKit checkout is the one scripts/jsc/build.sh uses (LP_WEBKIT_SRC).
+# LP_PGO_LTO=1 (with LP_PGO_LLVM; macOS arm64): the optimized build's JavaScriptCore archive is
+# ThinLTO bitcode (scripts/jsc/build.sh, LP_JSC_LTO), which the link optimizes as a whole with the
+# profile; ld loads LP_PGO_LLVM's libLTO for it (LP_LTO_LIBRARY, scripts/macos/linker/ld). The Rust
+# code stays native: taking it into the same LTO (-Clinker-plugin-lto, so that the bindings inline
+# the C API) measured no better. The instrumented build stays without LTO (the counters are placed
+# before it, so the profile matches either way).
+LTO=""
+if [[ -n "${LP_PGO_LTO:-}" ]]; then
+    [[ -n "$JSC_PGO" ]] || { echo "LP_PGO_LTO needs LP_PGO_LLVM" >&2; exit 1; }
+    [[ "$HOST" == aarch64-apple-darwin ]] || { echo "LP_PGO_LTO: macOS arm64 only (not tried elsewhere)" >&2; exit 1; }
+    LTO=1
+fi
+
+# Builds the JavaScriptCore archive with LP_PGO_LLVM's clang and extra flags (and LP_JSC_LTO=LTO,
+# if given) into $PGO_DIR/jsc-NAME (build directory $PGO_DIR/webkit-build-NAME) and prints the
+# directory for LP_JSC_DIR. The WebKit checkout is the one scripts/jsc/build.sh uses (LP_WEBKIT_SRC).
 pgo_jsc() {
-    local name="$1" flags="$2" root
+    local name="$1" flags="$2" lto="${3:-}" root
     if [[ "$(uname -s)" == Darwin ]]; then
         root="$HOME/Library/Caches/lightningpanda"
     else
@@ -54,7 +67,7 @@ pgo_jsc() {
     fi
     LP_JSC_CACHE="$PGO_DIR/jsc-$name" LP_JSC_BUILD="$PGO_DIR/webkit-build-$name" \
         LP_WEBKIT_SRC="${LP_WEBKIT_SRC:-$root/webkit-src}" \
-        CC="$LP_PGO_LLVM/bin/clang" CXX="$LP_PGO_LLVM/bin/clang++" LP_JSC_CFLAGS="$flags" \
+        CC="$LP_PGO_LLVM/bin/clang" CXX="$LP_PGO_LLVM/bin/clang++" LP_JSC_CFLAGS="$flags" LP_JSC_LTO="$lto" \
         "$ROOT/scripts/jsc/build.sh" >&2
     echo "$PGO_DIR/jsc-$name/$("$ROOT/scripts/jsc/cache-key.sh")"
 }

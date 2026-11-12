@@ -23,9 +23,13 @@ use="$PGO_DIR/use-$sum.profdata"
 if [[ -n "$JSC_PGO" ]]; then
     # The archive's directory name does not cover the profile: start it afresh (the build
     # directory stays, and rebuilds what the new profile path changes, which is everything).
-    rm -rf "$PGO_DIR/jsc-use"
-    LP_JSC_DIR="$(pgo_jsc use "-fprofile-use=$use -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin")"
+    name="use${LTO:+-lto}"
+    rm -rf "$PGO_DIR/jsc-$name"
+    LP_JSC_DIR="$(pgo_jsc "$name" "-fprofile-use=$use -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin" "${LTO:+thin}")"
     export LP_JSC_DIR
+fi
+if [[ -n "$LTO" ]]; then
+    export LP_LTO_LIBRARY="$LP_PGO_LLVM/lib/libLTO.dylib"
 fi
 RUSTFLAGS="-Cprofile-use=$use $LINKER_FLAG" \
     cargo build --profile release-pgo -p lightningpanda "${CARGO_TARGET[@]}" "$@"

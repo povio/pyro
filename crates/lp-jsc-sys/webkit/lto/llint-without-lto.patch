@@ -1,0 +1,28 @@
+Lightningpanda LTO patch: with LTO_MODE, the interpreter unit is compiled without LTO.
+
+IPInt::initialize() checks that the offlineasm handlers in llint/LowLevelInterpreter.cpp sit exactly
+alignIPInt bytes apart. With -flto the unit's inline asm is emitted by the LTO backend at link time,
+which breaks that layout: the RELEASE_ASSERT kills the process at startup. The GCC postprocess-asm
+path already builds this unit without LTO; clang now does too. Builds without LTO_MODE (the default)
+are unchanged. scripts/jsc/build.sh applies it on top of patches/ for LP_JSC_LTO builds only, so
+it is not part of the cache key of the default build (scripts/jsc/cache-key.sh).
+
+diff --git a/Source/JavaScriptCore/CMakeLists.txt b/Source/JavaScriptCore/CMakeLists.txt
+index 7a04bb8a1e..72c8164ad8 100644
+--- a/Source/JavaScriptCore/CMakeLists.txt
++++ b/Source/JavaScriptCore/CMakeLists.txt
+@@ -1827,6 +1827,14 @@ add_dependencies(JavaScriptCore_CopyPrivateHeaders Bytecodes JSCBuiltins JSCWebP
+ target_include_directories(LowLevelInterpreterLib
+     PRIVATE "$<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>" "${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/JavaScriptCore")
+ add_dependencies(LowLevelInterpreterLib Bytecodes JSCBuiltins JSCWebPreferenceOptions)
++
++if (LTO_MODE AND COMPILER_IS_CLANG)
++    # IPInt::initialize() validates that its opcode handlers in the offlineasm output sit
++    # exactly alignIPInt bytes apart. The LTO backend emits that inline asm at link time and
++    # breaks the layout (RELEASE_ASSERT -> SIGKILL on startup), so the interpreter unit is
++    # compiled without LTO, as the GCC postprocess-asm path below already does.
++    set_source_files_properties("llint/LowLevelInterpreter.cpp" PROPERTIES COMPILE_OPTIONS "-fno-lto")
++endif ()
+ if (TARGET WTF_CopyHeaders)
+     add_dependencies(LowLevelInterpreterLib WTF_CopyHeaders)
+ endif ()
