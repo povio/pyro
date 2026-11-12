@@ -11,11 +11,44 @@ use lp_dom::{DocumentKind, NodeId, NodeKind, NodeType, ShadowRootMode};
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Scope, Value};
 
 use crate::collections::{self, CollectionKind};
+use crate::names::NameArg;
 use crate::page::PageDom;
 use crate::target::{page_of, EventTarget, EventTargetData};
 use crate::util::*;
 
 /// Payload of every Node wrapper.
+///
+/// # What a wrapper holds on its node
+///
+/// The payload is the whole path from the JavaScript object to the node: the
+/// object's private data is this payload, `target.page` is the page whose
+/// store the node lives in, and `id` is the node's slot in that store. No
+/// map is consulted and nothing is looked up by key.
+///
+/// The invariant that makes this sound whatever goes away first:
+///
+/// - **The store outlives the wrapper.** `target.page` is an `Rc`, and the
+///   page owns its `Dom`. A closed page (`PageDom::dispose`) drops its roots
+///   and hooks, not the store: a wrapper another realm kept still reads a
+///   node that is there.
+/// - **The slot is this node's for as long as the wrapper exists.** A wrapper
+///   holds one reference on its node (`Dom::add_ref` in `wrap_node`, released
+///   in `Drop` below). `Dom::collect_garbage` frees a detached tree only when
+///   no node in it is referenced, and a slot is given to another node only
+///   after it was freed. So the node is not freed by removal from its
+///   document, by its document being dropped, or by adoption into another
+///   document (which changes the node's owner, never its slot). The
+///   generation in `id` is checked on access and is never what keeps an
+///   access right: a mismatch would be a broken reference count, and it
+///   surfaces as a `StaleNode` error, not as another node's data.
+/// - **The realm is not reached through the node.** A call into a wrapper
+///   whose realm is disposed fails in the binding layer (`Header::core`),
+///   before this payload is read.
+///
+/// Tests: `a_wrapper_keeps_its_removed_node_through_collections_and_slot_reuse`,
+/// `a_wrapper_follows_its_node_into_another_document_and_back` (`dom_js.rs`),
+/// `a_node_wrapper_kept_after_its_page_closed_stays_sound`
+/// (`payload_cycles.rs`).
 pub struct NodeData {
     pub target: EventTargetData,
     pub id: NodeId,
