@@ -90,13 +90,19 @@ impl Page {
         }
         let mut mismatches = Vec::new();
         for &(x, y) in &points {
+            // As pages ask (a descent, or the index once this layout has
+            // one), then each path by itself.
+            let asked = self.layout.element_from_point(&self.dom, x, y);
             let scan = self.layout.element_from_point_scan(&self.dom, x, y);
-            let descent = self.layout.element_from_point(&self.dom, x, y);
-            if scan != descent {
+            let descent = self.layout.element_from_point_descent(&self.dom, x, y);
+            let indexed = self.layout.element_from_point_indexed(&self.dom, x, y);
+            if scan != descent || scan != indexed || scan != asked {
                 mismatches.push(format!(
-                    "{label} at ({x}, {y}): scan {} descent {}",
+                    "{label} at ({x}, {y}): scan {} descent {} index {} asked {}",
                     self.describe(scan),
-                    self.describe(descent)
+                    self.describe(descent),
+                    self.describe(indexed),
+                    self.describe(asked)
                 ));
             }
             distinct.insert(scan);
