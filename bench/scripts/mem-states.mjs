@@ -16,7 +16,7 @@
 //   speed  what bench-work/final/speed.mjs does between its idle and after readings (default)
 //   pages  idle, connected, one blank page, N pages of the SPA (or big.html) open, all closed, disconnected
 // --heap <prefix> (a `--features heap-profile` build only) dumps the sampled Rust heap of every process at
-// every state; read the dumps with heap-profile.mjs.
+// every state; read the dumps with heap-profile.mjs, and the allocator pages next to them with heap-areas.mjs.
 // --raw keeps the full `footprint` and `vmmap --summary` text of every process at every state.
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
