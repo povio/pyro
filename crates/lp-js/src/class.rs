@@ -868,7 +868,7 @@ pub(crate) struct ClassInfo {
     /// order, per engine, and a member knows its class only as a type).
     pub display: Box<[Brand]>,
     pub instance_class: sys::JSClassRef,
-    pub def: ClassDefErased,
+    pub def: &'static ClassDefErased,
     /// The engine's [`HookState`] (it outlives the registry's entries): an
     /// indexed read finds it from the receiver's payload, with no
     /// thread-local lookup.
@@ -902,6 +902,65 @@ pub(crate) struct ClassDefErased {
     pub exposed: bool,
     pub indexed_iterable: bool,
     pub indexed_iterator: bool,
+}
+
+/// What a class is in every engine of the process: its definition and its
+/// JSC class (which JSC shares between context groups: what a class keeps
+/// per context is in the context's own data). Made by the first engine
+/// that registers the class and never freed, so an engine made later (one
+/// per connection of a threaded server) registers a class by looking it up:
+/// it runs no `JsClass::define`, sorts no names and creates no JSC class.
+pub(crate) struct ClassShared {
+    upcast: Option<UpcastFn>,
+    global_receiver: Option<GlobalReceiverFn>,
+    callback_interface: bool,
+    instance_class: sys::JSClassRef,
+    def: ClassDefErased,
+}
+
+// SAFETY: read-only once made; the pointers are fn pointers and a JSC
+// class, which any thread may use.
+unsafe impl Send for ClassShared {}
+unsafe impl Sync for ClassShared {}
+
+static SHARED: std::sync::Mutex<std::collections::HashMap<TypeId, &'static ClassShared, rustc_hash::FxBuildHasher>> =
+    std::sync::Mutex::new(std::collections::HashMap::with_hasher(rustc_hash::FxBuildHasher));
+
+/// The JSC classes every registry starts from (`ClassRegistry::{base,
+/// closure, member}`), one set per process.
+struct RootClasses {
+    base: sys::JSClassRef,
+    closure: sys::JSClassRef,
+    member: sys::JSClassRef,
+}
+
+// SAFETY: JSC classes, which any thread may use.
+unsafe impl Send for RootClasses {}
+unsafe impl Sync for RootClasses {}
+
+fn root_classes() -> &'static RootClasses {
+    static ROOT: std::sync::OnceLock<RootClasses> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let mut def = sys::JSClassDefinition::EMPTY;
+        def.className = c"LightpandaWrapper".as_ptr();
+        def.attributes = sys::kJSClassAttributeNoAutomaticPrototype | sys::kJSClassAttributeImmortal;
+        def.finalize = Some(finalize_wrapper);
+        // SAFETY: static class name, valid definition.
+        let base = unsafe { sys::JSClassCreate(&def) };
+        let mut cdef = sys::JSClassDefinition::EMPTY;
+        cdef.className = c"Function".as_ptr();
+        cdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype | sys::kJSClassAttributeImmortal;
+        cdef.parentClass = base;
+        cdef.callAsFunction = Some(crate::realm::closure_call);
+        let closure = unsafe { sys::JSClassCreate(&cdef) };
+        let mut mdef = sys::JSClassDefinition::EMPTY;
+        mdef.className = c"Function".as_ptr();
+        mdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype | sys::kJSClassAttributeImmortal;
+        mdef.callAsFunction = Some(member_call);
+        mdef.finalize = Some(member_finalize);
+        let member = unsafe { sys::JSClassCreate(&mdef) };
+        RootClasses { base, closure, member }
+    })
 }
 
 pub(crate) struct ClassRegistry {
@@ -939,25 +998,7 @@ pub(crate) const SPEC_STRIDE: usize = 3;
 
 impl ClassRegistry {
     pub fn new() -> ClassRegistry {
-        let base_name = c"LightpandaWrapper";
-        let mut def = sys::JSClassDefinition::EMPTY;
-        def.className = base_name.as_ptr();
-        def.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
-        def.finalize = Some(finalize_wrapper);
-        // SAFETY: static class name, valid definition.
-        let base = unsafe { sys::JSClassCreate(&def) };
-        let mut cdef = sys::JSClassDefinition::EMPTY;
-        cdef.className = c"Function".as_ptr();
-        cdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
-        cdef.parentClass = base;
-        cdef.callAsFunction = Some(crate::realm::closure_call);
-        let closure = unsafe { sys::JSClassCreate(&cdef) };
-        let mut mdef = sys::JSClassDefinition::EMPTY;
-        mdef.className = c"Function".as_ptr();
-        mdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
-        mdef.callAsFunction = Some(member_call);
-        mdef.finalize = Some(member_finalize);
-        let member = unsafe { sys::JSClassCreate(&mdef) };
+        let &RootClasses { base, closure, member } = root_classes();
         ClassRegistry {
             classes: Vec::new(),
             by_type: rustc_hash::FxHashMap::default(),
@@ -995,14 +1036,7 @@ impl ClassRegistry {
     }
 
     pub fn release_all(&mut self) {
-        unsafe {
-            for c in &self.classes {
-                sys::JSClassRelease(c.instance_class);
-            }
-            sys::JSClassRelease(self.closure);
-            sys::JSClassRelease(self.member);
-            sys::JSClassRelease(self.base);
-        }
+        // The JSC classes are the process's (`ClassShared`, `root_classes`).
         self.classes.clear();
         self.spec_names.clear();
         self.spec_data.clear();
@@ -1016,38 +1050,69 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     if let Some(id) = engine.classes.borrow().id_of::<C>() {
         return id;
     }
-    let parent = if TypeId::of::<C::Parent>() == TypeId::of::<NoParent>() {
-        None
-    } else {
-        let pid = register::<C::Parent>(engine);
-        let reg = engine.classes.borrow();
-        let same = reg.classes[pid as usize].data_type == TypeId::of::<C::Data>();
-        drop(reg);
-        Some((pid, same))
+    let parent =
+        if TypeId::of::<C::Parent>() == TypeId::of::<NoParent>() { None } else { Some(register::<C::Parent>(engine)) };
+    let mut reg = engine.classes.borrow_mut();
+    let shared = shared_class::<C>(parent.map(|p| reg.classes[p as usize].def));
+    if let Some(p) = parent {
+        assert!(
+            reg.classes[p as usize].data_type == TypeId::of::<C::Data>() || shared.upcast.is_some(),
+            "{}: Data differs from parent {} Data; declare ClassDef::upcast",
+            C::NAME,
+            C::Parent::NAME
+        );
+    }
+    let id = reg.classes.len() as ClassId;
+    let parent_info: *const ClassInfo = match parent {
+        Some(p) => &*reg.classes[p as usize],
+        None => ptr::null(),
     };
+    let own_upcast = shared.upcast.is_some();
+    let mut display: Vec<Brand> = match parent {
+        Some(p) => reg.classes[p as usize]
+            .display
+            .iter()
+            .map(|b| Brand { class_type: b.class_type, direct: b.direct && !own_upcast })
+            .collect(),
+        None => Vec::new(),
+    };
+    display.push(Brand { class_type: TypeId::of::<C>(), direct: true });
+    debug_assert_eq!(display.len() - 1, C::DEPTH as usize, "{}: depth from the registry", C::NAME);
+    reg.push_spec(C::NAME, parent, shared.def.ctor_length, shared.def.exposed, shared.callback_interface);
+    reg.classes.push(Box::new(ClassInfo {
+        upcast: shared.upcast,
+        global_receiver: shared.global_receiver,
+        name: C::NAME,
+        data_type: TypeId::of::<C::Data>(),
+        class_type: TypeId::of::<C>(),
+        parent,
+        parent_info,
+        display: display.into_boxed_slice(),
+        instance_class: shared.instance_class,
+        hook_state: &engine.hook_state,
+        def: &shared.def,
+    }));
+    reg.by_type.insert(TypeId::of::<C>(), id);
+    id
+}
+
+/// `C`'s [`ClassShared`], made on the first call in the process (`parent`:
+/// its parent class's definition, already made).
+fn shared_class<C: JsClass>(parent: Option<&'static ClassDefErased>) -> &'static ClassShared {
+    let mut shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(&class) = shared.get(&TypeId::of::<C>()) {
+        return class;
+    }
     let mut def = ClassDef::<C>::new();
     C::define(&mut def);
-    let parent = match parent {
-        Some((pid, same)) => {
-            assert!(
-                same || def.upcast.is_some(),
-                "{}: Data differs from parent {} Data; declare ClassDef::upcast",
-                C::NAME,
-                C::Parent::NAME
-            );
-            Some(pid)
-        }
-        None => None,
-    };
-    let mut reg = engine.classes.borrow_mut();
-    let id = reg.classes.len() as ClassId;
     let cname = CString::new(C::NAME).expect("class name without NUL");
-    if let Some(p) = parent {
-        let inherited = reg.classes[p as usize].def.hooks;
+    if let Some(parent) = parent {
+        let inherited = parent.hooks;
         // A subclass answers the same names unless it adds a named hook of its own.
-        let own_named = def.hooks.named.is_some_and(|own| !inherited.named.is_some_and(|p| std::ptr::fn_addr_eq(own, p)));
+        let own_named =
+            def.hooks.named.is_some_and(|own| !inherited.named.is_some_and(|p| std::ptr::fn_addr_eq(own, p)));
         def.hooks = def.hooks.inherit(&inherited);
-        if reg.classes[p as usize].def.announced_names && !own_named {
+        if parent.announced_names && !own_named {
             def.announced_names = true;
         }
     }
@@ -1060,12 +1125,12 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     let indexed_callbacks = sys::spi::get().class_set_indexed_callbacks.filter(|_| def.hooks.indexed.is_some());
     let mut jsdef = sys::JSClassDefinition::EMPTY;
     jsdef.className = cname.as_ptr();
-    jsdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
+    jsdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype | sys::kJSClassAttributeImmortal;
     if def.announced_names && sys::spi::get().add_impure_property.is_some() {
         debug_assert!(!def.hooks.override_builtins && def.hooks.indexed.is_none(), "announced names need named(false)");
         jsdef.attributes |= sys::kJSClassAttributeImpureNamedProperties;
     }
-    jsdef.parentClass = reg.base;
+    jsdef.parentClass = root_classes().base;
     if has_named_hooks || (def.hooks.indexed.is_some() && indexed_callbacks.is_none()) {
         jsdef.getProperty = Some(get_property_hook);
         jsdef.setProperty = Some(set_property_hook);
@@ -1097,33 +1162,11 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         a.slot =
             crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h, a.set_h);
     }
-    let parent_info: *const ClassInfo = match parent {
-        Some(p) => &*reg.classes[p as usize],
-        None => ptr::null(),
-    };
-    let own_upcast = def.upcast.is_some();
-    let mut display: Vec<Brand> = match parent {
-        Some(p) => reg.classes[p as usize]
-            .display
-            .iter()
-            .map(|b| Brand { class_type: b.class_type, direct: b.direct && !own_upcast })
-            .collect(),
-        None => Vec::new(),
-    };
-    display.push(Brand { class_type: TypeId::of::<C>(), direct: true });
-    debug_assert_eq!(display.len() - 1, C::DEPTH as usize, "{}: depth from the registry", C::NAME);
-    reg.push_spec(C::NAME, parent, def.ctor_length, def.exposed, def.callback_interface);
-    reg.classes.push(Box::new(ClassInfo {
+    let class: &'static ClassShared = Box::leak(Box::new(ClassShared {
         upcast: def.upcast,
         global_receiver: def.global_receiver,
-        name: C::NAME,
-        data_type: TypeId::of::<C::Data>(),
-        class_type: TypeId::of::<C>(),
-        parent,
-        parent_info,
-        display: display.into_boxed_slice(),
+        callback_interface: def.callback_interface,
         instance_class,
-        hook_state: &engine.hook_state,
         def: ClassDefErased {
             methods: def.methods,
             statics: def.statics,
@@ -1141,8 +1184,8 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             indexed_iterator: def.indexed_iterator,
         },
     }));
-    reg.by_type.insert(TypeId::of::<C>(), id);
-    id
+    shared.insert(TypeId::of::<C>(), class);
+    class
 }
 
 // ---------------------------------------------------------------------------

@@ -40,8 +40,14 @@ pub fn register_fonts(font: parley::fontique::Blob<u8>) {
 /// directories instead (memory-mapped), with the generic families and
 /// script fallbacks the platform backend would pick. Call before any font use.
 pub fn use_fork_safe_fonts() {
-    FORK_SAFE_FONTS.store(true, Ordering::Relaxed);
+    choose_fork_safe_fonts();
     drop(font_context());
+}
+
+/// [`use_fork_safe_fonts`] without the scan: the first font use (on any
+/// thread, others wait for it) runs it.
+pub fn choose_fork_safe_fonts() {
+    FORK_SAFE_FONTS.store(true, Ordering::Relaxed);
 }
 
 /// Whether [`use_fork_safe_fonts`] was called (fonts never touch CoreText).

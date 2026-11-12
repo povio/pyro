@@ -1,0 +1,184 @@
+Lightningpanda patch 0028: classes that are never released, and a callback object's data in its cell.
+
+Lightningpanda makes each of its classes once per process and every context group (one per
+connection, each on its own thread) uses them. A `JSCallbackObject` retained its class when made
+and released it when swept, so all those threads wrote one atomic word, the class's reference
+count, for every wrapper: eight connections each building and dropping DOM nodes ran 20% slower
+than with a set of classes per context group.
+
+`kJSClassAttributeImmortal` (JSForkPrivate.h) on a `JSClassDefinition` says the embedder never
+releases the class; its objects then count no reference to it. Releasing such a class while one
+of its objects lives is an error.
+
+`JSCallbackObjectData` (the private pointer, the class, the private properties) is a member of
+the object instead of an allocation of its own made and freed with every object.
+
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.h b/Source/JavaScriptCore/API/JSCallbackObject.h
+index bae848c7f8..d4da81129f 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.h
++++ b/Source/JavaScriptCore/API/JSCallbackObject.h
+@@ -34,6 +34,7 @@
+ #include "JSAPIWrapperGlobalObject.h"
+ #endif
+ #include "JSBase.h"
++#include "JSClassRef.h"
+ #include "JSGlobalObject.h"
+ #include "JSObject.h"
+ #include "JSObjectRef.h"
+@@ -42,19 +43,25 @@
+ 
+ namespace JSC {
+ 
++// Lightningpanda: a member of the object's cell (it was a heap allocation of its own, made and
++// freed with every object), and it counts no reference to a class that is never released
++// (kJSClassAttributeImmortal): the count is one atomic word that every thread making or
++// sweeping wrappers of a class shared by the process would write.
+ struct JSCallbackObjectData {
+-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSCallbackObjectData);
++    WTF_MAKE_NONCOPYABLE(JSCallbackObjectData);
+ public:
+     JSCallbackObjectData(void* privateData, JSClassRef jsClass)
+         : privateData(privateData)
+         , jsClass(jsClass)
+     {
+-        JSClassRetain(jsClass);
++        if (!jsClass->immortal)
++            JSClassRetain(jsClass);
+     }
+     
+     ~JSCallbackObjectData()
+     {
+-        JSClassRelease(jsClass);
++        if (!jsClass->immortal)
++            JSClassRelease(jsClass);
+     }
+     
+     JSValue getPrivateProperty(const Identifier& propertyName) const
+@@ -173,7 +180,7 @@ public:
+ 
+     DECLARE_INFO;
+ 
+-    JSClassRef classRef() const { return m_callbackObjectData->jsClass; }
++    JSClassRef classRef() const { return m_callbackObjectData.jsClass; }
+     bool inherits(JSClassRef) const;
+ 
+     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
+@@ -190,17 +197,17 @@ public:
+     
+     JSValue getPrivateProperty(const Identifier& propertyName) const
+     {
+-        return m_callbackObjectData->getPrivateProperty(propertyName);
++        return m_callbackObjectData.getPrivateProperty(propertyName);
+     }
+     
+     void setPrivateProperty(VM& vm, const Identifier& propertyName, JSValue value)
+     {
+-        m_callbackObjectData->setPrivateProperty(vm, this, propertyName, value);
++        m_callbackObjectData.setPrivateProperty(vm, this, propertyName, value);
+     }
+     
+     void deletePrivateProperty(const Identifier& propertyName)
+     {
+-        m_callbackObjectData->deletePrivateProperty(propertyName);
++        m_callbackObjectData.deletePrivateProperty(propertyName);
+     }
+ 
+     using Parent::methodTable;
+@@ -264,7 +271,7 @@ private:
+  
+     JSValue getStaticValue(JSGlobalObject*, PropertyName);
+ 
+-    std::unique_ptr<JSCallbackObjectData> m_callbackObjectData;
++    JSCallbackObjectData m_callbackObjectData;
+     const ClassInfo* m_classInfo { nullptr };
+ };
+ 
+@@ -275,7 +282,7 @@ void JSCallbackObject<Parent>::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+     JSCallbackObject* thisObject = uncheckedDowncast<JSCallbackObject>(cell);
+     ASSERT_GC_OBJECT_INHERITS((static_cast<Parent*>(thisObject)), JSCallbackObject<Parent>::info());
+     Parent::visitChildren(thisObject, visitor);
+-    thisObject->m_callbackObjectData->visitChildren(visitor);
++    thisObject->m_callbackObjectData.visitChildren(visitor);
+ }
+ 
+ // JSCallbackObject<T>::info()'s forward definition triggers an undefined template var warning
+diff --git a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+index 99c76e79c8..1d25cf627c 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
++++ b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+@@ -62,7 +62,7 @@ inline JSCallbackObject<Parent>* JSCallbackObject<Parent>::asCallbackObject(Enco
+ template <class Parent>
+ JSCallbackObject<Parent>::JSCallbackObject(JSGlobalObject* globalObject, Structure* structure, JSClassRef jsClass, void* data)
+     : Parent(getVM(globalObject), structure)
+-    , m_callbackObjectData(makeUnique<JSCallbackObjectData>(data, jsClass))
++    , m_callbackObjectData(data, jsClass)
+ {
+ }
+ 
+@@ -71,7 +71,7 @@ JSCallbackObject<Parent>::JSCallbackObject(JSGlobalObject* globalObject, Structu
+ template <class Parent>
+ JSCallbackObject<Parent>::JSCallbackObject(VM& vm, JSClassRef jsClass, Structure* structure)
+     : Parent(vm, structure)
+-    , m_callbackObjectData(makeUnique<JSCallbackObjectData>(nullptr, jsClass))
++    , m_callbackObjectData(nullptr, jsClass)
+ {
+ }
+ 
+@@ -807,13 +807,13 @@ void JSCallbackObject<Parent>::getOwnSpecialPropertyNames(JSObject* object, JSGl
+ template <class Parent>
+ void JSCallbackObject<Parent>::setPrivate(void* data)
+ {
+-    m_callbackObjectData->privateData = data;
++    m_callbackObjectData.privateData = data;
+ }
+ 
+ template <class Parent>
+ void* JSCallbackObject<Parent>::getPrivate()
+ {
+-    return m_callbackObjectData->privateData;
++    return m_callbackObjectData.privateData;
+ }
+ 
+ template <class Parent>
+diff --git a/Source/JavaScriptCore/API/JSClassRef.cpp b/Source/JavaScriptCore/API/JSClassRef.cpp
+index d2e2a8c887..25c582cf90 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.cpp
++++ b/Source/JavaScriptCore/API/JSClassRef.cpp
+@@ -84,6 +84,7 @@ OpaqueJSClass::OpaqueJSClass(const JSClassDefinition* definition, OpaqueJSClass*
+         && m_staticValues.isEmpty() && m_staticFunctions.isEmpty()
+         && (!parentClass || parentClass->wrappersAreCacheable);
+     impureNamedProperties = !wrappersAreCacheable && (definition->attributes & kJSClassAttributeImpureNamedProperties);
++    immortal = definition->attributes & kJSClassAttributeImmortal;
+ }
+ 
+ OpaqueJSClass::~OpaqueJSClass()
+diff --git a/Source/JavaScriptCore/API/JSClassRef.h b/Source/JavaScriptCore/API/JSClassRef.h
+index f8f0778f6e..e155b8234c 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.h
++++ b/Source/JavaScriptCore/API/JSClassRef.h
+@@ -146,6 +146,8 @@ struct OpaqueJSClass : public ThreadSafeRefCounted<OpaqueJSClass> {
+     bool wrappersAreCacheable { false };
+     // kJSClassAttributeImpureNamedProperties (JSForkPrivate.h).
+     bool impureNamedProperties { false };
++    // kJSClassAttributeImmortal (JSForkPrivate.h).
++    bool immortal { false };
+ 
+     // JSClassSetOwnPropertyNames: the names listed, in order, each with whether it is
+     // DontEnum (per context as identifiers: ownListedIdentifiers()), the names an own-property
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 27c078107a..526e01ca49 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -237,6 +237,12 @@ JS_EXPORT const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef va
+    watches the name, and announcing the name drops the caches. */
+ #define kJSClassAttributeImpureNamedProperties (1u << 30)
+ 
++/* A JSClassDefinition attribute: the embedder never releases the class (one made once per
++   process and shared by its context groups), so its objects count no reference to it: each
++   would write the class's reference count when made and when swept, from whichever thread
++   runs its context group. Releasing such a class while an object of it lives is an error. */
++#define kJSClassAttributeImmortal (1u << 29)
++
+ /* Announces that a wrapper of a kJSClassAttributeImpureNamedProperties class may now answer
+    `propertyName`: inline caches and compiled code that assumed otherwise are dropped. Cheap
+    when nothing watches the name. May not run JavaScript; callable with the DOM borrowed. */

@@ -1017,3 +1017,141 @@ fn review_observer_keeps_up_with_a_large_fast_body() {
     std::thread::sleep(Duration::from_millis(50));
     assert_eq!(failure.lock().unwrap().take(), None, "the observer was overrun");
 }
+
+/// An interceptor that opts into pausing on the caller's thread and parks
+/// every reply (or answers inside `paused` with `at_once`).
+#[derive(Default)]
+struct OnCaller {
+    parked: Mutex<Vec<tokio::sync::oneshot::Sender<InterceptDecision>>>,
+    paused_on: Mutex<Vec<std::thread::ThreadId>>,
+    at_once: bool,
+}
+
+impl Interceptor for OnCaller {
+    fn paused(&self, _req: PausedRequest, reply: tokio::sync::oneshot::Sender<InterceptDecision>) {
+        self.paused_on.lock().unwrap().push(std::thread::current().id());
+        if self.at_once {
+            let _ = reply.send(mock_decision());
+        } else {
+            self.parked.lock().unwrap().push(reply);
+        }
+    }
+    fn pauses_on_caller(&self) -> bool {
+        true
+    }
+}
+
+fn mock_decision() -> InterceptDecision {
+    InterceptDecision::Fulfill { status: 201, headers: Default::default(), body: Bytes::from_static(b"mock") }
+}
+
+/// Starts `/plain` and returns its id and its events, each with the thread
+/// the sink ran on.
+fn start_tagged(c: &NetClient, s: &Server) -> (RequestId, mpsc::Receiver<(std::thread::ThreadId, ResponseEvent)>) {
+    let (tx, rx) = mpsc::channel();
+    let req = Request::get(url(s, "/plain"), Destination::Fetch);
+    let id = c.fetch(req, Box::new(move |ev| tx.send((std::thread::current().id(), ev)).unwrap()));
+    (id, rx)
+}
+
+fn kinds_of(events: &NetSubscription) -> Vec<&'static str> {
+    let mut kinds = Vec::new();
+    while let Ok(ev) = events.try_recv() {
+        kinds.push(match ev {
+            NetEvent::RequestWillBeSent { .. } => "will",
+            NetEvent::ResponseReceived { .. } => "response",
+            NetEvent::DataReceived { .. } => "data",
+            NetEvent::LoadingFinished { .. } => "finished",
+            NetEvent::LoadingFailed { canceled: true, .. } => "canceled",
+            NetEvent::LoadingFailed { .. } => "failed",
+            _ => "other",
+        });
+    }
+    kinds
+}
+
+#[test]
+fn a_request_paused_on_its_callers_thread_is_answered_where_the_decision_is_made() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let events = c.subscribe();
+    let interceptor = Arc::new(OnCaller::default());
+    c.set_interceptor(Some(interceptor.clone()));
+    let me = std::thread::current().id();
+    let reply = || interceptor.parked.lock().unwrap().pop().expect("paused inside fetch");
+
+    // Fulfill: paused inside `fetch`, the sink runs inside the reply.
+    let (_, rx) = start_tagged(&c, &s);
+    assert_eq!(*interceptor.paused_on.lock().unwrap(), [me]);
+    assert_eq!(kinds_of(&events), ["will"]);
+    assert!(rx.try_recv().is_err());
+    reply().send(mock_decision()).ok().unwrap();
+    let got: Vec<_> = rx.try_iter().collect();
+    assert!(got.iter().all(|(thread, _)| *thread == me), "{got:?}");
+    assert!(matches!(&got[0].1, ResponseEvent::Response(h) if h.status.as_u16() == 201), "{got:?}");
+    assert!(matches!(&got[1].1, ResponseEvent::Data(d) if &d[..] == b"mock"), "{got:?}");
+    assert!(matches!(&got[2].1, ResponseEvent::Finished { encoded_len: 4, .. }), "{got:?}");
+    assert_eq!(kinds_of(&events), ["response", "data", "finished"]);
+
+    // Continue: the I/O thread fetches it, and announces it once.
+    let (_, rx) = start_tagged(&c, &s);
+    reply().send(InterceptDecision::Continue { url: None, method: None, headers: None, body: None }).ok().unwrap();
+    let mut body = Vec::new();
+    loop {
+        match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+            (thread, ResponseEvent::Response(h)) => assert!(thread != me && h.status.as_u16() == 200),
+            (_, ResponseEvent::Data(d)) => body.extend_from_slice(&d),
+            (_, ResponseEvent::Finished { .. }) => break,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert_eq!(body, b"hello");
+    assert_eq!(kinds_of(&events), ["will", "response", "data", "finished"]);
+    assert_eq!(s.log.lock().unwrap().iter().filter(|line| line.contains("/plain")).count(), 1);
+
+    // A dropped reply and a failure end the request there too.
+    let (_, rx) = start_tagged(&c, &s);
+    drop(reply());
+    assert!(matches!(rx.try_recv(), Ok((thread, ResponseEvent::Failed(NetError::Other(_)))) if thread == me));
+    let (_, rx) = start_tagged(&c, &s);
+    reply().send(InterceptDecision::Fail("Failed".into())).ok().unwrap();
+    assert!(matches!(rx.try_recv(), Ok((thread, ResponseEvent::Failed(NetError::Blocked(_)))) if thread == me));
+    assert_eq!(kinds_of(&events), ["will", "failed", "will", "failed"]);
+
+    // Cancel while paused: one terminal event, the reply is closed first.
+    let (id, rx) = start_tagged(&c, &s);
+    let parked = reply();
+    c.cancel(id);
+    assert!(parked.is_closed());
+    assert!(matches!(rx.try_recv(), Ok((_, ResponseEvent::Failed(NetError::Aborted)))));
+    c.cancel(id);
+    assert!(parked.send(mock_decision()).is_err());
+    assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+    assert_eq!(kinds_of(&events), ["will", "canceled"]);
+
+    // The last client going away aborts what is still paused.
+    let (_, rx) = start_tagged(&c, &s);
+    let parked = reply();
+    drop(c);
+    assert!(parked.is_closed());
+    assert!(matches!(rx.try_recv(), Ok((_, ResponseEvent::Failed(NetError::Aborted)))));
+}
+
+#[test]
+fn a_decision_made_inside_paused_never_calls_the_sink_inside_fetch() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let interceptor = Arc::new(OnCaller { at_once: true, ..Default::default() });
+    c.set_interceptor(Some(interceptor.clone()));
+    let me = std::thread::current().id();
+    let (_, rx) = start_tagged(&c, &s);
+    assert_eq!(*interceptor.paused_on.lock().unwrap(), [me]);
+    let (thread, first) = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(thread != me && matches!(&first, ResponseEvent::Response(h) if h.status.as_u16() == 201), "{first:?}");
+    // Requests that never reach the request stage start on the I/O thread.
+    let mut skipped = Request::get(url(&s, "/plain"), Destination::Fetch);
+    skipped.skip_interception = true;
+    let (k, _, b, _) = collect(&c, skipped);
+    assert_eq!((k, b), (vec!["response 200".to_owned(), "finished".to_owned()], b"hello".to_vec()));
+    assert_eq!(interceptor.paused_on.lock().unwrap().len(), 1);
+}

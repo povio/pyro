@@ -493,11 +493,16 @@ impl EngineHost {
     /// connection (`serve` keeps one spare per process so a client's first
     /// command does not wait for engine start). Must stay on this thread.
     pub fn prepare_thread() -> CdpResult<BrowserThread> {
-        Self::prepare_thread_with(&BrowserProfile::default())
+        Self::prepare_thread_with(&BrowserProfile::default(), true)
     }
 
     /// `prepare_thread` with the process's startup configuration.
-    pub fn prepare_thread_with(profile: &BrowserProfile) -> CdpResult<BrowserThread> {
+    ///
+    /// `spare_realm` also builds the first page's realm. That is over half of
+    /// the work here, so only a thread prepared ahead of its connection asks
+    /// for it: a thread started by its connection would do it before reading
+    /// the first command, and a client that opens no page would pay for it.
+    pub fn prepare_thread_with(profile: &BrowserProfile, spare_realm: bool) -> CdpResult<BrowserThread> {
         let mut thread =
             BrowserThread::new().map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
         thread
@@ -511,8 +516,10 @@ impl EngineHost {
         if !profile.local_storage.is_empty() {
             thread.set_local_storage_seed(profile.local_storage.clone());
         }
-        // Best effort: a failure here only costs the first page its head start.
-        let _ = thread.browser.prepare_spare_realm();
+        if spare_realm {
+            // Best effort: a failure here only costs the first page its head start.
+            let _ = thread.browser.prepare_spare_realm();
+        }
         Ok(thread)
     }
 
