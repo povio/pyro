@@ -1427,6 +1427,10 @@ pub(crate) fn serve_browser(
     let closed = |inbox: &VecDeque<Inbound>| matches!(inbox.back(), Some(Inbound::Closed));
     // When the last command that was not a prepared-page status query ran.
     let mut quiet_since = std::time::Instant::now();
+    // Watches for this thread going quiet with pages open (no command and
+    // next to no CPU for a second): the VM is then collected if the process
+    // grew since it last was (`Engine::settle_if_grown`).
+    let mut idle = lp_runtime::IdleWatch::new();
     'serve: loop {
         // A prepared page was taken: boot its replacement once no page is
         // open (the test closed its page), else only after a quiet moment
@@ -1465,10 +1469,16 @@ pub(crate) fn serve_browser(
             }
             continue;
         }
-        let quiet_at = match (quiet_at, release_at) {
-            (Some(q), Some(r)) => Some(q.min(r)),
-            (q, r) => q.or(r),
-        };
+        // After the collections a close left pending: they settle the same
+        // VM, and this one then finds no growth.
+        let idle_at = idle.deadline();
+        if idle_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
+            if idle.quiet(std::time::Instant::now()) && !engine.release_pending() {
+                engine.settle_if_grown();
+            }
+            continue;
+        }
+        let quiet_at = [quiet_at, release_at, idle_at].into_iter().flatten().min();
         let deadline = match (conn.borrow().next_deadline(), quiet_at) {
             (Some(d), Some(q)) => Some(d.min(q)),
             (d, q) => d.or(q),
@@ -1499,6 +1509,7 @@ pub(crate) fn serve_browser(
                     // parsed method says so (no scan of the message text).
                     if !browser.last_was_pool_poll() {
                         quiet_since = received;
+                        idle.note_work(received);
                     }
                     let flush = crate::perf::span("host.flush");
                     browser.host_mut().flush();

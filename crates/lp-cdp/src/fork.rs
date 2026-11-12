@@ -269,11 +269,12 @@ pub struct Template {
 /// - `heapGrowthMaxIncrease=3` (JavaScriptCore's own default; other
 ///   processes run at 1, see `lp_js::configure_process`): a fork may
 ///   allocate about three times the template's live heap before it collects
-///   instead of once, so most pages never collect. A collection in a fork
-///   marks memory it shares with the template (copying the pages it writes)
-///   for a process that exits seconds later: pages of a mid-size SPA ran
-///   2.5% fewer instructions for 9 MB more memory each on average. The
-///   template still settles (one full collection) before it forks.
+///   instead of once, so pages collect less often (a mid-size SPA's page
+///   still collects 5 times). A collection in a fork marks memory it shares
+///   with the template (copying the pages it writes) for a process that
+///   exits seconds later: pages of a mid-size SPA ran 2.5% fewer
+///   instructions for 9 MB more memory each on average. The template still
+///   settles (one full collection) before it forks.
 const FORK_JSC_DEFAULTS: [(&str, &str); 3] =
     [("JSC_useDFGJIT", "false"), ("JSC_jitMemoryReservationSize", "33554432"), ("JSC_heapGrowthMaxIncrease", "3")];
 

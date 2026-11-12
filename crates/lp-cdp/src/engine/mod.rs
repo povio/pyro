@@ -979,6 +979,38 @@ impl EngineHost {
                     },
                 })))
             }
+            // What this connection's VM holds, for attributing the process's
+            // "WebKit Malloc" from outside (`vmmap`, `footprint`, libpas's
+            // status reporter). `action` first does one step of what the
+            // server does on its own after closes, so that each step's share
+            // can be read: `collect` (a full collection), `settle` (that, and
+            // free pages returned), `deleteCode` (compiled and unlinked code
+            // dropped first).
+            "LP" if action == "jscMemory" => {
+                #[derive(Deserialize)]
+                struct P {
+                    action: Option<String>,
+                }
+                let engine = &self.thread.browser.engine;
+                match cmd.command.params::<P>()?.action.as_deref() {
+                    None | Some("stats") => {}
+                    Some("collect") => {
+                        engine.collect_garbage_now();
+                    }
+                    Some("settle") => engine.settle(),
+                    Some("deleteCode") => engine.settle_idle(),
+                    Some(other) => return Err(CdpError::invalid_params(format!("unknown action: {other}"))),
+                }
+                let stats = engine
+                    .memory_statistics_json()
+                    .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                Ok(Some(serde_json::json!({
+                    "processId": std::process::id(),
+                    "footprint": lp_js::process_footprint(),
+                    "heap": stats,
+                })))
+            }
             "LP" => {
                 // Dialogs opened by driver steps do not block (dialog.rs).
                 self.collector.dialogs.driver_busy.set(true);
