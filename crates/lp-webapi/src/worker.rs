@@ -75,16 +75,19 @@ pub(crate) fn is_held() -> bool {
 }
 
 thread_local! {
-    /// A worker this thread started has ended since [`take_ended`].
+    /// A worker this thread started, ended by the close of its browser
+    /// context, has torn down its VM since [`take_worker_ended`].
     static ENDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// On the thread that started it: a worker's thread has torn down its VM.
+/// On the thread that started it: the thread of a worker that a close ended
+/// (`Shared::report_end`) has torn down its VM.
 pub(crate) fn note_ended() {
     ENDED.with(|ended| ended.set(true));
 }
 
-/// Whether a worker this thread started has ended and nobody has asked yet.
+/// Whether a worker of a closed browser context has ended and nobody has
+/// asked yet.
 pub fn worker_ended() -> bool {
     ENDED.with(|ended| ended.get())
 }
@@ -107,6 +110,7 @@ pub(crate) fn track_thread(thread: std::thread::JoinHandle<()>) {
 pub(crate) fn new_shared() -> Arc<Shared> {
     Arc::new(Shared {
         closing: AtomicBool::new(false),
+        report_end: AtomicBool::new(false),
         terminate: Mutex::new(None),
         down_bytes: AtomicUsize::new(0),
         up_bytes: AtomicUsize::new(0),
@@ -152,6 +156,12 @@ pub fn join_stopped(timeout: Duration) -> bool {
 /// What both sides of a worker read and write.
 pub(crate) struct Shared {
     pub(crate) closing: AtomicBool,
+    /// The worker was ended by the close of what it belonged to (a browser
+    /// context's service worker): its thread tells the one that started it
+    /// once its VM is gone ([`note_ended`]). A worker a live page ends
+    /// (`terminate()`, `close()`, an unregistered service worker) leaves
+    /// nothing behind that is worth a collection of that page's heap.
+    pub(crate) report_end: AtomicBool,
     /// Set by the worker thread once its VM exists.
     pub(crate) terminate: Mutex<Option<TerminateHandle>>,
     /// Message bytes on their way to the worker and to the page.
@@ -486,6 +496,7 @@ impl JsClass for Worker {
             let id = NEXT_WORKER.fetch_add(1, Ordering::Relaxed);
             let shared = Arc::new(Shared {
                 closing: AtomicBool::new(false),
+                report_end: AtomicBool::new(false),
                 terminate: Mutex::new(None),
                 down_bytes: AtomicUsize::new(0),
                 up_bytes: AtomicUsize::new(0),

@@ -693,10 +693,13 @@ impl ThreadPerConnection {
             // idle again: 118 MB resident (64 MB footprint) without this call,
             // 83 MB (29 MB) with it. Only for a connection that left the
             // process larger: the release is 1.9M instructions, half of
-            // what a connection that opens nothing costs.
+            // what a connection that opens nothing costs. Where the
+            // footprint cannot be read (not macOS) nothing is released, as
+            // before: releasing at every connection's end is that cost
+            // with no measurement of what it returns there.
             let grown = match (before, lp_js::process_footprint()) {
                 (Some(before), Some(after)) => after.saturating_sub(before) >= THREAD_END_RELEASE_GROWTH,
-                _ => true,
+                _ => false,
             };
             if grown {
                 lp_js::release_thread_memory();
@@ -900,11 +903,12 @@ pub(crate) fn serve_browser(
             continue;
         }
         let engine = &browser.host().thread.browser.engine;
-        // A worker has ended (its page or its context was closed): what it
-        // kept alive on this thread is collectable only now, so its end
-        // counts as a close. Measured closing a context whose page a
-        // service worker controlled: 182 MB before this collection, 85 MB
-        // after; the one inside the close itself had freed 71 of 317 MB.
+        // A closed context's service worker has ended: what it kept alive
+        // on this thread is collectable only now, so its end counts as a
+        // close. Measured closing a context whose page a service worker
+        // controlled: 182 MB before this collection, 85 MB after; the one
+        // inside the close itself had freed 71 of 317 MB. A worker that a
+        // live page ended is not reported (`lp_webapi::worker_ended`).
         if lp_webapi::take_worker_ended() {
             engine.release_closed();
         }
