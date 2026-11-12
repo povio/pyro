@@ -2,11 +2,11 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Raw profiles from the training run and their merge; `target/` keeps them out of the tree.
-PGO_DIR="${LP_PGO_DIR:-$ROOT/target/pgo}"
+PGO_DIR="${PYRO_PGO_DIR:-$ROOT/target/pgo}"
 PROFRAW_DIR="$PGO_DIR/profraw"
 MERGED="$PGO_DIR/merged.profdata"
 # The binary both builds produce (`--profile release-pgo`).
-PGO_BIN="$ROOT/target/release-pgo/lightningpanda"
+PGO_BIN="$ROOT/target/release-pgo/pyro"
 # RUSTFLAGS replaces .cargo/config.toml's flags, so the linker wrapper that signs
 # the binary with the JIT entitlement has to be repeated (README, "Build").
 LINKER_FLAG="-Clink-arg=-Bscripts/macos/linker"

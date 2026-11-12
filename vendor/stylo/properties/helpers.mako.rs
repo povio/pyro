@@ -65,7 +65,7 @@ pub mod ${property.ident} {
                     CSSWideKeyword::Inherit => {
                         % if not property.style_struct.inherited:
                             % if property.name in ("box-sizing", "baseline-shift", "baseline-source", "alignment-baseline"):
-                            // lightningpanda: the parent's value is a cache condition.
+                            // pyro: the parent's value is a cache condition.
                             {
                                 let parent = context.builder.inherited_style.slow_clone_${property.ident}();
                                 context.rule_cache_conditions.borrow_mut().add_inherited_reset(

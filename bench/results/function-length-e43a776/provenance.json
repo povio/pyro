@@ -2,10 +2,10 @@
   "parent": {
     "sourceSha": "f537c86ee1c31b49e221cc13ee0d7a41ac96e713",
     "status": "",
-    "binary": "/private/tmp/lp-w3-cpu-baseline-f537c86-bin/lightningpanda",
+    "binary": "/private/tmp/pyro-w3-cpu-baseline-f537c86-bin/pyro",
     "sha256": "73323263e912e4c1060d6466705e235d96c4135b02b3fd403fb561a773569a50",
     "bytes": 12757472,
-    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/lp-w3-network-target /Users/povioserver/.cargo/bin/cargo build --locked --release -p lightningpanda",
+    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/pyro-w3-network-target /Users/povioserver/.cargo/bin/cargo build --locked --release -p pyro",
     "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
     "role": "Approved rewrite parent for function-length causal comparison; not Zig upstream. No timing samples yet."
   },
@@ -13,12 +13,12 @@
     "sourceSha": "e43a7766cf81ab634bb8744bd490a2f04fd4fa02",
     "parentSha": "f537c86ee1c31b49e221cc13ee0d7a41ac96e713",
     "status": "",
-    "binary": "/private/tmp/lp-w3-cpu-candidate-e43a776-bin/lightningpanda",
+    "binary": "/private/tmp/pyro-w3-cpu-candidate-e43a776-bin/pyro",
     "sha256": "8b1a0c95e3dca3019be2fff9de564fad54155dd4f92eb947f9bb26c1e72c053e",
     "bytes": 12757504,
-    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/lp-w3-network-target /Users/povioserver/.cargo/bin/cargo build --locked --release -p lightningpanda",
+    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/pyro-w3-network-target /Users/povioserver/.cargo/bin/cargo build --locked --release -p pyro",
     "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
-    "focusedTest": "cargo test --locked --release -p lp-js --test class_lengths:1passed",
+    "focusedTest": "cargo test --locked --release -p pyro-js --test class_lengths:1passed",
     "loadAverageBefore": [
       2.2236328125,
       1.75,

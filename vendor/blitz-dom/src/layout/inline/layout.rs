@@ -458,7 +458,7 @@ impl LayoutPassState<'_> {
                 .downcast_element_mut()
                 .unwrap()
                 .inline_layout_data = Some(inline_layout);
-            // lightningpanda: its own (or known) size still applies: a
+            // pyro: its own (or known) size still applies: a
             // `width: 200px` div holding only an empty `<i>` is 200px wide.
             return LayoutOutput::from_outer_size(
                 Size {
@@ -634,7 +634,7 @@ impl LayoutPassState<'_> {
             .width
             .map(|w| (w * scale) - pbw)
             .unwrap_or_else(|| {
-                // lightningpanda: the content widths of a layout without in-flow inline boxes are
+                // pyro: the content widths of a layout without in-flow inline boxes are
                 // kept with its shaped text (`TextLayout::content_widths`); with inline boxes, whose
                 // sizes depend on whether this measures under a min-content or max-content
                 // constraint, they are measured here.
@@ -841,7 +841,7 @@ impl LayoutPassState<'_> {
         // Perform inline layout
         #[cfg(feature = "floats")]
         {
-            // lightningpanda: breaking again with the inputs of the last break (no floats
+            // pyro: breaking again with the inputs of the last break (no floats
             // involved) gives the same lines.
             let break_key = {
                 use std::hash::{Hash, Hasher};
@@ -1063,7 +1063,7 @@ impl LayoutPassState<'_> {
             })
             .unwrap_or((parley::layout::Alignment::Start, None));
 
-        // lightningpanda: aligning moves each line with its runs (the glyph
+        // pyro: aligning moves each line with its runs (the glyph
         // reach is measured per line, `TextLayout::hit_reach`), except that
         // justification spaces the runs out within it: justifying now or
         // before measures again.

@@ -2,7 +2,7 @@
 // `serve` binaries, written as JSON (plus a Markdown summary) that cdp-perf-compare.mjs diffs run to run.
 //
 // Usage:
-//   node cdp-perf.mjs --bin [label=]/abs/lightningpanda [--bin base=/abs/other] --out /abs/result.json
+//   node cdp-perf.mjs --bin [label=]/abs/pyro [--bin base=/abs/other] --out /abs/result.json
 //                     [--rounds 5] [--scale 1] [--quick] [--filter REGEX] [--list]
 //                     [--sampler /abs/rss-sampler] [--playwright] [--perf-trace] [--fork]
 //
@@ -17,7 +17,7 @@
 // and CPU time barely move with host load: on a machine that cannot go quiet, compare those.
 //
 // --perf-trace needs binaries built with `--features perf-trace`: it resets the browser's stage timers after
-// warmup and reads them (LP.perfStats) after the measured loop, attributing inner CDP costs per scenario.
+// warmup and reads them (Pyro.perfStats) after the measured loop, attributing inner CDP costs per scenario.
 //
 // Exit status: 0 when every scenario passed for every binary, 1 if any failed (results are written either
 // way), 2 for usage errors.
@@ -34,7 +34,7 @@ import { summarize, median } from './cdp-perf-stats.mjs';
 
 const require = createRequire(import.meta.url);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SCHEMA = 'lightningpanda-cdp-perf/1';
+const SCHEMA = 'pyro-cdp-perf/1';
 
 // ---------- arguments ----------
 const argv = process.argv.slice(2);
@@ -65,8 +65,8 @@ const BINS = many('--bin').map((spec, i) => {
 });
 
 // Same flags and environment the TOS fixture uses (see run-baseline.mjs).
-const LP_FLAGS = ['--log-level', 'error', '--experimental-features', 'cors', '--load-resources', 'stylesheet', '--load-resources', 'iframe'];
-const LP_ENV = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true' };
+const PYRO_FLAGS = ['--log-level', 'error', '--experimental-features', 'cors', '--load-resources', 'stylesheet', '--load-resources', 'iframe'];
+const PYRO_ENV = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true' };
 
 // ---------- small helpers ----------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -259,7 +259,7 @@ async function objectId(cdp, sessionId, expression) {
 const BIG_FN = `function(a) { ${Array.from({ length: 2000 }, (_, i) => `const v${i} = ${i};`).join('\n')} return a + 1; }`;
 
 // ---------- scenarios ----------
-// Page.printToPDF cuts a document without `.pz-page` elements into pages (`paint_paper` in lp-render): layout at
+// Page.printToPDF cuts a document without `.pz-page` elements into pages (`paint_paper` in pyro-render): layout at
 // the paper's width, shrink to fit, `Breaks::of`, one cut per page. bench/pdf's ToS documents have `.pz-page` and
 // never get here. The content is set once per scenario; the sample is the print alone, and checks the page count roughly.
 const PAPER_CUT_WORDS = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
@@ -809,17 +809,17 @@ const SCENARIOS = [
     },
   },
 
-  // ---- LP.* native driver through the same Bun.WebView client (view.cdp) ----
+  // ---- Pyro.* native driver through the same Bun.WebView client (view.cdp) ----
   // One command per action: locators, actionability and waiting run in the browser.
   {
     name: 'wv.lp.click',
     group: 'webview',
-    what: 'LP.act click on "#b" through view.cdp (compare wv.click.selector)',
+    what: 'Pyro.act click on "#b" through view.cdp (compare wv.click.selector)',
     iterations: 100,
     webview: true,
     setup: async (env) => ({ ...(await wvSetup('/click')(env)), n: 0 }),
     run: async (s) => {
-      await s.view.cdp('LP.act', { locator: { css: '#b' }, action: 'click' });
+      await s.view.cdp('Pyro.act', { locator: { css: '#b' }, action: 'click' });
       s.n++;
     },
     check: async (s) => {
@@ -831,12 +831,12 @@ const SCENARIOS = [
   {
     name: 'wv.lp.fill',
     group: 'webview',
-    what: 'LP.act fill of 10 characters into "#t" (compare wv.type, which needs a focused input)',
+    what: 'Pyro.act fill of 10 characters into "#t" (compare wv.type, which needs a focused input)',
     iterations: 100,
     webview: true,
     setup: wvSetup('/click'),
     run: async (s, i) => {
-      await s.view.cdp('LP.act', { locator: { css: '#t' }, action: 'fill', value: `abcdefg${String(i).padStart(3, '0')}` });
+      await s.view.cdp('Pyro.act', { locator: { css: '#t' }, action: 'fill', value: `abcdefg${String(i).padStart(3, '0')}` });
     },
     check: async (s) => {
       const len = await s.view.evaluate(`document.getElementById('t').value.length`);
@@ -847,7 +847,7 @@ const SCENARIOS = [
   {
     name: 'wv.lp.flow.e2e',
     group: 'webview',
-    what: 'wv.flow.e2e on LP.*: open view, navigate form, fill name, click submit, LP.expect the result, close',
+    what: 'wv.flow.e2e on Pyro.*: open view, navigate form, fill name, click submit, Pyro.expect the result, close',
     iterations: 15,
     webview: true,
     run: async (s, i, env) => lpFlow(env, i, false, false),
@@ -857,7 +857,7 @@ const SCENARIOS = [
   {
     name: 'lp.flow.e2e',
     group: 'webview',
-    what: 'wv.lp.flow.e2e on the raw CDP client: new page, navigate form, LP.act fill + click, LP.expect, close',
+    what: 'wv.lp.flow.e2e on the raw CDP client: new page, navigate form, Pyro.act fill + click, Pyro.expect, close',
     iterations: 15,
     run: async (s, i, env) => cdpLpFlow(env, i, false),
   },
@@ -871,21 +871,21 @@ const SCENARIOS = [
   {
     name: 'lp.run.steps',
     group: 'webview',
-    what: 'lp.flow.e2e with fill, click and expect as one LP.run (click settles on its fetch)',
+    what: 'lp.flow.e2e with fill, click and expect as one Pyro.run (click settles on its fetch)',
     iterations: 15,
     run: async (s, i, env) => cdpRunFlow(env, i, false),
   },
   {
     name: 'lp.run.flow',
     group: 'webview',
-    what: 'lp.run.steps with the navigation as a goto step too: new page, one LP.run, close',
+    what: 'lp.run.steps with the navigation as a goto step too: new page, one Pyro.run, close',
     iterations: 15,
     run: async (s, i, env) => cdpRunFlow(env, i, true),
   },
   {
     name: 'wv.lp.run.flow',
     group: 'webview',
-    what: 'wv.lp.flow.e2e with fill, click and expect as one LP.run: open view, navigate form, LP.run, close',
+    what: 'wv.lp.flow.e2e with fill, click and expect as one Pyro.run: open view, navigate form, Pyro.run, close',
     iterations: 15,
     webview: true,
     run: async (s, i, env) => {
@@ -895,7 +895,7 @@ const SCENARIOS = [
       try {
         await view.navigate(`${env.site}/form`);
         phases.navigate = now() - t0;
-        await view.cdp('LP.run', { steps: formSteps(i) });
+        await view.cdp('Pyro.run', { steps: formSteps(i) });
         phases.result = now() - t0;
       } finally {
         await view.close();
@@ -920,22 +920,22 @@ const SCENARIOS = [
   ].map(([kind, locator, want]) => ({
     name: `wv.lp.locate.${kind}`,
     group: 'webview',
-    what: `LP.query count of a ${kind} locator over a 2000-row document (compare wv.evaluate.query2k)`,
+    what: `Pyro.query count of a ${kind} locator over a 2000-row document (compare wv.evaluate.query2k)`,
     iterations: 100,
     webview: true,
     setup: wvSetup('/dom?n=2000'),
     run: async (s) => {
-      const r = await s.view.cdp('LP.query', { locator, read: 'count' });
+      const r = await s.view.cdp('Pyro.query', { locator, read: 'count' });
       assert(r.value === want, `${kind} count ${r.value} != ${want}`);
     },
     teardown: wvClose,
   })),
 
-  // ---- TOS positions-close on the lightning-panda client (Bun only: the client is TypeScript) ----
+  // ---- TOS positions-close on the pyro client (Bun only: the client is TypeScript) ----
   {
     name: 'tos.close.steps',
     group: 'tos',
-    what: 'TOS positions-close, one LP.run per step: seed, new signed-in page, navigate to the overview, 8 steps, close',
+    what: 'TOS positions-close, one Pyro.run per step: seed, new signed-in page, navigate to the overview, 8 steps, close',
     iterations: 15,
     setup: tosSetup(false),
     run: async (s, i, env) => tosClose(s, env, 'steps'),
@@ -944,7 +944,7 @@ const SCENARIOS = [
   {
     name: 'tos.close.run.fresh',
     group: 'tos',
-    what: 'tos.close.steps as one LP.run (navigation included), still on a page booted for the test',
+    what: 'tos.close.steps as one Pyro.run (navigation included), still on a page booted for the test',
     iterations: 15,
     setup: tosSetup(false),
     run: async (s, i, env) => tosClose(s, env, 'run'),
@@ -953,7 +953,7 @@ const SCENARIOS = [
   {
     name: 'tos.close.run',
     group: 'tos',
-    what: 'tos.close.run.fresh on a pre-booted signed-in page: lp.page({ as, route }) + one LP.run (untimed: wait for a booted page)',
+    what: 'tos.close.run.fresh on a pre-booted signed-in page: lp.page({ as, route }) + one Pyro.run (untimed: wait for a booted page)',
     iterations: 15,
     setup: tosSetup(true),
     before: (s) => s.lp.warm('employee'),
@@ -1211,7 +1211,7 @@ function wvSetup(path) {
 async function wvClose(s) {
   await s.view?.close();
 }
-// The form flow on LP.*: fill, click, then one LP.expect that the browser answers
+// The form flow on Pyro.*: fill, click, then one Pyro.expect that the browser answers
 // when the fetch response has updated the DOM (no client polling).
 async function lpFlow(env, i, pipelined, semantic) {
   const t0 = now();
@@ -1226,14 +1226,14 @@ async function lpFlow(env, i, pipelined, semantic) {
   try {
     await view.navigate(`${env.site}/form`);
     lap('navigate');
-    const fill = view.cdp('LP.act', { locator: name, action: 'fill', value: `w${i}` });
+    const fill = view.cdp('Pyro.act', { locator: name, action: 'fill', value: `w${i}` });
     if (!pipelined) await fill;
-    const click = view.cdp('LP.act', { locator: submit, action: 'click' });
+    const click = view.cdp('Pyro.act', { locator: submit, action: 'click' });
     if (!pipelined) await click;
     lap('input');
     const expect = semantic
-      ? view.cdp('LP.expect', { locator: out, assert: 'visible' })
-      : view.cdp('LP.expect', { locator: out, assert: 'text', expected: `Hello, w${i}` });
+      ? view.cdp('Pyro.expect', { locator: out, assert: 'visible' })
+      : view.cdp('Pyro.expect', { locator: out, assert: 'text', expected: `Hello, w${i}` });
     await Promise.all([fill, click, expect]);
     lap('result');
   } finally {
@@ -1255,12 +1255,12 @@ async function cdpLpFlow(env, i, pipelined) {
     await navigate(c, page.sessionId, `${env.site}/form`);
     lap('navigate');
     const send = (method, params) => c.send(method, params, page.sessionId);
-    const fill = send('LP.act', { locator: { css: '#name' }, action: 'fill', value: `w${i}` });
+    const fill = send('Pyro.act', { locator: { css: '#name' }, action: 'fill', value: `w${i}` });
     if (!pipelined) await fill;
-    const click = send('LP.act', { locator: { css: '#submit' }, action: 'click' });
+    const click = send('Pyro.act', { locator: { css: '#submit' }, action: 'click' });
     if (!pipelined) await click;
     lap('input');
-    const expect = send('LP.expect', { locator: { css: '#out' }, assert: 'text', expected: `Hello, w${i}` });
+    const expect = send('Pyro.expect', { locator: { css: '#out' }, assert: 'text', expected: `Hello, w${i}` });
     await Promise.all([fill, click, expect]);
     lap('result');
   } finally {
@@ -1269,7 +1269,7 @@ async function cdpLpFlow(env, i, pipelined) {
   lap('close');
   return phases;
 }
-// ---------- TOS positions-close (lightning-panda) ----------
+// ---------- TOS positions-close (pyro) ----------
 const TOS_AUTH = { authorization: 'Bearer e2e-token' };
 const tosOverview = (id) => `/tos/platform/logistics/positions/${id}/overview`;
 async function tosSeed(env) {
@@ -1278,7 +1278,7 @@ async function tosSeed(env) {
   return r.json();
 }
 // The steps of TOS's 'closes an open Position from the Position overview' (see
-// packages/lightning-panda/examples/positions-close.test.ts).
+// packages/pyro/examples/positions-close.test.ts).
 function tosCloseSteps(t, p) {
   const { check, button, dialog, text } = t;
   return [
@@ -1294,9 +1294,9 @@ function tosCloseSteps(t, p) {
 }
 function tosSetup(prepared, connections = 1) {
   return async (env) => {
-    if (!globalThis.Bun) throw new Error('needs bun (the lightning-panda client is TypeScript)');
-    const t = await import('../../packages/lightning-panda/src/index.ts');
-    const lp = await t.Lightningpanda.connect(env.wsUrl, { connections });
+    if (!globalThis.Bun) throw new Error('needs bun (the pyro client is TypeScript)');
+    const t = await import('../../packages/pyro/src/index.ts');
+    const lp = await t.Pyro.connect(env.wsUrl, { connections });
     await lp.profile('employee', {
       url: `${env.site}/tos/platform`,
       localStorage: { 'auth-token': 'e2e-token' },
@@ -1309,7 +1309,7 @@ function tosSetup(prepared, connections = 1) {
   };
 }
 async function tosTeardown(s) {
-  if (s.lp) console.error(`      lightning-panda pages: ${JSON.stringify(s.lp.stats)}`);
+  if (s.lp) console.error(`      pyro pages: ${JSON.stringify(s.lp.stats)}`);
   s.lp?.close();
 }
 async function tosClose(s, env, mode) {
@@ -1349,7 +1349,7 @@ async function tosClose(s, env, mode) {
   return phases;
 }
 
-// The form flow as LP.run steps.
+// The form flow as Pyro.run steps.
 function formSteps(i) {
   return [
     { act: { locator: { css: '#name' }, action: 'fill', value: `w${i}` } },
@@ -1357,7 +1357,7 @@ function formSteps(i) {
     { check: { locator: { css: '#out' }, assert: 'text', expected: `Hello, w${i}` } },
   ];
 }
-// The form flow as one LP.run on the raw CDP client, with or without the navigation in it.
+// The form flow as one Pyro.run on the raw CDP client, with or without the navigation in it.
 async function cdpRunFlow(env, i, withGoto) {
   const t0 = now();
   const phases = {};
@@ -1374,8 +1374,8 @@ async function cdpRunFlow(env, i, withGoto) {
       await navigate(c, page.sessionId, `${env.site}/form`);
       lap('navigate');
     }
-    const r = await c.send('LP.run', { steps }, page.sessionId);
-    assert(r.results.length === steps.length, `LP.run results ${JSON.stringify(r)}`);
+    const r = await c.send('Pyro.run', { steps }, page.sessionId);
+    assert(r.results.length === steps.length, `Pyro.run results ${JSON.stringify(r)}`);
     lap('result');
   } finally {
     await closePage(c, page);
@@ -1440,7 +1440,7 @@ async function startSite() {
 async function startBrowser(bin) {
   const port = await freePort();
   const t = now();
-  const cp = track(spawn(bin.path, ['serve', '--host', '127.0.0.1', '--port', String(port), ...(FORK ? ['--fork'] : []), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV, detached: true }));
+  const cp = track(spawn(bin.path, ['serve', '--host', '127.0.0.1', '--port', String(port), ...(FORK ? ['--fork'] : []), ...PYRO_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: PYRO_ENV, detached: true }));
   let stderr = '';
   cp.stderr.on('data', (d) => {
     stderr = (stderr + d).slice(-4000);
@@ -1523,7 +1523,7 @@ async function runScenario(sc, bin, site, playwright) {
         }
         // Stage timers are process-wide, so one control connection sees every client's commands.
         const control = PERF_TRACE ? (cdp ?? (perfCdp = await Cdp.open(b.wsUrl))) : null;
-        if (control) await control.send('LP.perfReset');
+        if (control) await control.send('Pyro.perfReset');
         const before = await browserSnapshot(b.cp.pid);
         const t0 = now();
         for (let i = 0; i < iterations; i++) {
@@ -1536,7 +1536,7 @@ async function runScenario(sc, bin, site, playwright) {
         }
         result.wallMs = now() - t0;
         const after = await browserSnapshot(b.cp.pid);
-        if (control) result.perf = await control.send('LP.perfStats');
+        if (control) result.perf = await control.send('Pyro.perfStats');
         if (before && after) {
           result.cpuMsPerOp = (after.cpuMs - before.cpuMs) / (iterations * (sc.opsPerSample ?? 1));
           result.rssKiB = after.rssKiB;

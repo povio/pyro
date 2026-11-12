@@ -1,0 +1,365 @@
+Pyro patch 0024: own property names answered from the prototype; enumerable indices.
+
+JSClassSetOwnPropertyNames gives a class the names its wrappers have as own properties while
+the values stay with the prototype's accessors. Chrome has CSSOM's computed-style properties as
+named properties of the object (hasOwnProperty('color') is true, Object.keys and spread list
+them, getOwnPropertyDescriptor gives a data property); pyro keeps them as prototype
+accessors so that reads stay inline-cached. With this patch:
+- getOwnSpecialPropertyNames lists the class's "listed" names (DontEnum ones only for
+  getOwnPropertyNames), after what the getPropertyNames hook adds. The names become a realm's
+  identifiers once, on its first listing (OpaqueJSClassContextData), copied from the
+  characters so the class's own strings never turn into atoms of one VM's table.
+- getOwnPropertySlot, for an own-property lookup only (InternalMethodType::GetOwnProperty:
+  hasOwnProperty, getOwnPropertyDescriptor, the copies of spread and Object.assign), answers an
+  "answered" name the wrapper lacks as a writable, enumerable, configurable custom value
+  (uncacheable: wrappers of different classes share a structure when they share a prototype).
+  hasOwnProperty and Object.hasOwn never read it; a descriptor or a copy does, through the
+  class's getValue callback (the value independent of the prototype chain, as Chrome's named
+  properties are), or a [[Get]] without one. A [[Get]] never reaches this (on a cacheable
+  wrapper it skips getOwnPropertySlot altogether; otherwise the type check stops it), nor do
+  `in` and VM inquiries.
+- Object.prototype.propertyIsEnumerable reads the own slot's attributes instead of making a
+  descriptor, so it does not compute such a value either (every slot kind carries the
+  attributes its descriptor would get).
+Also: the indexed callbacks' properties (patch 0012) are enumerable, as WebIDL's are (Chrome:
+writable false, enumerable and configurable true), so spread and Object.assign copy them.
+
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.cpp b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+index 9b07fe9a98..2bbbf68435 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.cpp
++++ b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+@@ -42,6 +42,8 @@ static JSC_DECLARE_CUSTOM_GETTER(callbackGetterJSNonFinalObjectCallbackObject);
+ static JSC_DECLARE_CUSTOM_GETTER(staticFunctionGetterJSNonFinalObjectCallbackObject);
+ static JSC_DECLARE_CUSTOM_GETTER(callbackGetterJSGlobalObjectCallbackObject);
+ static JSC_DECLARE_CUSTOM_GETTER(staticFunctionGetterJSGlobalObjectCallbackObject);
++static JSC_DECLARE_CUSTOM_GETTER(ownNameGetterJSNonFinalObjectCallbackObject);
++static JSC_DECLARE_CUSTOM_GETTER(ownNameGetterJSGlobalObjectCallbackObject);
+ 
+ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSCallbackObject<JSNonFinalObject>);
+ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSCallbackObject<JSGlobalObject>);
+@@ -76,6 +78,12 @@ GetValueFunc JSCallbackObject<JSNonFinalObject>::getStaticFunctionGetter()
+     return staticFunctionGetterJSNonFinalObjectCallbackObject;
+ }
+ 
++template <>
++GetValueFunc JSCallbackObject<JSNonFinalObject>::getOwnNameGetter()
++{
++    return ownNameGetterJSNonFinalObjectCallbackObject;
++}
++
+ 
+ template<>
+ NativeFunction::Ptr JSCallbackObject<JSGlobalObject>::getCallFunction()
+@@ -101,6 +109,12 @@ GetValueFunc JSCallbackObject<JSGlobalObject>::getStaticFunctionGetter()
+     return staticFunctionGetterJSGlobalObjectCallbackObject;
+ }
+ 
++template <>
++GetValueFunc JSCallbackObject<JSGlobalObject>::getOwnNameGetter()
++{
++    return ownNameGetterJSGlobalObjectCallbackObject;
++}
++
+ template<>
+ JSCallbackObject<JSGlobalObject>* JSCallbackObject<JSGlobalObject>::create(VM& vm, JSClassRef classRef, Structure* structure)
+ {
+@@ -201,6 +215,16 @@ JSC_DEFINE_CUSTOM_GETTER(staticFunctionGetterJSGlobalObjectCallbackObject, (JSGl
+     return JSCallbackObject<JSGlobalObject>::staticFunctionGetterImpl(globalObject, thisValue, propertyName);
+ }
+ 
++JSC_DEFINE_CUSTOM_GETTER(ownNameGetterJSNonFinalObjectCallbackObject, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName propertyName))
++{
++    return JSCallbackObject<JSNonFinalObject>::ownNameGetterImpl(globalObject, thisValue, propertyName);
++}
++
++JSC_DEFINE_CUSTOM_GETTER(ownNameGetterJSGlobalObjectCallbackObject, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName propertyName))
++{
++    return JSCallbackObject<JSGlobalObject>::ownNameGetterImpl(globalObject, thisValue, propertyName);
++}
++
+ // Pyro: the inline caches' `wrapper[i]` (AccessCase::IndexedCallbackObjectLoad): the
+ // class chain's indexed getter, then the generic get for an index it does not answer.
+ JSC_DECLARE_JIT_OPERATION(operationGetByValCallbackObject, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.h b/Source/JavaScriptCore/API/JSCallbackObject.h
+index f7e408977c..bae848c7f8 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.h
++++ b/Source/JavaScriptCore/API/JSCallbackObject.h
+@@ -209,6 +209,7 @@ public:
+     static EncodedJSValue constructImpl(JSGlobalObject*, CallFrame*);
+     static EncodedJSValue staticFunctionGetterImpl(JSGlobalObject*, EncodedJSValue, PropertyName);
+     static EncodedJSValue callbackGetterImpl(JSGlobalObject*, EncodedJSValue, PropertyName);
++    static EncodedJSValue ownNameGetterImpl(JSGlobalObject*, EncodedJSValue, PropertyName);
+ 
+     DECLARE_VISIT_CHILDREN;
+    
+@@ -259,6 +260,7 @@ private:
+ 
+     static GetValueFunc getStaticFunctionGetter();
+     static GetValueFunc getCallbackGetter();
++    static GetValueFunc getOwnNameGetter();
+  
+     JSValue getStaticValue(JSGlobalObject*, PropertyName);
+ 
+diff --git a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+index d55e3e212f..99c76e79c8 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
++++ b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+@@ -159,7 +159,9 @@ bool JSCallbackObject<Parent>::tryIndexedGetter(JSGlobalObject* globalObject, un
+             JSLock::APICallbackScope callbackScope(globalObject);
+             value = getPropertyByIndex(toRef(globalObject), toRef(static_cast<JSObject*>(this)), index, &exception);
+         }
+-        unsigned attributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum;
++        // Enumerable, as WebIDL's indexed properties are (Chrome: writable false, enumerable and
++        // configurable true), so spread and Object.assign copy them.
++        unsigned attributes = static_cast<unsigned>(PropertyAttribute::ReadOnly);
+         if (exception) {
+             throwException(globalObject, scope, toJS(globalObject, exception));
+             slot.setValue(this, attributes, jsUndefined());
+@@ -271,6 +273,28 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
+     if (found)
+         return true;
+ 
++    // Pyro: a name the class answers as an own property although the prototype's
++    // accessor holds its value (JSClassSetOwnPropertyNames), for an own-property lookup only.
++    // A [[Get]] (whose inline caches go straight to the prototype on a cacheable wrapper),
++    // `in` and VM inquiries keep finding the prototype's accessor.
++    if (slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty) {
++        if (StringImpl* name = propertyName.uid(); name && !name->isSymbol()) {
++            for (JSClassRef jsClass = thisObject->classRef(); jsClass; jsClass = jsClass->parentClass) {
++                if (!jsClass->answersOwnPropertyName(name))
++                    continue;
++                // A custom value: hasOwnProperty, Object.hasOwn and propertyIsEnumerable answer
++                // without computing it (a computed style's value may need a restyle or a
++                // layout); getOwnPropertyDescriptor and the copies read it (ownNameGetterImpl).
++                // Not cacheable: a wrapper's structure is shared with other classes' wrappers
++                // that have the same prototype, so HasOwnPropertyCache must not remember the
++                // answer by structure.
++                slot.setCustom(thisObject, static_cast<unsigned>(PropertyAttribute::None), getOwnNameGetter());
++                slot.disableCaching();
++                return true;
++            }
++        }
++    }
++
+     // A cacheable wrapper's [[Get]] skips this function and finds the tag on its prototype, so
+     // don't answer with an own tag here either: getOwnPropertyDescriptor must agree.
+     if (propertyName.uid() == vm.propertyNames->toStringTagSymbol.impl() && thisObject->structure()->typeInfo().prohibitsPropertyCaching()) {
+@@ -743,6 +767,14 @@ void JSCallbackObject<Parent>::getOwnSpecialPropertyNames(JSObject* object, JSGl
+             JSLock::APICallbackScope callbackScope(globalObject);
+             getPropertyNames(execRef, thisRef, toRef(&propertyNames));
+         }
++
++        // Pyro: JSClassSetOwnPropertyNames.
++        if (!jsClass->ownListedNames.isEmpty()) {
++            for (auto& [identifier, dontEnum] : jsClass->ownListedIdentifiers(globalObject)) {
++                if (mode == DontEnumPropertiesMode::Include || !dontEnum)
++                    propertyNames.add(identifier);
++            }
++        }
+         
+         if (OpaqueJSClassStaticValuesTable* staticValues = jsClass->staticValues(globalObject)) {
+             typedef OpaqueJSClassStaticValuesTable::const_iterator iterator;
+@@ -861,6 +893,44 @@ EncodedJSValue JSCallbackObject<Parent>::staticFunctionGetterImpl(JSGlobalObject
+     return JSValue::encode(throwException(globalObject, scope, createReferenceError(globalObject, "Static function property defined with NULL callAsFunction callback."_s)));
+ }
+ 
++// Pyro: the value of a name JSClassSetOwnPropertyNames answers as an own property.
++// The class's getValue callback gives it (Chrome's named properties: the value does not depend on
++// the prototype chain); without one, or when it gives none, a [[Get]].
++template <class Parent>
++EncodedJSValue JSCallbackObject<Parent>::ownNameGetterImpl(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName propertyName)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
++    JSCallbackObject* thisObj = asCallbackObject(thisValue);
++    if (StringImpl* name = propertyName.uid()) {
++        for (JSClassRef jsClass = thisObj->classRef(); jsClass; jsClass = jsClass->parentClass) {
++            if (!jsClass->answersOwnPropertyName(name))
++                continue;
++            JSObjectGetPropertyCallback getValue = jsClass->ownPropertyValue;
++            if (!getValue)
++                break;
++            RefPtr<OpaqueJSString> propertyNameRef = OpaqueJSString::tryCreate(name);
++            if (!propertyNameRef)
++                break;
++            JSValueRef exception = nullptr;
++            JSValueRef value;
++            {
++                JSLock::APICallbackScope callbackScope(globalObject);
++                value = getValue(toRef(globalObject), toRef(static_cast<JSObject*>(thisObj)), propertyNameRef.get(), &exception);
++            }
++            if (exception) {
++                throwException(globalObject, scope, toJS(globalObject, exception));
++                return JSValue::encode(jsUndefined());
++            }
++            if (value)
++                return JSValue::encode(toJS(globalObject, value));
++            break;
++        }
++    }
++    RELEASE_AND_RETURN(scope, JSValue::encode(thisObj->get(globalObject, propertyName)));
++}
++
+ template <class Parent>
+ EncodedJSValue JSCallbackObject<Parent>::callbackGetterImpl(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName propertyName)
+ {
+diff --git a/Source/JavaScriptCore/API/JSClassRef.cpp b/Source/JavaScriptCore/API/JSClassRef.cpp
+index 3124ca161f..d2e2a8c887 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.cpp
++++ b/Source/JavaScriptCore/API/JSClassRef.cpp
+@@ -146,6 +146,23 @@ OpaqueJSClassContextData& OpaqueJSClass::contextData(JSGlobalObject* globalObjec
+     return *contextData;
+ }
+ 
++const Vector<std::pair<JSC::Identifier, bool>>& OpaqueJSClass::ownListedIdentifiers(JSGlobalObject* globalObject)
++{
++    OpaqueJSClassContextData& data = contextData(globalObject);
++    if (!data.ownListedIdentifiersMade) {
++        VM& vm = globalObject->vm();
++        data.ownListedIdentifiers.reserveInitialCapacity(ownListedNames.size());
++        for (auto& [name, dontEnum] : ownListedNames) {
++            // From the characters: Identifier::fromString(vm, String) would turn the class's
++            // string itself into an atom of this VM's table when the table lacks the name.
++            Identifier identifier = name.is8Bit() ? Identifier::fromString(vm, name.span8()) : Identifier::fromString(vm, name.span16());
++            data.ownListedIdentifiers.append({ WTF::move(identifier), dontEnum });
++        }
++        data.ownListedIdentifiersMade = true;
++    }
++    return data.ownListedIdentifiers;
++}
++
+ String OpaqueJSClass::className()
+ {
+     // Make a deep copy, so that the caller has no chance to put the original into AtomStringTable.
+diff --git a/Source/JavaScriptCore/API/JSClassRef.h b/Source/JavaScriptCore/API/JSClassRef.h
+index 36d86e53c9..f8f0778f6e 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.h
++++ b/Source/JavaScriptCore/API/JSClassRef.h
+@@ -29,9 +29,12 @@
+ #include <JavaScriptCore/JSObjectRef.h>
+ #include "JSForkPrivate.h"
+ #include <JavaScriptCore/OpaqueJSString.h>
++#include <JavaScriptCore/Identifier.h>
+ #include <JavaScriptCore/Protect.h>
+ #include <JavaScriptCore/Weak.h>
+ #include <wtf/HashMap.h>
++#include <wtf/HashSet.h>
++#include <wtf/Vector.h>
+ #include <wtf/text/WTFString.h>
+ 
+ #define STATIC_VALUE_ENTRY_METHOD(method) \
+@@ -96,6 +99,13 @@ public:
+     OpaqueJSClassStaticValuesTable staticValues;
+     OpaqueJSClassStaticFunctionsTable staticFunctions;
+     JSC::Weak<JSC::JSObject> cachedPrototype;
++
++    // Pyro (JSClassSetOwnPropertyNames): the class's listed names as this context's
++    // identifiers, each with whether it is DontEnum, made on the first listing so that
++    // getOwnPropertyNames does not make them again per call. Copies: the class's own strings
++    // never become atoms of any one table.
++    Vector<std::pair<JSC::Identifier, bool>> ownListedIdentifiers;
++    bool ownListedIdentifiersMade { false };
+ };
+ 
+ #define OPAQUE_JSCLASS_METHOD(method) \
+@@ -137,6 +147,16 @@ struct OpaqueJSClass : public ThreadSafeRefCounted<OpaqueJSClass> {
+     // kJSClassAttributeImpureNamedProperties (JSForkPrivate.h).
+     bool impureNamedProperties { false };
+ 
++    // JSClassSetOwnPropertyNames: the names listed, in order, each with whether it is
++    // DontEnum (per context as identifiers: ownListedIdentifiers()), the names an own-property
++    // lookup answers, and the callback that gives an answered name's value. Strings not in any
++    // AtomStringTable, as the static tables'; all read-only once objects exist.
++    Vector<std::pair<String, bool>> ownListedNames;
++    HashSet<RefPtr<StringImpl>> ownAnsweredNames;
++    JSObjectGetPropertyCallback ownPropertyValue { nullptr };
++    bool answersOwnPropertyName(StringImpl* name) const { return !ownAnsweredNames.isEmpty() && ownAnsweredNames.contains(name); }
++    const Vector<std::pair<JSC::Identifier, bool>>& ownListedIdentifiers(JSC::JSGlobalObject*);
++
+ private:
+     friend struct OpaqueJSClassContextData;
+ 
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 16ccb2765e..5f77ff5074 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -494,6 +494,24 @@ void JSContextThrowException(JSContextRef ctx, JSValueRef exception)
+     throwException(globalObject, scope, toJS(globalObject, exception));
+ }
+ 
++void JSClassSetOwnPropertyNames(JSClassRef jsClass, const char* const* names, const unsigned char* flags, size_t count, JSObjectGetPropertyCallback getValue)
++{
++    if (!jsClass || (count && (!names || !flags)))
++        return;
++    jsClass->ownListedNames.clear();
++    jsClass->ownAnsweredNames.clear();
++    jsClass->ownPropertyValue = getValue;
++    for (size_t i = 0; i < count; ++i) {
++        String name = String::fromUTF8(names[i]);
++        if (name.isEmpty())
++            continue;
++        if (flags[i] & kJSOwnPropertyNameListed)
++            jsClass->ownListedNames.append({ name, !!(flags[i] & kJSOwnPropertyNameDontEnum) });
++        if (flags[i] & kJSOwnPropertyNameAnswered)
++            jsClass->ownAnsweredNames.add(name.impl());
++    }
++}
++
+ void JSClassSetIndexedCallbacks(JSClassRef jsClass, JSObjectGetPropertyByIndexCallback getPropertyByIndex, JSObjectSetPropertyByIndexCallback setPropertyByIndex)
+ {
+     if (!jsClass)
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 79f81f3be0..cf53b55b71 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -174,6 +174,27 @@ typedef JSValueRef (*JSObjectGetPropertyByIndexCallback)(JSContextRef ctx, JSObj
+ typedef bool (*JSObjectSetPropertyByIndexCallback)(JSContextRef ctx, JSObjectRef object, unsigned index, JSValueRef value, JSValueRef* exception);
+ JS_EXPORT void JSClassSetIndexedCallbacks(JSClassRef jsClass, JSObjectGetPropertyByIndexCallback getPropertyByIndex, JSObjectSetPropertyByIndexCallback setPropertyByIndex);
+ 
++/* Names a class's wrappers have as own properties although their values come from accessors
++   of the prototype: CSSOM's computed style, whose properties Chrome has as named properties
++   of the object itself. Per name, `flags` holds:
++   - kJSOwnPropertyNameListed: Object.getOwnPropertyNames, Object.keys, for..in, JSON and the
++     like list it, after what the class's getPropertyNames hook adds;
++   - kJSOwnPropertyNameDontEnum: listed only where non-enumerable names are (getOwnPropertyNames,
++     not Object.keys);
++   - kJSOwnPropertyNameAnswered: an own-property lookup (hasOwnProperty,
++     getOwnPropertyDescriptor, the copies of spread and Object.assign) answers it, when the
++     wrapper has no such property itself, as a writable, enumerable, configurable data property.
++     Its value is computed only when read (a descriptor, spread, Object.entries; not
++     hasOwnProperty, Object.hasOwn or propertyIsEnumerable): `getValue(ctx, object, name)`, or,
++     when that is null or returns null without an exception, a [[Get]] of the name.
++   A [[Get]], `in` and assignment never consult the names: they reach the prototype's accessors
++   as before, through the inline caches. Set right after JSClassCreate, before the first
++   object of the class exists; `names` are UTF-8 (never an array index) and copied. */
++#define kJSOwnPropertyNameListed 1u
++#define kJSOwnPropertyNameDontEnum 2u
++#define kJSOwnPropertyNameAnswered 4u
++JS_EXPORT void JSClassSetOwnPropertyNames(JSClassRef jsClass, const char* const* names, const unsigned char* flags, size_t count, JSObjectGetPropertyCallback getValue);
++
+ /* A function object (an ordinary internal function, which call inline caches link to
+    directly) that calls `callback` with `data`. `name` and `length` are its own
+    properties. The function has no finalizer: `data` must outlive it. */
+diff --git a/Source/JavaScriptCore/runtime/ObjectPrototype.cpp b/Source/JavaScriptCore/runtime/ObjectPrototype.cpp
+index e0f0180281..3aac474437 100644
+--- a/Source/JavaScriptCore/runtime/ObjectPrototype.cpp
++++ b/Source/JavaScriptCore/runtime/ObjectPrototype.cpp
+@@ -303,10 +303,13 @@ JSC_DEFINE_HOST_FUNCTION(objectProtoFuncPropertyIsEnumerable, (JSGlobalObject* g
+     JSObject* thisObject = callFrame->thisValue().toThis(globalObject, ECMAMode::strict()).toObject(globalObject);
+     RETURN_IF_EXCEPTION(scope, encodedJSValue());
+ 
+-    scope.release();
+-    PropertyDescriptor descriptor;
+-    bool enumerable = thisObject->getOwnPropertyDescriptor(globalObject, propertyName, descriptor) && descriptor.enumerable();
+-    return JSValue::encode(jsBoolean(enumerable));
++    // Pyro: the own property's attributes, without its value (a descriptor would
++    // compute a custom value: JSClassSetOwnPropertyNames's computed-style names, which may need a
++    // restyle). Every kind of slot carries the attributes its descriptor would have.
++    PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
++    bool found = thisObject->methodTable()->getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
++    RETURN_IF_EXCEPTION(scope, encodedJSValue());
++    return JSValue::encode(jsBoolean(found && !(slot.attributes() & PropertyAttribute::DontEnum)));
+ }
+ 
+ // 15.2.4.3 Object.prototype.toLocaleString()

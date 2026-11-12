@@ -1,63 +1,63 @@
-# Root workspace for the lightningpanda Rust rewrite of lightpanda-io/browser.
+# Root workspace for the pyro Rust rewrite of lightpanda-io/browser.
 # JavaScript engine: system JavaScriptCore (no V8 anywhere in the tree;
 # `scripts/check-no-v8.sh` enforces this against `cargo tree`).
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-# Every crate (lp-render's Blitz lays pages out, so it is no longer optional).
+# Every crate (pyro-render's Blitz lays pages out, so it is no longer optional).
 default-members = [
-    "crates/lightningpanda",
-    "crates/lp-browser",
-    "crates/lp-canvas",
-    "crates/lp-cdp",
-    "crates/lp-cdp-protocol",
-    "crates/lp-dom",
-    "crates/lp-js",
-    "crates/lp-layout",
-    "crates/lp-jsc-sys",
-    "crates/lp-media",
-    "crates/lp-net",
-    "crates/lp-psl",
-    "crates/lp-render",
-    "crates/lp-runtime",
-    "crates/lp-webapi",
+    "crates/pyro",
+    "crates/pyro-browser",
+    "crates/pyro-canvas",
+    "crates/pyro-cdp",
+    "crates/pyro-cdp-protocol",
+    "crates/pyro-dom",
+    "crates/pyro-js",
+    "crates/pyro-layout",
+    "crates/pyro-jsc-sys",
+    "crates/pyro-media",
+    "crates/pyro-net",
+    "crates/pyro-psl",
+    "crates/pyro-render",
+    "crates/pyro-runtime",
+    "crates/pyro-webapi",
 ]
 
 [workspace.package]
 version = "0.0.17"
 edition = "2021"
 license = "AGPL-3.0-only"
-repository = "https://github.com/povio/lightningpanda"
+repository = "https://github.com/povio/pyro"
 rust-version = "1.85"
 
 [workspace.dependencies]
-lp-jsc-sys = { path = "crates/lp-jsc-sys" }
-lp-js = { path = "crates/lp-js" }
-lp-runtime = { path = "crates/lp-runtime" }
-lp-browser = { path = "crates/lp-browser" }
-lp-dom = { path = "crates/lp-dom" }
-lp-net = { path = "crates/lp-net" }
-lp-psl = { path = "crates/lp-psl" }
-lp-webapi = { path = "crates/lp-webapi" }
-lp-cdp-protocol = { path = "crates/lp-cdp-protocol" }
-lp-cdp = { path = "crates/lp-cdp" }
-lp-render = { path = "crates/lp-render" }
-lp-layout = { path = "crates/lp-layout" }
-lp-canvas = { path = "crates/lp-canvas" }
-lp-media = { path = "crates/lp-media", default-features = false }
+pyro-jsc-sys = { path = "crates/pyro-jsc-sys" }
+pyro-js = { path = "crates/pyro-js" }
+pyro-runtime = { path = "crates/pyro-runtime" }
+pyro-browser = { path = "crates/pyro-browser" }
+pyro-dom = { path = "crates/pyro-dom" }
+pyro-net = { path = "crates/pyro-net" }
+pyro-psl = { path = "crates/pyro-psl" }
+pyro-webapi = { path = "crates/pyro-webapi" }
+pyro-cdp-protocol = { path = "crates/pyro-cdp-protocol" }
+pyro-cdp = { path = "crates/pyro-cdp" }
+pyro-render = { path = "crates/pyro-render" }
+pyro-layout = { path = "crates/pyro-layout" }
+pyro-canvas = { path = "crates/pyro-canvas" }
+pyro-media = { path = "crates/pyro-media", default-features = false }
 # `float_roundtrip`: a JSON number parses to the nearest double, so a double
-# read back from JSON text (CDP params, the JSON.stringify text an `LP.run`
+# read back from JSON text (CDP params, the JSON.stringify text an `Pyro.run`
 # eval reads) is the one that was written, as with Chrome. The default parser
 # was one ulp off for about one random double in ten (0.9591810769706007
 # came back as ...008). Costs ~10 ns per parsed double (cdp_microbench:
-# 1,000 doubles through an LP.run eval, +9 us); integers and strings parse as
+# 1,000 doubles through an Pyro.run eval, +9 us); integers and strings parse as
 # before. Every crate takes serde_json from here.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
-# `lp_pgo_training` is set by scripts/pgo/generate.sh on the instrumented build only.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(lp_pgo_training)'] }
+# `pyro_pgo_training` is set by scripts/pgo/generate.sh on the instrumented build only.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(pyro_pgo_training)'] }
 
 [profile.release]
 lto = "thin"
@@ -66,35 +66,35 @@ debug = "line-tables-only"
 # Cargo otherwise strips after our linker signs when DEBUG=0, losing allow-jit.
 strip = "none"
 
-# lp-webapi's ~170 interface classes are small modules that rustc merges
-# into one codegen unit, together with every lp-js invoker they instantiate,
+# pyro-webapi's ~170 interface classes are small modules that rustc merges
+# into one codegen unit, together with every pyro-js invoker they instantiate,
 # so LLVM optimizes all of them on one core. More units for this crate let
 # that codegen run in parallel; thin LTO still inlines across units.
 # Measured clean release build (one member trampoline per member, before
-# lp-js switched to one invoker per class): 128 s -> 69 s. lp-dom and lp-cdp
+# pyro-js switched to one invoker per class): 128 s -> 69 s. pyro-dom and pyro-cdp
 # are off the critical path and keep one unit: splitting them cost ~10% on
 # the in-process CDP microbench for no wall-time gain.
-[profile.release.package.lp-webapi]
+[profile.release.package.pyro-webapi]
 codegen-units = 64
 
 # Release build for local iteration (`cargo build --profile release-fast`,
-# binary in target/release-fast). With lp-webapi already split, lp-cdp and
-# lp-dom are the single-core tail of a clean release build; 16 units each
+# binary in target/release-fast). With pyro-webapi already split, pyro-cdp and
+# pyro-dom are the single-core tail of a clean release build; 16 units each
 # cut it from ~70 s to ~48 s on an M1 Max. The cost is CDP round-trip
 # latency: on cdp_microbench (5 alternating runs) Runtime.evaluate went
 # 5.1 -> 5.5 us, evaluate handle + releaseObject 8.1 -> 9.1 us, small
-# callFunctionOn 5.6 -> 5.8 us. Splitting only lp-dom gains ~5 s. Ship and
+# callFunctionOn 5.6 -> 5.8 us. Splitting only pyro-dom gains ~5 s. Ship and
 # benchmark with `release`.
 [profile.release-fast]
 inherits = "release"
 
-[profile.release-fast.package.lp-webapi]
+[profile.release-fast.package.pyro-webapi]
 codegen-units = 64
 
-[profile.release-fast.package.lp-cdp]
+[profile.release-fast.package.pyro-cdp]
 codegen-units = 16
 
-[profile.release-fast.package.lp-dom]
+[profile.release-fast.package.pyro-dom]
 codegen-units = 16
 
 # Profile-guided release build (`scripts/pgo/`, binary in target/release-pgo).
@@ -112,13 +112,13 @@ codegen-units = 16
 [profile.release-pgo]
 inherits = "release"
 
-[profile.release-pgo.package.lp-webapi]
+[profile.release-pgo.package.pyro-webapi]
 codegen-units = 64
 
 # Tests at release speed without release link time (`cargo t`, see
 # .cargo/config.toml). `release` runs thin LTO over the whole dependency graph
 # for every test executable, with one codegen unit for most crates: rebuilding
-# the workspace tests after touching lp-dom took 90 CPU-minutes. Without LTO,
+# the workspace tests after touching pyro-dom took 90 CPU-minutes. Without LTO,
 # with parallel codegen and incremental workspace crates, each executable is
 # optimized like release but links without the cross-crate LTO pass. Ship and
 # benchmark with `release`.
@@ -128,12 +128,12 @@ lto = "off"
 codegen-units = 16
 incremental = true
 
-[profile.test-fast.package.lp-webapi]
+[profile.test-fast.package.pyro-webapi]
 codegen-units = 64
 
-# See [profile.dev.package.lp-psl]: its generated tables cost ~16 s of
+# See [profile.dev.package.pyro-psl]: its generated tables cost ~16 s of
 # single-core codegen when optimized, and lookups are negligible in tests.
-[profile.test-fast.package.lp-psl]
+[profile.test-fast.package.pyro-psl]
 opt-level = 0
 
 [profile.dev]
@@ -144,10 +144,10 @@ debug = "line-tables-only"
 # Generated public suffix list. At opt-level 2 LLVM spends ~16 s on its
 # tables on one core; at -O0 it builds in ~3 s and the lookup cost in dev and
 # tests is negligible. Every test binary and the main binary link against it,
-# so it must not become the last job: today the lp-dom -> lp-cdp chain ends
+# so it must not become the last job: today the pyro-dom -> pyro-cdp chain ends
 # at about the same time, so a clean build gains ~1 s of wall time and ~13 s
 # of CPU on an M1 Max.
-[profile.dev.package.lp-psl]
+[profile.dev.package.pyro-psl]
 opt-level = 0
 
 [profile.dev.package."*"]
@@ -201,8 +201,8 @@ opt-level = 0
 [profile.dev.package.find-msvc-tools]
 opt-level = 0
 
-# Blitz from upstream main (past 0.3.0-beta.4) with lightningpanda's changes; see
-# vendor/blitz-dom/README.lightningpanda.md. blitz-traits, blitz-html and stylo_taffy are
+# Blitz from upstream main (past 0.3.0-beta.4) with pyro's changes; see
+# vendor/blitz-dom/README.pyro.md. blitz-traits, blitz-html and stylo_taffy are
 # upstream main unchanged (blitz-dom main needs them).
 [patch.crates-io]
 blitz-dom = { path = "vendor/blitz-dom" }
@@ -210,17 +210,17 @@ blitz-paint = { path = "vendor/blitz-paint" }
 blitz-traits = { path = "vendor/blitz-traits" }
 blitz-html = { path = "vendor/blitz-html" }
 stylo_taffy = { path = "vendor/stylo_taffy" }
-# Taffy main with lightningpanda's changes; see vendor/taffy/README.lightningpanda.md.
+# Taffy main with pyro's changes; see vendor/taffy/README.pyro.md.
 taffy = { path = "vendor/taffy" }
-# Chromium's ascent for Times/Helvetica/Courier; see vendor/parley_engine/README.lightningpanda.md.
+# Chromium's ascent for Times/Helvetica/Courier; see vendor/parley_engine/README.pyro.md.
 parley_engine = { path = "vendor/parley_engine" }
-# Built layouts reused for identical text and styles; see vendor/parley/README.lightningpanda.md.
+# Built layouts reused for identical text and styles; see vendor/parley/README.pyro.md.
 parley = { path = "vendor/parley" }
-# `@font-face` `unicode-range` in font matching; see vendor/fontique/README.lightningpanda.md.
+# `@font-face` `unicode-range` in font matching; see vendor/fontique/README.pyro.md.
 fontique = { path = "vendor/fontique" }
-# Style sharing; see vendor/stylo/README.lightningpanda.md.
+# Style sharing; see vendor/stylo/README.pyro.md.
 stylo = { path = "vendor/stylo" }
-# ASCII hosts with invalid xn-- labels pass through; see vendor/idna/README.lightningpanda.md.
+# ASCII hosts with invalid xn-- labels pass through; see vendor/idna/README.pyro.md.
 idna = { path = "vendor/idna" }
-# WHATWG URL Standard fixes over url 2.5.8; see vendor/url/README.lightningpanda.md.
+# WHATWG URL Standard fixes over url 2.5.8; see vendor/url/README.pyro.md.
 url = { path = "vendor/url" }

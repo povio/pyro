@@ -10,7 +10,7 @@ and JSON serialization have focused coverage.
 ## Conformance
 
 The url crate is `vendor/url`: url 2.5.8 (the latest release) patched to the current
-WHATWG URL Standard; [its README](../../vendor/url/README.lightningpanda.md) lists the
+WHATWG URL Standard; [its README](../../vendor/url/README.pyro.md) lists the
 changes. Every URL in the engine goes through it (`URL`, `<a>`/`<area>`, `Location`,
 navigation, fetch, the network stack), so they all agree:
 - `file:` URLs keep a host next to a Windows drive letter (`file://host/C:/`), take the
@@ -26,9 +26,9 @@ navigation, fetch, the network stack), so they all agree:
   `/.` prefix of host-less URLs whose path starts with an empty segment.
 - `blob:` URLs have a tuple origin only for an `http(s):` inner URL.
 
-`crates/lp-webapi/tests/url_conformance.rs` runs WPT's `urltestdata.json`,
+`crates/pyro-webapi/tests/url_conformance.rs` runs WPT's `urltestdata.json`,
 `setters_tests.json` and `toascii.json` without a WPT run: a subset committed under
-`crates/lp-webapi/tests/data/url/`, and the full upstream files when a WPT checkout is
+`crates/pyro-webapi/tests/data/url/`, and the full upstream files when a WPT checkout is
 found (`WPT_DIR`). It checks the Rust calls the bindings make, and the subset again through
 the JavaScript `URL`, `URL.canParse` and `<a>` (parsing against `<base>`, setters,
 `toascii`). Results with url 2.5.8 before the patch, and after:
@@ -76,9 +76,9 @@ same setters as `URL`, against the `<base>`-aware document base; an unparseable
 Gaps:
 - `IdnaTestV2.json` and `percent-encoding.json` (legacy-encoding queries) are not in the
   Rust conformance test; CI's WPT run covers them.
-- `Location` (in `lp-browser`) parses with the same crate and its setters call
+- `Location` (in `pyro-browser`) parses with the same crate and its setters call
   `url::quirks`, but since its setters navigate it is not run against
-  `setters_tests.json`; `lp-browser/tests/file_urls.rs` covers a `file:` URL with an
+  `setters_tests.json`; `pyro-browser/tests/file_urls.rs` covers a `file:` URL with an
   empty leading segment through navigation and `location`.
 - The download itself is not performed, and no CDP download events are emitted.
 - Top-level navigation to a `blob:` URL is not covered by tests. The page's

@@ -588,7 +588,7 @@ where
         );
         matching_context.extra_data.originating_element_style = Some(originating_element_style);
 
-        // lightningpanda: no rule that can generate a `::before`/`::after` box matches, so the
+        // pyro: no rule that can generate a `::before`/`::after` box matches, so the
         // style matched and cascaded below would be dropped by
         // `eager_pseudo_is_definitely_not_generated`. Only for the unvisited pass: when it goes
         // on, the visited pass matches every rule, as upstream.

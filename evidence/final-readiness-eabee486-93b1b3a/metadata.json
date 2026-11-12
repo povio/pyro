@@ -25,8 +25,8 @@
     "sampler_sha256": "e17e429b843600737c72aa07a97c41eb537a132c648ec46659380c45500e2d5b",
     "binaries": {
       "A": {
-        "path": "/private/tmp/lp-final-readiness-93b1b3a/lightningpanda-A",
-        "retained_source_path": "/private/tmp/lp-profile-main-eabee486/target/release/lightningpanda-jit",
+        "path": "/private/tmp/pyro-final-readiness-93b1b3a/pyro-A",
+        "retained_source_path": "/private/tmp/pyro-profile-main-eabee486/target/release/pyro-jit",
         "sha256": "66e7448e07666176e9650ba714cba04ecc570c65f6e6139ad5bd759f5b49ad88",
         "commit": "eabee486709f79167520a46887cd6f303b26711d",
         "tree": "a30b943b31b44e211e06b5184023877a6afac7f0",
@@ -36,8 +36,8 @@
         "source_tracked_clean": true
       },
       "B": {
-        "path": "/private/tmp/lp-final-readiness-93b1b3a/lightningpanda-B",
-        "retained_source_path": "/private/tmp/lp-final-readiness-main-93b1b3a/target/release/lightningpanda",
+        "path": "/private/tmp/pyro-final-readiness-93b1b3a/pyro-B",
+        "retained_source_path": "/private/tmp/pyro-final-readiness-main-93b1b3a/target/release/pyro",
         "sha256": "02009fad9f28aa349ff88bb9b994ac160729b6b8b1ac55798a73de1e0969b633",
         "commit": "93b1b3a7c360cd892084a7e4d538024ead798fdc",
         "tree": "1daa4a31a0e4ea69e5b29fd0448486f3f5172063",
@@ -53,12 +53,12 @@
   "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
   "run_slug": "lpfinalready-1018-202640",
   "template_database": "fe_e2e_w2tpl_f9fde4aa_batch16fx_template",
-  "binary": "/private/tmp/lp-final-readiness-93b1b3a/lightningpanda-A",
-  "worktree": "/private/tmp/lp-tos-f9f-batch16-fx",
+  "binary": "/private/tmp/pyro-final-readiness-93b1b3a/pyro-A",
+  "worktree": "/private/tmp/pyro-tos-f9f-batch16-fx",
   "auth": "backend test-token -> localStorage; no UI login",
   "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
   "measurement": "frozen observer-free ABBA BAAB eight-process24-navigation matrix; setup excluded; original assertions/auth, shared64/private64, explicit JIT/polling; not fullsuite or independent24samples",
-  "lightningpanda_shared_asset_cache_mb": "64",
+  "pyro_shared_asset_cache_mb": "64",
   "expected_selected_cases": 1,
   "specs": [
     "e2e/configuration/profile-settings.e2e.ts"

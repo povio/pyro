@@ -16,7 +16,7 @@ pub struct Attribute {
     pub value: String,
 }
 
-/// lightningpanda: the declaration blocks of an element's presentational
+/// pyro: the declaration blocks of an element's presentational
 /// hints, which Stylo 0.24 borrows from the element for the length of a
 /// cascade (`TElement::synthesize_presentational_hints_for_legacy_attributes`).
 pub struct PresentationalHints {
@@ -28,7 +28,7 @@ pub struct PresentationalHints {
 
 pub struct Attributes {
     inner: ThinVec<Attribute>,
-    /// lightningpanda: the hints these attributes map to, built at the
+    /// pyro: the hints these attributes map to, built at the
     /// first cascade that asks and dropped by every write (`set`, `remove`,
     /// `DerefMut`). They depend on the attributes and the element's name
     /// only.
@@ -83,7 +83,7 @@ impl Attributes {
         idx.map(|idx| self.inner.remove(idx))
     }
 
-    /// lightningpanda: the cached presentational hints, built by `build`
+    /// pyro: the cached presentational hints, built by `build`
     /// when no cascade asked since the last write.
     pub fn presentational_hints(&self, build: impl FnOnce() -> PresentationalHints) -> &PresentationalHints {
         self.presentational_hints.get_or_init(|| Box::new(build()))

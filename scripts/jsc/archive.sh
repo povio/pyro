@@ -8,7 +8,7 @@
 # lib/libbmalloc.a, and the objects of the JavaScriptCoreJIT subtarget (jit, dfg,
 # ftl, bytecode, bytecompiler, llint: an object library that CMake hands to
 # whatever links JavaScriptCore instead of putting it in the archive). One
-# archive holds them all, so lp-jsc-sys names a single library and the order of
+# archive holds them all, so pyro-jsc-sys names a single library and the order of
 # the pieces on the link line cannot matter.
 #
 # build.sh calls this; run it by hand for a build directory of your own (a git

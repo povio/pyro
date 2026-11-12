@@ -15,7 +15,7 @@ A URL that does not parse throws `SyntaxError` in every case.
 
 ## What the popup gets
 
-A popup opened without `noopener` (`lp_browser::Browser::adopt_popup`, called by
+A popup opened without `noopener` (`pyro_browser::Browser::adopt_popup`, called by
 the CDP layer when the target exists):
 
 - **`window.opener`**: the opener's top-level window — the real global when

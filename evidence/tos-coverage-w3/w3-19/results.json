@@ -27,7 +27,7 @@
   },
   "runs": [
     {
-      "artifact_directory": "lp-w3-l19",
+      "artifact_directory": "pyro-w3-l19",
       "run_slug": "w3l19-1018-085922",
       "browser_commit": "81ad383cf4cb5d38adddce49a5b13b8be0636b62",
       "browser_sha256": "8a068ee5789f841d41e42567235b27cf3bdb5fbf1e78ab72ddfe9a920a64ec1f",
@@ -270,7 +270,7 @@
       }
     },
     {
-      "artifact_directory": "lp-w3-l19u",
+      "artifact_directory": "pyro-w3-l19u",
       "run_slug": "w3l19u-1018-090100",
       "browser_commit": "2ad38773fd674d3c9cea26a263b814ee46f6ba84",
       "browser_sha256": "7f76ccfece22e7130d39c8884321f5dea51f4bb2e195542944c3440a86dc4339",
@@ -310,7 +310,7 @@
       }
     },
     {
-      "artifact_directory": "lp-w3-l19h",
+      "artifact_directory": "pyro-w3-l19h",
       "run_slug": "w3l19h-1018-093618",
       "browser_commit": "fd520e4b78c324490c16e60e28e8855e14c737a8",
       "browser_sha256": "61bc2b2104611ee57fb2089fa0c60c1fe20157801b0f6a287fffc6790d4fd8f8",
@@ -343,7 +343,7 @@
       }
     },
     {
-      "artifact_directory": "lp-w3-l19hr",
+      "artifact_directory": "pyro-w3-l19hr",
       "run_slug": "w3l19hr-1018-093835",
       "browser_commit": "fd520e4b78c324490c16e60e28e8855e14c737a8",
       "browser_sha256": "61bc2b2104611ee57fb2089fa0c60c1fe20157801b0f6a287fffc6790d4fd8f8",
@@ -376,7 +376,7 @@
       }
     },
     {
-      "artifact_directory": "lp-w3-l19m",
+      "artifact_directory": "pyro-w3-l19m",
       "run_slug": "w3l19m-1018-094717",
       "browser_commit": "c32f29b99e6246355ef741fa537253ae099fb7cf",
       "browser_sha256": "d10f768a01cafe39a4f8caa4101023ae610fd5b68348c52908102ffad7c9e50d",

@@ -1,6 +1,6 @@
 [env]
 # Oldest macOS we target. JavaScriptCore entry points newer than this are
-# resolved at runtime (lp_jsc_sys::spi) rather than linked.
+# resolved at runtime (pyro_jsc_sys::spi) rather than linked.
 MACOSX_DEPLOYMENT_TARGET = "14.0"
 
 # Sign macOS executables with the JIT entitlement after linking: `cc` takes
@@ -18,9 +18,9 @@ rustflags = ["-C", "link-arg=-Bscripts/macos/linker"]
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "link-arg=-Bscripts/macos/linker"]
 
-# Tests under the `test-fast` profile (Cargo.toml). `cargo t -p lp-dom [filter]`
+# Tests under the `test-fast` profile (Cargo.toml). `cargo t -p pyro-dom [filter]`
 # tests one crate; `cargo tall` is the full pass: every crate, render feature on.
-# Both still need LP_JSC_DIR (or LP_JSC=system) as for builds.
+# Both still need PYRO_JSC_DIR (or PYRO_JSC=system) as for builds.
 [alias]
 t = "test --profile test-fast"
-tall = "test --profile test-fast --workspace --features lightningpanda/render"
+tall = "test --profile test-fast --workspace --features pyro/render"

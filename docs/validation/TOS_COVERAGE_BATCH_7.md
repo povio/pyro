@@ -19,17 +19,17 @@ resolution support.
 All four rewrite failures are 10 s timeouts. No pageerror or missing API was
 reported. Their causes were found with separate diagnostic runs (below).
 
-**INTTRA credentials: request body missing from CDP (W3, lp-cdp).** Affected
+**INTTRA credentials: request body missing from CDP (W3, pyro-cdp).** Affected
 cases: "generates Client and Carrier credentials from the details modal" and
 "autosaves an INTTRA credential edit through the rendered form".
 - The POST/PATCH requests are sent and return 200.
 - The tests' unchanged predicates read `request.postDataJSON()`, which is empty.
 - Playwright 1.59.1 `crNetworkManager.js` builds the request body only from
   `request.postDataEntries` and ignores `postData` text.
-- lp-cdp emits `hasPostData`/`postData` but not `postDataEntries`, on both
+- pyro-cdp emits `hasPostData`/`postData` but not `postDataEntries`, on both
   `Network.requestWillBeSent` and `Fetch.requestPaused`.
 
-**Credit note: same-document URL reported late (W1, lp-browser).** Affected cases:
+**Credit note: same-document URL reported late (W1, pyro-browser).** Affected cases:
 "creates an actual Credit Note from the draft direct-invoice Credit Note" and
 "renders the actual direct-invoice Credit Note".
 - The test reads the new credit note id from `page.url()` right after the draft
@@ -47,7 +47,7 @@ cases: "generates Client and Carrier credentials from the details modal" and
   | upstream | updated |
   | Chrome headless shell 1217 | updated |
 
-- Cause: `PageNav::same_document` in `crates/lp-browser/src/nav.rs` posts the
+- Cause: `PageNav::same_document` in `crates/pyro-browser/src/nav.rs` posts the
   `FrameNavigatedWithinDocument` page event (CDP `Page.navigatedWithinDocument`)
   as a navigation task instead of emitting it synchronously.
 
@@ -57,7 +57,7 @@ that contains both fixes.
 
 ## Diagnostic runs (not compatibility evidence)
 
-All diagnostic runs used a separate fixture, `/private/tmp/lp-tos-f9f-batch7-diag`,
+All diagnostic runs used a separate fixture, `/private/tmp/pyro-tos-f9f-batch7-diag`,
 with observation-only instrumentation: logs of request method, path, body keys and
 status, DOM event markers, and `page.url()`/`location` at the id capture.
 Assertions, timeouts, auth and the manifest were unchanged. No tokens or request
@@ -71,9 +71,9 @@ body values were logged, and UUIDs were truncated.
 | `lpb7d3u-1017-174908` | upstream | credit note, with capture-time URL log | 4 / 0 |
 
 Artifacts:
-- `/private/tmp/lp-tos-batch7-diag`, `-diag2`, `-diag3`, `-diag3-up`. Each has its
+- `/private/tmp/pyro-tos-batch7-diag`, `-diag2`, `-diag3`, `-diag3-up`. Each has its
   `instrumentation.patch`.
-- Minimal repro: `/private/tmp/lp-pushstate-repro` (`repro.mjs`, `results.txt`,
+- Minimal repro: `/private/tmp/pyro-pushstate-repro` (`repro.mjs`, `results.txt`,
   `README.md`).
 
 ## Provenance
@@ -93,7 +93,7 @@ Artifacts:
   | `43f9415` | `91a8454368d697aa3621bb1b5c40d71660304bfb9e6f062b796955b7cdd25450` | release build from a fresh detached worktree with its own target directory |
   | upstream | `7f76ccfece22e7130d39c8884321f5dea51f4bb2e195542944c3440a86dc4339` | |
 
-- Fixture: the main run used a fresh, clean `/private/tmp/lp-tos-f9f-batch7`. The
+- Fixture: the main run used a fresh, clean `/private/tmp/pyro-tos-f9f-batch7`. The
   upstream run reused it to save disk space. Its only change was the
   harness-generated pdfgen model.
 - Auth and setup:
@@ -169,7 +169,7 @@ assertions are unchanged.
 **The real defect is fixed.** The minimal repro (`page.url()` right after a
 `page.evaluate` that calls `history.pushState` resolves) returned the stale URL on
 `43f9415`. On `82477c9` it returns the updated URL in 2/2 rounds, matching upstream
-and Chrome (`/private/tmp/lp-pushstate-repro/results-82477c9.txt`).
+and Chrome (`/private/tmp/pyro-pushstate-repro/results-82477c9.txt`).
 
 ### Rerun provenance
 
@@ -179,7 +179,7 @@ and Chrome (`/private/tmp/lp-pushstate-repro/results-82477c9.txt`).
   `a70a6b5590d555f947d16afbedaeaf62118b27aaebb60235e16832101ecbc8d9`, built with
   its own target directory.
 - Fixture: to save disk space, the rerun reused the original
-  `/private/tmp/lp-tos-f9f-batch7` at `f9fde4aa0d`. Its e2e tree was verified
+  `/private/tmp/pyro-tos-f9f-batch7` at `f9fde4aa0d`. Its e2e tree was verified
   unchanged; the only change was the harness-generated pdfgen model.
 - Databases:
   - The harness left the run's base template database in addition to the snapshot.
@@ -191,7 +191,7 @@ and Chrome (`/private/tmp/lp-pushstate-repro/results-82477c9.txt`).
   - Both scripts are kept in the artifact directory.
 - Time: Playwright 41.7 s and 72.0 s whole harness. This is not a performance
   measurement.
-- Artifacts: `/private/tmp/lp-tos-batch7-fixed`, including `SUMMARY.md`.
+- Artifacts: `/private/tmp/pyro-tos-batch7-fixed`, including `SUMMARY.md`.
 
 ### Rerun diagnostics (not compatibility evidence)
 
@@ -209,8 +209,8 @@ have tokens and auth headers redacted and are kept locally only.
 - The Chromium-lane runs use the direct `playwright.e2e.config.ts`. Unlike the
   Lightpanda lane, this lane reuses a shared authenticated context.
 - Artifacts:
-  - `/private/tmp/lp-tos-batch7-{diag4,diag5,chr,chr-diag,chr-diag2}`
-  - `/private/tmp/lp-pushstate-repro`: the original `repro-v1.mjs` and
+  - `/private/tmp/pyro-tos-batch7-{diag4,diag5,chr,chr-diag,chr-diag2}`
+  - `/private/tmp/pyro-pushstate-repro`: the original `repro-v1.mjs` and
     `results.txt`; `repro.mjs` with the added response-then-pushState shape and
     `results-v2.txt`.
 

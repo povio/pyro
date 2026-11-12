@@ -17,7 +17,7 @@ use crate::layout::damage::ALL_DAMAGE;
 ///   - Stylo's thread-safe traversal model: `init`/`clear` only happen during exclusive-access phases
 pub struct StyloData {
     inner: UnsafeCell<Option<ElementDataWrapper>>,
-    /// lightningpanda: the primary style in the forms layout reads it in, rewritten whenever the
+    /// pyro: the primary style in the forms layout reads it in, rewritten whenever the
     /// primary style is replaced (see [`LayoutStyles`]).
     layout: UnsafeCell<LayoutStyles>,
 }
@@ -31,7 +31,7 @@ impl Default for StyloData {
     }
 }
 
-/// lightningpanda: what layout reads of a node's primary style, derived from it when it is
+/// pyro: what layout reads of a node's primary style, derived from it when it is
 /// written instead of on every layout pass. The style traversal (`RecalcStyle::process_preorder`,
 /// `sync_pseudo_element_styles`) rewrites it when a primary style is replaced with restyle damage
 /// that reaches layout ([`LayoutStyles::affected_by`]); `Node::update_layout_styles` wherever a

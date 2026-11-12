@@ -1,6 +1,6 @@
 # Iframe lifecycle hooks
 
-The browser owns child browsing contexts. `lp-webapi` exposes these default-noop
+The browser owns child browsing contexts. `pyro-webapi` exposes these default-noop
 `PageHooks` methods, all on the owner thread and outside DOM/hook borrows:
 
 - `iframe_connected(NodeId)`: create the initial blank browsing context
@@ -12,7 +12,7 @@ The browser owns child browsing contexts. `lp-webapi` exposes these default-noop
   The callback reads current attributes; detached changes are observed by the
   eventual connected callback. Other attributes do not trigger this hook.
 
-`IframeAttribute` is exported from both `lp_dom::iframe` and `lp_webapi`.
+`IframeAttribute` is exported from both `pyro_dom::iframe` and `pyro_webapi`.
 `PageDom::flush_iframe_events()` is the explicit parser/native mutation boundary:
 call it after releasing the DOM borrow and before entering page script. Installed
 native callback hooks and `PageDom::after_task()` also flush. Reentrant mutations
@@ -56,7 +56,7 @@ must enforce origin access before returning a child document. `frame_window`
 continues to supply the browser-owned WindowProxy.
 
 Nodes of a same-origin child are usable from the parent. A frame tree shares one
-`Dom`, and a wrapper belongs to one realm and PageDom. `lp-js` runs a host member
+`Dom`, and a wrapper belongs to one realm and PageDom. `pyro-js` runs a host member
 or property hook in its receiver's realm: JSC calls property hooks in the caller's
 realm and `Node.prototype.x.call(childNode)` in the callee's, so results, errors
 and listeners stay with the receiver. This costs one realm-id comparison per call.

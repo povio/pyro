@@ -19,7 +19,7 @@ Lightpanda (`Window.zig` `_current_event`) and Chromium do.
   `undefined`.
 - **[Replaceable].** Assigning `window.event` defines an own data property on the
   global (writable, enumerable, configurable) that shadows the accessor. The
-  realm's original `Object.defineProperty` is captured when lp-webapi installs.
+  realm's original `Object.defineProperty` is captured when pyro-webapi installs.
 
 ## Storage and lifetime
 
@@ -31,7 +31,7 @@ page.
 
 ## Tests
 
-In `crates/lp-webapi/tests/dom_js.rs`:
+In `crates/pyro-webapi/tests/dom_js.rs`:
 - `window_event_is_the_current_event_during_listener_invocation`: identity,
   nested save/restore, restore on throw.
 - `window_event_spans_the_callback_microtask_checkpoint_for_message_ports`:

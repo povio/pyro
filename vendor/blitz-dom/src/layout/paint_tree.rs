@@ -402,7 +402,7 @@ impl BaseDocument {
             .flags
             .remove(NodeFlags::PAINT_TREE_DIRTY | NodeFlags::PAINT_TREE_OWN_DAMAGE);
 
-        // lightningpanda: a table whose cells are all plain boxes in it visits again only the cells
+        // pyro: a table whose cells are all plain boxes in it visits again only the cells
         // that changed (`TableContext::placed`).
         if !own_damage && self.table_paint_children_kept(node_id) {
             return;
@@ -566,7 +566,7 @@ impl BaseDocument {
     }
 
     /// Whether `id` roots a stacking context for painting: by its style, or
-    /// (lightningpanda) because it is in the top layer, which always forms
+    /// (pyro) because it is in the top layer, which always forms
     /// one (CSS Positioned Layout 4 §4), so its z-indexed and fixed
     /// descendants stay in its subtree and paint with it above the document.
     #[inline]
@@ -817,7 +817,7 @@ fn top_layer_rank(value: &str) -> Option<u32> {
         .and_then(|n| n.parse().ok())
 }
 
-/// lightningpanda: the top layer as the embedder marks it: elements by rank
+/// pyro: the top layer as the embedder marks it: elements by rank
 /// (bottom first, ties in id order) and each element's rank. Membership
 /// tests, entering, leaving and re-ranking are logarithmic or constant, so
 /// a page with many showing popovers costs no quadratic work per snapshot,
@@ -865,7 +865,7 @@ impl TopLayer {
 }
 
 impl BaseDocument {
-    /// lightningpanda: element `id`'s state attribute is now `value` (`None`:
+    /// pyro: element `id`'s state attribute is now `value` (`None`:
     /// removed). Keeps [`Self::top_layer_nodes`] in step: an element with a
     /// `top-layer=N` token is in the top layer at rank `N`.
     pub(crate) fn note_lp_state(&mut self, id: NodeId, value: Option<&str>) {
@@ -876,21 +876,21 @@ impl BaseDocument {
         self.top_layer.set(id, rank);
     }
 
-    /// lightningpanda: whether any element is in the top layer (one length
+    /// pyro: whether any element is in the top layer (one length
     /// check).
     #[inline]
     pub fn has_top_layer(&self) -> bool {
         !self.top_layer.is_empty()
     }
 
-    /// lightningpanda: whether `id` is in the top layer: painted above the
+    /// pyro: whether `id` is in the top layer: painted above the
     /// whole document (see [`Self::top_layer_nodes`]), not in its place.
     #[inline]
     pub fn is_in_top_layer(&self, id: NodeId) -> bool {
         !self.top_layer.is_empty() && self.top_layer.contains(id)
     }
 
-    /// lightningpanda: the elements of the top layer that are in the
+    /// pyro: the elements of the top layer that are in the
     /// document, bottom first.
     pub fn top_layer_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.top_layer.iter().filter(|&id| {
@@ -900,7 +900,7 @@ impl BaseDocument {
         })
     }
 
-    /// lightningpanda: the offset of top-layer element `id` from the root
+    /// pyro: the offset of top-layer element `id` from the root
     /// element's border box (with the root's scroll applied), excluding its
     /// own location: where it paints, hoisted to the root's stacking context.
     pub fn top_layer_position(&self, id: NodeId) -> Point<f32> {

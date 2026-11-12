@@ -89,12 +89,12 @@ impl Drop for LayoutThreadScope {
 }
 
 impl Node {
-    /// `:state(name)`: lightningpanda's custom states attribute (names
+    /// `:state(name)`: pyro's custom states attribute (names
     /// separated by U+001F).
     fn has_lp_custom_state(&self, state: &str) -> bool {
         self.element_data().is_some_and(|e| {
             e.attrs.iter().any(|a| {
-                &*a.name.ns == "urn:x-lightningpanda:state"
+                &*a.name.ns == "urn:x-pyro:state"
                     && &*a.name.local == "custom-states"
                     && a.value.split('\u{1f}').any(|s| s == state)
             })
@@ -212,7 +212,7 @@ impl crate::document::BaseDocument {
                 self.generated_before_after = true;
             }
         }
-        // lightningpanda: restyled nodes that stopped being sticky, and
+        // pyro: restyled nodes that stopped being sticky, and
         // removed ones, leave the set (only nodes that were sticky are in it).
         if !self.sticky_nodes.is_empty() {
             let nodes = &self.nodes;
@@ -280,7 +280,7 @@ impl crate::document::BaseDocument {
         Some(self.resolve_undisplayed_styles(node_id)?.primary().clone())
     }
 
-    /// lightningpanda: `false` while no style traversal has kept a
+    /// pyro: `false` while no style traversal has kept a
     /// `::before` / `::after` style for any element, so
     /// [`Self::pseudo_element_style`] with `generated_only` answers `None`
     /// for every element (it may stay `true` after they are gone).
@@ -288,7 +288,7 @@ impl crate::document::BaseDocument {
         self.generated_before_after
     }
 
-    /// lightningpanda: the style `getComputedStyle(element, pseudo)` reads
+    /// pyro: the style `getComputedStyle(element, pseudo)` reads
     /// for the element `node_id`: an eagerly cascaded pseudo-element's
     /// (`::before`, `::after`, `::first-letter`, `::selection`) as the
     /// traversal kept it (resolved on demand inside `display: none`), a
@@ -837,7 +837,7 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
-        // lightningpanda: this element is in the subtree (or among the
+        // pyro: this element is in the subtree (or among the
         // siblings) a `:has()` bloom filter covers, and a search the filter
         // fast-rejects visits nothing and so flags nothing. Flag it as
         // searched in both directions, as a full search would have, so a
@@ -1131,7 +1131,7 @@ impl<'a> TElement for BlitzNode<'a> {
         V: Push<style::applicable_declarations::ApplicableDeclarationBlock<'h>>,
         Self: 'h,
     {
-        // lightningpanda: Stylo 0.24 borrows the declaration blocks for the
+        // pyro: Stylo 0.24 borrows the declaration blocks for the
         // cascade, so the element owns them (`Attributes::presentational_hints`).
         let node: &'h Node = self;
         let Some(elem) = node.data.downcast_element() else {
@@ -1181,14 +1181,14 @@ impl<'a> TElement for BlitzNode<'a> {
     where
         F: FnMut(&AtomIdent),
     {
-        // lightningpanda: lp-dom's render tree lists them (`has_lp_custom_state`).
+        // pyro: pyro-dom's render tree lists them (`has_lp_custom_state`).
         let value = self.attrs().and_then(|attrs| {
             attrs
                 .iter()
-                .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "custom-states")
+                .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "custom-states")
         });
         if let Some(attr) = value {
-            for state in crate::has_invalidation::lp_custom_states(Some(&attr.value)) {
+            for state in crate::has_invalidation::pyro_custom_states(Some(&attr.value)) {
                 callback(AtomIdent::cast(&style::Atom::from(state)));
             }
         }
@@ -1785,13 +1785,13 @@ pub struct RecalcStyle<'a> {
     /// dedicated storage on the node (see `flush_image_layers_from_style`)
     /// because their style changed during this traversal.
     nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
-    /// lightningpanda: an element styled in this traversal kept a
+    /// pyro: an element styled in this traversal kept a
     /// `::before` / `::after` style (one its rules generate).
     generated_before_after: std::sync::atomic::AtomicBool,
-    /// lightningpanda: elements styled `position: sticky` in this traversal
+    /// pyro: elements styled `position: sticky` in this traversal
     /// (`BaseDocument::sticky_nodes`).
     sticky_nodes: Mutex<Vec<NodeId>>,
-    /// lightningpanda: the elements whose primary style this traversal replaced, with the old
+    /// pyro: the elements whose primary style this traversal replaced, with the old
     /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
     style_changes: Mutex<Vec<crate::StyleChange>>,
     track_style_changes: bool,
@@ -1811,7 +1811,7 @@ impl<'a> RecalcStyle<'a> {
 }
 
 #[allow(unsafe_code)]
-/// lightningpanda: what the style traversal must reach once Stylo's relative selector
+/// pyro: what the style traversal must reach once Stylo's relative selector
 /// invalidator invalidated `element` (as Gecko's `relative_selector_invalidated_at`): the
 /// hints are set, the dirty-descendants bits lead to them.
 fn relative_selector_invalidated_at(element: BlitzNode<'_>, result: &InvalidationResult) {
@@ -1829,7 +1829,7 @@ fn relative_selector_invalidated_at(element: BlitzNode<'_>, result: &Invalidatio
 }
 
 impl crate::BaseDocument {
-    /// lightningpanda: the `:has()` anchors whose answer the insertion of `node_id` can change
+    /// pyro: the `:has()` anchors whose answer the insertion of `node_id` can change
     /// restyle. Stylo's relative selector invalidator (as Gecko's
     /// `MaybeInvalidateRelativeSelectorForInsertion`) looks the element's, and its
     /// descendants', tags, ids, classes and attributes up in the stylist's relative selector
@@ -1857,7 +1857,7 @@ impl crate::BaseDocument {
         self.invalidate_relative_selectors(node, inherited, operation);
     }
 
-    /// lightningpanda: as [`Self::invalidate_relative_selectors_for_insertion`] for an element
+    /// pyro: as [`Self::invalidate_relative_selectors_for_insertion`] for an element
     /// about to be removed (or moved away), called while it is still linked: the anchors are
     /// found through its parent and earlier siblings.
     pub(crate) fn invalidate_relative_selectors_for_removal(&self, node_id: NodeId) {
@@ -1917,7 +1917,7 @@ impl crate::BaseDocument {
         }
     }
 
-    /// lightningpanda: the `:has()` anchors whose answer a change of `node_id`'s emptiness or
+    /// pyro: the `:has()` anchors whose answer a change of `node_id`'s emptiness or
     /// sibling position can flip restyle (as Gecko's
     /// `MaybeInvalidateRelativeSelectorForEmptyDependency`, `...ForNthEdgeDependency` and
     /// `...ForNthDependencyFromSibling`). `:empty`, `:nth-child()` and `:first-child`/
@@ -1986,14 +1986,14 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             // Held (not just its address) so that a replacement cannot reuse the allocation.
             let old_primary = data.styles.get_primary().cloned();
             recalc_style_at(self, context, el, &mut data, note_child);
-            // lightningpanda: a replaced primary style rewrites what layout reads of it.
+            // pyro: a replaced primary style rewrites what layout reads of it.
             let new_primary = data.styles.get_primary();
             let replaced = match (&old_primary, new_primary) {
                 (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
                 (None, None) => false,
                 _ => true,
             };
-            // lightningpanda: the embedder's transitions want the style before and after a
+            // pyro: the embedder's transitions want the style before and after a
             // replacement; a first style, or styles dropped, is no change.
             if self.track_style_changes && replaced {
                 if let (Some(old), Some(new)) = (&old_primary, new_primary) {
@@ -2121,7 +2121,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
     }
 }
 
-/// lightningpanda: whether `node`'s primary style is `position: sticky`.
+/// pyro: whether `node`'s primary style is `position: sticky`.
 pub(crate) fn is_sticky(node: &Node) -> bool {
     node.primary_styles()
         .is_some_and(|style| style.clone_position() == style::computed_values::position::T::Sticky)
@@ -2297,7 +2297,7 @@ fn parse_inline() {
     // let val = CSSInlineStyleDeclaration();
 }
 
-/// lightningpanda: `:has()` anchors follow insertions and removals through Stylo's relative
+/// pyro: `:has()` anchors follow insertions and removals through Stylo's relative
 /// selector invalidator (`invalidate_relative_selectors_for_insertion`/`_removal`), and
 /// emptiness and sibling-position changes inside an argument through its tree-structural
 /// dependencies (`invalidate_relative_selectors_for_ts_state`).
@@ -2695,7 +2695,7 @@ mod relative_selector_invalidation_tests {
     }
 }
 
-/// lightningpanda: Stylo skips the eager `::before`/`::after` match and cascade when no rule
+/// pyro: Stylo skips the eager `::before`/`::after` match and cascade when no rule
 /// that can generate a box matches (`Stylist::may_generate_box_for_pseudo`). What generates,
 /// and the styles Stylo keeps, must not change.
 #[cfg(test)]

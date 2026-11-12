@@ -1,0 +1,31 @@
+[package]
+name = "pyro-media"
+description = "Audio and video decoding for media elements, Web Audio and canvas (symphonia, rav1d, openh264)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["av1", "h264"]
+# AV1 video through rav1d (pure Rust).
+av1 = ["dep:rav1d", "dep:libc"]
+# H.264 video through OpenH264 built from source (needs a C++ compiler).
+h264 = ["dep:openh264", "dep:openh264-sys2"]
+
+[dependencies]
+bytes = "1"
+# Pure Rust audio: demuxers for every container Chrome's decodeAudioData
+# reads and the codecs but Opus.
+symphonia = { version = "0.6.1", default-features = false, features = ["aac", "flac", "mp3", "pcm", "vorbis", "isomp4", "mkv", "ogg", "wav", "aiff", "caf", "alac", "adpcm", "opt-simd"] }
+# Pure Rust Opus (Symphonia has no Opus decoder); no dependencies.
+opus-pure = "0.2.2"
+# Without its assembly: the x86_64 part needs nasm, and the published crate
+# lacks a header its arm64 part includes. The Rust paths decode small and
+# medium videos fast enough for screenshots.
+rav1d = { version = "1.1.0", default-features = false, features = ["bitdepth_8", "bitdepth_16"], optional = true }
+libc = { version = "0.2", optional = true }
+openh264 = { version = "0.9.9", default-features = false, features = ["source"], optional = true }
+openh264-sys2 = { version = "0.9.9", default-features = false, features = ["source"], optional = true }
+
+[lints]
+workspace = true

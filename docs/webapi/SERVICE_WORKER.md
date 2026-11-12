@@ -1,6 +1,6 @@
 # Service workers
 
-`crates/lp-webapi/src/service_worker.rs` (browser thread: registrations,
+`crates/pyro-webapi/src/service_worker.rs` (browser thread: registrations,
 lifecycle, clients, request routing), `service_worker.js` (the page's
 `navigator.serviceWorker`, `ServiceWorkerRegistration`, `ServiceWorker`),
 `service_worker_scope.rs` and `service_worker_scope.js` (the worker's
@@ -195,7 +195,7 @@ isolated worlds (Playwright's utility world) can use it too.
 - A page that touches `navigator.serviceWorker` in an isolated world gets its
   updates in the main world only.
 
-Tests: `crates/lp-browser/tests/service_worker.rs` (lifecycle, interception of
+Tests: `crates/pyro-browser/tests/service_worker.rs` (lifecycle, interception of
 fetch/XHR, navigations and subresources, bypass, Cache Storage in pages,
 workers and service workers, messages and ports, registration errors, MSW's
 real worker script),

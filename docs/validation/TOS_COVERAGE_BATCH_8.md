@@ -34,9 +34,9 @@ No upstream comparison was run because the rewrite had no failures to compare.
   [batch 7 rerun](TOS_COVERAGE_BATCH_7.md), SHA-256
   `a70a6b5590d555f947d16afbedaeaf62118b27aaebb60235e16832101ecbc8d9`. It was
   rehashed before the run and not rebuilt.
-- Fixture: a fresh, clean `git worktree add --detach` (`/private/tmp/lp-tos-f9f-batch8`).
+- Fixture: a fresh, clean `git worktree add --detach` (`/private/tmp/pyro-tos-f9f-batch8`).
 - Setup: frozen install, one Playwright worker, and native PostgreSQL 17 with the
-  `lp_bench` role and a per-run slug and template database.
+  `pyro_bench` role and a per-run slug and template database.
   - Backend test token into localStorage, not UI login.
   - The same direct-lane version-gate bypass as earlier batches.
   - The cleanup script also accepts the run's exact base template name (see the
@@ -49,10 +49,10 @@ No upstream comparison was run because the rewrite had no failures to compare.
     `build`, `incremental` and `.fingerprint` under the merged PR #54 validation
     targets.
   - All 7 retained binary SHA-256s were unchanged.
-  - The audit is in `/private/tmp/lp-tos-cleanup-plan-1017c`. It also records that
+  - The audit is in `/private/tmp/pyro-tos-cleanup-plan-1017c`. It also records that
     the pre-removal process guard did not abort: its count matched macOS
     `.bundle` system processes. A stricter check found no active processes.
-- Artifacts: `/private/tmp/lp-tos-batch8`.
+- Artifacts: `/private/tmp/pyro-tos-batch8`.
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and
 assertion depth apply. Single runs do not establish flake rates.

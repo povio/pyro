@@ -1,10 +1,10 @@
 # Canvas 2D
 
-`crates/lp-webapi/src/canvas.rs` implements `CanvasRenderingContext2D`,
+`crates/pyro-webapi/src/canvas.rs` implements `CanvasRenderingContext2D`,
 `OffscreenCanvas` 2D contexts, `ImageBitmap` and canvas pixels. Pixels are
-painted by `crates/lp-canvas` (vello_cpu on the CPU, the same rasterizer
+painted by `crates/pyro-canvas` (vello_cpu on the CPU, the same rasterizer
 screenshots use). The value types are made in JS
-(`crates/lp-webapi/src/canvas2d.js`) on a realm's first use of any of them:
+(`crates/pyro-webapi/src/canvas2d.js`) on a realm's first use of any of them:
 `Path2D`, `ImageData`, `CanvasGradient`, `CanvasPattern`, `TextMetrics`,
 `ImageBitmap`, `OffscreenCanvas`, `OffscreenCanvasRenderingContext2D`,
 `createImageBitmap`, `DOMMatrixReadOnly`, `DOMMatrix` (also
@@ -14,7 +14,7 @@ accessor with the usual data property.
 
 ## Bitmaps and memory
 
-- Each 2D context owns an `lp_canvas::Surface`. Its bitmap (premultiplied
+- Each 2D context owns an `pyro_canvas::Surface`. Its bitmap (premultiplied
   RGBA) is allocated on the first draw or pixel write. Reading a canvas that
   was never drawn on (`getImageData`, `toDataURL`, `drawImage` of it)
   allocates nothing and reads transparent black.
@@ -69,14 +69,14 @@ accessor with the usual data property.
   the pattern captures the source's pixels when it is made.
 - Text: `fillText`, `strokeText` (with `maxWidth` squeezing) and
   `measureText` shape one line with Parley on the system fonts (the fonts
-  page rendering uses, `lp_canvas::fonts`): advance width, the primary
+  page rendering uses, `pyro_canvas::fonts`): advance width, the primary
   font's ascent/descent, ink bounds from the glyph outlines, baselines for
   `textBaseline`. Whitespace becomes spaces as HTML's text preparation says.
   Font fallback, synthetic bold/oblique and variable fonts come from Parley.
 - `drawImage` (3, 5 and 9 arguments) and `createPattern` from: a loaded
   `<img>` (decoded on first use: PNG, JPEG, GIF first frame, WebP), a
   `<canvas>` (its bitmap now, itself included), an `ImageBitmap`, an
-  `OffscreenCanvas`, a `<video>` (the frame shown now, decoded by lp-media
+  `OffscreenCanvas`, a `<video>` (the frame shown now, decoded by pyro-media
   for AV1 and H.264; nothing before `HAVE_CURRENT_DATA` or for other codecs;
   cross-origin video without CORS taints). An `<img>` still loading draws nothing and a broken one
   throws `InvalidStateError`; a zero-sized canvas throws; a closed
@@ -137,7 +137,7 @@ accessor with the usual data property.
 
 ## How `<img>` pixels reach a canvas
 
-lp-browser fetches `<img>` resources to learn their natural size and drops
+pyro-browser fetches `<img>` resources to learn their natural size and drops
 the body. When the document may draw images (it created a `<canvas>`
 element, a flag set at element creation, or used a canvas API), the body is
 kept in `PageDom` (`set_image_bytes`, at most 64 MiB per document, a

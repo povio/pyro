@@ -4,7 +4,7 @@
 // and whether DOM work and locators cost the same once a page has taken a
 // screenshot.
 //
-//   bun bench/screenshot/repeat.ts [--bin target/release/lightningpanda] [--iters 30] [--pages <dir>]
+//   bun bench/screenshot/repeat.ts [--bin target/release/pyro] [--iters 30] [--pages <dir>]
 //
 // Pages: the fixtures of match-screenshot.ts, plus every snapshot in --pages
 // (one directory each: page.html, meta.json with base_url and resources
@@ -12,12 +12,12 @@
 // 1280x720. Medians, ms.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { Lightningpanda, css, evaluate } from '../../packages/lightning-panda/src/index';
+import { Pyro, css, evaluate } from '../../packages/pyro/src/index';
 
 const args = process.argv.slice(2);
 const opt = (k: string, d: string) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
 const root = join(import.meta.dir, '../..');
-const bin = opt('--bin', [join(root, 'target/release/lightningpanda'), join(root, 'target/debug/lightningpanda')].find(existsSync) ?? '');
+const bin = opt('--bin', [join(root, 'target/release/pyro'), join(root, 'target/debug/pyro')].find(existsSync) ?? '');
 const iters = Number(opt('--iters', '30'));
 const pagesDir = opt('--pages', '');
 const fixtures = join(import.meta.dir, 'fixtures');
@@ -77,9 +77,9 @@ const SETUP = `(() => {
 const CHANGES: Record<string, string> = {
   'no change': '1',
   'one text change': `__bench.cell.data = __bench.text + ' ' + (++__bench.n); 1`,
-  'one class toggle': `__bench.row.classList.toggle('lp-bench-toggle'); 1`,
+  'one class toggle': `__bench.row.classList.toggle('pyro-bench-toggle'); 1`,
 };
-// DOM work and locator queries, timed inside the page and through LP.run.
+// DOM work and locator queries, timed inside the page and through Pyro.run.
 const DOM_WORK = `(() => {
   const t = performance.now();
   const box = document.body.appendChild(document.createElement('div'));
@@ -90,7 +90,7 @@ const DOM_WORK = `(() => {
   return performance.now() - t;
 })()`;
 
-const lp = await Lightningpanda.launch({ bin });
+const lp = await Pyro.launch({ bin });
 const shotRows: string[] = [];
 const domRows: string[] = [];
 for (const name of sites.keys()) {
@@ -149,7 +149,7 @@ console.log('Page.captureScreenshot (PNG) after a change, client round trip and 
 console.log('| page | change | round trip | snapshot | layout | scene+hash | raster | encode | total |');
 console.log('|---|---|---:|---:|---:|---:|---:|---:|---:|');
 for (const r of shotRows) console.log(r);
-console.log('\nDOM work (2,000 inserts, 500 setAttribute, 50 querySelectorAll, in the page) and an LP.run of 3 locator reads, before the first screenshot of the page and after the screenshots above:\n');
+console.log('\nDOM work (2,000 inserts, 500 setAttribute, 50 querySelectorAll, in the page) and an Pyro.run of 3 locator reads, before the first screenshot of the page and after the screenshots above:\n');
 console.log('| page | DOM work before | DOM work after | locators before | locators after |');
 console.log('|---|---:|---:|---:|---:|');
 for (const r of domRows) console.log(r);

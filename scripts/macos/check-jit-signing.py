@@ -20,13 +20,13 @@ manifest = (root / "Cargo.toml").read_text()
 profile = re.search(r"(?ms)^\[profile\.release\]\n.*?(?=^\[|\Z)", manifest)
 if profile is None:
     raise SystemExit("Repository release profile missing.")
-with tempfile.TemporaryDirectory(prefix="lp-jit-signing-") as directory:
+with tempfile.TemporaryDirectory(prefix="pyro-jit-signing-") as directory:
     work = Path(directory)
     (work / "src").mkdir()
     (work / ".cargo").mkdir()
     (work / "src/main.rs").write_text('fn main() { println!("signature-check"); }\n')
     (work / "Cargo.toml").write_text(
-        '[package]\nname="lp-jit-signing-check"\nversion="0.0.0"\nedition="2024"\n\n'
+        '[package]\nname="pyro-jit-signing-check"\nversion="0.0.0"\nedition="2024"\n\n'
         + profile.group(0)
     )
     # Absolute here: the temporary crate is not in the repository's workspace.
@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix="lp-jit-signing-") as directory:
     # Check the repository profile, not a caller's explicit strip override.
     env.pop("CARGO_PROFILE_RELEASE_STRIP", None)
     subprocess.run(["cargo", "build", "--release", "--offline"], cwd=work, env=env, check=True, timeout=120)
-    binary = work / "target/release/lp-jit-signing-check"
+    binary = work / "target/release/pyro-jit-signing-check"
     result = subprocess.run(
         ["codesign", "--display", "--entitlements", "-", "--xml", str(binary)],
         capture_output=True, check=True, timeout=10,

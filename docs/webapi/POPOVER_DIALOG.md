@@ -1,11 +1,11 @@
 # Popovers, dialogs, invokers and details
 
-What lightningpanda implements of the HTML popover API, `<dialog>`,
+What pyro implements of the HTML popover API, `<dialog>`,
 `command`/`commandfor` invokers and `<details>` toggling, and what it does
-not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
-`crates/lp-dom/src/top_layer.rs` (top layer, popover stacks, inertness),
-`crates/lp-dom/src/details.rs` (details attribute steps). Tests:
-`crates/lp-webapi/tests/popover_dialog_js.rs`, `crates/lp-dom/tests/top_layer.rs`.
+not. Code: `crates/pyro-webapi/src/popover.rs` (algorithms and bindings),
+`crates/pyro-dom/src/top_layer.rs` (top layer, popover stacks, inertness),
+`crates/pyro-dom/src/details.rs` (details attribute steps). Tests:
+`crates/pyro-webapi/tests/popover_dialog_js.rs`, `crates/pyro-dom/tests/top_layer.rs`.
 
 ## Events
 
@@ -22,7 +22,7 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
 - `<details>` fires a coalesced `toggle` (`ToggleEvent`, no bubbling, not
   cancelable) for every change of the `open` attribute's presence, however it
   changed: `details.open`, `setAttribute`/`removeAttribute`, a summary click,
-  the parser (`<details open>`), the exclusive accordion. lp-dom queues the
+  the parser (`<details open>`), the exclusive accordion. pyro-dom queues the
   change at mutation time and the page of the details' document posts the
   task; details in documents no page watches (template contents,
   `DOMParser`) fire nothing.
@@ -91,7 +91,7 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
 ## Top layer and inertness
 
 - The top layer (modal dialogs and showing popovers, in the order they
-  entered it) is kept by lp-dom at mutation time. Hit testing
+  entered it) is kept by pyro-dom at mutation time. Hit testing
   (`elementFromPoint`, the pointer target of CDP input) puts top-layer boxes
   above everything else, by top-layer order, whatever their ancestors'
   z-index or stacking contexts.
@@ -99,7 +99,7 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
   inert (not hit-testable, not focusable by `focus()`, by a click or by Tab,
   and left out of the CDP accessibility tree). A point outside the dialog
   hits the dialog (its `::backdrop`).
-- `:modal` and `:popover-open` match; the UA styles apply in lp-dom's
+- `:modal` and `:popover-open` match; the UA styles apply in pyro-dom's
   cascade and in the renderer's: `dialog:modal` is `position: fixed`,
   centered (`inset: 0`, `margin: auto`, fit-content size, `max-width` /
   `max-height` of `100% - 6px - 2em`), `[popover]` is `position: fixed`,
@@ -108,8 +108,8 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
 ## Painting (screenshots, PDF)
 
 - The render tree marks each top-layer element with its rank (a
-  `top-layer=N` token in the `urn:x-lightningpanda:state` `state`
-  attribute, which only lp-dom writes: page-set attributes in that
+  `top-layer=N` token in the `urn:x-pyro:state` `state`
+  attribute, which only pyro-dom writes: page-set attributes in that
   namespace are dropped from the snapshot). blitz-dom keeps the marked
   elements by rank when the attribute is set or cleared (no scans, however
   many popovers show), so an empty top layer costs one emptiness check per
@@ -129,8 +129,8 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
   painted as a box over the painted area (the viewport, or the whole
   document for a full-page capture): its `background-color`, `opacity` and
   `backdrop-filter`. `display: none` or `visibility: hidden` hides it.
-- Tests: `crates/lp-cdp/tests/engine_cdp.rs` (`top_layer_*`: pixels,
-  `elementFromPoint` and CDP clicks), `crates/lp-dom/tests/render_html.rs`
+- Tests: `crates/pyro-cdp/tests/engine_cdp.rs` (`top_layer_*`: pixels,
+  `elementFromPoint` and CDP clicks), `crates/pyro-dom/tests/render_html.rs`
   (`render_tree_marks_the_top_layer_by_rank`).
 
 ## Not implemented

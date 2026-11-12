@@ -26,12 +26,12 @@ Reference behaviour: the Chrome 147 probe in `target/worker-handoff/iframe-asses
 - Child documents live in the page's shared DOM store; each has its own `PageDom` (window target, request context
   with the child `frame_id`/`loader_id`).
 - Request defaults (user agent, extra headers, cache bypass) are the page's: Chrome applies them per target, i.e.
-  to every frame. lp-net activity is counted under the child loader, so network idle is per frame.
+  to every frame. pyro-net activity is counted under the child loader, so network idle is per frame.
 
 ## Creation (H1, synchronous) and navigation (asynchronous)
 - `iframe_connected(iframe)` runs inside script (e.g. `appendChild`) while `&mut Browser` is borrowed up the stack.
   It therefore goes through a page-owned `FrameHost` (scheduler, loop handle, observer cell, `Window` class id,
-  page/context ids, init scripts) and a new lp-js entry point that creates a realm in the thread's current engine.
+  page/context ids, init scripts) and a new pyro-js entry point that creates a realm in the thread's current engine.
 - What H1 does synchronously:
   - creates the child's initial `about:blank` document (origin inherited from the parent unless sandboxed), with
     realms for the default world and every init-script world;
@@ -62,19 +62,19 @@ Reference behaviour: the Chrome 147 probe in `target/worker-handoff/iframe-asses
   depth-first:
   1. for each descendant: dispose its `PageDom`, cancel timers and dispose its realms, emitting `RealmDestroyed`;
   2. emit `FrameChildFrameDetached`;
-  3. forget its lp-net activity entry.
+  3. forget its pyro-net activity entry.
   Queued tasks for a removed frame are dropped by frame and loader checks (stale guard).
 
 ## Window relationships
-- `parent`, `top`, `frames`, `length`, `frameElement` and `contentWindow` become real (lp-browser `Window`).
+- `parent`, `top`, `frames`, `length`, `frameElement` and `contentWindow` become real (pyro-browser `Window`).
 - Same-origin access returns the other frame's global. Cross-origin, including opaque, access returns a restricted
   cross-origin window object: allow-listed members (`window`, `self`, `parent`, `top`, `frames`, `length`,
   `closed`, `close`, `focus`, `blur`; `postMessage` is excluded in phase 1); everything else throws
   `SecurityError`.
 - `contentDocument` and `frameElement` are `null` across origins.
 
-## For lp-cdp (W3)
-- Events: the existing `PageEvent` variants, carrying the child `frame_id`. No field changes, so lp-cdp keeps
+## For pyro-cdp (W3)
+- Events: the existing `PageEvent` variants, carrying the child `frame_id`. No field changes, so pyro-cdp keeps
   compiling. `FrameChildFrameCreated{parent, frame_id}` precedes all other events for that frame.
   `FrameChildFrameDetached` follows that frame's `RealmDestroyed` events.
 - Accessors:
@@ -87,7 +87,7 @@ Reference behaviour: the Chrome 147 probe in `target/worker-handoff/iframe-asses
   These accessors never return a live frame-registry borrow across JavaScript. CDP must scope context
   destruction, pending navigation and lifecycle replay to the affected frame, keeping siblings alive.
 
-## Tests (lp-browser, real HTTP where it matters)
+## Tests (pyro-browser, real HTTP where it matters)
 - Sandboxed srcdoc: the child document's text is readable through the child realm; page scripts did not run; the
   realm evaluates; the parent's `contentDocument` is `null`; the cross-origin `contentWindow` throws on a
   disallowed property.
@@ -125,7 +125,7 @@ inspector evaluation and inspector init-script worlds remain available.
 origins, sandbox navigation, named and unnamed isolated worlds, init-script worlds, nested removal,
 self-removal, parent-load ordering, failed/cancelled loads, stale completions and repeated realm cleanup.
 `child_frame_network.rs` uses a local HTTP server for document/script/fetch request correlation, headers,
-inherited base resolution, frame network idle and activity cleanup. `lp-js/tests/nested_realm.rs` exercises
+inherited base resolution, frame network idle and activity cleanup. `pyro-js/tests/nested_realm.rs` exercises
 safe realm creation from a native callback and rejects calls without a live owning engine.
 
 Same-origin nodes are wrapped in their own frame's realm and work from the parent; see

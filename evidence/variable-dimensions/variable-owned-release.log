@@ -38,7 +38,7 @@
    Compiling tokio v1.53.3
    Compiling want v0.3.2
    Compiling cookie v0.18.2
-   Compiling lp-jsc-sys v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-jsc-sys)
+   Compiling pyro-jsc-sys v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-jsc-sys)
    Compiling futures-task v0.3.34
    Compiling powerfmt v0.2.1
    Compiling deranged v0.5.9
@@ -74,9 +74,9 @@
    Compiling yoke v0.8.3
    Compiling selectors v0.41.0
    Compiling hyper v1.12.0
-   Compiling lp-js v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-js)
+   Compiling pyro-js v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-js)
    Compiling zerovec v0.11.8
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-dom)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-dom)
    Compiling zerotrie v0.2.5
    Compiling tinystr v0.8.4
    Compiling potential_utf v0.1.6
@@ -91,10 +91,10 @@
    Compiling idna_adapter v1.2.2
    Compiling idna v1.1.0
    Compiling url v2.5.8
-   Compiling lp-net v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-net)
-   Compiling lp-webapi v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-webapi)
+   Compiling pyro-net v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-net)
+   Compiling pyro-webapi v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 2m 46s
-     Running unittests src/lib.rs (target/release/deps/lp_dom-ec49f7fda84ad9bf)
+     Running unittests src/lib.rs (target/release/deps/pyro_dom-ec49f7fda84ad9bf)
 
 running 14 tests
 test layout::tests::line_wrap ... ok
@@ -241,7 +241,7 @@ test long_operator_chains_do_not_recurse ... ok
 
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
 
-     Running unittests src/lib.rs (target/release/deps/lp_webapi-861023f6b56d7d09)
+     Running unittests src/lib.rs (target/release/deps/pyro_webapi-861023f6b56d7d09)
 
 running 7 tests
 test collections::tests::dataset_names ... ok
@@ -484,13 +484,13 @@ test xhr_timeout_update_uses_original_start_and_can_be_disabled ... ok
 
 test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
 
-   Doc-tests lp_dom
+   Doc-tests pyro_dom
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-   Doc-tests lp_webapi
+   Doc-tests pyro_webapi
 
 running 0 tests
 

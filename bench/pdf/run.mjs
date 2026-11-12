@@ -3,10 +3,10 @@
 // #document-generated[data-generation-token], document.fonts.ready, page.pdf().
 //
 //   bun run.mjs --cases <dir with pdf-visual-cases.json> --base <build dir> --fixed <build dir>
-//               --lp <lightningpanda binary> --out <dir> [--reps 3] [--only a,b] [--concurrency 6]
+//               --lp <pyro binary> --out <dir> [--reps 3] [--only a,b] [--concurrency 6]
 //
 // Engines: chrome-base (Chrome, base build), chrome-fixed (Chrome, page box
-// shadow removed), lp-fixed (Lightningpanda, fixed build). Runs are
+// shadow removed), pyro-fixed (Pyro, fixed build). Runs are
 // interleaved per case and repetition. Peak RSS is sampled (ps, 25 ms) over
 // each browser's process tree while its case runs.
 
@@ -125,7 +125,7 @@ const startEngine = async (name, build, cmd, cmdArgs, port, env = {}) => {
   let partial = '';
   proc.stderr.on('data', (d) => {
     err = (err + d).slice(-4000);
-    // LP_GEOMETRY_PROFILE=1: pass the engine's timing lines through.
+    // PYRO_GEOMETRY_PROFILE=1: pass the engine's timing lines through.
     partial += String(d);
     const lines = partial.split('\n');
     partial = lines.pop();
@@ -157,10 +157,10 @@ const launchLp = (build, port, geometry) =>
     geometry ? `lp-${geometry}` : `lp-${build.name}`,
     { ...build, url: 'http://pdfgen.localhost/index.html' },
     path.resolve(args.lp),
-    // Lightningpanda has no file: scheme: the build is served in place of an origin.
+    // Pyro has no file: scheme: the build is served in place of an origin.
     ['serve', '--port', String(port), '--static', `http://pdfgen.localhost=${build.dir}`],
     port,
-    geometry ? { LIGHTNINGPANDA_GEOMETRY: geometry } : {},
+    geometry ? { PYRO_GEOMETRY: geometry } : {},
   );
 
 const newPage = async (browser) => {
@@ -175,10 +175,10 @@ const preparePage = async (page, build) => {
   await page.waitForSelector('html[data-pdfgen-ready="true"]', { state: 'attached', timeout: 60000 });
 };
 
-// LP.geometryStats: Blitz-backed layouts since the last call (lp-blitz only).
+// Pyro.geometryStats: Blitz-backed layouts since the last call (pyro-blitz only).
 const geometryStats = async (page) => {
   const session = await page.context().newCDPSession(page);
-  const r = await session.send('LP.geometryStats').catch(() => null);
+  const r = await session.send('Pyro.geometryStats').catch(() => null);
   await session.detach().catch(() => {});
   return r;
 };
@@ -244,7 +244,7 @@ for (const e of engines) {
   await preparePage(e.page, e.build);
 }
 
-// Lightningpanda's own report (page boxes, overflow, skipped features, stage
+// Pyro's own report (page boxes, overflow, skipped features, stage
 // timings) rides on the printToPDF reply, which page.pdf() drops: fetched with
 // one extra, untimed raw call per case.
 const lpReport = async (page, landscape) => {
@@ -281,7 +281,7 @@ for (const c of cases) {
       const s = sampler(e.pid);
       let r;
       try {
-        r = await renderOnce(e.page, payload, landscape, e.name === 'lp-blitz');
+        r = await renderOnce(e.page, payload, landscape, e.name === 'pyro-blitz');
       } catch (err) {
         s.stop();
         rows.push({ case: c.name, engine: e.name, rep, error: String(err).slice(0, 300) });
@@ -335,7 +335,7 @@ if (concurrency > 0) {
   const payloads = await Promise.all(cases.map(readPayload));
   for (const e of engines) {
     if (e.name === 'chrome-base' && args.skipBaseThroughput) continue;
-    // Chrome: one browser, N pages. Lightningpanda: one server, N CDP connections (a render thread each).
+    // Chrome: one browser, N pages. Pyro: one server, N CDP connections (a render thread each).
     const pages = [];
     for (let i = 0; i < concurrency; i++) {
       const b = e.name.startsWith('lp') ? await e.connect() : e.browser;

@@ -4,7 +4,7 @@ What `innerText`, `CSS.*`, `getComputedStyle(el, pseudoElt)`, `dataset` and the 
 
 ## innerText
 
-`HTMLElement.innerText` (`crates/lp-dom/src/inner_text.rs`) takes each child's text display from its tag (the upstream table) unless its computed `display` differs from that tag's HTML default. The difference covers author CSS and Stylo's blockification of flex and grid items, floats and absolutely positioned boxes. In that case the computed box decides (`ComputedStyle::box_kind`, derived with the rest of the computed style):
+`HTMLElement.innerText` (`crates/pyro-dom/src/inner_text.rs`) takes each child's text display from its tag (the upstream table) unless its computed `display` differs from that tag's HTML default. The difference covers author CSS and Stylo's blockification of flex and grid items, floats and absolutely positioned boxes. In that case the computed box decides (`ComputedStyle::box_kind`, derived with the rest of the computed style):
 
 - block-level boxes (`block`, `flow-root`, `flex`, `grid`, `list-item`, `table`, `table-caption`) are surrounded by a required line break;
 - `table-cell` boxes are tab-separated and `table-row` boxes newline-separated, CSS tables included;
@@ -19,7 +19,7 @@ Not done: `display: block` on `<script>` / `<style>` (the layout engine keeps no
 
 `window.CSS` is made on its first read and then replaced by a writable, configurable, non-enumerable data property. Realms that never read it pay nothing.
 
-- `CSS.supports(property, value)` parses `value` with Stylo as that property's value in an author style rule. Property names match ASCII case-insensitively and custom properties match as written. `!important`, trailing tokens and surrounding whitespace in the name all fail. Properties that Stylo's servo build does not parse fail too (for example `-webkit-line-clamp`, `text-wrap` and `content-visibility`), except the three that lp-dom computes itself (`overflow-anchor`, `text-anchor`, `line-clamp`).
+- `CSS.supports(property, value)` parses `value` with Stylo as that property's value in an author style rule. Property names match ASCII case-insensitively and custom properties match as written. `!important`, trailing tokens and surrounding whitespace in the name all fail. Properties that Stylo's servo build does not parse fail too (for example `-webkit-line-clamp`, `text-wrap` and `content-visibility`), except the three that pyro-dom computes itself (`overflow-anchor`, `text-anchor`, `line-clamp`).
 - `CSS.supports(conditionText)` parses a `<supports-condition>` and falls back to a single declaration in parentheses. `not` / `and` / `or`, declarations and `selector()` are evaluated as `@supports` would evaluate them. `font-tech()` and `font-format()` are false. The Stylo features Blitz enables are switched on at the first call, so answers do not depend on whether a document has been laid out.
 - `CSS.registerProperty(definition)` validates with Stylo: the name, the syntax, and an initial value that is present, parses per the syntax and is computationally independent unless the syntax is `*`. A failure throws `SyntaxError`, and registering a name twice throws `InvalidModificationError`. Registrations are kept per document (`StyleEngine::register_property`). `getComputedStyle` returns the initial value, as written, for a registered property that no declaration sets. Not applied yet: `inherits: false`, typed computed values (`1em` stays `1em`), and `@property` rules. That would need Stylo's script registry wired into the layout engine's Stylist.
 

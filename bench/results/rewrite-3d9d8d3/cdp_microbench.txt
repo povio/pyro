@@ -1,4 +1,4 @@
-# cargo run --release -p lp-cdp --example cdp_microbench (source tree 3d9d8d3 + this example), 2026-10-17T08:44:06Z
+# cargo run --release -p pyro-cdp --example cdp_microbench (source tree 3d9d8d3 + this example), 2026-10-17T08:44:06Z
 ProductName:		macOS ProductVersion:		26.7.1 BuildVersion:		25G241 
 Apple M1
 8589934592

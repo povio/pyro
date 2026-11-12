@@ -59,7 +59,7 @@ They are:
 - The [follow-up triage](#follow-up-triage-added-after-merge) below narrows this
   down.
 
-These failures are not lightningpanda regressions: upstream and Chromium fail
+These failures are not pyro regressions: upstream and Chromium fail
 the same cases.
 
 ### Follow-up triage (added after merge)
@@ -105,17 +105,17 @@ It never ran a test: template preparation stopped when the runner's
   command"). In PostgreSQL 17 a non-superuser role cannot signal an autovacuum
   worker; PostgreSQL 18 adds `pg_signal_autovacuum_worker` for this.
 - **The fix and its scope.** Autovacuum was turned off only on worker 3's
-  dedicated Docker test server: container `lp-w3-pg17` on the W3 host, holding
+  dedicated Docker test server: container `pyro-w3-pg17` on the W3 host, holding
   only disposable test databases. The command was run as the container's
   bootstrap superuser:
 
   ```
-  docker exec -u postgres lp-w3-pg17 psql -X -c "ALTER SYSTEM SET autovacuum = off" -c "SELECT pg_reload_conf()"
+  docker exec -u postgres pyro-w3-pg17 psql -X -c "ALTER SYSTEM SET autovacuum = off" -c "SELECT pg_reload_conf()"
   ```
 
   It took effect at 06:40 UTC, and `SHOW autovacuum` reports `off`.
 - **Persistence.** The setting is stored in `postgresql.auto.conf` inside the
-  container's data volume (`lp-w3-pg17-data`), so it persists across restarts.
+  container's data volume (`pyro-w3-pg17-data`), so it persists across restarts.
   It is undone with `ALTER SYSTEM RESET autovacuum` and a reload.
 - **What was not changed.** W2's native PostgreSQL and any other shared or
   native service. The TOS source and runner are also unchanged.
@@ -176,7 +176,7 @@ their own and must not be added to another binary's results.
     matches. It is ad hoc signed and reports
     `1.1.0-nightly.10716+2ad38773f`.
 - **Fixture:** one fresh worktree at the TOS commit
-  (`/private/tmp/lp-w3-lfix-1`), then `bun install --frozen-lockfile`. All runs
+  (`/private/tmp/pyro-w3-lfix-1`), then `bun install --frozen-lockfile`. All runs
   reused it.
 - **Setup:** the W3 host setup.
   - Docker PostgreSQL 17.11 runs in Colima, with a dedicated `LOGIN CREATEDB`
@@ -198,7 +198,7 @@ their own and must not be added to another binary's results.
   | `w3l04` | 58.8 s | 33.4 s |
   | `w3l04u` | 55.5 s | 29.9 s |
 
-- **Artifacts:** on the W3 host in `/private/tmp/lp-w3-l03`, `-l03u`, `-l03u2`,
+- **Artifacts:** on the W3 host in `/private/tmp/pyro-w3-l03`, `-l03u`, `-l03u2`,
   `-l03b`, `-l03c`, `-l04` and `-l04u`.
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and

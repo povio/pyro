@@ -1,0 +1,39 @@
+[package]
+name = "pyro-dom"
+description = "Pure-Rust DOM: arena document, html5ever parsing, selectors, events (worker 2)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# One integration test binary (tests/integration.rs) instead of one per file.
+autotests = false
+
+[dependencies]
+cssparser = "0.38"
+encoding_rs = "0.8"
+html5ever = "0.40"
+markup5ever = "0.40"
+precomputed-hash = "0.1"
+quick-xml = "0.42"
+# `pattern` attributes: ECMAScript regular expressions (the `v` flag).
+regress = "0.12"
+rustc-hash = "2"
+selectors = "0.43"
+# The cascade: Stylo (Servo's style system), as blitz-dom uses it.
+style = { version = "0.24.0", package = "stylo" }
+style_dom = { version = "0.24.0", package = "stylo_dom" }
+style_traits = { version = "0.24.0", package = "stylo_traits" }
+style_config = { version = "0.24.0", package = "stylo_static_prefs" }
+url = "2"
+unicode-bidi = "0.3"
+app_units = "0.7.5"
+euclid = "0.22"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

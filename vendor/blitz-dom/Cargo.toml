@@ -1,5 +1,5 @@
 # Standalone manifest for the vendored copy (workspace inheritance resolved by
-# lightningpanda; see README.lightningpanda.md).
+# pyro; see README.pyro.md).
 
 [package]
 name = "blitz-dom"
@@ -76,7 +76,7 @@ keyboard-types = { version = "0.8" }
 cursor-icon = { version = "1" }
 thread_local = { version = "1" }
 web-time = { version = "1" }
-# lightningpanda: deep trees lay out and paint on a stack grown on demand (`util::ensure_stack`).
+# pyro: deep trees lay out and paint on a stack grown on demand (`util::ensure_stack`).
 stacker = { version = "0.1.21" }
 
 [target.'cfg(any(target_vendor = "apple"))'.dependencies]

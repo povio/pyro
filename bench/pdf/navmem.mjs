@@ -1,4 +1,4 @@
-// RSS of one lightningpanda server over N navigations of one page, each
+// RSS of one pyro server over N navigations of one page, each
 // followed (with --flow) by the ToS generate + printToPDF steps.
 //   bun navmem.mjs <binary> <build dir> <N> [payload.json]
 import { chromium } from 'playwright-core';

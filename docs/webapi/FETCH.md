@@ -1,8 +1,8 @@
 # Fetch binding and embedder contract
 
-`lp-webapi::install` installs `fetch(url, init)` and the network-created `Response`
+`pyro-webapi::install` installs `fetch(url, init)` and the network-created `Response`
 interface. This is an implemented subset, not full Fetch or TOS compatibility.
-The binding uses the existing `lp-net` HTTP/CORS/cookie/interception path and
+The binding uses the existing `pyro-net` HTTP/CORS/cookie/interception path and
 JavaScriptCore promises. No browser/runtime wiring is added by this change.
 
 Over HTTP/2 `Response.statusText` is empty, as the protocol has no reason phrase.
@@ -138,10 +138,10 @@ and a list naming `identity` or an unsupported coding (`zstd`, bogus values)
 passes the body through undecoded instead of failing.
 
 HTTP cache: each browser context has a private, in-memory, byte-bounded cache in
-lp-net (`crates/lp-net/src/cache.rs`, an RFC 9111 subset). By default contexts
+pyro-net (`crates/pyro-net/src/cache.rs`, an RFC 9111 subset). By default contexts
 never share entries, and a context's entries are freed with it.
 - The one exception is an explicit opt-in process-wide shared cache
-  (`LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB` or `NetConfig.shared_asset_cache`).
+  (`PYRO_SHARED_ASSET_CACHE_MB` or `NetConfig.shared_asset_cache`).
 - It shares credential-free GET 200 responses that are explicitly `public` and
   fresh, with no `Set-Cookie`/`Vary`/`private`/`no-store`/`no-cache`, across
   every context of the process. The contract is header-based, not limited to a

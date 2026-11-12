@@ -1,4 +1,4 @@
-# LP-AUTOMATION baseline provenance
+# Pyro-AUTOMATION baseline provenance
 
 Host: Apple M1 (8 cores), 8 GB RAM, macOS 26.7.1 (25G241), user povioserver. No sudo/brew/docker.
 Started: 2026-10-17T07:51Z (UTC). All PATH changes are per-command only:
@@ -23,8 +23,8 @@ Note: a pre-existing ~/toolchains/dl (rustup-init.sh, zig-index.json) was left u
 
 ## 2. Upstream reference clone
 ```
-git clone --no-hardlinks ~/Documents/GitHub/browser ~/lp-baseline/browser
-git -C ~/lp-baseline/browser checkout --detach 2ad38773fd674d3c9cea26a263b814ee46f6ba84
+git clone --no-hardlinks ~/Documents/GitHub/browser ~/pyro-baseline/browser
+git -C ~/pyro-baseline/browser checkout --detach 2ad38773fd674d3c9cea26a263b814ee46f6ba84
 ```
 - Commit: 2ad38773fd674d3c9cea26a263b814ee46f6ba84 (2026-10-17 14:36:55 +0800, "Merge pull request #4012 from orezraey/rsa-pkcs1")
 - Source checkout ~/Documents/GitHub/browser was clean (git status empty) and at the same HEAD; not modified.
@@ -38,15 +38,15 @@ zig build -Dsnapshot_path=../../snapshot.bin -Dprebuilt_v8_path=v8/libc_v8.a -Do
 - Zig 0.17 names the optimize mode `fast` (std.lang.Optimize .fast == former ReleaseFast).
 - `-Dorderfile=orderfile/lightpanda.ld` is passed ONLY in build-linux (ELF/LLD linker script; orderfile/README.md: "Linux/LLD only"). Not applicable on macOS -> not used.
 - `-Dcpu=` is only passed for Linux; macOS build uses native default target.
-- Locally, build.zig auto-discovers the `make download-v8` archive in .lp-cache (findPrebuiltV8), so -Dprebuilt_v8_path is equivalent to the auto path; we pass it explicitly to mirror CI.
+- Locally, build.zig auto-discovers the `make download-v8` archive in .pyro-cache (findPrebuiltV8), so -Dprebuilt_v8_path is equivalent to the auto path; we pass it explicitly to mirror CI.
 
 ### Prebuilt V8
 ```
-cd ~/lp-baseline/browser && make download-v8     # 6 s
+cd ~/pyro-baseline/browser && make download-v8     # 6 s
 ```
 - zig-v8 tag v0.5.9, V8 15.5.35.13 (from .github/actions/install/action.yml defaults)
 - URL: https://github.com/lightpanda-io/zig-v8-fork/releases/download/v0.5.9/libc_v8_15.5.35.13_macos_aarch64.a
-- Path: ~/lp-baseline/browser/.lp-cache/prebuilt-v8/v0.5.9/libc_v8_15.5.35.13_macos_aarch64.a
+- Path: ~/pyro-baseline/browser/.pyro-cache/prebuilt-v8/v0.5.9/libc_v8_15.5.35.13_macos_aarch64.a
 - Size 116,436,968 bytes; sha256 dc14027e53df891399522f6089296acfdf37207afaca1e49dd05c446d3fc475f
 - Cross-checked against GitHub release API asset digest (sha256:dc14027e...c475f, asset updated 2026-10-04T23:37:21Z): MATCH
 
@@ -62,36 +62,36 @@ export PATH=$HOME/toolchains/zig-0.17.0:$HOME/.cargo/bin:$PATH
 export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
 export CARGO_BUILD_JOBS=4      # modest parallelism, 8 GB host
 ```
-Zig build parallelism limited with `-j4`. Zig package deps (build.zig.zon) were fetched by zig into ~/lp-baseline/browser/zig-pkg
+Zig build parallelism limited with `-j4`. Zig package deps (build.zig.zon) were fetched by zig into ~/pyro-baseline/browser/zig-pkg
 and ~/.cache/zig (global cache); cargo crates into ~/.cargo/registry.
 
 ### Step A: V8 snapshot (mirrors release.yml "v8 snapshot")
 ```
-cd ~/lp-baseline/browser
-/usr/bin/time -l zig build -j4 -Dprebuilt_v8_path=.lp-cache/prebuilt-v8/v0.5.9/libc_v8_15.5.35.13_macos_aarch64.a \
+cd ~/pyro-baseline/browser
+/usr/bin/time -l zig build -j4 -Dprebuilt_v8_path=.pyro-cache/prebuilt-v8/v0.5.9/libc_v8_15.5.35.13_macos_aarch64.a \
     -Doptimize=fast snapshot_creator -- src/snapshot.bin
 ```
 - 07:54:33Z -> 07:59:14Z UTC: 280.9 s real, 589.3 s user, 58.0 s sys; max RSS (largest child) 2,830,123,008 bytes; rc=0
 - Version string printed by configure: `Lightpanda 1.1.0-dev.10716+2ad38773f`
 - Output src/snapshot.bin: 1,586,800 bytes, sha256 dc796fe8da0a2dbcf53dd0ba92150b4d56946fd347935846569b130ef192cb2d
-- Log: ~/lp-baseline/results/build-snapshot.log
+- Log: ~/pyro-baseline/results/build-snapshot.log
 - `-Dsnapshot_path=../../snapshot.bin` is consumed by `@embedFile` in src/browser/js/Snapshot.zig, i.e. resolves to src/snapshot.bin.
 
 ### Step B: main build (mirrors release.yml build-macos "zig build"; nightly version flag)
 ```
-cd ~/lp-baseline/browser
+cd ~/pyro-baseline/browser
 /usr/bin/time -l zig build -j4 -Dsnapshot_path=../../snapshot.bin \
-    -Dprebuilt_v8_path=.lp-cache/prebuilt-v8/v0.5.9/libc_v8_15.5.35.13_macos_aarch64.a \
+    -Dprebuilt_v8_path=.pyro-cache/prebuilt-v8/v0.5.9/libc_v8_15.5.35.13_macos_aarch64.a \
     -Doptimize=fast -Dversion=nightly
 ```
 - No `-Dorderfile` (Linux/LLD-only per orderfile/README.md and release.yml; macOS job does not pass it). No `-Dcpu` (macOS job does not pass it; native aarch64 target).
 - 08:02:12Z -> 08:06:28Z UTC: 256.8 s real, 246.2 s user, 9.3 s sys; max RSS (largest child) 3,450,404,864 bytes; rc=0
   (C/Rust deps were already cached from step A, so this is mostly the Zig/LLVM compile+link of the exe.)
-- Log: ~/lp-baseline/results/build-main.log
-- `git -C ~/lp-baseline/browser status --short` after build: clean (zig-out/, zig-pkg/, .lp-cache/, src/snapshot.bin are ignored).
+- Log: ~/pyro-baseline/results/build-main.log
+- `git -C ~/pyro-baseline/browser status --short` after build: clean (zig-out/, zig-pkg/, .pyro-cache/, src/snapshot.bin are ignored).
 
 ### Binary
-- Path: ~/lp-baseline/browser/zig-out/bin/lightpanda (Mach-O 64-bit arm64, ad-hoc linker signature, not stripped)
+- Path: ~/pyro-baseline/browser/zig-out/bin/lightpanda (Mach-O 64-bit arm64, ad-hoc linker signature, not stripped)
 - `lightpanda version` -> `1.1.0-nightly.10716+2ad38773f`
 - Size: 92,895,000 bytes
 - sha256: cf1545dac0239e2ff18165583bd8c6983de030a9adfb2dfabb688929b519590b
@@ -100,7 +100,7 @@ cd ~/lp-baseline/browser
 
 ## 3. Smoke test and measurements
 
-### Scripts (~/lp-baseline/scripts)
+### Scripts (~/pyro-baseline/scripts)
 - testsite.mjs — throwaway node http server: `/` (form#f, input#name, button#submit, button#routed, fetch() to JSON), `/api/data.json`, `/api/routed.json`.
 - smoke.mjs — Playwright 1.59.1 (`require` by absolute path of tos-monorepo/node_modules/.bun/playwright-core@1.59.1/node_modules/playwright-core; nothing installed there).
   Steps: connectOverCDP(ws://127.0.0.1:PORT) -> newContext -> newPage -> goto -> locator.fill -> click+waitForResponse -> evaluate -> page.route fulfill (+click+waitForResponse+DOM check) -> close (page, context, browser).
@@ -112,10 +112,10 @@ cd ~/lp-baseline/browser
 
 ### Commands
 ```
-cd ~/lp-baseline/scripts
-B=~/lp-baseline/browser/zig-out/bin/lightpanda
-node run-baseline.mjs --bin $B --results ~/lp-baseline/results/idle --startup-runs 10 --smoke-runs 5
-node run-baseline.mjs --bin $B --results ~/lp-baseline/results/warm --startup-runs 10 --smoke-runs 5 --warm-cpu
+cd ~/pyro-baseline/scripts
+B=~/pyro-baseline/browser/zig-out/bin/lightpanda
+node run-baseline.mjs --bin $B --results ~/pyro-baseline/results/idle --startup-runs 10 --smoke-runs 5
+node run-baseline.mjs --bin $B --results ~/pyro-baseline/results/warm --startup-runs 10 --smoke-runs 5 --warm-cpu
 node cdp-summarize.mjs ../results/idle/smoke-proxy-1.cdp.jsonl ../results/cdp-inventory.json ../results/cdp-inventory.md
 ```
 (results/superseded-run0 = first orchestrator run; superseded because its RSS samplers used blocking sleep(20ms) which this host
@@ -152,13 +152,13 @@ evaluate 1.5, route.fulfill(+click+wait) 17.8, close 3.9.
 Raw: results/{idle,warm}/baseline.json and per-run *.smoke.json, *.rss-native.txt, *.rss-samples.txt, *.time-l.txt, *.lightpanda.stderr.log.
 
 ## 4. CDP recording proxy
-- ~/lp-baseline/scripts/cdp-record-proxy.mjs — uses `ws` 8.21.0 loaded read-only by absolute path
+- ~/pyro-baseline/scripts/cdp-record-proxy.mjs — uses `ws` 8.21.0 loaded read-only by absolute path
   ~/Documents/GitHub/tos-monorepo/node_modules/.bun/ws@8.21.0/node_modules/ws (overridable with CDP_PROXY_WS_PATH).
-  CLI: `node cdp-record-proxy.mjs --upstream http://127.0.0.1:<lp port> --out <file.jsonl> [--listen <port>] [--host 127.0.0.1] [--params]`
+  CLI: `node cdp-record-proxy.mjs --upstream http://127.0.0.1:<pyro port> --out <file.jsonl> [--listen <port>] [--host 127.0.0.1] [--params]`
   Forwards all HTTP (rewrites upstream host:port -> proxy host:port in /json* bodies) and WebSocket upgrades on any path.
   JSONL records: c2s command (id, method, session bool), s2c event (method, session bool), s2c response/error (id, matched method,
   latency ms, error code+message), ws-open / ws-close (with unanswered command methods) / http.
-- ~/lp-baseline/scripts/cdp-summarize.mjs `<in.jsonl> <out.json> [out.md]` -> sorted count tables.
+- ~/pyro-baseline/scripts/cdp-summarize.mjs `<in.jsonl> <out.json> [out.md]` -> sorted count tables.
 - Verified: error path logged correctly with a raw ws client (`Bogus.method` -> -32601 "'Bogus.method' wasn't found").
 - Inventory of the smoke: results/cdp-inventory.md / .json (from results/idle/smoke-proxy-1.cdp.jsonl; warm run table identical).
   91 commands (34 distinct), 0 error responses, 33 events (19 distinct), 1 WS connection, 1 HTTP GET /json/version.

@@ -225,7 +225,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      pub(crate) initial_y: f64,
      /// The id of the document's root element (cached to avoid re-resolving it for every element)
      pub(crate) root_element_id: Option<NodeId>,
-+    /// lightningpanda: the document's top layer, bottom first (usually
++    /// pyro: the document's top layer, bottom first (usually
 +    /// empty). Its elements are skipped where the tree puts them and painted
 +    /// above everything, each over its `::backdrop`.
 +    pub(crate) top_layer: Vec<NodeId>,
@@ -292,7 +292,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-+    /// lightningpanda: paints the top layer above the document, bottom
++    /// pyro: paints the top layer above the document, bottom
 +    /// first: each element's `::backdrop` (a viewport-sized box: its
 +    /// background color, `opacity` and `backdrop-filter`), then the element
 +    /// in its own root stacking context, positioned as a box hoisted to the
@@ -431,7 +431,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  || contain_paint
 -                || !matches!(box_style.overflow_x, Overflow::Visible)
 -                || !matches!(box_style.overflow_y, Overflow::Visible))
-+                // lightningpanda: `overflow` on `body` is the viewport's, not body's.
++                // pyro: `overflow` on `body` is the viewport's, not body's.
 +                || ((!matches!(box_style.overflow_x, Overflow::Visible)
 +                    || !matches!(box_style.overflow_y, Overflow::Visible))
 +                    && !self.dom.as_ref().body_overflow_goes_to_viewport(node.id)))
@@ -452,7 +452,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              return;
          }
  
-+        // lightningpanda: a top-layer element paints above the document
++        // pyro: a top-layer element paints above the document
 +        // (`paint_top_layer`), not here.
 +        if !self.top_layer.is_empty()
 +            && self.top_layer_root.get() != Some(node_id)
@@ -486,7 +486,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          match &node.data {
 -            NodeData::Element(_) | NodeData::AnonymousBlock(_) => {
-+            // lightningpanda: once per tree level; a tree of any depth paints on a stack grown on
++            // pyro: once per tree level; a tree of any depth paints on a stack grown on
 +            // demand (blitz-dom `util::ensure_stack`).
 +            NodeData::Element(_) | NodeData::AnonymousBlock(_) => blitz_dom::util::ensure_stack(|| {
                  self.render_element(scene, node_id, parent_style_transform, clip_rect)
@@ -1069,7 +1069,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                  // Zero-size text is invisible, but hinting can give its glyphs ink. Fully
                  // transparent text is skipped too: backends draw color (emoji) glyphs opaque.
 -                if font_size > 0.0 && fill_color.components[3] > 0.0 {
-+                // lightningpanda: a recording paint (the PDF's) keeps it, as invisible text.
++                // pyro: a recording paint (the PDF's) keeps it, as invisible text.
 +                if font_size > 0.0 && (fill_color.components[3] > 0.0 || runs.is_some()) {
 +                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
 +                    // next recorded one, so a run recorded but not drawn would stop the matching.

@@ -44,7 +44,7 @@
    Compiling markup5ever v0.40.0
    Compiling html5ever v0.40.1
    Compiling selectors v0.41.0
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-office-widths/crates/lp-dom)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-office-widths/crates/pyro-dom)
     Finished `release` profile [optimized] target(s) in 17.29s
      Running tests/layout.rs (target/release/deps/layout-7fddc7aed37eea63)
 
@@ -55,7 +55,7 @@ failures:
 
 ---- percentage_width_uses_definite_parent_and_tracks_mutation stdout ----
 
-thread 'percentage_width_uses_definite_parent_and_tracks_mutation' (6523878) panicked at crates/lp-dom/tests/layout.rs:2574:5:
+thread 'percentage_width_uses_definite_parent_and_tracks_mutation' (6523878) panicked at crates/pyro-dom/tests/layout.rs:2574:5:
 assertion `left == right` failed
   left: 5.0
  right: 320.0
@@ -67,4 +67,4 @@ failures:
 
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.00s
 
-error: test failed, to rerun pass `-p lp-dom --test layout`
+error: test failed, to rerun pass `-p pyro-dom --test layout`

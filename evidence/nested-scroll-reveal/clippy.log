@@ -53,7 +53,7 @@
     Checking try-lock v0.2.5
     Checking once_cell v1.21.4
     Checking want v0.3.2
-   Compiling lp-jsc-sys v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-jsc-sys)
+   Compiling pyro-jsc-sys v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-jsc-sys)
     Checking tokio v1.53.3
     Checking http-body v1.1.0
     Checking tracing-core v0.1.36
@@ -84,7 +84,7 @@
     Checking cpufeatures v0.2.17
     Checking futures-channel v0.3.34
     Checking tower-service v0.3.3
-    Checking lp-dom v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-dom)
+    Checking pyro-dom v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-dom)
     Checking psl-types v2.0.11
     Checking flate2 v1.1.10
     Checking psl v2.1.241
@@ -98,10 +98,10 @@
     Checking getrandom v0.3.4
     Checking sha1 v0.10.7
     Checking sha2 v0.10.9
-    Checking lp-js v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-js)
+    Checking pyro-js v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-js)
     Checking cookie v0.18.2
     Checking hyper v1.12.0
     Checking hyper-util v0.1.21
-    Checking lp-net v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-net)
-    Checking lp-webapi v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-webapi)
+    Checking pyro-net v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-net)
+    Checking pyro-webapi v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 7.46s

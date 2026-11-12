@@ -1,4 +1,4 @@
-| case | pages C/L | paginate ms Cb/Cf/L | pdf ms Cb/Cf/L | total ms Cf/L | KB Cf/L | peak RSS MB Cf/L | pixel diff % mean/max | text overlap | LP overflow px |
+| case | pages C/L | paginate ms Cb/Cf/L | pdf ms Cb/Cf/L | total ms Cf/L | KB Cf/L | peak RSS MB Cf/L | pixel diff % mean/max | text overlap | Pyro overflow px |
 |---|---|---|---|---|---|---|---|---|---|
 | invoice-preview | 1/1 | 48/44/58 | 152/95/17 | 140/75 | 189/48 | 1206/247 | 4.6/4.6 | 0.884 | 375 |
 | invoice-final | 1/1 | 42/46/55 | 148/89/17 | 134/72 | 188/49 | 1478/261 | 4.6/4.6 | 0.884 | 375 |
@@ -49,6 +49,6 @@
 |---|---|---|---|---|---|---|---|---|---|---|
 | chrome-base | 1963 | 8538 | 129 | 10563 | 11.8 | 1538 | 7.03 | 310/795 | 1072 | 0 |
 | chrome-fixed | 1974 | 3974 | 73 | 6018 | 7.2 | 1538 | 9.32 | 241/338 | 1100 | 0 |
-| lp-fixed | 2766 | 415 | 7 | 3195 | 1.5 | 477 | 24.38 | 69/283 | 1186 | 0 |
+| pyro-fixed | 2766 | 415 | 7 | 3195 | 1.5 | 477 | 24.38 | 69/283 | 1186 | 0 |
 
 Load: {"started":"2026-11-01T11:57:55.506Z","loadBefore":"12:57  up 28 days, 15:47, 1 user, load averages: 23.23 47.52 83.00","loadAfterSequential":"12:58  up 28 days, 15:48, 1 user, load averages: 15.86 40.90 78.10","loadAfterThroughput":"12:59  up 28 days, 15:48, 1 user, load averages: 16.36 39.78 77.05","finished":"2026-11-01T11:59:13.079Z"}

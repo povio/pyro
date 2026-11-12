@@ -4,7 +4,7 @@
 # `cc` finds this file as `ld` through `-B scripts/macos/linker`. It links with
 # the toolchain's own ld, then re-signs linked executables ad hoc with
 # scripts/macos/jit.entitlements (com.apple.security.cs.allow-jit only), so
-# the system JavaScriptCore can use its JIT in `lightningpanda` and in test
+# the system JavaScriptCore can use its JIT in `pyro` and in test
 # binaries. Without the entitlement JSC silently runs interpreter-only.
 # The signature stays ad hoc, as the linker's own is; nothing else changes.
 # Dynamic libraries and bundles are left with the linker's signature.

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Builds the patched JavaScriptCore that lp-jsc-sys links into the binary instead
-# of the system framework (see crates/lp-jsc-sys/build.rs and
+# Builds the patched JavaScriptCore that pyro-jsc-sys links into the binary instead
+# of the system framework (see crates/pyro-jsc-sys/build.rs and
 # docs/ARCHITECTURE.md): one static archive, lib/libJavaScriptCore.a, holding
 # JavaScriptCore, WTF and bmalloc (scripts/jsc/archive.sh). ICU and the C++
 # runtime stay the system's shared libraries.
 #
-# Inputs: crates/lp-jsc-sys/webkit/REVISION (WebKit commit) and
-# crates/lp-jsc-sys/webkit/patches/*.patch. The result goes to
-# $LP_JSC_CACHE/<revision>-<patch hash>/ with a copy of those inputs, which is how
+# Inputs: crates/pyro-jsc-sys/webkit/REVISION (WebKit commit) and
+# crates/pyro-jsc-sys/webkit/patches/*.patch. The result goes to
+# $PYRO_JSC_CACHE/<revision>-<patch hash>/ with a copy of those inputs, which is how
 # build.rs finds a build that matches the checkout. Re-running after a patch
 # change rebuilds incrementally in the shared build directory.
 #
@@ -15,10 +15,10 @@
 # headers (Linux, see scripts/linux/Dockerfile) and ~30 GB of free RAM at -j10.
 #
 # Environment:
-#   LP_JSC_CACHE   artifact root (default ~/Library/Caches/lightningpanda/jsc on
-#                  macOS, ${XDG_CACHE_HOME:-~/.cache}/lightningpanda/jsc on Linux)
-#   LP_WEBKIT_SRC  WebKit checkout, created if missing (default $LP_JSC_CACHE/../webkit-src)
-#   LP_JSC_BUILD   ninja build dir (default $LP_JSC_CACHE/../webkit-build)
+#   PYRO_JSC_CACHE   artifact root (default ~/Library/Caches/pyro/jsc on
+#                  macOS, ${XDG_CACHE_HOME:-~/.cache}/pyro/jsc on Linux)
+#   PYRO_WEBKIT_SRC  WebKit checkout, created if missing (default $PYRO_JSC_CACHE/../webkit-src)
+#   PYRO_JSC_BUILD   ninja build dir (default $PYRO_JSC_CACHE/../webkit-build)
 #   JOBS           parallel jobs (default: number of CPUs)
 #
 # Static since 2026-11: the 48 MB dylib cost dyld 1.2 ms of every launch on the
@@ -35,20 +35,20 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-inputs="$root/crates/lp-jsc-sys/webkit"
+inputs="$root/crates/pyro-jsc-sys/webkit"
 rev="$(tr -d '[:space:]' < "$inputs/REVISION")"
 os="$(uname -s)"
 libname=libJavaScriptCore.a
 if [[ "$os" == Darwin ]]; then
-    default_cache="$HOME/Library/Caches/lightningpanda/jsc"
+    default_cache="$HOME/Library/Caches/pyro/jsc"
     ncpu="$(sysctl -n hw.ncpu)"
 else
-    default_cache="${XDG_CACHE_HOME:-$HOME/.cache}/lightningpanda/jsc"
+    default_cache="${XDG_CACHE_HOME:-$HOME/.cache}/pyro/jsc"
     ncpu="$(nproc)"
 fi
-cache="${LP_JSC_CACHE:-$default_cache}"
-src="${LP_WEBKIT_SRC:-$(dirname "$cache")/webkit-src}"
-build="${LP_JSC_BUILD:-$(dirname "$cache")/webkit-build}"
+cache="${PYRO_JSC_CACHE:-$default_cache}"
+src="${PYRO_WEBKIT_SRC:-$(dirname "$cache")/webkit-src}"
+build="${PYRO_JSC_BUILD:-$(dirname "$cache")/webkit-build}"
 jobs="${JOBS:-$ncpu}"
 
 sha256() { if command -v shasum >/dev/null; then shasum -a 256; else sha256sum; fi; }

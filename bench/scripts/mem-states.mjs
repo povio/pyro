@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Memory of a `serve` process tree, state by state (macOS).
 //
-//   bun scripts/mem-states.mjs --bin /abs/lightningpanda [--fork] [--spa /abs/dist] [--pages 5]
+//   bun scripts/mem-states.mjs --bin /abs/pyro [--fork] [--spa /abs/dist] [--pages 5]
 //                              [--flow speed|pages] [--out file.json] [--raw dir] [--heap prefix]
 //                              [--settle ms] [--watch ms] [-- extra serve args]
 //
@@ -133,7 +133,7 @@ async function snap(label) {
 
 if (RAW) fs.mkdirSync(RAW, { recursive: true });
 const port = await freePort();
-const child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...FLAGS, ...(FORK ? ['--fork'] : []), ...extra], { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', ...(HEAP ? { LIGHTNINGPANDA_HEAP_PROFILE: HEAP } : {}) } });
+const child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...FLAGS, ...(FORK ? ['--fork'] : []), ...extra], { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', ...(HEAP ? { PYRO_HEAP_PROFILE: HEAP } : {}) } });
 serverPid = child.pid;
 const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
 process.on('exit', kill);
@@ -144,7 +144,7 @@ try {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 15000 });
   await snap('connected');
   if (FLOW === 'speed') {
-    const upstream = /lightpanda$/.test(BIN) && !/lightningpanda$/.test(BIN);
+    const upstream = /lightpanda$/.test(BIN) && !/pyro$/.test(BIN);
     for (let i = 0; i < 10; i++) { const c = await browser.newContext(); await c.newPage(); await c.close(); }
     const ctx = await browser.newContext();
     const page = await ctx.newPage();

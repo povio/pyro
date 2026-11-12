@@ -34,7 +34,7 @@ index 0bf5cf2a2c..c66b6be325 100644
 +  try {
 +    await chooseOption(page, partyLabel);
 +  } finally {
-+    console.log("LP-PARTY-DIAG " + JSON.stringify(await page.evaluate(() => {
++    console.log("Pyro-PARTY-DIAG " + JSON.stringify(await page.evaluate(() => {
 +      (window as any).__lpPartyDiag.record("after-choice");
 +      return (window as any).__lpPartyDiag.rows;
 +    })));

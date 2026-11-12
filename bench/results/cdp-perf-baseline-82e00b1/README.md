@@ -3,7 +3,7 @@
 - Date: 2026-10-27 (A/A run started 10:26:40Z, upstream run 10:28:48Z)
 - Host: Apple M1 Max, 10 CPUs, 64 GB, macOS 27.0.1 (26A434). Bun 1.4.3, Node v24.16.0.
 - Commit: `82e00b1589047f555c92224188545cab5881fbd1`. The binary was built at 3ee8884; 82e00b1 changes only
-  `bench/`, so the Rust sources are identical. sha256 of `target/release/lightningpanda`: `a26f6a1f0cc4748b…`
+  `bench/`, so the Rust sources are identical. sha256 of `target/release/pyro`: `a26f6a1f0cc4748b…`
   (full hash in `run.json`).
 - Load: the host was busy (other builds). 1-minute load average was 14.6 at start, 15.3 to 18.9 per round and
   16.7 at end (15-minute ≈ 18.5) on 10 CPUs. Absolute wall times are therefore pessimistic; within-run
@@ -23,14 +23,14 @@
 ## Commands
 
 ```sh
-cargo build --release -p lightningpanda
+cargo build --release -p pyro
 (cd bench/rss-sampler && cargo build --release)
 (cd bench && bun install)
-bun bench/scripts/cdp-perf.mjs --bin $PWD/target/release/lightningpanda --out /tmp/cdp-perf/quick.json --quick
-bun bench/scripts/cdp-perf.mjs --bin a=$PWD/target/release/lightningpanda --bin b=$PWD/target/release/lightningpanda \
+bun bench/scripts/cdp-perf.mjs --bin $PWD/target/release/pyro --out /tmp/cdp-perf/quick.json --quick
+bun bench/scripts/cdp-perf.mjs --bin a=$PWD/target/release/pyro --bin b=$PWD/target/release/pyro \
   --rounds 5 --out /tmp/cdp-perf/aa.json
 bun bench/scripts/cdp-perf-compare.mjs /tmp/cdp-perf/aa.json --base a --head b --no-fail --md aa-compare.md
-bun bench/scripts/cdp-perf.mjs --bin upstream=/path/to/lightpanda --bin rewrite=$PWD/target/release/lightningpanda \
+bun bench/scripts/cdp-perf.mjs --bin upstream=/path/to/lightpanda --bin rewrite=$PWD/target/release/pyro \
   --rounds 5 --out /tmp/cdp-perf/vs-upstream.json
 bun bench/scripts/cdp-perf-compare.mjs /tmp/cdp-perf/vs-upstream.json --base upstream --head rewrite --no-fail --md vs-upstream-compare.md
 ```

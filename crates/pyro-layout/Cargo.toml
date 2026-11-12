@@ -1,0 +1,24 @@
+[package]
+name = "pyro-layout"
+description = "pyro-dom's layout queries answered from a persistent Blitz document per page (pyro-render)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+autotests = false
+
+[dependencies]
+pyro-dom = { workspace = true }
+pyro-render = { workspace = true }
+style = { package = "stylo", version = "0.24.0" }
+url = "2"
+
+[dev-dependencies]
+rustc-hash = "2"
+serde_json.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

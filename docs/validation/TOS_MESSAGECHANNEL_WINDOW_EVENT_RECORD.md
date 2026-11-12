@@ -73,10 +73,10 @@ No shared cause is claimed among these.
 All diagnostics ran on separate instrumented fixtures, with the tests' assertions,
 auth and manifest unchanged, fresh run-owned DBs (0 left), and no product edits or
 artificial delays. Artifacts:
-- `/private/tmp/lp-tos-batch19-diag2`: FINDINGS.md, patches for each step, and
+- `/private/tmp/pyro-tos-batch19-diag2`: FINDINGS.md, patches for each step, and
   `analysis/`;
-- `/private/tmp/lp-order-repro`, `/private/tmp/lp-mc-probe`,
-  `/private/tmp/lp-timer-repro`, `/private/tmp/lp-event-context-repro`.
+- `/private/tmp/pyro-order-repro`, `/private/tmp/pyro-mc-probe`,
+  `/private/tmp/pyro-timer-repro`, `/private/tmp/pyro-event-context-repro`.
 
 Superseded repro versions (`*-v1.*`) are kept.
 
@@ -112,7 +112,7 @@ Superseded repro versions (`*-v1.*`) are kept.
    - About 8 ms is in 21 wrapped DOM calls (`setAttribute` ×2402,
      `createElement` ×482, …). The other ~43 ms is unattributed: it may include
      unwrapped bindings, native work, GC and instrumentation. It is not proof of
-     pure-JS or lp-js cost.
+     pure-JS or pyro-js cost.
    - Upstream had no comparable window.
 7. **Idle wake-up.** Not reproduced in the tested posting paths: timer, nested
    timer, rAF, chained port, fetch, microtask and `import()`. That does not rule
@@ -133,7 +133,7 @@ Side observation, deferred: in a repro server launched without TOS's
 
 ## Runtime fix validation (PR #78), 2026-10-18
 
-W1's lp-runtime fix (PR #78, final head `ca2ada7`) runs local tasks and due timers
+W1's pyro-runtime fix (PR #78, final head `ca2ada7`) runs local tasks and due timers
 in readiness order. Before it, every queued local task ran before any due timer,
 so a self-reposting MessageChannel loop starved due timers.
 
@@ -186,11 +186,11 @@ Residual batch 16 limit:
 
 Additional single-case runs (native task trace, diagnostic):
 - Unchanged test, `--grep "deletes an account line"`.
-- Fixture `/private/tmp/lp-tos-f9f-batch16-fxmc`, reused; its e2e tree was
+- Fixture `/private/tmp/pyro-tos-f9f-batch16-fxmc`, reused; its e2e tree was
   verified unchanged.
 - Fresh run-owned DBs, 0 left.
 - W1's diagnostic-only trace branch `diag/runtime-task-trace` at `142840e` (main
-  `6ad00f2` + PR #78 + an `LP_TRACE_TASKS` native task trace; never for merge),
+  `6ad00f2` + PR #78 + an `PYRO_TRACE_TASKS` native task trace; never for merge),
   built fresh with `CARGO_INCREMENTAL=0`.
 
 | Build | Release SHA-256 | Native trace only | With `DEBUG=pw:protocol` |
@@ -202,8 +202,8 @@ Additional single-case runs (native task trace, diagnostic):
 - Client-side Playwright protocol logging flips it to pass 6/6. That supports
   timing sensitivity but proves no mechanism.
 - Trace directories:
-  `/private/tmp/lp-tos-b16acct-ntrace-{diag,diagmc}-r*` and
-  `/private/tmp/lp-tos-b16acct-trace-{diag,diagmc}-r*`.
+  `/private/tmp/pyro-tos-b16acct-ntrace-{diag,diagmc}-r*` and
+  `/private/tmp/pyro-tos-b16acct-trace-{diag,diagmc}-r*`.
 
 ## Remote readiness validation (PR #81), 2026-10-18
 
@@ -261,7 +261,7 @@ The pinning rule:
   without page hooks.
 - Disposal releases every pin.
 
-Forced-GC regressions, in `crates/lp-webapi/tests/dom_js.rs` (each fails on the
+Forced-GC regressions, in `crates/pyro-webapi/tests/dom_js.rs` (each fails on the
 code before its fix):
 - queued messages kept across GC when the peer closes;
 - late start after the peer was collected;
@@ -280,7 +280,7 @@ The focused review passed both heads.
 PR #80 (`306ceac`, merged as `a756213`):
 - links through `scripts/macos/link-and-sign.sh`, which ad-hoc signs with
   `com.apple.security.cs.allow-jit`;
-- defaults `JSC_usePollingTraps=true` in lp-js.
+- defaults `JSC_usePollingTraps=true` in pyro-js.
 
 Build rules:
 - Every build runs cargo from inside its own fresh `--no-hardlinks` clone, so that
@@ -288,7 +288,7 @@ Build rules:
 - Each binary was checked for:
   - no "without scripts/macos/link-and-sign.sh" warning;
   - the `allow-jit` entitlement (`codesign -d --entitlements -`);
-  - the polling-traps default present in `crates/lp-js/src/engine.rs`.
+  - the polling-traps default present in `crates/pyro-js/src/engine.rs`.
 - Earlier JIT builds made with `--manifest-path` from another cwd (`j-main`,
   `jmc`, `jwe`), or from the wrong branch (`j2-main`), had no entitlement. They
   are labelled invalid and are not used. Hand-signed copies were diagnostic
@@ -312,7 +312,7 @@ Provenance of jfwe:
   still exist, and verified that GitHub `main` resolved to `a756213`.
 
 Unchanged TOS run + repeat:
-- Fixtures `lp-tos-f9f-batch{19,16}-fx` reused, with the e2e tree and status
+- Fixtures `pyro-tos-f9f-batch{19,16}-fx` reused, with the e2e tree and status
   verified unchanged.
 - Fresh DBs, 0 left.
 
@@ -347,7 +347,7 @@ Results, run once each:
 - W3-02 (selection sha256 `d5ee9317…`, 15 cases): 15/15 (`lpjcw302`). This
   includes "Email Logs › restores text drafts on Back and Forward after
   duplicate blur commits".
-- W3-02 ran on W2's fixture `lp-tos-f9f-batch16-fx` (TOS `f9fde4aa0d`).
+- W3-02 ran on W2's fixture `pyro-tos-f9f-batch16-fx` (TOS `f9fde4aa0d`).
 
 ## Status
 

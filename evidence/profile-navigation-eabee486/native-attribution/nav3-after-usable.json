@@ -1,22 +1,22 @@
 {
   "files": {
-    "lp-js-90879-ThreadId(2).csv": {
+    "pyro-js-90879-ThreadId(2).csv": {
       "sha256": "ba342a717912a47b364895155b015916ba94213445f64755fa76334f9b02b2d6",
       "root_count": 78223
     },
-    "lp-runtime-90879-ThreadId(2).csv": {
+    "pyro-runtime-90879-ThreadId(2).csv": {
       "sha256": "9c3c11c5637968e974ae2d4a3f891cfb2d332b7d0aebf3b62135033bc9a3cfa1",
       "root_count": 2142
     }
   },
   "crates": {
-    "lp-js": {
+    "pyro-js": {
       "roots": 6,
       "cpu_ms": 14.986791,
       "wall_ms": 15.017,
       "boundary_roots": [
         {
-          "file": "lp-js-90879-ThreadId(2).csv",
+          "file": "pyro-js-90879-ThreadId(2).csv",
           "root": "78217",
           "tag": "js.call",
           "start_ms": 1792344223586.77,
@@ -125,13 +125,13 @@
         }
       }
     },
-    "lp-runtime": {
+    "pyro-runtime": {
       "roots": 18,
       "cpu_ms": 16.003791,
       "wall_ms": 726.744,
       "boundary_roots": [
         {
-          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "file": "pyro-runtime-90879-ThreadId(2).csv",
           "root": "2114",
           "tag": "task.local",
           "start_ms": 1792344223586.751,
@@ -139,7 +139,7 @@
           "cpu_ms": 0.370666
         },
         {
-          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "file": "pyro-runtime-90879-ThreadId(2).csv",
           "root": "2133",
           "tag": "wait.remote",
           "start_ms": 1792344224315.116,
@@ -210,5 +210,5 @@
     1792344223586.9817,
     1792344224588.4697
   ],
-  "limits": "Separate crate interval trees overlap: do not add lp-js to lp-runtime. Boundary roots excluded without prorating. Native categories may include unwrapped FFI/JS; diagnostics overhead is not a baseline speed measurement."
+  "limits": "Separate crate interval trees overlap: do not add pyro-js to pyro-runtime. Boundary roots excluded without prorating. Native categories may include unwrapped FFI/JS; diagnostics overhead is not a baseline speed measurement."
 }

@@ -60,10 +60,10 @@ jobs:
         run: rustup toolchain install stable --profile minimal --no-self-update
       - name: Build browser and comparison worker against the patched JavaScriptCore
         run: |
-          export LP_JSC_DIR="$HOME/.cache/lightningpanda/jsc/$JSC_DIR"
-          mkdir -p "$(dirname "$LP_JSC_DIR")"
-          mv patched-jsc "$LP_JSC_DIR"
-          cargo +stable build --locked --release --package lightningpanda --package lp-render --features render
+          export PYRO_JSC_DIR="$HOME/.cache/pyro/jsc/$JSC_DIR"
+          mkdir -p "$(dirname "$PYRO_JSC_DIR")"
+          mv patched-jsc "$PYRO_JSC_DIR"
+          cargo +stable build --locked --release --package pyro --package pyro-render --features render
       - name: Bundle ICU and check the bundle
         env:
           ARCH: ${{ matrix.arch }}
@@ -71,25 +71,25 @@ jobs:
         run: |
           stage="archive/linux-$ARCH"
           mkdir -p "$stage"
-          cp target/release/lightningpanda target/release/lp-snapshot-compare "$stage/"
+          cp target/release/pyro target/release/pyro-snapshot-compare "$stage/"
           # Release debug information makes the combined npm payload too large.
           # Strip only staged copies; retain symbols and untouched build outputs.
-          strip --strip-debug "$stage/lightningpanda" "$stage/lp-snapshot-compare"
+          strip --strip-debug "$stage/pyro" "$stage/pyro-snapshot-compare"
           scripts/release/bundle-icu-linux.sh "$stage"
-          ldd "$stage/lightningpanda"
+          ldd "$stage/pyro"
           # JavaScriptCore is inside the browser, and its ICU is the bundled one.
           # (`! pipeline` would not stop the step: errexit ignores a negated command.)
-          if ldd "$stage/lightningpanda" | grep -F libJavaScriptCore; then exit 1; fi
-          ldd "$stage/lightningpanda" | grep -F "$PWD/$stage/lib/libicuuc.so"
-          if ldd "$stage/lightningpanda" | grep -E 'not found|/usr/lib/.*libicu'; then exit 1; fi
-          "$stage/lightningpanda" version
-          "$stage/lightningpanda" version | grep -q 'fork: true'
+          if ldd "$stage/pyro" | grep -F libJavaScriptCore; then exit 1; fi
+          ldd "$stage/pyro" | grep -F "$PWD/$stage/lib/libicuuc.so"
+          if ldd "$stage/pyro" | grep -E 'not found|/usr/lib/.*libicu'; then exit 1; fi
+          "$stage/pyro" version
+          "$stage/pyro" version | grep -q 'fork: true'
           if [[ -n "$VERSION" ]]; then
-            "$stage/lightningpanda" version | grep -Fx "lightningpanda $VERSION"
+            "$stage/pyro" version | grep -Fx "pyro $VERSION"
           fi
-          "$stage/lightningpanda" eval -e 'console.log("linux-smoke-ok")' | grep -Fx linux-smoke-ok
+          "$stage/pyro" eval -e 'console.log("linux-smoke-ok")' | grep -Fx linux-smoke-ok
           mkdir -p "native/linux-$ARCH/lib"
-          cp "$stage/lightningpanda" "native/linux-$ARCH/"
+          cp "$stage/pyro" "native/linux-$ARCH/"
           cp "$stage"/lib/* "native/linux-$ARCH/lib/"
       - uses: oven-sh/setup-bun@v2
         with:
@@ -97,11 +97,11 @@ jobs:
       - name: Test the client against the bundled browser
         env:
           ARCH: ${{ matrix.arch }}
-        working-directory: packages/lightning-panda
+        working-directory: packages/pyro
         run: |
           bun install --frozen-lockfile
           bun run build
-          LIGHTNINGPANDA_BIN="$GITHUB_WORKSPACE/archive/linux-$ARCH/lightningpanda" bun test ./test
+          PYRO_BIN="$GITHUB_WORKSPACE/archive/linux-$ARCH/pyro" bun test ./test
       - uses: actions/upload-artifact@v4
         with:
           name: native-linux-${{ matrix.arch }}

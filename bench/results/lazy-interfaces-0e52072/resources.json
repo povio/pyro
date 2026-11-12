@@ -11,21 +11,21 @@
   "binaries": [
     {
       "name": "upstream",
-      "path": "/private/tmp/lp-w3-lazy-baseline-4168ac9-bin/lightningpanda",
+      "path": "/private/tmp/pyro-w3-lazy-baseline-4168ac9-bin/pyro",
       "sourceSha": "4168ac99eb68cab56fc9f733acde8cc8ecf9f218",
       "sha256": "47eac6a5a20f832b8beef9cc2a60e5e846e71ff8af2b2e840f4cff8b364a86ef",
       "bytes": 12897840
     },
     {
       "name": "rewrite",
-      "path": "/private/tmp/lp-w3-lazy-candidate-0e52072-bin/lightningpanda",
+      "path": "/private/tmp/pyro-w3-lazy-candidate-0e52072-bin/pyro",
       "sourceSha": "0e52072bcb476469790d18a56c6e44fc2a70eae4",
       "sha256": "773b253676e980bba9113d5ba8c1d49bba16ff0a0c61ff100344fdf8d0732083",
       "bytes": 12914928
     }
   ],
   "sampler": {
-    "path": "/private/tmp/lp-w3-sampler-target/release/rss-sampler",
+    "path": "/private/tmp/pyro-w3-sampler-target/release/rss-sampler",
     "sha256": "7d31b30cab16622eda1333be012d1aa8fba2bbed6669b2e269c681725d198569"
   },
   "harnessSha256": "c70d5f2de867c5f39881a8606996a01c975eeaf377f9ee96391d686a8b550fc7",

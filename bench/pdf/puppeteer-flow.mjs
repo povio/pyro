@@ -1,6 +1,6 @@
 // The ToS PdfRenderer flow (tos-monorepo apps/be/src/modules/document/pdf-renderer.ts:
 // preparePage, render, releasePage) with puppeteer-core 25 against a
-// Lightningpanda server, over every case, from a pool of 3 pages.
+// Pyro server, over every case, from a pool of 3 pages.
 //   bun puppeteer-flow.mjs <binary> <pdfgen build dir> <cases dir> <out dir>
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';

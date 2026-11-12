@@ -1,13 +1,13 @@
 import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import { expect, test } from '/private/tmp/lp-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/test';
-import { createLightpandaBrowser } from '/private/tmp/lp-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/lightpanda';
-import { trackBrowserContexts } from '/private/tmp/lp-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/browser';
-import { startWorkerSession, stopWorkerSession } from '/private/tmp/lp-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/worker-session';
-import { e2eEnv } from '/private/tmp/lp-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/env';
+import { expect, test } from '/private/tmp/pyro-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/test';
+import { createLightpandaBrowser } from '/private/tmp/pyro-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/lightpanda';
+import { trackBrowserContexts } from '/private/tmp/pyro-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/browser';
+import { startWorkerSession, stopWorkerSession } from '/private/tmp/pyro-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/worker-session';
+import { e2eEnv } from '/private/tmp/pyro-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/env';
 
-const out='/private/tmp/lp-url-nav-main-4e89ab4';
+const out='/private/tmp/pyro-url-nav-main-4e89ab4';
 const rows:any[]=[];
 const save=()=>writeFileSync(`${out}/observations.json`,JSON.stringify(rows,null,2));
 const browserPids=()=>execFileSync('/bin/ps',['-axo','pid=,comm='],{encoding:'utf8'}).split('\n').filter(l=>l.trim().endsWith(process.env.LIGHTPANDA_EXECUTABLE!)).map(l=>Number(l.trim().split(/\s+/)[0]));
@@ -20,7 +20,7 @@ const sample=(pid:number)=>{
 test('diagnostic profile hard navigation matrix',async({playwright})=>{
  test.setTimeout(300000);
  for (const cacheMiB of [64]) for(let processOrdinal=1;processOrdinal<=1;processOrdinal++) {
-  process.env.LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB=String(cacheMiB);
+  process.env.PYRO_SHARED_ASSET_CACHE_MB=String(cacheMiB);
   const prior=new Set(browserPids());
   const facade=trackBrowserContexts(createLightpandaBrowser(playwright));
   const setupStart=performance.now();

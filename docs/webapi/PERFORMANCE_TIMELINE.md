@@ -1,6 +1,6 @@
 # Performance Timeline
 
-`window.performance` (crates/lp-browser/src/nav.rs) holds, per realm:
+`window.performance` (crates/pyro-browser/src/nav.rs) holds, per realm:
 
 - User Timing: `mark`, `measure`, `clearMarks`, `clearMeasures`, the
   `PerformanceMark` constructor. `measure()` takes the `PerformanceTiming`
@@ -22,21 +22,21 @@
   (`fetchStart` .. `responseEnd`, `redirectCount`, sizes,
   `nextHopProtocol`, `responseStatus`, `contentType`), then
   `domInteractive`, `domContentLoadedEventStart/End`, `domComplete` and
-  `loadEventStart/End` recorded as the loader runs those steps (lp-webapi
+  `loadEventStart/End` recorded as the loader runs those steps (pyro-webapi
   `lifecycle`, `PageDom::timing`). The time origin is the start of the
   document's fetch, so `startTime` and (without redirects) `fetchStart` are
   0. The legacy `performance.timing` (epoch milliseconds) and
   `performance.navigation` read the same values.
 - `PerformanceObserver` / `PerformanceObserverEntryList`
-  (crates/lp-webapi/src/performance_observer.js), made on the realm's first
+  (crates/pyro-webapi/src/performance_observer.js), made on the realm's first
   use: `observe({type, buffered})` and `observe({entryTypes})` with Chrome's
   errors, `takeRecords`, `disconnect`, `supportedEntryTypes`
   (`mark`, `measure`, `navigation`, `paint`, `resource`). Callbacks run in a
   task; the first one after `observe()` gets `droppedEntriesCount` (the
   resource entries the buffer dropped, when `resource` is observed, else 0).
 
-The entry interfaces and User Timing live in crates/lp-webapi/src/performance.rs,
-shared by a Window's `Performance` (lp-browser `nav`) and a worker's.
+The entry interfaces and User Timing live in crates/pyro-webapi/src/performance.rs,
+shared by a Window's `Performance` (pyro-browser `nav`) and a worker's.
 
 ## Workers
 
@@ -59,7 +59,7 @@ are not in its document's timeline. `PerformanceObserver` and
 
 ## Resource Timing
 
-Where the times come from (crates/lp-net/src/timing.rs): every response
+Where the times come from (crates/pyro-net/src/timing.rs): every response
 head carries a `NetTiming` of `Instant`s. `NetClient::fetch` stamps the
 start; each hop stamps its `fetchStart`, and a redirect its end; the request
 goes out when a pooled connection is free (or the new one is ready) and the
@@ -74,7 +74,7 @@ connection being handed to hyper (`connectEnd`). A cache hit, a static file
 or an intercepted response has no connection and starts its request and
 response when it is answered.
 
-Timing-Allow-Origin (Fetch "TAO check") runs per hop in lp-net, a stored
+Timing-Allow-Origin (Fetch "TAO check") runs per hop in pyro-net, a stored
 response served from the HTTP cache included, against the requesting
 document's origin (an iframe's navigation: its parent's): a
 cross-origin hop passes when the header lists `*` or that origin. A failure
@@ -91,9 +91,9 @@ stand-in), 0 for a cache hit (`deliveryType` `cache`).
 `renderBlockingStatus` is `blocking` for stylesheets, `non-blocking`
 otherwise.
 
-Recording (crates/lp-webapi/src/resource_timing.rs): a consumer wraps its
-lp-net sink with `timed_sink` (fetch, XHR, beacon, EventSource) or, in
-lp-browser's `NetLoader`, by the `initiator` of its `FetchRequest`. When the
+Recording (crates/pyro-webapi/src/resource_timing.rs): a consumer wraps its
+pyro-net sink with `timed_sink` (fetch, XHR, beacon, EventSource) or, in
+pyro-browser's `NetLoader`, by the `initiator` of its `FetchRequest`. When the
 fetch ends (an aborted fetch has no entry; a network error has one with
 only its start and end) the I/O thread pushes a plain `FetchReport` into
 the document's inbox and, if it was empty, posts one task that turns the
@@ -119,7 +119,7 @@ A worker that never reads `performance` makes no object for it; its
 fetches cost what a window's do. A realm that never touches `PerformanceObserver` has no module and no
 registration: `mark`/`measure` check one empty list, the loader one empty
 list at `load` and at first paint. The timing marks are six `Cell` writes
-per document. Each fetch costs a few `Instant::now()` calls in lp-net, one
+per document. Each fetch costs a few `Instant::now()` calls in pyro-net, one
 small allocation per new connection, and at its end one `FetchReport` (its
 URL string) pushed under a mutex plus, per batch, one posted task that
 pushes the entries; nothing runs JS unless an observer watches, in which

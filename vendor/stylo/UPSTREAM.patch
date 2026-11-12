@@ -5,7 +5,7 @@ diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/inva
      pub used: bool,
      /// Flag indicating if invalidating a relative selector requires ancestor traversal.
      pub needs_ancestors_traversal: bool,
-+    /// lightningpanda: every element state some relative selector's
++    /// pyro: every element state some relative selector's
 +    /// argument depends on (the union of `state_affecting_selectors`' states
 +    /// in the relative selector map), so an embedder can tell with one flag
 +    /// test that a state change cannot change any `:has()` match.
@@ -33,7 +33,7 @@ diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/inva
      fn this_scope_dependencies(&mut self) -> &mut Option<Vec<Dependency>>;
      fn update_states(&mut self, element_state: ElementState, document_state: DocumentState);
  
-+    /// lightningpanda: `element_state` goes into `state_map()`; a relative
++    /// pyro: `element_state` goes into `state_map()`; a relative
 +    /// selector map records the union
 +    /// (`AdditionalRelativeSelectorInvalidationMap::state_dependencies`).
 +    fn note_state_dependency(&mut self, element_state: ElementState);
@@ -82,7 +82,7 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
          return false;
      }
  
-+    // lightningpanda: an element not styled yet (Blitz gives every element its
++    // pyro: an element not styled yet (Blitz gives every element its
 +    // data up front) has nothing to invalidate: its first styling uses the
 +    // new viewport. `viewport_unit_usage` unwraps the primary style.
 +    if data.styles.get_primary().is_none() {
@@ -115,7 +115,7 @@ diff -ruN a/properties/data.py b/properties/data.py
 +        servo_restyle_damage=None,
          affects=None,
      ):
-+        # lightningpanda: a property that names no restyle damage gets the one its `affects`
++        # pyro: a property that names no restyle damage gets the one its `affects`
 +        # implies (upstream: `rebuild_box` for every one, so a change of `border-top-color`,
 +        # `visibility` or `box-shadow` relaid out). `affects` is required and checked below.
 +        if servo_restyle_damage is None:
@@ -136,7 +136,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                      CSSWideKeyword::Inherit => {
                          % if not property.style_struct.inherited:
 +                            % if property.name in ("box-sizing", "baseline-shift", "baseline-source", "alignment-baseline"):
-+                            // lightningpanda: the parent's value is a cache condition.
++                            // pyro: the parent's value is a cache condition.
 +                            {
 +                                let parent = context.builder.inherited_style.slow_clone_${property.ident}();
 +                                context.rule_cache_conditions.borrow_mut().add_inherited_reset(
@@ -246,7 +246,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
      color_scheme: Option<ColorSchemeFlags>,
-+    /// lightningpanda: reset properties the style inherits explicitly, with
++    /// pyro: reset properties the style inherits explicitly, with
 +    /// the parent's values: `*, ::before, ::after { box-sizing: inherit }`
 +    /// (MUI's and many resets' pattern, on every element) and the UA's
 +    /// `td, th, tr { vertical-align: inherit }`. A cached style serves an
@@ -256,7 +256,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
  
 +macro_rules! inherited_resets {
 +    ($($variant:ident, $clone:ident, $ty:ty;)*) => {
-+        /// lightningpanda: a reset property inherited explicitly, with the parent's value.
++        /// pyro: a reset property inherited explicitly, with the parent's value.
 +        #[derive(Clone, Debug, PartialEq)]
 +        pub enum InheritedReset {
 +            $(
@@ -284,7 +284,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
 +}
 +
  impl RuleCacheConditions {
-+    /// lightningpanda: sets the style as depending on its parent's value of
++    /// pyro: sets the style as depending on its parent's value of
 +    /// an explicitly inherited reset property, instead of making it
 +    /// uncacheable.
 +    pub fn add_inherited_reset(&mut self, reset: InheritedReset) {
@@ -330,7 +330,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
          || old_box.original_display != new_box.original_display
          || old_box.has_transform_or_perspective() != new_box.has_transform_or_perspective()
          || old.get_effects().filter.0.is_empty() != new.get_effects().filter.0.is_empty()
-+        // lightningpanda: a `backdrop-filter` makes a containing block for fixed boxes, as a
++        // pyro: a `backdrop-filter` makes a containing block for fixed boxes, as a
 +        // `filter` does; otherwise it is `recalculate_overflow` damage (it affects overflow).
 +        || old.get_effects().backdrop_filter.0.is_empty() != new.get_effects().backdrop_filter.0.is_empty()
  }
@@ -340,7 +340,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  ) -> bool {
      restyle_damage_rebuild_stacking_context(old, new)
          || old.guarantees_stacking_context() != new.guarantees_stacking_context()
-+        // lightningpanda: a mask makes a stacking context in Blitz's paint tree
++        // pyro: a mask makes a stacking context in Blitz's paint tree
 +        // (`applies_atomic_paint_effect`); `mask-image` is otherwise `repaint` damage.
 +        || has_mask_image(old) != has_mask_image(new)
 +}
@@ -362,7 +362,7 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          );
          matching_context.extra_data.originating_element_style = Some(originating_element_style);
  
-+        // lightningpanda: no rule that can generate a `::before`/`::after` box matches, so the
++        // pyro: no rule that can generate a `::before`/`::after` box matches, so the
 +        // style matched and cascaded below would be dropped by
 +        // `eager_pseudo_is_definitely_not_generated`. Only for the unvisited pass: when it goes
 +        // on, the visited pass matches every rule, as upstream.
@@ -450,7 +450,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          doc_author_rules_apply && f(&self.cascade_data.author)
      }
  
-+    /// lightningpanda: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
++    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
 +    /// rule that matches leaves `content` at `normal` (it is not inherited) and declares neither
@@ -513,7 +513,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      }
  }
  
-+/// lightningpanda: the `::before` and `::after` rules (one pseudo-element level, in
++/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
 +/// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
 +/// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
 +/// `var()` and the CSS-wide keywords count. Without one of them matching, `content` is `normal`
@@ -523,7 +523,7 @@ diff -ruN a/stylist.rs b/stylist.rs
 +/// A copy of the rules kept in `normal_rules`, filled by the same `add_styles` and cleared with
 +/// it; a CSSOM declaration edit rebuilds both (`RuleChangeKind::StyleRuleDeclarations` is
 +/// `DataValidity::FullyInvalid`).
-+/// lightningpanda: whether a `::before`/`::after` rule with these declarations can make the
++/// pyro: whether a `::before`/`::after` rule with these declarations can make the
 +/// pseudo-element generate a box (see `BoxGeneratingPseudoRules`).
 +pub fn declarations_may_generate_pseudo_box(block: &PropertyDeclarationBlock) -> bool {
 +    BoxGeneratingPseudoRules::declarations_may_generate_box(block)
@@ -540,7 +540,7 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    /// `::before` or `::after` rule).
 +    ///
 +    /// `content: normal | none` and `animation-name: none` cannot make the box appear, so they
-+    /// do not count: lightningpanda's UA `*::before, *::after { animation: none !important }`
++    /// do not count: pyro's UA `*::before, *::after { animation: none !important }`
 +    /// would otherwise put a rule matching every element in the index. Their CSS-wide keyword
 +    /// and `var()` forms still count.
 +    fn declarations_may_generate_box(block: &PropertyDeclarationBlock) -> bool {
@@ -596,7 +596,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
  
-+    /// lightningpanda: the rules of `normal_rules` that can make a `::before` or `::after`
++    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
 +    /// generate a box.
 +    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
 +
@@ -615,14 +615,14 @@ diff -ruN a/stylist.rs b/stylist.rs
          self.normal_rules.rules(pseudo_elements)
      }
  
-+    /// lightningpanda: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
++    /// pyro: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
 +    /// or `::after`) generate a box. `None` for other pseudo-elements.
 +    #[inline]
 +    pub fn box_generating_pseudo_rules(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
 +        self.box_generating_pseudo_rules.map(pseudo)
 +    }
 +
-+    /// lightningpanda: whether any rule here is for `pseudo`, in any of the maps the rule
++    /// pyro: whether any rule here is for `pseudo`, in any of the maps the rule
 +    /// collector reads for it.
 +    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
 +        let pseudos = std::slice::from_ref(pseudo);

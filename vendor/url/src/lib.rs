@@ -1565,7 +1565,7 @@ impl Url {
             self.serialization.push('#');
             self.mutate(|parser| parser.parse_fragment(parser::Input::new_no_trim(input)))
         } else {
-            // lightningpanda: the standard no longer strips trailing spaces from an opaque
+            // pyro: the standard no longer strips trailing spaces from an opaque
             // path here; the parser writes a space before "?" or "#" as "%20" instead.
             self.fragment_start = None;
         }
@@ -1632,7 +1632,7 @@ impl Url {
                 )
             });
         } else {
-            // lightningpanda: no trailing-space stripping, as in `set_fragment`.
+            // pyro: no trailing-space stripping, as in `set_fragment`.
             self.query_start = None;
         }
 
@@ -1760,7 +1760,7 @@ impl Url {
                 );
             }
         });
-        // lightningpanda: without a host, "/." goes before a path that starts with an empty
+        // pyro: without a host, "/." goes before a path that starts with an empty
         // segment, so it does not read as an authority, and goes away when it does not.
         if host_is_null {
             let dot_start = self.scheme_end as usize + 1;
@@ -2072,7 +2072,7 @@ impl Url {
 
     /// opt_new_port: None means leave unchanged, Some(None) means remove any port number.
     fn set_host_internal(&mut self, host: Host<Cow<'_, str>>, opt_new_port: Option<Option<u16>>) {
-        // lightningpanda: a URL without a host may serialize "/." before a path that starts
+        // pyro: a URL without a host may serialize "/." before a path that starts
         // with an empty segment (`non-spec:/.//p`); once there is a host it goes.
         let dot_prefix = !self.has_authority() && self.path_start == self.host_end + 2;
         let old_suffix_pos = if opt_new_port.is_some() || dot_prefix {

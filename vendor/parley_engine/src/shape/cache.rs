@@ -228,7 +228,7 @@ struct GlyphEntry {
     pre_context: Box<str>,
     post_context: Box<str>,
     glyphs: harfrust::GlyphBuffer,
-    /// lightningpanda: the run's font metrics, computed when it was shaped (the key holds
+    /// pyro: the run's font metrics, computed when it was shaped (the key holds
     /// everything they depend on: font, synthesis, variations and size).
     metrics: RunMetrics,
 }

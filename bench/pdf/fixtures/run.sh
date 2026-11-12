@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: run.sh <lightningpanda binary> <output directory> [generator names]
+# usage: run.sh <pyro binary> <output directory> [generator names]
 # Probes each fixture set with the binary and compares it with Chrome 156's summary. Exits 1 if a generator fails.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"

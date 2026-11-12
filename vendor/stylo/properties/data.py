@@ -345,7 +345,7 @@ class Longhand(Property):
         servo_restyle_damage=None,
         affects=None,
     ):
-        # lightningpanda: a property that names no restyle damage gets the one its `affects`
+        # pyro: a property that names no restyle damage gets the one its `affects`
         # implies (upstream: `rebuild_box` for every one, so a change of `border-top-color`,
         # `visibility` or `box-shadow` relaid out). `affects` is required and checked below.
         if servo_restyle_damage is None:

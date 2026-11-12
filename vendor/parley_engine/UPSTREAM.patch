@@ -63,7 +63,7 @@
 +    pre_context: Box<str>,
 +    post_context: Box<str>,
 +    glyphs: harfrust::GlyphBuffer,
-+    /// lightningpanda: the run's font metrics, computed when it was shaped (the key holds
++    /// pyro: the run's font metrics, computed when it was shaped (the key holds
 +    /// everything they depend on: font, synthesis, variations and size).
 +    metrics: RunMetrics,
 +}
@@ -176,7 +176,7 @@
 +    }
 +}
 +
-+/// lightningpanda: WebKit's and Chromium's (macOS) extra ascent for Times,
++/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
 +/// (16px Helvetica: 2px, a 18px normal line instead of 16px). These are the
@@ -211,7 +211,7 @@
 +        .any(|name| family.chars().eq(name.chars()))
 +}
 +
-+/// lightningpanda: the font metrics of a shaped run, which depend on the font instance, the font
++/// pyro: the font metrics of a shaped run, which depend on the font instance, the font
 +/// size and the variation location only. Computed once per such combination in a
 +/// [`ShapedText`] (see [`ShapedText::push_run`]) and kept with the run's glyphs in the shaper's
 +/// glyph cache, so a run shaped before costs no font parse.
@@ -266,7 +266,7 @@
      glyphs: Vec<Glyph>,
      fonts: Vec<FontInstance>,
      normalized_coords: Vec<NormalizedCoord>,
-+    /// lightningpanda: the metrics of the runs' fonts, one entry per font, size and variation
++    /// pyro: the metrics of the runs' fonts, one entry per font, size and variation
 +    /// location; a run of a combination seen before takes its entry.
 +    run_metrics: Vec<RunMetricsEntry>,
  }
@@ -294,7 +294,7 @@
                  index
              });
  
-+        // lightningpanda: the entry of this font, size and location in this text; the first run
++        // pyro: the entry of this font, size and location in this text; the first run
 +        // of a combination enters the metrics the caller shaped it with before, or computes them.
 +        // The table is the same whatever the caller had cached.
          let metrics = {
@@ -401,7 +401,7 @@
  
      // Shape a run of the segment with a single font, appending it to `shaped_text`.
      let mut shape_run = |font: &FontInstance, range: TextRange| {
-+        // lightningpanda: the font is parsed only when something has to be built from it (shaper
++        // pyro: the font is parsed only when something has to be built from it (shaper
 +        // data, instance, or the shaper of a run the glyph cache does not hold); a cached run needs
 +        // none of them, and its variation coords are the instance's.
          // TODO: How do we want to handle errors like this?
@@ -532,7 +532,7 @@
  }
  
 +/// Only Chromium's hyphen-before-digit rule, every other pair deferring to the default (ICU)
-+/// behavior (lightningpanda).
++/// behavior (pyro).
 +///
 +/// UAX #14 LB25 forbids a break between a hyphen and a digit (`HY × NU`). Chromium allows one
 +/// when the character before the hyphen is an ASCII letter or digit (`4b87-|916e`, `10-|20`), and

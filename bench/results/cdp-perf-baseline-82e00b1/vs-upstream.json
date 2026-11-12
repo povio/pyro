@@ -1,5 +1,5 @@
 {
- "schema": "lightningpanda-cdp-perf/1",
+ "schema": "pyro-cdp-perf/1",
  "meta": {
   "startedAt": "2026-10-27T10:28:48.594Z",
   "host": {
@@ -18,7 +18,7 @@
   "scale": 1,
   "filter": null,
   "harnessSha256": "ffdc62d6fb530ff2989b0386d0f48f9410338bbf7c1716deef0eb63a6e6d3476",
-  "cpuSource": "/Users/xban1x/Povio/lp-cdp-perf-wt/bench/rss-sampler/target/release/rss-sampler",
+  "cpuSource": "/Users/xban1x/Povio/pyro-cdp-perf-wt/bench/rss-sampler/target/release/rss-sampler",
   "loadavg": {
    "start": [
     9.79443359375,
@@ -235,7 +235,7 @@
   },
   {
    "label": "rewrite",
-   "path": "/Users/xban1x/Povio/lp-cdp-perf-wt/target/release/lightningpanda",
+   "path": "/Users/xban1x/Povio/pyro-cdp-perf-wt/target/release/pyro",
    "sha256": "a26f6a1f0cc4748b7e29474bbe2be4111bc9bbdedef2d5be61fa385220df5065",
    "startup": {
     "n": 155,

@@ -1,10 +1,10 @@
 # `JsString::new` UTF-16 sizing: synthetic paired benchmark
 
-This is a synthetic `JsString::new` workload in `crates/lp-js/examples/large_string_cycles.rs`. It has no DOM, network, CDP, browser or TOS component. ES modules are compiled from UTF-8 by `lp_jsc_module_script_create` and never pass through `JsString::new`. Nothing here establishes how much TOS or any real page benefits.
+This is a synthetic `JsString::new` workload in `crates/pyro-js/examples/large_string_cycles.rs`. It has no DOM, network, CDP, browser or TOS component. ES modules are compiled from UTF-8 by `pyro_jsc_module_script_create` and never pass through `JsString::new`. Nothing here establishes how much TOS or any real page benefits.
 
 ## Variants
 
-All three variants are built from the same tree and example. Only `crates/lp-js/src/string.rs` differs. `PROVENANCE.json` lists file and binary SHA-256s, host, toolchain and SDK.
+All three variants are built from the same tree and example. Only `crates/pyro-js/src/string.rs` differs. `PROVENANCE.json` lists file and binary SHA-256s, host, toolchain and SDK.
 
 - **`base`** (`2b4d66b`): `s.encode_utf16().collect()`.
 - **`len`** (`a32656e`): `Vec::with_capacity(s.len())`. This over-allocates up to 3× for 3-byte UTF-8.

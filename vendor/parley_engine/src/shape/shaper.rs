@@ -302,7 +302,7 @@ fn shape_segment(
 
     // Shape a run of the segment with a single font, appending it to `shaped_text`.
     let mut shape_run = |font: &FontInstance, range: TextRange| {
-        // lightningpanda: the font is parsed only when something has to be built from it (shaper
+        // pyro: the font is parsed only when something has to be built from it (shaper
         // data, instance, or the shaper of a run the glyph cache does not hold); a cached run needs
         // none of them, and its variation coords are the instance's.
         // TODO: How do we want to handle errors like this?

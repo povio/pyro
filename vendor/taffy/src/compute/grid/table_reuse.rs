@@ -1,4 +1,4 @@
-//! lightningpanda: a table's grid laid out again from its last layout.
+//! pyro: a table's grid laid out again from its last layout.
 //!
 //! A table's rows are a grid's (`LayoutGridContainer::grid_rows_are_table_rows`). After a full layout
 //! of such a grid, `compute_grid_layout` offers what it computed to the tree
@@ -144,7 +144,7 @@ impl GridContainerConstants {
     }
 }
 
-/// lightningpanda: whether `reuse.state` is the layout at `inputs` as it is: nothing changed since it
+/// pyro: whether `reuse.state` is the layout at `inputs` as it is: nothing changed since it
 /// was laid out (no item, no row replaced or appended, the same tracks) and the inputs differ at most
 /// in the available width (and the parent's width, where the grid's own style resolves nothing against
 /// it). A shrink-to-fit table in a container that got wider or narrower, but not past the table's

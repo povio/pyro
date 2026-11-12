@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // Reads a dump of the sampling heap profiler (a `--features heap-profile` build run with
-// LIGHTNINGPANDA_HEAP_PROFILE=<prefix>, dumped on SIGUSR2; see crates/lightningpanda/src/heap_profile.rs)
+// PYRO_HEAP_PROFILE=<prefix>, dumped on SIGUSR2; see crates/pyro/src/heap_profile.rs)
 // and prints who owns the live Rust heap.
 //
-//   bun scripts/heap-profile.mjs --bin /abs/lightningpanda <file.heap> [--top 40] [--by owner|crate|leaf] [--stacks N]
+//   bun scripts/heap-profile.mjs --bin /abs/pyro <file.heap> [--top 40] [--by owner|crate|leaf] [--stacks N]
 //                                [--grep REGEX]
 //
 // owner  the innermost frame that is not allocator, std or a container library: the function that asked
@@ -43,7 +43,7 @@ try {
   keys.forEach((k, i) => names.set(k, (out[i] ?? names.get(k)).replace(/\[[0-9a-f]{16}\]/g, '')));
 } catch { console.error('heap-profile: no rustfilt, names stay mangled'); }
 // Frames that only pass an allocation on.
-const GENERIC = /^(_?_?rust_|__rdl_|__rg_|alloc::|core::|std::|<alloc::|<core::|<std::|hashbrown::|<hashbrown::|smallvec::|<smallvec::|indexmap::|<indexmap::|mi_|_mi_|lightningpanda::heap_profile|<lightningpanda::heap_profile|<T as |<&T as |<\[|<\(|bytes::|<bytes::|thin_vec::|<thin_vec::|servo_arc::|<servo_arc::|slab::|<slab::|<&mut |<&|<Box|<Vec|<String|0x)/;
+const GENERIC = /^(_?_?rust_|__rdl_|__rg_|alloc::|core::|std::|<alloc::|<core::|<std::|hashbrown::|<hashbrown::|smallvec::|<smallvec::|indexmap::|<indexmap::|mi_|_mi_|pyro::heap_profile|<pyro::heap_profile|<T as |<&T as |<\[|<\(|bytes::|<bytes::|thin_vec::|<thin_vec::|servo_arc::|<servo_arc::|slab::|<slab::|<&mut |<&|<Box|<Vec|<String|0x)/;
 const crateOf = (name) => {
   const m = name.replace(/^<+/, '').match(/^([a-zA-Z_][a-zA-Z0-9_]*)::/);
   return m ? m[1] : name.startsWith('JSC') || name.startsWith('WTF') ? 'JavaScriptCore' : '(other)';

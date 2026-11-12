@@ -1,26 +1,26 @@
-// End-to-end screenshot benchmark through the real path: a lightningpanda
+// End-to-end screenshot benchmark through the real path: a pyro
 // binary built with `--features render`, the fixtures served over HTTP (Lato
 // as a web font, fetched by the renderer through the page's network), and the
-// lightning-panda client over CDP.
+// pyro client over CDP.
 //
-//   bun bench/screenshot/match-screenshot.ts [--bin target/release/lightningpanda] [--iters 50]
+//   bun bench/screenshot/match-screenshot.ts [--bin target/release/pyro] [--iters 50]
 //
 // Per fixture and viewport, after warm-up, median and p95 (ms) of:
 // - capture:   Page.captureScreenshot (PNG) round trip
-// - compare:   LP.run [matchScreenshot] with the baseline bytes under a new name
+// - compare:   Pyro.run [matchScreenshot] with the baseline bytes under a new name
 //              each time (decode + raster + compare, no hash to hit)
-// - hash hit:  LP.run [matchScreenshot] against a cached baseline whose
+// - hash hit:  Pyro.run [matchScreenshot] against a cached baseline whose
 //              display-list hash is known (no raster, no compare)
-// - floor:     LP.run [eval "1"] (the CDP + LP.run round trip alone)
+// - floor:     Pyro.run [eval "1"] (the CDP + Pyro.run round trip alone)
 // plus the browser-side stage times of the compare path.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Lightningpanda, evaluate } from '../../packages/lightning-panda/src/index';
+import { Pyro, evaluate } from '../../packages/pyro/src/index';
 
 const args = process.argv.slice(2);
 const opt = (k: string, d: string) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
 const root = join(import.meta.dir, '../..');
-const bin = opt('--bin', [join(root, 'target/release/lightningpanda'), join(root, 'target/debug/lightningpanda')].find(existsSync) ?? '');
+const bin = opt('--bin', [join(root, 'target/release/pyro'), join(root, 'target/debug/pyro')].find(existsSync) ?? '');
 const iters = Number(opt('--iters', '50'));
 const fixtures = join(import.meta.dir, 'fixtures');
 const font = readFileSync(join(fixtures, 'fonts/Lato-Regular.ttf'));
@@ -55,7 +55,7 @@ async function time(n: number, f: () => Promise<unknown>): Promise<number[]> {
   return out;
 }
 
-const lp = await Lightningpanda.launch({ bin });
+const lp = await Pyro.launch({ bin });
 const rows: string[] = [];
 const stages: string[] = [];
 const cases: [string, number][] = [['login', 1], ['dashboard', 1], ['article', 1], ['dashboard', 2]];
@@ -73,17 +73,17 @@ for (const [name, dpr] of cases) {
   let k = 0;
   const browser: Record<string, number[]> = {};
   const compare = await time(iters, async () => {
-    const r = await page.send('LP.run', { steps: [{ matchScreenshot: { name: `${label}-${k++}`, baseline } }] });
+    const r = await page.send('Pyro.run', { steps: [{ matchScreenshot: { name: `${label}-${k++}`, baseline } }] });
     const res = r.results[0];
     if (!res.pass || res.hashHit) throw new Error(`${label}: unexpected ${JSON.stringify({ ...res, actual: undefined })}`);
     for (const [s, v] of Object.entries(res.ms as Record<string, number>)) (browser[s] ??= []).push(v);
   });
-  await page.send('LP.run', { steps: [{ matchScreenshot: { name: `${label}-hit`, baseline } }] });
+  await page.send('Pyro.run', { steps: [{ matchScreenshot: { name: `${label}-hit`, baseline } }] });
   const hit = await time(iters, async () => {
-    const r = await page.send('LP.run', { steps: [{ matchScreenshot: { name: `${label}-hit` } }] });
+    const r = await page.send('Pyro.run', { steps: [{ matchScreenshot: { name: `${label}-hit` } }] });
     if (!r.results[0].hashHit) throw new Error(`${label}: no hash hit`);
   });
-  const floor = await time(iters, () => page.send('LP.run', { steps: [{ eval: { expression: '1' } }] }));
+  const floor = await time(iters, () => page.send('Pyro.run', { steps: [{ eval: { expression: '1' } }] }));
   rows.push(`| ${label} | ${coldMs.toFixed(1)} | ${cell(capture)} | ${cell(compare)} | ${cell(hit)} | ${cell(floor)} |`);
   const b = (s: string) => (browser[s] ? stats(browser[s]).median.toFixed(2) : '-');
   stages.push(`| ${label} | ${b('decode')} | ${b('snapshot')} | ${b('fetch')} | ${b('layout')} | ${b('scene')} | ${b('raster')} | ${b('compare')} | ${b('total')} |`);
@@ -92,7 +92,7 @@ lp.close();
 server.stop(true);
 
 console.log(`Binary: ${bin}; ${iters} iterations after 3 warm-up; 1280x720; cells median / p95 ms (client-side, CDP round trip included).\n`);
-console.log('| fixture | first capture | Page.captureScreenshot | LP.run matchScreenshot (compare) | LP.run matchScreenshot (hash hit) | LP.run eval floor |');
+console.log('| fixture | first capture | Page.captureScreenshot | Pyro.run matchScreenshot (compare) | Pyro.run matchScreenshot (hash hit) | Pyro.run eval floor |');
 console.log('|---|---:|---:|---:|---:|---:|');
 for (const r of rows) console.log(r);
 console.log('\nBrowser-side stages of the compare path (median ms; `total` = from the step starting to its result on the browser thread):\n');

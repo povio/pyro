@@ -1,4 +1,4 @@
-// Real Playwright 1.59.1 (connectOverCDP) against `lightningpanda serve`: JSON
+// Real Playwright 1.59.1 (connectOverCDP) against `pyro serve`: JSON
 // and CSS module scripts through import attributes (patched JavaScriptCore,
 // patch 0020-module-import-attributes). Static and dynamic imports with
 // `with { type: 'json' | 'css' }`, the CSSStyleSheet a CSS module exports
@@ -6,7 +6,7 @@
 // and the TypeErrors HTML gives for unknown or mismatched types, and a module
 // worker importing JSON while a CSS import fails there without a fetch.
 //
-// Usage: bun tests/e2e/module-import-attributes.mjs /abs/path/to/lightningpanda
+// Usage: bun tests/e2e/module-import-attributes.mjs /abs/path/to/pyro
 // Requires `bun install` in bench/ for the pinned playwright-core.
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -22,7 +22,7 @@ const { chromium } = require('playwright-core');
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: bun tests/e2e/module-import-attributes.mjs /abs/path/to/lightningpanda');
+  console.error('usage: bun tests/e2e/module-import-attributes.mjs /abs/path/to/pyro');
   process.exit(2);
 }
 
@@ -81,7 +81,7 @@ for (;;) {
     const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) });
     if (r.ok) break;
   } catch {}
-  if (child.exitCode !== null) { console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
+  if (child.exitCode !== null) { console.error(`pyro exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
   if (performance.now() - started > 10_000) { console.error(`startup timed out: ${stderr}`); process.exit(1); }
   await new Promise((r) => setTimeout(r, 10));
 }

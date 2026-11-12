@@ -277,7 +277,7 @@ index 9aa2c89..bc1f9d8 100644
      pub(crate) char_style_indices: Vec<u16>,
      pub(crate) scx: Shaper,
 +    /// Per style of the layout being built, the first available font the shaper's font selector
-+    /// found (lightningpanda; see `shape::FontSelector`), for the style metrics.
++    /// found (pyro; see `shape::FontSelector`), for the style metrics.
 +    pub(crate) style_first_fonts: Vec<Option<parley_engine::FontInstance>>,
  
      // Unicode analysis data sources (provided by icu)
@@ -293,7 +293,7 @@ index 9aa2c89..bc1f9d8 100644
 +    pub(crate) previous_layout: crate::layout::data::LayoutData<B>,
 +
 +    /// The line-break override every builder of this context starts with
-+    /// (lightningpanda; see [`Self::set_line_break_override`]).
++    /// (pyro; see [`Self::set_line_break_override`]).
 +    pub(crate) line_break_override: Option<&'static LineBreakOverrideFn>,
  }
  
@@ -716,7 +716,7 @@ index 3c3798c..f49024d 100644
                              self.state.mark_line_break_opportunity();
                          }
 +                    } else if self.state.line.x == 0.0 {
-+                        // lightningpanda: at the start of the line this box will never fit, so
++                        // pyro: at the start of the line this box will never fit, so
 +                        // consume it, accept the overflow and mark the soft wrap opportunity after
 +                        // it: content that follows breaks there, and a box ending the paragraph
 +                        // ends its last line (Chromium) rather than leaving an empty line behind.
@@ -1055,7 +1055,7 @@ index 7b7b147..74e7b8b 100644
  /// style builders guarantee. `shaped_text` is the already shaped text of the layout, whose run
  /// metrics are reused where a style's first available font was also used for shaping.
 +/// `first_fonts` holds, per style, the first available font the shaper's font selector found
-+/// (lightningpanda; see `shape::FontSelector`); a style without one is queried here.
++/// (pyro; see `shape::FontSelector`); a style without one is queried here.
  pub(crate) fn resolve_style_metrics<B: Brush>(
      rcx: &ResolveContext,
      fcx: &mut FontContext,
@@ -1131,7 +1131,7 @@ index 060a32d..cbbd406 100644
      analysis_data_sources: &AnalysisDataSources,
 +    first_fonts: &mut Vec<Option<FontInstance>>,
  ) {
-+    // lightningpanda: one slot per style for the first available font the selector saw.
++    // pyro: one slot per style for the first available font the selector saw.
 +    first_fonts.clear();
 +    first_fonts.resize(styles.len(), None);
 +
@@ -1152,7 +1152,7 @@ index 060a32d..cbbd406 100644
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
-+    /// lightningpanda: per style, the first font [`Self::query`] yields for the style's own
++    /// pyro: per style, the first font [`Self::query`] yields for the style's own
 +    /// families and attributes whose `unicode-range` includes U+0020 (its CSS first available
 +    /// font), recorded when the style's fonts are first queried; `None` where its families yield
 +    /// no such font or the style shaped no text.
@@ -1183,7 +1183,7 @@ index 060a32d..cbbd406 100644
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
-+        // lightningpanda: this pass also finds the style's first available font, which the style
++        // pyro: this pass also finds the style's first available font, which the style
 +        // metrics need: the first font the query yields for the current families and attributes
 +        // whose `unicode-range` includes U+0020, if it comes from the style's own families (not
 +        // the script fallbacks or the emoji family, which the query yields after them). Fonts

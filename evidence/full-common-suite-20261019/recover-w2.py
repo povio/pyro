@@ -1,6 +1,6 @@
 from pathlib import Path
 import json,hashlib
-b=Path('/private/tmp/lp-w2cov');out=Path('/private/tmp/lp-suite-20261019');entries=[]
+b=Path('/private/tmp/pyro-w2cov');out=Path('/private/tmp/pyro-suite-20261019');entries=[]
 for p in sorted(b.glob('w2-*/*/lightpanda.json')):
  if 'upstream'in p.parts:continue
  try:d=json.loads(p.read_text());meta=json.loads((p.parent/'metadata.json').read_text())
