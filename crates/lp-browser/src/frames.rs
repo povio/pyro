@@ -128,6 +128,10 @@ pub(crate) fn prepare_spare_realm(class: lp_js::ClassId) -> Result<(), JsError> 
 }
 
 /// Drops this thread's spare realm (engine teardown).
+pub(crate) fn has_spare_realm() -> bool {
+    SPARE_REALM.with(|s| s.borrow().is_some())
+}
+
 pub(crate) fn drop_spare_realm() {
     SPARE_REALM.with(|s| {
         if let Some(r) = s.borrow_mut().take() {

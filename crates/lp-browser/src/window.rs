@@ -38,6 +38,11 @@ pub fn note_client_activity() {
     EAGER_FRAMES_LEFT.with(|c| c.set(EAGER_FRAMES));
 }
 
+/// No eager frame is left ([`crate::reset_thread`]).
+pub(crate) fn reset_eager_frames() {
+    EAGER_FRAMES_LEFT.with(|c| c.set(0));
+}
+
 /// Takes one eager frame, if any is left.
 fn take_eager_frame() -> bool {
     EAGER_FRAMES_LEFT.with(|c| {

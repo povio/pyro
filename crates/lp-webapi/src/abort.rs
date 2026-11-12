@@ -370,3 +370,9 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<AbortSignal>();
     engine.register::<AbortController>();
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    ALGORITHM_EXCEPTION.with(|e| e.borrow().is_some()).then_some("abort::ALGORITHM_EXCEPTION")
+}

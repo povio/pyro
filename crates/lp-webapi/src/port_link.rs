@@ -197,6 +197,13 @@ impl Link {
 /// A pipe as the page that made it remembers it.
 pub(crate) struct WeakPipe(std::sync::Weak<Pipe>);
 
+impl WeakPipe {
+    /// Whether a link of the pipe is still alive, on any thread.
+    pub(crate) fn is_live(&self) -> bool {
+        self.0.strong_count() > 0
+    }
+}
+
 impl Link {
     pub(crate) fn downgrade(&self) -> WeakPipe {
         WeakPipe(Arc::downgrade(&self.pipe))
@@ -471,4 +478,13 @@ mod tests {
         assert!(c.peer_open());
         assert!(!claimed.is_closed());
     }
+}
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    if RELEASING.with(|r| !r.borrow().is_empty()) {
+        return Some("port_link::RELEASING");
+    }
+    RELEASE_ACTIVE.get().then_some("port_link::RELEASE_ACTIVE")
 }

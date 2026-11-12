@@ -994,3 +994,9 @@ pub(crate) fn set_event_handler(
     maybe_pin(s, &target.page, target.key, object);
     Ok(())
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    (!WATCHED.get().0.is_null()).then_some("target::WATCHED")
+}

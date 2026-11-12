@@ -308,3 +308,9 @@ fn cancel_where(page: &PageDom, pick: impl Fn(&Source) -> bool) {
         }
     }
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    SOURCES.with(|s| !s.borrow().is_empty()).then_some("event_source::SOURCES")
+}
