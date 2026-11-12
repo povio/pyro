@@ -65,13 +65,31 @@ pub struct ListenerStore {
     other_parents: FxHashMap<u64, u64>,
     /// A listener for a transition event was ever added.
     transition_listeners: bool,
+    /// How many listeners `map` holds for each event type, over every
+    /// target (nodes, documents, windows, the other targets): what tells a
+    /// dispatch nobody can hear apart ([`Dom::listens_for`]). Kept by the
+    /// functions below, the only ones that add to or take from `map`.
+    by_type: FxHashMap<LocalName, u32>,
 }
 
 impl ListenerStore {
     /// Drops the target's listeners, keeping a document's window link.
     fn erase(&mut self, key: TargetKey) {
         if let Some(list) = self.map.remove(&key) {
+            for l in &list {
+                Self::uncount(&mut self.by_type, &l.ty);
+            }
             self.released.extend(list.into_iter().map(|l| (key, l.callback)));
+        }
+    }
+
+    /// One listener for `ty` left `map`.
+    fn uncount(by_type: &mut FxHashMap<LocalName, u32>, ty: &LocalName) {
+        if let Some(n) = by_type.get_mut(ty) {
+            *n -= 1;
+            if *n == 0 {
+                by_type.remove(ty);
+            }
         }
     }
 
@@ -79,9 +97,7 @@ impl ListenerStore {
         // Called for every freed node (a closed document's whole tree), most
         // of which never had a listener: skip the lookups in empty tables.
         if !self.map.is_empty() {
-            if let Some(list) = self.map.remove(&key) {
-                self.released.extend(list.into_iter().map(|l| (key, l.callback)));
-            }
+            self.erase(key);
         }
         if let TargetKey::Other(k) = key {
             if !self.other_parents.is_empty() {
@@ -233,15 +249,33 @@ impl Dom {
         if !st.formdata_listeners && ty == "formdata" {
             st.formdata_listeners = true;
         }
+        let ty = LocalName::from(ty);
+        *st.by_type.entry(ty.clone()).or_insert(0) += 1;
         list.push(Listener {
             id: st.next_id,
-            ty: LocalName::from(ty),
+            ty,
             callback,
             capture: opts.capture,
             once: opts.once,
             passive: opts.passive.unwrap_or(false),
         });
         true
+    }
+
+    /// Whether dispatching an event of type `ty` in this tree could run a
+    /// listener: one is registered for `ty` (or for the legacy type a
+    /// trusted event of that type falls back to) on some target, be it a
+    /// node, a document, a window or any other target, connected or not,
+    /// for the capture or the bubble phase. `false` means a dispatch runs
+    /// no script, whatever its target and path. Event handler attributes
+    /// and properties are listeners once the bindings registered them.
+    pub fn listens_for(&self, ty: &str) -> bool {
+        let by_type = &self.events.by_type;
+        if by_type.is_empty() {
+            return false;
+        }
+        by_type.contains_key(&LocalName::from(ty))
+            || legacy_event_type(ty).is_some_and(|legacy| by_type.contains_key(&LocalName::from(legacy)))
     }
 
     /// `removeEventListener`. Returns the dropped handle for release.
@@ -258,6 +292,7 @@ impl Dom {
         if list.is_empty() {
             self.events.map.remove(&target);
         }
+        ListenerStore::uncount(&mut self.events.by_type, &l.ty);
         self.events.released.push((target, l.callback));
         Some(l.callback)
     }
@@ -306,6 +341,7 @@ impl Dom {
         if list.is_empty() {
             self.events.map.remove(&target);
         }
+        ListenerStore::uncount(&mut self.events.by_type, &listener.ty);
         self.events.released.push((target, listener.callback));
     }
 
@@ -404,8 +440,12 @@ impl Dom {
         self.events.map.get(&target).is_some_and(|l| l.iter().any(|x| x.id == id))
     }
     fn remove_listener_id(&mut self, target: TargetKey, id: u32) {
-        if let Some(list) = self.events.map.get_mut(&target) {
-            list.retain(|l| l.id != id);
+        let st = &mut self.events;
+        if let Some(list) = st.map.get_mut(&target) {
+            if let Some(pos) = list.iter().position(|l| l.id == id) {
+                let l = list.remove(pos);
+                ListenerStore::uncount(&mut st.by_type, &l.ty);
+            }
         }
     }
 
@@ -668,46 +708,52 @@ pub fn dispatch_on_path(
         before_listeners(&path);
     }
     let ty = event.borrow().ty.clone();
+    // With no listener for the type on any target (`Dom::listens_for`) the
+    // two passes below would run nothing and leave nothing behind: what
+    // they set on the event on their way is reset or set again after them.
+    // Nothing has run script since the path was built, so none was added.
+    let heard = dom.borrow().listens_for(&ty);
     // One listener list for the whole dispatch (`Dom::snapshot_into`).
     let mut listeners = Vec::new();
-
-    // Capturing: from the outermost ancestor down to (and including) target.
-    for item in path.iter().rev() {
-        {
-            let mut ev = event.borrow_mut();
-            if ev.stop_propagation {
-                break;
+    if heard {
+        // Capturing: from the outermost ancestor down to (and including) target.
+        for item in path.iter().rev() {
+            {
+                let mut ev = event.borrow_mut();
+                if ev.stop_propagation {
+                    break;
+                }
+                ev.phase = if item.at_target() { Phase::AtTarget } else { Phase::Capturing };
+                ev.target = Some(item.target);
+                ev.related_target = item.related_target;
             }
-            ev.phase = if item.at_target() { Phase::AtTarget } else { Phase::Capturing };
-            ev.target = Some(item.target);
-            ev.related_target = item.related_target;
+            invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, true, &mut listeners);
         }
-        invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, true, &mut listeners);
-    }
-    // Bubbling: target, then ancestors when bubbles.
-    for item in &path {
-        let at_target = item.at_target();
-        {
-            let mut ev = event.borrow_mut();
-            if ev.stop_propagation {
-                break;
+        // Bubbling: target, then ancestors when bubbles.
+        for item in &path {
+            let at_target = item.at_target();
+            {
+                let mut ev = event.borrow_mut();
+                if ev.stop_propagation {
+                    break;
+                }
+                if !at_target && !ev.bubbles {
+                    continue;
+                }
+                // A `submit` or `reset` event of a nested form (or of any other
+                // descendant) does not reach the listeners of an ancestor form,
+                // nor anything above it: Chromium, Gecko and WebKit all stop its
+                // propagation there.
+                if !at_target && matches!(&*ty, "submit" | "reset") && dom.borrow().is_html_form(item.invocation_target) {
+                    ev.stop_propagation = true;
+                    break;
+                }
+                ev.phase = if at_target { Phase::AtTarget } else { Phase::Bubbling };
+                ev.target = Some(item.target);
+                ev.related_target = item.related_target;
             }
-            if !at_target && !ev.bubbles {
-                continue;
-            }
-            // A `submit` or `reset` event of a nested form (or of any other
-            // descendant) does not reach the listeners of an ancestor form,
-            // nor anything above it: Chromium, Gecko and WebKit all stop its
-            // propagation there.
-            if !at_target && matches!(&*ty, "submit" | "reset") && dom.borrow().is_html_form(item.invocation_target) {
-                ev.stop_propagation = true;
-                break;
-            }
-            ev.phase = if at_target { Phase::AtTarget } else { Phase::Bubbling };
-            ev.target = Some(item.target);
-            ev.related_target = item.related_target;
+            invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, false, &mut listeners);
         }
-        invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, false, &mut listeners);
     }
 
     let mut ev = event.borrow_mut();

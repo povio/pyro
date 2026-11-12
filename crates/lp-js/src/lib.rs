@@ -20,7 +20,7 @@ mod string;
 mod value;
 
 pub use accessors::slot_usage as accessor_slot_usage;
-pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent, OwnName};
+pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent, OwnGetter, OwnName};
 pub use engine::{
     configure_process, entry_realm, is_process_default, prepare_process_for_fork, prepare_time_zones, Capabilities,
     ConsoleLevel, Engine, EngineHooks, FunctionCoverage, HeapCounts, ImpureNames, ModulePrecompileStats,

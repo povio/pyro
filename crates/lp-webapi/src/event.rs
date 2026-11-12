@@ -444,10 +444,20 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
 }
 
 /// `isTrusted` is [LegacyUnforgeable]: an own, non-configurable accessor of
-/// every event object, with one getter per realm. The realm's installer
-/// defines it with the `Object.defineProperty` captured before page script
-/// ran.
+/// every event object, with one getter per realm. Defined natively (a custom
+/// accessor of the object, which runs no script); without that the realm's
+/// installer defines it with the `Object.defineProperty` captured before page
+/// script ran.
 fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -> JsResult<()> {
+    static IS_TRUSTED: std::sync::OnceLock<lp_js::OwnGetter> = std::sync::OnceLock::new();
+    let getter = IS_TRUSTED.get_or_init(|| {
+        lp_js::OwnGetter::new::<Event>("isTrusted", lp_js::GetterResult::Boolean, |s, event| {
+            Ok(s.boolean(event.state.borrow().is_trusted))
+        })
+    });
+    if s.define_own_getter(wrapper, getter) {
+        return Ok(());
+    }
     let realm = s.realm_id();
     let cached = page.event_unforgeables.borrow().get(&realm).map(|p| p.get(s));
     let install = match cached.and_then(|v| v.as_object()) {

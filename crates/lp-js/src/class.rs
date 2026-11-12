@@ -192,6 +192,58 @@ pub enum GetterResult {
     ObjectOrNull,
 }
 
+/// A pure getter that single objects carry as an own accessor property
+/// ([`Scope::define_own_getter`]), with no setter: enumerable and not
+/// configurable, as a WebIDL `[LegacyUnforgeable]` attribute is. One per
+/// class and name for the process; the getter function script can read from
+/// the property is one per realm.
+#[derive(Clone, Copy)]
+pub struct OwnGetter {
+    name: &'static str,
+    slot: Option<u16>,
+}
+
+impl OwnGetter {
+    /// Reserves the custom accessor of `name` on wrappers of `C` (and of the
+    /// classes that inherit from it). `g` must run no script.
+    pub fn new<C: JsClass>(name: &'static str, result: GetterResult, g: GetterFn<C>) -> Self {
+        let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
+        let slot = crate::accessors::slot_for(
+            TypeId::of::<C>(),
+            name,
+            get,
+            None,
+            true,
+            result,
+            Some(getter_invoke_h::<C>),
+            None,
+        );
+        Self { name, slot }
+    }
+}
+
+impl<'s> Scope<'s> {
+    /// Defines `getter` on `object` without running script. `false` when it
+    /// cannot be (no patched JavaScriptCore, or no accessor slot left): the
+    /// caller then defines the property the ordinary way.
+    pub fn define_own_getter(&self, object: Object<'s>, getter: &OwnGetter) -> bool {
+        let (Some(install), Some(slot)) = (sys::spi::get().set_custom_accessor, getter.slot) else { return false };
+        let name = crate::string::atom_raw(getter.name);
+        // SAFETY: `object` is live in this scope's context; the slot's
+        // trampoline is a process-lifetime function.
+        unsafe {
+            install(
+                self.ctx,
+                object.raw,
+                name,
+                Some(crate::accessors::GETTERS[usize::from(slot)]),
+                None,
+                sys::kJSPropertyAttributeDontDelete,
+            )
+        }
+    }
+}
+
 /// How a name of [`ClassDef::own_property_name`] shows on the wrappers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct OwnName(u8);
