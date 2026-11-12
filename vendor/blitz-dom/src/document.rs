@@ -19,6 +19,7 @@ use crate::{
     EventDriver, HtmlParserProvider, Node, NodeData, NoopEventHandler, StyleThreading,
     TextNodeData,
 };
+use bitflags::bitflags;
 use blitz_traits::devtools::DevtoolSettings;
 use blitz_traits::events::{DomEvent, HitResult, UiEvent};
 use blitz_traits::navigation::{DummyNavigationProvider, NavigationProvider};
@@ -119,7 +120,7 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
         style_config::set_pref!("layout.css.text-overflow.enabled", true);
-        style_config::set_pref!("layout.css.text-underline.enabled", true);
+        style_config::set_pref!("layout.css.text-underline-position.enabled", true);
         style_config::set_pref!("layout.css.view-transitions.enabled", true);
         style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
         style_config::set_pref!("layout.css.zoom.enabled", true);
@@ -343,6 +344,8 @@ pub struct BaseDocument {
     layout_size: Option<(f32, f32)>,
     /// See [`BaseDocument::set_layout_size`].
     pub(crate) layout_available: Option<(f32, f32)>,
+    /// Document-wide work for the next [`resolve`](Self::resolve).
+    pub(crate) flags: DocumentFlags,
     /// Strategy for Stylo's style traversal during `resolve`.
     pub(crate) style_threading: StyleThreading,
     /// Whether incremental layout is enabled for this document. When disabled,
@@ -559,6 +562,17 @@ pub(crate) struct DocumentScratch {
     pub(crate) keyed_children: Vec<((i32, i32), NodeId)>,
 }
 
+bitflags! {
+    /// Document-wide work for the next [`resolve`](BaseDocument::resolve).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub(crate) struct DocumentFlags: u8 {
+        /// Recompute the transform and scrollable overflow of every node, not
+        /// only of the damaged ones. Both are kept in device pixels, so a scale
+        /// change makes them stale throughout the tree.
+        const RESOLVE_ALL_TRANSFORMS = 0b0000_0001;
+    }
+}
+
 impl BaseDocument {
     /// Create a new (empty) [`BaseDocument`] with the specified configuration
     pub fn new(config: DocumentConfig) -> Self {
@@ -644,6 +658,7 @@ impl BaseDocument {
             last_layout_space: None,
             layout_size: None,
             layout_available: None,
+            flags: DocumentFlags::empty(),
             style_threading: config.style_threading,
             incremental_layout: config.incremental.unwrap_or(true),
             subdocument_depth: config.subdocument_depth,
@@ -2697,9 +2712,11 @@ impl BaseDocument {
         self.scroll_viewport_by(0.0, 0.0); // Clamp scroll offset
 
         // Text is shaped at a specific scale factor, so cached inline layouts
-        // must be invalidated when the scale changes.
+        // must be invalidated when the scale changes, as must every node's
+        // transform and scrollable overflow (kept in device pixels).
         if changes.contains(DeviceChanges::SCALE) {
             self.invalidate_inline_contexts();
+            self.flags.insert(DocumentFlags::RESOLVE_ALL_TRANSFORMS);
         }
 
         // Color-scheme changes affect values that are resolved at cascade time

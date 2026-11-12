@@ -352,3 +352,141 @@ fn a_repaint_only_change_to_collapsed_table_borders_rebuilds_the_table() {
         assert_eq!(tables, 1, "{what}");
     }
 }
+
+#[test]
+fn has_anchors_follow_changes_stylo_has_no_snapshot_for() {
+    // Paints after each step, and compares with a first paint of the page as
+    // it is then.
+    #[track_caller]
+    fn steps(html: &str, steps: &[(&str, &dyn Fn(&Page))]) {
+        let page = Page::new(html);
+        let mut live = Renderer::new();
+        let mut seen = vec![paint(&mut live, &page.snapshot()).hash];
+        for (what, step) in steps {
+            step(&page);
+            let snap = page.snapshot();
+            let hash = paint(&mut live, &snap).hash;
+            assert_eq!(hash, paint(&mut Renderer::new(), &snap).hash, "{what}");
+            assert_ne!(Some(&hash), seen.last(), "{what}: changes the pixels");
+            seen.push(hash);
+        }
+    }
+    let class = |id: &'static str, class: &'static str| {
+        move |p: &Page| {
+            let el = p.find(id);
+            p.dom.borrow_mut().set_attribute(el, "class", class).unwrap();
+        }
+    };
+
+    // WPT css/selectors/invalidation/has-unstyled.html: the changed element
+    // is in a `display: none` subtree, so it was never styled.
+    let html = r#"<!doctype html><style>body{margin:0;font:14px sans-serif} div,main{color:grey} .none{display:none}
+#subject:has(.test){color:red} #subject:has(~ #sibling .test){color:green}
+#subject:has(:is(.test_inner #subject_descendant)){color:blue}
+#subject:has(~ #sibling :is(.test_inner #sibling_descendant)){color:yellow}</style>
+<main><div id=subject>subject<div id=subject_child class=none><div id=subject_descendant></div></div></div>
+<div id=sibling class=none><div id=sibling_child><div id=sibling_descendant></div></div></div></main>"#;
+    steps(
+        html,
+        &[
+            ("test on the subject's descendant", &class("#subject_descendant", "test")),
+            ("and off", &class("#subject_descendant", "")),
+            ("test on the sibling's descendant", &class("#sibling_descendant", "test")),
+            ("and off", &class("#sibling_descendant", "")),
+            ("test_inner on the subject's child", &class("#subject_child", "none test_inner")),
+            ("and off", &class("#subject_child", "none")),
+            ("test_inner on the sibling's child", &class("#sibling_child", "test_inner")),
+            ("and off", &class("#sibling_child", "")),
+        ],
+    );
+
+    // WPT css/selectors/invalidation/state-in-has.html: Stylo's snapshot
+    // keeps no custom states.
+    let html = r#"<!doctype html><style>body{margin:0;font:14px sans-serif} #subject{background:#f00}
+#subject:has(:state(--green)){background:#0f0} #subject:has(:state(--blue)){background:#00f}</style>
+<div id=subject>subject<my-element id=child></my-element></div>"#;
+    let state = |name: &'static str, on: bool| {
+        move |p: &Page| {
+            let el = p.find("#child");
+            p.dom.borrow_mut().set_custom_state(el, name, on).unwrap();
+        }
+    };
+    let clear = |p: &Page| {
+        let el = p.find("#child");
+        p.dom.borrow_mut().clear_custom_states(el).unwrap();
+    };
+    steps(
+        html,
+        &[
+            ("green added", &state("--green", true)),
+            ("cleared", &clear),
+            ("blue added", &state("--blue", true)),
+            ("cleared again", &clear),
+            ("green added again", &state("--green", true)),
+            ("blue added to green", &state("--blue", true)),
+            ("blue deleted", &state("--blue", false)),
+            ("green deleted", &state("--green", false)),
+        ],
+    );
+}
+
+#[test]
+fn a_viewport_resize_with_elements_not_styled_yet() {
+    // Stylo walks the tree for styles that use viewport units; elements
+    // inserted since the last cascade, and those below `display: none`, have
+    // no style yet.
+    let html = r#"<!doctype html><style>body{margin:0;font:14px sans-serif} .w{width:50vw;height:10vh;background:green}
+.none{display:none}</style><div id=a class=w>a</div><div class=none><div class=w><b>hidden</b></div></div>"#;
+    let page = Page::new(html);
+    let mut live = Renderer::new();
+    paint(&mut live, &page.snapshot());
+    {
+        let a = page.find("#a");
+        let mut d = page.dom.borrow_mut();
+        let el = d.create_element(page.doc, "div").unwrap();
+        d.set_attribute(el, "class", "w").unwrap();
+        let inner = d.create_element(page.doc, "i").unwrap();
+        d.append_child(el, inner).unwrap();
+        d.append_child(a, el).unwrap();
+    }
+    let mut snap = page.snapshot();
+    (snap.width, snap.height) = (400, 300);
+    let resized = paint(&mut live, &snap);
+    assert_eq!(resized.hash, paint(&mut Renderer::new(), &snap).hash);
+}
+
+#[test]
+fn presentational_attributes_written_after_the_first_cascade() {
+    // The element owns the declarations its legacy attributes map to (Stylo
+    // borrows them): every attribute write must drop them, and a cell's
+    // padding follows the table it is in.
+    let html = r##"<!doctype html><style>body{margin:0;font:14px sans-serif}</style>
+<table id=t1 cellpadding=4><tr><td id=c1 bgcolor="#ff0000" width=80>one</td><td>two</td></tr></table>
+<table id=t2 cellpadding=12><tr id=r2><td>three</td></tr></table><div id=d hidden>shown later</div>"##;
+    check("a bgcolor and a width replaced", html, &|p| {
+        let c1 = p.find("#c1");
+        let mut d = p.dom.borrow_mut();
+        d.set_attribute(c1, "bgcolor", "#0000ff").unwrap();
+        d.set_attribute(c1, "width", "140").unwrap();
+    });
+    check("a width removed", html, &|p| {
+        let c1 = p.find("#c1");
+        p.dom.borrow_mut().remove_attribute(c1, "width").unwrap();
+    });
+    check("hidden removed", html, &|p| {
+        let el = p.find("#d");
+        p.dom.borrow_mut().remove_attribute(el, "hidden").unwrap();
+    });
+    check("a table's cellpadding replaced", html, &|p| {
+        let t1 = p.find("#t1");
+        p.dom.borrow_mut().set_attribute(t1, "cellpadding", "20").unwrap();
+    });
+    check("a table's cellpadding removed", html, &|p| {
+        let t1 = p.find("#t1");
+        p.dom.borrow_mut().remove_attribute(t1, "cellpadding").unwrap();
+    });
+    check("a cell moved to a table with another cellpadding", html, &|p| {
+        let (c1, r2) = (p.find("#c1"), p.find("#r2"));
+        p.dom.borrow_mut().append_child(r2, c1).unwrap();
+    });
+}

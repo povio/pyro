@@ -1,7 +1,7 @@
-# stylo 0.23.0, patched
+# stylo 0.24.0, patched
 
-This is the published `stylo` 0.23.0 crate (crates.io, servo/stylo commit
-`2dca34592ced37c6aa01733e94206a767194cf9d`, the one Blitz main pins), used through `[patch.crates-io]` in the
+This is the published `stylo` 0.24.0 crate (crates.io, servo/stylo commit
+`32359dc3f17780ee269980cb7a3a7f8597a1dc0e`; Blitz main still pins 0.23.0), used through `[patch.crates-io]` in the
 workspace `Cargo.toml`. License: MPL-2.0, as upstream. Only `.cargo_vcs_info.json`, `.cargo-ok` and
 `Cargo.toml.orig` were left out of the copy. `UPSTREAM.patch` is the whole diff against the published
 crate (`diff -ruN`).
@@ -53,9 +53,6 @@ crate (`diff -ruN`).
   flag test that a state change cannot change any `:has()` match before it runs the relative selector
   invalidation (`vendor/blitz-dom/src/has_invalidation.rs`).
 
-- `servo/selector_parser.rs`: `:in-range` parses (upstream has the pseudo-class, its state flag and
-  serialization, but left it out of the parser, so a rule using it was dropped).
-
 - `properties/data.py`: a longhand without an explicit `servo_restyle_damage` gets the damage its `affects` implies
   (`layout` → `rebuild_box`, `overflow` → `recalculate_overflow`, `paint` and `""` → `repaint`). Upstream gave every
   such property `rebuild_box`, so a change of `border-top-color`, `visibility`, `box-shadow`, a border radius, a mask
@@ -85,6 +82,21 @@ non-`Copy` values `slow_clone_*`, so the rule cache's inherited resets (`rule_ca
 `properties/helpers.mako.rs`) call `slow_clone_box_sizing` and friends; and the `container` shorthand's
 pref name above. The `::before`/`::after` index (`stylist.rs`, `style_resolver.rs`) was written
 on 0.22 and ported onto 0.23's `stylist.rs` as is.
+
+## Moving from 0.23 to 0.24
+
+The patch applied to 0.24.0 but for one hunk: `:in-range` parses upstream now, so that change is gone.
+0.24 lends applicable declarations instead of cloning them (`ApplicableDeclarationBlock<'a>`,
+`ApplicableDeclarationList<'a>`), which the `::before`/`::after` index follows:
+`Stylist::may_generate_box_for_pseudo` borrows the stylist for the scratch list's lifetime, and the
+debug check in `style_resolver.rs` passes its `AnimationDeclarations` by reference. blitz-dom's side of
+the move (presentational hints the element owns) is in `vendor/blitz-dom/README.lightningpanda.md`.
+
+`invalidation/viewport_units.rs`: the walk that invalidates styles using viewport units skips an element
+that has no primary style yet (blitz-dom gives every element its data up front, so one inserted since the
+last cascade, or below `display: none`, has data and no style). The 0.23 copy here had this check;
+0.24.0 as published unwraps the primary style (`ElementStyles::viewport_unit_usage`) and panics on a
+viewport resize. Test: `a_viewport_resize_with_elements_not_styled_yet` in lp-render.
 
 ## Updating or dropping the patch
 

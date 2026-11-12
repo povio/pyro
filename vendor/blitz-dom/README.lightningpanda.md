@@ -1,11 +1,11 @@
-# blitz-dom main (be60597), patched
+# blitz-dom main (c27b4ca), patched
 
 `packages/blitz-dom` of [DioxusLabs/blitz](https://github.com/dioxuslabs/blitz) main at commit
-`be60597f67b3cece0456d26e8d7ff5a88600bbc5` (#1456, 124 commits past 0.3.0-beta.4 = `92b11f1b`; its version
+`c27b4ca14158dc457f35c78eb32b8c4fec906b7e` (#1525, 142 commits past 0.3.0-beta.4 = `92b11f1b`; its version
 is still 0.3.0-beta.4), used through `[patch.crates-io]` in the workspace `Cargo.toml`. License: MIT OR
 Apache-2.0, as upstream. `src/` and `assets/` are copied; `Cargo.toml` is the package manifest with the
 workspace's dependency versions written in, git dependencies replaced by their crates.io releases (Taffy and
-Stylo come from `vendor/`, anyrender 0.14 from crates.io: main's anyrender API is unchanged). blitz-traits,
+Stylo come from `vendor/`, Stylo at 0.24.0 where main pins 0.23.0: "Stylo 0.24" below, anyrender 0.14 from crates.io: main's anyrender API is unchanged). blitz-traits,
 blitz-html and stylo_taffy are vendored from the same commit unchanged (`vendor/blitz-traits`,
 `vendor/blitz-html`, `vendor/stylo_taffy`): blitz-dom main needs them.
 
@@ -714,3 +714,37 @@ parent's subtree and damaged the element:
   `border-collapse: collapse` table that changes its borders or `color` is damage on it: the collapsed
   edges (`CollapsedEdges`) hold resolved colours, collected again with the part's row. Covered by
   `tables_lay_out_from_the_styles_written_at_restyle` (lp-render).
+
+## From be60597 to c27b4ca
+
+Main's 18 commits merged with three conflicts:
+
+- `src/document.rs`: `BaseDocument` keeps main's `flags: DocumentFlags` next to the local layout fields.
+- `src/layout/resolve.rs`: main's `resolve_all` (every node resolved again after a scroll or viewport
+  change) is threaded through the local incremental pass: `resolve_transforms(node_id, resolve_all)` skips
+  an unchanged subtree only when it is false, and so does `table_cells_overflow`.
+- blitz-paint `src/text.rs`: see its README.
+
+## Stylo 0.24
+
+Main pins Stylo 0.23.0; this copy builds against the vendored 0.24.0.
+
+- `src/node/attributes.rs`, `src/stylo.rs`: Stylo 0.24 borrows the declaration blocks of presentational
+  hints from the element for the length of the cascade
+  (`TElement::synthesize_presentational_hints_for_legacy_attributes<'a>`), where 0.23 took a new `Arc` per
+  declaration at every cascade. `Attributes` owns them (`PresentationalHints`, built by
+  `Node::build_presentational_hints` at the first cascade that asks, dropped by every attribute write:
+  `set`, `remove`, `DerefMut`; a clone builds its own). A table's `cellpadding` maps to four padding blocks
+  the table owns (`PresentationalHints::cells`) and its cells borrow (`Node::cell_table`), so a cell's
+  hints depend on its own attributes only and cells of one table push the same blocks.
+- `src/stylo.rs`: `pseudo_style` passes its `AnimationDeclarations` by reference;
+  `:-moz-topmost-modal` never matches.
+- `src/has_invalidation.rs`: given snapshots, 0.24 drops a `:has()` dependency whose compound matches
+  the changed element as it did per its snapshot (`RelativeSelectorDependencyCollector::add_dependency`).
+  `run_relative_invalidation` passes them only when the element has a snapshot and the change is not one
+  of custom states: an element never styled (below `display: none`) gets no snapshot
+  (`snapshot_node_impl`), and Servo's snapshot keeps no custom states, so both read as unchanged and the
+  anchor kept its style (WPT `css/selectors/invalidation/has-unstyled.html`, `state-in-has.html`). Test:
+  `has_anchors_follow_changes_stylo_has_no_snapshot_for` in lp-render.
+- `src/stylo_device.rs`: `Device::new` takes the submit button's default label.
+- `src/document.rs`: the pref is `layout.css.text-underline-position.enabled` now.

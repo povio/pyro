@@ -808,16 +808,16 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
             pp != NIL && matches!(self.cx().dom.n(pp).kind, NodeKind::Document(_))
         }
     }
-    fn synthesize_presentational_hints_for_legacy_attributes<V>(&self, _visited: VisitedHandlingMode, hints: &mut V)
-    where
-        V: Push<ApplicableDeclarationBlock>,
+    /// Nothing: this crate matches selectors and never cascades (the
+    /// cascade, with its presentational hints, is blitz-dom's).
+    fn synthesize_presentational_hints_for_legacy_attributes<'h, V>(
+        &self,
+        _visited: VisitedHandlingMode,
+        _hints: &mut V,
+    ) where
+        V: Push<ApplicableDeclarationBlock<'h>>,
+        Self: 'h,
     {
-        let e = self.element();
-        if e.name.ns == ns!(svg) {
-            super::hints::svg_presentation(e, self.cx().lock, self.cx().quirks, hints);
-            return;
-        }
-        super::hints::synthesize(e, self.cx().lock, hints);
     }
     fn local_name(&self) -> &LocalName {
         &self.element().name.local
