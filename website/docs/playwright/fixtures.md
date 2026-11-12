@@ -1,11 +1,11 @@
 # Fixtures, hooks and steps
 
-The runner implements Playwright's test API on top of `bun test`: Bun registers and runs the tests, and `@povio/lightning-panda/playwright` resolves their fixtures, runs their hooks, applies timeouts and retries, and reports. Code written for `@playwright/test` works as it is. This page lists what is supported and where behaviour differs.
+The runner implements Playwright's test API on top of `bun test`: Bun registers and runs the tests, and `@povio/pyro/wright` resolves their fixtures, runs their hooks, applies timeouts and retries, and reports. Code written for `@playwright/test` works as it is. This page lists what is supported and where behaviour differs.
 
 ## A complete example
 
 ```ts
-import { test as base, expect, type Page } from '@povio/lightning-panda/playwright';
+import { test as base, expect, type Page } from '@povio/pyro/wright';
 
 type Fixtures = {
   todoPage: Page;
@@ -61,11 +61,11 @@ test.describe('todos', () => {
 | --- | --- | --- |
 | `page` | test | A new page in `context`. |
 | `context` | test | A new `BrowserContext` with the test's `use` options; closed after the test. |
-| `browser` | worker | The worker's `Browser`, one per distinct `lightningpanda` option. Kept for the whole worker process. |
+| `browser` | worker | The worker's `Browser`, one per distinct `pyro` option. Kept for the whole worker process. |
 | `request` | test | An `APIRequestContext` with `baseURL`, `extraHTTPHeaders`, `httpCredentials`, `ignoreHTTPSErrors`, `userAgent` and `storageState`; disposed after the test. |
 | `playwright` | worker | `{ chromium, request, devices, errors, selectors }`. |
 | `browserName` | worker option | `'chromium'` unless `use` sets it. |
-| every `use` option | test or worker option | `baseURL`, `viewport`, `storageState`, `testIdAttribute`, `actionTimeout`, ... and `lightningpanda`. |
+| every `use` option | test or worker option | `baseURL`, `viewport`, `storageState`, `testIdAttribute`, `actionTimeout`, ... and `pyro`. |
 
 `browser.newContext()` inside a test starts from the test's `use` options (viewport, `baseURL`, storage state, timeouts, test id attribute), as in Playwright.
 
@@ -186,7 +186,7 @@ test.describe.fixme('broken', () => { /* ... */ });   // same as skip
 | --- | --- |
 | `default` | Tests run in order in the file's worker. A failure does not stop the others. |
 | `serial` | Tests run in order in the file's worker. After a failure (retries used up), the rest of the group is skipped with "an earlier test of its serial group failed". |
-| `parallel` | Tests spread over the workers. Within one worker they still run one after another unless `LP_CONCURRENT=1`. |
+| `parallel` | Tests spread over the workers. Within one worker they still run one after another unless `PYRO_CONCURRENT=1`. |
 
 `configure({ retries, timeout })` applies to the describe and the describes inside it.
 

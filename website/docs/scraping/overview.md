@@ -6,9 +6,9 @@ The browser speaks the Chrome DevTools Protocol (CDP). You can drive it in four 
 
 | Tool | When to use it | Page |
 | --- | --- | --- |
-| `lightningpanda fetch` | One URL, rendered HTML on stdout, shell pipelines | [One-off fetches (CLI)](/scraping/fetch) |
-| `@povio/lightning-panda/playwright` | Scripts written against Playwright's API: contexts, locators, `storageState` | [Scripting a browser](/scraping/library) |
-| `@povio/lightning-panda` (native SDK) | Many pages fast: a whole job is one command, and signed-in pages are booted ahead or forked | [Scripting a browser](/scraping/library), [Profiles booted once](/scraping/fork-profiles) |
+| `pyro fetch` | One URL, rendered HTML on stdout, shell pipelines | [One-off fetches (CLI)](/scraping/fetch) |
+| `@povio/pyro/wright` | Scripts written against Playwright's API: contexts, locators, `storageState` | [Scripting a browser](/scraping/library) |
+| `@povio/pyro` (native SDK) | Many pages fast: a whole job is one command, and signed-in pages are booted ahead or forked | [Scripting a browser](/scraping/library), [Profiles booted once](/scraping/fork-profiles) |
 | Puppeteer or raw CDP | Existing Puppeteer code, or any language with a WebSocket client | [Puppeteer and raw CDP](/scraping/cdp) |
 
 ## Use cases
@@ -42,13 +42,13 @@ What does not work, or works differently:
 - **Layout and pixels are not Chromium's.** Positions can differ by a few pixels, and screenshots do not match Chrome's pixel for pixel. Text extraction is not affected.
 - **No video, no tracing, no trace viewer, no `Page.startScreencast`.**
 - **Other gaps.** Some web APIs are partial. A site that depends on one of them may break. [Web platform support](/reference/web-platform) and [CDP coverage](/reference/cdp) list the details.
-- **Browser fingerprint.** The default user agent says `lightningpanda`, and the JavaScript engine is JavaScriptCore, not V8. Sites that block automated or non-Chrome browsers can tell. Pyro has no stealth mode or captcha solving.
+- **Browser fingerprint.** The default user agent says `pyro`, and the JavaScript engine is JavaScriptCore, not V8. Sites that block automated or non-Chrome browsers can tell. Pyro has no stealth mode or captcha solving.
 
 When a site fails, check it with Chrome first. If it works there and not here, see [Troubleshooting](/guide/troubleshooting).
 
 ## Platforms
 
-The npm package `@povio/lightning-panda` bundles the browser for:
+The npm package `@povio/pyro` bundles the browser for:
 
 | Platform | Fork mode |
 | --- | --- |

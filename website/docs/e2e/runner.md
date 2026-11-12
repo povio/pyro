@@ -1,6 +1,6 @@
-# Suite runner: lightningpanda e2e
+# Suite runner: pyro e2e
 
-`lightningpanda e2e` runs a whole suite in one process. Tests from every spec file go into one queue that runs up to `--concurrency` of them at a time, so cases of different files interleave. They all share one fork-mode browser, which the runner launches on first use and always closes. Every profile therefore boots once per run, and every test forks its page from it.
+`pyro e2e` runs a whole suite in one process. Tests from every spec file go into one queue that runs up to `--concurrency` of them at a time, so cases of different files interleave. They all share one fork-mode browser, which the runner launches on first use and always closes. Every profile therefore boots once per run, and every test forks its page from it.
 
 Use it instead of `bun test --parallel` for large suites. `bun test` runs the files of a worker one after another, so overlapping tests of different files takes worker processes, and each worker launches its own browser and boots its own profiles.
 
@@ -8,20 +8,20 @@ It needs [Bun](https://bun.sh) on `PATH`: the CLI hands `e2e` over to Bun even w
 
 ## A spec file
 
-Specs import `describe`, `test`, the hooks and `expect` from `@povio/lightning-panda/e2e` instead of `bun:test`, and get the browser from `browser()`:
+Specs import `describe`, `test`, the hooks and `expect` from `@povio/pyro/e2e` instead of `bun:test`, and get the browser from `browser()`:
 
 ```ts
 // e2e/todos.test.ts
-import { beforeAll, browser, defer, describe, expect, test } from '@povio/lightning-panda/e2e';
-import { button, check, label, testId, text } from '@povio/lightning-panda';
+import { beforeAll, browser, defer, describe, expect, test } from '@povio/pyro/e2e';
+import { button, check, label, testId, text } from '@povio/pyro';
 import { app, signedInProfile } from './app';
 
 describe('todos', () => {
   beforeAll(async () => {
     await signedInProfile();                       // shared by every file, registered once
-    const lp = await browser();
-    await lp.profile('todos', { base: 'app', url: `${app()}/`, setup: [check(label('New todo')).visible()] });
-    defer(() => lp.releaseProfile('todos'));       // after this describe's last test
+    const pyro = await browser();
+    await pyro.profile('todos', { base: 'app', url: `${app()}/`, setup: [check(label('New todo')).visible()] });
+    defer(() => pyro.releaseProfile('todos'));       // after this describe's last test
   });
 
   test('adds a todo', async () => {
@@ -51,17 +51,17 @@ A profile that many files share is registered once per run. Module state is shar
 
 ```ts
 // e2e/app.ts
-import { browser, setupResult } from '@povio/lightning-panda/e2e';
-import { button, check, label, text } from '@povio/lightning-panda';
+import { browser, setupResult } from '@povio/pyro/e2e';
+import { button, check, label, text } from '@povio/pyro';
 
 export const app = () => setupResult<{ app: string }>().app;
 
 let signedIn: Promise<void> | undefined;
 export function signedInProfile() {
   return (signedIn ??= (async () => {
-    const lp = await browser();
-    await lp.profile('signed-out', { url: `${app()}/` });
-    await lp.profile('app', {
+    const pyro = await browser();
+    await pyro.profile('signed-out', { url: `${app()}/` });
+    await pyro.profile('app', {
       base: 'signed-out',
       url: `${app()}/`,
       setup: [label('Email').fill('ada@example.com'), button('Sign in').click(), check(text('Signed in')).visible()],
@@ -71,8 +71,8 @@ export function signedInProfile() {
 ```
 
 ```sh
-$ bunx lightningpanda e2e e2e --setup e2e/setup.ts -j 4 --timeout 10000 --junit junit.xml
-lightningpanda: CDP server listening on ws://127.0.0.1:49843/ (fork mode)
+$ bunx pyro e2e e2e --setup e2e/setup.ts -j 4 --timeout 10000 --junit junit.xml
+pyro: CDP server listening on ws://127.0.0.1:49843/ (fork mode)
 ✓ e2e/settings.test.ts > opens settings [320.10ms]
 ✓ e2e/todos.test.ts > todos > adds a todo [159.22ms]
 ✓ e2e/todos.test.ts > todos > deletes a seeded todo [166.88ms]
@@ -87,7 +87,7 @@ The first tests of a run include the profile boots they waited for.
 ## Options
 
 ```text
-lightningpanda e2e [options] [path | dir | glob | filter ...]
+pyro e2e [options] [path | dir | glob | filter ...]
 ```
 
 | Option | Default | Meaning |
@@ -102,7 +102,7 @@ lightningpanda e2e [options] [path | dir | glob | filter ...]
 | `--update-timings` | | Write this run's per-file durations to `--timings` |
 | `--setup <module>` | | A setup module (see below) |
 | `--preload <module>` | | Loaded before the specs; its top-level hooks apply to every test. Repeatable |
-| `--browser-arg <arg>` | | Extra `lightningpanda serve` argument. Repeatable |
+| `--browser-arg <arg>` | | Extra `pyro serve` argument. Repeatable |
 | `--reporter junit` | console | Also write a JUnit report, to `--reporter-outfile` |
 | `--reporter-outfile <file>` | | Where the JUnit report goes |
 | `--junit <file>` | | Both at once |
@@ -118,7 +118,7 @@ Arguments are files, directories, globs or filters:
 
 - A **directory** is searched for files matching `*.test.*`, `*.spec.*`, `*_test.*` or `*_spec.*` with a `js`, `ts`, `jsx`, `tsx`, `mjs`, `cjs`, `mts` or `cts` extension, skipping `node_modules` and dot directories.
 - A **file** runs as given, whatever its name.
-- A **glob** (an argument with `*`, `?`, `[` or `{`) runs every file it matches. Use one for other naming schemes: `lightningpanda e2e 'e2e/**/*.e2e.ts'`.
+- A **glob** (an argument with `*`, `?`, `[` or `{`) runs every file it matches. Use one for other naming schemes: `pyro e2e 'e2e/**/*.e2e.ts'`.
 - Anything else is a **filter**: only discovered files whose path contains it run, as with `bun test`.
 
 Without paths the runner searches the working directory. No spec files found is an error (exit code 1).
@@ -129,7 +129,7 @@ Without paths the runner searches the working directory. No spec files found is 
 
 ```ts
 // e2e/setup.ts
-import type { Setup } from '@povio/lightning-panda/e2e';
+import type { Setup } from '@povio/pyro/e2e';
 import { startServer } from '../server';
 
 type Runtime = { app: string; stop: () => void };
@@ -149,16 +149,16 @@ export default {
 | Export | Called | Contract |
 |---|---|---|
 | `setup()` | Once, before any spec file loads | Start servers, seed data. Its (awaited) return value is the run's setup result |
-| `browser(result)` | When the first test calls `browser()` | Returns `{ args?: string[]; bin?: string }`: extra `lightningpanda serve` arguments (`--static`, `--proxy`, ...) and the browser binary (default `$LIGHTNINGPANDA_BIN`, else the bundled one) |
+| `browser(result)` | When the first test calls `browser()` | Returns `{ args?: string[]; bin?: string }`: extra `pyro serve` arguments (`--static`, `--proxy`, ...) and the browser binary (default `$PYRO_BIN`, else the bundled one) |
 | `teardown(result)` | Once, after the run, also when it is interrupted | Stop what `setup` started. A failure counts as a hook failure |
 
 Specs read the result with `setupResult<T>()`, even while they load. Without `--setup`, `setupResult()` throws.
 
-The runner launches the browser with `--fork` when the binary supports it (it checks `lightningpanda version` for `fork: true`), plus `--cdp-max-connections` set to the larger of 64 and `4 × concurrency + 8` unless you pass that flag yourself. Arguments from `browser(result)` come first, then `--browser-arg` values.
+The runner launches the browser with `--fork` when the binary supports it (it checks `pyro version` for `fork: true`), plus `--cdp-max-connections` set to the larger of 64 and `4 × concurrency + 8` unless you pass that flag yourself. Arguments from `browser(result)` come first, then `--browser-arg` values.
 
 ## Spec API
 
-Everything below is exported from `@povio/lightning-panda/e2e`. Signatures follow `bun:test`; `expect` is Bun's own.
+Everything below is exported from `@povio/pyro/e2e`. Signatures follow `bun:test`; `expect` is Bun's own.
 
 | Export | Meaning |
 |---|---|
@@ -170,7 +170,7 @@ Everything below is exported from `@povio/lightning-panda/e2e`. Signatures follo
 | `test.skip`, `test.todo(name, fn?)`, `test.only`, `test.if(cond)`, `test.skipIf(cond)` | As in `bun:test`; `.only` takes effect with `--only` |
 | `beforeAll`, `afterAll`, `beforeEach`, `afterEach` | Hooks of the describe (or file) they are declared in |
 | `setDefaultTimeout(ms)` | Default timeout of tests and hooks without their own |
-| `browser()` | The run's browser (a `Lightningpanda`), launched on first use |
+| `browser()` | The run's browser (a `Pyro`), launched on first use |
 | `defer(fn)` | Cleanup after what is running now |
 | `setupResult<T>()` | What the setup module's `setup()` returned |
 | `testInfo()` | `{ file, name, titlePath }` of the running test, or `undefined` |
@@ -181,11 +181,11 @@ Hooks and tests can be async, or take a `done` callback. `beforeEach` hooks run 
 ### browser()
 
 ```ts
-const lp = await browser();
-await using page = await lp.page({ as: 'todos' });
+const pyro = await browser();
+await using page = await pyro.page({ as: 'todos' });
 ```
 
-The first call launches `lightningpanda serve --fork` with the setup module's options. Every later call returns the same instance. The runner closes it when the run ends, also on `SIGINT`, `SIGTERM` and `SIGHUP`. If the runner is killed outright, the browser's `--parent-pid` watch ends it.
+The first call launches `pyro serve --fork` with the setup module's options. Every later call returns the same instance. The runner closes it when the run ends, also on `SIGINT`, `SIGTERM` and `SIGHUP`. If the runner is killed outright, the browser's `--parent-pid` watch ends it.
 
 Pages a test opens through `browser()` are closed when the test ends, including a test that timed out, so a hung test does not keep its forked process. Still write `await using`: it closes the page as soon as the test body is done.
 
@@ -202,9 +202,9 @@ Later calls run first. The usual use is retiring a per-describe profile:
 
 ```ts
 beforeAll(async () => {
-  const lp = await browser();
-  await lp.profile('orders', { base: 'app', url, setup });
-  defer(() => lp.releaseProfile('orders'));
+  const pyro = await browser();
+  await pyro.profile('orders', { base: 'app', url, setup });
+  defer(() => pyro.releaseProfile('orders'));
 });
 ```
 
@@ -239,10 +239,10 @@ A first `SIGINT` (or `SIGTERM`, `SIGHUP`) stops the run the same way and prints 
 
 ```sh
 # record durations once (on a full run)
-bunx lightningpanda e2e e2e --setup e2e/setup.ts --timings e2e/timings.json --update-timings
+bunx pyro e2e e2e --setup e2e/setup.ts --timings e2e/timings.json --update-timings
 
 # split across 4 machines
-bunx lightningpanda e2e e2e --setup e2e/setup.ts --timings e2e/timings.json --shard 1/4
+bunx pyro e2e e2e --setup e2e/setup.ts --timings e2e/timings.json --shard 1/4
 ```
 
 `--shard i/n` sorts the files by their recorded duration, longest first, and gives each to the least loaded shard. Files without a recorded duration count as the average. Every shard computes the same split from the same file, so commit `timings.json`. A shard with no files prints `No spec files in shard i/n.` and exits 0.
@@ -255,21 +255,21 @@ bunx lightningpanda e2e e2e --setup e2e/setup.ts --timings e2e/timings.json --sh
 
 ## Screenshots
 
-`-u` sets update mode for `matchScreenshot` steps (the same as `LP_UPDATE_SNAPSHOTS=1`): missing and mismatching baselines are written instead of compared. See [Visual tests](/e2e/screenshots).
+`-u` sets update mode for `matchScreenshot` steps (the same as `PYRO_UPDATE_SNAPSHOTS=1`): missing and mismatching baselines are written instead of compared. See [Visual tests](/e2e/screenshots).
 
 ## Environment
 
-The runner sets `NODE_ENV=test` unless it is already set. `$LIGHTNINGPANDA_BIN` selects the browser binary when the setup module does not.
+The runner sets `NODE_ENV=test` unless it is already set. `$PYRO_BIN` selects the browser binary when the setup module does not.
 
 ## Migrating from bun test --parallel
 
-1. Replace `bun:test` imports in spec files with `@povio/lightning-panda/e2e`. The functions take the same arguments.
-2. Replace your own `Lightningpanda.launch()` or `connect()` with `await browser()`. Do not call `lp.close()`: the runner owns the browser.
+1. Replace `bun:test` imports in spec files with `@povio/pyro/e2e`. The functions take the same arguments.
+2. Replace your own `Pyro.launch()` or `connect()` with `await browser()`. Do not call `pyro.close()`: the runner owns the browser.
 3. Move global setup (servers, seeding, environment) into a setup module: `setup()` returns what specs need, `browser(result)` returns the server flags (`--static`, `--local-storage`, ...), `teardown(result)` stops it all.
-4. Register shared profiles once (a memoized promise in a shared module), per-file or per-describe profiles in that describe's `beforeAll` with `defer(() => lp.releaseProfile(name))`.
+4. Register shared profiles once (a memoized promise in a shared module), per-file or per-describe profiles in that describe's `beforeAll` with `defer(() => pyro.releaseProfile(name))`.
 5. Remove per-file globals that assumed a process per file: every file shares one module graph.
 6. Run with the same concurrency first (`-j 8 --max-concurrency 1` for `bun test --parallel=8 --max-concurrency=1`), then raise `-j`.
 
-Porting ToS (2,158 cases) took the import changes and about 20 lines of harness code (PR #289). At equal concurrency on 62 files, `bun test` took 59.0 s and 59.3 s, `lightningpanda e2e` 51.9 s and 58.9 s; on the full suite, `lightningpanda e2e -j 16` with one browser took 313 s against 380 s for `bun test --parallel=8` with eight.
+Porting ToS (2,158 cases) took the import changes and about 20 lines of harness code (PR #289). At equal concurrency on 62 files, `bun test` took 59.0 s and 59.3 s, `pyro e2e` 51.9 s and 58.9 s; on the full suite, `pyro e2e -j 16` with one browser took 313 s against 380 s for `bun test --parallel=8` with eight.
 
 The runner has no watch mode, no coverage option and no HTML report.

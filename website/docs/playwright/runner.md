@@ -1,11 +1,11 @@
 # Config and the test runner
 
-`lightningpanda test` is the counterpart of `playwright test`. It reads your config, finds each project's test files, starts web servers and global setup once, then runs the files in worker processes. Each worker is a `bun test` process with its own Pyro browser. This page lists every flag, every config field that is honoured, and how workers split the work.
+`pyro run` is the counterpart of `playwright test`. It reads your config, finds each project's test files, starts web servers and global setup once, then runs the files in worker processes. Each worker is a `bun test` process with its own Pyro browser. This page lists every flag, every config field that is honoured, and how workers split the work.
 
 ## Usage
 
 ```sh
-lightningpanda test [options] [test-filter...]
+pyro run [options] [test-filter...]
 ```
 
 A `test-filter` is a regular expression. A file runs when its absolute or working-directory-relative path matches any filter. Playwright's `file.spec.ts:42` line filters are not supported.
@@ -16,7 +16,7 @@ The command needs [Bun](https://bun.sh) on `PATH`. When the CLI is started by No
 
 | Flag | Meaning |
 | --- | --- |
-| `-c, --config <file>` | Config file. Default: `lightningpanda.config.*`, else `playwright.config.*` in the working directory. |
+| `-c, --config <file>` | Config file. Default: `pyro.config.*`, else `playwright.config.*` in the working directory. |
 | `--project <name>` | Run only this project. Repeatable. Without it, every project's files run. |
 | `-j, --workers <n\|n%>` | Worker processes. Default: the config's `workers`, else half the CPUs. `50%` is a share of the CPUs. |
 | `-g, --grep <regex>` | Only tests whose title path (file, describes, title, tags) matches. |
@@ -73,9 +73,9 @@ Project `dependencies` are worth a note: a "setup" project that logs in and save
 
 ## Projects
 
-`lightningpanda test` collects the files of every project (or those named with `--project`). Each file runs once, under the first project whose `testDir`, `testMatch` and `testIgnore` include it. Playwright would run such a file once per project.
+`pyro run` collects the files of every project (or those named with `--project`). Each file runs once, under the first project whose `testDir`, `testMatch` and `testIgnore` include it. Playwright would run such a file once per project.
 
-Under plain `bun test`, the project is `$LP_PROJECT` if set, else the project whose files include the test file, else the first one.
+Under plain `bun test`, the project is `$PYRO_PROJECT` if set, else the project whose files include the test file, else the first one.
 
 ## use options
 
@@ -95,20 +95,20 @@ All Playwright `use` options are accepted. These take effect:
 | `testIdAttribute` | The attribute `getByTestId` matches. Default `data-testid`. |
 | `contextOptions` | Merged under the named options. |
 | `acceptDownloads` | Default `true`. |
-| `lightningpanda` | How tests reach the browser. See below. |
+| `pyro` | How tests reach the browser. See below. |
 
-These are accepted and have no effect on pages: `bypassCSP`, `deviceScaleFactor`, `geolocation`, `hasTouch`, `isMobile`, `javaScriptEnabled`, `locale`, `offline`, `permissions`, `proxy`, `timezoneId`, `serviceWorkers`, and the worker options `browserName`, `channel`, `headless`, `launchOptions`, `connectOptions`, `screenshot`, `video`, `trace`. A proxy goes on the browser instead: `lightningpanda: { args: ['--proxy', 'http://host:3128'] }`.
+These are accepted and have no effect on pages: `bypassCSP`, `deviceScaleFactor`, `geolocation`, `hasTouch`, `isMobile`, `javaScriptEnabled`, `locale`, `offline`, `permissions`, `proxy`, `timezoneId`, `serviceWorkers`, and the worker options `browserName`, `channel`, `headless`, `launchOptions`, `connectOptions`, `screenshot`, `video`, `trace`. A proxy goes on the browser instead: `pyro: { args: ['--proxy', 'http://host:3128'] }`.
 
 `browserName` still sets the `browserName` fixture, so `test.skip(({ browserName }) => browserName === 'webkit')` behaves as the config says.
 
-### use.lightningpanda
+### use.pyro
 
 ```ts
 use: {
-  lightningpanda: {
+  pyro: {
     wsEndpoint: 'ws://127.0.0.1:9222/',     // connect to a running server instead of launching one
-    bin: '/path/to/lightningpanda',          // the binary to launch
-    args: ['--static', 'http://app.test=./dist'], // extra `lightningpanda serve` flags
+    bin: '/path/to/pyro',          // the binary to launch
+    args: ['--static', 'http://app.test=./dist'], // extra `pyro serve` flags
     boot: [{ url: '/platform', routes: '/platform/**' }], // pages booted ahead
   },
 },
@@ -116,26 +116,26 @@ use: {
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `wsEndpoint` | `$LIGHTNINGPANDA_WS` | A running `lightningpanda serve` to connect to. Without it, each worker launches its own browser. |
-| `bin` | `$LIGHTNINGPANDA_BIN`, else the bundled binary | The binary each worker launches. |
-| `args` | none | Extra `lightningpanda serve` flags, for example `--static`, `--proxy`, `--hyphen-digit-breaks on`. See [serve options](/reference/serve). |
+| `wsEndpoint` | `$PYRO_WS` | A running `pyro serve` to connect to. Without it, each worker launches its own browser. |
+| `bin` | `$PYRO_BIN`, else the bundled binary | The binary each worker launches. |
+| `args` | none | Extra `pyro serve` flags, for example `--static`, `--proxy`, `--hyphen-digit-breaks on`. See [serve options](/reference/serve). |
 | `boot` | none | Pages booted ahead of the tests. See [Booting pages ahead](/playwright/boot-pools). |
 
-`lightningpanda` is a worker option, so `test.use({ lightningpanda: { ... } })` in a file works. Each distinct value gets its own browser in the worker.
+`pyro` is a worker option, so `test.use({ pyro: { ... } })` in a file works. Each distinct value gets its own browser in the worker.
 
-With `wsEndpoint` (or `$LIGHTNINGPANDA_WS`), all workers share one server, one connection each. Start it yourself, for example `lightningpanda serve --port 9222`, or in `globalSetup`.
+With `wsEndpoint` (or `$PYRO_WS`), all workers share one server, one connection each. Start it yourself, for example `pyro serve --port 9222`, or in `globalSetup`.
 
 ## Environment variables
 
 | Variable | Meaning |
 | --- | --- |
-| `LP_CONFIG` | Config file path. `PLAYWRIGHT_CONFIG` is read when it is unset. |
-| `LP_PROJECT` | Project for plain `bun test` runs. |
-| `LP_UPDATE_SNAPSHOTS` | Update mode (`all`, `changed`, `missing`, `none`; `1` or `true` mean `changed`). Set by `-u`. |
-| `LP_RETRIES`, `LP_TIMEOUT` | Override retries and test timeout. Set by `--retries` and `--timeout`. |
-| `LP_CONCURRENT` | `1` runs the tests of a parallel describe concurrently inside one worker (see [Workers](#workers)). |
-| `LIGHTNINGPANDA_WS` | Connect to this server instead of launching one. |
-| `LIGHTNINGPANDA_BIN` | Binary to launch. |
+| `PYRO_CONFIG` | Config file path. `PLAYWRIGHT_CONFIG` is read when it is unset. |
+| `PYRO_PROJECT` | Project for plain `bun test` runs. |
+| `PYRO_UPDATE_SNAPSHOTS` | Update mode (`all`, `changed`, `missing`, `none`; `1` or `true` mean `changed`). Set by `-u`. |
+| `PYRO_RETRIES`, `PYRO_TIMEOUT` | Override retries and test timeout. Set by `--retries` and `--timeout`. |
+| `PYRO_CONCURRENT` | `1` runs the tests of a parallel describe concurrently inside one worker (see [Workers](#workers)). |
+| `PYRO_WS` | Connect to this server instead of launching one. |
+| `PYRO_BIN` | Binary to launch. |
 
 See [Environment variables](/reference/env) for the browser's own variables.
 
@@ -146,7 +146,7 @@ The runner starts `workers` processes at once. Each runs `bun test` with its own
 - **A file's tests run in order, in one worker**, unless they are parallel.
 - **Parallel tests** (`fullyParallel`, `--fully-parallel`, or a describe with `mode: 'parallel'`) spread over the workers by their position in the file. A describe's `beforeAll` and `afterAll` run in each worker that runs some of its tests, and in no other.
 - A describe in `serial` mode, or `default` mode set with `test.describe.configure`, keeps its tests on the file's worker.
-- **Inside a worker, parallel tests still run one after another**, since they may share state set in hooks. Set `LP_CONCURRENT=1` to run a parallel describe's tests concurrently in the worker (Bun's `test.concurrent`).
+- **Inside a worker, parallel tests still run one after another**, since they may share state set in hooks. Set `PYRO_CONCURRENT=1` to run a parallel describe's tests concurrently in the worker (Bun's `test.concurrent`).
 - **Web servers and global setup run once**, in the parent process, before any worker starts.
 - A worker that gets no tests exits before it starts a browser.
 
@@ -195,9 +195,9 @@ The exit status is 1 when any test failed or a worker crashed, else 0.
 ## Plain bun test
 
 ```sh
-LP_CONFIG=playwright.config.ts bun test ./e2e/foo.spec.ts
+PYRO_CONFIG=playwright.config.ts bun test ./e2e/foo.spec.ts
 ```
 
 This runs the files in one process with one browser. The config, web servers and global setup are loaded on the first file; teardowns run after the last file. Bun's own flags apply (`-t` for names, `--bail`, `-u` for snapshots).
 
-Differences from `lightningpanda test`: no workers or `fullyParallel` spreading, Bun's reporter instead of the runner's, and a run-time `test.skip()` is reported by Bun as a pass (it prints `↳ skipped: <title>` to the log).
+Differences from `pyro run`: no workers or `fullyParallel` spreading, Bun's reporter instead of the runner's, and a run-time `test.skip()` is reported by Bun as a pass (it prints `↳ skipped: <title>` to the log).

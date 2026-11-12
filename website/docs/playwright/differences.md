@@ -41,7 +41,7 @@ Register the listener **before** the action. If a listener answers a dialog that
 
 ## The browser is not Chromium
 
-- **User agent.** `navigator.userAgent` is `Mozilla/5.0 (compatible; lightningpanda/<version>)`. Apps that sniff the user agent may show an "unsupported browser" screen or take a different code path. Set `userAgent` in `use` if needed (note that this disables [booted pages](/playwright/boot-pools)).
+- **User agent.** `navigator.userAgent` is `Mozilla/5.0 (compatible; pyro/<version>)`. Apps that sniff the user agent may show an "unsupported browser" screen or take a different code path. Set `userAgent` in `use` if needed (note that this disables [booted pages](/playwright/boot-pools)).
 - **Every project runs on Pyro.** `browserName: 'firefox'` or `'webkit'` changes the `browserName` fixture, not the browser. Each file runs once, under its first project.
 - **Web APIs.** Coverage is broad (DOM, fetch, XHR, WebSocket, workers, IndexedDB, Web Crypto, Canvas 2D, observers, ...) but partial. See [Web platform support](/reference/web-platform). A missing API shows up as `undefined` in app code or a page error.
 - **JavaScript engine.** Pyro runs JavaScriptCore, not V8. Error messages and stack traces are worded the way JavaScriptCore words them. Code that parses V8 stack traces sees a different format.
@@ -61,7 +61,7 @@ These `use` / `newContext` options are accepted and do nothing to pages:
 | `locale`, `timezoneId` | None in the Playwright layer. |
 | `geolocation`, `permissions`, `context.grantPermissions()`, `setGeolocation()` | None. |
 | `offline`, `context.setOffline()` | A route that aborts every request. |
-| `proxy` | `use.lightningpanda.args: ['--proxy', url]`. |
+| `proxy` | `use.pyro.args: ['--proxy', url]`. |
 | `httpCredentials` | Works for `request` only. For pages, send an `authorization` header with `extraHTTPHeaders`. |
 | `ignoreHTTPSErrors` | Works for `request` only. |
 | `deviceScaleFactor`, `isMobile`, `hasTouch` | None. Pages render at scale 1. |
@@ -80,7 +80,7 @@ See [API coverage](/playwright/api-coverage) for the full list.
 
 ## Test runner
 
-- **Plain `bun test` reports a run-time skip as a pass.** `test.skip()` inside a running test is reported as skipped by `lightningpanda test`, but Bun cannot mark a running test as skipped, so plain `bun test` counts it as passed and prints `↳ skipped: <title>`.
+- **Plain `bun test` reports a run-time skip as a pass.** `test.skip()` inside a running test is reported as skipped by `pyro run`, but Bun cannot mark a running test as skipped, so plain `bun test` counts it as passed and prints `↳ skipped: <title>`.
 - **`testInfo.status` in hooks.** `testInfo.status`, `error`, `errors` and `duration` are not updated while a test runs. In `afterEach`, `status` is `'passed'` even after a failure. A hook like this never takes its screenshot:
 
   ```ts
@@ -91,7 +91,7 @@ See [API coverage](/playwright/api-coverage) for the full list.
 
   Take such screenshots unconditionally into `testInfo.outputPath()`, or catch the error in the test body and record it yourself.
 - **Worker fixtures are set up per file**, not per worker process. The built-in `browser` lives for the whole worker.
-- **Parallel tests inside one worker run one after another.** `mode: 'parallel'` and `fullyParallel` spread tests over workers; within a worker they are sequential unless `LP_CONCURRENT=1`.
+- **Parallel tests inside one worker run one after another.** `mode: 'parallel'` and `fullyParallel` spread tests over workers; within a worker they are sequential unless `PYRO_CONCURRENT=1`.
 - **Serial groups retry the failed test only.** Playwright reruns the whole group.
 - **`step.skip()` skips the whole test.** Steps are not reported.
 - **Unsupported flags fail.** `--shard`, `--trace`, `--repeat-each`, `--last-failed` and other flags not listed in [Config and the test runner](/playwright/runner#flags) exit with status 2.
@@ -127,8 +127,8 @@ See [API coverage](/playwright/api-coverage) for the full list.
 
 The Playwright layer adds attributes to find elements across calls:
 
-- `data-lp-frame="<frame id>"` on an `<iframe>` once its frame has been listed (`page.frames()`, `frame.childFrames()`).
-- `data-lp-handle="<id>"` on an element for the length of an element handle action.
+- `data-pyro-frame="<frame id>"` on an `<iframe>` once its frame has been listed (`page.frames()`, `frame.childFrames()`).
+- `data-pyro-handle="<id>"` on an element for the length of an element handle action.
 
 An app or a snapshot that serializes the DOM can see them.
 
@@ -139,5 +139,5 @@ An app or a snapshot that serializes the DOM can see them.
 - `page.screenshot()` ignores `mask`, `animations`, `omitBackground`, `scale`, `caret` and `style`.
 - `page.pause()`, `page.bringToFront()` and `locator.highlight()` do nothing. `page.video()` and `page.opener()` return `null`.
 - `context.tracing.start()` / `stop()` do nothing.
-- `browser.version()` returns `'lightningpanda'`.
+- `browser.version()` returns `'pyro'`.
 - `devices` has five entries: `Desktop Chrome`, `Desktop Chrome HiDPI`, `Desktop Edge`, `Pixel 7`, `iPhone 15`.

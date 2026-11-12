@@ -2,7 +2,7 @@
 
 A stored profile is one identity on disk: the cookies and `localStorage` of a signed-in session, saved to a JSON file, plus a small file that says how that identity looks (user agent, viewport, proxy, locale). You sign in once, save, and every later run starts from the file, already signed in. One file per account lets you scrape as many identities as you have, each isolated from the others.
 
-This page uses the Playwright library (`@povio/lightning-panda/playwright`) and its `storageState` format, which is the same JSON Playwright writes. For profiles that the server boots and signs in once and then forks per job, see [Profiles booted once (fork)](/scraping/fork-profiles).
+This page uses the Playwright library (`@povio/pyro/wright`) and its `storageState` format, which is the same JSON Playwright writes. For profiles that the server boots and signs in once and then forks per job, see [Profiles booted once (fork)](/scraping/fork-profiles).
 
 ::: warning There is no persistent profile directory
 Pyro keeps all browser storage in memory: cookies, `localStorage`, `sessionStorage`, IndexedDB and the HTTP cache live in a browser context and are gone when it closes. There is no `--user-data-dir` flag and no `launchPersistentContext`. A profile persists only as the JSON file you save with `context.storageState()`.
@@ -81,7 +81,7 @@ An identity file holds the context options for that identity, plus the settings 
 | `userAgent`, `viewport`, `extraHTTPHeaders` | Context options; the library honors them. |
 | `locale` | CDP `Emulation.setLocaleOverride`: `navigator.language(s)` and `Accept-Language`. `Intl` and `Date` formatting keep the process locale. The library's own `locale` option has no effect. |
 | `timezoneId` | CDP `Emulation.setTimezoneOverride`: `Date`, `Intl`, `Temporal`. It applies to the whole connection, so two contexts on one connection cannot have different zones. The library's own `timezoneId` option has no effect. |
-| `proxy`, `proxyBypass` | `lightningpanda serve --proxy` and `--proxy-bypass`: one browser server per distinct proxy. The library's `proxy` context option has no effect. |
+| `proxy`, `proxyBypass` | `pyro serve --proxy` and `--proxy-bypass`: one browser server per distinct proxy. The library's `proxy` context option has no effect. |
 
 [Proxies, user agents, headers](/scraping/identity) explains each setting and what else is available.
 
@@ -91,7 +91,7 @@ This module opens a profile by name. It reuses the stored state when it still wo
 
 ```ts
 // profiles.ts: one identity per name, stored on disk, reused across runs.
-import { chromium, type Browser, type BrowserContext, type Page } from '@povio/lightning-panda/playwright';
+import { chromium, type Browser, type BrowserContext, type Page } from '@povio/pyro/wright';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 
@@ -178,7 +178,7 @@ And a script that uses it. The site-specific parts are `signIn` (fill the login 
 
 ```ts
 // scrape.ts: bun scrape.ts alice bob
-import type { Page } from '@povio/lightning-panda/playwright';
+import type { Page } from '@povio/pyro/wright';
 import { closeAll, openProfile, type SignIn } from './profiles';
 
 const BASE = 'http://127.0.0.1:4500';
@@ -229,7 +229,7 @@ The second run needs no passwords: both sessions came from the files.
 To create profiles without scraping, for example from a setup script or by hand once per account, the minimum is:
 
 ```ts
-import { chromium } from '@povio/lightning-panda/playwright';
+import { chromium } from '@povio/pyro/wright';
 
 const browser = await chromium.launch();
 const context = await browser.newContext();
@@ -303,8 +303,8 @@ When every context needs the same `localStorage` entries, for example one API to
 ```
 
 ```sh
-lightningpanda serve --local-storage seed.json
-# or: LIGHTNINGPANDA_LOCAL_STORAGE=seed.json lightningpanda serve
+pyro serve --local-storage seed.json
+# or: PYRO_LOCAL_STORAGE=seed.json pyro serve
 ```
 
 Top-level keys are origins (or URLs; only the origin is used). Values are objects of entries. A non-string value is stored as its JSON text, so `settings` reads back as the string `'{"theme":"dark"}'`. Every connection and every new browser context starts with a fresh copy, and a page's writes stay in its own context. It seeds `localStorage` only, not cookies. With `chromium.launch()`, pass it as `args: ['--local-storage', 'seed.json']`.
@@ -332,7 +332,7 @@ A state file is as good as a password for as long as the session lives, and ofte
 
 - **Do not log them.** Cookie values and tokens end up in logs, crash reports and CI output easily. Log profile names, not states.
 - **Revoke when leaked.** Signing out on the site (or changing the password) usually invalidates the session in the file.
-- **Mind the CDP port.** Anyone who can connect to your `lightningpanda serve` can read every cookie of every open context. Keep it on `127.0.0.1` or a private network. See [Running as a service](/scraping/service#securing-it).
+- **Mind the CDP port.** Anyone who can connect to your `pyro serve` can read every cookie of every open context. Keep it on `127.0.0.1` or a private network. See [Running as a service](/scraping/service#securing-it).
 
 ## Related
 

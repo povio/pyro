@@ -3,7 +3,7 @@
 The browser records every request a page makes, so a test asserts on requests instead of waiting for them. Mocks answer, delay, fail, rewrite or hold requests from inside the browser, without a round trip to the test. Both are ordinary steps of a run.
 
 ```ts
-import { check, mock, unmock, release } from '@povio/lightning-panda';
+import { check, mock, unmock, release } from '@povio/pyro';
 ```
 
 ## Checking requests
@@ -128,7 +128,7 @@ await page.run([
 - `method` restricts a rule to one method (case-insensitive).
 - When several rules match, **the most recently added one wins**. Register broad rules first and exceptions after them.
 
-Rules live on the browser context until `unmock` removes them, their `times` are used up, or the context is closed. They therefore stay active for later runs on the same page. Each page from `lp.page()` has its own context, so mocks never leak between tests.
+Rules live on the browser context until `unmock` removes them, their `times` are used up, or the context is closed. They therefore stay active for later runs on the same page. Each page from `pyro.page()` has its own context, so mocks never leak between tests.
 
 ### Options
 
@@ -228,7 +228,7 @@ Mocks sit in front of CDP `Fetch` interception on the same context, so a request
 Mocks are scoped to the browser context of the page. To mock requests before the app's first request, the mock must run before the navigation: take a blank page and put the `mock` before a `goto`:
 
 ```ts
-await using page = await lp.page({ initScripts: ['localStorage.setItem("token", "t")'] });
+await using page = await pyro.page({ initScripts: ['localStorage.setItem("token", "t")'] });
 await page.run([
   mock('http://app.test/api/items', { json: [{ id: 7, title: 'Mocked item' }] }),
   goto('http://app.test/'),

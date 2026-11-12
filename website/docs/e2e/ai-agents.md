@@ -7,10 +7,10 @@ The package ships a guide written for coding agents: `LLM.md`. It states the mod
 `LLM.md` is part of the npm package, next to its README:
 
 ```text
-node_modules/@povio/lightning-panda/LLM.md
+node_modules/@povio/pyro/LLM.md
 ```
 
-It matches the installed version, so an agent reading it from `node_modules` gets the API your project actually has. The builders it describes are in `node_modules/@povio/lightning-panda/src/steps.ts` and pages and runs in `src/index.ts`; agents that read source can check details there.
+It matches the installed version, so an agent reading it from `node_modules` gets the API your project actually has. The builders it describes are in `node_modules/@povio/pyro/src/steps.ts` and pages and runs in `src/index.ts`; agents that read source can check details there.
 
 ## Pointing your agent at it
 
@@ -22,8 +22,8 @@ Claude Code reads `CLAUDE.md` at the repository root and supports `@path` import
 <!-- e2e/CLAUDE.md -->
 # E2E tests
 
-Tests in this directory use @povio/lightning-panda's native driver.
-Read and follow @../node_modules/@povio/lightning-panda/LLM.md before writing or changing a test.
+Tests in this directory use @povio/pyro's native driver.
+Read and follow @../node_modules/@povio/pyro/LLM.md before writing or changing a test.
 ```
 
 ### Cursor
@@ -32,14 +32,14 @@ Add a project rule that applies to your test files and references the guide:
 
 ```markdown
 ---
-description: Writing E2E tests with @povio/lightning-panda
+description: Writing E2E tests with @povio/pyro
 globs: e2e/**/*.test.ts
 alwaysApply: false
 ---
-Before writing or changing a test, read node_modules/@povio/lightning-panda/LLM.md and follow it.
+Before writing or changing a test, read node_modules/@povio/pyro/LLM.md and follow it.
 ```
 
-Save it as `.cursor/rules/lightning-panda.mdc`.
+Save it as `.cursor/rules/pyro.mdc`.
 
 ### Codex and other agents
 
@@ -48,8 +48,8 @@ Agents that read `AGENTS.md` (Codex and others) take the same instruction:
 ```markdown
 ## E2E tests
 
-Tests under e2e/ use @povio/lightning-panda. Before writing or changing one,
-read node_modules/@povio/lightning-panda/LLM.md and follow it.
+Tests under e2e/ use @povio/pyro. Before writing or changing one,
+read node_modules/@povio/pyro/LLM.md and follow it.
 ```
 
 For an agent without file access, paste the contents of `LLM.md` into its context.
@@ -59,11 +59,11 @@ For an agent without file access, paste the contents of `LLM.md` into its contex
 If you prefer a short project rule over the whole guide, or want to add your project's specifics on top of it, this summary follows `LLM.md`:
 
 ```markdown
-## E2E tests (@povio/lightning-panda)
+## E2E tests (@povio/pyro)
 
 - A test seeds its data through the API, then makes ONE `page.run([...])`.
   Split into several runs only when plain code must run between them.
-- Pages come from profiles: `await using page = await lp.page({ as: 'employee', route: '/path' })`.
+- Pages come from profiles: `await using page = await pyro.page({ as: 'employee', route: '/path' })`.
   One profile per kind of user; sessions go in the profile's `localStorage`, never through the login UI.
 - Locators: role + name first (`button('Save')`, `dialog().button('OK')`), then `label`,
   `placeholder`, `text`, then `testId`, then `css`. Strings are case-insensitive substrings;
@@ -86,7 +86,7 @@ These are the mistakes agents make most often with a native driver. `LLM.md` lis
 - **No one-run-per-step.** It costs a round trip per step, and request checks see only their own run.
 - **No shared pages.** Take a new page per test with `await using`.
 - **No raised timeouts to make a test pass.** A timeout means the condition never held.
-- **No rewriting of working Playwright suites.** To move a Playwright suite, change the imports to `@povio/lightning-panda/playwright` and keep the code. Rewrite into `page.run` only the tests whose speed matters.
+- **No rewriting of working Playwright suites.** To move a Playwright suite, change the imports to `@povio/pyro/wright` and keep the code. Rewrite into `page.run` only the tests whose speed matters.
 
 ## Reviewing what an agent wrote
 
@@ -98,6 +98,6 @@ A quick review catches most problems:
 4. No `evaluate` doing what an action or a check should do.
 5. `await using` on every page.
 
-Then run the test, and run it under load (for example `lightningpanda e2e -j` at twice your core count) to shake out races that a quiet machine hides.
+Then run the test, and run it under load (for example `pyro e2e -j` at twice your core count) to shake out races that a quiet machine hides.
 
 See also [Porting from Playwright](/e2e/porting) for the mapping an agent uses when it ports a test, and [Debugging failures](/e2e/debugging) for the error messages it will meet.

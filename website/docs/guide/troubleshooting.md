@@ -4,48 +4,48 @@ Common errors, what they mean, and how to fix them. For failing test steps in pa
 
 ## The browser does not start
 
-### `Lightningpanda has no bundled browser for <platform>-<arch>`
+### `Pyro has no bundled browser for <platform>-<arch>`
 
-You are on a platform without a bundled browser, such as Windows or Linux on another architecture. Run the browser on a supported machine and connect to it with `Lightningpanda.connect(ws)` or `LIGHTNINGPANDA_WS`, or point `LIGHTNINGPANDA_BIN` at a browser you built. See [Platforms](/guide/platforms).
+You are on a platform without a bundled browser, such as Windows or Linux on another architecture. Run the browser on a supported machine and connect to it with `Pyro.connect(ws)` or `PYRO_WS`, or point `PYRO_BIN` at a browser you built. See [Platforms](/guide/platforms).
 
-### `Missing bundled browser: …/native/<platform>-<arch>/lightningpanda`
+### `Missing bundled browser: …/native/<platform>-<arch>/pyro`
 
-The package is installed but its binary is missing. This happens when a tool prunes "unneeded" files from `node_modules`, or when the package was copied without `native/`. Reinstall `@povio/lightning-panda`, or set `LIGHTNINGPANDA_BIN`.
+The package is installed but its binary is missing. This happens when a tool prunes "unneeded" files from `node_modules`, or when the package was copied without `native/`. Reinstall `@povio/pyro`, or set `PYRO_BIN`.
 
-### `lightningpanda serve did not start: …`
+### `pyro serve did not start: …`
 
-`Lightningpanda.launch()` could not start the server or reach it. The message carries the cause. Run the binary yourself to see its output:
+`Pyro.launch()` could not start the server or reach it. The message carries the cause. Run the binary yourself to see its output:
 
 ```sh
-bunx lightningpanda version
-bunx lightningpanda serve --port 9222
+bunx pyro version
+bunx pyro serve --port 9222
 ```
 
 On Linux, an error such as `version 'GLIBC_2.39' not found` means the system's glibc is too old. Use Ubuntu 24.04, Debian 13 or newer. An error about `libfontconfig.so.1` means fontconfig is missing: install `libfontconfig1` (Debian, Ubuntu).
 
-### `lightningpanda test: needs Bun (https://bun.sh) on PATH`
+### `pyro run: needs Bun (https://bun.sh) on PATH`
 
-`lightningpanda test` and `lightningpanda e2e` run on Bun. Install Bun, or on CI add `oven-sh/setup-bun`. The client library itself works under Node 22+.
+`pyro run` and `pyro e2e` run on Bun. Install Bun, or on CI add `oven-sh/setup-bun`. The client library itself works under Node 22+.
 
 ### `Address already in use`
 
-Another process listens on the port. `lightningpanda serve` defaults to 9222, which Chrome's remote debugging also uses. Pick another `--port`. `Lightningpanda.launch()` always picks a free port, so this only affects servers you start yourself.
+Another process listens on the port. `pyro serve` defaults to 9222, which Chrome's remote debugging also uses. Pick another `--port`. `Pyro.launch()` always picks a free port, so this only affects servers you start yourself.
 
 ## Fork mode
 
-### `lightningpanda serve: --fork needs the patched JavaScriptCore`
+### `pyro serve: --fork needs the patched JavaScriptCore`
 
 The binary has no fork mode. The Intel macOS build uses the system JavaScriptCore and cannot fork. Check with:
 
 ```sh
-bunx lightningpanda version   # look for fork: true
+bunx pyro version   # look for fork: true
 ```
 
-On an Intel Mac, drop `--fork` and use [profiles](/guide/profiles) with several connections. `lightningpanda e2e` falls back by itself and prints `has no fork mode; every page boots its profile`.
+On an Intel Mac, drop `--fork` and use [profiles](/guide/profiles) with several connections. `pyro e2e` falls back by itself and prints `has no fork mode; every page boots its profile`.
 
-### `no profile <name>: adopting a profile needs lightningpanda serve --fork`
+### `no profile <name>: adopting a profile needs pyro serve --fork`
 
-`lp.adopt(name)`, or `lp.page({ as })` for a name this client never declared, only works against a fork-mode server, where profiles are shared between clients. Against a thread-mode server, declare the profile in each client with `lp.profile()`.
+`pyro.adopt(name)`, or `pyro.page({ as })` for a name this client never declared, only works against a fork-mode server, where profiles are shared between clients. Against a thread-mode server, declare the profile in each client with `pyro.profile()`.
 
 ### A profile definition is refused
 
@@ -56,15 +56,15 @@ In fork mode, profile names are shared by every client of the server. Registerin
 If everything works but JavaScript-heavy pages are many times slower than expected, check that the binary still has its JIT entitlement:
 
 ```sh
-codesign -d --entitlements - node_modules/@povio/lightning-panda/native/darwin-arm64/lightningpanda
-# Intel Macs: native/darwin-x64/lightningpanda
+codesign -d --entitlements - node_modules/@povio/pyro/native/darwin-arm64/pyro
+# Intel Macs: native/darwin-x64/pyro
 ```
 
 Without `com.apple.security.cs.allow-jit`, JavaScriptCore runs only its interpreter. This happens when a binary was re-signed or stripped. See [Platforms](/guide/platforms#the-jit-entitlement-on-macos) to restore it.
 
 Other causes of slow tests:
 
-- **Pages boot for every test.** `lp.stats.fresh` grows. Declare a [profile](/guide/profiles), raise `pool`, or open more `connections`.
+- **Pages boot for every test.** `pyro.stats.fresh` grows. Declare a [profile](/guide/profiles), raise `pool`, or open more `connections`.
 - **A step waits the full settle second.** An action started work that never finishes (polling with a short `setTimeout`, a long-lived request). Add `idle({ timeout: 2000 })` after it and read `pending`, then use `{ settle: false }` on the action. See [Settling](/guide/settling).
 - **The dev server is slow.** Serve a production build with `--static`. See [Serving a build](/e2e/static).
 
@@ -94,15 +94,15 @@ A page that works in Chrome throws `ReferenceError: X is not defined`, or a feat
 
 - Feature-detect in the app and fall back, as you would for an older browser.
 - Stub the API with an init script (`initScripts` in a profile, `page.addInitScript`) when the test does not depend on it.
-- Open an issue on the [repository](https://github.com/povio/lightningpanda) with the API and the page that needs it.
+- Open an issue on the [repository](https://github.com/povio/pyro) with the API and the page that needs it.
 
-CDP commands that are not implemented return an explicit error (`… is not supported by lightningpanda`) rather than a fake success. See [CDP coverage](/reference/cdp).
+CDP commands that are not implemented return an explicit error (`… is not supported by pyro`) rather than a fake success. See [CDP coverage](/reference/cdp).
 
 ## Screenshots and PDFs
 
 ### Every screenshot fails against my baselines
 
-Baselines taken with Chromium never match: pixels come from Pyro's renderer. Regenerate them with Pyro (`LP_UPDATE_SNAPSHOTS=1`, `bun test -u`, or `lightningpanda test -u`). See [Rendering](/guide/rendering).
+Baselines taken with Chromium never match: pixels come from Pyro's renderer. Regenerate them with Pyro (`PYRO_UPDATE_SNAPSHOTS=1`, `bun test -u`, or `pyro run -u`). See [Rendering](/guide/rendering).
 
 ### Screenshots differ between my machine and CI
 
@@ -127,15 +127,15 @@ The page prints with its current emulated media, `screen` by default. Emulate `p
 The server accepts 16 connections at a time by default; more wait in the kernel's backlog until one closes. In fork mode every page is a connection. Raise the limit:
 
 ```sh
-lightningpanda serve --fork --cdp-max-connections 64
+pyro serve --fork --cdp-max-connections 64
 ```
 
-`lightningpanda e2e` sets it to at least 64 (or four times the concurrency plus 8) unless you pass your own.
+`pyro e2e` sets it to at least 64 (or four times the concurrency plus 8) unless you pass your own.
 
 ### A browser keeps running after tests
 
-`Lightningpanda.launch()` tells the server to exit with the launching process, however it ends. A server you started yourself with `lightningpanda serve` runs until you stop it. To list running browsers without printing their arguments:
+`Pyro.launch()` tells the server to exit with the launching process, however it ends. A server you started yourself with `pyro serve` runs until you stop it. To list running browsers without printing their arguments:
 
 ```sh
-pgrep -x lightningpanda
+pgrep -x pyro
 ```

@@ -12,15 +12,15 @@ No. JavaScript runs on JavaScriptCore, the engine in Safari. The project forbids
 
 ## What User-Agent do pages see?
 
-`Mozilla/5.0 (compatible; lightningpanda/<version>)`, in `navigator.userAgent` and in request headers. Override it per context (Playwright's `userAgent` option) or per page (`Emulation.setUserAgentOverride`) if a site serves different content to unknown browsers. Google Fonts is one such site; see [Rendering](/guide/rendering#fonts).
+`Mozilla/5.0 (compatible; pyro/<version>)`, in `navigator.userAgent` and in request headers. Override it per context (Playwright's `userAgent` option) or per page (`Emulation.setUserAgentOverride`) if a site serves different content to unknown browsers. Google Fonts is one such site; see [Rendering](/guide/rendering#fonts).
 
 ## Do I need Playwright installed?
 
-No. `@povio/lightning-panda/playwright` implements Playwright's API itself, including the test runner and `expect`. Replace the imports and remove Playwright from your dependencies. See [Migrating a suite](/playwright/migration).
+No. `@povio/pyro/wright` implements Playwright's API itself, including the test runner and `expect`. Replace the imports and remove Playwright from your dependencies. See [Migrating a suite](/playwright/migration).
 
 ## Can I use stock Playwright with it?
 
-Yes. `chromium.connectOverCDP('ws://127.0.0.1:9222/')` from the real `playwright` package works against `lightningpanda serve`. It is slower than the Playwright module, because stock Playwright sends many CDP commands per action and polls from the client: the project measured 34 ms per test for stock Playwright against 2.75 ms for the native driver on the same flow.
+Yes. `chromium.connectOverCDP('ws://127.0.0.1:9222/')` from the real `playwright` package works against `pyro serve`. It is slower than the Playwright module, because stock Playwright sends many CDP commands per action and polls from the client: the project measured 34 ms per test for stock Playwright against 2.75 ms for the native driver on the same flow.
 
 ## Can I use Puppeteer?
 
@@ -28,7 +28,7 @@ Basic flows work: `puppeteer.connect({ browserWSEndpoint: 'ws://127.0.0.1:9222/'
 
 ## Does it work on Windows?
 
-The browser does not. Run it on macOS or Linux (a Linux VM or WSL 2 with glibc 2.39+ works) and connect from Windows with `Lightningpanda.connect()` or `LIGHTNINGPANDA_WS`. See [Platforms](/guide/platforms#windows).
+The browser does not. Run it on macOS or Linux (a Linux VM or WSL 2 with glibc 2.39+ works) and connect from Windows with `Pyro.connect()` or `PYRO_WS`. See [Platforms](/guide/platforms#windows).
 
 ## Does it work in CI?
 
@@ -40,11 +40,11 @@ No. Pyro has no window and no GPU. To see a page, take a screenshot (`Page.captu
 
 ## Is there a trace viewer, video recording or HTML report?
 
-No. The Playwright module accepts the `trace`, `video` and `screenshot` options so existing configs load, but records nothing. `lightningpanda test` reports with `list`, `line` or `dot`. `lightningpanda e2e` writes JUnit XML (`--junit`). For failures, the native `RunError` names the failing step and why it was waiting, and every run reply lists the requests the page made. See [Debugging failures](/e2e/debugging).
+No. The Playwright module accepts the `trace`, `video` and `screenshot` options so existing configs load, but records nothing. `pyro run` reports with `list`, `line` or `dot`. `pyro e2e` writes JUnit XML (`--junit`). For failures, the native `RunError` names the failing step and why it was waiting, and every run reply lists the requests the page made. See [Debugging failures](/e2e/debugging).
 
 ## Can I shard a suite across machines?
 
-With `lightningpanda e2e`, yes: `--shard i/n` splits files by recorded durations (`--timings`). `lightningpanda test` (the Playwright runner) has no sharding. See [Suite runner](/e2e/runner).
+With `pyro e2e`, yes: `--shard i/n` splits files by recorded durations (`--timings`). `pyro run` (the Playwright runner) has no sharding. See [Suite runner](/e2e/runner).
 
 ## Why does my spinner assertion fail?
 
@@ -72,7 +72,7 @@ It depends on your app, since every booted page is a full copy of it. On a small
 
 ## Why is fork mode not available on my Mac?
 
-Fork mode needs the patched JavaScriptCore, which is bundled for Apple silicon and Linux only. The Intel macOS build uses macOS's own JavaScriptCore. `bunx lightningpanda version` shows `fork: true` or `fork: false`. See [Fork mode](/guide/fork-mode#platform-availability).
+Fork mode needs the patched JavaScriptCore, which is bundled for Apple silicon and Linux only. The Intel macOS build uses macOS's own JavaScriptCore. `bunx pyro version` shows `fork: true` or `fork: false`. See [Fork mode](/guide/fork-mode#platform-availability).
 
 ## How is it related to Lightpanda?
 
@@ -88,4 +88,4 @@ The package, including the TypeScript client, is licensed under AGPL-3.0-only, a
 
 ## Can AI coding agents write tests for it?
 
-Yes. The package ships `LLM.md`, a complete guide for coding agents writing native tests. Point your agent at `node_modules/@povio/lightning-panda/LLM.md`. See [Writing tests with AI agents](/e2e/ai-agents).
+Yes. The package ships `LLM.md`, a complete guide for coding agents writing native tests. Point your agent at `node_modules/@povio/pyro/LLM.md`. See [Writing tests with AI agents](/e2e/ai-agents).

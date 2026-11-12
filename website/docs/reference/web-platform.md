@@ -131,7 +131,7 @@ Styles are computed by Stylo (Firefox's style engine) and laid out by Blitz and 
 | HTTP cache | Yes | Private in-memory cache per context (RFC 9111 subset, Fetch cache modes). Controlled by CDP `Network.setCacheDisabled` and `Network.clearBrowserCache`. |
 | Authentication | Partial | Opt-in Basic challenges for servers and proxies; no credential cache or auth UI. |
 | Proxies | Partial | HTTP forward proxy per context or `serve --proxy` (CONNECT for https). SOCKS and `https://` proxies are refused. |
-| `file:` URLs | Yes | Navigations and the subresources of `file:` documents; not reachable from http(s) pages or through fetch/XHR. `LIGHTNINGPANDA_FILE_URLS=0` turns them off. |
+| `file:` URLs | Yes | Navigations and the subresources of `file:` documents; not reachable from http(s) pages or through fetch/XHR. `PYRO_FILE_URLS=0` turns them off. |
 | `blob:` and `data:` URLs | Yes | `blob:` loads through fetch/XHR and as script, stylesheet, image and iframe source. |
 | URL, URLSearchParams | Yes | Current WHATWG URL Standard; every case of WPT `urltestdata.json`, `setters_tests.json` and `toascii.json` passes. `URLPattern` is undefined. |
 | Encoding | Yes | `TextEncoder`/`TextDecoder` (streaming), legacy encodings for forms. |
@@ -206,7 +206,7 @@ All storage is in memory: nothing is written to disk, and a new browser context 
 
 | Area | Default | Notes |
 | --- | --- | --- |
-| User agent | `Mozilla/5.0 (compatible; lightningpanda/<version>)` | Override per page through CDP `Emulation.setUserAgentOverride` (Playwright `userAgent`); `serve` has no user-agent flag. `navigator.userAgentData` and low-entropy `Sec-CH-UA` headers follow the override's metadata. Some sites serve different assets to this UA than to Chrome's. |
+| User agent | `Mozilla/5.0 (compatible; pyro/<version>)` | Override per page through CDP `Emulation.setUserAgentOverride` (Playwright `userAgent`); `serve` has no user-agent flag. `navigator.userAgentData` and low-entropy `Sec-CH-UA` headers follow the override's metadata. Some sites serve different assets to this UA than to Chrome's. |
 | Viewport | 1280x720 at DPR 1 over CDP (observed with the SDK on 0.0.33) | Set per page through CDP `Emulation.setDeviceMetricsOverride` or the SDK/Playwright `viewport`. A size change fires `resize`. |
 | Locale | Process locale | `navigator.language` and `Accept-Language` follow the per-page locale; `Intl` and `Date` keep the process locale. |
 | Timezone | Process timezone | One timezone per connection: a different zone in a second context of the same connection fails. |

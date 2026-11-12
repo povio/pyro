@@ -16,7 +16,7 @@ RunError: step 2 (request {"method":"POST","path":"/api/items","status":200}): t
 | `last match was {...}` | **Why it was still waiting**: the reason from the last attempt |
 
 ```ts
-import { RunError } from '@povio/lightning-panda';
+import { RunError } from '@povio/pyro';
 
 try {
   await page.run(steps);
@@ -26,7 +26,7 @@ try {
 }
 ```
 
-When the failure happens in a step that `lp.page({ route, url })` added in front of yours, the message starts with `opening the page (...)` instead, and `error.step` is negative:
+When the failure happens in a step that `pyro.page({ route, url })` added in front of yours, the message starts with `opening the page (...)` instead, and `error.step` is negative:
 
 ```text
 opening the page ({"goto":{"url":"http://127.0.0.1:1/","waitUntil":"load"}}) (goto http://127.0.0.1:1/): the navigation failed before its document loaded
@@ -108,12 +108,12 @@ Errors from the SDK itself, before anything reaches the browser:
 
 | Message | Cause |
 |---|---|
-| `no profile X: declare it with lp.profile()` | `lp.page({ as: 'X' })` for an undeclared profile |
+| `no profile X: declare it with pyro.profile()` | `pyro.page({ as: 'X' })` for an undeclared profile |
 | `filter before first() / last() / nth()` | A filter chained after a pick |
 | `read(as, 'css', property) needs the property` | `read(..., 'css')` without the property |
 | `screenshot name '...': use letters, digits, ...` | An invalid screenshot name |
-| `no booted page for X after N ms` | `lp.warm()` timed out |
-| `lightningpanda serve did not start: ...` | `Lightningpanda.launch()` could not start the server within 15 s |
+| `no booted page for X after N ms` | `pyro.warm()` timed out |
+| `pyro serve did not start: ...` | `Pyro.launch()` could not start the server within 15 s |
 | `setup and base need serve --fork` | Fork-only profile options on a plain server |
 
 ## Timeouts
@@ -167,11 +167,11 @@ Other ways to look:
 
 ### Console output
 
-The server does not print the page's console. To see it, subscribe to `Runtime.consoleAPICalled` on the CDP connection and enable the `Runtime` domain. On a server without fork mode, the page lives on `lp.cdp`:
+The server does not print the page's console. To see it, subscribe to `Runtime.consoleAPICalled` on the CDP connection and enable the `Runtime` domain. On a server without fork mode, the page lives on `pyro.cdp`:
 
 ```ts
-await using page = await lp.page({ url });
-lp.cdp.on('Runtime.consoleAPICalled', (p, sessionId) => {
+await using page = await pyro.page({ url });
+pyro.cdp.on('Runtime.consoleAPICalled', (p, sessionId) => {
   if (sessionId === page.sessionId) console.log('console:', p.type, p.args.map((a: any) => a.value).join(' '));
 });
 await page.send('Runtime.enable');
@@ -181,13 +181,13 @@ Messages logged before `Runtime.enable` are delivered when it is enabled. In for
 
 ## Server logs
 
-`lightningpanda serve --log-level <debug|info|warn|error|fatal>` (default `info`) controls the server's own messages on standard error: at `info` it prints what `--static` serves, what `--local-storage` seeds, which pages `--prepare` boots, and the listening address. Errors such as a failed fork-mode profile `setup` are printed there too:
+`pyro serve --log-level <debug|info|warn|error|fatal>` (default `info`) controls the server's own messages on standard error: at `info` it prints what `--static` serves, what `--local-storage` seeds, which pages `--prepare` boots, and the listening address. Errors such as a failed fork-mode profile `setup` are printed there too:
 
 ```text
-lightningpanda: template: setup of profile 2: step 0 (expect Visible {"text":"missing"}): ...
+pyro: template: setup of profile 2: step 0 (expect Visible {"text":"missing"}): ...
 ```
 
-`Lightningpanda.launch()` passes the server's standard error through to your test process, so these lines appear in the test output. Keep them visible in CI. The log level does not add page console output or per-request logs.
+`Pyro.launch()` passes the server's standard error through to your test process, so these lines appear in the test output. Keep them visible in CI. The log level does not add page console output or per-request logs.
 
 ## A checklist
 

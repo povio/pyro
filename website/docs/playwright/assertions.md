@@ -1,9 +1,9 @@
 # Assertions (expect)
 
-`expect` from `@povio/lightning-panda/playwright` has Playwright's API. Web-first matchers on locators, pages and API responses retry until they pass or time out. Every other matcher is Bun's, which follows Jest as Playwright's do. `.not`, `.soft`, `.poll`, `.configure`, `.extend`, `toPass` and the asymmetric matchers work as in Playwright.
+`expect` from `@povio/pyro/wright` has Playwright's API. Web-first matchers on locators, pages and API responses retry until they pass or time out. Every other matcher is Bun's, which follows Jest as Playwright's do. `.not`, `.soft`, `.poll`, `.configure`, `.extend`, `toPass` and the asymmetric matchers work as in Playwright.
 
 ```ts
-import { test, expect } from '@povio/lightning-panda/playwright';
+import { test, expect } from '@povio/pyro/wright';
 
 test('cart', async ({ page }) => {
   await page.goto('/cart');
@@ -159,7 +159,7 @@ Takes `timeout`, `soft` and `message`.
 ## expect.extend
 
 ```ts
-import { expect as base, type Locator } from '@povio/lightning-panda/playwright';
+import { expect as base, type Locator } from '@povio/pyro/wright';
 
 export const expect = base.extend({
   async toHaveAmount(locator: Locator, expected: number) {

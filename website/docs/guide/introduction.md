@@ -2,10 +2,10 @@
 
 Pyro is a headless browser written in Rust. It runs JavaScript on JavaScriptCore, the engine behind Safari, and never uses V8. Clients drive it over the Chrome DevTools Protocol (CDP). It is built for one job above all others: running browser end-to-end tests quickly and with little memory.
 
-It ships as one npm package, `@povio/lightning-panda`. The package holds the browser binaries for macOS and Linux, the `lightningpanda` CLI, a typed client, a Playwright-compatible test API and a suite runner. You do not need a Rust toolchain, Chrome or Playwright to use it.
+It ships as one npm package, `@povio/pyro`. The package holds the browser binaries for macOS and Linux, the `pyro` CLI, a typed client, a Playwright-compatible test API and a suite runner. You do not need a Rust toolchain, Chrome or Playwright to use it.
 
-::: info Names in code
-Pyro is the product name. The package, command and APIs keep their current names: the npm package `@povio/lightning-panda`, the `lightningpanda` command, the `Lightningpanda` class, the `Lightningpanda.*` CDP domain and the `LIGHTNINGPANDA_*` environment variables. Use those names in code and scripts.
+::: info Formerly Lightningpanda
+Pyro was called Lightningpanda up to version 0.0.33, published as `@povio/lightning-panda` with the `lightningpanda` command. From the next release the package is `@povio/pyro`; every name moved with it (class `Pyro`, `PYRO_*` environment variables, the `Pyro.*` CDP domain, `@povio/pyro/wright` and `pyro run` for Playwright tests). The old package keeps its old names. See [Versions](/reference/versions#renamed-from-lightningpanda).
 :::
 
 ## Who it is for
@@ -18,9 +18,9 @@ Pyro is the product name. The package, command and APIs keep their current names
 
 | Path | What you write | Start here |
 | --- | --- | --- |
-| Playwright drop-in | Your existing Playwright tests. Replace `@playwright/test` and `playwright` imports with `@povio/lightning-panda/playwright` and run `lightningpanda test`. | [Coming from Playwright](/playwright/overview) |
+| Playwright drop-in | Your existing Playwright tests. Replace `@playwright/test` and `playwright` imports with `@povio/pyro/wright` and run `pyro run`. | [Coming from Playwright](/playwright/overview) |
 | Native fast E2E | Tests that send one `page.run([...steps])` per scenario. The browser locates, acts, waits and checks on its own thread and replies once. | [Fastest E2E tests](/e2e/overview) |
-| Scraping and automation | Scripts that use the native client, the `lightningpanda fetch` CLI, Puppeteer, or raw CDP. | [Scraping and automation](/scraping/overview) |
+| Scraping and automation | Scripts that use the native client, the `pyro fetch` CLI, Puppeteer, or raw CDP. | [Scraping and automation](/scraping/overview) |
 
 The three paths share one browser and can be mixed in the same project. [Choosing an API](/guide/choosing-an-api) compares them in detail.
 
@@ -48,7 +48,7 @@ Pyro is young and moves quickly. Versions are `0.0.x`; release candidates are pu
 
 ## Origins and license
 
-Pyro is a Rust rewrite of [Lightpanda](https://github.com/lightpanda-io/browser), a headless browser written in Zig on V8. It is a derivative work and keeps Lightpanda's license, **AGPL-3.0-only**. The patched JavaScriptCore it links is LGPL, and its source is published with each GitHub release. The project is built by [Povio](https://github.com/povio/lightningpanda).
+Pyro is a Rust rewrite of [Lightpanda](https://github.com/lightpanda-io/browser), a headless browser written in Zig on V8. It is a derivative work and keeps Lightpanda's license, **AGPL-3.0-only**. The patched JavaScriptCore it links is LGPL, and its source is published with each GitHub release. The project is built by [Povio](https://github.com/povio/pyro).
 
 ## Next steps
 

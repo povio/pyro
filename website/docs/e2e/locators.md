@@ -3,7 +3,7 @@
 A locator describes which element a step acts on or checks. In the native driver a locator is plain data: the builders only produce a JSON description, and the browser resolves it against the live DOM each time the step is tried. Build locators once and reuse them freely.
 
 ```ts
-import { button, dialog, row, label, css, text } from '@povio/lightning-panda';
+import { button, dialog, row, label, css, text } from '@povio/pyro';
 
 const confirm = dialog().hasText('will be closed').button('Close Position', { exact: true });
 const editExport = row('Export').button('Edit');
@@ -11,7 +11,7 @@ const editExport = row('Export').button('Edit');
 
 ## Top-level builders
 
-All are exported from `@povio/lightning-panda`.
+All are exported from `@povio/pyro`.
 
 | Builder | Matches |
 |---|---|
@@ -161,4 +161,4 @@ The wire format has a few locator fields that the native builders do not produce
 | `includeHidden` | Lets a role locator match hidden elements. The accessible name of a `display: none` element can be empty, so match such elements by role or test id rather than by name |
 | `of` | Another locator's matches as the base set, so a filter or a pick can follow a pick: `new Locator({ of: { role: 'button', nth: 0 }, filter: { hasText: 'Bold' } })` |
 
-A `Locator` built this way has every method of the builders' locators (`.click()`, `.read()`, chaining). See [SDK: locators and steps](/reference/steps) and [LP.run wire format](/reference/lp-run).
+A `Locator` built this way has every method of the builders' locators (`.click()`, `.read()`, chaining). See [SDK: locators and steps](/reference/steps) and [Pyro.run wire format](/reference/pyro-run).

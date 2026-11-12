@@ -1,11 +1,11 @@
 # Running as a service
 
-For scraping around the clock, run `lightningpanda serve` as a long-lived service and connect your jobs to it, instead of launching a browser per script. This page covers the flags that matter for a service, a systemd unit and a Docker image for Ubuntu 24.04, health checks, logging, and how to keep the CDP port safe.
+For scraping around the clock, run `pyro serve` as a long-lived service and connect your jobs to it, instead of launching a browser per script. This page covers the flags that matter for a service, a systemd unit and a Docker image for Ubuntu 24.04, health checks, logging, and how to keep the CDP port safe.
 
 ## The server
 
 ```sh
-lightningpanda serve --host 127.0.0.1 --port 9222 --cdp-max-connections 32
+pyro serve --host 127.0.0.1 --port 9222 --cdp-max-connections 32
 ```
 
 | Flag | Default | Notes |
@@ -19,7 +19,7 @@ lightningpanda serve --host 127.0.0.1 --port 9222 --cdp-max-connections 32
 | `--log-level <LEVEL>` | `info` | `debug`, `info`, `warn`, `error`, `fatal`. |
 | `--parent-pid <PID>` | | Exit when that process exits. The SDK's `launch()` sets it; a service does not need it. |
 
-Identity and behaviour flags apply to every connection: `--proxy`, `--proxy-bypass` ([Proxies, user agents, headers](/scraping/identity)), `--local-storage` ([Stored profiles](/scraping/profiles#the-same-localstorage-for-every-context-serve-local-storage)), `--fork` and `--prepare` ([Profiles booted once](/scraping/fork-profiles)), `--hyphen-digit-breaks` and `--render-prewarm` ([Screenshots and PDFs](/scraping/pdf)). `lightningpanda serve --help` lists them all, and [serve options](/reference/serve) explains each. Several also read an environment variable, for launchers that cannot pass flags: `LIGHTNINGPANDA_FORK=1`, `LIGHTNINGPANDA_LOCAL_STORAGE`, `LIGHTNINGPANDA_PREPARE`, `LIGHTNINGPANDA_HYPHEN_DIGIT_BREAKS` and others (see [Environment variables](/reference/env)). The proxy and the network flags have no environment variable.
+Identity and behaviour flags apply to every connection: `--proxy`, `--proxy-bypass` ([Proxies, user agents, headers](/scraping/identity)), `--local-storage` ([Stored profiles](/scraping/profiles#the-same-localstorage-for-every-context-serve-local-storage)), `--fork` and `--prepare` ([Profiles booted once](/scraping/fork-profiles)), `--hyphen-digit-breaks` and `--render-prewarm` ([Screenshots and PDFs](/scraping/pdf)). `pyro serve --help` lists them all, and [serve options](/reference/serve) explains each. Several also read an environment variable, for launchers that cannot pass flags: `PYRO_FORK=1`, `PYRO_LOCAL_STORAGE`, `PYRO_PREPARE`, `PYRO_HYPHEN_DIGIT_BREAKS` and others (see [Environment variables](/reference/env)). The proxy and the network flags have no environment variable.
 
 `--experimental-features` and `--load-resources` are accepted for compatibility with Lightpanda's command line and have no effect.
 
@@ -30,14 +30,14 @@ The server stops on `SIGTERM` or `SIGINT`. Closing it closes every connection; c
 The npm package carries the browser for each platform under `native/<platform>/`:
 
 ```
-node_modules/@povio/lightning-panda/native/
-  linux-x64/    lightningpanda, lib/ (patched JavaScriptCore and ICU)
-  linux-arm64/  lightningpanda, lib/
-  darwin-arm64/ lightningpanda, lib/
-  darwin-x64/   lightningpanda
+node_modules/@povio/pyro/native/
+  linux-x64/    pyro, lib/ (patched JavaScriptCore and ICU)
+  linux-arm64/  pyro, lib/
+  darwin-arm64/ pyro, lib/
+  darwin-x64/   pyro
 ```
 
-Keep `lightningpanda` and its `lib/` directory together; the binary finds its libraries next to itself. You can run it directly, without Node.js, or through `npx lightningpanda`, which spawns the same binary and forwards signals to it.
+Keep `pyro` and its `lib/` directory together; the binary finds its libraries next to itself. You can run it directly, without Node.js, or through `npx pyro`, which spawns the same binary and forwards signals to it.
 
 On Linux it needs glibc 2.39 or newer (for example Ubuntu 24.04) and these system libraries: `libstdc++6`, `libatomic1` and `libfontconfig1`, plus some fonts for screenshots and PDFs. It does not need a display server or a GPU. HTTPS uses built-in Mozilla root certificates, so no `ca-certificates` package is needed for the browser itself.
 
@@ -47,26 +47,26 @@ Install the package into a fixed directory and create a system user:
 
 ```sh
 sudo apt-get install -y nodejs npm libatomic1 libfontconfig1 fonts-dejavu-core fonts-liberation
-sudo mkdir -p /opt/lightningpanda && cd /opt/lightningpanda
-sudo npm install --omit=dev @povio/lightning-panda@0.0.33
-sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin lightningpanda
+sudo mkdir -p /opt/pyro && cd /opt/pyro
+sudo npm install --omit=dev @povio/pyro@X.Y.Z
+sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin pyro
 ```
 
 Ubuntu's own Node.js is only needed to run `npm install` here; the service runs the binary directly. (`npm` may warn that the package wants Node.js 22; that applies to the JavaScript API, not to installing the binary.)
 
-`/etc/systemd/system/lightningpanda.service`:
+`/etc/systemd/system/pyro.service`:
 
 ```ini
 [Unit]
-Description=Lightningpanda headless browser (CDP)
+Description=Pyro headless browser (CDP)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=lightningpanda
-Group=lightningpanda
+User=pyro
+Group=pyro
 # linux-arm64 on ARM machines
-ExecStart=/opt/lightningpanda/node_modules/@povio/lightning-panda/native/linux-x64/lightningpanda \
+ExecStart=/opt/pyro/node_modules/@povio/pyro/native/linux-x64/pyro \
   serve --host 127.0.0.1 --port 9222 --cdp-max-connections 32 --log-level info
 Restart=always
 RestartSec=2
@@ -84,7 +84,7 @@ ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 # Writable directory for downloads saved by `download({ saveTo })` steps, if you use them.
-StateDirectory=lightningpanda
+StateDirectory=pyro
 # Do not set MemoryDenyWriteExecute=yes: JavaScriptCore's JIT needs writable, executable memory.
 
 [Install]
@@ -93,8 +93,8 @@ WantedBy=multi-user.target
 
 ```sh
 sudo systemctl daemon-reload
-sudo systemctl enable --now lightningpanda
-journalctl -u lightningpanda -f
+sudo systemctl enable --now pyro
+journalctl -u pyro -f
 ```
 
 `Restart=always` brings the server back after a crash or an out-of-memory kill. Clients must reconnect then: connections, contexts, pages and fork profiles do not survive a restart. Make your jobs reconnect and re-register profiles on failure. Fork mode keeps its template sockets in the temporary directory, which `PrivateTmp=yes` makes private to the service; that is fine.
@@ -109,28 +109,28 @@ A two-stage image: the first stage fetches the npm package, the second is Ubuntu
 # Stage 1: fetch the npm package, which bundles the Linux browsers.
 FROM oven/bun:1 AS fetch
 WORKDIR /pkg
-RUN bun add @povio/lightning-panda@0.0.33
-RUN cp -r "node_modules/@povio/lightning-panda/native/linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')" /lightningpanda
+RUN bun add @povio/pyro@X.Y.Z
+RUN cp -r "node_modules/@povio/pyro/native/linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')" /pyro
 
 # Stage 2: Ubuntu 24.04 with the browser's libraries and some fonts.
 FROM ubuntu:24.04
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libatomic1 libfontconfig1 fonts-dejavu-core fonts-liberation curl \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=fetch /lightningpanda /opt/lightningpanda
-RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin lightningpanda
-USER lightningpanda
+COPY --from=fetch /pyro /opt/pyro
+RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin pyro
+USER pyro
 EXPOSE 9222
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -fsS --max-time 4 http://127.0.0.1:9222/json/version > /dev/null || exit 1
-ENTRYPOINT ["/opt/lightningpanda/lightningpanda", "serve", "--host", "0.0.0.0", "--port", "9222"]
+ENTRYPOINT ["/opt/pyro/pyro", "serve", "--host", "0.0.0.0", "--port", "9222"]
 ```
 
 ```sh
-docker build -t lightningpanda .
-docker run -d --name lightningpanda --restart unless-stopped \
+docker build -t pyro .
+docker run -d --name pyro --restart unless-stopped \
   -p 127.0.0.1:9222:9222 --memory 4g \
-  lightningpanda --advertise-host 127.0.0.1 --cdp-max-connections 32
+  pyro --advertise-host 127.0.0.1 --cdp-max-connections 32
 ```
 
 Arguments after the image name are added to `serve`. This image was built and tested on Linux arm64 (Docker Desktop on Apple silicon): Playwright-library scripts on the host drove it, it printed PDFs with the DejaVu fonts, the health check reported `healthy`, and `--fork` served forked signed-in pages.
@@ -139,7 +139,7 @@ Arguments after the image name are added to `serve`. This image was built and te
 
 ### The `Host` header in container networks
 
-The server answers only requests whose `Host` header is an IP address or `localhost`, to block DNS rebinding attacks. In Docker Compose or Kubernetes, a client that connects to `ws://lightningpanda:9222/` by service name gets `403 Forbidden`. Options:
+The server answers only requests whose `Host` header is an IP address or `localhost`, to block DNS rebinding attacks. In Docker Compose or Kubernetes, a client that connects to `ws://pyro:9222/` by service name gets `403 Forbidden`. Options:
 
 - Resolve the name to an IP in the client and connect to `ws://<ip>:9222/`.
 - Run the scraper and the browser in one pod or network namespace and connect to `127.0.0.1`.
@@ -159,7 +159,7 @@ curl -fsS --max-time 4 http://127.0.0.1:9222/json/version
 - `/json/version` does not start a browser thread. For a deeper check, connect and load a page:
 
   ```ts
-  import { chromium } from '@povio/lightning-panda/playwright';
+  import { chromium } from '@povio/pyro/wright';
 
   const browser = await chromium.connectOverCDP('ws://127.0.0.1:9222/');
   const page = await browser.newPage();
@@ -173,8 +173,8 @@ curl -fsS --max-time 4 http://127.0.0.1:9222/json/version
 The server writes a few lines to stderr: what it serves at startup, the listening address, and errors. For example:
 
 ```
-lightningpanda: localStorage preload for https://app.example.com: 2 entries
-lightningpanda: CDP server listening on ws://127.0.0.1:9222/
+pyro: localStorage preload for https://app.example.com: 2 entries
+pyro: CDP server listening on ws://127.0.0.1:9222/
 ```
 
 In fork mode the template reports failing profile `setup` steps there too. `--log-level warn` drops the startup lines. The server does not log requests, page console output or page errors; collect those in your client (`page.on('console')`, `page.on('pageerror')`, `page.on('requestfailed')`) and log them with the job.

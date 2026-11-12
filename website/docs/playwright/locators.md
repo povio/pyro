@@ -63,7 +63,7 @@ await frame?.getByLabel('Card number').fill('4242 4242 4242 4242');
 ```
 
 - `FrameLocator` has `locator`, every `getBy*`, `frameLocator` (nested frames) and `owner()`. Its deprecated `first()`, `last()` and `nth()` are not implemented and are type errors; narrow the `<iframe>` locator before `contentFrame()` instead.
-- `page.frames()`, `page.frame(nameOrOptions)`, `frame.childFrames()` and `frame.parentFrame()` list child frames. Once listed, a frame's `<iframe>` element carries a `data-lp-frame` attribute, which the frame's locators use to find it. An app that serializes the DOM may see that attribute.
+- `page.frames()`, `page.frame(nameOrOptions)`, `frame.childFrames()` and `frame.parentFrame()` list child frames. Once listed, a frame's `<iframe>` element carries a `data-pyro-frame` attribute, which the frame's locators use to find it. An app that serializes the DOM may see that attribute.
 - `Frame.evaluate`, `content`, `title`, `waitForFunction` and `waitForLoadState` on a child frame run through the `<iframe>` element's window. A cross-origin frame fails with "the frame has no window (cross-origin or detached)".
 
 ## Selector strings

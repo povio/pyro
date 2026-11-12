@@ -1,16 +1,16 @@
 # One-off fetches (CLI)
 
-`lightningpanda fetch` loads one URL, runs the page's scripts, and prints the resulting DOM as HTML. `lightningpanda eval` runs JavaScript in a blank page. Both are single commands with no server and no client library, so they fit shell scripts and cron jobs.
+`pyro fetch` loads one URL, runs the page's scripts, and prints the resulting DOM as HTML. `pyro eval` runs JavaScript in a blank page. Both are single commands with no server and no client library, so they fit shell scripts and cron jobs.
 
 Use them for quick jobs. For sign-in, clicking, proxies, custom headers or many pages, use a script instead: see [Scripting a browser](/scraping/library).
 
 ## `fetch`
 
 ```sh
-lightningpanda fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] URL
+pyro fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] URL
 ```
 
-If you installed the npm package locally, run it as `npx lightningpanda` or `bunx lightningpanda`.
+If you installed the npm package locally, run it as `npx pyro` or `bunx pyro`.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
@@ -32,9 +32,9 @@ How a run goes:
 Without `--wait-ms`, the DOM is printed right at `load`. Data a page fetches after `load` is not there yet. A test page that starts a `fetch` and a 200 ms timer from an inline script:
 
 ```sh
-$ lightningpanda fetch http://127.0.0.1:4500/late | grep -c 'id="fetched"'
+$ pyro fetch http://127.0.0.1:4500/late | grep -c 'id="fetched"'
 0
-$ lightningpanda fetch --wait-ms 1000 http://127.0.0.1:4500/late | grep -c 'id="fetched"'
+$ pyro fetch --wait-ms 1000 http://127.0.0.1:4500/late | grep -c 'id="fetched"'
 1
 ```
 
@@ -55,17 +55,17 @@ The HTML goes to stdout. The page's `console.log` and `console.info` go to stdou
 
 `fetch` uses the browser's defaults and has no other options:
 
-- no proxy, cookies, extra headers or user agent flags (the user agent is `Mozilla/5.0 (compatible; lightningpanda/<version>)`)
+- no proxy, cookies, extra headers or user agent flags (the user agent is `Mozilla/5.0 (compatible; pyro/<version>)`)
 - no way to click, type or wait for a selector
 - no screenshot or PDF output
 - one URL per process
 
-For any of those, start `lightningpanda serve` and drive it from a script.
+For any of those, start `pyro serve` and drive it from a script.
 
 ## `eval`
 
 ```sh
-lightningpanda eval [--timeout-ms N] (-e CODE | FILE | -)
+pyro eval [--timeout-ms N] (-e CODE | FILE | -)
 ```
 
 `eval` runs JavaScript in an `about:blank` page until the event loop is idle. Pass the code with `-e`, as a file path, or on stdin with `-`.
@@ -80,9 +80,9 @@ lightningpanda eval [--timeout-ms N] (-e CODE | FILE | -)
 `console.log` goes to stdout, `console.error` to stderr. Uncaught exceptions and unhandled promise rejections are printed to stderr and make the exit code `1`.
 
 ```sh
-$ lightningpanda eval -e 'console.log(navigator.userAgent)'
-Mozilla/5.0 (compatible; lightningpanda/0.0.33)
-$ echo 'console.log(JSON.stringify({ ok: 1 }))' | lightningpanda eval -
+$ pyro eval -e 'console.log(navigator.userAgent)'
+Mozilla/5.0 (compatible; pyro/X.Y.Z)
+$ echo 'console.log(JSON.stringify({ ok: 1 }))' | pyro eval -
 {"ok":1}
 ```
 
@@ -97,21 +97,21 @@ The `eval` page has no network. `fetch()` rejects with `Page networking is not i
 Extract with [pup](https://github.com/ericchiang/pup) or [htmlq](https://github.com/mgdm/htmlq):
 
 ```sh
-lightningpanda fetch --wait-ms 2000 'http://127.0.0.1:4500/products?page=1' \
+pyro fetch --wait-ms 2000 'http://127.0.0.1:4500/products?page=1' \
   | htmlq --text '.product .name'
 ```
 
 Convert to text or Markdown with [pandoc](https://pandoc.org/):
 
 ```sh
-lightningpanda fetch --wait-ms 2000 https://example.com/article \
+pyro fetch --wait-ms 2000 https://example.com/article \
   | pandoc -f html -t gfm-raw_html -o article.md
 ```
 
 Parse it in Python with BeautifulSoup (`pip install beautifulsoup4`):
 
 ```sh
-lightningpanda fetch --wait-ms 2000 'http://127.0.0.1:4500/products?page=1' \
+pyro fetch --wait-ms 2000 'http://127.0.0.1:4500/products?page=1' \
   | python3 -c 'import sys, bs4; print([li.select_one(".name").text for li in bs4.BeautifulSoup(sys.stdin, "html.parser").select(".product")])'
 ```
 
@@ -127,7 +127,7 @@ A sequential crawl of numbered pages with a polite delay:
 mkdir -p pages
 for page in $(seq 1 5); do
   url="http://127.0.0.1:4500/products?page=$page"
-  if lightningpanda fetch --wait-ms 2000 --timeout-ms 20000 "$url" > "pages/$page.html"; then
+  if pyro fetch --wait-ms 2000 --timeout-ms 20000 "$url" > "pages/$page.html"; then
     echo "ok   $url"
   else
     echo "fail $url (exit $?)" >&2
@@ -143,7 +143,7 @@ A list of URLs, four at a time, with `xargs`:
 # urls.txt: one URL per line
 mkdir -p out
 cat -n urls.txt | xargs -P 4 -L 1 sh -c \
-  'lightningpanda fetch --wait-ms 2000 --timeout-ms 20000 "$1" > "out/$0.html" || { rm -f "out/$0.html"; echo "failed: $1" >&2; }'
+  'pyro fetch --wait-ms 2000 --timeout-ms 20000 "$1" > "out/$0.html" || { rm -f "out/$0.html"; echo "failed: $1" >&2; }'
 ```
 
 `-P 4` runs four browsers at once. Keep the number low for a single site; see [Scraping responsibly](/scraping/overview#scraping-responsibly).
@@ -152,12 +152,12 @@ Retry once on a timeout:
 
 ```sh
 fetch_retry() {
-  lightningpanda fetch --wait-ms 2000 --timeout-ms 20000 "$1" && return
-  [ $? -eq 124 ] && sleep 5 && lightningpanda fetch --wait-ms 2000 --timeout-ms 40000 "$1"
+  pyro fetch --wait-ms 2000 --timeout-ms 20000 "$1" && return
+  [ $? -eq 124 ] && sleep 5 && pyro fetch --wait-ms 2000 --timeout-ms 40000 "$1"
 }
 fetch_retry 'http://127.0.0.1:4500/products?page=1' > page1.html
 ```
 
 ## When to move to a script
 
-A process per URL pays for engine start and the page's boot every time, and it cannot keep cookies between URLs. Move to `lightningpanda serve` and a script when you need sign-in, many pages from one site, cookies, headers, proxies, clicking, or PDFs. [Scripting a browser](/scraping/library) shows the same crawl as a script. For every CLI command and flag, see the [CLI reference](/reference/cli).
+A process per URL pays for engine start and the page's boot every time, and it cannot keep cookies between URLs. Move to `pyro serve` and a script when you need sign-in, many pages from one site, cookies, headers, proxies, clicking, or PDFs. [Scripting a browser](/scraping/library) shows the same crawl as a script. For every CLI command and flag, see the [CLI reference](/reference/cli).

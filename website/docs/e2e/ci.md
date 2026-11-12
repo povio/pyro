@@ -15,7 +15,7 @@ The Linux builds need glibc 2.39 or newer: Ubuntu 24.04 has it, Ubuntu 22.04 doe
 
 ## A complete workflow
 
-This job builds the front end, starts the API in the setup module, serves the build with `--static`, and runs the suite with `lightningpanda e2e`.
+This job builds the front end, starts the API in the setup module, serves the build with `--static`, and runs the suite with `pyro e2e`.
 
 ```yaml
 # .github/workflows/e2e.yml
@@ -40,7 +40,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build                         # your front-end build, e.g. into apps/web/dist
       - name: E2E
-        run: bunx lightningpanda e2e e2e --setup e2e/setup.ts --timeout 30000 --junit junit.xml
+        run: bunx pyro e2e e2e --setup e2e/setup.ts --timeout 30000 --junit junit.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -52,7 +52,7 @@ The setup module starts what the tests need and hands the browser its flags:
 
 ```ts
 // e2e/setup.ts
-import type { Setup } from '@povio/lightning-panda/e2e';
+import type { Setup } from '@povio/pyro/e2e';
 
 type Runtime = { origin: string; api: ReturnType<typeof Bun.spawn> };
 
@@ -121,7 +121,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: >
-          bunx lightningpanda e2e e2e --setup e2e/setup.ts --timeout 30000
+          bunx pyro e2e e2e --setup e2e/setup.ts --timeout 30000
           --shard ${{ matrix.shard }}/4 --timings e2e/timings.json
           --junit junit-${{ matrix.shard }}.xml
       - uses: actions/upload-artifact@v4
@@ -134,7 +134,7 @@ jobs:
 Refresh the timings from a full, unsharded run now and then, and commit the file:
 
 ```sh
-bunx lightningpanda e2e e2e --setup e2e/setup.ts --timings e2e/timings.json --update-timings
+bunx pyro e2e e2e --setup e2e/setup.ts --timings e2e/timings.json --update-timings
 ```
 
 `--update-timings` merges this run's durations into the file. It does not write when `-t` or `--only` filtered tests or when the run stopped early. Files without a recorded duration count as the average, so new files do not break the split.
@@ -169,7 +169,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build
-      - run: bunx lightningpanda e2e e2e/visual --setup e2e/setup.ts -u
+      - run: bunx pyro e2e e2e/visual --setup e2e/setup.ts -u
       - uses: actions/upload-artifact@v4
         with:
           name: linux-baselines
@@ -191,7 +191,7 @@ On a runner without fork mode (`macos-15-intel`), every page boots the profile, 
 
 ## Without the suite runner
 
-With plain `bun test`, launch the server in the test files (`Lightningpanda.launch()`) or share one fork-mode server across `bun test --parallel` workers ([One server, many workers](/e2e/shared-server)). `bun test --reporter=junit --reporter-outfile=junit.xml` writes Bun's own JUnit report. A Playwright-layer suite runs with `lightningpanda test` instead; see [Config and the test runner](/playwright/runner).
+With plain `bun test`, launch the server in the test files (`Pyro.launch()`) or share one fork-mode server across `bun test --parallel` workers ([One server, many workers](/e2e/shared-server)). `bun test --reporter=junit --reporter-outfile=junit.xml` writes Bun's own JUnit report. A Playwright-layer suite runs with `pyro run` instead; see [Config and the test runner](/playwright/runner).
 
 ## Checklist
 

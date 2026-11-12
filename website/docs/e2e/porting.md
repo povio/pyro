@@ -1,28 +1,28 @@
 # Porting from Playwright
 
-You do not have to port anything to run a Playwright suite on Pyro: replace the `playwright` and `@playwright/test` imports with `@povio/lightning-panda/playwright` and run `lightningpanda test` (see [Migrating a suite](/playwright/migration)). Port a test to the native driver when its last milliseconds matter: the hot tests that run on every commit, the long tail of short flows, the ones that dominate a suite's wall time. This page maps Playwright code to native steps and shows complete before and after examples.
+You do not have to port anything to run a Playwright suite on Pyro: replace the `playwright` and `@playwright/test` imports with `@povio/pyro/wright` and run `pyro run` (see [Migrating a suite](/playwright/migration)). Port a test to the native driver when its last milliseconds matter: the hot tests that run on every commit, the long tail of short flows, the ones that dominate a suite's wall time. This page maps Playwright code to native steps and shows complete before and after examples.
 
 ## Where porting pays off
 
-On the TOS close flow (`bench/results/lp-tos-e501cef` and the package README):
+On the TOS close flow (`bench/results/pyro-tos-e501cef` and the package README):
 
 | How the test runs | Per test |
 |---|---:|
 | Stock Playwright over CDP, same browser | 34 to 44 ms |
-| Unchanged Playwright code on `@povio/lightning-panda/playwright` | 14.7 ms |
-| Native, one `LP.run` on a page booted ahead | 6.8 ms |
+| Unchanged Playwright code on `@povio/pyro/wright` | 14.7 ms |
+| Native, one `Pyro.run` on a page booted ahead | 6.8 ms |
 | Native, booted pages over 4 connections | 2.7 ms |
 
-The Playwright layer already runs each awaited call as one `LP.run` command, so locating, actionability and auto-waiting happen in the browser. Porting removes what is left: one round trip per call, the client-side code between calls, the page and app boot per test, and the request waits.
+The Playwright layer already runs each awaited call as one `Pyro.run` command, so locating, actionability and auto-waiting happen in the browser. Porting removes what is left: one round trip per call, the client-side code between calls, the page and app boot per test, and the request waits.
 
 Keep the Playwright API for tests that use what the native driver does not have: HAR replay and recording, `page.clock` beyond advancing time, ARIA snapshots, element and JS handles, coverage, event listeners (`page.on('console')`, `page.on('dialog')`), and `test.step` reporting. Both styles run against the same browser and can live in one repository.
 
 ## Example 1: a form submit
 
-**Before** (Playwright, run with `lightningpanda test`):
+**Before** (Playwright, run with `pyro run`):
 
 ```ts
-import { test, expect } from '@povio/lightning-panda/playwright';
+import { test, expect } from '@povio/pyro/wright';
 
 test('adds a todo', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('token', 'test-token'));
@@ -40,12 +40,12 @@ test('adds a todo', async ({ page }) => {
 
 ```ts
 beforeAll(async () => {
-  lp = await Lightningpanda.launch();
-  await lp.profile('user', { url: `${APP}/`, localStorage: { token: 'test-token' } });
+  pyro = await Pyro.launch();
+  await pyro.profile('user', { url: `${APP}/`, localStorage: { token: 'test-token' } });
 });
 
 test.concurrent('adds a todo', async () => {
-  await using page = await lp.page({ as: 'user' });
+  await using page = await pyro.page({ as: 'user' });
   const r = await page.run([
     label('New todo').fill('Buy milk'),
     button('Add').click(),
@@ -81,12 +81,12 @@ test('closes a position', async ({ page }) => {
 });
 ```
 
-**After**, from `packages/lightning-panda/examples/positions-close.test.ts`:
+**After**, from `packages/pyro/examples/positions-close.test.ts`:
 
 ```ts
 test.concurrent('closes an open Position from the Position overview', async () => {
   const position = await createPosition();                       // seeded through the API
-  await using page = await lp.page({ as: 'employee', route: overview(position.id) });
+  await using page = await pyro.page({ as: 'employee', route: overview(position.id) });
 
   await page.run([
     check(text(position.number)).visible(),
@@ -162,8 +162,8 @@ Native `.text()` compares exact after whitespace normalization; it takes a strin
 
 | Playwright | Native |
 |---|---|
-| `browser.newContext({ storageState })` + `newPage()` + `goto()` | `lp.profile(name, { url, localStorage })` once, then `lp.page({ as, route })` |
-| `page.goto(url)` | `lp.page({ url })` or a `goto(url)` step |
+| `browser.newContext({ storageState })` + `newPage()` + `goto()` | `pyro.profile(name, { url, localStorage })` once, then `pyro.page({ as, route })` |
+| `page.goto(url)` | `pyro.page({ url })` or a `goto(url)` step |
 | `page.reload()` | `reload()` |
 | `page.waitForURL(u)` | `waitForUrl(u)` |
 | `page.waitForLoadState('load')` | `loaded()` |
@@ -175,7 +175,7 @@ Native `.text()` compares exact after whitespace normalization; it takes a strin
 | `route.fetch()` then `fulfill` with a changed body | `mock(url, { patch: { json } })` |
 | `page.unroute(url)` | `unmock(url)` |
 | `page.evaluate(fn)` | `evaluate('expression', 'name')` (a string; promises are awaited) |
-| `page.addInitScript(src)` | profile `initScripts`, `lp.page({ initScripts })`, or `await page.addInitScript(src)` before a `goto`/`reload` |
+| `page.addInitScript(src)` | profile `initScripts`, `pyro.page({ initScripts })`, or `await page.addInitScript(src)` before a `goto`/`reload` |
 | `page.setViewportSize(s)` | `viewport(w, h)` |
 | `page.emulateMedia({ colorScheme })` | `media({ colorScheme })` |
 | `page.waitForEvent('popup')` | `popup('name')`, then `switchTo('name')` |

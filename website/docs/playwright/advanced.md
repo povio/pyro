@@ -193,7 +193,7 @@ await body.dispose();
 `page.$`, `page.$$`, `page.$eval`, `page.$$eval`, `evaluateHandle`, `locator.elementHandle()` / `elementHandles()`, and handles inside `evaluate` arguments all work, in the main frame and in child frames.
 
 - `JSHandle`: `evaluate`, `evaluateHandle`, `jsonValue`, `getProperty`, `getProperties`, `asElement`, `dispose` (also `await using`).
-- `ElementHandle` actions (`click`, `fill`, `check`, `press`, `selectOption`, `setInputFiles`, `hover`, `tap`, `focus`, `dispatchEvent`, `screenshot`, ...) run as native actions on the element. For the length of the action the element carries a `data-lp-handle` attribute.
+- `ElementHandle` actions (`click`, `fill`, `check`, `press`, `selectOption`, `setInputFiles`, `hover`, `tap`, `focus`, `dispatchEvent`, `screenshot`, ...) run as native actions on the element. For the length of the action the element carries a `data-pyro-handle` attribute.
 - `ElementHandle.$` and `$$` take CSS only.
 - `waitForElementState('stable')` returns at once.
 - `ElementHandle.waitForSelector` is not implemented.

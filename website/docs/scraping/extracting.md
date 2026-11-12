@@ -2,14 +2,14 @@
 
 Once a page has loaded, there are several ways to get data out of it: run JavaScript in the page, read through locators, take a compact accessibility snapshot, or skip the DOM and capture the JSON the page fetched. This page shows each, with the waiting, pagination, scrolling and download patterns around them.
 
-All examples run against a local test site at `http://127.0.0.1:4500` and were checked with `@povio/lightning-panda` 0.0.33. Replace the URLs and selectors with your own.
+All examples run against a local test site at `http://127.0.0.1:4500` and were checked with version 0.0.33. Replace the URLs and selectors with your own.
 
 ## Run JavaScript in the page
 
 The most flexible way: one function that walks the DOM and returns plain data. It runs in the page, so a list of 1,000 rows costs one round trip, not 1,000.
 
 ```ts
-import { chromium } from '@povio/lightning-panda/playwright';
+import { chromium } from '@povio/pyro/wright';
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
@@ -52,10 +52,10 @@ A method that reads one element (`textContent`, `getAttribute`, `innerText`) on 
 With the native SDK, reads are steps of a run, and all values come back in one reply:
 
 ```ts
-import { Lightningpanda, css, evaluate, goto, heading, link } from '@povio/lightning-panda';
+import { Pyro, css, evaluate, goto, heading, link } from '@povio/pyro';
 
-const lp = await Lightningpanda.launch();
-await using page = await lp.page();
+const pyro = await Pyro.launch();
+await using page = await pyro.page();
 const r = await page.run([
   goto('http://127.0.0.1:4500/products?page=1'),
   heading().read('title'), // text
@@ -65,7 +65,7 @@ const r = await page.run([
   evaluate(`[...document.querySelectorAll('.product .name')].map((e) => e.textContent)`, 'names'),
 ]);
 console.log(r.values); // { title, count, nextVisible, color, names }
-lp.close();
+pyro.close();
 ```
 
 `read` waits for its element like any step, and fails the run if it never appears. `read` kinds: `text`, `value`, `count`, `visible`, `box`, `css`, `name`, `focused`, `enabled`. See [Scripting a browser](/scraping/library#the-native-sdk-one-round-trip-per-job).
@@ -218,7 +218,7 @@ Scrolling the sentinel into view works too: `await page.locator('#sentinel').scr
 In the native SDK the whole scroll is one run. Each `mouse('wheel')` step settles on the requests it triggers:
 
 ```ts
-import { css, goto, mouse } from '@povio/lightning-panda';
+import { css, goto, mouse } from '@povio/pyro';
 
 const r = await page.run([
   goto('http://127.0.0.1:4500/feed'),
@@ -244,7 +244,7 @@ await download.saveAs('out/items.csv');
 Native SDK, where the file's text also comes back in the reply:
 
 ```ts
-import { css, download, goto } from '@povio/lightning-panda';
+import { css, download, goto } from '@povio/pyro';
 
 const r = await page.run([
   goto('http://127.0.0.1:4500/downloads'),

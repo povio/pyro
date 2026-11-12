@@ -1,9 +1,9 @@
 # SDK: locators and steps
 
-Locators and steps are plain data. Builders such as `button('Save')`, `dialog().hasText('…').button('OK')` and `check(locator).visible()` only describe work. `page.run([...])` sends the whole list to the browser in one [`LP.run`](/reference/lp-run) command, and the browser resolves locators, waits and acts in Rust. Everything on this page is exported from `@povio/lightning-panda`.
+Locators and steps are plain data. Builders such as `button('Save')`, `dialog().hasText('…').button('OK')` and `check(locator).visible()` only describe work. `page.run([...])` sends the whole list to the browser in one [`Pyro.run`](/reference/pyro-run) command, and the browser resolves locators, waits and acts in Rust. Everything on this page is exported from `@povio/pyro`.
 
 ```ts
-import { button, check, css, dialog, goto, mock, textbox } from '@povio/lightning-panda';
+import { button, check, css, dialog, goto, mock, textbox } from '@povio/pyro';
 
 await page.run([
   mock('/api/items', { json: [] }),
@@ -69,7 +69,7 @@ Each returns a [`Locator`](#locator).
 
 `opts` is `{ exact?: boolean }` everywhere.
 
-For locator kinds without a builder (`xpath`, `or`, `and`, `of`, role states such as `checked` or `level`, `ariaRef`), construct one from its [wire spec](/reference/lp-run#locator): `new Locator({ role: 'checkbox', checked: true })`.
+For locator kinds without a builder (`xpath`, `or`, `and`, `of`, role states such as `checked` or `level`, `ariaRef`), construct one from its [wire spec](/reference/pyro-run#locator): `new Locator({ role: 'checkbox', checked: true })`.
 
 ## Locator {#locator}
 
@@ -148,7 +148,7 @@ type UploadFile = { name: string; text?: string; base64?: string; mimeType?: str
 | `wheel(deltaX: number, deltaY: number, opts?)` | Moves the pointer to the element, then turns the wheel there (scrolls the nearest scrollable container) |
 | `matchScreenshot(name: string, opts?: ScreenshotOptions)` | Compares this element's box with a baseline; see [`matchScreenshot`](#matchscreenshot) |
 
-The step result of an action is `{}` or `{ settleMs, settled?, pending? }`. Pointer actions also accept `modifiers` on the wire (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`); see [act](/reference/lp-run#act).
+The step result of an action is `{}` or `{ settleMs, settled?, pending? }`. Pointer actions also accept `modifiers` on the wire (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`); see [act](/reference/pyro-run#act).
 
 ### read() {#read}
 
@@ -205,7 +205,7 @@ check(dialog()).not.visible();
 | `.disabled(opts?)` | `enabled(false)` | `{ actual }` |
 | `.not` | Negates the next assertion: `check(x).not.text('…')` | |
 
-`opts` is `{ timeout?: number }`. The wire also has `attribute` and `description` assertions with no builder; see [check](/reference/lp-run#check).
+`opts` is `{ timeout?: number }`. The wire also has `attribute` and `description` assertions with no builder; see [check](/reference/pyro-run#check).
 
 ### check.request() {#check-request}
 
@@ -231,7 +231,7 @@ check.request('POST', '/api/orders').status(201).bodyKeys(['sku', 'qty']);
 check.request('GET', /\/api\/items\?page=2/).count(1);
 ```
 
-Result: the matched request (see [request log](/reference/lp-run#request-log)), or `{ count }` with `.count()`. The wire also takes `bodyJson` (the body parsed as JSON equals a value).
+Result: the matched request (see [request log](/reference/pyro-run#request-log)), or `{ count }` with `.count()`. The wire also takes `bodyJson` (the body parsed as JSON equals a value).
 
 ## Navigation and scripts {#navigation}
 
@@ -265,7 +265,7 @@ Reloads the current document and waits for `load`.
 loaded(opts?: { timeout?: number }): StepLike
 ```
 
-Waits for the current document's `load`. On a pooled page taken while it is still booting, it waits for the profile URL's navigation to commit and load, never for the `about:blank` before it. `lp.page()` adds this step when needed.
+Waits for the current document's `load`. On a pooled page taken while it is still booting, it waits for the profile URL's navigation to commit and load, never for the `about:blank` before it. `pyro.page()` adds this step when needed.
 
 ### waitForUrl() {#waitforurl}
 
@@ -291,7 +291,7 @@ evaluate(expression: string, as?: string, opts?: { timeout?: number }): StepLike
 
 Evaluates an expression in the page's main world. Its JSON value lands in `values[as]`. A returned promise is awaited within `timeout`, and a rejection fails the step (`rejected: <message>`).
 
-The wire `eval` step can also call a function with an element, all matches, or an argument (`call`, `locator`, `all`, `arg`); see [eval](/reference/lp-run#eval).
+The wire `eval` step can also call a function with an element, all matches, or an argument (`call`, `locator`, `all`, `arg`); see [eval](/reference/pyro-run#eval).
 
 ## Network mocks {#mocks}
 
@@ -482,4 +482,4 @@ const advance = (ms: number): StepLike => ({ toStep: () => ({ advanceTime: { ms 
 await page.run([button('Save').click(), advance(30_000), check(text('Saved')).visible()]);
 ```
 
-The full wire format of every step and of `LocatorSpec` is in [LP.run wire format](/reference/lp-run).
+The full wire format of every step and of `LocatorSpec` is in [Pyro.run wire format](/reference/pyro-run).

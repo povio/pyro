@@ -15,13 +15,13 @@ Pyro's browser runs on macOS and Linux. The client runs anywhere Node 22+ or Bun
 
 glibc 2.39 or newer means Ubuntu 24.04, Debian 13, Fedora 40 or newer. Check yours with `ldd --version`.
 
-The client (`@povio/lightning-panda`) needs Node.js 22+ or Bun. The two test runners, `lightningpanda test` and `lightningpanda e2e`, need Bun on `PATH`.
+The client (`@povio/pyro`) needs Node.js 22+ or Bun. The two test runners, `pyro run` and `pyro e2e`, need Bun on `PATH`.
 
 ## Intel Macs
 
 The Intel build uses the JavaScriptCore that ships with macOS instead of the patched one. Everything works except what needs the patch:
 
-- **No fork mode.** `serve --fork` exits with an error; `lightningpanda e2e` falls back to thread mode, where each page boots its profile.
+- **No fork mode.** `serve --fork` exits with an error; `pyro e2e` falls back to thread mode, where each page boots its profile.
 - Features that the system framework does not offer fall back or report an error: import maps are ignored with a console warning, and precise JavaScript coverage (`page.coverage`) is not available.
 
 Use [profiles](/guide/profiles) with several connections to hide boot time on Intel machines.
@@ -33,7 +33,7 @@ macOS's JavaScriptCore only compiles JavaScript to machine code in a process tha
 The bundled binaries are signed ad hoc with that entitlement and nothing else. You keep it as long as you copy the binaries as they are. You lose it if you re-sign or strip them. To check a binary:
 
 ```sh
-codesign -d --entitlements - path/to/lightningpanda
+codesign -d --entitlements - path/to/pyro
 # should list com.apple.security.cs.allow-jit = true
 ```
 
@@ -50,7 +50,7 @@ cat > jit.entitlements <<'EOF'
 </dict>
 </plist>
 EOF
-codesign -f -s - --entitlements jit.entitlements path/to/lightningpanda
+codesign -f -s - --entitlements jit.entitlements path/to/pyro
 ```
 
 When you copy a browser out of the package, copy its whole `native/<platform>/` directory: some builds load libraries from the `lib/` directory next to the binary.
@@ -61,15 +61,15 @@ There is no Windows browser. Run the browser on a macOS or Linux machine (or a L
 
 ```sh
 # on the browser host
-lightningpanda serve --host 0.0.0.0 --port 9222 --advertise-host lp-host
+pyro serve --host 0.0.0.0 --port 9222 --advertise-host pyro-host
 ```
 
 ```ts
 // on Windows
-const lp = await Lightningpanda.connect('ws://lp-host:9222/');
+const pyro = await Pyro.connect('ws://pyro-host:9222/');
 ```
 
-For Playwright-style tests on Windows, set `LIGHTNINGPANDA_WS=ws://lp-host:9222/`. Note that `lightningpanda test` and `lightningpanda e2e` still need Bun on the Windows machine, and that paths in server options (`--static`, file uploads by path) refer to the browser host. The server has no authentication; keep it on a trusted network.
+For Playwright-style tests on Windows, set `PYRO_WS=ws://pyro-host:9222/`. Note that `pyro run` and `pyro e2e` still need Bun on the Windows machine, and that paths in server options (`--static`, file uploads by path) refer to the browser host. The server has no authentication; keep it on a trusted network.
 
 ## Docker and Linux notes
 
@@ -89,7 +89,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY . .
-CMD ["bunx", "lightningpanda", "serve", "--host", "0.0.0.0", "--port", "9222"]
+CMD ["bunx", "pyro", "serve", "--host", "0.0.0.0", "--port", "9222"]
 ```
 
 ## Limits worth knowing
@@ -99,11 +99,11 @@ CMD ["bunx", "lightningpanda", "serve", "--host", "0.0.0.0", "--port", "9222"]
 | Concurrent CDP connections | 16; more wait in the kernel's backlog | `--cdp-max-connections` |
 | CDP WebSocket message size | 64 MiB | `--cdp-max-message-size` |
 | CDP HTTP message size | 1 MiB | `--cdp-max-http-message-size` |
-| `LP.run` step timeout | 5 s per step | `page.run(steps, { timeout })` or per step |
-| `LP.run` maximum timeout | 600 s | |
-| Steps per `LP.run` | 10,000 | |
+| `Pyro.run` step timeout | 5 s per step | `page.run(steps, { timeout })` or per step |
+| `Pyro.run` maximum timeout | 600 s | |
+| Steps per `Pyro.run` | 10,000 | |
 | Settle wait after an action | 1 s, then the run carries on | `{ settle: false }` to skip |
 | Pages per profile pool | 1 to 8 | `pool` |
-| Fork spares per template | 2 | `LIGHTNINGPANDA_FORK_SPARES` |
+| Fork spares per template | 2 | `PYRO_FORK_SPARES` |
 
 Web platform coverage is partial: WebGL, WebGPU, WebRTC and `SharedWorker` are absent, among others. See [Web platform support](/reference/web-platform).

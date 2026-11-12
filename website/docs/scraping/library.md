@@ -2,14 +2,14 @@
 
 Most scraping jobs are scripts: open a page, wait for the data, read it, move on. The package gives you two APIs for that, and both drive the same browser.
 
-- **`@povio/lightning-panda/playwright`** is Playwright's library API: `chromium`, `Browser`, `BrowserContext`, `Page`, `Locator`. Playwright itself is not needed. Use it when you know Playwright, when you want `storageState` profiles, or when you port an existing script.
-- **`@povio/lightning-panda`** is the native SDK. A job is a list of steps sent as one `LP.run` command. The browser runs every step, waits in place, and replies once with everything you read. Use it when you scrape many pages and the round trips add up, or with fork mode.
+- **`@povio/pyro/wright`** is Playwright's library API: `chromium`, `Browser`, `BrowserContext`, `Page`, `Locator`. Playwright itself is not needed. Use it when you know Playwright, when you want `storageState` profiles, or when you port an existing script.
+- **`@povio/pyro`** is the native SDK. A job is a list of steps sent as one `Pyro.run` command. The browser runs every step, waits in place, and replies once with everything you read. Use it when you scrape many pages and the round trips add up, or with fork mode.
 
 Install the package in your project:
 
 ```sh
-bun add @povio/lightning-panda
-# or: npm install @povio/lightning-panda
+bun add @povio/pyro
+# or: npm install @povio/pyro
 ```
 
 The examples run on Bun (`bun script.ts`) and on Node.js 22+ (compile TypeScript first, or write `.mjs`).
@@ -18,10 +18,10 @@ The examples run on Bun (`bun script.ts`) and on Node.js 22+ (compile TypeScript
 
 There are two ways to get a browser.
 
-**Launch** starts `lightningpanda serve` on a free local port as a child process and connects to it. The server exits with your script, however the script ends.
+**Launch** starts `pyro serve` on a free local port as a child process and connects to it. The server exits with your script, however the script ends.
 
 ```ts
-import { chromium } from '@povio/lightning-panda/playwright';
+import { chromium } from '@povio/pyro/wright';
 
 const browser = await chromium.launch();
 // Extra serve flags: chromium.launch({ args: ['--proxy', 'http://proxy.internal:3128'] })
@@ -30,7 +30,7 @@ const browser = await chromium.launch();
 **Connect** attaches to a server that is already running, on this machine or another:
 
 ```sh
-lightningpanda serve --port 9222
+pyro serve --port 9222
 ```
 
 ```ts
@@ -66,7 +66,7 @@ Context options that take effect: `storageState`, `userAgent`, `viewport`, `extr
 ## Navigate, wait, read
 
 ```ts
-import { chromium } from '@povio/lightning-panda/playwright';
+import { chromium } from '@povio/pyro/wright';
 
 const BASE = 'http://127.0.0.1:4500';
 const browser = await chromium.launch();
@@ -95,7 +95,7 @@ await browser.close();
 
 Things to know:
 
-- **`goto` waits for more than `load`.** Every action in this library is one `LP.run` command, and it returns once the page is quiet: no queued task, no request the action started, no timer due within 50 ms, no pending animation frame. Data the page fetches right after `load` is usually there when `goto` returns; a timer set for later than 50 ms is not waited for, so wait for the element you need. See [Settling and auto-waiting](/guide/settling).
+- **`goto` waits for more than `load`.** Every action in this library is one `Pyro.run` command, and it returns once the page is quiet: no queued task, no request the action started, no timer due within 50 ms, no pending animation frame. Data the page fetches right after `load` is usually there when `goto` returns; a timer set for later than 50 ms is not waited for, so wait for the element you need. See [Settling and auto-waiting](/guide/settling).
 - **Locators auto-wait.** `page.locator('.order').first().textContent()` waits for the element, up to the timeout (`page.setDefaultTimeout(ms)`).
 - **`page.evaluate(fn, arg)`** runs a function in the page and returns its JSON result. A returned promise is awaited.
 - **`page.content()`** returns the page's HTML.
@@ -107,12 +107,12 @@ The locator API is Playwright's: `getByRole`, `getByText`, `getByLabel`, `getByT
 The Playwright library sends one command per awaited call. A job that navigates, waits, reads five things and checks a link costs seven round trips. The native SDK sends the whole job as one list of steps:
 
 ```ts
-import { Lightningpanda, css, evaluate, goto, link } from '@povio/lightning-panda';
+import { Pyro, css, evaluate, goto, link } from '@povio/pyro';
 
 const BASE = 'http://127.0.0.1:4500';
-const lp = await Lightningpanda.launch(); // or: await Lightningpanda.connect('ws://127.0.0.1:9222/')
+const pyro = await Pyro.launch(); // or: await Pyro.connect('ws://127.0.0.1:9222/')
 try {
-  await using page = await lp.page(); // a blank page in its own context, closed at the end of the block
+  await using page = await pyro.page(); // a blank page in its own context, closed at the end of the block
   const rows: unknown[] = [];
   let url: string | null = `${BASE}/products?page=1`;
   while (url) {
@@ -140,7 +140,7 @@ try {
   const r = await page.run([goto(`${BASE}/products?page=1`), link('Next').click(), css('h1').read('h')]);
   console.log(r.values.h, r.requests.map((q) => `${q.method} ${q.url} ${q.status}`));
 } finally {
-  lp.close();
+  pyro.close();
 }
 ```
 
@@ -174,11 +174,11 @@ Locators are data: `css`, `text`, `role` and its shortcuts (`button`, `link`, `h
 
 ### Connections
 
-`Lightningpanda.connect(ws, { connections: 4 })` and `Lightningpanda.launch({ connections: 4 })` open four browser threads; `lp.page()` takes a page on the least busy one. Against a server started with `--fork`, every `lp.page()` gets its own forked process instead, and `connections` makes no difference. See [Profiles booted once (fork)](/scraping/fork-profiles).
+`Pyro.connect(ws, { connections: 4 })` and `Pyro.launch({ connections: 4 })` open four browser threads; `pyro.page()` takes a page on the least busy one. Against a server started with `--fork`, every `pyro.page()` gets its own forked process instead, and `connections` makes no difference. See [Profiles booted once (fork)](/scraping/fork-profiles).
 
 ### Raw CDP from the SDK
 
-`page.send(method, params)` sends any CDP command to the page's session, and `lp.cdp.send(method, params)` sends browser-level commands. For example, to override the timezone before a run:
+`page.send(method, params)` sends any CDP command to the page's session, and `pyro.cdp.send(method, params)` sends browser-level commands. For example, to override the timezone before a run:
 
 ```ts
 await page.send('Emulation.setTimezoneOverride', { timezoneId: 'America/New_York' });

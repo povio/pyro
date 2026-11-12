@@ -5,9 +5,9 @@ Three short starts, one per way of using Pyro. Each is complete: copy the files,
 Install the package first ([Installation](/guide/installation)) in an empty directory:
 
 ```sh
-mkdir lp-start && cd lp-start
+mkdir pyro-start && cd pyro-start
 bun init -y
-bun add --dev @povio/lightning-panda
+bun add --dev @povio/pyro
 ```
 
 All three starts use the same small app. Save it as `site/index.html`:
@@ -40,19 +40,19 @@ All three starts use the same small app. Save it as `site/index.html`:
 
 ## 1. Run a Playwright test unchanged
 
-A Playwright test runs on Pyro when it imports from `@povio/lightning-panda/playwright` instead of `@playwright/test`. Nothing else changes, and Playwright is not installed.
+A Playwright test runs on Pyro when it imports from `@povio/pyro/wright` instead of `@playwright/test`. Nothing else changes, and Playwright is not installed.
 
 `playwright.config.ts`:
 
 ```ts
-import { defineConfig } from '@povio/lightning-panda/playwright';
+import { defineConfig } from '@povio/pyro/wright';
 
 export default defineConfig({
   testDir: './e2e',
   use: {
     baseURL: 'http://app.test',
     // Serve ./site in place of http://app.test.
-    lightningpanda: { args: ['--static', `http://app.test=${import.meta.dirname}/site`] },
+    pyro: { args: ['--static', `http://app.test=${import.meta.dirname}/site`] },
   },
 });
 ```
@@ -60,7 +60,7 @@ export default defineConfig({
 `e2e/todo.spec.ts`:
 
 ```ts
-import { test, expect } from '@povio/lightning-panda/playwright'; // was '@playwright/test'
+import { test, expect } from '@povio/pyro/wright'; // was '@playwright/test'
 
 test('adds a todo', async ({ page }) => {
   await page.goto('/');
@@ -74,7 +74,7 @@ test('adds a todo', async ({ page }) => {
 Run it as you would run `playwright test`:
 
 ```sh
-bunx lightningpanda test
+bunx pyro run
 ```
 
 ```text
@@ -83,7 +83,7 @@ bunx lightningpanda test
   1 passed (0.6s)
 ```
 
-`lightningpanda test` takes Playwright's usual flags (`-c`, `--project`, `-j`, `-g`, `--retries`, `-u`, ...) and needs Bun on `PATH`. The browser starts once per worker. Next: [Migrating a suite](/playwright/migration).
+`pyro run` takes Playwright's usual flags (`-c`, `--project`, `-j`, `-g`, `--retries`, `-u`, ...) and needs Bun on `PATH`. The browser starts once per worker. Next: [Migrating a suite](/playwright/migration).
 
 ## 2. Write a native `page.run` test
 
@@ -93,22 +93,22 @@ The native client sends a whole scenario as one command. The browser runs every 
 
 ```ts
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { Lightningpanda, button, check, label, role } from '@povio/lightning-panda';
+import { Pyro, button, check, label, role } from '@povio/pyro';
 
-let lp: Lightningpanda;
+let pyro: Pyro;
 
 beforeAll(async () => {
   // Starts the bundled browser on a free port. It exits with this process.
-  lp = await Lightningpanda.launch({
+  pyro = await Pyro.launch({
     args: ['--static', `http://app.test=${import.meta.dirname}/../site`],
   });
   // Pages of this profile boot ahead with a token in localStorage.
-  await lp.profile('user', { url: 'http://app.test/', localStorage: { token: 'ada' } });
+  await pyro.profile('user', { url: 'http://app.test/', localStorage: { token: 'ada' } });
 });
-afterAll(() => lp.close());
+afterAll(() => pyro.close());
 
 test('adds a todo', async () => {
-  await using page = await lp.page({ as: 'user' });
+  await using page = await pyro.page({ as: 'user' });
   const r = await page.run([
     check(role('paragraph')).text('Signed in as ada'),
     label('New todo').fill('Buy milk'),
@@ -137,15 +137,15 @@ The same client works outside a test runner. A profile is a named recipe for a p
 `scrape.ts`:
 
 ```ts
-import { Lightningpanda, check, css, evaluate } from '@povio/lightning-panda';
+import { Pyro, check, css, evaluate } from '@povio/pyro';
 
-const lp = await Lightningpanda.launch({
+const pyro = await Pyro.launch({
   args: ['--static', `http://app.test=${import.meta.dirname}/site`],
 });
 try {
-  await lp.profile('signed-in', { url: 'http://app.test/', localStorage: { token: 'ada' } });
+  await pyro.profile('signed-in', { url: 'http://app.test/', localStorage: { token: 'ada' } });
 
-  const page = await lp.page({ as: 'signed-in' });
+  const page = await pyro.page({ as: 'signed-in' });
   const r = await page.run([
     check(css('#user')).text('Signed in as ada'),  // waits until the app has rendered it
     evaluate(
@@ -156,7 +156,7 @@ try {
   console.log(r.values.data);
   page.close();
 } finally {
-  lp.close();
+  pyro.close();
 }
 ```
 

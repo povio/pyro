@@ -1,11 +1,11 @@
 # Puppeteer and raw CDP
 
-`lightningpanda serve` is a Chrome DevTools Protocol server. Anything that speaks CDP can drive it: Puppeteer, a WebSocket client in any language, or tools built on either. This page shows Puppeteer, then the protocol by hand, then Pyro's own `Lightningpanda.*` and `LP.*` commands.
+`pyro serve` is a Chrome DevTools Protocol server. Anything that speaks CDP can drive it: Puppeteer, a WebSocket client in any language, or tools built on either. This page shows Puppeteer, then the protocol by hand, then Pyro's own `Pyro.*` and `Pyro.*` commands.
 
 ## The endpoints
 
 ```sh
-lightningpanda serve --port 9222
+pyro serve --port 9222
 ```
 
 | Endpoint | What it returns |
@@ -81,7 +81,7 @@ Things that differ from Chrome:
 - `browser.pages()` is empty after connecting. Pyro does not create a placeholder page; call `newPage()`.
 - `browser.version()` and `browser.userAgent()` report the Chrome 124 strings from `/json/version`, not the page user agent.
 - Closing the connection (`disconnect()`, or the process ending) disposes every context and page it made.
-- Commands Pyro does not implement fail with `... is not supported by lightningpanda` instead of succeeding silently. Among them: `DOM.getDocument`, `DOM.querySelector`, `DOM.getOuterHTML`, `Tracing.*`, `Page.startScreencast`, `HeapProfiler.collectGarbage`. Puppeteer features built on those (tracing, screencasts, some `ElementHandle` internals) do not work.
+- Commands Pyro does not implement fail with `... is not supported by pyro` instead of succeeding silently. Among them: `DOM.getDocument`, `DOM.querySelector`, `DOM.getOuterHTML`, `Tracing.*`, `Page.startScreencast`, `HeapProfiler.collectGarbage`. Puppeteer features built on those (tracing, screencasts, some `ElementHandle` internals) do not work.
 
 The [CDP coverage](/reference/cdp) page lists every method with its status.
 
@@ -93,7 +93,7 @@ This script runs on Bun (or Node.js 22+, which has a global `WebSocket`):
 
 ```ts
 // raw-cdp.ts
-const HTTP = process.env.LP_HTTP ?? 'http://127.0.0.1:9222';
+const HTTP = process.env.PYRO_HTTP ?? 'http://127.0.0.1:9222';
 const { webSocketDebuggerUrl } = await (await fetch(`${HTTP}/json/version`)).json();
 
 const ws = new WebSocket(webSocketDebuggerUrl);
@@ -140,9 +140,9 @@ const { result } = await send(
 );
 console.log(result.value);
 
-// The same with LP.run: one round trip that navigates, waits until the page is quiet, and reads.
+// The same with Pyro.run: one round trip that navigates, waits until the page is quiet, and reads.
 const run = await send(
-  'LP.run',
+  'Pyro.run',
   {
     steps: [
       { goto: { url: 'http://127.0.0.1:4500/products?page=2', waitUntil: 'load' } },
@@ -171,23 +171,23 @@ Notes:
 
 The same pattern works from any language with a WebSocket client: Python's `websockets`, Go's `gorilla/websocket`, and so on.
 
-## The `LP` and `Lightningpanda` domains
+## The `Pyro` and `Pyro` domains
 
 Pyro adds two domains of its own.
 
-**`LP.run`** (on a page session) runs a list of steps in the browser and replies once: navigation, locating elements by CSS, text, role, label or test id, actions (click, fill, type, press, hover, wheel, drag, upload), checks that wait until they hold, reads, network mocks, request checks, downloads and screenshots. Each action settles before the next step. `LP.idle { timeout }` waits until the page is quiet on its own. The reply has `reads`, `results`, `requests` and `ms`. The step format is in [LP.run wire format](/reference/lp-run); the native SDK builds it for you.
+**`Pyro.run`** (on a page session) runs a list of steps in the browser and replies once: navigation, locating elements by CSS, text, role, label or test id, actions (click, fill, type, press, hover, wheel, drag, upload), checks that wait until they hold, reads, network mocks, request checks, downloads and screenshots. Each action settles before the next step. `Pyro.idle { timeout }` waits until the page is quiet on its own. The reply has `reads`, `results`, `requests` and `ms`. The step format is in [Pyro.run wire format](/reference/pyro-run); the native SDK builds it for you.
 
-**`Lightningpanda.*`** (on the browser session) manages pre-booted pages:
+**`Pyro.*`** (on the browser session) manages pre-booted pages:
 
 | Command | What it does |
 | --- | --- |
-| `Lightningpanda.capabilities` | `{ fork, sharedProfiles }`: whether the server forks connections. |
-| `Lightningpanda.registerPreparedPage` | Declare a profile: `url`, `initScripts`, `viewport`, `pool`; with `--fork` also `setup`, `base` and `name`. Returns `profileId`. |
-| `Lightningpanda.acquirePreparedPage` | Take a booted page of a profile (`profileId` or `url`), optionally attached in the same call (`attach: true`). |
-| `Lightningpanda.preparedPages` | Pages booted and waiting, with `ready`. |
-| `Lightningpanda.unregisterPreparedPage` | Remove a profile (`profileId`), or drop this connection's hold on a named one (`name`). |
-| `Lightningpanda.adoptPreparedPage` | Hold a named profile another client registered (`--fork`). |
-| `Lightningpanda.preparedProfiles` | Named profiles and their holders (`--fork`). |
+| `Pyro.capabilities` | `{ fork, sharedProfiles }`: whether the server forks connections. |
+| `Pyro.registerPreparedPage` | Declare a profile: `url`, `initScripts`, `viewport`, `pool`; with `--fork` also `setup`, `base` and `name`. Returns `profileId`. |
+| `Pyro.acquirePreparedPage` | Take a booted page of a profile (`profileId` or `url`), optionally attached in the same call (`attach: true`). |
+| `Pyro.preparedPages` | Pages booted and waiting, with `ready`. |
+| `Pyro.unregisterPreparedPage` | Remove a profile (`profileId`), or drop this connection's hold on a named one (`name`). |
+| `Pyro.adoptPreparedPage` | Hold a named profile another client registered (`--fork`). |
+| `Pyro.preparedProfiles` | Named profiles and their holders (`--fork`). |
 
 In fork mode, a connection to `ws://host:port/?profile=<profileId>` is forked from that profile's snapshot. The details are in [Pyro CDP domain](/reference/cdp-domain), and the uses in [Profiles booted once (fork)](/scraping/fork-profiles).
 

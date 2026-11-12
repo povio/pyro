@@ -31,14 +31,14 @@ const cdp = await context.newCDPSession(page);
 await cdp.send('Emulation.setLocaleOverride', { locale: 'de-DE' });
 ```
 
-In the native SDK, use `page.send(method, params)` for page commands and `lp.cdp.send(method, params)` for browser-level ones. In Puppeteer, `page.createCDPSession()`.
+In the native SDK, use `page.send(method, params)` for page commands and `pyro.cdp.send(method, params)` for browser-level ones. In Puppeteer, `page.createCDPSession()`.
 
 ## User agent
 
 The default `User-Agent` is:
 
 ```
-Mozilla/5.0 (compatible; lightningpanda/0.0.33)
+Mozilla/5.0 (compatible; pyro/X.Y.Z)
 ```
 
 with the installed version. `navigator.userAgent` returns the same string. Many sites serve this user agent normally; some block it or serve a reduced page. Set a different one per context:
@@ -91,10 +91,10 @@ Pyro supports HTTP forward proxies: `http://[user:pass@]host[:port]` (port 80 by
 ### One proxy for the whole server
 
 ```sh
-lightningpanda serve --proxy http://user:pass@proxy.example.net:3128 --proxy-bypass '*.internal,10.0.0.0/8'
+pyro serve --proxy http://user:pass@proxy.example.net:3128 --proxy-bypass '*.internal,10.0.0.0/8'
 ```
 
-With `chromium.launch()` or `Lightningpanda.launch()`, pass them as `args`:
+With `chromium.launch()` or `Pyro.launch()`, pass them as `args`:
 
 ```ts
 const browser = await chromium.launch({ args: ['--proxy', 'http://user:pass@proxy.example.net:3128'] });
@@ -123,20 +123,20 @@ A browser context can have its own proxy. The CDP command is `Target.createBrows
 Native SDK:
 
 ```ts
-import { Lightningpanda, css, goto } from '@povio/lightning-panda';
+import { Pyro, css, goto } from '@povio/pyro';
 
-const lp = await Lightningpanda.launch();
-const cdp = lp.cdp;
+const pyro = await Pyro.launch();
+const cdp = pyro.cdp;
 const { browserContextId } = await cdp.send('Target.createBrowserContext', {
   proxyServer: 'http://user:pass@proxy-de.example.net:3128',
   proxyBypassList: '*.internal',
 });
 const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId });
 const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-const r = await cdp.send('LP.run', { steps: [goto('https://httpbin.org/ip').toStep(), css('body').read('ip').toStep()] }, sessionId);
+const r = await cdp.send('Pyro.run', { steps: [goto('https://httpbin.org/ip').toStep(), css('body').read('ip').toStep()] }, sessionId);
 console.log(r.reads.ip);
 await cdp.send('Target.disposeBrowserContext', { browserContextId });
-lp.close();
+pyro.close();
 ```
 
 Puppeteer:
@@ -189,7 +189,7 @@ Geolocation needs both an override and the permission:
 
 ```ts
 // native SDK
-await lp.cdp.send('Browser.grantPermissions', {
+await pyro.cdp.send('Browser.grantPermissions', {
   permissions: ['geolocation'],
   browserContextId: page.browserContextId,
   origin: 'https://example.com',
@@ -215,7 +215,7 @@ The Playwright library's `httpCredentials` reaches only `context.request`, not p
 
 ## Viewport, pixel ratio, mobile
 
-`viewport` sets the layout size and `innerWidth`/`innerHeight`. The Playwright library's default is 1280 x 720; a native SDK page without a profile viewport, and `lightningpanda fetch`, use 1920 x 1080.
+`viewport` sets the layout size and `innerWidth`/`innerHeight`. The Playwright library's default is 1280 x 720; a native SDK page without a profile viewport, and `pyro fetch`, use 1920 x 1080.
 
 The library always sets a pixel ratio of 1. For a different `devicePixelRatio` (and sharper screenshots), use CDP:
 
@@ -227,10 +227,10 @@ await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, 
 
 ### `devices`
 
-`devices` from `@povio/lightning-panda/playwright` holds a few of Playwright's descriptors: `Desktop Chrome`, `Desktop Chrome HiDPI`, `Desktop Edge`, `Pixel 7` and `iPhone 15`.
+`devices` from `@povio/pyro/wright` holds a few of Playwright's descriptors: `Desktop Chrome`, `Desktop Chrome HiDPI`, `Desktop Edge`, `Pixel 7` and `iPhone 15`.
 
 ```ts
-import { chromium, devices } from '@povio/lightning-panda/playwright';
+import { chromium, devices } from '@povio/pyro/wright';
 
 const context = await browser.newContext({ ...devices['Pixel 7'] });
 ```

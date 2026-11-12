@@ -5,14 +5,14 @@ This page explains the parts of Pyro a test author or script writer runs into: t
 ## The pieces
 
 ```text
-  your test / script                       lightningpanda serve
+  your test / script                       pyro serve
  ┌─────────────────────┐   WebSocket    ┌──────────────────────────────────────────────┐
  │ Playwright module   │   (CDP JSON)   │ I/O thread: accepts sockets, HTTP discovery  │
  │ native SDK          │ ─────────────► │                                              │
  │ Puppeteer, raw CDP  │                │ browser thread per connection:               │
  └─────────────────────┘                │   JavaScriptCore engine (one VM)             │
                                         │   DOM (Rust arena), Stylo styles             │
-                                        │   event loop, CDP domains, LP.run driver     │
+                                        │   event loop, CDP domains, Pyro.run driver     │
                                         │                                              │
                                         │ network thread (HTTP, cookies, cache)        │
                                         │ render thread per connection (Blitz, Vello)  │
@@ -28,7 +28,7 @@ This page explains the parts of Pyro a test author or script writer runs into: t
 | Layout | Blitz with Taffy (flex, grid, block) and Parley (text). Layout queries such as `getBoundingClientRect`, scrolling and hit testing are answered from the same layout that screenshots and PDFs paint. |
 | Painting | Vello's CPU rasterizer for PNG screenshots; a PDF writer for `Page.printToPDF`. See [Rendering](/guide/rendering). |
 | Network | An HTTP client on its own I/O thread: cookies, CORS, redirects, proxies, interception for `page.route` and mocks. |
-| Protocol | A CDP server compatible with what Playwright 1.59 sends, plus the `Lightningpanda.*` and `LP.*` domains. |
+| Protocol | A CDP server compatible with what Playwright 1.59 sends, plus the `Pyro.*` and `Pyro.*` domains. |
 
 ## One browser thread per connection
 
@@ -44,9 +44,9 @@ Consequences for you:
 
 Dedicated workers run on threads of their own, each with its own engine.
 
-## Where `LP.run` runs
+## Where `Pyro.run` runs
 
-The native SDK's `page.run([...steps])` is one CDP command, `LP.run`. It runs on the page's browser thread, between event loop tasks:
+The native SDK's `page.run([...steps])` is one CDP command, `Pyro.run`. It runs on the page's browser thread, between event loop tasks:
 
 1. Each step's locator is resolved against the Rust DOM, with no JavaScript involved. Role and accessible-name matching, text matching, visibility and hit testing are Rust code.
 2. If a step cannot finish yet (the element does not exist, is covered, the text does not match), the run parks. It is tried again only when the page's DOM version changes or its document is replaced. Nothing polls.
@@ -55,7 +55,7 @@ The native SDK's `page.run([...steps])` is one CDP command, `LP.run`. It runs on
 
 Input is delivered like Chromium delivers it: each input event of a pointer action (the move, the press, the release) is dispatched in its own task, with an event loop turn between them, so handlers that schedule work between press and release see it run.
 
-The Playwright module uses the same machinery: each awaited Playwright call is one `LP.run`.
+The Playwright module uses the same machinery: each awaited Playwright call is one `Pyro.run`.
 
 ## Why it is fast
 
@@ -74,9 +74,9 @@ With `serve --fork`, the server starts a template process that boots one page pe
 
 ## Lifetimes
 
-- `Lightningpanda.launch()` passes its own process id with `--parent-pid`. The server exits when that process exits, however it ends, so a crashed test runner does not leave browsers behind.
+- `Pyro.launch()` passes its own process id with `--parent-pid`. The server exits when that process exits, however it ends, so a crashed test runner does not leave browsers behind.
 - A fork-mode server also stops its template and removes its socket files when it exits, and cleans up those of servers that were killed.
-- Closed pages are collected and their memory returned to the operating system right away. `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns that off, for comparisons.
+- Closed pages are collected and their memory returned to the operating system right away. `PYRO_RELEASE_ON_CLOSE=0` turns that off, for comparisons.
 
 ## Where it differs from Chrome
 

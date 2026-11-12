@@ -1,6 +1,6 @@
 # Coming from Playwright
 
-`@povio/lightning-panda/playwright` is Playwright's test API and library API implemented on Pyro. You replace the imports of `@playwright/test` and `playwright` with it, run `lightningpanda test` instead of `playwright test`, and keep your tests. Playwright itself is not installed or used.
+`@povio/pyro/wright` is Playwright's test API and library API implemented on Pyro. You replace the imports of `@playwright/test` and `playwright` with it, run `pyro run` instead of `playwright test`, and keep your tests. Playwright itself is not installed or used.
 
 This section is for teams with an existing Playwright suite. It covers what carries over unchanged, what behaves differently, and what is missing.
 
@@ -11,22 +11,22 @@ This section is for teams with an existing Playwright suite. It covers what carr
 import { test, expect, type Page } from '@playwright/test';
 
 // after
-import { test, expect, type Page } from '@povio/lightning-panda/playwright';
+import { test, expect, type Page } from '@povio/pyro/wright';
 ```
 
 ```sh
 # before
 npx playwright test
 # after
-npx lightningpanda test        # or: bunx lightningpanda test
+npx pyro run        # or: bunx pyro run
 ```
 
-The same module replaces both `@playwright/test` (the runner, fixtures and `expect`) and `playwright` (the library: `chromium.launch()`, `Browser`, `Page`, ...). `@povio/lightning-panda/test` is an alias of the same module.
+The same module replaces both `@playwright/test` (the runner, fixtures and `expect`) and `playwright` (the library: `chromium.launch()`, `Browser`, `Page`, ...). `@povio/pyro/test` is an alias of the same module.
 
 A test like this one runs unchanged:
 
 ```ts
-import { test, expect } from '@povio/lightning-panda/playwright';
+import { test, expect } from '@povio/pyro/wright';
 
 test('closes a position', async ({ page }) => {
   await page.goto('/positions/42');
@@ -56,34 +56,34 @@ test('closes a position', async ({ page }) => {
 ## What stays the same
 
 - Test files, fixtures, page objects and helpers, as long as they import from the new module.
-- The config file. `lightningpanda test` looks for `lightningpanda.config.*` first, then `playwright.config.*`.
+- The config file. `pyro run` looks for `pyro.config.*` first, then `playwright.config.*`.
 - Locators, auto-waiting, actionability checks and web-first assertions. Default timeouts are Playwright's: 30 s per test, 5 s per `expect`.
 - Snapshot file paths (`<test file>-snapshots/<name>-<project>-<platform>.png`, or your `snapshotPathTemplate`).
 - Most command-line flags: `-c`, `--project`, `-j`, `-g`, `--grep-invert`, `--retries`, `--timeout`, `-u`, `-x`, `--max-failures`, `--list`, `--reporter list|line|dot`.
 
 ## What changes
 
-- **The browser is Pyro, not Chromium.** Every project runs on it, whatever `browserName` says. Its user agent is `Mozilla/5.0 (compatible; lightningpanda/<version>)`. Its web platform support is broad but partial. See [Web platform support](/reference/web-platform).
+- **The browser is Pyro, not Chromium.** Every project runs on it, whatever `browserName` says. Its user agent is `Mozilla/5.0 (compatible; pyro/<version>)`. Its web platform support is broad but partial. See [Web platform support](/reference/web-platform).
 - **Actions settle before they return.** A click returns once the page is quiet: no queued task, no request the action started, no timer due within 50 ms. An assertion on a transient state between the action and its result (a spinner, a "Saving..." label) can miss it. See [Behaviour differences](/playwright/differences).
 - **Screenshots come from Pyro's CPU renderer.** Chromium baselines do not match. Re-baseline once when you migrate. See [Screenshots and snapshots](/playwright/snapshots).
-- **Tests run on `bun test`.** `lightningpanda test` needs [Bun](https://bun.sh) on `PATH`. The library API (`chromium.launch()` in a script) also runs on Node.js 22+.
+- **Tests run on `bun test`.** `pyro run` needs [Bun](https://bun.sh) on `PATH`. The library API (`chromium.launch()` in a script) also runs on Node.js 22+.
 - **Each awaited call is one command to the browser.** Locating, actionability checks, waiting and settling run inside the browser, in one round trip, instead of the many CDP calls Playwright makes per action.
 - **Some Playwright APIs are left out.** The selector-first page methods (`page.click(selector)`, `page.fill(selector, value)`, ...) are not implemented; use locators. Deprecated APIs are type errors. See [API coverage](/playwright/api-coverage).
 
 ## Speed
 
-The package's README reports this measurement for TOS's "close a position" flow (`packages/lightning-panda/test/playwright/tos-flow.ts`, Playwright code as TOS writes it):
+The package's README reports this measurement for TOS's "close a position" flow (`packages/pyro/test/wright/tos-flow.ts`, Playwright code as TOS writes it):
 
 | How the flow runs | Time per test |
 | --- | --- |
-| `@povio/lightning-panda/playwright` on Pyro | 14.7 ms (median of 40, fresh page) |
+| `@povio/pyro/wright` on Pyro | 14.7 ms (median of 40, fresh page) |
 | Stock Playwright driving the same Pyro over CDP | 41-44 ms |
 
 The flow seeds a position over HTTP, opens a context, navigates, clicks through a dialog and waits for two responses. The gain comes from sending each awaited call as one browser command.
 
-Pages booted ahead cut more: with `use.lightningpanda.boot`, a test's first `goto` becomes a route change in an app that has already loaded. See [Booting pages ahead](/playwright/boot-pools).
+Pages booted ahead cut more: with `use.pyro.boot`, a test's first `goto` becomes a route change in an app that has already loaded. See [Booting pages ahead](/playwright/boot-pools).
 
-The native driver (`page.run([...])`, one command per test) is faster still. In the bench run recorded in `bench/results/lp-tos-e501cef`, the same flow took 8.6 ms on a fresh page and 2.7 ms per test over four connections, against 34.2 ms for stock Playwright over CDP on the same busy host. If you are willing to rewrite tests, see [Why a native driver](/e2e/overview).
+The native driver (`page.run([...])`, one command per test) is faster still. In the bench run recorded in `bench/results/pyro-tos-e501cef`, the same flow took 8.6 ms on a fresh page and 2.7 ms per test over four connections, against 34.2 ms for stock Playwright over CDP on the same busy host. If you are willing to rewrite tests, see [Why a native driver](/e2e/overview).
 
 ::: tip Measure your own suite
 These numbers come from one flow on one machine. Run your suite both ways and compare wall time and CPU. Your app's own JavaScript is often the larger cost.
@@ -97,13 +97,13 @@ These numbers come from one flow on one machine. Run your suite both ways and co
 | Trace viewer, `trace` option | Not available. `context.tracing` methods exist and do nothing. |
 | Video, `video` option | Not available. `page.video()` returns `null`. |
 | Screenshot on failure, `screenshot` option | Accepted, no effect. |
-| Sharding (`--shard`) | Not available in `lightningpanda test` (unknown option). The native suite runner `lightningpanda e2e` has `--shard`; see [Suite runner](/e2e/runner). |
+| Sharding (`--shard`) | Not available in `pyro run` (unknown option). The native suite runner `pyro e2e` has `--shard`; see [Suite runner](/e2e/runner). |
 | UI mode, `--headed`, `--debug` | Print a warning and have no effect. Pyro is headless. |
 | Codegen, inspector, `page.pause()` | Not available. `page.pause()` returns at once. |
 | Firefox and WebKit | Every project runs on Pyro. |
 | Custom selector engines (`selectors.register`) | Throws. |
 | Component testing | Not available. |
-| JUnit / JSON reporters | Not in `lightningpanda test`. |
+| JUnit / JSON reporters | Not in `pyro run`. |
 
 If one of these is essential, keep Playwright for that job. Pyro and Playwright can run side by side during a migration; see [Migrating a suite](/playwright/migration#running-both-side-by-side).
 

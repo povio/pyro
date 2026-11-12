@@ -1,19 +1,19 @@
 # Pyro CDP domain
 
-`Lightningpanda.*` is a browser-level CDP domain that Pyro adds to the standard protocol. It manages **prepared pages**: pages booted ahead of a test in their own browser context, so a test takes a page that has already loaded the app instead of waiting for it. In fork mode it also manages **shared profiles** that every client of one server can use.
+`Pyro.*` is a browser-level CDP domain that Pyro adds to the standard protocol. It manages **prepared pages**: pages booted ahead of a test in their own browser context, so a test takes a page that has already loaded the app instead of waiting for it. In fork mode it also manages **shared profiles** that every client of one server can use.
 
-The SDK ([`lp.profile()`, `lp.page()`, `lp.adopt()`](/reference/sdk)) and the Playwright drop-in ([boot pools](/playwright/boot-pools)) call these commands for you. Use them directly from Puppeteer, raw CDP or another client. For the concepts, see [Profiles and pre-booted pages](/guide/profiles) and [Connections and fork mode](/guide/fork-mode).
+The SDK ([`pyro.profile()`, `pyro.page()`, `pyro.adopt()`](/reference/sdk)) and the Playwright drop-in ([boot pools](/playwright/boot-pools)) call these commands for you. Use them directly from Puppeteer, raw CDP or another client. For the concepts, see [Profiles and pre-booted pages](/guide/profiles) and [Connections and fork mode](/guide/fork-mode).
 
-The per-page driver commands `LP.run`, `LP.idle` and the rest of the `LP.*` domain are documented in [LP.run wire format](/reference/lp-run).
+The per-page driver commands `Pyro.run`, `Pyro.idle` and the rest of the `Pyro.*` domain are documented in [Pyro.run wire format](/reference/pyro-run).
 
 ## Calling convention
 
 - Send these commands on the **browser session**: no `sessionId`, or a session from `Target.attachToBrowserTarget`. Nothing here is page-scoped.
 - They are per connection. Without `--fork`, each CDP connection has its own profiles and pools. With [`--fork`](/reference/serve#fork), profiles live in the server's template process and every connection that opens later shares them.
-- Errors use the standard CDP error object. Bad parameters return `-32602` (invalid params). Fork-registry failures return `-32000` (server error). An unknown `Lightningpanda.*` method returns `-32601` `'Lightningpanda.x' wasn't found`.
+- Errors use the standard CDP error object. Bad parameters return `-32602` (invalid params). Fork-registry failures return `-32000` (server error). An unknown `Pyro.*` method returns `-32601` `'Pyro.x' wasn't found`.
 
 ```json
-{ "id": 1, "method": "Lightningpanda.capabilities" }
+{ "id": 1, "method": "Pyro.capabilities" }
 { "id": 1, "result": { "fork": false, "sharedProfiles": false } }
 ```
 
@@ -32,7 +32,7 @@ The per-page driver commands `LP.run`, `LP.idle` and the rest of the `LP.*` doma
 Profiles come from two places:
 
 - [`serve --prepare <URL>`](/reference/serve#prepare) (repeatable): one profile per URL, in order, so the first `--prepare` is `profileId` 0. Each keeps one page booted (`pool: 1`). [`--prepare-refill`](/reference/serve#prepare-refill) sets when the replacement boots.
-- `Lightningpanda.registerPreparedPage` at run time. Ids continue after the `--prepare` ones.
+- `Pyro.registerPreparedPage` at run time. Ids continue after the `--prepare` ones.
 
 ## The profile object
 
@@ -45,7 +45,7 @@ Profiles come from two places:
 | `viewport` | `{width, height}` (integers) | server default (1280x720) | Viewport set before the navigation. |
 | `pool` | integer 1–8 | `1` | Pages kept booted per profile. Each acquisition starts booting the next one. Outside 1–8: `-32602 pool must be between 1 and 8`. Ignored in fork mode, where the template keeps exactly one page per profile. The SDK sends `2` by default. |
 | `refillAfterClose` | boolean | `false` | Boot the replacement only once the acquired page's browser context closes, not as soon as the thread is quiet. You get at most `pool` booted apps instead of `pool` + 1, but the next test waits for the boot when tests run back to back. The per-request form of `--prepare-refill after-close`. Ignored in fork mode. |
-| `setup` | object[] | `[]` | [`LP.run` steps](/reference/lp-run) run once on the booted page before any test gets it. **`--fork` only**: the template runs them, and every connection forked afterwards starts from the state they leave. The steps must finish within 60 s. |
+| `setup` | object[] | `[]` | [`Pyro.run` steps](/reference/pyro-run) run once on the booted page before any test gets it. **`--fork` only**: the template runs them, and every connection forked afterwards starts from the state they leave. The steps must finish within 60 s. |
 | `base` | integer (profile id) | — | Start from another profile's page instead of booting `url`. The template forks that profile's snapshot and runs only this profile's `setup` on it. **`--fork` only.** Pages of a derived profile are never booted from `url`. |
 | `name` | string | — | Register as a shared, named profile. **`--fork` only.** Must not be empty. See [Shared profiles](#shared-profiles). |
 
@@ -83,7 +83,7 @@ Declares a profile and starts booting its pages.
 - `the connection's lease has ended`
 
 ```json
-{ "id": 2, "method": "Lightningpanda.registerPreparedPage",
+{ "id": 2, "method": "Pyro.registerPreparedPage",
   "params": { "url": "http://localhost:5173/app",
               "initScripts": ["localStorage.setItem('token', 'abc')"],
               "viewport": { "width": 1280, "height": 800 },
@@ -117,11 +117,11 @@ With both filters empty, any waiting page matches. A loaded page is preferred. O
 
 **Errors:**
 
-- No page matches: `-32602 No prepared page for that url: register one with Lightningpanda.registerPreparedPage or serve --prepare`. The SDK catches this code and opens a fresh page instead.
+- No page matches: `-32602 No prepared page for that url: register one with Pyro.registerPreparedPage or serve --prepare`. The SDK catches this code and opens a fresh page instead.
 - The connection already has 256 targets: `-32000 Too many targets`.
 
 ```json
-{ "id": 3, "method": "Lightningpanda.acquirePreparedPage", "params": { "profileId": 0, "attach": true } }
+{ "id": 3, "method": "Pyro.acquirePreparedPage", "params": { "profileId": 0, "attach": true } }
 { "id": 3, "result": { "targetId": "…03", "browserContextId": "…01", "sessionId": "…02",
                        "url": "http://localhost:5173/app", "ready": true } }
 ```
@@ -134,7 +134,7 @@ Lists the pages waiting on this connection, booted or still booting. Acquired pa
 
 **Result:** `{ "pages": [{ "profileId": number, "url": string, "ready": boolean }] }`
 
-`ready` is `true` once the page has loaded. The SDK's `lp.warm(name)` polls this until the profile's pool is ready.
+`ready` is `true` once the page has loaded. The SDK's `pyro.warm(name)` polls this until the profile's pool is ready.
 
 ## unregisterPreparedPage
 
@@ -209,12 +209,12 @@ In fork mode, each WebSocket connection is a `fork()` of a template that already
 ws://127.0.0.1:9222/?profile=3
 ```
 
-This matters for derived profiles (`base`), which live in a template forked off their base. On the new connection, `acquirePreparedPage {profileId: 3, attach: true}` returns the booted page at once. The SDK opens one such connection per `lp.page({ as })`.
+This matters for derived profiles (`base`), which live in a template forked off their base. On the new connection, `acquirePreparedPage {profileId: 3, attach: true}` returns the booted page at once. The SDK opens one such connection per `pyro.page({ as })`.
 
 ## Example: raw CDP
 
 ```ts
-// bun run prepared.ts  (with `lightningpanda serve` running on 9222)
+// bun run prepared.ts  (with `pyro serve` running on 9222)
 const ws = new WebSocket('ws://127.0.0.1:9222/');
 await new Promise((r) => (ws.onopen = r));
 let next = 0;
@@ -230,14 +230,14 @@ const send = (method: string, params = {}, sessionId?: string) =>
     ws.send(JSON.stringify({ id, method, params, sessionId }));
   });
 
-const { result: { profileId } } = await send('Lightningpanda.registerPreparedPage', {
+const { result: { profileId } } = await send('Pyro.registerPreparedPage', {
   url: 'https://example.com/',
 });
 // Wait until it has booted (optional: acquire returns ready: false otherwise).
-while (!(await send('Lightningpanda.preparedPages')).result.pages.some((p: any) => p.ready)) {
+while (!(await send('Pyro.preparedPages')).result.pages.some((p: any) => p.ready)) {
   await Bun.sleep(10);
 }
-const { result: page } = await send('Lightningpanda.acquirePreparedPage', { profileId, attach: true });
+const { result: page } = await send('Pyro.acquirePreparedPage', { profileId, attach: true });
 const title = await send('Runtime.evaluate', { expression: 'document.title', returnByValue: true }, page.sessionId);
 console.log(title.result.result.value); // "Example Domain"
 ws.close();

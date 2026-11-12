@@ -54,10 +54,10 @@ The CPU rasterizer is bit-exact from run to run, so compare exactly by default a
 
 ```ts
 import { writeFileSync } from 'node:fs';
-import { Lightningpanda, loaded } from '@povio/lightning-panda';
+import { Pyro, loaded } from '@povio/pyro';
 
-const lp = await Lightningpanda.launch();
-const page = await lp.page({ url: 'https://example.com/' });
+const pyro = await Pyro.launch();
+const page = await pyro.page({ url: 'https://example.com/' });
 await page.run([loaded()]);
 const { data } = await page.send('Page.printToPDF', {
   paperWidth: 8.27, paperHeight: 11.69,   // A4, in inches
@@ -65,7 +65,7 @@ const { data } = await page.send('Page.printToPDF', {
 });
 writeFileSync('page.pdf', Buffer.from(data, 'base64'));
 page.close();
-lp.close();
+pyro.close();
 ```
 
 `page.pdf()` in the Playwright module and Puppeteer's `page.pdf()` send the same command. The PDF waits for the fonts and images its layout fetches, up to 10 seconds, while the browser keeps serving other commands.
@@ -92,7 +92,7 @@ Variable fonts are embedded once per instance a run used, so a `font-weight: 700
 ## Fonts
 
 - Fonts come from `@font-face` rules the page loads, then from the system. `@font-face` `unicode-range` decides which face draws each character.
-- **Google Fonts serves different files by User-Agent.** Pyro's default page User-Agent is `Mozilla/5.0 (compatible; lightningpanda/<version>)`. For it, Google Fonts returns one TrueType file per weight with no `unicode-range`. For a Chrome User-Agent it returns variable WOFF2 files split into script subsets. To render with the same font files Chrome gets, set a Chrome User-Agent before navigating (Playwright's `userAgent` context option, or CDP `Emulation.setUserAgentOverride`).
+- **Google Fonts serves different files by User-Agent.** Pyro's default page User-Agent is `Mozilla/5.0 (compatible; pyro/<version>)`. For it, Google Fonts returns one TrueType file per weight with no `unicode-range`. For a Chrome User-Agent it returns variable WOFF2 files split into script subsets. To render with the same font files Chrome gets, set a Chrome User-Agent before navigating (Playwright's `userAgent` context option, or CDP `Emulation.setUserAgentOverride`).
 - On Linux, system fonts are found through fontconfig. A minimal container may have no fonts at all; see [Installation](/guide/installation#ci).
 
 ## Line breaks between a hyphen and a digit
@@ -100,9 +100,9 @@ Variable fonts are embedded once per instance a run used, so a `font-weight: 700
 Unicode's line breaking rules keep a hyphen together with a following digit, so by default Pyro never wraps `REG-be08b23e-89be-48b8-9a6f-…` after a hyphen followed by a digit. Chrome does. To wrap like Chrome in screenshots and PDFs:
 
 ```sh
-lightningpanda serve --hyphen-digit-breaks on
-# or LIGHTNINGPANDA_HYPHEN_DIGIT_BREAKS=on
-# or Lightningpanda.launch({ args: ['--hyphen-digit-breaks', 'on'] })
+pyro serve --hyphen-digit-breaks on
+# or PYRO_HYPHEN_DIGIT_BREAKS=on
+# or Pyro.launch({ args: ['--hyphen-digit-breaks', 'on'] })
 ```
 
 Text may then break between a hyphen and a digit when the hyphen follows a letter or digit (`10-` / `20`). A minus sign stays with its number (`-120,00`, `A -5`). Table column widths and other min-content widths follow the same breaks. It is off by default.

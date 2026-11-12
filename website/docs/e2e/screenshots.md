@@ -2,12 +2,12 @@
 
 A `matchScreenshot` step renders the page in the browser and compares it there with a baseline PNG, in the same run as the steps that led to the state. Rendering runs on the CPU and is deterministic, so baselines compare exactly by default. When the page's display list is unchanged since the baseline was recorded, the step passes without rasterizing at all.
 
-The browsers bundled in `@povio/lightning-panda` are built with rendering enabled. A browser you build yourself needs the `render` feature (see [Rendering: screenshots and PDF](/guide/rendering)).
+The browsers bundled in `@povio/pyro` are built with rendering enabled. A browser you build yourself needs the `render` feature (see [Rendering: screenshots and PDF](/guide/rendering)).
 
 ## The three forms
 
 ```ts
-import { css, label, matchScreenshot, screenshotMatchers } from '@povio/lightning-panda';
+import { css, label, matchScreenshot, screenshotMatchers } from '@povio/pyro';
 
 // 1. Steps inside a run
 await page.run([
@@ -74,12 +74,12 @@ The run reports the first missing baseline it meets and stops writing there, so 
 
 | How | Where |
 |---|---|
-| `LP_UPDATE_SNAPSHOTS=1` (also `true`, `all`, `changed`) | Any runner |
+| `PYRO_UPDATE_SNAPSHOTS=1` (also `true`, `all`, `changed`) | Any runner |
 | `bun test -u` or `bun test --update-snapshots` | `bun test` |
-| `lightningpanda e2e -u` | The suite runner |
+| `pyro e2e -u` | The suite runner |
 
 ```sh
-LP_UPDATE_SNAPSHOTS=1 bun test e2e/visual.test.ts
+PYRO_UPDATE_SNAPSHOTS=1 bun test e2e/visual.test.ts
 ```
 
 Update mode rewrites every baseline the run reaches, matching or not. Run it for the tests you mean to update, look at the changed PNGs in your diff tool, then commit.
@@ -95,7 +95,7 @@ step 1 (matchScreenshot /path/to/__screenshots__/home.png): matchScreenshot '/pa
 ```
 
 ```ts
-import { ScreenshotMismatchError } from '@povio/lightning-panda';
+import { ScreenshotMismatchError } from '@povio/pyro';
 
 try {
   await page.run([matchScreenshot('home')]);

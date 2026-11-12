@@ -1,6 +1,6 @@
 # Why a native driver
 
-The native driver runs a whole test scenario inside the browser as one command. You build the steps in TypeScript, `page.run([...])` sends them as one `LP.run` CDP command, and the browser locates, acts, waits and checks on its own thread before it replies once. This section shows how to write tests that way and how to run a large suite with it.
+The native driver runs a whole test scenario inside the browser as one command. You build the steps in TypeScript, `page.run([...])` sends them as one `Pyro.run` CDP command, and the browser locates, acts, waits and checks on its own thread before it replies once. This section shows how to write tests that way and how to run a large suite with it.
 
 If you already have a Playwright suite, you do not need this section to get started: change the imports and run it unchanged (see [Coming from Playwright](/playwright/overview)). Come back here for the tests whose last milliseconds matter, or for new suites.
 
@@ -32,7 +32,7 @@ The native driver removes each of these costs:
 
 ## What runs in the browser
 
-`page.run(steps)` sends the steps as one `LP.run` command. For each step the browser:
+`page.run(steps)` sends the steps as one `Pyro.run` command. For each step the browser:
 
 1. Resolves the locator against the live DOM. An action on a locator that matches several elements fails at once ([strict mode](/e2e/locators#strict-mode)).
 2. Checks actionability for actions: attached, visible, enabled where the action needs it, not covered by another element, scrolled into view.
@@ -51,7 +51,7 @@ A native test has two parts:
 ```ts
 test.concurrent('closes a position', async () => {
   const position = await api.createPosition();                 // seed through the API
-  await using page = await lp.page({ as: 'employee', route: `/positions/${position.id}` });
+  await using page = await pyro.page({ as: 'employee', route: `/positions/${position.id}` });
   await page.run([
     check(text(position.number)).visible(),
     button('Settings', { exact: true }).press('Enter'),
@@ -70,25 +70,25 @@ Split a scenario into several `run` calls only when plain code must happen betwe
 
 All numbers below were measured on an Apple M1 Max under load from other work. They show the order of magnitude, not a guarantee for your app.
 
-**One test, TOS close flow** (`bench/results/lp-tos-e501cef`, median of 5 rounds, TOS-shaped app in the bench site):
+**One test, TOS close flow** (`bench/results/pyro-tos-e501cef`, median of 5 rounds, TOS-shaped app in the bench site):
 
 | How the test runs | Median per test |
 |---|---:|
 | Playwright over CDP, same browser | 34.2 ms |
 | Native driver, one CDP command per step, fresh page | 9.2 ms |
-| One `LP.run`, fresh page | 8.6 ms |
-| One `LP.run`, page booted ahead | 6.8 ms |
-| One `LP.run`, booted pages over 4 connections, back to back | 2.7 ms |
+| One `Pyro.run`, fresh page | 8.6 ms |
+| One `Pyro.run`, page booted ahead | 6.8 ms |
+| One `Pyro.run`, booted pages over 4 connections, back to back | 2.7 ms |
 
-The same flow written as Playwright code and run through `@povio/lightning-panda/playwright` took 14.7 ms per test (median of 40, fresh page) against 41 to 44 ms for stock Playwright driving the same browser (package README).
+The same flow written as Playwright code and run through `@povio/pyro/wright` took 14.7 ms per test (median of 40, fresh page) against 41 to 44 ms for stock Playwright driving the same browser (package README).
 
 **A whole suite** (TOS, 2,158 cases in 309 files, PR #289):
 
 | Run | Wall time | Passed |
 |---|---:|---:|
 | `bun test --parallel=8 --max-concurrency=1` (8 browsers) | 380 s | 2,158/2,158 |
-| `lightningpanda e2e -j 12` (1 browser) | 362 s | 2,157/2,158 |
-| `lightningpanda e2e -j 16` (1 browser) | 313 s | 2,154/2,158 |
+| `pyro e2e -j 12` (1 browser) | 362 s | 2,157/2,158 |
+| `pyro e2e -j 16` (1 browser) | 313 s | 2,154/2,158 |
 
 The suite numbers are wall time for an app whose own JavaScript dominates the cost; the failures were app-level step timeouts and a known flaky test. [Performance](/guide/performance) collects the other measurements.
 
@@ -103,4 +103,4 @@ The suite numbers are wall time for an app whose own JavaScript dominates the co
 - [Your first test](/e2e/first-test): install, a tiny app, one test, end to end.
 - [Locators](/e2e/locators) and [Steps and checks](/e2e/steps): everything a run can do.
 - [Profiles and page pools](/e2e/profiles) and [Fork mode in tests](/e2e/fork): how pages start booted.
-- [Suite runner: lightningpanda e2e](/e2e/runner): one process and one browser for a whole suite.
+- [Suite runner: pyro e2e](/e2e/runner): one process and one browser for a whole suite.

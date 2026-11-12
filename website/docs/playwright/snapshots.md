@@ -40,7 +40,7 @@ export default defineConfig({
 `animations`, `caret`, `mask`, `maskColor`, `omitBackground`, `scale` and `stylePath` are in the types but the browser rejects them:
 
 ```text
-LP.run: step 0: unknown field `animations`, expected one of `name`, `baseline`, `sceneHash`, `threshold`, ...
+Pyro.run: step 0: unknown field `animations`, expected one of `name`, `baseline`, `sceneHash`, `threshold`, ...
 ```
 
 Remove them when you migrate. Pyro renders a still frame, so there is no animation or caret to disable.
@@ -78,7 +78,7 @@ A missing baseline is written, and the test fails at its end with `A snapshot do
 
 ## Update modes
 
-`-u` / `--update-snapshots [mode]` on `lightningpanda test`, the config's `updateSnapshots`, or `$LP_UPDATE_SNAPSHOTS` choose what is written:
+`-u` / `--update-snapshots [mode]` on `pyro run`, the config's `updateSnapshots`, or `$PYRO_UPDATE_SNAPSHOTS` choose what is written:
 
 | Mode | Missing baseline | Mismatch |
 | --- | --- | --- |
@@ -88,9 +88,9 @@ A missing baseline is written, and the test fails at its end with `A snapshot do
 | `none` | Fails: `A snapshot doesn't exist at <path>.` | Fails |
 
 ```sh
-bunx lightningpanda test -u            # changed
-bunx lightningpanda test -u all        # rewrite every baseline
-bunx lightningpanda test -u none       # CI: never write
+bunx pyro run -u            # changed
+bunx pyro run -u all        # rewrite every baseline
+bunx pyro run -u none       # CI: never write
 ```
 
 With plain `bun test`, `-u` means `changed`. These modes also apply to `toMatchSnapshot` and `toMatchAriaSnapshot` files.
@@ -100,12 +100,12 @@ With plain `bun test`, `-u` means `changed`. These modes also apply to `toMatchS
 Chromium and Pyro draw text, anti-aliasing, form controls and some layout details differently. The renderer is described in [Rendering: screenshots and PDF](/guide/rendering). Expect every Chromium baseline to fail.
 
 1. Remove the old baseline images, or keep them on a branch for reference.
-2. Run `bunx lightningpanda test -u all` on the platform where CI runs. Fonts come from the operating system, and the file name carries the platform, so macOS and Linux need their own baselines.
+2. Run `bunx pyro run -u all` on the platform where CI runs. Fonts come from the operating system, and the file name carries the platform, so macOS and Linux need their own baselines.
 3. Look at the new images. A rendering problem in Pyro would otherwise become the new truth.
 4. Commit the `.png` and `.json` files.
 5. In CI, run with `-u none` or without `-u`, so a missing baseline fails.
 
-If a test's screenshot depends on text wrapping at hyphens next to digits (IDs, dates), `use: { lightningpanda: { args: ['--hyphen-digit-breaks', 'on'] } }` wraps like Chrome does. It is off by default.
+If a test's screenshot depends on text wrapping at hyphens next to digits (IDs, dates), `use: { pyro: { args: ['--hyphen-digit-breaks', 'on'] } }` wraps like Chrome does. It is off by default.
 
 ## toMatchSnapshot
 

@@ -1,8 +1,8 @@
 # API coverage
 
-This page lists Playwright's library API class by class and marks what `@povio/lightning-panda/playwright` implements. Use it to check whether a suite depends on something missing before you migrate.
+This page lists Playwright's library API class by class and marks what `@povio/pyro/wright` implements. Use it to check whether a suite depends on something missing before you migrate.
 
-**How this was derived.** The tables come from reading the classes in `packages/lightning-panda/src/playwright/` (`page.ts`, `browser.ts`, `handles.ts`, `request.ts`, `clock.ts`, `coverage.ts`, `cdp-session.ts`, `index.ts`) at version 0.0.33 and comparing their methods with Playwright's documented API. Many entries were also checked by running scripts against the published 0.0.33 package. The test runner and `expect` are covered in [Fixtures, hooks and steps](/playwright/fixtures), [Config and the test runner](/playwright/runner) and [Assertions](/playwright/assertions).
+**How this was derived.** The tables come from reading the classes in `packages/pyro/src/wright/` (`page.ts`, `browser.ts`, `handles.ts`, `request.ts`, `clock.ts`, `coverage.ts`, `cdp-session.ts`, `index.ts`) at version 0.0.33 and comparing their methods with Playwright's documented API. Many entries were also checked by running scripts against the published 0.0.33 package. The test runner and `expect` are covered in [Fixtures, hooks and steps](/playwright/fixtures), [Config and the test runner](/playwright/runner) and [Assertions](/playwright/assertions).
 
 **Legend.** Supported: works as in Playwright. Partial: works with the limits noted. No-op: exists and does nothing. Not supported: missing (a type error, and `undefined` at run time) or throws.
 
@@ -24,7 +24,7 @@ This page lists Playwright's library API class by class and marks what `@povio/l
 | Method | Status | Notes |
 | --- | --- | --- |
 | `launch(options)` | Partial | Launches the bundled Pyro. Takes `bin`, `args` (serve flags) and `boot`. Playwright's launch options (`headless`, `executablePath`, `proxy`, ...) are ignored. |
-| `connectOverCDP(endpoint)` | Supported | A `ws://` URL or `http://host:port` of a running `lightningpanda serve`. `timeout` and `headers` are ignored. |
+| `connectOverCDP(endpoint)` | Supported | A `ws://` URL or `http://host:port` of a running `pyro serve`. `timeout` and `headers` are ignored. |
 | `connect(wsEndpoint)` | Partial | Same as `connectOverCDP`; there is no Playwright server protocol. |
 | `name()` | Supported | `'chromium'`. |
 | `launchPersistentContext`, `launchServer`, `executablePath` | Not supported | |
@@ -36,7 +36,7 @@ This page lists Playwright's library API class by class and marks what `@povio/l
 | `newContext(options)` | Supported | In a test, starts from the test's `use` options. See [Context options](#context-options). |
 | `newPage(options)` | Supported | A page in its own context, closed with the page. |
 | `contexts()`, `isConnected()`, `close()` | Supported | |
-| `version()` | Partial | Returns `'lightningpanda'`. |
+| `version()` | Partial | Returns `'pyro'`. |
 | `browserType()` | Partial | `{ name: () => 'chromium' }`. |
 | `on/once/off('disconnected')` | Supported | |
 | `newBrowserCDPSession()`, `startTracing()`, `stopTracing()`, `removeAllListeners()` | Not supported | |
@@ -167,7 +167,7 @@ This page lists Playwright's library API class by class and marks what `@povio/l
 
 | Method | Status | Notes |
 | --- | --- | --- |
-| `click()`, `dblclick()`, `tap()`, `hover()`, `fill()`, `press()`, `pressSequentially()`, `check()`, `uncheck()`, `setChecked()`, `focus()`, `selectOption()`, `selectText()`, `setInputFiles()`, `dispatchEvent()`, `screenshot()` | Supported | Native actions; the element carries `data-lp-handle` meanwhile. Same option limits as Locator. |
+| `click()`, `dblclick()`, `tap()`, `hover()`, `fill()`, `press()`, `pressSequentially()`, `check()`, `uncheck()`, `setChecked()`, `focus()`, `selectOption()`, `selectText()`, `setInputFiles()`, `dispatchEvent()`, `screenshot()` | Supported | Native actions; the element carries `data-pyro-handle` meanwhile. Same option limits as Locator. |
 | `isVisible()`, `isHidden()`, `isEnabled()`, `isDisabled()`, `isEditable()`, `isChecked()`, `inputValue()` | Supported | |
 | `getAttribute()`, `textContent()`, `innerText()`, `innerHTML()`, `boundingBox()` | Supported | |
 | `ownerFrame()`, `contentFrame()`, `scrollIntoViewIfNeeded()` | Supported | |

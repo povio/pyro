@@ -169,7 +169,7 @@ const hash = await page.evaluate(() => (window as any).sha256('abc'));
 | `extraHTTPHeaders` (option), `context.setExtraHTTPHeaders()`, `page.setExtraHTTPHeaders()` | Supported. |
 | `userAgent` (option) | Supported. |
 | `httpCredentials` (option) | Used by `request` only. Page requests do not send them. Put credentials in `extraHTTPHeaders` (`authorization: 'Basic ...'`) for pages. |
-| `proxy` (option) | No effect. Pass the browser flag instead: `use: { lightningpanda: { args: ['--proxy', 'http://user:pass@host:3128'] } }`. HTTP proxies only, `CONNECT` for HTTPS, no SOCKS. `--proxy-bypass` takes a bypass list. See [serve options](/reference/serve). |
+| `proxy` (option) | No effect. Pass the browser flag instead: `use: { pyro: { args: ['--proxy', 'http://user:pass@host:3128'] } }`. HTTP proxies only, `CONNECT` for HTTPS, no SOCKS. `--proxy-bypass` takes a bypass list. See [serve options](/reference/serve). |
 | `offline`, `context.setOffline()` | No effect. Use a route that aborts: `context.route('**/*', (r) => r.abort('internetdisconnected'))`. |
 | `ignoreHTTPSErrors` (option) | Used by `request` only. |
 

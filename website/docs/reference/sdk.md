@@ -1,70 +1,70 @@
 # SDK: Pyro and Page
 
-The TypeScript API of `@povio/lightning-panda`: launching or connecting to a browser, declaring profiles, opening pages, and running steps in one `LP.run` round trip. It runs on Bun and on Node 22 or later, using the runtime's global `WebSocket` and `fetch`. Locators and step builders are documented in [SDK: locators and steps](/reference/steps).
+The TypeScript API of `@povio/pyro`: launching or connecting to a browser, declaring profiles, opening pages, and running steps in one `Pyro.run` round trip. It runs on Bun and on Node 22 or later, using the runtime's global `WebSocket` and `fetch`. Locators and step builders are documented in [SDK: locators and steps](/reference/steps).
 
 ```ts
-import { Lightningpanda, button, check, dialog } from '@povio/lightning-panda';
+import { Pyro, button, check, dialog } from '@povio/pyro';
 
-const lp = await Lightningpanda.launch();
-await lp.profile('employee', { url: 'http://localhost:5173/platform', localStorage: { token } });
-await using page = await lp.page({ as: 'employee', route: `/positions/${id}` });
+const pyro = await Pyro.launch();
+await pyro.profile('employee', { url: 'http://localhost:5173/platform', localStorage: { token } });
+await using page = await pyro.page({ as: 'employee', route: `/positions/${id}` });
 const r = await page.run([
   button('Settings').click(),
   dialog().hasText('will be closed').button('Close Position').click(),
   check.request('POST', `/positions/${id}/close`).status(200),
   check(button('Reopen Position')).count(1),
 ]);
-lp.close();
+pyro.close();
 ```
 
 ## Entry points {#entry-points}
 
 | Import | Contents | Documented in |
 | --- | --- | --- |
-| `@povio/lightning-panda` | `Lightningpanda`, `Page`, `RunError`, types, every step and locator builder, `Cdp`, `CdpError`, screenshot helpers | this page, [steps](/reference/steps) |
-| `@povio/lightning-panda/e2e` | Spec-file API for `lightningpanda e2e` | [below](#e2e) |
-| `@povio/lightning-panda/playwright` | Playwright-compatible API (`chromium`, `Browser`, `Page`, `Locator`, `expect`, `test`, ...) | [Coming from Playwright](/playwright/overview) |
-| `@povio/lightning-panda/test` | `@playwright/test` replacement (`test`, `expect`, config helpers) | [Config and the test runner](/playwright/runner) |
+| `@povio/pyro` | `Pyro`, `Page`, `RunError`, types, every step and locator builder, `Cdp`, `CdpError`, screenshot helpers | this page, [steps](/reference/steps) |
+| `@povio/pyro/e2e` | Spec-file API for `pyro e2e` | [below](#e2e) |
+| `@povio/pyro/wright` | Playwright-compatible API (`chromium`, `Browser`, `Page`, `Locator`, `expect`, `test`, ...) | [Coming from Playwright](/playwright/overview) |
+| `@povio/pyro/test` | `@playwright/test` replacement (`test`, `expect`, config helpers) | [Config and the test runner](/playwright/runner) |
 
 Under Bun the package's `bun` export condition loads the TypeScript sources directly. Other runtimes load the built `dist/*.js`.
 
-## Pyro {#lightningpanda}
+## Pyro {#pyro}
 
-A client of one `lightningpanda serve`: one or more CDP connections, the profiles this client declared, and, when it launched the server, the server process.
+A client of one `pyro serve`: one or more CDP connections, the profiles this client declared, and, when it launched the server, the server process.
 
-### Lightningpanda.launch() {#launch}
+### Pyro.launch() {#launch}
 
 ```ts
-static launch(opts?: ConnectOptions & { bin?: string; args?: string[] }): Promise<Lightningpanda>
+static launch(opts?: ConnectOptions & { bin?: string; args?: string[] }): Promise<Pyro>
 ```
 
-Starts `lightningpanda serve --host 127.0.0.1 --port <free port> ...args` and connects to it.
+Starts `pyro serve --host 127.0.0.1 --port <free port> ...args` and connects to it.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `bin` | `string` | `$LIGHTNINGPANDA_BIN`, else the bundled binary | Browser binary. |
+| `bin` | `string` | `$PYRO_BIN`, else the bundled binary | Browser binary. |
 | `args` | `string[]` | `[]` | Extra [serve options](/reference/serve), for example `['--fork']`, `['--static', 'http://app.test=./dist']`, `['--hyphen-digit-breaks', 'on']`. |
 | `connections` | `number` | `1` | See [`ConnectOptions`](#connect-options). |
 
-- The server inherits the environment plus `LIGHTNINGPANDA_PARENT_PID=<this pid>`, so it exits with this process however that ends ([`--parent-pid`](/reference/serve#parent-pid)).
+- The server inherits the environment plus `PYRO_PARENT_PID=<this pid>`, so it exits with this process however that ends ([`--parent-pid`](/reference/serve#parent-pid)).
 - It runs in its own process group (on POSIX). Its stdout is discarded and its stderr is inherited.
-- `launch()` polls `GET /json/version` every 5 ms for up to 15 s. If the process exits or the deadline passes, it throws `lightningpanda serve did not start: ...` and kills the process group.
-- After connecting it sends `Lightningpanda.capabilities` to learn whether the server forks connections (`--fork`) and shares profiles.
+- `launch()` polls `GET /json/version` every 5 ms for up to 15 s. If the process exits or the deadline passes, it throws `pyro serve did not start: ...` and kills the process group.
+- After connecting it sends `Pyro.capabilities` to learn whether the server forks connections (`--fork`) and shares profiles.
 
 ```ts
-const lp = await Lightningpanda.launch({ args: ['--fork', '--static', 'http://app.test=./dist'] });
+const pyro = await Pyro.launch({ args: ['--fork', '--static', 'http://app.test=./dist'] });
 ```
 
-### Lightningpanda.connect() {#connect}
+### Pyro.connect() {#connect}
 
 ```ts
-static connect(wsUrl: string, opts?: ConnectOptions): Promise<Lightningpanda>
+static connect(wsUrl: string, opts?: ConnectOptions): Promise<Pyro>
 ```
 
-Connects to a running server (for example another process's `lp.wsEndpoint`). `close()` then closes only the connections. A server that does not know `Lightningpanda.capabilities` (an older one) is treated as having no fork mode.
+Connects to a running server (for example another process's `pyro.wsEndpoint`). `close()` then closes only the connections. A server that does not know `Pyro.capabilities` (an older one) is treated as having no fork mode.
 
 ```ts
-const lp = await Lightningpanda.connect(process.env.LIGHTNINGPANDA_WS!, { connections: 4 });
+const pyro = await Pyro.connect(process.env.PYRO_WS!, { connections: 4 });
 ```
 
 ### ConnectOptions {#connect-options}
@@ -76,7 +76,7 @@ type ConnectOptions = {
 };
 ```
 
-Each connection is a browser thread of its own with its own page pools. `lp.page()` picks the connection with the fewest open pages (round-robin among equals). A connection refills its pools as soon as it has no open page, while tests run on the others. Against `serve --fork` every page opens a connection of its own anyway, and the extra connections only carry browser-level commands.
+Each connection is a browser thread of its own with its own page pools. `pyro.page()` picks the connection with the fewest open pages (round-robin among equals). A connection refills its pools as soon as it has no open page, while tests run on the others. Against `serve --fork` every page opens a connection of its own anyway, and the extra connections only carry browser-level commands.
 
 ### Properties {#properties}
 
@@ -86,13 +86,13 @@ Each connection is a browser thread of its own with its own page pools. `lp.page
 | `cdp` | [`Cdp`](#cdp) (getter) | The first connection, for raw browser-level commands. |
 | `stats` | `{ prepared: number; preparedBooting: number; fresh: number }` | Counters: pages taken from a pool, of those the ones still booting when taken, and pages booted on demand because none was waiting. |
 
-### lp.profile() {#profile}
+### pyro.profile() {#profile}
 
 ```ts
 profile(name: string, profile: Profile): Promise<void>
 ```
 
-Declares a kind of page that tests ask for by name (`lp.page({ as: name })`). The server keeps pages of it booted ahead (`Lightningpanda.registerPreparedPage` on every connection, or once in the template with `--fork`).
+Declares a kind of page that tests ask for by name (`pyro.page({ as: name })`). The server keeps pages of it booted ahead (`Pyro.registerPreparedPage` on every connection, or once in the template with `--fork`).
 
 - `localStorage` entries become the first init script, followed by `initScripts`.
 - Declaring a name again with a different definition replaces this client's own.
@@ -127,15 +127,15 @@ type Profile = {
 | `setup` | [`StepLike[]`](/reference/steps) | | `serve --fork` only: steps run once on the booted page in the template. Every page of the profile starts from their result (for example a signed-in state). |
 | `base` | `string` | | `serve --fork` only: start from another profile's snapshot. Its page forks from that profile's, and only this profile's `setup` runs on it. The base may be a profile another client of the server registered. |
 
-### lp.adopt() {#adopt}
+### pyro.adopt() {#adopt}
 
 ```ts
 adopt(name: string): Promise<void>
 ```
 
-Holds the profile another client of this server registered as `name` (`serve --fork`), so `page({ as: name })` and `base: name` work here too. Nothing boots: pages fork from the server's snapshot. `page()` and `profile()` adopt unknown names by themselves. Without `--fork` it throws `no profile <name>: adopting a profile needs lightningpanda serve --fork`. If the server has no such profile it throws `no profile <name> on this server: declare it with lp.profile()`.
+Holds the profile another client of this server registered as `name` (`serve --fork`), so `page({ as: name })` and `base: name` work here too. Nothing boots: pages fork from the server's snapshot. `page()` and `profile()` adopt unknown names by themselves. Without `--fork` it throws `no profile <name>: adopting a profile needs pyro serve --fork`. If the server has no such profile it throws `no profile <name> on this server: declare it with pyro.profile()`.
 
-### lp.releaseProfile() {#release-profile}
+### pyro.releaseProfile() {#release-profile}
 
 ```ts
 releaseProfile(name: string): Promise<void>
@@ -143,7 +143,7 @@ releaseProfile(name: string): Promise<void>
 
 Releases one name. Against `serve --fork` this drops this client's hold, and the server retires the profile once no client holds it and no other profile derives from it. Otherwise the connections' prepared pages are unregistered, except where another of this client's names (an alias of the same definition) still uses them. Pages already taken stay open. Unknown names are ignored.
 
-### lp.warm() {#warm}
+### pyro.warm() {#warm}
 
 ```ts
 warm(name: string, timeoutMs = 5000): Promise<void>
@@ -151,7 +151,7 @@ warm(name: string, timeoutMs = 5000): Promise<void>
 
 Waits until profile `name` is fully booted. Without `--fork` it waits for each connection's pool to have `pool` ready pages. With `--fork` it waits until a new connection, forked from the template, finds the profile's page ready. Throws `no booted page for <name> after <ms> ms` past the timeout. Does nothing for an unknown name or a `prepare: false` profile.
 
-### lp.page() {#page}
+### pyro.page() {#page}
 
 ```ts
 page(opts?: { as?: string; route?: string; url?: string; initScripts?: string[] }): Promise<Page>
@@ -159,14 +159,14 @@ page(opts?: { as?: string; route?: string; url?: string; initScripts?: string[] 
 
 | Option | Description |
 | --- | --- |
-| `as` | Profile name. A page is taken from its pool (`Lightningpanda.acquirePreparedPage`, attached in the same call). Without a ready one it boots a fresh page in a new context, with the profile's scripts and viewport, and navigates to the profile's `url`. Without `as`: a blank page in a new browser context. |
+| `as` | Profile name. A page is taken from its pool (`Pyro.acquirePreparedPage`, attached in the same call). Without a ready one it boots a fresh page in a new context, with the profile's scripts and viewport, and navigates to the profile's `url`. Without `as`: a blank page in a new browser context. |
 | `route` | Same-document navigation, run as the first step of the first `run()` (a [`route`](/reference/steps#route) step). |
 | `url` | Full navigation, run as the first step of the first `run()` (a [`goto`](/reference/steps#goto) step). Replaces the navigation to the profile `url` of a fresh page. |
 | `initScripts` | Run in every document of this page after the profile's scripts. A booted page already ran its document, so with `initScripts` the page always boots fresh instead of coming from the pool. |
 
-A pooled page that is still booting when taken gets a [`loaded()`](/reference/steps#loaded) step first. With `--fork` the page gets a connection of its own (`ws://…/?profile=<id>`), forked from the profile's snapshot. Closing the page ends that process. An unknown `as` throws `no profile <name>: declare it with lp.profile()`.
+A pooled page that is still booting when taken gets a [`loaded()`](/reference/steps#loaded) step first. With `--fork` the page gets a connection of its own (`ws://…/?profile=<id>`), forked from the profile's snapshot. Closing the page ends that process. An unknown `as` throws `no profile <name>: declare it with pyro.profile()`.
 
-### lp.close() {#close}
+### pyro.close() {#close}
 
 ```ts
 close(): void
@@ -176,7 +176,7 @@ Closes every connection. When this client launched the server, it also sends `SI
 
 ## Page {#page-class}
 
-One page, attached over flat CDP sessions. Created by `lp.page()`.
+One page, attached over flat CDP sessions. Created by `pyro.page()`.
 
 | Member | Type | Description |
 | --- | --- | --- |
@@ -191,7 +191,7 @@ One page, attached over flat CDP sessions. Created by `lp.page()`.
 run(steps: StepLike[], opts?: { timeout?: number }): Promise<RunResult>
 ```
 
-Sends every step to the browser as one [`LP.run`](/reference/lp-run) command. The browser runs the steps in order, waiting in place, and replies once. `timeout` is the per-step timeout in ms for steps without their own (server default 5000, maximum 600000).
+Sends every step to the browser as one [`Pyro.run`](/reference/pyro-run) command. The browser runs the steps in order, waiting in place, and replies once. `timeout` is the per-step timeout in ms for steps without their own (server default 5000, maximum 600000).
 
 - Throws [`RunError`](#run-error) at the first failing step.
 - Throws [`ScreenshotMismatchError`](#screenshot-mismatch-error) for a `matchScreenshot` step that does not match. The `.actual.png` and `.diff.png` files are written before it throws.
@@ -214,8 +214,8 @@ type RunResult = {
 | --- | --- |
 | `values` | Keyed by `as`: values of `read`, `evaluate`, `download`, `downloadCount` and `popup` steps (the wire `reads`). |
 | `screenshots` | `matchScreenshot` results by step name. |
-| `results` | One entry per step you passed (prefix steps removed): what a check saw (`{ actual }`), an action's `{ settleMs }`, a matched request, and so on. See [step results](/reference/lp-run#step-results). |
-| `requests` | Requests the page made during the run. The wire objects also carry `requestHeaders`, `responseHeaders` and `postData`. See [request log](/reference/lp-run#request-log). |
+| `results` | One entry per step you passed (prefix steps removed): what a check saw (`{ actual }`), an action's `{ settleMs }`, a matched request, and so on. See [step results](/reference/pyro-run#step-results). |
+| `requests` | Requests the page made during the run. The wire objects also carry `requestHeaders`, `responseHeaders` and `postData`. See [request log](/reference/pyro-run#request-log). |
 | `ms` | Time the run took in the browser. |
 
 ```ts
@@ -269,7 +269,7 @@ close(): void
 [Symbol.asyncDispose](): Promise<void>
 ```
 
-Closes the page and its browser context without waiting (`Target.closeTarget` and `Target.disposeBrowserContext`). For a fork-mode page it closes the page's own connection, which ends its process. Calling it again does nothing. `await using page = await lp.page(...)` closes the page when the scope ends.
+Closes the page and its browser context without waiting (`Target.closeTarget` and `Target.disposeBrowserContext`). For a fork-mode page it closes the page's own connection, which ends its process. Calling it again does nothing. `await using page = await pyro.page(...)` closes the page when the scope ends.
 
 ## Screenshots {#screenshots}
 
@@ -321,7 +321,7 @@ The message names the differing pixel count and the `actual:` and `diff:` paths.
 function updateMode(): boolean
 ```
 
-`true` when baselines should be written instead of compared: `LP_UPDATE_SNAPSHOTS` is `1`, `true`, `all` or `changed`, or the process was started with `--update-snapshots` or `-u` (`bun test -u`). See [env](/reference/env#lp-update-snapshots).
+`true` when baselines should be written instead of compared: `PYRO_UPDATE_SNAPSHOTS` is `1`, `true`, `all` or `changed`, or the process was started with `--update-snapshots` or `-u` (`bun test -u`). See [env](/reference/env#pyro-update-snapshots).
 
 ### screenshotMatchers {#screenshot-matchers}
 
@@ -329,7 +329,7 @@ A matcher for `expect.extend`:
 
 ```ts
 import { expect } from 'bun:test';
-import { screenshotMatchers } from '@povio/lightning-panda';
+import { screenshotMatchers } from '@povio/pyro';
 
 expect.extend(screenshotMatchers);
 await expect(page).toMatchScreenshot('home', { fullPage: true });
@@ -339,7 +339,7 @@ await expect(page).toMatchScreenshot('home', { fullPage: true });
 
 ## Cdp {#cdp}
 
-The minimal CDP client the SDK uses: flat sessions, one promise per command, event listeners by method. Use it for raw commands through `lp.cdp` or on its own.
+The minimal CDP client the SDK uses: flat sessions, one promise per command, event listeners by method. Use it for raw commands through `pyro.cdp` or on its own.
 
 ```ts
 class Cdp {
@@ -364,7 +364,7 @@ class Cdp {
 | `close` | Closes the socket. |
 
 ```ts
-const { pages } = await lp.cdp.send('Lightningpanda.preparedPages');
+const { pages } = await pyro.cdp.send('Pyro.preparedPages');
 ```
 
 ### CdpError {#cdp-error}
@@ -381,17 +381,17 @@ The message is `<method>: <server message>`. `code` is the JSON-RPC error code (
 
 ## e2e module {#e2e}
 
-`@povio/lightning-panda/e2e` is the spec-file API of [`lightningpanda e2e`](/reference/cli#e2e). The functions have `bun:test`'s signatures, but tests from every file share the run's queue and its one fork-mode browser. They only work in files that `lightningpanda e2e` loads: elsewhere they throw `... is for spec files run by lightningpanda e2e`. Guide: [Suite runner](/e2e/runner).
+`@povio/pyro/e2e` is the spec-file API of [`pyro e2e`](/reference/cli#e2e). The functions have `bun:test`'s signatures, but tests from every file share the run's queue and its one fork-mode browser. They only work in files that `pyro e2e` loads: elsewhere they throw `... is for spec files run by pyro e2e`. Guide: [Suite runner](/e2e/runner).
 
 ```ts
-import { browser, describe, expect, test, beforeAll, defer } from '@povio/lightning-panda/e2e';
-import { button, check } from '@povio/lightning-panda';
+import { browser, describe, expect, test, beforeAll, defer } from '@povio/pyro/e2e';
+import { button, check } from '@povio/pyro';
 
 describe('positions', () => {
   beforeAll(async () => {
-    const lp = await browser();
-    await lp.profile('positions', { url: 'http://app.test/positions' });
-    defer(() => lp.releaseProfile('positions'));
+    const pyro = await browser();
+    await pyro.profile('positions', { url: 'http://app.test/positions' });
+    defer(() => pyro.releaseProfile('positions'));
   });
 
   test('closes a position', async () => {
@@ -414,7 +414,7 @@ describe('positions', () => {
 | `beforeAll`, `afterAll`, `beforeEach`, `afterEach` | `(fn, timeout?)`. `beforeEach` runs outer hooks first and `afterEach` inner hooks first. At the top level of a file they apply to that file. In a `--preload` module they apply to every test. |
 | `setDefaultTimeout(ms)` | Timeout of tests and hooks without their own (default 5000, or `--timeout`). |
 | `defer(fn)` | Runs `fn` once what is running now is done. From a test (or its `beforeEach`/`afterEach`): after that test. From a describe's `beforeAll`/`afterAll`, or while it registers: after that describe's last test and its `afterAll` hooks. Later calls run first. |
-| `browser()` | `Promise<Lightningpanda>`: the run's browser, `lightningpanda serve --fork` launched on first use with the setup module's `browser()` options and closed when the run ends. Pages a test opens through it close when the test ends, including a test that timed out. |
+| `browser()` | `Promise<Pyro>`: the run's browser, `pyro serve --fork` launched on first use with the setup module's `browser()` options and closed when the run ends. Pages a test opens through it close when the test ends, including a test that timed out. |
 | `setupResult<T>()` | What the setup module's `setup()` returned. Throws without `--setup`. |
 | `testInfo()` | `{ file, name, titlePath } \| undefined`: the test running now. |
 | `expect` | `bun:test`'s `expect`. |
@@ -426,7 +426,7 @@ Hooks and tests take an `async` function, a sync function or a `done` callback (
 The module passed with `--setup <module>`: a default export object, or the same names exported one by one.
 
 ```ts
-import type { Setup } from '@povio/lightning-panda/e2e';
+import type { Setup } from '@povio/pyro/e2e';
 
 export default {
   async setup() {
@@ -448,9 +448,9 @@ type Setup<T = unknown> = {
 };
 
 type BrowserOptions = {
-  /** Extra `lightningpanda serve` arguments (`--static`, `--proxy`, ...); `--fork` is added. */
+  /** Extra `pyro serve` arguments (`--static`, `--proxy`, ...); `--fork` is added. */
   args?: string[];
-  /** The browser binary (default: `$LIGHTNINGPANDA_BIN`, else the bundled one). */
+  /** The browser binary (default: `$PYRO_BIN`, else the bundled one). */
   bin?: string;
 };
 ```

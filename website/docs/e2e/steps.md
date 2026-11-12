@@ -6,7 +6,7 @@ A run is a list of steps. Each step waits in the browser until it can complete, 
 import {
   button, check, label, text, css, goto, route, reload, waitForUrl, loaded, idle,
   evaluate, viewport, media, popup, switchTo, download, downloadCount, mouse,
-} from '@povio/lightning-panda';
+} from '@povio/pyro';
 ```
 
 ## Timeouts
@@ -265,7 +265,7 @@ Playwright's `page.mouse` at viewport coordinates, not tied to an element:
 
 ## Wire-only steps
 
-The engine accepts a few steps and fields the builders do not produce. A run takes any object with a `toStep()` method, so you can send them directly. Field names are those of [LP.run wire format](/reference/lp-run).
+The engine accepts a few steps and fields the builders do not produce. A run takes any object with a `toStep()` method, so you can send them directly. Field names are those of [Pyro.run wire format](/reference/pyro-run).
 
 ```ts
 const raw = (step: Record<string, unknown>) => ({ toStep: () => step });
@@ -291,4 +291,4 @@ These are stable parts of the wire format, but they have no TypeScript types in 
 
 ## Step results at a glance
 
-`r.results[i]` is the result of your step `i`. Actions give `{ settleMs }` (plus `settled: false` and `pending` when settling gave up), checks `{ actual }`, reads and `evaluate` their value, `goto`/`reload`/`loaded` `{}`, `waitForUrl` `{ url }`, `viewport` `{ width, height, settleMs }`, `request` checks the matched request (or `{ count }` with `.count(n)`), `mock` `{ mockId, mocks }`, `unmock` `{ removed }`, `release` `{ released }`. The steps that `lp.page({ route, url })` added in front of yours are not included.
+`r.results[i]` is the result of your step `i`. Actions give `{ settleMs }` (plus `settled: false` and `pending` when settling gave up), checks `{ actual }`, reads and `evaluate` their value, `goto`/`reload`/`loaded` `{}`, `waitForUrl` `{ url }`, `viewport` `{ width, height, settleMs }`, `request` checks the matched request (or `{ count }` with `.count(n)`), `mock` `{ mockId, mocks }`, `unmock` `{ removed }`, `release` `{ released }`. The steps that `pyro.page({ route, url })` added in front of yours are not included.

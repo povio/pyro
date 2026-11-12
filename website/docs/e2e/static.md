@@ -1,13 +1,13 @@
 # Serving a build: --static
 
-`lightningpanda serve --static ORIGIN=DIR` answers the browser's requests for `ORIGIN` from the files in `DIR`, as a static file server would, without anything listening at that origin. Point it at your front-end build and a CI job needs no front-end dev server or preview server: build once, then run the tests against the files. API calls that the directory cannot answer still go to the network, so your backend, or [mocks](/e2e/network#mocks), serve the data.
+`pyro serve --static ORIGIN=DIR` answers the browser's requests for `ORIGIN` from the files in `DIR`, as a static file server would, without anything listening at that origin. Point it at your front-end build and a CI job needs no front-end dev server or preview server: build once, then run the tests against the files. API calls that the directory cannot answer still go to the network, so your backend, or [mocks](/e2e/network#mocks), serve the data.
 
 ```sh
-bunx lightningpanda serve --fork --static http://localhost:3000=./dist
+bunx pyro serve --fork --static http://localhost:3000=./dist
 ```
 
 ```ts
-const lp = await Lightningpanda.launch({ args: ['--fork', '--static', `http://localhost:3000=${process.cwd()}/dist`] });
+const pyro = await Pyro.launch({ args: ['--fork', '--static', `http://localhost:3000=${process.cwd()}/dist`] });
 ```
 
 ## How requests are answered
@@ -27,7 +27,7 @@ The directory sits behind interception: [mocks](/e2e/network#mocks) and Playwrig
 ### --static-fallback network
 
 ```sh
-bunx lightningpanda serve --static http://localhost:3000=./dist --static-fallback network
+bunx pyro serve --static http://localhost:3000=./dist --static-fallback network
 ```
 
 With `network`, a missing path goes to the network at its original URL, navigations included. Existing assets still come from the directory. Use it when the server at that origin owns the app's routes or renders some documents itself, and you only want the built assets served from disk.
@@ -37,7 +37,7 @@ With `network`, a missing path goes to the network at its original URL, navigati
 Here the "backend" is a Bun server that only answers `/api/items`; the HTML and JavaScript come from the directory, through the same origin:
 
 ```ts
-import { Lightningpanda, check, evaluate, heading, text } from '@povio/lightning-panda';
+import { Pyro, check, evaluate, heading, text } from '@povio/pyro';
 
 const api = Bun.serve({
   port: 0,
@@ -50,20 +50,20 @@ const api = Bun.serve({
 const origin = api.url.origin;
 const dist = new URL('./app/', import.meta.url).pathname;
 
-const lp = await Lightningpanda.launch({ args: ['--fork', '--static', `${origin}=${dist}`] });
+const pyro = await Pyro.launch({ args: ['--fork', '--static', `${origin}=${dist}`] });
 try {
-  await using page = await lp.page({ url: `${origin}/settings` });     // an SPA route: index.html
+  await using page = await pyro.page({ url: `${origin}/settings` });     // an SPA route: index.html
   const r = await page.run([check(heading('Settings')).visible(), check(text('From API')).visible()]);
   console.log(r.requests.map((q) => `${q.method} ${q.url} ${q.status}`));
 } finally {
-  lp.close();
+  pyro.close();
   api.stop(true);
 }
 ```
 
 ```text
-lightningpanda: serving http://localhost:55436 from /private/tmp/lp-docs-verify-e2e/app/
-lightningpanda: CDP server listening on ws://127.0.0.1:55438/ (fork mode)
+pyro: serving http://localhost:55436 from /private/tmp/pyro-docs-verify-e2e/app/
+pyro: CDP server listening on ws://127.0.0.1:55438/ (fork mode)
 [ "GET http://localhost:55436/settings 200", "GET http://localhost:55436/app.js 200",
   "GET http://localhost:55436/api/items 200" ]
 ```
@@ -75,8 +75,8 @@ lightningpanda: CDP server listening on ws://127.0.0.1:55438/ (fork mode)
 The origin does not have to exist: `--static http://app.test=./dist` works, and the page loads `http://app.test/`. Requests the directory cannot answer then go to the network for `app.test` and fail, so mock the API:
 
 ```ts
-const lp = await Lightningpanda.launch({ args: ['--static', `http://app.test=${dist}`] });
-await using page = await lp.page({ initScripts: ['localStorage.setItem("token", "t")'] });
+const pyro = await Pyro.launch({ args: ['--static', `http://app.test=${dist}`] });
+await using page = await pyro.page({ initScripts: ['localStorage.setItem("token", "t")'] });
 await page.run([
   mock('http://app.test/api/items', { json: [{ id: 7, title: 'Mocked item' }] }),
   goto('http://app.test/'),
@@ -91,13 +91,13 @@ Use your real API origin when the tests should hit a real backend.
 `--static` is repeatable. A micro-frontend shell and its remotes, or an app and a CDN origin, each get their own directory:
 
 ```sh
-bunx lightningpanda serve --static http://localhost:3000=./apps/shell/dist --static http://localhost:3001=./apps/orders/dist
+bunx pyro serve --static http://localhost:3000=./apps/shell/dist --static http://localhost:3001=./apps/orders/dist
 ```
 
 ## Seeding localStorage for every context
 
 ```sh
-bunx lightningpanda serve --static http://localhost:3000=./dist --local-storage auth.json
+bunx pyro serve --static http://localhost:3000=./dist --local-storage auth.json
 ```
 
 ```json
@@ -117,16 +117,16 @@ For launchers that cannot pass flags:
 
 | Variable | Same as |
 |---|---|
-| `LIGHTNINGPANDA_STATIC` | `--static`; several entries separated by `;`: `http://localhost:3000=/app/dist;http://localhost:3001=/orders/dist` |
-| `LIGHTNINGPANDA_LOCAL_STORAGE` | `--local-storage <file>` |
+| `PYRO_STATIC` | `--static`; several entries separated by `;`: `http://localhost:3000=/app/dist;http://localhost:3001=/orders/dist` |
+| `PYRO_LOCAL_STORAGE` | `--local-storage <file>` |
 
 `--static-fallback` has no environment variable.
 
 At start the server prints what it serves and seeds on standard error (at the default `--log-level info`):
 
 ```text
-lightningpanda: localStorage preload for http://localhost:55436: 1 entries
-lightningpanda: serving http://localhost:55436 from /private/tmp/lp-docs-verify-e2e/app/
+pyro: localStorage preload for http://localhost:55436: 1 entries
+pyro: serving http://localhost:55436 from /private/tmp/pyro-docs-verify-e2e/app/
 ```
 
 ## With the suite runner
@@ -135,7 +135,7 @@ Return the flags from the setup module's `browser()`, so the build directory and
 
 ```ts
 // e2e/setup.ts
-import type { Setup } from '@povio/lightning-panda/e2e';
+import type { Setup } from '@povio/pyro/e2e';
 
 type Runtime = { origin: string; dist: string };
 
@@ -153,7 +153,7 @@ export default {
 Profiles, pools and fork mode work the same on a static origin: a profile's `url` is a URL on that origin, and its pages boot from the directory.
 
 ```ts
-await lp.profile('employee', { url: 'http://localhost:3000/platform', localStorage: tokens });
+await pyro.profile('employee', { url: 'http://localhost:3000/platform', localStorage: tokens });
 ```
 
 ## Why this helps in CI

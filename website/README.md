@@ -1,6 +1,6 @@
 # Pyro documentation site
 
-VitePress site for Pyro (the product name; the package stays @povio/lightning-panda), hosted on Robodev Lite
+VitePress site for Pyro (npm @povio/pyro; up to 0.0.33 @povio/lightning-panda), hosted on Robodev Lite
 (project `prj-pqvevmsxr7el` in the Povio organization):
 https://pyro.robodev.povio.dev (also https://prj-pqvevmsxr7el.robodev.povio.dev)
 

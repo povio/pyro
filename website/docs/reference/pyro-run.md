@@ -1,21 +1,21 @@
-# LP.run wire format
+# Pyro.run wire format
 
-`LP.run` is a CDP command that sends a whole test scenario to the browser in one message: a list of steps (navigate, act, check, read, mock, ...). The browser runs them in order and replies once, when the last step holds or the first one fails. Locators are resolved against the DOM in Rust, and actionability checks and waiting happen in the browser, so a scenario costs one round trip. The SDK's `page.run()` sends this command. Any CDP client can send it too. Step semantics (waiting, settling, strictness) are described in [SDK: locators and steps](/reference/steps#semantics). This page is the JSON reference.
+`Pyro.run` is a CDP command that sends a whole test scenario to the browser in one message: a list of steps (navigate, act, check, read, mock, ...). The browser runs them in order and replies once, when the last step holds or the first one fails. Locators are resolved against the DOM in Rust, and actionability checks and waiting happen in the browser, so a scenario costs one round trip. The SDK's `page.run()` sends this command. Any CDP client can send it too. Step semantics (waiting, settling, strictness) are described in [SDK: locators and steps](/reference/steps#semantics). This page is the JSON reference.
 
-## The LP domain {#domain}
+## The Pyro domain {#domain}
 
-The `LP.*` commands are page-session commands: send them with the `sessionId` of an attached page (flat mode, `Target.attachToTarget {flatten: true}`). Without a session they fail with `-32000 LP.run is not supported by lightningpanda`.
+The `Pyro.*` commands are page-session commands: send them with the `sessionId` of an attached page (flat mode, `Target.attachToTarget {flatten: true}`). Without a session they fail with `-32000 Pyro.run is not supported by pyro`.
 
 | Command | Params | Result |
 | --- | --- | --- |
-| [`LP.run`](#lp-run) | `{steps, timeout?}` | `{results, reads, requests, ms}` |
-| [`LP.act`](#lp-act) | one [`act`](#act) step body | the step's result |
-| [`LP.expect`](#lp-expect) | one [`check`](#check) step body | the step's result |
-| [`LP.query`](#lp-query) | one [`read`](#read) step body | `{value}` |
-| [`LP.idle`](#lp-idle) | `{timeout?}` | the [`idle`](#idle) step's result |
-| [`LP.dialogs`](#lp-dialogs) | `{block}` | `{}` |
+| [`Pyro.run`](#pyro-run) | `{steps, timeout?}` | `{results, reads, requests, ms}` |
+| [`Pyro.act`](#pyro-act) | one [`act`](#act) step body | the step's result |
+| [`Pyro.expect`](#pyro-expect) | one [`check`](#check) step body | the step's result |
+| [`Pyro.query`](#pyro-query) | one [`read`](#read) step body | `{value}` |
+| [`Pyro.idle`](#pyro-idle) | `{timeout?}` | the [`idle`](#idle) step's result |
+| [`Pyro.dialogs`](#pyro-dialogs) | `{block}` | `{}` |
 
-## LP.run {#lp-run}
+## Pyro.run {#pyro-run}
 
 ### Params {#params}
 
@@ -58,7 +58,7 @@ The run fails at the first failing step. The JSON-RPC error has:
 | `-32602` | A step does not parse or validate. Nothing has run. | `step <i>: <reason>`, e.g. `step 0: locator needs exactly one of css, xpath, testId, text, role, label, placeholder, ariaRef, of` |
 | `-32602` | More than 10000 steps | `too many steps` |
 | `-32000` | A step failed or timed out while running | `step <i> (<what>): <reason>` |
-| `-32000` | Over 1024 commands are already waiting on this connection | `too many waiting LP commands` |
+| `-32000` | Over 1024 commands are already waiting on this connection | `too many waiting Pyro commands` |
 
 `<i>` is the zero-based index in `steps` and `<what>` describes the step. Typical reasons:
 
@@ -189,7 +189,7 @@ Same-document navigation: `history.pushState` and a `popstate` event. Settles on
 | `force` | boolean | `false` | `click`, `dblclick`, `hover`, `wheel`: skip the hit test and the enabled check |
 | `deltaX`, `deltaY` | number | `0` | `wheel` |
 | `modifiers` | `("Shift" \| "Control" \| "Alt" \| "Meta" \| "ControlOrMeta")[]` | `[]` | pointer actions (`ControlOrMeta` is Meta on macOS) |
-| `settle` | boolean | `true` in `LP.run`, `false` in `LP.act` | wait for the page to go quiet afterwards |
+| `settle` | boolean | `true` in `Pyro.run`, `false` in `Pyro.act` | wait for the page to go quiet afterwards |
 | `timeout` | integer | run timeout | |
 
 Result `{}`, or `{settleMs, settled?, pending?}` after a settle.
@@ -369,7 +369,7 @@ Waits until exactly `count` responses are held under `hold`, all with an accepte
 { "advanceTime": { "ms": 30000 } }
 ```
 
-Advances the clock of the page's browser thread by `ms` (at most one day per step). `Date` follows the page clock from then on, and timers that come due fire. This does not need `LIGHTNINGPANDA_VIRTUAL_TIME`. Result `{advanced: ms}`. This step has no SDK builder.
+Advances the clock of the page's browser thread by `ms` (at most one day per step). `Date` follows the page clock from then on, and timers that come due fire. This does not need `PYRO_VIRTUAL_TIME`. Result `{advanced: ms}`. This step has no SDK builder.
 
 ### viewport {#viewport}
 
@@ -450,7 +450,7 @@ Give at most one of `clip`, `fullPage` and `locator`.
 
 ## Request log {#request-log}
 
-From the first `LP.run` on, the page records its requests. `requests` in a run's result holds the entries made during that run, including requests still in flight.
+From the first `Pyro.run` on, the page records its requests. `requests` in a run's result holds the entries made during that run, including requests still in flight.
 
 ```json
 {
@@ -473,41 +473,41 @@ From the first `LP.run` on, the page records its requests. `requests` in a run's
 | `requestHeaders`, `responseHeaders` | Header objects (`responseHeaders` is `null` without a response). Values of `authorization`, `proxy-authorization`, `cookie`, `cookie2`, `set-cookie`, `set-cookie2`, `x-api-key`, `x-auth-token`, `x-csrf-token` and `x-xsrf-token` are `[REDACTED]`. |
 | `postData` | Request body: text, or base64 with `postDataBase64: true`. Bodies over 1 MiB are cut off and marked `postDataTruncated: true`. |
 
-## LP.act, LP.expect, LP.query {#single-step}
+## Pyro.act, Pyro.expect, Pyro.query {#single-step}
 
-### LP.act {#lp-act}
+### Pyro.act {#pyro-act}
 
 Params: one [`act`](#act) body. Runs it as a one-step run and replies with the step's result. `settle` defaults to `false`.
 
-### LP.expect {#lp-expect}
+### Pyro.expect {#pyro-expect}
 
 Params: one [`check`](#check) body. Result: `{actual}`.
 
-### LP.query {#lp-query}
+### Pyro.query {#pyro-query}
 
 Params: one [`read`](#read) body (`as` is ignored). It reads **at once, without waiting**: `{value}`. With no match it fails with `-32000 <locator> matched no element`, except for `count`.
 
 Errors of these commands carry the bare reason, without the `step <i>` prefix.
 
-## LP.idle {#lp-idle}
+## Pyro.idle {#pyro-idle}
 
 ```json
-{ "method": "LP.idle", "params": { "timeout": 2000 }, "sessionId": "…" }
+{ "method": "Pyro.idle", "params": { "timeout": 2000 }, "sessionId": "…" }
 ```
 
 Runs one [`idle`](#idle) step: it waits until the page is quiet, with no requests in flight, for up to `timeout` (default 5000). It never fails. Result `{settleMs}`, plus `settled: false` and `pending` if it timed out.
 
-## LP.dialogs {#lp-dialogs}
+## Pyro.dialogs {#pyro-dialogs}
 
 ```json
-{ "method": "LP.dialogs", "params": { "block": true }, "sessionId": "…" }
+{ "method": "Pyro.dialogs", "params": { "block": true }, "sessionId": "…" }
 ```
 
 With `block: true`, dialogs (`alert`, `confirm`, `prompt`) opened by this page's driver steps wait for `Page.handleJavaScriptDialog`, like other dialogs. By default they return what a dismissed dialog gives. Result `{}`.
 
 ## Raw CDP example {#example}
 
-A complete client with nothing but a WebSocket (Bun or Node 22+), against `lightningpanda serve --port 9222`:
+A complete client with nothing but a WebSocket (Bun or Node 22+), against `pyro serve --port 9222`:
 
 ```ts
 const version = await (await fetch('http://127.0.0.1:9222/json/version')).json();
@@ -531,7 +531,7 @@ const { result: { browserContextId } } = await send('Target.createBrowserContext
 const { result: { targetId } } = await send('Target.createTarget', { url: 'about:blank', browserContextId });
 const { result: { sessionId } } = await send('Target.attachToTarget', { targetId, flatten: true });
 
-const reply = await send('LP.run', {
+const reply = await send('Pyro.run', {
   timeout: 10_000,
   steps: [
     { mock: { url: '/api/items', json: [{ id: 1, name: 'Panda' }] } },
@@ -548,4 +548,4 @@ console.log(reply.result.reads.first, reply.result.ms);
 ws.close();
 ```
 
-For pages booted ahead (`Lightningpanda.acquirePreparedPage`), see [Pyro CDP domain](/reference/cdp-domain).
+For pages booted ahead (`Pyro.acquirePreparedPage`), see [Pyro CDP domain](/reference/cdp-domain).

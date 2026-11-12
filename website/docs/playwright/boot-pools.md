@@ -1,17 +1,17 @@
 # Booting pages ahead
 
-Most of an E2E test's time often goes into booting the app: downloading and parsing its JavaScript, running its startup code and its first requests. With `use.lightningpanda.boot`, the browser keeps pages that have already loaded your app, and a test's first `goto` becomes a route change inside one of them. The test code does not change.
+Most of an E2E test's time often goes into booting the app: downloading and parsing its JavaScript, running its startup code and its first requests. With `use.pyro.boot`, the browser keeps pages that have already loaded your app, and a test's first `goto` becomes a route change inside one of them. The test code does not change.
 
 ## Configure it
 
 ```ts
 // playwright.config.ts
-import { defineConfig } from '@povio/lightning-panda/playwright';
+import { defineConfig } from '@povio/pyro/wright';
 
 export default defineConfig({
   use: {
     baseURL: 'http://localhost:3000',
-    lightningpanda: {
+    pyro: {
       boot: [{ url: '/platform', routes: '/platform/**' }],
     },
   },
@@ -34,7 +34,7 @@ Each `boot` entry is a `BootSpec`:
 | `routes` | A glob, RegExp or predicate, or a list of them. A first `goto` to a matching URL on the same origin as `url` takes a booted page. Optional: without it, only a `goto` to `url` itself does. |
 | `pool` | How many booted pages to keep ready. Default 2. |
 
-`boot` can be set per file with `test.use({ lightningpanda: { boot: [...] } })`, since `lightningpanda` is a worker option. Each distinct `lightningpanda` value gets its own browser in the worker.
+`boot` can be set per file with `test.use({ pyro: { boot: [...] } })`, since `pyro` is a worker option. Each distinct `pyro` value gets its own browser in the worker.
 
 ## When goto becomes a route change
 
@@ -86,8 +86,8 @@ test.afterAll(async ({ browser }) => {
 
 ## Fork mode
 
-Pyro's fork mode (`lightningpanda serve --fork`) serves each connection from a fork of a process that booted the profiles once. The Playwright layer opens one connection per worker and keeps it, so it does not get a fork per test.
+Pyro's fork mode (`pyro serve --fork`) serves each connection from a fork of a process that booted the profiles once. The Playwright layer opens one connection per worker and keeps it, so it does not get a fork per test.
 
-Measured with version 0.0.33: with `use: { lightningpanda: { args: ['--fork'], boot: [...] } }`, every page was fresh (`{ pooled: 0, fresh: 4 }` for four tests that took booted pages without `--fork`). Do not combine `boot` with `--fork`.
+Measured with version 0.0.33: with `use: { pyro: { args: ['--fork'], boot: [...] } }`, every page was fresh (`{ pooled: 0, fresh: 4 }` for four tests that took booted pages without `--fork`). Do not combine `boot` with `--fork`.
 
 Fork mode pays off with the native API, where each test opens its own connection: see [Connections and fork mode](/guide/fork-mode) and [Fork mode in tests](/e2e/fork). Pre-booted pages there are called profiles; see [Profiles and pre-booted pages](/guide/profiles).

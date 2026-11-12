@@ -65,7 +65,7 @@ An action with `settle: false` still gets one event loop turn before the next st
 `idle({ timeout })` waits for the same quiet state as an action's settle, with no requests in flight allowed, up to its timeout. It never fails. When it gives up, its result says what was still pending:
 
 ```ts
-import { evaluate, idle } from '@povio/lightning-panda';
+import { evaluate, idle } from '@povio/pyro';
 
 const r = await page.run([
   evaluate('(function tick() { setTimeout(tick, 10) })(), 1', 'started'),
@@ -75,11 +75,11 @@ console.log(r.results[1]);
 // { pending: { timers: 1 }, settleMs: 304.2, settled: false }
 ```
 
-A quiet page gives `{ settleMs: 0.4 }` or similar. Use `idle` after `evaluate` steps that start work, or to find out why a page never settles. The CDP command `LP.idle {timeout}` does the same on its own.
+A quiet page gives `{ settleMs: 0.4 }` or similar. Use `idle` after `evaluate` steps that start work, or to find out why a page never settles. The CDP command `Pyro.idle {timeout}` does the same on its own.
 
 ## Settling in the Playwright module
 
-The Playwright module sends each awaited call as one `LP.run`, so the same rules apply: `await locator.click()` returns after the page has settled. Web-first assertions (`await expect(locator).toHaveText(...)`) wait in the browser the same way a native check does.
+The Playwright module sends each awaited call as one `Pyro.run`, so the same rules apply: `await locator.click()` returns after the page has settled. Web-first assertions (`await expect(locator).toHaveText(...)`) wait in the browser the same way a native check does.
 
 ### Compared with Playwright's auto-waiting
 
@@ -106,7 +106,7 @@ await expect(page.getByRole('progressbar')).toBeVisible(); // can fail
 To test a transient state, hold the work that ends it. With the native SDK, hold the request until you have checked, and do not let the click settle on a request that cannot finish yet:
 
 ```ts
-import { button, check, mock, release, role, text } from '@povio/lightning-panda';
+import { button, check, mock, release, role, text } from '@povio/pyro';
 
 await page.run([
   mock('/api/save', { hold: 'save', json: { ok: true } }),

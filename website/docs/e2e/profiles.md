@@ -1,19 +1,19 @@
 # Profiles and page pools
 
-A profile is a kind of page your tests ask for by name: "a signed-in employee on the dashboard", "a guest on the pricing page". The browser boots pages of a profile before any test asks, so `lp.page({ as })` returns one that has already loaded the app, run its scripts and read its tokens. This page lists every option of `lp.profile()` and `lp.page()` and explains pools, connections, refills and memory. [Fork mode in tests](/e2e/fork) covers the fork-only options in depth; [Profiles and pre-booted pages](/guide/profiles) explains the concept.
+A profile is a kind of page your tests ask for by name: "a signed-in employee on the dashboard", "a guest on the pricing page". The browser boots pages of a profile before any test asks, so `pyro.page({ as })` returns one that has already loaded the app, run its scripts and read its tokens. This page lists every option of `pyro.profile()` and `pyro.page()` and explains pools, connections, refills and memory. [Fork mode in tests](/e2e/fork) covers the fork-only options in depth; [Profiles and pre-booted pages](/guide/profiles) explains the concept.
 
 ```ts
-await lp.profile('employee', {
+await pyro.profile('employee', {
   url: `${APP}/platform`,
   localStorage: { accessToken: tokens.access, refreshToken: tokens.refresh },
   viewport: { width: 1440, height: 900 },
   pool: 4,
 });
 
-await using page = await lp.page({ as: 'employee', route: `/positions/${id}` });
+await using page = await pyro.page({ as: 'employee', route: `/positions/${id}` });
 ```
 
-## `lp.profile(name, profile)`
+## `pyro.profile(name, profile)`
 
 Declares the profile and starts booting its pages. It resolves once the server has registered it, not when the pages are booted (use [`warm`](#warm) for that).
 
@@ -24,7 +24,7 @@ Declares the profile and starts booting its pages. It resolves once the server h
 | `initScripts` | `string[]` | | Scripts run in every document before its own scripts, after the `localStorage` writes |
 | `viewport` | `{ width, height }` | 1920 × 1080 | The viewport in CSS px (device scale factor 1) |
 | `pool` | `number` (1 to 8) | `2` | Pages kept booted per connection. Ignored in fork mode |
-| `prepare` | `boolean` | `true` | `false` declares the profile without booting ahead: each `lp.page({ as })` then boots a fresh page |
+| `prepare` | `boolean` | `true` | `false` declares the profile without booting ahead: each `pyro.page({ as })` then boots a fresh page |
 | `setup` | `StepLike[]` | | Steps run once on the booted page before tests get it. Fork mode only |
 | `base` | `string` | | Start from another profile's snapshot. Fork mode only |
 
@@ -37,8 +37,8 @@ Most single-page apps keep their session in `localStorage`. Get tokens from your
 ```ts
 beforeAll(async () => {
   const tokens = await getAuthTokens();                      // your API, not the UI
-  lp = await Lightningpanda.launch();
-  await lp.profile('employee', {
+  pyro = await Pyro.launch();
+  await pyro.profile('employee', {
     url: `${APP}/platform`,
     localStorage: {
       'auth.tokens': JSON.stringify(tokens),
@@ -57,13 +57,13 @@ There is no cookie option. For cookie sessions, either sign in once in a `setup`
 Code that must run before the app in every document: feature flags, a fixed `Math.random`, test hooks.
 
 ```ts
-await lp.profile('flags', {
+await pyro.profile('flags', {
   url: `${APP}/`,
   initScripts: ['window.__FEATURES__ = { newCheckout: true };'],
 });
 ```
 
-## `lp.page(options)`
+## `pyro.page(options)`
 
 | Option | Meaning |
 |---|---|
@@ -78,7 +78,7 @@ Use `route` for an app whose routes fetch their data when they mount. Use `url` 
 
 A page asked for while no booted page is waiting is booted for the test: a new context, the profile's scripts and viewport, then a navigation to the profile's `url`. A page taken while it is still booting gets a `loaded()` step in front of your steps, so your first step sees the finished document.
 
-`lp.stats` counts what happened: `prepared` (pages taken from a pool), `preparedBooting` (of those, still booting when taken) and `fresh` (booted on demand).
+`pyro.stats` counts what happened: `prepared` (pages taken from a pool), `preparedBooting` (of those, still booting when taken) and `fresh` (booted on demand).
 
 ## Pools and refills
 
@@ -92,14 +92,14 @@ Close every page when its test ends (`await using`). An open page keeps its conn
 ## Connections
 
 ```ts
-const lp = await Lightningpanda.launch({ connections: 4 });
+const pyro = await Pyro.launch({ connections: 4 });
 // or
-const lp = await Lightningpanda.connect(wsUrl, { connections: 4 });
+const pyro = await Pyro.connect(wsUrl, { connections: 4 });
 ```
 
-Each connection is its own browser thread with its own pools. `lp.page()` takes the page from the connection with the fewest open pages (round robin among equals), and a connection refills while tests run on the others. With 4 connections the TOS close flow took 2.7 ms per test back to back, against 7.4 ms on one connection (`bench/results/lp-tos-e501cef`).
+Each connection is its own browser thread with its own pools. `pyro.page()` takes the page from the connection with the fewest open pages (round robin among equals), and a connection refills while tests run on the others. With 4 connections the TOS close flow took 2.7 ms per test back to back, against 7.4 ms on one connection (`bench/results/pyro-tos-e501cef`).
 
-Every connection boots `pool` pages of every profile, so memory grows with `connections × pool × profiles`. `lp.profile()` registers the profile on every connection.
+Every connection boots `pool` pages of every profile, so memory grows with `connections × pool × profiles`. `pyro.profile()` registers the profile on every connection.
 
 In fork mode `connections` and `pool` make no difference: every page gets a connection of its own.
 
@@ -107,7 +107,7 @@ In fork mode `connections` and `pool` make no difference: every page gets a conn
 
 Every booted page is a full copy of the app. A pool of N holds N booted pages plus the one in use, per connection and per profile. Two ways to cap it:
 
-- **`--prepare-refill after-close`**: the replacement boots only once the taken page's context closes, so a connection never holds more than `pool` copies. Pass it to the server: `Lightningpanda.launch({ args: ['--prepare-refill', 'after-close'] })`. It applies to every profile; the SDK has no per-profile option for it.
+- **`--prepare-refill after-close`**: the replacement boots only once the taken page's context closes, so a connection never holds more than `pool` copies. Pass it to the server: `Pyro.launch({ args: ['--prepare-refill', 'after-close'] })`. It applies to every profile; the SDK has no per-profile option for it.
 - **Fork mode**: the profile boots once in a template process, and each page is a copy-on-write fork that exits when the page closes. See [Fork mode in tests](/e2e/fork).
 
 ## Setup steps and base profiles
@@ -115,9 +115,9 @@ Every booted page is a full copy of the app. A pool of N holds N booted pages pl
 In fork mode, a profile can run steps once on its booted page, and every page of it starts from their result:
 
 ```ts
-const lp = await Lightningpanda.launch({ args: ['--fork'] });
-await lp.profile('signed-out', { url: `${APP}/` });
-await lp.profile('app', {
+const pyro = await Pyro.launch({ args: ['--fork'] });
+await pyro.profile('signed-out', { url: `${APP}/` });
+await pyro.profile('app', {
   base: 'signed-out',
   url: `${APP}/`,
   setup: [label('Email').fill('ada@example.com'), button('Sign in').click(), check(text('Signed in')).visible()],
@@ -129,15 +129,15 @@ await lp.profile('app', {
 ## warm()
 
 ```ts
-await lp.warm('employee');          // default timeout 5,000 ms
-await lp.warm('employee', 30_000);
+await pyro.warm('employee');          // default timeout 5,000 ms
+await pyro.warm('employee', 30_000);
 ```
 
-Waits until every connection's pool of the profile is fully booted (in fork mode: until the profile's template page is ready). It throws `no booted page for <name> after <ms> ms` on timeout. Use it before timing tests, or in a launcher before workers start. Tests do not need it: `lp.page()` takes a page that is still booting and waits for it in the browser.
+Waits until every connection's pool of the profile is fully booted (in fork mode: until the profile's template page is ready). It throws `no booted page for <name> after <ms> ms` on timeout. Use it before timing tests, or in a launcher before workers start. Tests do not need it: `pyro.page()` takes a page that is still booting and waits for it in the browser.
 
 ## releaseProfile() and redeclaring
 
-`await lp.releaseProfile(name)` drops the profile: the server unregisters it and retires its waiting pages. Pages already taken stay independent until they close. In fork mode with several clients, it drops only this client's hold (see [One server, many workers](/e2e/shared-server)).
+`await pyro.releaseProfile(name)` drops the profile: the server unregisters it and retires its waiting pages. Pages already taken stay independent until they close. In fork mode with several clients, it drops only this client's hold (see [One server, many workers](/e2e/shared-server)).
 
 Declaring the same name again with a different definition replaces it.
 
@@ -146,8 +146,8 @@ Declaring the same name again with a different definition replaces it.
 **One profile per kind of user.**
 
 ```ts
-await lp.profile('admin', { url: `${APP}/admin`, localStorage: adminTokens });
-await lp.profile('employee', { url: `${APP}/platform`, localStorage: employeeTokens });
+await pyro.profile('admin', { url: `${APP}/admin`, localStorage: adminTokens });
+await pyro.profile('employee', { url: `${APP}/platform`, localStorage: employeeTokens });
 ```
 
 **A page per test, seeded through the API.**
@@ -155,7 +155,7 @@ await lp.profile('employee', { url: `${APP}/platform`, localStorage: employeeTok
 ```ts
 test.concurrent('shows the order', async () => {
   const order = await api.createOrder();
-  await using page = await lp.page({ as: 'employee', route: `/orders/${order.id}` });
+  await using page = await pyro.page({ as: 'employee', route: `/orders/${order.id}` });
   await page.run([check(heading(`Order ${order.number}`)).visible()]);
 });
 ```
@@ -163,7 +163,7 @@ test.concurrent('shows the order', async () => {
 **A test that needs extra init code.**
 
 ```ts
-await using page = await lp.page({ as: 'employee', initScripts: ['window.__TEST_CLOCK__ = 0'] });
+await using page = await pyro.page({ as: 'employee', initScripts: ['window.__TEST_CLOCK__ = 0'] });
 ```
 
 This page boots fresh, so it costs a full app boot. Prefer a second profile when many tests need the same script.

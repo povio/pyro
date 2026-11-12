@@ -11,7 +11,7 @@ The output is close to Chrome's, not identical. PDF page geometry follows Chrome
 `page.pdf()` passes its options straight to CDP `Page.printToPDF`. **Use the CDP parameter names, with sizes in inches.** Playwright's own `format`, `width`, `height` and `margin` options are not translated: they are ignored, and you get US Letter with 0.4 in margins.
 
 ```ts
-import { chromium } from '@povio/lightning-panda/playwright';
+import { chromium } from '@povio/pyro/wright';
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
@@ -103,8 +103,8 @@ The first PDF or screenshot of a server scans the system fonts and warms the ren
 Long identifiers such as `REG-be08b23e-89be-48b8-9a6f-...` break differently in Chrome and in the Unicode line breaking rules: Chrome allows a break between a hyphen and a digit, Unicode does not. Pyro follows Unicode by default, so such a string can overflow a narrow table cell where Chrome would wrap it. To wrap like Chrome:
 
 ```sh
-lightningpanda serve --hyphen-digit-breaks on
-# or: LIGHTNINGPANDA_HYPHEN_DIGIT_BREAKS=on
+pyro serve --hyphen-digit-breaks on
+# or: PYRO_HYPHEN_DIGIT_BREAKS=on
 ```
 
 ```ts
