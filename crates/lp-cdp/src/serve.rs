@@ -71,11 +71,12 @@ options:
                                         prepared pages), off otherwise;
                                         env LIGHTNINGPANDA_SPARE_ENGINE=on|off
       --engine-reuse <on|off|thread|always>
-                                       a connection that ends leaves its browser
-                                       thread to the next one, and its JavaScript
-                                       engine too when it made no page in it
+                                       a connection that ends without having made
+                                       a page leaves its browser thread and its
+                                       JavaScript engine to the next one
                                        (default: on; at most one waits, for at
-                                       most 10 s); thread: never the engine;
+                                       most 10 s); thread: the thread after pages
+                                       too, never the engine;
                                        always: the engine after pages too, once
                                        it is proven to hold nothing of them
                                        env LIGHTNINGPANDA_ENGINE_REUSE=...
@@ -267,15 +268,24 @@ pub enum EngineReuse {
     Off,
     /// Its browser thread. The engine is destroyed and the next connection
     /// makes one on the thread.
+    ///
+    /// Not the default: a thread that keeps running pages competes worse
+    /// for a processor than a new one. With twice as many busy processes
+    /// as cores (macOS, 10 cores, 20 hogs), connections that load one page
+    /// one after another: 20 to 25 of 450 took over three times the median
+    /// on a kept thread, 3 to 5 on new threads (p90 17.7 ms against
+    /// 12.8 ms, mean 10.6 to 12.6 ms against 9.3 to 10.2 ms). With idle
+    /// cores the two are equal in time.
     Thread,
-    /// Its browser thread, and its engine when nothing used it
+    /// Its browser thread and its engine when nothing used the engine
     /// (`lp_js::Engine::untouched`: a client that connected and asked the
     /// browser things without ever making a page). A used engine is
-    /// destroyed.
+    /// destroyed and its thread ends with it, for the reason above.
     ///
     /// Measured, instructions per connection that opens one page: 20.96 M
     /// with a new thread and engine each time, 20.24 M with the thread
-    /// kept, 21.26 M with the engine kept too ([`EngineReuse::Always`]):
+    /// kept ([`EngineReuse::Thread`]), 21.26 M with the engine kept too
+    /// ([`EngineReuse::Always`]):
     /// proving a used engine clean (delete all code, a full collection, a
     /// walk of the heap for its counts) costs a little more than destroying
     /// it and making another, and the next page finds no compiled code
@@ -1008,6 +1018,11 @@ fn browser_thread(profile: &Arc<BrowserProfile>, park: &Park, first: Turn) {
             if !keep {
                 // The engine goes; what its wrappers held goes with it.
                 drop(left);
+                if mode == EngineReuse::On {
+                    // A thread that ran pages is not kept (`EngineReuse::On`).
+                    park.refuse("the engine was used");
+                    return;
+                }
                 if let Err(why) = scrub_thread(workers_joined) {
                     park.refuse(why);
                     return;

@@ -432,10 +432,10 @@ async fn workers_timers_and_pending_requests_end_with_their_client() {
     b.close().await;
 }
 
-/// The default: a used engine is destroyed, its thread serves on; an
-/// unused engine serves on too.
+/// The default: a used engine is destroyed and its thread ends; an unused
+/// engine serves on, on its thread.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn by_default_an_engine_a_page_ran_in_is_not_kept_and_its_thread_is() {
+async fn by_default_an_engine_a_page_ran_in_is_not_kept_and_neither_is_its_thread() {
     let (url, requests) = site();
     let (addr, park) = serve(ThreadPerConnection::default()).await;
     let mut a = Client::new(addr).await;
@@ -449,7 +449,9 @@ async fn by_default_an_engine_a_page_ran_in_is_not_kept_and_its_thread_is() {
     )
     .await;
     a.close().await;
-    assert_eq!(decided(&park, 1).await, EngineReuseStats { parked: 1, reused: 0, dropped: 0, expired: 0 });
+    assert_eq!(decided(&park, 1).await, EngineReuseStats { parked: 0, reused: 0, dropped: 1, expired: 0 });
+    assert_eq!(park.last_refusal(), Some("the engine was used"));
+    assert!(!park.occupied());
 
     let sent_before = requests.lock().unwrap().len();
     let mut b = Client::new(addr).await;
@@ -465,13 +467,13 @@ async fn by_default_an_engine_a_page_ran_in_is_not_kept_and_its_thread_is() {
     b.s.write_all(&masked(spin.to_string().as_bytes())).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     drop(b);
-    assert_eq!(decided(&park, 2).await, EngineReuseStats { parked: 2, reused: 0, dropped: 0, expired: 0 });
+    assert_eq!(decided(&park, 2).await, EngineReuseStats { parked: 0, reused: 0, dropped: 2, expired: 0 });
 
-    // The same thread, a new engine, nothing used: this one is kept.
+    // A new thread, a new engine, nothing used: these are kept.
     let mut c = Client::new(addr).await;
     assert!(c.call("Browser.getVersion", json!({})).await["result"]["product"].is_string());
     c.close().await;
-    assert_eq!(decided(&park, 3).await, EngineReuseStats { parked: 3, reused: 0, dropped: 0, expired: 0 });
+    assert_eq!(decided(&park, 3).await, EngineReuseStats { parked: 1, reused: 0, dropped: 2, expired: 0 });
     let mut d = Client::new(addr).await;
     d.page("about:blank").await;
     assert_eq!(d.eval("typeof leaked + ' ' + (6 * 7)").await, "undefined 42");
