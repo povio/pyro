@@ -238,8 +238,14 @@ struct Listed {
 /// The template process of a `serve --fork` server; killed (and its socket
 /// removed) when dropped.
 pub struct Template {
-    child: std::process::Child,
+    pid: libc::pid_t,
+    /// The write end of the template's stdin (see below). Never written to.
+    _stdin: OwnedFd,
+    /// Its exit status once reaped: it is not to be signalled or waited for again.
+    exited: std::sync::Mutex<Option<std::process::ExitStatus>>,
     socket: PathBuf,
+    /// Whether it came to listen: asked once, by whoever needs it first.
+    ready: std::sync::OnceLock<Result<(), String>>,
 }
 
 // The template's stdin is a pipe from the server, which only the server
@@ -272,55 +278,116 @@ const FORK_JSC_DEFAULTS: [(&str, &str); 3] =
     [("JSC_useDFGJIT", "false"), ("JSC_jitMemoryReservationSize", "33554432"), ("JSC_heapGrowthMaxIncrease", "3")];
 
 impl Template {
-    /// Starts `lightningpanda serve --template <socket> <args>` and waits
-    /// until it listens.
-    pub fn spawn(args: &[String]) -> std::io::Result<Template> {
-        // Servers that were killed could not remove theirs.
-        remove_stale_sockets();
-        remove_socket_files(std::process::id());
+    /// Starts the template process: a fork of this one, which goes on as
+    /// `serve --template <socket>` would with the same options. Not a second
+    /// launch of the executable: loading it and its libraries again is 8 to
+    /// 15 ms of a fork-mode start. It listens some tens of milliseconds
+    /// later: [`Template::wait_ready`].
+    ///
+    /// # Safety
+    /// This process has one thread and has not started JavaScriptCore.
+    pub unsafe fn spawn(options: &ServeOptions) -> std::io::Result<Template> {
+        // No look for socket files left behind here (a scan of the temporary
+        // directory, milliseconds when it is full): the template replaces
+        // any file where it binds, and `remove_stale_sockets` runs later.
         let socket = socket_path(std::process::id());
-        let exe = std::env::current_exe()?;
-        let mut command = std::process::Command::new(exe);
-        command
-            .arg("serve")
-            .arg("--template")
-            .arg(&socket)
-            .args(args.iter().filter(|a| a.as_str() != "--fork"))
-            .stdin(std::process::Stdio::piped())
+        let (stdin, ours) = pipe()?;
+        // SAFETY: the caller's contract; the child continues on this thread.
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if pid == 0 {
+            drop(ours);
+            // SAFETY: both descriptors are ours.
+            unsafe { libc::dup2(stdin.as_raw_fd(), 0) };
+            drop(stdin);
             // The template ends with this server (its stdin), not with our parent.
-            .env_remove(crate::serve::PARENT_PID_ENV);
-        // Unless the user set them (this process's own defaults do not count).
-        for (name, value) in FORK_JSC_DEFAULTS {
-            if std::env::var_os(name).is_none() || lp_js::is_process_default(name) {
-                command.env(name, value);
+            std::env::remove_var(crate::serve::PARENT_PID_ENV);
+            // Unless the user set them (this process's own defaults do not count).
+            for (name, value) in FORK_JSC_DEFAULTS {
+                if std::env::var_os(name).is_none() || lp_js::is_process_default(name) {
+                    std::env::set_var(name, value);
+                }
             }
+            let options =
+                ServeOptions { fork: false, parent_pid: None, template: Some(socket.clone()), ..options.clone() };
+            let code = match run_template(&options, &socket) {
+                Ok(()) => 0,
+                // The server reports what is wrong with the options itself.
+                Err(TemplateError::Options(_)) => 2,
+                Err(TemplateError::Other(e)) => {
+                    eprintln!("lightningpanda serve --fork: template: {e}");
+                    1
+                }
+            };
+            std::process::exit(code);
         }
-        let child = command.spawn()?;
-        TEMPLATE_PID.store(child.id() as i32, std::sync::atomic::Ordering::Relaxed);
-        let mut template = Template { child, socket };
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while UnixStream::connect(&template.socket).is_err() {
-            if let Some(status) = template.child.try_wait()? {
-                return Err(std::io::Error::other(format!("template process exited: {status}")));
-            }
-            if Instant::now() > deadline {
-                return Err(std::io::Error::other("template process did not start"));
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        Ok(template)
+        drop(stdin);
+        TEMPLATE_PID.store(pid, std::sync::atomic::Ordering::Relaxed);
+        Ok(Template {
+            pid,
+            _stdin: ours,
+            exited: std::sync::Mutex::new(None),
+            socket,
+            ready: std::sync::OnceLock::new(),
+        })
     }
 
-    pub fn socket(&self) -> &Path {
-        &self.socket
+    /// The template's exit status if it has exited (reaps it).
+    fn try_wait(&self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        use std::os::unix::process::ExitStatusExt;
+        let mut exited = self.exited.lock().unwrap_or_else(|e| e.into_inner());
+        if exited.is_none() {
+            let mut status = 0;
+            // SAFETY: our own child, not reaped yet.
+            match unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) } {
+                0 => {}
+                pid if pid == self.pid => *exited = Some(std::process::ExitStatus::from_raw(status)),
+                _ => return Err(std::io::Error::last_os_error()),
+            }
+        }
+        Ok(*exited)
+    }
+
+    /// Waits until the template listens (once: later calls answer the same,
+    /// concurrent ones wait together).
+    pub fn wait_ready(&self) -> std::io::Result<()> {
+        let ready = self.ready.get_or_init(|| {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while UnixStream::connect(&self.socket).is_err() {
+                match self.try_wait() {
+                    Ok(Some(status)) => return Err(format!("template process exited: {status}")),
+                    Err(e) => return Err(e.to_string()),
+                    Ok(None) => {}
+                }
+                if Instant::now() > deadline {
+                    return Err("template process did not start".into());
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(())
+        });
+        ready.clone().map_err(std::io::Error::other)
+    }
+
+    /// The template's control socket, once it listens.
+    pub fn socket(&self) -> std::io::Result<&Path> {
+        self.wait_ready()?;
+        Ok(&self.socket)
     }
 }
 
 impl Drop for Template {
     fn drop(&mut self) {
         TEMPLATE_PID.store(0, std::sync::atomic::Ordering::Relaxed);
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if self.exited.get_mut().unwrap_or_else(|e| e.into_inner()).is_none() {
+            // SAFETY: our own child, not reaped yet.
+            unsafe {
+                libc::kill(self.pid, libc::SIGKILL);
+                libc::waitpid(self.pid, std::ptr::null_mut(), 0);
+            }
+        }
         // Derived templates' sockets too (`<socket>.<id>`, `.conn`).
         remove_socket_files(std::process::id());
     }
@@ -376,8 +443,8 @@ fn remove_socket_files(server: u32) {
 }
 
 /// Removes the socket files of servers that are gone (killed before they
-/// could remove them).
-fn remove_stale_sockets() {
+/// could remove them). Never this server's own: its template may be binding.
+pub(crate) fn remove_stale_sockets() {
     for (name, path) in socket_files() {
         let Some(pid) = socket_server(&name).and_then(|p| libc::pid_t::try_from(p).ok()) else { continue };
         // SAFETY: signal 0 only checks that the process exists.
@@ -532,38 +599,60 @@ struct TemplateProcess {
     spares_generation: u64,
 }
 
-/// Entry point of the template process (`serve --template <socket>`).
+/// Entry point of a template process launched as `serve --template <socket>`
+/// (the server forks its own instead: [`Template::spawn`]).
 pub fn template_main(options: &ServeOptions, socket: &Path) -> ExitCode {
     match run_template(options, socket) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            let (TemplateError::Options(e) | TemplateError::Other(e)) = e;
             eprintln!("lightningpanda serve --fork: template: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
+/// Why the template could not start.
+enum TemplateError {
+    /// The options do not make a browser profile (the server finds the same).
+    Options(String),
+    Other(String),
+}
+
+impl From<String> for TemplateError {
+    fn from(e: String) -> Self {
+        TemplateError::Other(e)
+    }
+}
+
+fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateError> {
     // A fork needs every other thread gone: a page's workers wait for the child.
     lp_webapi::hold_for_fork();
     // Before profile preload, VM and network threads, and every template fork.
     lp_js::prepare_process_for_fork();
     crate::fork_stats::init();
-    let profile = crate::serve::browser_profile(options)?;
+    let profile = crate::serve::browser_profile(options).map_err(TemplateError::Options)?;
     if !supported() {
-        return Err("this JavaScriptCore cannot fork (build the patched one: scripts/jsc/build.sh)".into());
+        return Err("this JavaScriptCore cannot fork (build the patched one: scripts/jsc/build.sh)".to_string().into());
     }
     // The static-file preload runs on a thread of its own: let it finish.
     let _ = profile.net.static_files.preloaded();
+    // Fonts without CoreText, loaded before any fork (children inherit
+    // them): see lp_render::use_fork_safe_fonts. On a thread of their own
+    // while this one creates the engine: each is half of the start.
     #[cfg(feature = "render")]
-    {
+    let fonts = {
         crate::engine::set_fork_template(true);
-        // Fonts without CoreText, loaded here before any fork (children
-        // inherit them): see lp_render::use_fork_safe_fonts.
-        lp_render::use_fork_safe_fonts();
-    }
+        lp_render::load_fork_safe_fonts()
+    };
 
-    let mut thread = EngineHost::prepare_thread_with(&profile, true).map_err(|e| e.message)?;
+    let thread = EngineHost::prepare_thread_with(&profile, true);
+    // Whatever happened: no thread of ours may be left when this process forks.
+    #[cfg(feature = "render")]
+    if let Some(fonts) = fonts {
+        fonts.join().map_err(|_| "loading the system fonts panicked".to_string())?;
+    }
+    let mut thread = thread.map_err(|e| e.message)?;
     precompile_static_modules(&thread.browser.engine, &profile.net.static_files);
     let profiles: Vec<PreparedProfile> = profile.prepared.iter().map(one_page).collect();
     let pages = EngineHost::preboot(&mut thread, &profiles);

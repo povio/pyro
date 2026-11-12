@@ -579,6 +579,20 @@ pub fn use_fork_safe_fonts() {
     drop(process_fonts());
 }
 
+/// [`use_fork_safe_fonts`] on a thread of its own, so the caller can start its
+/// engine meanwhile (the font scan is half of a fork template's start). From
+/// this call on no font use touches the platform API; one that comes before
+/// the scan is done waits for it. Join the thread before any `fork`. `None`:
+/// the thread could not start and the fonts were loaded here.
+pub fn load_fork_safe_fonts() -> Option<std::thread::JoinHandle<()>> {
+    lp_canvas::fonts::choose_fork_safe_fonts();
+    let started = std::thread::Builder::new().name("lp-fonts".into()).spawn(use_fork_safe_fonts);
+    if started.is_err() {
+        use_fork_safe_fonts();
+    }
+    started.ok()
+}
+
 /// Whether [`use_fork_safe_fonts`] was called (fonts never touch CoreText).
 pub fn fork_safe_fonts() -> bool {
     lp_canvas::fonts::fork_safe_fonts()

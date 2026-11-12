@@ -494,6 +494,25 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     if let Some(socket) = &options.template {
         return crate::fork::template_main(&options, socket);
     }
+    // The template first, while this process has one thread and no engine:
+    // it is a fork of this process, and it starts (half of a fork-mode
+    // start) while the server gets ready to listen.
+    let template = if options.fork {
+        if !crate::fork::supported() {
+            eprintln!("lightningpanda serve: --fork needs the patched JavaScriptCore (scripts/jsc/build.sh)");
+            return ExitCode::from(2);
+        }
+        // SAFETY: nothing above starts a thread or JavaScriptCore.
+        match unsafe { crate::fork::Template::spawn(&options) } {
+            Ok(t) => Some(Arc::new(t)),
+            Err(e) => {
+                eprintln!("lightningpanda serve: --fork: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     // Before anything that can take a while: the process may already be gone.
     if let Some(pid) = options.parent_pid {
         if let Err(e) = crate::lifetime::exit_with(pid, crate::fork::cleanup_for_exit) {
@@ -508,27 +527,29 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let template = if options.fork {
-        if !crate::fork::supported() {
-            eprintln!("lightningpanda serve: --fork needs the patched JavaScriptCore (scripts/jsc/build.sh)");
-            return ExitCode::from(2);
+    if let Some(template) = &template {
+        // Killed by a signal, the server still removes its templates' sockets.
+        if let Err(e) = crate::lifetime::cleanup_on_signals(crate::fork::cleanup_for_exit) {
+            eprintln!("lightningpanda serve: --fork: {e}");
         }
-        match crate::fork::Template::spawn(args) {
-            Ok(t) => {
-                // Killed by a signal, the server still removes its templates' sockets.
-                if let Err(e) = crate::lifetime::cleanup_on_signals(crate::fork::cleanup_for_exit) {
-                    eprintln!("lightningpanda serve: --fork: {e}");
-                }
-                Some(Arc::new(t))
-            }
-            Err(e) => {
+        // The server listens while the template starts: the first connection
+        // waits for it. A template that cannot start ends the server.
+        let waiting = template.clone();
+        let watch = std::thread::Builder::new().name("lp-template-wait".into()).spawn(move || {
+            crate::fork::remove_stale_sockets();
+            if let Err(e) = waiting.wait_ready() {
                 eprintln!("lightningpanda serve: --fork: {e}");
-                return ExitCode::FAILURE;
+                crate::fork::cleanup_for_exit();
+                // SAFETY: ends the process without static destructors
+                // while the server thread runs.
+                unsafe { libc::_exit(1) };
             }
+        });
+        if let Err(e) = watch {
+            eprintln!("lightningpanda serve: --fork: {e}");
+            return ExitCode::FAILURE;
         }
-    } else {
-        None
-    };
+    }
     if options.log_level <= LogLevel::Info {
         for (origin, count) in profile.local_storage.summary() {
             eprintln!("lightningpanda: localStorage preload for {origin}: {count} entries");
@@ -745,7 +766,7 @@ impl SessionFactory for ForkPerConnection {
             .split_once('?')
             .and_then(|(_, query)| query.split('&').find_map(|kv| kv.strip_prefix("profile=")))
             .and_then(|v| v.parse().ok());
-        Some(crate::fork::connect(self.template.socket(), socket, buffered, profile))
+        Some(self.template.socket().and_then(|template| crate::fork::connect(template, socket, buffered, profile)))
     }
 }
 

@@ -467,7 +467,8 @@ JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git 
 
 Copy-on-write page snapshots: an app's startup (parsing and running its JavaScript) is paid once, not per test.
 
-- The server spawns a **template process** (`serve --template <socket>`, same options). It boots one page per
+- The server forks a **template process** first thing (one thread, no engine yet; it goes on as
+  `serve --template <socket>` would with the same options) and listens while it starts. It boots one page per
   prepared profile (`--prepare`, and every `Lightningpanda.registerPreparedPage` from any connection) on its main
   thread, settles each once loaded, and listens on a Unix socket.
 - Each upgraded connection is passed to the template with `SCM_RIGHTS`, plus the write end of a pipe. When the
