@@ -167,6 +167,54 @@ fn scan_path_impl(
     Some(())
 }
 
+/// The files under `paths`, in the order [`scan_paths`] visits them.
+#[cfg(feature = "std")]
+pub fn list_files(
+    paths: impl IntoIterator<Item = impl AsRef<Path>>,
+    max_depth: u32,
+) -> Vec<std::path::PathBuf> {
+    fn walk(path: &Path, is_dir: bool, max_depth: u32, depth: u32, out: &mut Vec<std::path::PathBuf>) {
+        if !is_dir {
+            out.push(path.into());
+            return;
+        }
+        if depth > max_depth {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let path = entry.path();
+            // The entry's own type answers without a `stat`, except through a link.
+            let is_dir = match entry.file_type() {
+                Ok(kind) if !kind.is_symlink() => kind.is_dir(),
+                _ => match path.metadata() {
+                    Ok(metadata) => metadata.is_dir(),
+                    Err(_) => continue,
+                },
+            };
+            walk(&path, is_dir, max_depth, depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    for path in paths {
+        let path = path.as_ref();
+        if let Ok(metadata) = path.metadata() {
+            walk(path, metadata.is_dir(), max_depth, 0, &mut out);
+        }
+    }
+    out
+}
+
+/// Maps the file at `path` and invokes the given function for each font in it.
+#[cfg(feature = "std")]
+pub fn scan_file(path: &Path, mut f: impl FnMut(&ScannedFont<'_>)) -> Option<()> {
+    let file = std::fs::File::open(path).ok()?;
+    let mapped = unsafe { memmap2::Mmap::map(&file) }.ok()?;
+    scan_memory_impl(&mapped, Some(path), &mut f)
+}
+
 #[cfg(feature = "std")]
 type ScanMemoryPathType<'a> = Option<&'a Path>;
 
