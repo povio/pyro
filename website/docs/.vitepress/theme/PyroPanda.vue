@@ -10,6 +10,7 @@ const povioP =
   'M10.1738 5.44751C15.2203 5.44751 19.3309 9.75897 19.3477 15.0227C19.3475 20.3532 15.237 24.6809 10.1738 24.6809C7.46687 24.6642 4.94347 23.428 3.27246 21.3059V32.0002H1V15.0393C1 9.7589 5.11067 5.44757 10.1738 5.44751ZM10.1738 7.76977C6.36394 7.76984 3.27246 11.0289 3.27246 15.0393C3.27257 19.0998 6.36401 22.4084 10.1738 22.4084C13.967 22.4084 17.0584 19.0998 17.0752 15.0393C17.0752 11.0288 13.9838 7.76977 10.1738 7.76977Z';
 
 const root = ref<HTMLDivElement>();
+const glc = ref<HTMLCanvasElement>();
 const back = ref<HTMLCanvasElement>();
 const front = ref<HTMLCanvasElement>();
 
@@ -70,6 +71,122 @@ const TONGUES: [number, number, number][] = [
 ];
 const TONGUE_WEIGHT = TONGUES.reduce((s, t) => s + t[2], 0);
 
+// WebGL flames: turbulent noise shaping five tongues, drawn in the back box.
+const FIRE_VS = `attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
+const FIRE_FS = `
+precision highp float;
+uniform vec2 res;
+uniform float time;
+uniform float wind;
+uniform float halo;
+uniform float boost;
+float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
+  for (int i = 0; i < 5; i++) { v += a * noise(p); p = m * p; a *= 0.5; }
+  return v;
+}
+// One flame: widest at the base, narrowing to a point at its height h.
+float tongue(vec2 q, float c, float w, float h, float ph) {
+  h *= (1.0 + 0.3 * boost) * (0.88 + 0.12 * sin(time * 2.3 + ph) * sin(time * 1.3 + ph * 2.0));
+  float yy = q.y / h;
+  if (yy >= 1.0 || yy < -0.2) return 0.0;
+  float hw = w * pow(max(1.0 - yy, 0.0), 0.7) * (1.0 + 0.15 * sin(time * 3.1 + ph + q.y * 9.0));
+  float dx = abs(q.x - c) / max(hw, 0.0005);
+  return clamp(1.0 - dx * dx, 0.0, 1.0) * (1.0 - 0.55 * max(yy, 0.0));
+}
+float flames(vec2 q) {
+  float f = tongue(q, 0.500, 0.300, 0.26, 0.4);
+  f = max(f, tongue(q, 0.270, 0.085, 0.50, 0.0));
+  f = max(f, tongue(q, 0.385, 0.095, 0.72, 1.7));
+  f = max(f, tongue(q, 0.500, 0.110, 0.90, 3.1));
+  f = max(f, tongue(q, 0.615, 0.095, 0.74, 4.4));
+  f = max(f, tongue(q, 0.730, 0.085, 0.52, 5.9));
+  f = max(f, tongue(q, 0.445, 0.050, 0.60, 2.3));
+  f = max(f, tongue(q, 0.560, 0.050, 0.64, 5.1));
+  return f;
+}
+vec3 ramp(float f) {
+  vec3 c = mix(vec3(0.42, 0.02, 0.04), vec3(0.72, 0.04, 0.07), smoothstep(0.0, 0.2, f));
+  c = mix(c, vec3(0.90, 0.13, 0.14), smoothstep(0.15, 0.4, f));
+  c = mix(c, vec3(1.00, 0.36, 0.12), smoothstep(0.4, 0.65, f));
+  c = mix(c, vec3(1.00, 0.62, 0.26), smoothstep(0.65, 0.85, f));
+  return mix(c, vec3(1.00, 0.86, 0.58), smoothstep(0.88, 1.0, f));
+}
+void main() {
+  vec2 uv = gl_FragCoord.xy / res;
+  float y = uv.y - 0.07;
+  float x = uv.x - wind * max(y, 0.0) * max(y, 0.0) * 0.35;
+  float n1 = fbm(vec2(x * 5.0, y * 3.2 - time * 1.9));
+  float n2 = fbm(vec2(x * 11.0 + 3.1, y * 7.0 - time * 3.3));
+  x += (n1 - 0.5) * 0.15 * (0.2 + y * 1.4);
+  float f = flames(vec2(x, y + (n1 - 0.5) * 0.05));
+  // Licks: noise eats into the flame, more toward the tips.
+  f += ((n2 - 0.5) * 0.55 * (0.3 + y * 1.2) + (n1 - 0.5) * 0.25) * smoothstep(0.0, 0.25, f);
+  f = clamp(f, 0.0, 1.0) * smoothstep(-0.03, 0.05, y + (n1 - 0.5) * 0.04);
+  float a = smoothstep(0.06, 0.2, f);
+  vec4 fire = vec4(ramp(f) * a, a);
+  float dx = (uv.x - 0.5) / 0.21;
+  float g = halo * exp(-dx * dx) * smoothstep(0.85, 0.12, uv.y) * smoothstep(0.0, 0.1, uv.y) * (0.9 + 0.1 * sin(time * 2.7));
+  vec4 glow = vec4(vec3(0.86, 0.12, 0.13) * g, g);
+  gl_FragColor = fire + glow * (1.0 - fire.a);
+}`;
+
+type GlFire = { draw: (time: number, wind: number, dark: boolean, boost: number) => void; resize: () => void };
+function makeGlFire(canvas: HTMLCanvasElement): GlFire | undefined {
+  const gl = canvas.getContext('webgl', { premultipliedAlpha: true, alpha: true, antialias: false });
+  if (!gl) return undefined;
+  const shader = (type: number, src: string) => {
+    const s = gl.createShader(type)!;
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (gl.getShaderParameter(s, gl.COMPILE_STATUS)) return s;
+    console.warn('pyro fire shader:', gl.getShaderInfoLog(s));
+    return undefined;
+  };
+  const vs = shader(gl.VERTEX_SHADER, FIRE_VS);
+  const fs = shader(gl.FRAGMENT_SHADER, FIRE_FS);
+  if (!vs || !fs) return undefined;
+  const prog = gl.createProgram()!;
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return undefined;
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const u = (n: string) => gl.getUniformLocation(prog, n);
+  const uRes = u('res'), uTime = u('time'), uWind = u('wind'), uHalo = u('halo'), uBoost = u('boost');
+  return {
+    resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    },
+    draw(time, wind, dark, boost) {
+      gl.uniform1f(uBoost, boost);
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.uniform1f(uTime, time);
+      gl.uniform1f(uWind, wind / 120);
+      gl.uniform1f(uHalo, dark ? 0.3 : 0.14);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    },
+  };
+}
+
 const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
 
 let raf = 0;
@@ -88,6 +205,7 @@ onMounted(() => {
   let escale = 1;
   let wind = 0;
   let windTarget = 0;
+  let flare = 0;
   let time = 0;
   let flameDebt = 0;
   let sparkDebt = 0;
@@ -97,9 +215,11 @@ onMounted(() => {
   let dark = document.documentElement.classList.contains('dark');
   const mo = new MutationObserver(() => { dark = document.documentElement.classList.contains('dark'); if (!running) draw(); });
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  const glFire = makeGlFire(glc.value!);
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function resize() {
+    glFire?.resize();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     for (const c of [bc, fc]) {
       c.width = Math.max(1, Math.round(c.clientWidth * dpr));
@@ -153,8 +273,9 @@ onMounted(() => {
   function step(dt: number) {
     time += dt;
     wind += (windTarget - wind) * Math.min(1, dt * 3);
+    flare *= Math.exp(-dt * 2.2);
     flameDebt += dt * 430;
-    while (flameDebt > 1) { spawnFlame(); flameDebt--; }
+    while (flameDebt > 1) { if (!glFire) spawnFlame(); flameDebt--; }
     sparkDebt += dt * 16;
     while (sparkDebt > 1) { spawnSpark(); sparkDebt--; }
 
@@ -200,8 +321,10 @@ onMounted(() => {
 
   function draw() {
     bx.clearRect(0, 0, bc.width, bc.height);
+    if (glFire) glFire.draw(time, wind, dark, flare);
     fx.clearRect(0, 0, fc.width, fc.height);
 
+    if (!glFire) {
     // Heat glow, pulsing.
     const pulse = 0.85 + Math.sin(time * 2.3) * 0.08 + Math.sin(time * 5.1) * 0.04;
     const glow = bx.createRadialGradient(px(CX), py(300), 0, px(CX), py(280), 158 * scale);
@@ -223,6 +346,7 @@ onMounted(() => {
     }
     bx.globalAlpha = 1;
     bx.globalCompositeOperation = 'source-over';
+    }
 
     fx.globalCompositeOperation = dark ? 'lighter' : 'source-over';
     fx.lineCap = 'round';
@@ -281,7 +405,8 @@ onMounted(() => {
   }
   function onLeave() { windTarget = 0; }
   function onDown() {
-    for (let i = 0; i < 70; i++) spawnFlame(true);
+    flare = 1;
+    for (let i = 0; i < 70; i++) if (!glFire) spawnFlame(true);
     for (let i = 0; i < 60; i++) spawnSpark(true);
     if (reduced) { for (let i = 0; i < 20; i++) step(1 / 30); draw(); }
   }
@@ -325,6 +450,7 @@ onBeforeUnmount(() => cleanup?.());
 
 <template>
   <div ref="root" class="pyro-panda">
+    <canvas ref="glc" class="fire back" aria-hidden="true" />
     <canvas ref="back" class="fire back" aria-hidden="true" />
     <svg viewBox="0 0 400 440" role="img" aria-label="Pyro, a red panda sitting in a fire">
       <defs>
