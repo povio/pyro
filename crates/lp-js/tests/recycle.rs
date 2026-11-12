@@ -60,9 +60,12 @@ fn a_used_engine_is_accepted_once_its_realms_are_gone_and_starts_over() {
         assert_eq!(engine.recycle(Some(clean)), Ok(()));
         assert!(engine.untouched());
         let after = engine.heap_counts().unwrap();
+        // The script's code stays, without a realm, in the VM's code cache:
+        // its handles are all the engine protects beyond a clean one.
+        assert_eq!(after.cached_code, clean.cached_code + 1, "{after:?} vs {clean:?}");
         assert_eq!(
             (after.globals, after.protected, after.protected_globals),
-            (clean.globals, clean.protected, clean.protected_globals)
+            (clean.globals, clean.protected + 1, clean.protected_globals)
         );
         assert!(after.heap_size <= clean.heap_size + RECYCLE_HEAP_SLACK, "{after:?} vs {clean:?}");
     }
@@ -171,4 +174,31 @@ fn a_time_zone_override_goes_back_to_the_hosts() {
     assert_eq!(zone(&engine), other);
     assert_eq!(engine.recycle(Some(clean)), Ok(()));
     assert_eq!(zone(&engine), host);
+}
+
+#[test]
+fn code_the_counts_cannot_account_for_is_deleted() {
+    let (engine, Some(clean)) = engine() else { return };
+    // What a `Function` constructor compiles is in the code cache under a
+    // handle that no count of code blocks shows: such an engine is proven
+    // clean the other way, with every code deleted.
+    #[inline(never)]
+    fn construct(engine: &Engine) {
+        let realm = engine.create_realm(Default::default()).unwrap();
+        assert_eq!(eval(&realm, "new Function('a', 'return a + 1')(1)"), "2");
+        realm.dispose();
+    }
+    construct(&engine);
+    clear_stack();
+    assert_eq!(engine.recycle(Some(clean)), Ok(()));
+    let after = engine.heap_counts().unwrap();
+    assert_eq!((after.cached_code, after.protected), (clean.cached_code, clean.protected), "{after:?} vs {clean:?}");
+    // And when nothing comes for long, the kept code goes too.
+    use_and_leave(&engine);
+    clear_stack();
+    assert_eq!(engine.recycle(Some(clean)), Ok(()));
+    assert!(engine.heap_counts().unwrap().cached_code > clean.cached_code);
+    engine.settle_idle();
+    let idle = engine.heap_counts().unwrap();
+    assert_eq!((idle.cached_code, idle.protected), (clean.cached_code, clean.protected), "{idle:?} vs {clean:?}");
 }

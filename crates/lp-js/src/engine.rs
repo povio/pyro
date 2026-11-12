@@ -1155,11 +1155,40 @@ impl Engine {
                 let number = sys::JSValueToNumber(root, value, &mut exc);
                 (exc.is_null() && number.is_finite() && number >= 0.0).then_some(number as u64)
             };
+            // Cells alive by class name; a class without one is absent.
+            let types = {
+                let name = crate::string::JsString::new("objectTypeCounts");
+                let mut exc = std::ptr::null();
+                let value = sys::JSObjectGetProperty(root, object, name.as_raw(), &mut exc);
+                if !exc.is_null() || value.is_null() || !sys::JSValueIsObject(root, value) {
+                    return None;
+                }
+                sys::JSValueToObject(root, value, &mut exc)
+            };
+            if types.is_null() {
+                return None;
+            }
+            let alive = |class: &str| -> Option<u64> {
+                let name = crate::string::JsString::new(class);
+                let mut exc = std::ptr::null();
+                let value = sys::JSObjectGetProperty(root, types, name.as_raw(), &mut exc);
+                if !exc.is_null() || value.is_null() {
+                    return None;
+                }
+                if sys::JSValueIsUndefined(root, value) {
+                    return Some(0);
+                }
+                let number = sys::JSValueToNumber(root, value, &mut exc);
+                (exc.is_null() && number.is_finite() && number >= 0.0).then_some(number as u64)
+            };
             Some(HeapCounts {
                 heap_size: read("heapSize")?,
                 protected: read("protectedObjectCount")?,
                 globals: read("globalObjectCount")?,
                 protected_globals: read("protectedGlobalObjectCount")?,
+                cached_code: alive("UnlinkedProgramCodeBlock")?
+                    + alive("UnlinkedEvalCodeBlock")?
+                    + alive("UnlinkedModuleProgramCodeBlock")?,
             })
         }
     }
@@ -1186,19 +1215,43 @@ impl Engine {
     /// - no script was ever terminated in it (JavaScriptCore keeps the
     ///   termination pending in places this code cannot see);
     /// - coverage is off and no module was precompiled into the VM;
-    /// - after every compiled and cached code is deleted (the source-keyed
-    ///   code cache with it) and a full synchronous collection, the VM holds
-    ///   exactly one global object, the engine's own root, which no script
-    ///   ever ran in, and exactly the protected values a clean engine has.
+    /// - after a full synchronous collection, the VM holds exactly one
+    ///   global object, the engine's own root, which no script ever ran in.
     ///   Every other JavaScript object reaches its realm's global object
     ///   through its structure, and so does a queued microtask, a pending
-    ///   promise reaction, a module record or a timer's callback: with no
-    ///   second global object alive, none of them is.
+    ///   promise reaction, a module record, a timer's callback or a piece
+    ///   of code linked to a realm: with no second global object alive,
+    ///   none of them is;
+    /// - it protects exactly the values a clean engine protects, plus one
+    ///   per top-level code block left alive in its unlinked form
+    ///   ([`HeapCounts::cached_code`]). With no realm alive only the VM's
+    ///   source-keyed code cache refers to those, with one strong handle
+    ///   for each, so the count leaves no room for a handle to anything
+    ///   else. (A balance of two counts, not the cache's own count, which
+    ///   JavaScriptCore does not report: a code block kept alive by a stale
+    ///   word on the stack instead of the cache would make room for one
+    ///   handle. Only one to a value that refers to no global object could
+    ///   use it: a string, a symbol, a number. Every object keeps its
+    ///   global object alive and fails the count above.);
     /// - the live heap is no more than [`RECYCLE_HEAP_SLACK`] above the
     ///   clean engine's.
     ///
+    /// An engine that fails the last two (the cache also holds what a
+    /// `Function` constructor compiled, which the count cannot tell from a
+    /// handle of somebody's; a large application's code is above the
+    /// bound) has every compiled and cached code deleted and is collected
+    /// and compared once more: it must then protect exactly what a clean
+    /// engine does.
+    ///
     /// What survives is VM-wide and carries no script-visible state: the
-    /// atom table, the structures of the root context, the classes.
+    /// atom table, the structures of the root context, the classes, and the
+    /// code cache with JavaScriptCore's own builtins in their unlinked form:
+    /// source text and the bytecode made from it, which refer to no realm
+    /// and no object of one. The next owner's realm does not parse the
+    /// builtins again, nor a script whose text and URL the last owner also
+    /// ran; that it starts faster for it is all it can learn. An owner that
+    /// does not come soon finds no code either
+    /// ([`Engine::settle_idle`]).
     pub fn recycle(&self, clean: Option<HeapCounts>) -> Result<(), &'static str> {
         let inner = &self.inner;
         let tls = callback_tls();
@@ -1234,15 +1287,39 @@ impl Engine {
         if inner.time_zone_set.get() && !self.set_time_zone(None).unwrap_or(false) {
             return Err("the time zone override stays");
         }
+        // Memory is not returned to the system here: the next owner may
+        // come at once, and one that does not leaves time for `settle_idle`.
+        //
+        // With the code kept first; an engine that cannot be proven clean
+        // that way (a `Function` constructor's source in the cache, more
+        // code than the heap bound allows) is tried once more as an engine
+        // without any code.
+        if self.prove_clean(clean, false).is_err() {
+            self.prove_clean(clean, true)?;
+        }
+        if Rc::strong_count(inner) != 1 {
+            return Err("a handle still refers to the engine");
+        }
+        inner.next_realm_id.set(1);
+        inner.coverage_cursor.set(0);
+        inner.release_gate.forked();
+        Ok(())
+    }
+
+    /// One attempt at [`Engine::recycle`]'s proof: collects, after deleting
+    /// every compiled and cached code when `delete_code`, and compares what
+    /// is left with `clean`.
+    fn prove_clean(&self, clean: HeapCounts, delete_code: bool) -> Result<(), &'static str> {
+        let inner = &self.inner;
         // A payload freed by the first collection may have held the last
         // handle of another object: collect until nothing more is freed.
         let mut counts = None;
-        // Memory is not returned to the system here: the next owner may
-        // come at once, and one that does not leaves time for `settle_idle`.
         for _ in 0..3 {
-            if let Some(f) = sys::spi::get().delete_all_code {
-                // SAFETY: the group is alive and used by this thread only.
-                unsafe { f(inner.group()) };
+            if delete_code {
+                if let Some(f) = sys::spi::get().delete_all_code {
+                    // SAFETY: the group is alive and used by this thread only.
+                    unsafe { f(inner.group()) };
+                }
             }
             self.collect_and_finalize(true);
             counts = self.heap_counts();
@@ -1263,21 +1340,20 @@ impl Engine {
         if !inner.held.borrow_mut().reset(inner.root_ctx()) {
             return Err("a held value survived");
         }
+        // What a clean engine protects and, with the code kept, the code
+        // cache's handles: one per top-level code block alive.
+        let expected = |c: &HeapCounts| {
+            clean.protected + if delete_code { 0 } else { c.cached_code.saturating_sub(clean.cached_code) }
+        };
         // The array of held values was protected; the count is read again
         // only when it was there.
-        let counts = if counts.protected == clean.protected { counts } else { self.heap_counts().unwrap_or(counts) };
-        if counts.protected != clean.protected {
+        let counts = if counts.protected == expected(&counts) { counts } else { self.heap_counts().unwrap_or(counts) };
+        if counts.protected != expected(&counts) {
             return Err("a protected value survived");
         }
         if counts.heap_size > clean.heap_size + RECYCLE_HEAP_SLACK {
             return Err("the heap stayed above its bound");
         }
-        if Rc::strong_count(inner) != 1 {
-            return Err("a handle still refers to the engine");
-        }
-        inner.next_realm_id.set(1);
-        inner.coverage_cursor.set(0);
-        inner.release_gate.forked();
         Ok(())
     }
 
@@ -1556,6 +1632,11 @@ pub struct HeapCounts {
     /// Global objects alive: the engine's root and one per realm.
     pub globals: u64,
     pub protected_globals: u64,
+    /// Top-level code blocks alive in their unlinked form (programs,
+    /// indirect evals, modules): bytecode without a realm. Once no realm's
+    /// global object is alive, these are the entries of the VM's
+    /// source-keyed code cache, which protects each with a strong handle.
+    pub cached_code: u64,
 }
 
 /// How far above a clean engine's live heap [`Engine::recycle`] accepts.
