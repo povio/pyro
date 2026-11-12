@@ -16,8 +16,17 @@ use std::time::{Duration, Instant};
 /// releases none of them): after a closed SPA the system heap held 28 MB
 /// for 3 MB of live blocks. mimalloc returns them (`MADV_FREE_REUSABLE`
 /// after a delay, at once on [`lp_js::Engine::settle`]).
+#[cfg(not(feature = "heap-profile"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "heap-profile")]
+mod heap_profile;
+
+/// The same heap, sampled (`heap_profile`).
+#[cfg(feature = "heap-profile")]
+#[global_allocator]
+static GLOBAL: heap_profile::Profiled = heap_profile::Profiled(mimalloc::MiMalloc);
 
 unsafe extern "C" {
     /// Frees the calling thread's empty pages (and the blocks other threads
@@ -105,6 +114,8 @@ fn exit_on_termination_signals() {
 fn main() -> ExitCode {
     #[cfg(lp_pgo_training)]
     exit_on_termination_signals();
+    #[cfg(feature = "heap-profile")]
+    heap_profile::init();
     lp_js::set_allocator_release(release_allocator);
     lp_js::set_allocator_trim(trim_allocator);
     lp_net::set_idle_release(release_allocator);
