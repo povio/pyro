@@ -119,8 +119,17 @@ impl Dom {
         found
     }
     pub(crate) fn iframes_after_insert(&mut self, idx: u32) {
+        // Nearly every inserted subtree holds neither an iframe nor a
+        // script: its nodes are looked at before the document is looked up.
+        if !self.is_connected_idx(idx) {
+            return;
+        }
+        let found = self.post_connection_subtree(idx);
+        if found.is_empty() {
+            return;
+        }
         let Some(document) = self.iframe_document(idx) else { return };
-        for (node, change) in self.post_connection_subtree(idx) {
+        for (node, change) in found {
             self.iframe_event(document, node, change);
         }
     }
@@ -154,8 +163,15 @@ impl Dom {
         }
     }
     pub(crate) fn iframes_before_remove(&mut self, idx: u32) {
+        if !self.is_connected_idx(idx) {
+            return;
+        }
+        let frames = self.iframe_subtree(idx);
+        if frames.is_empty() {
+            return;
+        }
         let Some(document) = self.iframe_document(idx) else { return };
-        for node in self.iframe_subtree(idx).into_iter().rev() {
+        for node in frames.into_iter().rev() {
             self.iframe_event(document, node, IframeChange::Disconnected);
         }
     }
