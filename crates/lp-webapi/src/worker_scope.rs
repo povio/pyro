@@ -1102,6 +1102,7 @@ fn register(engine: &Engine, service: bool) -> lp_js::ClassId {
     engine.register::<crate::xhr::XMLHttpRequestUpload>();
     engine.register::<crate::indexeddb::IdbFactory>();
     engine.register::<crate::cache_storage::CacheHandle>();
+    engine.register::<crate::cache_storage::StoredBody>();
     engine.register::<crate::request::Request>();
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();

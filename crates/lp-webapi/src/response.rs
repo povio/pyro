@@ -360,7 +360,8 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
             }
             ReadKind::Text => "text",
             ReadKind::Json => "json",
-            ReadKind::ArrayBuffer => "arrayBuffer",
+            // A script's stream has no pieces to share: its bytes, in a buffer.
+            ReadKind::ArrayBuffer | ReadKind::Chunks => "arrayBuffer",
             ReadKind::Bytes => "bytes",
             ReadKind::Blob => "blob",
         };
@@ -400,6 +401,18 @@ pub(crate) fn wrap<'s>(
     Ok(wrapper.value())
 }
 
+/// Reads `response`'s body for `cache.put` (`cache_storage`): a promise of a
+/// `StoredBody` holding the pieces the network delivered (an ArrayBuffer for a
+/// script's stream), or null for a null body. Marks the body used, as
+/// `arrayBuffer()` does.
+pub(crate) fn read_for_cache<'s>(s: &Scope<'s>, response: Value<'_>) -> JsResult<Value<'s>> {
+    let data = s.unwrap::<Response>(response).ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    if !data.script_stream.get() && data.body.is_null() {
+        return Ok(s.null());
+    }
+    consume(s, &data, ReadKind::Chunks)
+}
+
 /// A response read back from a cache (`cache_storage`): its stored type
 /// ("default" for a script's, "error", or a network one's), URL, status,
 /// status text, headers (as script saw them) and body, in a new object.
@@ -412,7 +425,7 @@ pub(crate) fn stored<'s>(
     status_text: String,
     headers: Vec<(String, String)>,
     redirected: bool,
-    body: Option<Bytes>,
+    body: Option<Vec<Bytes>>,
 ) -> JsResult<Value<'s>> {
     let (origin, kind) = match kind {
         "default" => (Origin::Script, ResponseKind::Basic),
@@ -438,7 +451,7 @@ pub(crate) fn stored<'s>(
         protocol: lp_net::http::Version::HTTP_11,
         timing: Default::default(),
     };
-    let body = crate::fetch::Body::constructed(s, body, mime.unwrap_or_default());
+    let body = crate::fetch::Body::constructed_chunks(s, body, mime.unwrap_or_default());
     let headers = HeadersData::from_pairs(headers, origin != Origin::Script);
     wrap_script(s, None, origin, head, body, headers)
 }
