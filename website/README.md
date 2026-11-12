@@ -2,7 +2,7 @@
 
 VitePress site for Lightningpanda, hosted on Robodev Lite
 (project `prj-pqvevmsxr7el` in the Povio organization):
-https://prj-pqvevmsxr7el.robodev.povio.dev
+https://lightningpanda.robodev.povio.dev (also https://prj-pqvevmsxr7el.robodev.povio.dev)
 
 ```sh
 bun install
