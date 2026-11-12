@@ -813,6 +813,24 @@ impl Realm {
 pub struct WeakRealm(std::rc::Weak<RealmInner>);
 
 impl WeakRealm {
+    /// [`Realm::pending_finalizers`] of the realm while it is alive and not
+    /// disposed, else 0, with no reference count touched: for a check that
+    /// runs after every native callback.
+    pub fn pending_finalizers(&self) -> usize {
+        if self.0.strong_count() == 0 {
+            return 0;
+        }
+        // SAFETY: a strong count above zero means the value is alive, and it
+        // stays so: `Rc` is single-threaded and nothing below drops a
+        // handle. The borrowed handle is never dropped, so no count changes.
+        let realm = std::mem::ManuallyDrop::new(Realm { inner: unsafe { Rc::from_raw(self.0.as_ptr()) } });
+        if realm.is_disposed() {
+            0
+        } else {
+            realm.pending_finalizers()
+        }
+    }
+
     /// The realm, if still alive and not disposed.
     pub fn upgrade(&self) -> Option<Realm> {
         self.0.upgrade().map(|inner| Realm { inner }).filter(|r| !r.is_disposed())
