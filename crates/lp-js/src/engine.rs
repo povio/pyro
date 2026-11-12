@@ -145,6 +145,13 @@ pub(crate) struct EngineInner {
     terminate: Arc<TerminateState>,
     /// Payload headers queued by GC finalizers, which may run on any thread.
     pub(crate) finalized: Arc<class::FinalizeQueue>,
+    /// Payloads of the owned wrappers that were alive when `shutdown` took
+    /// them from the collector, until the VM is released.
+    pub(crate) orphaned: RefCell<Vec<usize>>,
+    /// Where JavaScriptCore counts the dead owned wrappers whose payloads it
+    /// holds for `class::drain_tracked` (null without that SPI, and once the
+    /// VM is released): asked after every native callback, so one load.
+    dead_tracked: Cell<*const std::sync::atomic::AtomicUsize>,
     /// Set once the VM has been torn down; `Persistent`s then skip unprotect.
     shut_down: Cell<bool>,
     /// The owning `Engine` handle was dropped: callbacks no longer resolve to
@@ -175,6 +182,8 @@ pub(crate) struct EngineInner {
     coverage_users: Cell<u32>,
     coverage_cursor: Cell<usize>,
     pub(crate) coverage_realms: RefCell<Option<rustc_hash::FxHashMap<usize, RealmId>>>,
+    /// [`Engine::set_time_zone`] has overridden the host's zone.
+    time_zone_set: Cell<bool>,
 }
 
 /// A script compiled while coverage was on ([`Engine::new_scripts`],
@@ -374,7 +383,7 @@ impl ReleaseGate {
 
 /// The process's physical footprint in bytes: what the system charges it for,
 /// without the reclaimable pages that resident size still counts.
-fn process_footprint() -> Option<u64> {
+pub fn process_footprint() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
         /// `struct rusage_info_v0` from `<sys/resource.h>`: a 16-byte UUID,
@@ -504,7 +513,19 @@ impl EngineInner {
 
     /// Payloads of finalized wrappers waiting for [`Self::drain_finalized`].
     pub(crate) fn pending_finalizers(&self) -> usize {
-        self.finalized.len()
+        self.finalized.len() + self.dead_tracked()
+    }
+
+    /// Dead owned wrappers whose payloads the collector holds for
+    /// `class::drain_tracked`.
+    #[inline]
+    pub(crate) fn dead_tracked(&self) -> usize {
+        let counter = self.dead_tracked.get();
+        if counter.is_null() {
+            return 0;
+        }
+        // SAFETY: the live group's counter (nulled before the VM is released).
+        unsafe { (*counter).load(std::sync::atomic::Ordering::Relaxed) }
     }
 
     /// Finds the realm owning global context `global`.
@@ -548,6 +569,10 @@ impl EngineInner {
         class::drain_finalized(self);
         self.collections.release(self.group);
         self.release_retired_members();
+        // Owned wrappers have no finalizer: their payloads are taken from the
+        // collector's list, the live ones' too.
+        class::drain_tracked(self, true);
+        self.dead_tracked.set(std::ptr::null());
         self.shut_down.set(true);
         // SAFETY: no realm, scope or callback remains; the root context and
         // group are owned here. Releasing the group destroys the VM, which
@@ -563,6 +588,18 @@ impl EngineInner {
         }
         let was_current = self.is_current();
         class::drain_finalized(self);
+        loop {
+            let orphaned = std::mem::take(&mut *self.orphaned.borrow_mut());
+            if orphaned.is_empty() {
+                break;
+            }
+            for h in orphaned {
+                let h = h as *mut class::Header;
+                // SAFETY: handed over once by `class::drain_tracked`; the VM
+                // that held their objects is gone.
+                unsafe { ((*h).drop_fn)(h) };
+            }
+        }
         self.classes.borrow_mut().release_all();
         self.hook_state.placeholders.set(0);
         // Payload destructors above may have created a new engine on this
@@ -700,7 +737,7 @@ impl Engine {
             crate::value::verify_immediates(root);
             (group, root)
         };
-        let terminate = Arc::new(TerminateState { requested: AtomicBool::new(false) });
+        let terminate = Arc::new(TerminateState { requested: AtomicBool::new(false), ever: AtomicBool::new(false) });
         let inner = Rc::new(EngineInner {
             group,
             root,
@@ -711,6 +748,12 @@ impl Engine {
             next_realm_id: Cell::new(1),
             terminate: terminate.clone(),
             finalized: Arc::new(class::FinalizeQueue::default()),
+            orphaned: RefCell::new(Vec::new()),
+            dead_tracked: Cell::new(match sys::spi::get().tracked() {
+                // SAFETY: the group just made; the address lives as long as it.
+                Some(tracked) => unsafe { (tracked.dead_counter)(group) },
+                None => std::ptr::null(),
+            }),
             shut_down: Cell::new(false),
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
@@ -722,6 +765,7 @@ impl Engine {
             coverage_users: Cell::new(0),
             coverage_cursor: Cell::new(0),
             coverage_realms: RefCell::new(None),
+            time_zone_set: Cell::new(false),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -927,11 +971,7 @@ impl Engine {
     pub fn settle(&self) {
         // Finished compilations only: a page close must not wait for an FTL
         // compile. One still running holds its realm until the next settle.
-        self.complete_jit_plans(false);
-        self.synchronous_gc();
-        class::drain_finalized(&self.inner);
-        crate::interned::sweep_realms(&self.inner, true);
-        self.inner.release_dead_members();
+        self.collect_and_finalize(false);
         release_memory();
         // The collection freed the closed page's blocks to JSC's allocator,
         // whose scavenger returns them to the system only later, if at all
@@ -941,6 +981,18 @@ impl Engine {
         }
         self.inner.release_gate.pending.set(false);
         self.inner.release_gate.put_off.set(0);
+    }
+
+    /// A full synchronous collection and what follows from it on the Rust
+    /// side: finalized wrappers' payloads dropped, dead realms swept.
+    /// `wait_for_jit` waits for running compilations too (each holds its
+    /// code's realm until it is installed).
+    fn collect_and_finalize(&self, wait_for_jit: bool) {
+        self.complete_jit_plans(wait_for_jit);
+        self.synchronous_gc();
+        class::drain_finalized(&self.inner);
+        crate::interned::sweep_realms(&self.inner, true);
+        self.inner.release_dead_members();
     }
 
     /// [`Engine::settle`] for a process that has gone idle: first drops every
@@ -1073,7 +1125,160 @@ impl Engine {
         };
         // SAFETY: the group is alive and used by this thread only; the string
         // is NUL-terminated and read during the call.
-        Ok(unsafe { set(self.inner.group, id.as_ref().map_or(std::ptr::null(), |id| id.as_ptr())) })
+        let set = unsafe { set(self.inner.group, id.as_ref().map_or(std::ptr::null(), |id| id.as_ptr())) };
+        if set {
+            self.inner.time_zone_set.set(id.is_some());
+        }
+        Ok(set)
+    }
+
+    /// What the VM's heap holds now ([`HeapCounts`]); `None` without the
+    /// statistics SPI. Walks the heap: not for a hot path.
+    pub fn heap_counts(&self) -> Option<HeapCounts> {
+        let stats = sys::spi::get().memory_usage_statistics?;
+        let root = self.inner.root_ctx();
+        // SAFETY: the root context is alive and used by this thread only. The
+        // object is a plain one made in the root context, whose properties
+        // are data properties: reading them runs no script.
+        unsafe {
+            let object = stats(root);
+            if object.is_null() {
+                return None;
+            }
+            let read = |name: &str| -> Option<u64> {
+                let name = crate::string::JsString::new(name);
+                let mut exc = std::ptr::null();
+                let value = sys::JSObjectGetProperty(root, object, name.as_raw(), &mut exc);
+                if !exc.is_null() || value.is_null() {
+                    return None;
+                }
+                let number = sys::JSValueToNumber(root, value, &mut exc);
+                (exc.is_null() && number.is_finite() && number >= 0.0).then_some(number as u64)
+            };
+            Some(HeapCounts {
+                heap_size: read("heapSize")?,
+                protected: read("protectedObjectCount")?,
+                globals: read("globalObjectCount")?,
+                protected_globals: read("protectedGlobalObjectCount")?,
+            })
+        }
+    }
+
+    /// Whether nothing has used this engine since it was made (or since
+    /// [`Engine::recycle`] last succeeded): no realm was created in it and
+    /// its time zone is the host's. Class registration does not count.
+    pub fn untouched(&self) -> bool {
+        self.inner.next_realm_id.get() == 1 && !self.inner.time_zone_set.get()
+    }
+
+    /// Returns the engine to the state [`Engine::new`] plus class
+    /// registration left it in, for an owner that is done with it and wants
+    /// to hand it to an unrelated one, or says why it cannot be proven to be
+    /// in that state. An engine that refuses must be dropped.
+    ///
+    /// Call on the engine's thread, outside of script, after every realm was
+    /// disposed and every handle dropped. `clean` is what
+    /// [`Engine::heap_counts`] read on an engine built the same way that
+    /// nothing had used yet.
+    ///
+    /// What makes the proof, for an engine something used:
+    /// - no `Realm`, `Persistent` or payload still refers to the engine;
+    /// - no script was ever terminated in it (JavaScriptCore keeps the
+    ///   termination pending in places this code cannot see);
+    /// - coverage is off and no module was precompiled into the VM;
+    /// - after every compiled and cached code is deleted (the source-keyed
+    ///   code cache with it) and a full synchronous collection, the VM holds
+    ///   exactly one global object, the engine's own root, which no script
+    ///   ever ran in, and exactly the protected values a clean engine has.
+    ///   Every other JavaScript object reaches its realm's global object
+    ///   through its structure, and so does a queued microtask, a pending
+    ///   promise reaction, a module record or a timer's callback: with no
+    ///   second global object alive, none of them is.
+    /// - the live heap is no more than [`RECYCLE_HEAP_SLACK`] above the
+    ///   clean engine's.
+    ///
+    /// What survives is VM-wide and carries no script-visible state: the
+    /// atom table, the structures of the root context, the classes.
+    pub fn recycle(&self, clean: Option<HeapCounts>) -> Result<(), &'static str> {
+        let inner = &self.inner;
+        let tls = callback_tls();
+        if inner.is_shut_down() || !inner.is_current() {
+            return Err("not this thread's live engine");
+        }
+        if tls.depth.get() > 0 || !tls.entry.get().is_null() {
+            return Err("JavaScript is running");
+        }
+        if inner.terminate.ever.load(Ordering::SeqCst)
+            || inner.terminate.requested.load(Ordering::SeqCst)
+            || tls.terminating.get()
+        {
+            return Err("a script was terminated");
+        }
+        if inner.coverage_users.get() > 0 {
+            return Err("coverage is on");
+        }
+        if Self::has_module_precompile() && self.module_precompile_stats().modules > 0 {
+            return Err("modules were precompiled");
+        }
+        *inner.hooks.borrow_mut() = None;
+        INTERRUPT_CHECK.with(|c| *c.borrow_mut() = None);
+        if self.untouched() {
+            if Rc::strong_count(inner) != 1 {
+                return Err("a handle still refers to the engine");
+            }
+            return Ok(());
+        }
+        // Handles and realms a wrapper's payload holds go with the payload,
+        // in the collection below: they are counted after it.
+        let clean = clean.ok_or("no clean heap to compare with")?;
+        if inner.time_zone_set.get() && !self.set_time_zone(None).unwrap_or(false) {
+            return Err("the time zone override stays");
+        }
+        // A payload freed by the first collection may have held the last
+        // handle of another object: collect until nothing more is freed.
+        let mut counts = None;
+        // Memory is not returned to the system here: the next owner may
+        // come at once, and one that does not leaves time for `settle_idle`.
+        for _ in 0..3 {
+            if let Some(f) = sys::spi::get().delete_all_code {
+                // SAFETY: the group is alive and used by this thread only.
+                unsafe { f(inner.group()) };
+            }
+            self.collect_and_finalize(true);
+            counts = self.heap_counts();
+            if inner.pending_finalizers() == 0 && counts.is_some_and(|c| c.globals <= clean.globals) {
+                break;
+            }
+        }
+        let counts = counts.ok_or("no heap statistics")?;
+        if inner.pending_finalizers() != 0 {
+            return Err("finalizers still pending");
+        }
+        if counts.globals != clean.globals || counts.protected_globals != clean.protected_globals {
+            return Err("a global object survived");
+        }
+        if !inner.realms.borrow().is_empty() || !inner.retired_members.borrow().is_empty() {
+            return Err("a realm's state survived");
+        }
+        if !inner.held.borrow_mut().reset(inner.root_ctx()) {
+            return Err("a held value survived");
+        }
+        // The array of held values was protected; the count is read again
+        // only when it was there.
+        let counts = if counts.protected == clean.protected { counts } else { self.heap_counts().unwrap_or(counts) };
+        if counts.protected != clean.protected {
+            return Err("a protected value survived");
+        }
+        if counts.heap_size > clean.heap_size + RECYCLE_HEAP_SLACK {
+            return Err("the heap stayed above its bound");
+        }
+        if Rc::strong_count(inner) != 1 {
+            return Err("a handle still refers to the engine");
+        }
+        inner.next_realm_id.set(1);
+        inner.coverage_cursor.set(0);
+        inner.release_gate.forked();
+        Ok(())
     }
 
     /// Whether this JavaScriptCore precompiles modules (patch 0027).
@@ -1318,9 +1523,43 @@ pub fn prepare_process_for_fork() {
     });
 }
 
+/// Builds JavaScriptCore's table of time zones on a thread of its own, which
+/// the first `Intl` or `Temporal` use of a zone in a process otherwise does
+/// (2.2 ms; patched JSC, where creating a VM no longer does). For a process
+/// that forks its pages: built once here, beside engine creation, no page
+/// builds it again. Call after [`prepare_process_for_fork`] and with the
+/// `JSC_*` environment final (this may be what initializes JavaScriptCore);
+/// join the thread before any `fork`. `None`: nothing to build, or no thread.
+pub fn prepare_time_zones() -> Option<std::thread::JoinHandle<()>> {
+    let build = sys::spi::get().prepare_time_zones?;
+    configure_process();
+    // SAFETY: the entry point takes no argument, initializes JavaScriptCore
+    // itself and builds the table under a `std::call_once`.
+    std::thread::Builder::new().name("lp-time-zones".into()).spawn(move || unsafe { build() }).ok()
+}
+
 pub(crate) struct TerminateState {
     requested: AtomicBool,
+    /// A termination was ever requested or carried out in this engine
+    /// ([`Engine::recycle`] refuses it then).
+    ever: AtomicBool,
 }
+
+/// The live counts of a VM's heap ([`Engine::heap_counts`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeapCounts {
+    /// Bytes of live objects.
+    pub heap_size: u64,
+    /// Objects protected from collection by a handle (`JSValueProtect`,
+    /// a strong handle).
+    pub protected: u64,
+    /// Global objects alive: the engine's root and one per realm.
+    pub globals: u64,
+    pub protected_globals: u64,
+}
+
+/// How far above a clean engine's live heap [`Engine::recycle`] accepts.
+pub const RECYCLE_HEAP_SLACK: u64 = 1 << 20;
 
 /// `Send + Sync` handle that makes the engine abort running JavaScript at its
 /// next watchdog poll (≤ ~50 ms). The aborted call returns
@@ -1335,6 +1574,7 @@ pub struct TerminateHandle(Arc<TerminateState>);
 
 impl TerminateHandle {
     pub fn terminate(&self) {
+        self.0.ever.store(true, Ordering::SeqCst);
         self.0.requested.store(true, Ordering::SeqCst);
     }
 }
@@ -1409,6 +1649,7 @@ unsafe extern "C" fn should_terminate(ctx: sys::JSContextRef, data: *mut c_void)
         state.requested.store(true, Ordering::SeqCst);
     }
     if state.requested.swap(false, Ordering::SeqCst) {
+        state.ever.store(true, Ordering::SeqCst);
         callback_tls().terminating.set(true);
         return true;
     }
@@ -1447,6 +1688,19 @@ pub fn set_allocator_trim(trim: fn()) {
 fn trim_memory() {
     if let Some(trim) = ALLOCATOR_TRIM.get() {
         trim();
+    }
+}
+
+/// For a thread whose engine is gone (a worker's, about to exit): returns
+/// what the engine's heap and the thread's Rust heap left free to the
+/// operating system. Nobody else does: the thread that started the worker
+/// releases on its own closes, and JavaScriptCore's scavenger may not run
+/// again in an idle process.
+pub fn release_thread_memory() {
+    release_memory();
+    if let Some(f) = sys::spi::get().release_free_memory {
+        // SAFETY: the call takes no group (the allocator is process-wide).
+        unsafe { f(std::ptr::null_mut()) };
     }
 }
 

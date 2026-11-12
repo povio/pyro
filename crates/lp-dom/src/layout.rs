@@ -204,6 +204,227 @@ pub struct Layout {
     /// The `position: sticky` elements' inputs, with the sync they were
     /// read at.
     sticky: RefCell<Option<(u64, Rc<FxHashMap<NodeId, ExternalSticky>>)>>,
+    /// The hit-test index of the current layout and scroll position, and
+    /// what decides when one is built (see [`HitIndex`]).
+    hit_index: RefCell<HitIndexState>,
+}
+
+/// The hit-testable boxes of one layout at one scroll position, in paint
+/// input order, under a spatial index: answers "the topmost box at this
+/// point" from the few boxes around the point, for as long as neither the
+/// layout (DOM, styles, focus/hover, viewport, a loaded resource: one more
+/// sync of the engine) nor a scroll offset changes.
+///
+/// `els`/`rects` list every box with an area in tree order, with the client
+/// rect hit testing gives it; `grid` maps a point to the boxes whose rect
+/// reaches the point's cell. Paint order (stacking contexts, z-index, top
+/// layer), overflow clips and the style predicates of the boxes found are
+/// those of `result`, resolved once per box when a test first meets it
+/// (`LayoutResult::hit`, `geometry`): the selection is the scan's, over
+/// fewer boxes.
+struct HitIndex {
+    result: Rc<LayoutResult>,
+    geometry: RefCell<HitTestGeometry>,
+    els: Vec<NodeId>,
+    rects: Vec<Rect>,
+    grid: HitGrid,
+}
+
+impl HitIndex {
+    /// `hit_select`'s test of a point against a box's rect (edges included).
+    fn holds(r: &Rect, x: f64, y: f64) -> bool {
+        x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height
+    }
+}
+
+/// A uniform grid over the bounds of a list of rects: each cell lists, in
+/// ascending order, the rects reaching it (compressed rows: `starts[c]..
+/// starts[c + 1]` of `items`). A rect holding a point is listed in the
+/// point's cell: the cell of a coordinate never decreases as the coordinate
+/// grows, and a rect is listed from its near edge's cell to its far edge's.
+#[derive(Default)]
+struct HitGrid {
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    /// Cells per CSS pixel.
+    sx: f64,
+    sy: f64,
+    nx: usize,
+    ny: usize,
+    starts: Vec<u32>,
+    items: Vec<u32>,
+    /// Rects with an edge at infinity, in every cell's list by hand.
+    unbounded: Vec<u32>,
+}
+
+impl HitGrid {
+    /// At most this many list entries per rect on average: a coarser grid
+    /// is taken when large boxes (a page's wrappers span every cell) would
+    /// need more.
+    const FILL: usize = 12;
+
+    fn new(rects: &[Rect]) -> HitGrid {
+        let mut g = HitGrid {
+            x0: f64::INFINITY,
+            y0: f64::INFINITY,
+            x1: f64::NEG_INFINITY,
+            y1: f64::NEG_INFINITY,
+            ..Default::default()
+        };
+        let finite = |r: &Rect| r.x.is_finite() && r.y.is_finite() && r.width.is_finite() && r.height.is_finite();
+        let mut bounded = 0usize;
+        for (i, r) in rects.iter().enumerate() {
+            if !finite(r) {
+                g.unbounded.push(i as u32);
+                continue;
+            }
+            bounded += 1;
+            g.x0 = g.x0.min(r.x);
+            g.y0 = g.y0.min(r.y);
+            g.x1 = g.x1.max(r.x + r.width);
+            g.y1 = g.y1.max(r.y + r.height);
+        }
+        if bounded == 0 {
+            // No cell: `cell` answers `unbounded` for every point.
+            (g.x0, g.y0, g.x1, g.y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+            return g;
+        }
+        // About one cell per rect, in the bounds' proportions.
+        let (w, h) = ((g.x1 - g.x0).max(1.0), (g.y1 - g.y0).max(1.0));
+        let cells = bounded.min(1 << 16) as f64;
+        let mut nx = ((cells * w / h).sqrt().round() as usize).clamp(1, 1 << 10);
+        let mut ny = ((cells / nx as f64).round() as usize).clamp(1, 1 << 12);
+        loop {
+            g.nx = nx;
+            g.ny = ny;
+            g.sx = if g.x1 > g.x0 { nx as f64 / (g.x1 - g.x0) } else { 0.0 };
+            g.sy = if g.y1 > g.y0 { ny as f64 / (g.y1 - g.y0) } else { 0.0 };
+            let limit = Self::FILL * bounded + nx * ny;
+            let mut counts = vec![0u32; nx * ny + 1];
+            let mut total = 0usize;
+            for r in rects.iter().filter(|r| finite(r)) {
+                let (cx0, cx1, cy0, cy1) = g.span(r);
+                total += (cx1 - cx0 + 1) * (cy1 - cy0 + 1);
+                if total > limit && nx * ny > 1 {
+                    break;
+                }
+                for cy in cy0..=cy1 {
+                    for c in &mut counts[cy * nx + cx0..=cy * nx + cx1] {
+                        *c += 1;
+                    }
+                }
+            }
+            if total > limit && nx * ny > 1 {
+                nx = nx.div_ceil(2);
+                ny = ny.div_ceil(2);
+                continue;
+            }
+            // Counts to starts, then fill in rect order (ascending lists).
+            let mut sum = 0u32;
+            for c in counts.iter_mut() {
+                let n = *c;
+                *c = sum;
+                sum += n;
+            }
+            let mut next = counts.clone();
+            let mut items = vec![0u32; sum as usize];
+            for (i, r) in rects.iter().enumerate().filter(|(_, r)| finite(r)) {
+                let (cx0, cx1, cy0, cy1) = g.span(r);
+                for cy in cy0..=cy1 {
+                    for cx in cx0..=cx1 {
+                        let at = &mut next[cy * nx + cx];
+                        items[*at as usize] = i as u32;
+                        *at += 1;
+                    }
+                }
+            }
+            if !g.unbounded.is_empty() {
+                // Rare (a box at infinity): merged into every list.
+                let mut merged = Vec::with_capacity(items.len() + g.unbounded.len() * nx * ny);
+                let mut starts = Vec::with_capacity(counts.len());
+                for c in 0..nx * ny {
+                    starts.push(merged.len() as u32);
+                    let mut list: Vec<u32> = items[counts[c] as usize..counts[c + 1] as usize].to_vec();
+                    list.extend_from_slice(&g.unbounded);
+                    list.sort_unstable();
+                    merged.extend(list);
+                }
+                starts.push(merged.len() as u32);
+                (counts, items) = (starts, merged);
+            }
+            g.starts = counts;
+            g.items = items;
+            return g;
+        }
+    }
+
+    fn col(&self, x: f64) -> usize {
+        (((x - self.x0) * self.sx).floor().max(0.0) as usize).min(self.nx - 1)
+    }
+
+    fn row(&self, y: f64) -> usize {
+        (((y - self.y0) * self.sy).floor().max(0.0) as usize).min(self.ny - 1)
+    }
+
+    /// The cells a (finite) rect reaches: columns, then rows, inclusive.
+    fn span(&self, r: &Rect) -> (usize, usize, usize, usize) {
+        (self.col(r.x), self.col(r.x + r.width), self.row(r.y), self.row(r.y + r.height))
+    }
+
+    /// The rects that may hold the point, ascending.
+    fn cell(&self, x: f64, y: f64) -> &[u32] {
+        if x.is_nan() || y.is_nan() {
+            return &[];
+        }
+        if !(x >= self.x0 && x <= self.x1 && y >= self.y0 && y <= self.y1) {
+            // Outside every bounded rect.
+            return &self.unbounded;
+        }
+        let c = self.row(y) * self.nx + self.col(x);
+        &self.items[self.starts[c] as usize..self.starts[c + 1] as usize]
+    }
+}
+
+/// [`Layout`]'s hit-test index and the account that decides when to build
+/// one (see `Layout::hit_index_for`).
+#[derive(Default)]
+struct HitIndexState {
+    /// The sync count and scroll generation the rest is of.
+    epoch: Option<(u64, u64)>,
+    index: Option<Rc<HitIndex>>,
+    /// Tests of this epoch answered without an index, and what they took.
+    tests: u32,
+    rented: std::time::Duration,
+    /// What a descent takes and what an index takes to build (nothing
+    /// before the first of each).
+    descent_cost: CostEstimate,
+    build_cost: CostEstimate,
+    /// What the descents since the last build took, over every layout.
+    rented_since_build: std::time::Duration,
+    /// Layouts indexed at their first test since a descent was last timed.
+    bought_unseen: u32,
+    builds: u64,
+}
+
+/// What one of the two hit-test paths costs, from the clock: the lesser of
+/// its last two measurements. A measurement is the work plus whatever the
+/// thread waited inside it (descheduled on a busy machine, a cold first
+/// run), so one alone can be orders of magnitude too high, and the choice
+/// made from it stops the path being measured again; two in a row that
+/// high are a cost that rose.
+#[derive(Default)]
+struct CostEstimate([Option<std::time::Duration>; 2]);
+
+impl CostEstimate {
+    fn record(&mut self, took: std::time::Duration) {
+        self.0 = [self.0[1], Some(took)];
+    }
+
+    fn get(&self) -> Option<std::time::Duration> {
+        self.0.iter().flatten().min().copied()
+    }
 }
 
 /// The observation stamp and viewport a geometry source was synced at.
@@ -247,6 +468,7 @@ impl Layout {
             result: RefCell::new(None),
             text: RefCell::new(None),
             sticky: RefCell::new(None),
+            hit_index: RefCell::default(),
         }
     }
 
@@ -259,6 +481,7 @@ impl Layout {
         self.result.borrow_mut().take();
         self.text.borrow_mut().take();
         self.sticky.borrow_mut().take();
+        *self.hit_index.borrow_mut() = HitIndexState::default();
     }
 
     /// The geometry source, brought up to the document (synced when
@@ -1407,6 +1630,170 @@ impl Layout {
     /// descent of its tree reaching the boxes that may hold the point and
     /// their ancestors) or, without that, among every box of the document.
     fn element_from_point_impl(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
+        if ignore_x {
+            // A whole row of the page: nothing a point index narrows.
+            return self.hit_test_descent(dom, x, y, true);
+        }
+        if let Some(index) = self.hit_index_for(dom, false) {
+            return self.hit_test_indexed(dom, &index, x, y);
+        }
+        let started = std::time::Instant::now();
+        let hit = self.hit_test_descent(dom, x, y, false);
+        let took = started.elapsed();
+        let mut state = self.hit_index.borrow_mut();
+        state.rented += took;
+        state.rented_since_build += took;
+        state.descent_cost.record(took);
+        state.bought_unseen = 0;
+        hit
+    }
+
+    /// The index of the current layout and scroll position, when there is
+    /// one or it is time to build one (`force`: now).
+    ///
+    /// An index answers any point but reads every box of the document
+    /// once, and lives until the next change of the layout or of a scroll
+    /// offset; a descent of the engine's tree answers one point and reads
+    /// the boxes on its way, with a fixed cost of its own (its candidates'
+    /// boxes, paint order and clips are worked out per test). Which is
+    /// cheaper depends on the size of the document and on how many tests
+    /// come before the next change, which is not known. So, by what each
+    /// last took on this document:
+    ///
+    /// - an index that builds in no more time than one descent takes is
+    ///   built at the first test of every layout (a small document: a
+    ///   click handler writing to the DOM between clicks costs a build per
+    ///   click, less than the descents it replaces);
+    /// - otherwise the descents answer until those of this layout have
+    ///   cost as much as an index, and then it is built: never more than
+    ///   twice the best choice, whatever the page does. A large page that
+    ///   changes between pointer events keeps descending; one clicked or
+    ///   moved over as it stands is indexed after a few tests.
+    ///
+    /// The first index of a document is built at the second test of a
+    /// layout (its price is not known before). The answer is the same by
+    /// either path: only the cost depends on the clock.
+    ///
+    /// Each choice stops the other path being timed, so a price that was
+    /// wrong or has changed would stand for the life of the document. Both
+    /// are therefore taken again at a bounded cost: a descent answers the
+    /// first test of every [`Self::HIT_DESCENT_EVERY`]th layout in a row
+    /// that would be indexed at once, and an index is built when the
+    /// descents since the last one have cost [`Self::HIT_BUILD_AFTER`]
+    /// times its price (see also [`CostEstimate`]).
+    const HIT_DESCENT_EVERY: u32 = 32;
+    const HIT_BUILD_AFTER: u32 = 16;
+
+    fn hit_index_for(&self, dom: &Dom, force: bool) -> Option<Rc<HitIndex>> {
+        self.synced_geometry_source(dom)?;
+        let epoch = (self.syncs.get(), self.scroll_generation);
+        {
+            let mut state = self.hit_index.borrow_mut();
+            if state.epoch != Some(epoch) {
+                state.epoch = Some(epoch);
+                state.index = None;
+                state.tests = 0;
+                state.rented = std::time::Duration::ZERO;
+            }
+            if let Some(index) = &state.index {
+                return Some(index.clone());
+            }
+            state.tests += 1;
+            let buy = match state.build_cost.get() {
+                None => state.tests >= 2,
+                Some(build) if state.tests == 1 && state.descent_cost.get().is_some_and(|descent| build <= descent) => {
+                    state.bought_unseen += 1;
+                    state.bought_unseen < Self::HIT_DESCENT_EVERY
+                }
+                Some(build) => state.rented >= build || state.rented_since_build >= build * Self::HIT_BUILD_AFTER,
+            };
+            if !force && !buy {
+                return None;
+            }
+        }
+        let started = std::time::Instant::now();
+        let index = Rc::new(self.build_hit_index(dom));
+        let mut state = self.hit_index.borrow_mut();
+        state.build_cost.record(started.elapsed());
+        state.rented_since_build = std::time::Duration::ZERO;
+        state.builds += 1;
+        state.index = Some(index.clone());
+        Some(index)
+    }
+
+    /// Reads every box of the document into a [`HitIndex`].
+    fn build_hit_index(&self, dom: &Dom) -> HitIndex {
+        let result = self.layout_result(dom);
+        // As `hit_test_scan` sets up, for the life of the index.
+        let mut geometry = HitTestGeometry {
+            has_element_scroll: self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0),
+            has_sticky: self.external.as_ref().is_some_and(|source| source.has_sticky()),
+            ..Default::default()
+        };
+        let mut order: Vec<(u32, NodeId)> = result
+            .boxes
+            .iter()
+            .filter(|(_, b)| !(b.rect.width <= 0.0 && b.rect.height <= 0.0))
+            .map(|(&el, b)| (b.order, el))
+            .collect();
+        order.sort_unstable_by_key(|&(order, _)| order);
+        let mut els = Vec::with_capacity(order.len());
+        let mut rects = Vec::with_capacity(order.len());
+        for (_, el) in order {
+            let r = self.hit_test_client_rect(dom, &result, el, &mut geometry);
+            // A rect no point is inside of (see `HitIndex::holds`).
+            if r.x.is_nan() || r.y.is_nan() || r.width.is_nan() || r.height.is_nan() || r.width < 0.0 || r.height < 0.0
+            {
+                continue;
+            }
+            els.push(el);
+            rects.push(r);
+        }
+        let grid = HitGrid::new(&rects);
+        HitIndex { result, geometry: RefCell::new(geometry), els, rects, grid }
+    }
+
+    /// [`Layout::element_from_point_impl`] from `index`: the boxes of the
+    /// point's cell holding the point, in tree order, are the candidates
+    /// of the same selection as the scan's and the descent's.
+    fn hit_test_indexed(&self, dom: &Dom, index: &HitIndex, x: f64, y: f64) -> Option<NodeId> {
+        let candidates = index
+            .grid
+            .cell(x, y)
+            .iter()
+            .filter(|&&i| HitIndex::holds(&index.rects[i as usize], x, y))
+            .map(|&i| index.els[i as usize]);
+        self.hit_select(dom, &index.result, candidates, x, y, false, &mut index.geometry.borrow_mut())
+    }
+
+    /// `document.elementFromPoint(x, y)` answered from the index, built
+    /// now if this layout has none yet (tests).
+    #[doc(hidden)]
+    pub fn element_from_point_indexed(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        let index = self.hit_index_for(dom, true)?;
+        self.hit_test_indexed(dom, &index, x, y)
+    }
+
+    /// `document.elementFromPoint(x, y)` answered by a descent of the
+    /// engine's tree, whether or not there is an index (tests).
+    #[doc(hidden)]
+    pub fn element_from_point_descent(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        self.hit_test_descent(dom, x, y, false)
+    }
+
+    /// How many hit-test indexes were built so far, and whether the current
+    /// layout has one (tests).
+    #[doc(hidden)]
+    pub fn hit_index_stats(&self, dom: &Dom) -> (u64, bool) {
+        self.synced_geometry_source(dom);
+        let state = self.hit_index.borrow();
+        let current = state.epoch == Some((self.syncs.get(), self.scroll_generation)) && state.index.is_some();
+        (state.builds, current)
+    }
+
+    /// The hit test by the engine's candidates (see
+    /// [`Layout::element_from_point_impl`]).
+    fn hit_test_descent(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
         let source = self.synced_geometry_source(dom)?.clone();
         let has_element_scroll = self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0);
         let sticky = self.sticky_map(dom);
@@ -3024,5 +3411,163 @@ mod scroll_to_origin {
         assert!(layout.window_scroll_to(&dom, Some(0), Some(0)));
         assert_eq!(layout.scroll_y(), 0);
         assert_eq!(source.0.get(), 1);
+    }
+}
+
+#[cfg(test)]
+mod hit_index_policy {
+    use super::*;
+    use crate::geometry::HitVisit;
+    use std::cell::Cell;
+    use std::time::Duration;
+
+    /// Boxes of 30 x 12 px in rows of 25, with a descent that reads only
+    /// the box at the point. Each stall is served once: the thread sleeps
+    /// inside the next descent or the next read of every box, as one
+    /// descheduled there would.
+    struct Tiles {
+        boxes: Vec<(u64, ExternalBox)>,
+        stall_descent: Cell<Option<Duration>>,
+        stall_geometry: Cell<Option<Duration>>,
+        style: style::servo_arc::Arc<style::properties::ComputedValues>,
+    }
+
+    impl GeometrySource for Tiles {
+        fn sync(&self, _dom: &Dom, _layout: &Layout) {}
+        fn element_box(&self, key: u64) -> Option<ExternalBox> {
+            self.boxes.iter().find(|(k, _)| *k == key).map(|(_, b)| *b)
+        }
+        fn geometry(&self) -> Option<ExternalGeometry> {
+            if let Some(stall) = self.stall_geometry.take() {
+                std::thread::sleep(stall);
+            }
+            Some(ExternalGeometry {
+                boxes: self.boxes.clone(),
+                document_width: 800.0,
+                document_height: 600.0,
+                ..Default::default()
+            })
+        }
+        fn hit_candidates(
+            &self,
+            probe: &HitProbe,
+            _offset: &dyn Fn(u64) -> (f64, f64),
+            _shifted: &[u64],
+        ) -> Option<Vec<HitVisit>> {
+            if let Some(stall) = self.stall_descent.take() {
+                std::thread::sleep(stall);
+            }
+            let at = (probe.y / 12.0) as usize * 25 + (probe.x / 30.0) as usize;
+            Some(
+                self.boxes
+                    .get(at)
+                    .map(|&(key, bounds)| HitVisit { key, order: at as u32, bounds, hit: true })
+                    .into_iter()
+                    .collect(),
+            )
+        }
+        fn document_size(&self) -> Option<(f64, f64)> {
+            Some((800.0, 600.0))
+        }
+        fn has_sticky(&self) -> bool {
+            false
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+            Some(self.style.clone())
+        }
+    }
+
+    fn tiles(count: usize) -> (Dom, Vec<NodeId>, Rc<Tiles>, Layout) {
+        use crate::parse::{parse_document, DomRef};
+        let html = format!(
+            "<!doctype html><body>{}</body>",
+            (0..count).map(|i| format!("<div id=c{i}></div>")).collect::<String>()
+        );
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", &html);
+        let dom = Rc::try_unwrap(dom_ref).ok().unwrap().into_inner();
+        let nodes: Vec<_> =
+            (0..count).map(|i| dom.get_element_by_id(doc, &format!("c{i}")).unwrap().unwrap()).collect();
+        let boxes = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, &node)| {
+                let bounds = ExternalBox {
+                    x: (i % 25 * 30) as f64,
+                    y: (i / 25 * 12) as f64,
+                    width: 30.0,
+                    height: 12.0,
+                    ..Default::default()
+                };
+                (crate::snapshot::render_key(node), bounds)
+            })
+            .collect();
+        let source = Rc::new(Tiles {
+            boxes,
+            stall_descent: Cell::new(None),
+            stall_geometry: Cell::new(None),
+            style: style::properties::ComputedValues::initial_values_with_font_override(
+                style::properties::style_structs::Font::initial_values(),
+            ),
+        });
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.set_geometry_source(Some(source.clone()));
+        (dom, nodes, source, layout)
+    }
+
+    /// A large page that changes between pointer events is answered by
+    /// descents. One descent that took long for a reason of its own (the
+    /// thread was descheduled inside it) must not make every later pointer
+    /// event read all the boxes of the page.
+    #[test]
+    fn one_slow_descent_does_not_index_a_large_changing_page_at_every_event() {
+        let (mut dom, nodes, source, layout) = tiles(20_000);
+        let target = nodes[421];
+        let hit = |dom: &Dom| layout.element_from_point(dom, 635.0, 198.0);
+        // The first index: two tests of one layout.
+        assert_eq!(hit(&dom), Some(target));
+        assert_eq!(hit(&dom), Some(target));
+        assert_eq!(layout.hit_index_stats(&dom).0, 1);
+        let mut round = 0;
+        let mut change_and_hit = |dom: &mut Dom| {
+            round += 1;
+            dom.set_attribute(target, "data-round", &round.to_string()).unwrap();
+            assert_eq!(layout.element_from_point(dom, 635.0, 198.0), Some(target));
+        };
+        for _ in 0..10 {
+            change_and_hit(&mut dom);
+        }
+        let before = layout.hit_index_stats(&dom).0;
+        source.stall_descent.set(Some(Duration::from_millis(1500)));
+        for _ in 0..12 {
+            change_and_hit(&mut dom);
+        }
+        let built = layout.hit_index_stats(&dom).0 - before;
+        assert!(built <= 2, "{built} indexes of 20000 boxes built for 12 pointer events after one slow descent");
+    }
+
+    /// A small page whose click handler writes to the DOM is indexed at
+    /// each click. One index that took long to build (the first: cold, or
+    /// the thread was descheduled) must not leave the page to descents for
+    /// good.
+    #[test]
+    fn one_slow_build_does_not_leave_a_small_page_without_an_index_for_good() {
+        let (mut dom, nodes, source, layout) = tiles(8);
+        let target = nodes[3];
+        source.stall_geometry.set(Some(Duration::from_millis(4)));
+        let mut builds = 0;
+        for round in 0..200_000 {
+            dom.set_attribute(target, "data-round", &round.to_string()).unwrap();
+            assert_eq!(layout.element_from_point(&dom, 95.0, 5.0), Some(target));
+            assert_eq!(layout.element_from_point(&dom, 95.0, 5.0), Some(target));
+            builds = layout.hit_index_stats(&dom).0;
+            if builds >= 3 {
+                break;
+            }
+        }
+        assert!(builds >= 3, "{builds} index(es) built: the slow one's price was never measured again");
     }
 }

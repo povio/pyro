@@ -8,3 +8,4 @@ mod rect_sync;
 mod has_state;
 mod hit_descent;
 mod hit_adversarial;
+mod hit_index;

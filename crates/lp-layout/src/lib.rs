@@ -144,6 +144,16 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
     })));
 }
 
+/// Undoes [`install`] and drops this thread's renderer with the documents,
+/// fonts and images it holds: a browser thread between two clients keeps no
+/// page's rendering state (the next `install` and the next layout make them
+/// again). The fetcher, which reaches the old client's network, goes too.
+pub fn release_thread() {
+    lp_dom::layout::set_geometry_source_factory(None);
+    let renderer = RENDERER.with(|r| r.try_borrow_mut().ok().and_then(|mut r| r.take()));
+    drop(renderer);
+}
+
 /// The Blitz document of one page document.
 /// DOM version, style generation, viewport (width, height, device pixel
 /// ratio bits, dark) and style invalidations.

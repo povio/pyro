@@ -645,9 +645,15 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateErr
         crate::engine::set_fork_template(true);
         lp_render::load_fork_safe_fonts()
     };
+    // JavaScriptCore's table of time zones, which a VM no longer builds: here
+    // once, beside the engine, instead of in every page that formats a date.
+    let time_zones = lp_js::prepare_time_zones();
 
     let thread = EngineHost::prepare_thread_with(&profile, true);
     // Whatever happened: no thread of ours may be left when this process forks.
+    if let Some(time_zones) = time_zones {
+        time_zones.join().map_err(|_| "building the time zone table panicked".to_string())?;
+    }
     #[cfg(feature = "render")]
     if let Some(fonts) = fonts {
         fonts.join().map_err(|_| "loading the system fonts panicked".to_string())?;

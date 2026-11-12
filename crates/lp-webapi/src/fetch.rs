@@ -1463,3 +1463,10 @@ mod tests {
         assert_eq!(budget.used.load(Ordering::Relaxed), 0);
     }
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    PAGES.with(|p| p.borrow_mut().retain(|_, page| page.strong_count() > 0));
+    PAGES.with(|p| !p.borrow().is_empty()).then_some("fetch::PAGES")
+}

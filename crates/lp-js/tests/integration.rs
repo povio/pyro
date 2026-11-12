@@ -16,7 +16,9 @@ mod redefined_accessor;
 mod named_hooks;
 mod nested_realm;
 mod object_inspection;
+mod owned_wrappers;
 mod precompiled_modules;
+mod recycle;
 mod runtime;
 mod webidl_bindings;
 

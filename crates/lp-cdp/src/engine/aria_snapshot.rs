@@ -137,6 +137,12 @@ thread_local! {
     static REFS: RefCell<Vec<DocRefs>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Forgets every snapshot's refs: the thread's pages are gone (a browser
+/// thread between two clients).
+pub(crate) fn forget_refs() {
+    REFS.with(|refs| refs.borrow_mut().clear());
+}
+
 fn is_page(w: &Weak<PageDom>, page: &PageDom) -> bool {
     w.strong_count() > 0 && std::ptr::eq(w.as_ptr(), page)
 }

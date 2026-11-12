@@ -1911,3 +1911,12 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<HtmlDocument>();
     engine.register::<XmlDocument>();
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: the match
+/// buffer keeps its allocation and nothing else.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    let mut found = FOUND.take();
+    found.clear();
+    FOUND.set(found);
+    None
+}

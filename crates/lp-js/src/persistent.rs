@@ -125,6 +125,23 @@ pub(crate) struct HeldValues {
     free: Vec<u32>,
 }
 
+impl HeldValues {
+    /// With no value held: drops the array and its protection, as before the
+    /// first value. `false`, changing nothing, while one is held.
+    pub(crate) fn reset(&mut self, root: sys::JSContextRef) -> bool {
+        if self.free.len() != self.len as usize {
+            return false;
+        }
+        if let Some(array) = self.array.take() {
+            // SAFETY: the array was protected in the live root context.
+            unsafe { sys::JSValueUnprotect(root, array as sys::JSValueRef) };
+        }
+        self.len = 0;
+        self.free.clear();
+        true
+    }
+}
+
 impl HeldValue {
     pub fn new(scope: &Scope<'_>, value: Value<'_>) -> HeldValue {
         let engine = scope.engine_inner();

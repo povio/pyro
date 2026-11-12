@@ -503,8 +503,20 @@ impl EngineHost {
     /// for it: a thread started by its connection would do it before reading
     /// the first command, and a client that opens no page would pay for it.
     pub fn prepare_thread_with(profile: &BrowserProfile, spare_realm: bool) -> CdpResult<BrowserThread> {
-        let mut thread =
-            BrowserThread::new().map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
+        Self::prepare_thread_around(profile, spare_realm, None)
+    }
+
+    /// `prepare_thread_with` around the engine an earlier browser of this
+    /// thread left ([`lp_browser::BrowserThread::with_engine`]) when one is
+    /// given. Everything but the engine is made anew: the browser, its loop,
+    /// the network client with its cookie jar, cache and connections.
+    pub fn prepare_thread_around(
+        profile: &BrowserProfile,
+        spare_realm: bool,
+        engine: Option<lp_js::Engine>,
+    ) -> CdpResult<BrowserThread> {
+        let mut thread = BrowserThread::with_engine(engine)
+            .map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
         thread
             .enable_network(profile.net.clone())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
@@ -521,6 +533,13 @@ impl EngineHost {
             let _ = thread.browser.prepare_spare_realm();
         }
         Ok(thread)
+    }
+
+    /// After this thread's host and browser were dropped: forgets what the
+    /// protocol layer kept per thread for their pages, and the renderer's
+    /// fetcher.
+    pub(crate) fn forget_thread_state() {
+        aria_snapshot::forget_refs();
     }
 
     /// Starts the pages of `profiles` on a prepared thread, before any

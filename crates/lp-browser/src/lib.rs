@@ -497,7 +497,13 @@ impl Page {
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
 pub struct Browser {
-    pub engine: Engine,
+    /// Dropped (or handed to [`BrowserThread::return_engine`]'s slot) by
+    /// this struct's `Drop`, before every other field as when it was a plain
+    /// first field.
+    pub engine: std::mem::ManuallyDrop<Engine>,
+    /// Where the engine goes when this browser is dropped, instead of being
+    /// dropped with it.
+    engine_return: Option<EngineSlot>,
     sched: Scheduler<Browser>,
     pub pages: Vec<Page>,
     /// Shared with every page's [`PageNav`], which reports same-document
@@ -610,6 +616,34 @@ impl Browser {
 #[cfg(target_os = "macos")]
 const JSC_RUNLOOP_SERVICE_MAX_IDLE: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// Where a dropped [`Browser`] leaves its engine ([`BrowserThread::return_engine`]).
+pub type EngineSlot = Rc<RefCell<Option<Engine>>>;
+
+/// What [`Engine::heap_counts`] read on the first engine a browser thread of
+/// this process made, right after its classes were registered: what
+/// [`Engine::recycle`] compares a used engine with. Every browser thread
+/// builds its engine the same way, so one reading stands for all.
+static CLEAN_HEAP: std::sync::OnceLock<Option<lp_js::HeapCounts>> = std::sync::OnceLock::new();
+
+/// The heap of an engine [`BrowserThread::new`] just made; `None` before
+/// the first one, and when the JavaScriptCore in use cannot tell.
+pub fn clean_heap() -> Option<lp_js::HeapCounts> {
+    CLEAN_HEAP.get().copied().flatten()
+}
+
+/// Returns this thread's browser state to what a new thread has, after its
+/// [`BrowserThread`] was dropped and before another is made on it: the page
+/// clock (virtual time, a frozen clock) and the eager animation frames.
+/// `Err` names state that is not this function's to clear and is still there.
+pub fn reset_thread() -> Result<(), &'static str> {
+    if frames::has_spare_realm() {
+        return Err("a spare realm is still held");
+    }
+    clock::reset();
+    window::reset_eager_frames();
+    Ok(())
+}
+
 /// A browser thread's loop plus its state.
 pub struct BrowserThread {
     pub event_loop: EventLoop<Browser>,
@@ -619,6 +653,26 @@ pub struct BrowserThread {
 impl BrowserThread {
     /// Creates the engine for the current thread (one per thread).
     pub fn new() -> Result<BrowserThread, JsError> {
+        Self::with_engine(None)
+    }
+
+    /// [`BrowserThread::new`] around `engine` when given: an engine an
+    /// earlier `BrowserThread` of this thread made and left
+    /// ([`BrowserThread::return_engine`]), which [`Engine::recycle`] has
+    /// accepted since. Its classes are registered already.
+    pub fn with_engine(engine: Option<Engine>) -> Result<BrowserThread, JsError> {
+        let engine = match engine {
+            Some(engine) => engine,
+            None => {
+                let engine = Self::new_engine()?;
+                CLEAN_HEAP.get_or_init(|| engine.heap_counts());
+                engine
+            }
+        };
+        Ok(Self::around(engine))
+    }
+
+    fn new_engine() -> Result<Engine, JsError> {
         let engine = Engine::new()?;
         lp_webapi::register(&engine);
         engine.register::<frames::CrossWindow>();
@@ -635,6 +689,10 @@ impl BrowserThread {
         engine.register::<lp_webapi::performance::PerformanceNavigationTiming>();
         engine.register::<nav::PerformanceTiming>();
         engine.register::<nav::PerformanceNavigation>();
+        Ok(engine)
+    }
+
+    fn around(engine: Engine) -> BrowserThread {
         let event_loop = EventLoop::new();
         // The system JavaScriptCore binds this VM's timers to this thread's
         // run loop; the loop services it at a bounded interval for the VM's
@@ -650,7 +708,8 @@ impl BrowserThread {
             event_loop
         };
         let browser = Browser {
-            engine,
+            engine: std::mem::ManuallyDrop::new(engine),
+            engine_return: None,
             sched: event_loop.scheduler(),
             pages: Vec::new(),
             observer: Rc::new(RefCell::new(None)),
@@ -672,7 +731,14 @@ impl BrowserThread {
             local_storage_seed: Default::default(),
             completions: std::collections::HashMap::new(),
         };
-        Ok(BrowserThread { event_loop, browser })
+        BrowserThread { event_loop, browser }
+    }
+
+    /// When this thread's browser is dropped, its engine is left in `slot`
+    /// instead of being destroyed. The taker calls [`Engine::recycle`] once
+    /// everything else of the thread is gone, and drops an engine it refuses.
+    pub fn return_engine(&mut self, slot: EngineSlot) {
+        self.browser.engine_return = Some(slot);
     }
 
     pub fn handle(&self) -> LoopHandle<Browser> {
@@ -885,7 +951,12 @@ impl Browser {
             self.close_page(p);
         }
         let before = self.contexts.len();
-        self.contexts.retain(|c| c.id != id);
+        self.contexts.retain(|c| {
+            if c.id == id {
+                c.services.close();
+            }
+            c.id != id
+        });
         before != self.contexts.len()
     }
 
@@ -1609,5 +1680,11 @@ impl Drop for Browser {
     fn drop(&mut self) {
         frames::drop_spare_realm();
         self.close_all();
+        // SAFETY: taken once, here; nothing reads the field afterwards (the
+        // remaining fields drop without it).
+        let engine = unsafe { std::mem::ManuallyDrop::take(&mut self.engine) };
+        if let Some(slot) = self.engine_return.take() {
+            *slot.borrow_mut() = Some(engine);
+        }
     }
 }

@@ -484,3 +484,13 @@ mod tests {
         assert!(validate_protocols(&["\u{e9}".into()]).is_err());
     }
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    if SOCKETS.with(|s| !s.borrow().is_empty()) {
+        return Some("websocket::SOCKETS");
+    }
+    NEXT.set(1);
+    None
+}

@@ -86,6 +86,7 @@ mod storage_manager;
 mod streams;
 mod structured_clone;
 pub mod target;
+pub mod thread_state;
 pub mod traversal;
 pub mod url;
 pub mod url_search_params;
@@ -123,7 +124,8 @@ pub use structured_clone::{decode_message as deserialize_message, encode_message
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use worker::{
-    hold_for_fork, join_stopped, release_after_fork, InspectTask, WorkerEvent, WorkerHandle, MAX_WORKERS_PER_DOCUMENT,
+    hold_for_fork, join_stopped, release_after_fork, take_worker_ended, worker_ended, InspectTask, WorkerEvent,
+    WorkerHandle, MAX_WORKERS_PER_DOCUMENT,
 };
 pub use worker_scope::{BufferedEvent, WorkerContext, WorkerEvents};
 pub use xhr::XhrLimits;
@@ -192,6 +194,15 @@ thread_local! {
     /// own wrapper table.
     static DOM_PAGES: std::cell::RefCell<rustc_hash::FxHashMap<usize, Rc<std::cell::RefCell<Vec<std::rc::Weak<PageDom>>>>>> =
         Default::default();
+}
+
+/// [`thread_state::reset_thread`]'s part for `DOM_PAGES`.
+fn dom_pages_leftover() -> Option<&'static str> {
+    DOM_PAGES.with(|map| {
+        let mut map = map.borrow_mut();
+        map.retain(|_, pages| pages.borrow().iter().any(|p| p.strong_count() > 0));
+        (!map.is_empty()).then_some("lib::DOM_PAGES")
+    })
 }
 
 /// A node holding listeners keeps its wrapper (and so the listeners) from the

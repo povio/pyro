@@ -213,3 +213,13 @@ fn float32_array<'s>(s: &Scope<'s>, samples: &[f32]) -> JsResult<Value<'s>> {
         Ok(Value::from_raw(ctx, obj as sys::JSValueRef))
     }
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    if PENDING.with(|p| !p.borrow().is_empty()) {
+        return Some("webaudio::PENDING");
+    }
+    NEXT.set(1);
+    None
+}

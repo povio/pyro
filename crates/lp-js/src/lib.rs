@@ -22,11 +22,11 @@ mod value;
 pub use accessors::slot_usage as accessor_slot_usage;
 pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent, OwnName};
 pub use engine::{
-    configure_process, entry_realm, is_process_default, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine,
-    EngineHooks, FunctionCoverage, ImpureNames, ModulePrecompileStats, ScriptCoverage, TerminateHandle,
-    WrapperPropertyHook,
+    configure_process, entry_realm, is_process_default, prepare_process_for_fork, prepare_time_zones, Capabilities,
+    ConsoleLevel, Engine, EngineHooks, FunctionCoverage, HeapCounts, ImpureNames, ModulePrecompileStats,
+    ScriptCoverage, TerminateHandle, WrapperPropertyHook, RECYCLE_HEAP_SLACK,
 };
-pub use engine::{set_allocator_release, set_allocator_trim};
+pub use engine::{process_footprint, release_thread_memory, set_allocator_release, set_allocator_trim};
 pub use error::{DomError, JsError, JsException, JsResult, Message};
 pub use interned::InternedId;
 pub use persistent::{HeldValue, Persistent, RootedVec};

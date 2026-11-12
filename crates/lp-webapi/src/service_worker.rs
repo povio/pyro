@@ -217,11 +217,33 @@ impl Registry {
     }
 }
 
-impl Drop for Registry {
-    fn drop(&mut self) {
-        for registration in self.registrations.get_mut().drain(..) {
+impl Registry {
+    /// Ends every registration's workers. `report`: their threads tell this
+    /// one when they have ended (`crate::worker::note_ended`).
+    fn close(&self, report: bool) {
+        for registration in self.registrations.take() {
+            if report {
+                registration.report_ends();
+            }
             registration.clear();
         }
+    }
+}
+
+impl Drop for Registry {
+    fn drop(&mut self) {
+        self.close(false);
+    }
+}
+
+impl crate::navigator_extras::ContextServices {
+    /// The browser context is closed: its service workers end now. The
+    /// registry itself lives as long as a closed page's wrappers refer to
+    /// it, which is until a later collection; measured after the close of a
+    /// context with one controlled page, the worker's thread and its VM
+    /// stayed for five seconds in an idle server.
+    pub fn close(&self) {
+        self.service_workers.close(true);
     }
 }
 
@@ -375,6 +397,16 @@ impl Registration {
             slot(&self.active),
             matches,
         )
+    }
+
+    /// Before [`Registration::clear`] for a closed browser context: each
+    /// version's thread reports its end (`Shared::report_end`).
+    fn report_ends(&self) {
+        for slot in [&self.evaluating, &self.installing, &self.waiting, &self.active] {
+            if let Some(version) = slot.borrow().as_ref() {
+                version.shared.report_end.store(true, Ordering::Release);
+            }
+        }
     }
 
     /// Ends every version (the registration is gone).
@@ -1591,4 +1623,14 @@ fn replace(s: &Scope<'_>, page: &Rc<PageDom>, name: &str, value: Value<'_>) -> J
     desc.set_atom("configurable", s.boolean(true))?;
     define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
     Ok(())
+}
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    VERSIONS.with(|v| v.borrow_mut().retain(|_, version| version.strong_count() > 0));
+    if VERSIONS.with(|v| !v.borrow().is_empty()) {
+        return Some("service_worker::VERSIONS");
+    }
+    FINISHERS.with(|f| !f.borrow().is_empty()).then_some("service_worker::FINISHERS")
 }

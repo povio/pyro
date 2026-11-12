@@ -3,6 +3,7 @@
 //! mostly link time. Add new test files as modules here.
 
 mod engine_cdp;
+mod engine_reuse;
 mod serve_threads;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor

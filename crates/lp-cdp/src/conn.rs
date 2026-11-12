@@ -96,6 +96,9 @@ pub(crate) struct Conn {
     write_blocked_since: Option<Instant>,
     stall_since: Option<Instant>,
     last_read: Instant,
+    /// The last read took bytes and left the socket empty, and nothing has
+    /// looked at the socket since.
+    just_drained: bool,
 }
 
 impl Conn {
@@ -131,6 +134,7 @@ impl Conn {
             write_blocked_since: None,
             stall_since: None,
             last_read: Instant::now(),
+            just_drained: false,
         };
         conn.update_interest(0);
         Ok(conn)
@@ -144,9 +148,18 @@ impl Conn {
     /// timeouts. Runs between loop tasks; cheap when there is nothing to do.
     pub(crate) fn service(&mut self, inbox: &mut VecDeque<Inbound>) {
         inbox.extend(self.held.drain(..));
-        let now = Instant::now();
-        if self.watch.take_ready() || now.duration_since(self.last_read) >= BUSY_READ_INTERVAL {
-            self.read(inbox, now);
+        let mut now = None;
+        if self.watch.take_ready() {
+            self.read(inbox, *now.insert(Instant::now()));
+        } else if std::mem::take(&mut self.just_drained) {
+            // The commands just read were run and the socket was empty
+            // after them: a client that waits for each reply has sent
+            // nothing yet, and asking is a system call that says so. The
+            // loop's poll looks next if it sleeps now, the next call here
+            // if it does not. Neither the socket nor the clock is read.
+            self.decode(inbox);
+        } else if now.insert(Instant::now()).duration_since(self.last_read) >= BUSY_READ_INTERVAL {
+            self.read(inbox, now.expect("set above"));
         } else {
             // Messages already buffered (read while the session was busy).
             self.decode(inbox);
@@ -160,7 +173,7 @@ impl Conn {
     pub(crate) fn flush(&mut self, inbox: &mut VecDeque<Inbound>) {
         inbox.extend(self.held.drain(..));
         self.write();
-        self.check_timeouts(inbox, Instant::now());
+        self.check_timeouts(inbox, None);
         self.update_interest(inbox.len());
     }
 
@@ -364,6 +377,7 @@ impl Conn {
 
     fn read(&mut self, inbox: &mut VecDeque<Inbound>, now: Instant) {
         self.last_read = now;
+        self.just_drained = false;
         // A read that did not fill the buffer took all there was: asking
         // again is a system call that answers "nothing yet" for every
         // command of a client that waits for each reply. What arrives after
@@ -391,6 +405,7 @@ impl Conn {
                     self.decoder.feed(&self.chunk[..n]);
                     crate::perf::record_since("io.ws_read", read);
                     drained = n < self.chunk.len();
+                    self.just_drained = drained;
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
@@ -600,11 +615,21 @@ impl Conn {
         }
     }
 
-    fn check_timeouts(&mut self, inbox: &mut VecDeque<Inbound>, now: Instant) {
+    /// `now`: the time, when the caller read the clock already (it is read
+    /// here only while a timeout runs: none does between the commands of a
+    /// client that is served in time).
+    fn check_timeouts(&mut self, inbox: &mut VecDeque<Inbound>, now: Option<Instant>) {
         if self.state == State::Gone {
             self.tell_closed(inbox);
             return;
         }
+        if self.message_deadline.is_none() && self.write_blocked_since.is_none() {
+            if self.state == State::Closing && self.close_written {
+                self.tell_closed(inbox);
+            }
+            return;
+        }
+        let now = now.unwrap_or_else(Instant::now);
         if self.message_deadline.is_some_and(|d| now >= d) {
             self.message_deadline = None;
             self.close(inbox, 1008, "incomplete message timeout");

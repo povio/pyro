@@ -355,19 +355,19 @@ fn boxes_moving_between_hit_tests_match_the_scan() {
 }
 
 /// A small deterministic generator (LCG).
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 impl Rng {
     fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         self.0 >> 33
     }
-    fn below(&mut self, n: u64) -> u64 {
+    pub(crate) fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
-    fn pick<'a>(&mut self, xs: &[&'a str]) -> &'a str {
+    pub(crate) fn pick<'a>(&mut self, xs: &[&'a str]) -> &'a str {
         xs[self.below(xs.len() as u64) as usize]
     }
-    fn chance(&mut self, pct: u64) -> bool {
+    pub(crate) fn chance(&mut self, pct: u64) -> bool {
         self.below(100) < pct
     }
 }
@@ -479,7 +479,7 @@ fn random_text(r: &mut Rng) -> String {
     (0..n).map(|_| r.pick(WORDS)).collect::<Vec<_>>().join(" ")
 }
 
-fn random_children(r: &mut Rng, depth: u32, out: &mut String, id: &mut u32) {
+pub(crate) fn random_children(r: &mut Rng, depth: u32, out: &mut String, id: &mut u32) {
     let n = 1 + r.below(if depth == 0 { 9 } else { 4 });
     for _ in 0..n {
         *id += 1;
@@ -892,11 +892,29 @@ fn lay2_compare_points(p: &Page, r: &mut Rng, label: &str, failures: &mut Vec<St
     for _ in 0..40 {
         points.push((r.below(1600) as f64 / 2.0, r.below(1200) as f64 / 2.0));
     }
-    for (x, y) in points {
-        let descent = p.layout.element_from_point(&p.dom, x, y);
+    // Whether this round's layout is indexed at once or left to the tests
+    // (a descent first, the index when the descents have paid for one):
+    // either way the index of the layout before the mutations is gone.
+    let force = r.chance(50);
+    for (i, (x, y)) in points.into_iter().enumerate() {
+        let asked = match force && i == 0 {
+            true => p.layout.element_from_point_indexed(&p.dom, x, y),
+            false => p.layout.element_from_point(&p.dom, x, y),
+        };
         let scan = p.layout.element_from_point_scan(&p.dom, x, y);
-        if scan != descent {
-            failures.push(format!("{label} at ({x}, {y}): scan {} descent {}", p.describe(scan), p.describe(descent)));
+        let descent = p.layout.element_from_point_descent(&p.dom, x, y);
+        let indexed = match i % 3 {
+            0 => p.layout.element_from_point_indexed(&p.dom, x, y),
+            _ => scan,
+        };
+        if scan != descent || scan != asked || scan != indexed {
+            failures.push(format!(
+                "{label} at ({x}, {y}): scan {} descent {} asked {} index {}",
+                p.describe(scan),
+                p.describe(descent),
+                p.describe(asked),
+                p.describe(indexed)
+            ));
             return;
         }
     }

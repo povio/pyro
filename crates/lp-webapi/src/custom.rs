@@ -825,3 +825,9 @@ pub fn registry<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<CustomElementRegistry>();
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    RUNNING.with(|r| !r.borrow().is_empty()).then_some("custom::RUNNING")
+}

@@ -14,10 +14,20 @@ use std::time::{Duration, Instant};
 /// The process's Rust heap. macOS's allocator keeps the pages of freed
 /// blocks resident and charged to the process (`malloc_zone_pressure_relief`
 /// releases none of them): after a closed SPA the system heap held 28 MB
-/// for 3 MB of live blocks. mimalloc returns them (`MADV_FREE_REUSABLE`
-/// after a delay, at once on [`lp_js::Engine::settle`]).
+/// for 3 MB of live blocks. mimalloc returns them (when a later allocation
+/// finds the purge delay over, at once on [`lp_js::Engine::settle`]; how,
+/// on macOS: `allocator_region`).
+#[cfg(not(feature = "heap-profile"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "heap-profile")]
+mod heap_profile;
+
+/// The same heap, sampled (`heap_profile`).
+#[cfg(feature = "heap-profile")]
+#[global_allocator]
+static GLOBAL: heap_profile::Profiled = heap_profile::Profiled(mimalloc::MiMalloc);
 
 unsafe extern "C" {
     /// Frees the calling thread's empty pages (and the blocks other threads
@@ -25,33 +35,130 @@ unsafe extern "C" {
     fn mi_collect(force: bool);
 }
 
-/// The VM tag of mimalloc's regions. Its default (100) is
-/// `VM_MEMORY_IOACCELERATOR`, so vmmap and footprint showed the Rust heap as
-/// the GPU driver's "IOAccelerator"; `VM_MEMORY_APPLICATION_SPECIFIC_1`
-/// shows as "App-Specific Tag 1".
+/// Where mimalloc keeps the Rust heap on macOS, and how its freed pages go
+/// back to the system.
+///
+/// mimalloc purges a free range with `madvise(MADV_FREE_REUSABLE)`. That
+/// takes the pages off the process's footprint, but they stay resident
+/// until the system wants them: `ps` and Activity Monitor's "Real Memory"
+/// went on counting them. Measured after a Playwright run of five SPA page
+/// loads on one connection: the heap had 153 MB resident for 59 MB in use
+/// (`serve --fork`, the connection's process), 177 MB for 35 MB without
+/// `--fork`. So the heap lives in one reserved range handed to mimalloc as
+/// an arena (`mi_manage_memory`) whose decommit maps fresh pages over the
+/// range: the old ones leave the resident set at once, as JavaScriptCore's
+/// do (`JSSetDecommitReplacesPages`). A heap that outgrows the range gets
+/// mimalloc's own arenas after it, purged the stock way.
+/// `LIGHTNINGPANDA_HEAP_ARENA=0` keeps mimalloc's own arenas only.
 #[cfg(target_os = "macos")]
-mod allocator_tag {
-    use std::ffi::{c_int, c_long};
+mod allocator_region {
+    use std::ffi::{c_int, c_long, c_void};
 
     /// mimalloc's `mi_option_os_tag`.
     const MI_OPTION_OS_TAG: c_int = 18;
-    const VM_MEMORY_APPLICATION_SPECIFIC_1: c_long = 240;
+    /// The VM tag of the heap's regions. mimalloc's default (100) is
+    /// `VM_MEMORY_IOACCELERATOR`, so vmmap and footprint showed the Rust
+    /// heap as the GPU driver's "IOAccelerator";
+    /// `VM_MEMORY_APPLICATION_SPECIFIC_1` shows as "App-Specific Tag 1".
+    const VM_MEMORY_APPLICATION_SPECIFIC_1: c_int = 240;
+    /// Address space reserved for the heap; pages are used as touched.
+    /// mimalloc's bookkeeping for the range is touched in full, though:
+    /// 8 GiB cost each process of `serve --fork` 1 MB (idle server 9.5 MB
+    /// resident against 8.4 MB), so the range covers what a connection's
+    /// pages were measured to need several times over and no more.
+    const RESERVE: usize = 2 << 30;
+
+    type CommitFn = unsafe extern "C" fn(bool, *mut c_void, usize, *mut bool, *mut c_void) -> bool;
 
     unsafe extern "C" {
         fn mi_option_set(option: c_int, value: c_long);
+        fn mi_manage_memory(
+            start: *mut c_void,
+            size: usize,
+            is_committed: bool,
+            is_pinned: bool,
+            is_zero: bool,
+            numa_node: c_int,
+            exclusive: bool,
+            commit_fun: Option<CommitFn>,
+            commit_fun_arg: *mut c_void,
+            arena_id: *mut *mut c_void,
+        ) -> bool;
+        fn getenv(name: *const std::ffi::c_char) -> *const std::ffi::c_char;
     }
 
-    extern "C" fn tag_allocator_regions() {
-        // SAFETY: mimalloc's public API; it only stores the value.
-        unsafe { mi_option_set(MI_OPTION_OS_TAG, VM_MEMORY_APPLICATION_SPECIFIC_1) }
+    /// Anonymous memory carrying the heap's tag (Darwin reads the tag from
+    /// the descriptor argument, `VM_MAKE_TAG`).
+    unsafe fn map(at: *mut c_void, size: usize, fixed: c_int) -> *mut c_void {
+        unsafe {
+            libc::mmap(
+                at,
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON | fixed,
+                VM_MEMORY_APPLICATION_SPECIFIC_1 << 24,
+                0,
+            )
+        }
+    }
+
+    /// mimalloc's commit callback for the arena. Every page of the range
+    /// is always usable, so a commit has nothing to do; a decommit swaps
+    /// the range for untouched pages.
+    unsafe extern "C" fn commit(
+        commit: bool,
+        start: *mut c_void,
+        size: usize,
+        is_zero: *mut bool,
+        _arg: *mut c_void,
+    ) -> bool {
+        if commit {
+            if !is_zero.is_null() {
+                // SAFETY: mimalloc passes null or a valid flag.
+                unsafe { *is_zero = false };
+            }
+            return true;
+        }
+        // SAFETY: the range lies inside the arena's mapping and mimalloc
+        // holds no block in it.
+        unsafe { map(start, size, libc::MAP_FIXED) == start }
+    }
+
+    extern "C" fn set_up_heap() {
+        // SAFETY: mimalloc's public API and libc; nothing else runs yet.
+        unsafe {
+            mi_option_set(MI_OPTION_OS_TAG, c_long::from(VM_MEMORY_APPLICATION_SPECIFIC_1));
+            let off = getenv(c"LIGHTNINGPANDA_HEAP_ARENA".as_ptr());
+            if !off.is_null() && *off == b'0' as std::ffi::c_char {
+                return;
+            }
+            let start = map(std::ptr::null_mut(), RESERVE, 0);
+            if start == libc::MAP_FAILED {
+                return;
+            }
+            if !mi_manage_memory(
+                start,
+                RESERVE,
+                false,
+                false,
+                true,
+                -1,
+                false,
+                Some(commit),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ) {
+                libc::munmap(start, RESERVE);
+            }
+        }
     }
 
     /// Runs before `main`, so before the first Rust allocation: mimalloc
-    /// tags a region when it maps it, and its first arena serves the heap
-    /// from then on.
+    /// makes its first arena at the first allocation and would serve the
+    /// heap from that one.
     #[used]
     #[link_section = "__DATA,__mod_init_func"]
-    static TAG_BEFORE_MAIN: extern "C" fn() = tag_allocator_regions;
+    static HEAP_BEFORE_MAIN: extern "C" fn() = set_up_heap;
 }
 
 /// Returns mimalloc's free pages to the system now: the browser thread's on
@@ -105,6 +212,8 @@ fn exit_on_termination_signals() {
 fn main() -> ExitCode {
     #[cfg(lp_pgo_training)]
     exit_on_termination_signals();
+    #[cfg(feature = "heap-profile")]
+    heap_profile::init();
     lp_js::set_allocator_release(release_allocator);
     lp_js::set_allocator_trim(trim_allocator);
     lp_net::set_idle_release(release_allocator);

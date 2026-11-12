@@ -498,9 +498,11 @@ pub const SOURCE_BUILD: bool = cfg!(lp_jsc_source);
 /// `JSObjectRefPrivate.h`, `JSBasePrivate.h`). Signatures follow WebKit
 /// `Source/JavaScriptCore/API`.
 ///
-/// They are resolved at runtime with `dlsym`, never linked, so a JavaScriptCore
-/// build without one of them still loads; callers must handle `None` and report
-/// the capability as unsupported.
+/// Against a shared JavaScriptCore (the system framework, or a patched dylib)
+/// they are resolved at runtime with `dlsym`, never linked, so a build without
+/// one of them still loads; callers must handle `None` and report the
+/// capability as unsupported. With the patched build linked statically
+/// (`cfg(lp_jsc_static)`, the default) every one is a linked symbol.
 pub mod spi {
     use super::*;
     use std::sync::OnceLock;
@@ -534,6 +536,31 @@ pub mod spi {
         keep_alive: *const u8,
         weak: *mut JSWeakRef,
     ) -> JSObjectRef;
+    /// A tracked wrapper (patch 0029, `JSObjectMakeTrackedWrapper`): an object
+    /// of `class` (immortal) with private data `data`, whose cell has no
+    /// destructor and no weak handle. `flags[0]` is the host's: while nonzero
+    /// the object is kept alive. `flags[1]` is the collector's: nonzero once
+    /// the object is dead. Both bytes must outlive the object's entry, which
+    /// ends when `data` comes back from `JSContextGroupTakeDeadTrackedWrappers`.
+    /// With `shape` (of `class`, of this global object) the object starts with
+    /// its structure; otherwise it gets `prototype`.
+    pub type JSObjectMakeTrackedWrapperFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        shape: JSWrapperShapeRef,
+        class: JSClassRef,
+        prototype: JSValueRef,
+        data: *mut c_void,
+        flags: *mut u8,
+    ) -> JSObjectRef;
+    /// Dead tracked wrappers not taken yet; any thread, no lock.
+    pub type JSContextGroupDeadTrackedWrapperCounterFn =
+        unsafe extern "C" fn(group: JSContextGroupRef) -> *const std::sync::atomic::AtomicUsize;
+    /// The `data` of up to `capacity` dead (`...TakeDead...`) or of dead and
+    /// live (`...TakeAll...`, which ends every entry) tracked wrappers.
+    pub type JSContextGroupTakeTrackedWrappersFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, buffer: *mut *mut c_void, capacity: usize) -> usize;
+    /// Clears `flags[0]` of every live tracked wrapper of `ctx`'s global object.
+    pub type JSContextReleaseTrackedWrappersFn = unsafe extern "C" fn(ctx: JSContextRef);
     pub type JSGlobalContextSetUnhandledRejectionCallbackFn =
         unsafe extern "C" fn(ctx: JSGlobalContextRef, function: JSObjectRef, exception: *mut JSValueRef);
     pub type JSContextGroupSetExecutionTimeLimitFn = unsafe extern "C" fn(
@@ -559,6 +586,8 @@ pub mod spi {
     pub type JSGlobalContextReseedRandomFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
     /// Patched JavaScriptCore only (`webkit/patches/0003-complete-jit-plans.patch`).
     pub type JSCompleteJITPlansFn = unsafe extern "C" fn(group: JSContextGroupRef, wait: bool);
+    /// Patched JavaScriptCore only (`webkit/patches/0030-first-vm-no-bundle-no-time-zone-table.patch`).
+    pub type JSPrepareTimeZonesFn = unsafe extern "C" fn();
     /// Patched JavaScriptCore only (`webkit/patches/0006-vm-time-zone.patch`).
     pub type JSSetWrapperPropertyAddedCallbackFn =
         unsafe extern "C" fn(callback: Option<unsafe extern "C" fn(JSContextRef, JSObjectRef)>);
@@ -708,6 +737,11 @@ pub mod spi {
     pub type JSObjectGetFunctionDataFn = unsafe extern "C" fn(object: JSObjectRef) -> *mut c_void;
     pub type JSContextGroupReleaseFreeMemoryFn = unsafe extern "C" fn(group: JSContextGroupRef);
     pub type JSContextGroupDeleteAllCodeFn = unsafe extern "C" fn(group: JSContextGroupRef);
+    /// `JSGetMemoryUsageStatistics` (JSContextRefPrivate.h): an object with
+    /// `heapSize`, `heapCapacity`, `extraMemorySize`, `objectCount`,
+    /// `protectedObjectCount`, `globalObjectCount` and
+    /// `protectedGlobalObjectCount` of the context's VM.
+    pub type JSGetMemoryUsageStatisticsFn = unsafe extern "C" fn(ctx: JSContextRef) -> JSObjectRef;
     /// Freed allocator pages are replaced by fresh mappings (they leave the
     /// resident set at once) instead of being `madvise`d.
     pub type JSSetDecommitReplacesPagesFn = unsafe extern "C" fn(enable: bool);
@@ -797,6 +831,16 @@ pub mod spi {
     pub type JSContextGroupTakeCoverageFn =
         unsafe extern "C" fn(group: JSContextGroupRef, callback: JSCoverageSourceCallback, data: *mut c_void);
 
+    /// See [`Spi::tracked`].
+    #[derive(Debug, Clone, Copy)]
+    pub struct TrackedWrappers {
+        pub make: JSObjectMakeTrackedWrapperFn,
+        pub dead_counter: JSContextGroupDeadTrackedWrapperCounterFn,
+        pub take_dead: JSContextGroupTakeTrackedWrappersFn,
+        pub take_all: JSContextGroupTakeTrackedWrappersFn,
+        pub release: JSContextReleaseTrackedWrappersFn,
+    }
+
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
     #[derive(Debug, Clone, Copy)]
@@ -809,6 +853,11 @@ pub mod spi {
         pub wrapper_shape_create: Option<JSWrapperShapeCreateFn>,
         pub wrapper_shape_release: Option<JSWrapperShapeReleaseFn>,
         pub object_make_wrapper: Option<JSObjectMakeWrapperFn>,
+        pub object_make_tracked_wrapper: Option<JSObjectMakeTrackedWrapperFn>,
+        pub dead_tracked_wrapper_counter: Option<JSContextGroupDeadTrackedWrapperCounterFn>,
+        pub take_dead_tracked_wrappers: Option<JSContextGroupTakeTrackedWrappersFn>,
+        pub take_all_tracked_wrappers: Option<JSContextGroupTakeTrackedWrappersFn>,
+        pub release_tracked_wrappers: Option<JSContextReleaseTrackedWrappersFn>,
         pub set_unhandled_rejection_callback: Option<JSGlobalContextSetUnhandledRejectionCallbackFn>,
         pub set_execution_time_limit: Option<JSContextGroupSetExecutionTimeLimitFn>,
         pub clear_execution_time_limit: Option<JSContextGroupClearExecutionTimeLimitFn>,
@@ -823,6 +872,7 @@ pub mod spi {
         pub did_fork: Option<JSDidForkFn>,
         pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
         pub complete_jit_plans: Option<JSCompleteJITPlansFn>,
+        pub prepare_time_zones: Option<JSPrepareTimeZonesFn>,
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
@@ -840,6 +890,7 @@ pub mod spi {
         pub get_function_data: Option<JSObjectGetFunctionDataFn>,
         pub release_free_memory: Option<JSContextGroupReleaseFreeMemoryFn>,
         pub delete_all_code: Option<JSContextGroupDeleteAllCodeFn>,
+        pub memory_usage_statistics: Option<JSGetMemoryUsageStatisticsFn>,
         pub set_decommit_replaces_pages: Option<JSSetDecommitReplacesPagesFn>,
         pub value_string_characters: Option<JSValueGetStringCharactersFn>,
         pub make_string_latin1: Option<JSValueMakeStringLatin1Fn>,
@@ -855,6 +906,17 @@ pub mod spi {
         /// Weak references (wrapper identity maps) need all three entry points.
         pub fn weak(&self) -> Option<(JSWeakCreateFn, JSWeakReleaseFn, JSWeakGetObjectFn)> {
             Some((self.weak_create?, self.weak_release?, self.weak_get_object?))
+        }
+
+        /// Tracked wrappers (patch 0029), all or nothing.
+        pub fn tracked(&self) -> Option<TrackedWrappers> {
+            Some(TrackedWrappers {
+                make: self.object_make_tracked_wrapper?,
+                dead_counter: self.dead_tracked_wrapper_counter?,
+                take_dead: self.take_dead_tracked_wrappers?,
+                take_all: self.take_all_tracked_wrappers?,
+                release: self.release_tracked_wrappers?,
+            })
         }
 
         /// Strings to and from host characters without a `JSStringRef` in
@@ -907,14 +969,33 @@ pub mod spi {
         DIRECT.get_or_init(|| get().direct_strings()).as_ref()
     }
 
+    #[cfg(not(lp_jsc_static))]
     unsafe extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
-    #[cfg(target_vendor = "apple")]
+    #[cfg(all(not(lp_jsc_static), target_vendor = "apple"))]
     const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
-    #[cfg(not(target_vendor = "apple"))]
+    #[cfg(all(not(lp_jsc_static), not(target_vendor = "apple")))]
     const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
 
+    // JavaScriptCore linked into the executable: the names are not in a
+    // dynamic symbol table to look up, and the archive is this checkout's
+    // patched build, so each entry point is referenced directly. One the
+    // archive lacks fails the link instead of reporting `None` at run time.
+    #[cfg(lp_jsc_static)]
+    macro_rules! resolve {
+        ($name:literal) => {{
+            unsafe extern "C" {
+                #[link_name = $name]
+                fn entry();
+            }
+            // SAFETY: the address of the named function of the linked
+            // archive, whose signature is declared by the target fn type.
+            Some(unsafe { core::mem::transmute::<unsafe extern "C" fn(), _>(entry) })
+        }};
+    }
+
+    #[cfg(not(lp_jsc_static))]
     macro_rules! resolve {
         ($name:literal) => {{
             // SAFETY: dlsym with RTLD_DEFAULT and a NUL-terminated name; the
@@ -942,6 +1023,11 @@ pub mod spi {
             wrapper_shape_create: resolve!("JSWrapperShapeCreate"),
             wrapper_shape_release: resolve!("JSWrapperShapeRelease"),
             object_make_wrapper: resolve!("JSObjectMakeWrapper"),
+            object_make_tracked_wrapper: resolve!("JSObjectMakeTrackedWrapper"),
+            dead_tracked_wrapper_counter: resolve!("JSContextGroupDeadTrackedWrapperCounter"),
+            take_dead_tracked_wrappers: resolve!("JSContextGroupTakeDeadTrackedWrappers"),
+            take_all_tracked_wrappers: resolve!("JSContextGroupTakeAllTrackedWrappers"),
+            release_tracked_wrappers: resolve!("JSContextReleaseTrackedWrappers"),
             set_unhandled_rejection_callback: resolve!("JSGlobalContextSetUnhandledRejectionCallback"),
             set_execution_time_limit: resolve!("JSContextGroupSetExecutionTimeLimit"),
             clear_execution_time_limit: resolve!("JSContextGroupClearExecutionTimeLimit"),
@@ -956,6 +1042,7 @@ pub mod spi {
             did_fork: resolve!("JSDidFork"),
             reseed_random: resolve!("JSGlobalContextReseedRandom"),
             complete_jit_plans: resolve!("JSCompleteJITPlans"),
+            prepare_time_zones: resolve!("JSPrepareTimeZones"),
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
@@ -973,6 +1060,7 @@ pub mod spi {
             get_function_data: resolve!("JSObjectGetFunctionData"),
             release_free_memory: resolve!("JSContextGroupReleaseFreeMemory"),
             delete_all_code: resolve!("JSContextGroupDeleteAllCode"),
+            memory_usage_statistics: resolve!("JSGetMemoryUsageStatistics"),
             set_decommit_replaces_pages: resolve!("JSSetDecommitReplacesPages"),
             value_string_characters: resolve!("JSValueGetStringCharacters"),
             make_string_latin1: resolve!("JSValueMakeStringLatin1"),
