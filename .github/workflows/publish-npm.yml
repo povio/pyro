@@ -135,7 +135,6 @@ jobs:
         env:
           JSC_DIR: ${{ needs.jsc.outputs.dir }}
         run: |
-          # At the path it was built at: its install name is absolute.
           export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
           mkdir -p "$(dirname "$LP_JSC_DIR")"
           mv patched-jsc "$LP_JSC_DIR"
@@ -146,23 +145,19 @@ jobs:
         run: |
           binary=target/release/lightningpanda
           codesign --verify --strict "$binary"
-          otool -L "$binary" | grep libJavaScriptCore.dylib
+          # The patched JavaScriptCore is inside the browser (a static archive): no library of that name is loaded.
+          if otool -L "$binary" | grep -F JavaScriptCore; then exit 1; fi
+          codesign -d --entitlements - "$binary" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
           "$binary" version | grep -Fx "lightningpanda $VERSION"
           "$binary" version | grep -q 'fork: true'
           mkdir -p archive/fork
           cp "$binary" target/release/lp-snapshot-compare archive/fork/
-      - name: Bundle the patched JavaScriptCore for the npm package
-        env:
-          JSC_DIR: ${{ needs.jsc.outputs.dir }}
+      - name: Stage the browser for the npm package
         run: |
           mkdir -p native/darwin-arm64
           cp target/release/lightningpanda native/darwin-arm64/
-          scripts/release/bundle-jsc.sh native/darwin-arm64 "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR/lib/libJavaScriptCore.dylib"
-          # Moved, so nothing can load the build cache's copy instead.
-          mv "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR" "$RUNNER_TEMP/jsc-moved"
+          codesign --verify --strict native/darwin-arm64/lightningpanda
           native/darwin-arm64/lightningpanda version | grep -q 'fork: true'
-          DYLD_PRINT_LIBRARIES=1 native/darwin-arm64/lightningpanda eval -e 1 2>&1 | grep libJavaScriptCore \
-            | grep -q "$PWD/native/darwin-arm64/lib/libJavaScriptCore.dylib"
       - uses: actions/upload-artifact@v4
         with:
           name: archive-fork

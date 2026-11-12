@@ -1,9 +1,10 @@
 name: Linux build
 
 # Builds the render-enabled browser and comparison worker for Linux x64 and
-# arm64 against the patched JavaScriptCore (jsc.yml's linux job), bundles that
-# library and its ICU beside the browser (scripts/release/bundle-jsc-linux.sh),
-# smoke-tests the bundle and runs the client's test suite against it.
+# arm64 with the patched JavaScriptCore linked in (jsc.yml's linux job: a
+# static archive), bundles the ICU libraries it needs beside the browser
+# (scripts/release/bundle-icu-linux.sh), smoke-tests the bundle and runs the
+# client's test suite against it.
 #
 # Artifacts: native-linux-<arch> (the npm package's browser) and
 # archive-linux-<arch> (the GitHub release archive's binaries).
@@ -59,12 +60,11 @@ jobs:
         run: rustup toolchain install stable --profile minimal --no-self-update
       - name: Build browser and comparison worker against the patched JavaScriptCore
         run: |
-          # At the path it was built at: its SONAME is absolute.
           export LP_JSC_DIR="$HOME/.cache/lightningpanda/jsc/$JSC_DIR"
           mkdir -p "$(dirname "$LP_JSC_DIR")"
           mv patched-jsc "$LP_JSC_DIR"
           cargo +stable build --locked --release --package lightningpanda --package lp-render --features render
-      - name: Bundle the patched JavaScriptCore and check the bundle
+      - name: Bundle ICU and check the bundle
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ inputs.version }}
@@ -75,13 +75,13 @@ jobs:
           # Release debug information makes the combined npm payload too large.
           # Strip only staged copies; retain symbols and untouched build outputs.
           strip --strip-debug "$stage/lightningpanda" "$stage/lp-snapshot-compare"
-          jsc="$HOME/.cache/lightningpanda/jsc/$JSC_DIR"
-          scripts/release/bundle-jsc-linux.sh "$stage" "$jsc/lib/libJavaScriptCore.so"
-          # Moved, so nothing can load the build cache's copy instead.
-          mv "$jsc" "$RUNNER_TEMP/jsc-moved"
+          scripts/release/bundle-icu-linux.sh "$stage"
           ldd "$stage/lightningpanda"
-          ldd "$stage/lightningpanda" | grep -F "$PWD/$stage/lib/libJavaScriptCore.so"
-          ! ldd "$stage/lightningpanda" "$stage/lib/libJavaScriptCore.so" | grep -E 'not found|/usr/lib/.*libicu'
+          # JavaScriptCore is inside the browser, and its ICU is the bundled one.
+          # (`! pipeline` would not stop the step: errexit ignores a negated command.)
+          if ldd "$stage/lightningpanda" | grep -F libJavaScriptCore; then exit 1; fi
+          ldd "$stage/lightningpanda" | grep -F "$PWD/$stage/lib/libicuuc.so"
+          if ldd "$stage/lightningpanda" | grep -E 'not found|/usr/lib/.*libicu'; then exit 1; fi
           "$stage/lightningpanda" version
           "$stage/lightningpanda" version | grep -q 'fork: true'
           if [[ -n "$VERSION" ]]; then

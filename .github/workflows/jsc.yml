@@ -1,8 +1,9 @@
 name: Patched JavaScriptCore
 
 # Builds the patched JavaScriptCore the fork variant (macOS) and the Linux
-# builds link (scripts/jsc/build.sh) and keeps each platform's build in the
-# Actions cache, keyed by the WebKit revision and the patches. A cold build takes about 7 minutes; `main`
+# builds link into the browser (scripts/jsc/build.sh: one static archive,
+# lib/libJavaScriptCore.a) and keeps each platform's build in the Actions cache,
+# keyed by the WebKit revision and the patches. A cold build takes about 7 minutes; `main`
 # rebuilds whenever the inputs change: caches saved on the default branch are
 # the ones release tags can restore. Release tags call this workflow and get
 # the cached build, or build it themselves on a miss.
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - crates/lp-jsc-sys/webkit/**
+      - scripts/jsc/archive.sh
       - scripts/jsc/build.sh
       - scripts/jsc/cache-key.sh
       - scripts/linux/setup.sh
@@ -20,6 +22,7 @@ on:
   pull_request:
     paths:
       - crates/lp-jsc-sys/webkit/**
+      - scripts/jsc/archive.sh
       - scripts/jsc/build.sh
       - scripts/jsc/cache-key.sh
       - scripts/linux/setup.sh
@@ -53,7 +56,7 @@ jobs:
         id: cache
         with:
           path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
-          key: patched-jsc-macos-arm64-${{ steps.key.outputs.dir }}
+          key: patched-jsc-static-macos-arm64-${{ steps.key.outputs.dir }}
       - name: Build patched JavaScriptCore
         if: steps.cache.outputs.cache-hit != 'true'
         env:
@@ -67,16 +70,19 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
-          key: patched-jsc-macos-arm64-${{ steps.key.outputs.dir }}
+          key: patched-jsc-static-macos-arm64-${{ steps.key.outputs.dir }}
       - name: Check the build
         env:
           DIR: ${{ steps.key.outputs.dir }}
         run: |
-          lib="$HOME/Library/Caches/lightningpanda/jsc/$DIR/lib/libJavaScriptCore.dylib"
+          lib="$HOME/Library/Caches/lightningpanda/jsc/$DIR/lib/libJavaScriptCore.a"
           lipo -archs "$lib" | grep -qx arm64
-          codesign --verify --strict "$lib"
-          # A fork-support entry point (patch 0002): this is the patched library.
-          nm -gU "$lib" | grep -q JSPrepareForFork
+          # A fork-support entry point (patch 0002): this is the patched library. The archive's
+          # other pieces: the JIT subtarget's objects, WTF and bmalloc (scripts/jsc/archive.sh).
+          nm -gU "$lib" 2>/dev/null > symbols.txt || true
+          for symbol in _JSPrepareForFork __ZN3JSC3DFG4Plan11notifyReadyEv __ZN3WTF10initializeEv __ZN8Gigacage14ensureGigacageEv; do
+            grep -q " T $symbol\$" symbols.txt || { echo "libJavaScriptCore.a does not define $symbol" >&2; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: patched-jsc
@@ -85,8 +91,7 @@ jobs:
           retention-days: 7
 
   # The same patched build for Linux: artifacts patched-jsc-linux-x64 and
-  # patched-jsc-linux-arm64, under ~/.cache/lightningpanda/jsc/<dir>. Its
-  # SONAME is that absolute path; restore it there before linking.
+  # patched-jsc-linux-arm64, under ~/.cache/lightningpanda/jsc/<dir>.
   linux:
     strategy:
       fail-fast: false
@@ -111,7 +116,7 @@ jobs:
         id: cache
         with:
           path: ~/.cache/lightningpanda/jsc/${{ steps.key.outputs.dir }}
-          key: patched-jsc-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
+          key: patched-jsc-static-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
       - name: Build patched JavaScriptCore
         if: steps.cache.outputs.cache-hit != 'true'
         env:
@@ -126,14 +131,17 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           path: ~/.cache/lightningpanda/jsc/${{ steps.key.outputs.dir }}
-          key: patched-jsc-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
+          key: patched-jsc-static-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
       - name: Check the build
         env:
           DIR: ${{ steps.key.outputs.dir }}
         run: |
-          lib="$HOME/.cache/lightningpanda/jsc/$DIR/lib/libJavaScriptCore.so"
-          readelf -d "$lib" | grep -F "[$lib]"
-          nm -D --defined-only "$lib" | grep -q JSPrepareForFork
+          lib="$HOME/.cache/lightningpanda/jsc/$DIR/lib/libJavaScriptCore.a"
+          # A fork-support entry point (patch 0002), and the archive's other pieces: the JIT subtarget, WTF and bmalloc.
+          nm --defined-only "$lib" 2>/dev/null > symbols.txt || true
+          for symbol in JSPrepareForFork _ZN3JSC3DFG4Plan11notifyReadyEv _ZN3WTF10initializeEv _ZN8Gigacage14ensureGigacageEv; do
+            grep -q " T $symbol\$" symbols.txt || { echo "libJavaScriptCore.a does not define $symbol" >&2; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: patched-jsc-linux-${{ matrix.arch }}

@@ -72,7 +72,7 @@ jobs:
           # Every input of the browser build, by git object id: sources, build configuration, the bundling script and
           # this workflow (its build steps); plus the stable toolchain (its manifest's hash) and the JavaScriptCore.
           inputs="$(git rev-parse HEAD:crates HEAD:vendor HEAD:Cargo.toml HEAD:Cargo.lock HEAD:.cargo HEAD:scripts/macos \
-            HEAD:scripts/release/bundle-jsc.sh HEAD:.github/workflows/wpt.yml)"
+            HEAD:.github/workflows/wpt.yml)"
           toolchain="$(curl -fsS --retry 3 https://static.rust-lang.org/dist/channel-rust-stable.toml.sha256)" || toolchain=unknown
           browser_key="wpt-browser-macos-arm64-$(printf '%s\n' "$inputs" "${toolchain%% *}" "$jsc_dir" | sha256sum | cut -c1-16)"
           # An entry this run can restore: saved on its own ref, its base branch or main. A failed lookup is a miss.
@@ -83,7 +83,7 @@ jobs:
           }
           {
             echo "jsc-dir=$jsc_dir"
-            echo "jsc-cached=$(cached "patched-jsc-macos-arm64-$jsc_dir")"
+            echo "jsc-cached=$(cached "patched-jsc-static-macos-arm64-$jsc_dir")"
             echo "browser-key=$browser_key"
             echo "browser-cached=$(cached "$browser_key")"
           } | tee -a "$GITHUB_OUTPUT"
@@ -113,7 +113,7 @@ jobs:
         if: needs.jsc.result != 'success'
         with:
           path: ~/Library/Caches/lightningpanda/jsc/${{ needs.prepare.outputs.jsc-dir }}
-          key: patched-jsc-macos-arm64-${{ needs.prepare.outputs.jsc-dir }}
+          key: patched-jsc-static-macos-arm64-${{ needs.prepare.outputs.jsc-dir }}
           fail-on-cache-miss: true
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update
@@ -127,23 +127,20 @@ jobs:
       # end of the build is not one core's work.
       - name: Build the browser against the patched JavaScriptCore
         run: |
-          # At the path it was built at: its install name is absolute.
           export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
           if [ -d patched-jsc ]; then
             mkdir -p "$(dirname "$LP_JSC_DIR")"
             mv patched-jsc "$LP_JSC_DIR"
           fi
           cargo +stable build --locked --profile release-fast --package lightningpanda
-      - name: Bundle the patched JavaScriptCore with the browser
+      - name: Stage and check the browser
         run: |
           mkdir browser
           cp target/release-fast/lightningpanda browser/
-          scripts/release/bundle-jsc.sh browser "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR/lib/libJavaScriptCore.dylib"
-          # Moved, so nothing can load the build cache's copy instead.
-          mv "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR" "$RUNNER_TEMP/jsc-moved"
+          # The patched JavaScriptCore is inside the browser (a static archive): no library of that name is loaded.
+          if otool -L browser/lightningpanda | grep -F JavaScriptCore; then exit 1; fi
+          codesign --verify --strict browser/lightningpanda
           browser/lightningpanda version | grep -q 'fork: true'
-          DYLD_PRINT_LIBRARIES=1 browser/lightningpanda eval -e 1 2>&1 | grep libJavaScriptCore \
-            | grep -q "$PWD/browser/lib/libJavaScriptCore.dylib"
           browser/lightningpanda eval -e 'console.log("ok")' | grep -Fx ok
           tar -czf browser.tgz browser
       # For later runs with the same inputs (pull requests restore their own entries and main's).

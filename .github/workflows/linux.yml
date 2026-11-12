@@ -9,7 +9,8 @@ on:
       - .github/workflows/linux.yml
       - .github/workflows/linux-build.yml
       - scripts/linux/**
-      - scripts/release/bundle-jsc-linux.sh
+      - scripts/release/bundle-icu-linux.sh
+      - scripts/jsc/**
       - crates/lp-jsc-sys/**
   workflow_dispatch:
 

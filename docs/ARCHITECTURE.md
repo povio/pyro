@@ -294,14 +294,19 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
 `crates/lp-jsc-sys/webkit/`: `REVISION` (WebKit commit) and `patches/*.patch`, kept small and few, like Bun's fork.
 
 - `scripts/jsc/build.sh` builds WebKit's portable JSCOnly CMake port (the Apple framework build needs full Xcode)
-  into `~/Library/Caches/lightningpanda/jsc/<revision>-<patch hash>/lib/libJavaScriptCore.dylib`, with a copy of
-  the inputs. Needs `brew install cmake ninja`. A clean build took a few minutes at `-j10` on an M1 Max; after a
+  into `~/Library/Caches/lightningpanda/jsc/<revision>-<patch hash>/lib/libJavaScriptCore.a`, with a copy of
+  the inputs: one static archive of JavaScriptCore, its JIT subtarget's objects, WTF and bmalloc
+  (`scripts/jsc/archive.sh`). Needs `brew install cmake ninja`. A clean build took a few minutes at `-j10` on an M1 Max; after a
   patch change ninja rebuilds incrementally.
-- The dylib has an absolute install name and is linked dynamically, so Rust edit rebuilds cost the same as with the
-  system framework.
+- The archive is linked into the binary (static since 2026-11). As a 48 MB dylib it cost dyld 1.2 ms of every
+  launch on the M1 Max (process start to `main` 7.2-7.7 ms, 6.0-6.1 ms linked in) and was a second file to ship,
+  sign and find at run time; the release binary grew from 57.0 MB to 99.1 MB where binary plus dylib were 105.1 MB.
+  ICU (`libicucore` on macOS, the distribution's on Linux) and the C++ runtime stay shared. The SPI is referenced
+  directly instead of through `dlsym`, so a missing entry point is a link error. A directory that holds only
+  `lib/libJavaScriptCore.dylib` (an older build) is still linked dynamically on macOS.
 - `build.rs` links the cached build whose inputs match the checkout. Without one it warns and falls back to the
   system framework (patched-only entry points are then reported unsupported). `LP_JSC=system` forces the system
-  framework, `LP_JSC_DIR=<dir>` uses `<dir>/lib/libJavaScriptCore.dylib`.
+  framework, `LP_JSC_DIR=<dir>` uses `<dir>/lib/libJavaScriptCore.a`.
 - JSCOnly has no Objective-C API, so patch `0001` adds a C module-loader SPI (`JSGlobalContextSetModuleLoader`,
   `JSModuleSourceCreate`, `JSLoadAndEvaluateModule`) to `JSAPIGlobalObject`, ported from `JSAPIGlobalObject.mm`.
   `shim/modules_source.c` maps the crate's `lp_jsc_module_*` interface onto it.
@@ -543,9 +548,9 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
 | Platform | JSC | Status |
 |---|---|---|
 | macOS 27.0.1 (26A434) arm64, SDK 27.0, JavaScriptCore 22625.1.29.11.28 (dylib 625.1.29), rustc 1.99.1 | system framework | builds; all tests pass |
-| macOS 27.0.1 arm64, Command Line Tools only (no Xcode), WebKit `0e0dd70` JSCOnly + `webkit/patches` | source dylib | builds; all tests pass |
+| macOS 27.0.1 arm64, Command Line Tools only (no Xcode), WebKit `0e0dd70` JSCOnly + `webkit/patches` | source, static archive | builds; all tests pass |
 | other macOS versions | system framework | untested. Deployment target is 14.0; SPI is probed at runtime |
-| Linux x64/arm64, Ubuntu 24.04 (glibc 2.39), clang 21 | source `.so` (JSCOnly + `webkit/patches`) | built in CI (`linux-build.yml`); no system fallback (WebKitGTK has no module loader). Release bundles the library and ICU in `lib/` |
+| Linux x64/arm64, Ubuntu 24.04 (glibc 2.39), clang 21 | source, static archive (JSCOnly + `webkit/patches`) | built in CI (`linux-build.yml`); no system fallback (WebKitGTK has no module loader). Release bundles ICU in `lib/` |
 
 On some hosts the default SDK hits a linker/TAPI mismatch (`unknown arm64e.x1`). Worker 3 worked around it with a
 command-scoped `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`. Do not hardcode that path.

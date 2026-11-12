@@ -17,19 +17,23 @@ for (const arch of ['arm64', 'x64']) {
     throw new Error(`Expected a macOS ${arch} Mach-O executable: ${fileURLToPath(binary)}`);
   }
 }
-// The arm64 browser is the fork-capable build and loads its patched
-// JavaScriptCore from beside it (scripts/release/bundle-jsc.sh).
+// The arm64 browser is the fork-capable build: the patched JavaScriptCore is
+// linked into it (a static archive, scripts/jsc/build.sh). A library left
+// beside it is from a build before that: the browser would not load it.
 {
   const lib = new URL('native/darwin-arm64/lib/libJavaScriptCore.dylib', pkg);
-  const header = statSync(lib, { throwIfNoEntry: false })?.isFile() ? readFileSync(lib).subarray(0, 8) : Buffer.alloc(0);
-  if (header.length < 8 || header.readUInt32LE(0) !== 0xfeedfacf || header.readUInt32LE(4) !== 0x0100000c) {
-    throw new Error(`Missing or not an arm64 library: ${fileURLToPath(lib)}. The arm64 browser must be the fork build with its patched JavaScriptCore (see docs/NPM_PUBLISHING.md).`);
+  if (statSync(lib, { throwIfNoEntry: false })) {
+    throw new Error(`Stale ${fileURLToPath(lib)}: the arm64 browser links JavaScriptCore statically. Remove native/darwin-arm64/lib and stage the current build (see docs/NPM_PUBLISHING.md).`);
   }
 }
-// Linux browsers are fork builds too, with the patched JavaScriptCore and its
-// ICU in lib/ beside them (scripts/release/bundle-jsc-linux.sh).
+// Linux browsers are fork builds too, with the ICU libraries they load in lib/
+// beside them (scripts/release/bundle-icu-linux.sh).
 for (const [arch, machine] of [['x64', 62], ['arm64', 183]]) {
-  for (const rel of [`native/linux-${arch}/lightningpanda`, `native/linux-${arch}/lib/libJavaScriptCore.so`]) {
+  const stale = new URL(`native/linux-${arch}/lib/libJavaScriptCore.so`, pkg);
+  if (statSync(stale, { throwIfNoEntry: false })) {
+    throw new Error(`Stale ${fileURLToPath(stale)}: the Linux browsers link JavaScriptCore statically (see docs/NPM_PUBLISHING.md).`);
+  }
+  for (const rel of [`native/linux-${arch}/lightningpanda`]) {
     const file = new URL(rel, pkg);
     if (!statSync(file, { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`Missing ${fileURLToPath(file)}. Build both Linux browsers before packing (see docs/NPM_PUBLISHING.md).`);
