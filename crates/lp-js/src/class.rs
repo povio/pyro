@@ -1423,22 +1423,37 @@ pub(crate) fn drain_tracked(engine: &EngineInner, all: bool) -> usize {
     }
     let mut total = 0;
     let mut batch = [ptr::null_mut::<std::ffi::c_void>(); 256];
-    loop {
-        let take = if all { tracked.take_all } else { tracked.take_dead };
-        // SAFETY: the engine's live group, on its thread; `batch` has room.
-        let n = unsafe { take(engine.group(), batch.as_mut_ptr(), batch.len()) };
-        total += n;
-        if all {
-            // Dropped once the VM is gone, as finalized payloads are.
-            engine.orphaned.borrow_mut().extend(batch[..n].iter().map(|&h| h as usize));
-        } else {
-            for &h in &batch[..n] {
-                let h = h as *mut Header;
-                // SAFETY: the payload of a dead owned wrapper, handed over
-                // once; nothing else refers to it (its owner forgets the
-                // `WrapperRef` in the payload's `Drop`).
-                unsafe { ((*h).drop_fn)(h) };
+    if all {
+        // The live ones first: with no entry left, no collection can find
+        // another wrapper dead, so the dead list taken after it is whole. A
+        // collection that ends on the collector's thread between the two
+        // (the realms were disposed just now, so nothing is kept any more)
+        // would otherwise list payloads nobody takes: leaked, each with
+        // whatever it owns.
+        for take in [tracked.take_all, tracked.take_dead] {
+            loop {
+                // SAFETY: the engine's live group, on its thread; `batch` has room.
+                let n = unsafe { take(engine.group(), batch.as_mut_ptr(), batch.len()) };
+                total += n;
+                // Dropped once the VM is gone, as finalized payloads are.
+                engine.orphaned.borrow_mut().extend(batch[..n].iter().map(|&h| h as usize));
+                if n < batch.len() {
+                    break;
+                }
             }
+        }
+        return total;
+    }
+    loop {
+        // SAFETY: the engine's live group, on its thread; `batch` has room.
+        let n = unsafe { (tracked.take_dead)(engine.group(), batch.as_mut_ptr(), batch.len()) };
+        total += n;
+        for &h in &batch[..n] {
+            let h = h as *mut Header;
+            // SAFETY: the payload of a dead owned wrapper, handed over
+            // once; nothing else refers to it (its owner forgets the
+            // `WrapperRef` in the payload's `Drop`).
+            unsafe { ((*h).drop_fn)(h) };
         }
         if n < batch.len() {
             return total;

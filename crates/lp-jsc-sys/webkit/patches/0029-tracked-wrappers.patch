@@ -25,7 +25,9 @@ The class must be immortal (patch 0028): nothing of the object then needs releas
 private property map, if it has one, which the walk takes and the mutator's thread destroys
 (its keys are atom strings). `JSContextReleaseTrackedWrappers` clears flags[0] of a global
 object's wrappers (a realm ending); `JSContextGroupTakeAllTrackedWrappers` ends every entry
-for a host that is dropping its VM.
+for a host that is dropping its VM. Those objects may be alive and a collection under way may
+be visiting them on its marking threads, so it waits for that collection first
+(`PreventCollectionScope`): it frees their property maps.
 
 A class records whether its objects have anything to initialise (`objectsNeedInit`: an
 initialize callback or convertToType in its chain), which `JSCallbackObject::init` walked the
@@ -229,7 +231,7 @@ index 13d2d84e29..12be302f32 100644
  JS_EXPORT void JSWeakRelease(JSContextGroupRef, JSWeakRef);
  /* Lightningpanda: JSWeakRelease of `count` handles under one lock. */
 diff --git a/Source/JavaScriptCore/heap/Heap.cpp b/Source/JavaScriptCore/heap/Heap.cpp
-index 702f3a2a41..467e83ee3a 100644
+index 702f3a2a41..27e1ad2de0 100644
 --- a/Source/JavaScriptCore/heap/Heap.cpp
 +++ b/Source/JavaScriptCore/heap/Heap.cpp
 @@ -481,6 +481,14 @@ void Heap::shutDown()
@@ -255,7 +257,7 @@ index 702f3a2a41..467e83ee3a 100644
      reconcileWeakGCHashTables();
      sweepArrayBuffers();
      snapshotUnswept();
-@@ -965,6 +974,96 @@ void Heap::pruneDeadReferences()
+@@ -965,6 +974,100 @@ void Heap::pruneDeadReferences()
      m_codeBlocks->clearCurrentlyExecutingAndRemoveDeadCodeBlocks(vm());
  }
  
@@ -332,6 +334,10 @@ index 702f3a2a41..467e83ee3a 100644
 +
 +size_t Heap::takeAllTrackedWrappers(void** buffer, size_t capacity)
 +{
++    // The objects taken here may be alive, and a collection under way may be visiting them on
++    // its marking threads (JSCallbackObjectData::visitChildren reads the property map freed
++    // below): it ends first, and none starts until this returns.
++    PreventCollectionScope preventCollectionScope(*this);
 +    destroyDeadTrackedWrapperProperties();
 +    size_t count = 0;
 +    while (count < capacity && !m_trackedWrappers.isEmpty()) {
@@ -352,7 +358,7 @@ index 702f3a2a41..467e83ee3a 100644
  void Heap::prepareForAllocation()
  {
      ASSERT(isInPhase(CollectorPhase::End));
-@@ -2520,6 +2619,18 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
+@@ -2520,6 +2623,18 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
          ConstraintConcurrency::Concurrent,
          ConstraintParallelism::Sequential));
  

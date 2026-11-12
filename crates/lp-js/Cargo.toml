@@ -20,6 +20,12 @@ path = "tests/integration.rs"
 name = "string_allocation"
 path = "tests/string_allocation.rs"
 
+# Its own process: it sets a JSC option (`JSC_collectContinuously`) that is
+# read once and that no other test wants.
+[[test]]
+name = "teardown_collecting"
+path = "tests/teardown_collecting.rs"
+
 [lints]
 workspace = true
 
