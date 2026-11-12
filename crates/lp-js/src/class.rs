@@ -1241,16 +1241,16 @@ pub(crate) struct Header {
     /// The same realm for the lean member dispatch: its context and the
     /// realm itself in two loads, with no reference count touched.
     pub core: Rc<crate::realm::RealmCore>,
-    /// An owned wrapper (`IdentityKey::OWNED`): nonzero while its owner wants
-    /// the object kept. The collector reads it while marking, possibly from
-    /// another thread (`JSWeakCreateKeptWhile`).
-    pub keep_alive: std::sync::atomic::AtomicU8,
-    /// An owned wrapper's weak handle (null otherwise, and once released).
-    pub weak: std::cell::Cell<sys::JSWeakRef>,
-    /// The realm's list of owned wrappers (`RealmInner::owned_head`), so it
-    /// can release their handles when it is disposed.
-    pub owned_prev: std::cell::Cell<*mut Header>,
-    pub owned_next: std::cell::Cell<*mut Header>,
+    /// An owned wrapper (`IdentityKey::OWNED`), which JavaScriptCore tracks
+    /// by these two bytes (`JSObjectMakeTrackedWrapper`). `[KEEP]` is ours:
+    /// nonzero while the owner wants the object kept; the collector reads it
+    /// while marking, possibly from another thread. `[DEAD]` is the
+    /// collector's: nonzero once the object is dead, after which the payload
+    /// comes back from `JSContextGroupTakeDeadTrackedWrappers`.
+    pub flags: [std::sync::atomic::AtomicU8; 2],
+    /// An owned wrapper's object (null otherwise): not a reference the
+    /// collector knows of, valid while `flags[DEAD]` is zero.
+    pub object: std::cell::Cell<sys::JSObjectRef>,
     pub kind: Kind,
     pub key: Option<IdentityKey>,
     pub data_type: TypeId,
@@ -1259,6 +1259,11 @@ pub(crate) struct Header {
     /// Owning engine's finalization queue (outlives every payload: the VM is
     /// destroyed, finalizing all objects, before the queue is dropped).
     pub queue: *const FinalizeQueue,
+}
+
+impl Header {
+    pub const KEEP: usize = 0;
+    pub const DEAD: usize = 1;
 }
 
 /// Payload headers awaiting destruction on the engine thread. Finalizers may
@@ -1324,10 +1329,8 @@ pub(crate) fn new_payload<T: 'static>(
             info,
             realm_ref,
             core: realm.core.clone(),
-            keep_alive: std::sync::atomic::AtomicU8::new(0),
-            weak: std::cell::Cell::new(ptr::null_mut()),
-            owned_prev: std::cell::Cell::new(ptr::null_mut()),
-            owned_next: std::cell::Cell::new(ptr::null_mut()),
+            flags: [std::sync::atomic::AtomicU8::new(0), std::sync::atomic::AtomicU8::new(0)],
+            object: std::cell::Cell::new(ptr::null_mut()),
             kind,
             key,
             data_type: TypeId::of::<T>(),
@@ -1373,56 +1376,8 @@ unsafe extern "C" fn finalize_wrapper(object: sys::JSObjectRef) {
 
 /// Drops payloads of finalized wrappers and prunes dead identity-map entries.
 /// Engine thread only, outside GC.
-/// Takes a dead owned wrapper's payload out of its realm's list and gives
-/// its weak handle to release (none for other payloads, and once the realm
-/// disposed).
-///
-/// # Safety
-/// `h` is a payload header whose object is dead, on the engine's thread.
-unsafe fn release_owned(h: *mut Header) -> Option<sys::JSWeakRef> {
-    unsafe {
-        let weak = (*h).weak.replace(ptr::null_mut());
-        if weak.is_null() {
-            return None;
-        }
-        let prev = (*h).owned_prev.replace(ptr::null_mut());
-        let next = (*h).owned_next.replace(ptr::null_mut());
-        if !prev.is_null() {
-            (*prev).owned_next.set(next);
-        } else if let Some(realm) = (*h).realm_ref.upgrade() {
-            if realm.owned_head.get() == h {
-                realm.owned_head.set(next);
-            }
-        }
-        if !next.is_null() {
-            (*next).owned_prev.set(prev);
-        }
-        Some(weak)
-    }
-}
-
-/// Releases the weak handles of dead owned wrappers: under one lock with the
-/// patched JSC (`JSWeakReleaseMany`), one by one otherwise.
-fn release_weaks(engine: &EngineInner, weaks: &[sys::JSWeakRef]) {
-    if weaks.is_empty() {
-        return;
-    }
-    let spi = sys::spi::get();
-    // SAFETY: handles this engine made and still owns, released once.
-    unsafe {
-        if let Some(many) = spi.weak_release_many {
-            many(engine.group(), weaks.as_ptr(), weaks.len());
-        } else if let Some((_, release, _)) = spi.weak() {
-            for &w in weaks {
-                release(engine.group(), w);
-            }
-        }
-    }
-}
-
 pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
-    let mut total = 0;
-    let mut weaks = Vec::new();
+    let mut total = drain_tracked(engine, false);
     loop {
         let batch = engine.finalized.take();
         if batch.is_empty() {
@@ -1441,16 +1396,52 @@ pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
                         realm.prune_identity(key);
                     }
                 }
-                weaks.extend(release_owned(h));
             }
         }
-        // The handles go before the payloads that hold their flag bytes.
-        release_weaks(engine, &weaks);
-        weaks.clear();
         for h in batch {
             let h = h as *mut Header;
             // SAFETY: as above; dropped once.
             unsafe { ((*h).drop_fn)(h) };
+        }
+        // Dropping a payload may have let more wrappers die only at a later
+        // collection: nothing more to take from the collector now.
+    }
+}
+
+/// Drops the payloads of the owned wrappers the collector found dead (`all`:
+/// of every owned wrapper, for an engine about to release its VM, whose
+/// objects have no destructor to tell of their end). No callback ran for
+/// them: the collector listed them, and this takes the list in batches.
+pub(crate) fn drain_tracked(engine: &EngineInner, all: bool) -> usize {
+    let Some(tracked) = sys::spi::get().tracked() else { return 0 };
+    if engine.is_shut_down() {
+        // The VM is released: its group is no longer ours to call.
+        return 0;
+    }
+    if !all && engine.dead_tracked() == 0 {
+        return 0;
+    }
+    let mut total = 0;
+    let mut batch = [ptr::null_mut::<std::ffi::c_void>(); 256];
+    loop {
+        let take = if all { tracked.take_all } else { tracked.take_dead };
+        // SAFETY: the engine's live group, on its thread; `batch` has room.
+        let n = unsafe { take(engine.group(), batch.as_mut_ptr(), batch.len()) };
+        total += n;
+        if all {
+            // Dropped once the VM is gone, as finalized payloads are.
+            engine.orphaned.borrow_mut().extend(batch[..n].iter().map(|&h| h as usize));
+        } else {
+            for &h in &batch[..n] {
+                let h = h as *mut Header;
+                // SAFETY: the payload of a dead owned wrapper, handed over
+                // once; nothing else refers to it (its owner forgets the
+                // `WrapperRef` in the payload's `Drop`).
+                unsafe { ((*h).drop_fn)(h) };
+            }
+        }
+        if n < batch.len() {
+            return total;
         }
     }
 }

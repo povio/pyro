@@ -534,6 +534,31 @@ pub mod spi {
         keep_alive: *const u8,
         weak: *mut JSWeakRef,
     ) -> JSObjectRef;
+    /// A tracked wrapper (patch 0029, `JSObjectMakeTrackedWrapper`): an object
+    /// of `class` (immortal) with private data `data`, whose cell has no
+    /// destructor and no weak handle. `flags[0]` is the host's: while nonzero
+    /// the object is kept alive. `flags[1]` is the collector's: nonzero once
+    /// the object is dead. Both bytes must outlive the object's entry, which
+    /// ends when `data` comes back from `JSContextGroupTakeDeadTrackedWrappers`.
+    /// With `shape` (of `class`, of this global object) the object starts with
+    /// its structure; otherwise it gets `prototype`.
+    pub type JSObjectMakeTrackedWrapperFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        shape: JSWrapperShapeRef,
+        class: JSClassRef,
+        prototype: JSValueRef,
+        data: *mut c_void,
+        flags: *mut u8,
+    ) -> JSObjectRef;
+    /// Dead tracked wrappers not taken yet; any thread, no lock.
+    pub type JSContextGroupDeadTrackedWrapperCounterFn =
+        unsafe extern "C" fn(group: JSContextGroupRef) -> *const std::sync::atomic::AtomicUsize;
+    /// The `data` of up to `capacity` dead (`...TakeDead...`) or of dead and
+    /// live (`...TakeAll...`, which ends every entry) tracked wrappers.
+    pub type JSContextGroupTakeTrackedWrappersFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, buffer: *mut *mut c_void, capacity: usize) -> usize;
+    /// Clears `flags[0]` of every live tracked wrapper of `ctx`'s global object.
+    pub type JSContextReleaseTrackedWrappersFn = unsafe extern "C" fn(ctx: JSContextRef);
     pub type JSGlobalContextSetUnhandledRejectionCallbackFn =
         unsafe extern "C" fn(ctx: JSGlobalContextRef, function: JSObjectRef, exception: *mut JSValueRef);
     pub type JSContextGroupSetExecutionTimeLimitFn = unsafe extern "C" fn(
@@ -797,6 +822,16 @@ pub mod spi {
     pub type JSContextGroupTakeCoverageFn =
         unsafe extern "C" fn(group: JSContextGroupRef, callback: JSCoverageSourceCallback, data: *mut c_void);
 
+    /// See [`Spi::tracked`].
+    #[derive(Debug, Clone, Copy)]
+    pub struct TrackedWrappers {
+        pub make: JSObjectMakeTrackedWrapperFn,
+        pub dead_counter: JSContextGroupDeadTrackedWrapperCounterFn,
+        pub take_dead: JSContextGroupTakeTrackedWrappersFn,
+        pub take_all: JSContextGroupTakeTrackedWrappersFn,
+        pub release: JSContextReleaseTrackedWrappersFn,
+    }
+
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
     #[derive(Debug, Clone, Copy)]
@@ -809,6 +844,11 @@ pub mod spi {
         pub wrapper_shape_create: Option<JSWrapperShapeCreateFn>,
         pub wrapper_shape_release: Option<JSWrapperShapeReleaseFn>,
         pub object_make_wrapper: Option<JSObjectMakeWrapperFn>,
+        pub object_make_tracked_wrapper: Option<JSObjectMakeTrackedWrapperFn>,
+        pub dead_tracked_wrapper_counter: Option<JSContextGroupDeadTrackedWrapperCounterFn>,
+        pub take_dead_tracked_wrappers: Option<JSContextGroupTakeTrackedWrappersFn>,
+        pub take_all_tracked_wrappers: Option<JSContextGroupTakeTrackedWrappersFn>,
+        pub release_tracked_wrappers: Option<JSContextReleaseTrackedWrappersFn>,
         pub set_unhandled_rejection_callback: Option<JSGlobalContextSetUnhandledRejectionCallbackFn>,
         pub set_execution_time_limit: Option<JSContextGroupSetExecutionTimeLimitFn>,
         pub clear_execution_time_limit: Option<JSContextGroupClearExecutionTimeLimitFn>,
@@ -855,6 +895,17 @@ pub mod spi {
         /// Weak references (wrapper identity maps) need all three entry points.
         pub fn weak(&self) -> Option<(JSWeakCreateFn, JSWeakReleaseFn, JSWeakGetObjectFn)> {
             Some((self.weak_create?, self.weak_release?, self.weak_get_object?))
+        }
+
+        /// Tracked wrappers (patch 0029), all or nothing.
+        pub fn tracked(&self) -> Option<TrackedWrappers> {
+            Some(TrackedWrappers {
+                make: self.object_make_tracked_wrapper?,
+                dead_counter: self.dead_tracked_wrapper_counter?,
+                take_dead: self.take_dead_tracked_wrappers?,
+                take_all: self.take_all_tracked_wrappers?,
+                release: self.release_tracked_wrappers?,
+            })
         }
 
         /// Strings to and from host characters without a `JSStringRef` in
@@ -942,6 +993,11 @@ pub mod spi {
             wrapper_shape_create: resolve!("JSWrapperShapeCreate"),
             wrapper_shape_release: resolve!("JSWrapperShapeRelease"),
             object_make_wrapper: resolve!("JSObjectMakeWrapper"),
+            object_make_tracked_wrapper: resolve!("JSObjectMakeTrackedWrapper"),
+            dead_tracked_wrapper_counter: resolve!("JSContextGroupDeadTrackedWrapperCounter"),
+            take_dead_tracked_wrappers: resolve!("JSContextGroupTakeDeadTrackedWrappers"),
+            take_all_tracked_wrappers: resolve!("JSContextGroupTakeAllTrackedWrappers"),
+            release_tracked_wrappers: resolve!("JSContextReleaseTrackedWrappers"),
             set_unhandled_rejection_callback: resolve!("JSGlobalContextSetUnhandledRejectionCallback"),
             set_execution_time_limit: resolve!("JSContextGroupSetExecutionTimeLimit"),
             clear_execution_time_limit: resolve!("JSContextGroupClearExecutionTimeLimit"),
