@@ -1004,6 +1004,21 @@ impl Dom {
         self.create_element_raw(doc, QualName::new(None, ns, local))
     }
 
+    /// [`Dom::create_element`] for an interned name.
+    pub fn create_element_named(&mut self, doc: NodeId, name: &ScriptName) -> DomResult<NodeId> {
+        if !name.valid_element {
+            return Err(invalid_character());
+        }
+        let owner = self.owner_for(doc)?;
+        let (local, ns) = if self.doc_data(owner).kind == DocumentKind::Html {
+            (name.lower.clone(), ns!(html))
+        } else {
+            let ns = if &*self.doc_data(owner).content_type == "application/xhtml+xml" { ns!(html) } else { ns!() };
+            (name.exact.clone(), ns)
+        };
+        self.create_element_raw(doc, QualName::new(None, ns, local))
+    }
+
     /// `document.createElementNS(namespace, qualifiedName)`.
     pub fn create_element_ns(&mut self, doc: NodeId, namespace: Option<&str>, qualified: &str) -> DomResult<NodeId> {
         let name = validate_and_extract(namespace, qualified, NameContext::Element)?;
@@ -2611,6 +2626,72 @@ impl Dom {
         let (i, _) = self.el(id)?;
         Ok(self.find_attr_qualified(i, name).is_some())
     }
+    /// The attribute `name` names on element `i`, as `find_attr_qualified`
+    /// finds it for the name's text: the lowercase atom on an HTML element
+    /// of an HTML document. An attribute without a prefix (nearly all) is
+    /// matched by its atom, with no text compared.
+    fn find_attr_named(&self, i: u32, name: &ScriptName) -> Option<usize> {
+        let n = self.n(i);
+        let el = n.element()?;
+        let want = self.script_name_for(el, n.owner_doc, name);
+        el.attrs.iter().position(|a| match &a.name.prefix {
+            Some(p) if !p.is_empty() => {
+                let name: &str = want;
+                name.len() == p.len() + 1 + a.name.local.len()
+                    && name.starts_with(&**p)
+                    && name.as_bytes()[p.len()] == b':'
+                    && name.ends_with(&*a.name.local)
+            }
+            _ => a.name.local == *want,
+        })
+    }
+
+    /// `Dom::html_lower` for an interned name.
+    #[inline]
+    fn script_name_for<'a>(&self, el: &ElementData, owner: u32, name: &'a ScriptName) -> &'a LocalName {
+        if name.has_upper && el.is_html() && self.doc_data(owner).kind == DocumentKind::Html {
+            &name.lower
+        } else {
+            &name.exact
+        }
+    }
+
+    /// [`Dom::get_attribute_qualified_atom`] for an interned name.
+    pub fn get_attribute_named_atom(&self, id: NodeId, name: &ScriptName) -> DomResult<Option<(&str, Option<&Atom>)>> {
+        let (i, el) = self.el(id)?;
+        Ok(self.find_attr_named(i, name).map(|k| (&*el.attrs[k].value, el.attr_atom(k))))
+    }
+    /// [`Dom::has_attribute_qualified`] for an interned name.
+    pub fn has_attribute_named(&self, id: NodeId, name: &ScriptName) -> DomResult<bool> {
+        let (i, _) = self.el(id)?;
+        Ok(self.find_attr_named(i, name).is_some())
+    }
+    /// [`Dom::set_attribute`] for an interned name: validated when it was
+    /// interned, and a new attribute takes the atom.
+    pub fn set_attribute_named(&mut self, id: NodeId, name: &ScriptName, value: &str) -> DomResult<()> {
+        if !name.valid_attribute {
+            return Err(invalid_character());
+        }
+        let (i, n) = self.live(id)?;
+        let el = n.element().ok_or(DomError::Type("not an element"))?;
+        let want = self.script_name_for(el, n.owner_doc, name).clone();
+        match self.find_attr_named(i, name) {
+            Some(k) => self.change_attr(i, k, value),
+            None => self.append_attr(i, QualName::new(None, ns!(), want), value),
+        }
+        Ok(())
+    }
+    /// [`Dom::remove_attribute`] for an interned name.
+    pub fn remove_attribute_named(&mut self, id: NodeId, name: &ScriptName) -> DomResult<bool> {
+        let (i, _) = self.el(id)?;
+        match self.find_attr_named(i, name) {
+            Some(k) => {
+                self.remove_attr_at(i, k);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
     pub fn get_attribute_ns(&self, id: NodeId, ns: Option<&str>, local: &str) -> DomResult<Option<&str>> {
         let (_, el) = self.el(id)?;
         let ns = ns.unwrap_or("");
@@ -3542,6 +3623,37 @@ impl Iterator for Descendants<'_> {
 /// `body` or `frameset`: the local names of a document's body element.
 pub(crate) fn is_body_name(local: &LocalName) -> bool {
     *local == local_name!("body") || *local == local_name!("frameset")
+}
+
+/// A name script passed as a string (`getAttribute(name)`,
+/// `createElement(name)`), interned once: as written and ASCII-lowercased
+/// (one atom when it has no uppercase letter), with the checks that depend on
+/// its text alone. Whoever keeps one for a JavaScript string resolves that
+/// string's later uses without reading its characters.
+#[derive(Clone, Debug)]
+pub struct ScriptName {
+    pub exact: LocalName,
+    pub lower: LocalName,
+    pub has_upper: bool,
+    /// `validate_attribute_name` accepts it.
+    pub valid_attribute: bool,
+    /// `validate_element_name` accepts it.
+    pub valid_element: bool,
+}
+
+impl ScriptName {
+    pub fn new(name: &str) -> ScriptName {
+        let exact = LocalName::from(name);
+        let has_upper = name.bytes().any(|b| b.is_ascii_uppercase());
+        let lower = if has_upper { LocalName::from(name.to_ascii_lowercase()) } else { exact.clone() };
+        ScriptName {
+            exact,
+            lower,
+            has_upper,
+            valid_attribute: is_valid_attribute_local_name(name),
+            valid_element: is_valid_element_local_name(name),
+        }
+    }
 }
 
 /// The first attribute of `el` whose qualified name is `name`, which is

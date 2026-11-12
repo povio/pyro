@@ -58,6 +58,8 @@ pub struct PageDom {
     pub(crate) render_blocking: crate::render_blocking::RenderBlocking,
     connected_iframes: RefCell<FxHashSet<NodeId>>,
     pub(crate) selectors: RefCell<SelectorCache>,
+    /// Attribute and tag names by JavaScript string identity (see `names`).
+    pub(crate) names: crate::names::NameTable,
     /// Members of live collections by (root, kind), shared by every
     /// collection object over the same root and kind
     /// (`collections::CollectionData`).
@@ -644,6 +646,7 @@ impl PageDom {
             render_blocking: Default::default(),
             connected_iframes: RefCell::new(FxHashSet::default()),
             selectors: RefCell::new(SelectorCache::default()),
+            names: Default::default(),
             collection_members: RefCell::default(),
             pending_release: RefCell::new(Vec::new()),
             after_task_stamp: Cell::new(None),
@@ -840,6 +843,7 @@ impl PageDom {
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);
         self.dom.borrow_mut().unwatch_iframes(self.document());
+        self.names.clear();
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
         crate::websocket::dispose(self);

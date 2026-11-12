@@ -1213,12 +1213,17 @@ impl JsClass for Element {
             Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
         def.pure_method("getAttribute", 1, |s, n, a| {
-            crate::util::with_arg_str(&a, 0, "Element.getAttribute", |name| {
-                let dom = n.page().dom.borrow();
-                Ok(match dom.get_attribute_qualified_atom(n.id, name).js()? {
-                    Some((value, atom)) => attr_value(s, value, atom),
-                    None => s.null(),
-                })
+            a.require(1, "Element.getAttribute")?;
+            let name = a.get(0);
+            let name = n.page().names.arg(s, &name)?;
+            let dom = n.page().dom.borrow();
+            let found = match &name {
+                NameArg::Name(name) => dom.get_attribute_named_atom(n.id, name),
+                NameArg::Text(name) => dom.get_attribute_qualified_atom(n.id, name),
+            };
+            Ok(match found.js()? {
+                Some((value, atom)) => attr_value(s, value, atom),
+                None => s.null(),
             })
         });
         def.pure_method("getAttributeNS", 2, |s, n, a| {
@@ -1231,11 +1236,15 @@ impl JsClass for Element {
         def.method("setAttribute", 2, |s, n, a| {
             a.require(2, "Element.setAttribute")?;
             let (name, value) = (a.get(0), a.get(1));
-            let name = str_of(&name)?;
+            let name = n.page().names.arg(s, &name)?;
             let value = str_of(&value)?;
-            n.page().dom.borrow_mut().set_attribute(n.id, &name, &value).js()?;
-            handler_attribute_changed(s, n, &name, Some(&value))?;
-            crate::input::blur_if_focus_disabled(n.page(), n.id, &name);
+            match &name {
+                NameArg::Name(name) => n.page().dom.borrow_mut().set_attribute_named(n.id, name, &value),
+                NameArg::Text(name) => n.page().dom.borrow_mut().set_attribute(n.id, name, &value),
+            }
+            .js()?;
+            handler_attribute_changed(s, n, name.text(), Some(&value))?;
+            crate::input::blur_if_focus_disabled(n.page(), n.id, name.text());
             Ok(s.undefined())
         });
         def.method("setAttributeNS", 3, |s, n, a| {
@@ -1250,13 +1259,18 @@ impl JsClass for Element {
             Ok(s.undefined())
         });
         def.method("removeAttribute", 1, |s, n, a| {
-            with_arg_str(&a, 0, "Element.removeAttribute", |name| {
-                let removed = n.page().dom.borrow_mut().remove_attribute(n.id, name).js()?;
-                if removed {
-                    handler_attribute_changed(s, n, name, None)?;
-                }
-                Ok(s.undefined())
-            })
+            a.require(1, "Element.removeAttribute")?;
+            let name = a.get(0);
+            let name = n.page().names.arg(s, &name)?;
+            let removed = match &name {
+                NameArg::Name(name) => n.page().dom.borrow_mut().remove_attribute_named(n.id, name),
+                NameArg::Text(name) => n.page().dom.borrow_mut().remove_attribute(n.id, name),
+            }
+            .js()?;
+            if removed {
+                handler_attribute_changed(s, n, name.text(), None)?;
+            }
+            Ok(s.undefined())
         });
         def.method("removeAttributeNS", 2, |s, n, a| {
             a.require(2, "Element.removeAttributeNS")?;
@@ -1266,9 +1280,18 @@ impl JsClass for Element {
             Ok(s.undefined())
         });
         def.pure_method("hasAttribute", 1, |s, n, a| {
-            crate::util::with_arg_str(&a, 0, "Element.hasAttribute", |name| {
-                Ok(s.boolean(n.page().dom.borrow().has_attribute_qualified(n.id, name).js()?))
-            })
+            a.require(1, "Element.hasAttribute")?;
+            let name = a.get(0);
+            // Converted before the DOM is borrowed: an object's conversion runs script.
+            let name = n.page().names.arg(s, &name)?;
+            let dom = n.page().dom.borrow();
+            Ok(s.boolean(
+                match name {
+                    NameArg::Name(name) => dom.has_attribute_named(n.id, &name),
+                    NameArg::Text(name) => dom.has_attribute_qualified(n.id, &name),
+                }
+                .js()?,
+            ))
         });
         def.pure_method("hasAttributeNS", 2, |s, n, a| {
             let ns = opt_dom_string(a.get(0))?;
@@ -1748,9 +1771,13 @@ impl JsClass for Document {
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::Name(name))?.value())
         });
         def.method("createElement", 1, |s, n, a| {
-            let el = with_arg_str(&a, 0, "Document.createElement", |name| {
-                n.page().dom.borrow_mut().create_element(n.id, name).js()
-            })?;
+            a.require(1, "Document.createElement")?;
+            let name = a.get(0);
+            let el = match n.page().names.arg(s, &name)? {
+                NameArg::Name(name) => n.page().dom.borrow_mut().create_element_named(n.id, &name),
+                NameArg::Text(name) => n.page().dom.borrow_mut().create_element(n.id, &name),
+            }
+            .js()?;
             if let Some(is) = a
                 .opt(1)
                 .and_then(|o| o.as_object())
