@@ -182,6 +182,19 @@ impl Dom {
 
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
+        // The usual insertion of a script: one element holding at most text
+        // (`createElement`, `textContent`, `appendChild`), or the text node
+        // itself. Its subtree has one node that can be anything to the four
+        // passes below, so that node's kind is looked at once, not once per
+        // pass and walk.
+        if self.subtree_has_one_element_at_most(node) {
+            self.details_after_insert(node);
+            if self.is_connected_idx(node) {
+                self.iframe_after_parser_insert(node);
+            }
+            self.media_after_insert(node);
+            return self.resources_after_single_insert(node);
+        }
         self.details_after_insert(node);
         self.iframes_after_insert(node);
         self.media_after_insert(node);
@@ -207,6 +220,30 @@ impl Dom {
         self.details_after_insert(node);
         self.iframe_after_parser_insert(node);
         self.media_after_insert(node);
+        self.resources_after_single_insert(node);
+    }
+
+    /// Whether `node`'s shadow-including subtree holds no element but `node`
+    /// itself (it has no shadow root, and its children are text, comments..).
+    fn subtree_has_one_element_at_most(&self, node: u32) -> bool {
+        let n = self.n(node);
+        if n.element().is_some_and(|e| e.shadow_root != NIL) {
+            return false;
+        }
+        let mut c = n.first_child;
+        while c != NIL {
+            let child = self.n(c);
+            if child.first_child != NIL || child.element().is_some() {
+                return false;
+            }
+            c = child.next;
+        }
+        true
+    }
+
+    /// The resource events of an inserted `node` whose subtree holds no
+    /// other element: `scan_subtree` of the node alone.
+    fn resources_after_single_insert(&mut self, node: u32) {
         if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }
@@ -214,7 +251,6 @@ impl Dom {
         if parent != NIL && self.resource_kind(parent) == Some(ResourceKind::StyleText) {
             self.push_resource(parent, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
-        // `scan_subtree` of the node alone.
         if let Some(k) = self.resource_kind(node) {
             let parser_script = k == ResourceKind::Script
                 && self.n(node).element().is_some_and(|e| e.flags & element_flags::PARSER_INSERTED != 0);

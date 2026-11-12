@@ -606,3 +606,66 @@ fn inner_html_text_matches_the_fragment_parser() {
         }
     }
 }
+
+/// Collection frees the detached nodes a script made and dropped while the
+/// trees it still holds, named by candidates between them, stay whole; a
+/// kept tree is freed by a later collection once it is released.
+#[test]
+fn dropped_nodes_are_freed_between_candidates_of_kept_trees() {
+    let mut dom = Dom::new();
+    let doc = dom.create_document(DocumentKind::Html, "http://t/");
+    dom.set_document_active(doc, true).unwrap();
+    let live = dom.live_nodes();
+
+    // Two kept trees: a root with a reference and two children each.
+    let mut kept = Vec::new();
+    for _ in 0..2 {
+        let root = dom.create_element(doc, "div").unwrap();
+        dom.add_ref(root).unwrap();
+        let mut kids = Vec::new();
+        for _ in 0..2 {
+            let kid = dom.create_element(doc, "p").unwrap();
+            dom.add_ref(kid).unwrap();
+            dom.append_child(root, kid).unwrap();
+            kids.push(kid);
+        }
+        kept.push((root, kids));
+    }
+    // Dropped nodes, each a component of its own (one with a child).
+    let mut dropped = Vec::new();
+    for i in 0..6 {
+        let node =
+            if i % 2 == 0 { dom.create_fragment(doc).unwrap() } else { dom.create_element(doc, "span").unwrap() };
+        dom.add_ref(node).unwrap();
+        dropped.push(node);
+    }
+    let text = dom.create_text(doc, "t").unwrap();
+    dom.append_child(dropped[1], text).unwrap();
+
+    // Candidates of kept and dropped components, interleaved.
+    for i in 0..2 {
+        dom.release(kept[0].1[i]);
+        dom.release(dropped[3 * i]);
+        dom.release(kept[1].1[i]);
+        dom.release(dropped[3 * i + 1]);
+        dom.release(dropped[3 * i + 2]);
+    }
+    assert_eq!(dom.collect_garbage(), 7, "six dropped nodes and one's text child");
+    for &node in &dropped {
+        assert!(!dom.is_alive(node), "a dropped node is gone");
+    }
+    for (root, kids) in &kept {
+        assert_eq!(dom.child_count(*root).unwrap(), 2);
+        for &kid in kids {
+            assert_eq!(dom.parent(kid).unwrap(), Some(*root));
+        }
+    }
+    assert_eq!(dom.live_nodes(), live + 6);
+
+    for (root, _) in &kept {
+        dom.release(*root);
+    }
+    assert_eq!(dom.collect_garbage(), 6);
+    assert_eq!(dom.live_nodes(), live);
+    assert!(dom.is_alive(doc), "the active document stays");
+}

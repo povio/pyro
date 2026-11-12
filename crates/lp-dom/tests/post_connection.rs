@@ -155,3 +155,66 @@ fn started_and_frameless_scripts_are_not_queued() {
     assert!(dom.take_iframe_events(other).is_empty());
     assert!(drain(&mut dom, doc).is_empty());
 }
+
+/// An inserted subtree of one element (holding text or nothing) is examined
+/// without the subtree walks: it queues what the same element queues inside
+/// a wrapper, whose insertion takes the walks.
+#[test]
+fn an_element_inserted_alone_queues_what_it_queues_inside_a_subtree() {
+    fn build(dom: &mut Dom, doc: NodeId, name: &str, text: bool) -> NodeId {
+        let e = dom.create_element(doc, name).unwrap();
+        if name == "link" {
+            dom.set_attribute(e, "rel", "stylesheet").unwrap();
+        }
+        if text {
+            let t = dom.create_text(doc, "x()").unwrap();
+            dom.append_child(e, t).unwrap();
+        }
+        e
+    }
+    for name in ["script", "iframe", "frame", "style", "link", "img", "p"] {
+        for text in [false, true] {
+            // Alone.
+            let (mut dom, doc, body) = page();
+            let alone = build(&mut dom, doc, name, text);
+            dom.append_child(body, alone).unwrap();
+            let steps: Vec<_> = drain(&mut dom, doc).into_iter().map(|(_, change)| change).collect();
+            let resources: Vec<_> = dom.take_resource_events().iter().map(|e| (e.kind, e.reason)).collect();
+
+            // Inside a `div`.
+            let (mut dom, doc, body) = page();
+            let inner = build(&mut dom, doc, name, text);
+            let div = dom.create_element(doc, "div").unwrap();
+            dom.append_child(div, inner).unwrap();
+            assert!(drain(&mut dom, doc).is_empty(), "{name}: nothing is connected yet");
+            dom.take_resource_events();
+            dom.append_child(body, div).unwrap();
+            let wrapped_steps: Vec<_> = drain(&mut dom, doc).into_iter().map(|(_, change)| change).collect();
+            let wrapped: Vec<_> = dom.take_resource_events().iter().map(|e| (e.kind, e.reason)).collect();
+
+            assert_eq!(steps, wrapped_steps, "{name} (text: {text})");
+            assert_eq!(resources, wrapped, "{name} (text: {text})");
+            let expects_step = matches!(name, "script" | "iframe" | "frame");
+            assert_eq!(!steps.is_empty(), expects_step, "{name} (text: {text}): {steps:?}");
+            let expects_resource = name != "p";
+            assert_eq!(!resources.is_empty(), expects_resource, "{name} (text: {text}): {resources:?}");
+        }
+    }
+}
+
+/// A text node inserted into a connected `<style>` reports the style's
+/// children changed, and one inserted while detached reports nothing.
+#[test]
+fn a_text_node_inserted_alone_reports_its_style_parent() {
+    let (mut dom, doc, body) = page();
+    let style = dom.create_element(doc, "style").unwrap();
+    let detached = dom.create_text(doc, "a{}").unwrap();
+    dom.append_child(style, detached).unwrap();
+    assert!(dom.take_resource_events().is_empty(), "a detached style loads nothing");
+    dom.append_child(body, style).unwrap();
+    dom.take_resource_events();
+    let text = dom.create_text(doc, "b{}").unwrap();
+    dom.append_child(style, text).unwrap();
+    let resources: Vec<_> = dom.take_resource_events().iter().map(|e| (e.node, e.kind, e.reason)).collect();
+    assert_eq!(resources, [(style, ResourceKind::StyleText, ResourceReason::ChildrenChanged)]);
+}

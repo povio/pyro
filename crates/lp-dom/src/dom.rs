@@ -3428,16 +3428,22 @@ impl Dom {
                     continue;
                 }
             }
-            if !seen.insert(root) {
+            // `seen` holds the roots found alive, the only ones a later
+            // candidate can name again (a freed root's slot is empty): a
+            // component that is freed, as nearly every node a script made
+            // and dropped is, costs no entry.
+            if !seen.is_empty() && seen.contains(&root) {
                 continue;
             }
             nodes.clear();
             if !self.unreferenced_component(root, &mut nodes) {
+                seen.insert(root);
                 continue;
             }
             if matches!(self.n(root).kind, NodeKind::Document(_)) {
                 let own = nodes.iter().filter(|&&i| self.n(i).owner_doc == root).count() as u32;
                 if self.doc_data(root).owned != own {
+                    seen.insert(root);
                     continue; // nodes owned by this document are alive elsewhere
                 }
             }
@@ -3448,7 +3454,9 @@ impl Dom {
             }
             nodes = batch;
             // Freeing may orphan other documents; re-examine them.
-            seen.clear();
+            if !seen.is_empty() {
+                seen.clear();
+            }
             last_root = NIL;
         }
         freed_total
@@ -3476,7 +3484,9 @@ impl Dom {
         self.live -= 1;
         if owner != i && owner != NIL && self.slots[owner as usize].node.is_some() {
             self.doc_data_mut(owner).owned -= 1;
-            if owner != component_root {
+            // Once per run of nodes of one document (a freed tree's nodes),
+            // not once per node: each entry is a look at the document later.
+            if owner != component_root && self.candidates.last() != Some(&owner) {
                 self.candidates.push(owner);
             }
         }
