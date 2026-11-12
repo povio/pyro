@@ -7083,6 +7083,9 @@ fn names_built_per_call_survive_collections_and_address_reuse() {
     // A resolved string whose character buffer the engine replaces (used as
     // a property key when an atom with its text exists): the freed buffer's
     // address goes to other strings of its length, which are other names.
+    // (The scenario `JSString::swapToAtomString` allows. A table keyed by
+    // the buffer passed this too when tried: the case guards the behaviour,
+    // it is not a reproduction.)
     assert_eq!(
         eval(r, "(() => { let bad = 0; d.setAttribute('data-swap', 'right'); for (let round = 0; round < 200; round++) { const x = ['data', 'swap'].join('-'); if (d.getAttribute(x) !== 'right' || d.getAttribute(x) !== 'right') bad++; const o = { 'data-swap': 1 }; if (o[x] !== 1) bad++; const made = []; for (let i = 0; i < 40; i++) { const y = ['data', 'sw' + String.fromCharCode(97 + (i + round) % 26) + 'q'].join('-'); made.push(y); if (d.getAttribute(y) !== null || d.hasAttribute(y) || d.getAttribute(y) !== null) bad++; } if (d.getAttribute(x) !== 'right') bad++; } return bad; })()"),
         "0"
