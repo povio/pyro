@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // The Pyro mascot: a red panda sitting in a particle fire.
-// The fire is two canvases (flames behind, sparks in front) drawn in SVG units:
-// the canvases cover the box [-60, -80] .. [460, 440] of the panda's 400 x 440 viewBox.
+// The fire is two canvases drawn in SVG units: flames behind the panda cover the box
+// [-60, -80] .. [460, 440] of its 400 x 440 viewBox; embers in front fly over a much
+// larger box, [-340, -260] .. [740, 560], out across the hero.
 // The tag on the collar carries Povio's "p" (the glyph from the povio.com wordmark).
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
@@ -13,10 +14,11 @@ const back = ref<HTMLCanvasElement>();
 const front = ref<HTMLCanvasElement>();
 
 const BOX = { x: -60, y: -80, w: 520, h: 520 };
+const EBOX = { x: -340, y: -260, w: 1080, h: 820 };
 const CX = 200;
 
 type Flame = { x: number; y: number; vx: number; vy: number; age: number; life: number; size: number; seed: number; axis: number };
-type Spark = { x: number; y: number; vx: number; vy: number; age: number; life: number; size: number; seed: number };
+type Spark = { x: number; y: number; vx: number; vy: number; age: number; life: number; size: number; seed: number; orbit: number; trail: number[] };
 
 // Life palette: hot core -> orange -> red -> ember. Kept red-heavy.
 const STOPS: [number, [number, number, number]][] = [
@@ -83,6 +85,7 @@ onMounted(() => {
   const flames: Flame[] = [];
   const sparks: Spark[] = [];
   let scale = 1;
+  let escale = 1;
   let wind = 0;
   let windTarget = 0;
   let time = 0;
@@ -103,6 +106,7 @@ onMounted(() => {
       c.height = Math.max(1, Math.round(c.clientHeight * dpr));
     }
     scale = bc.width / BOX.w;
+    escale = fc.width / EBOX.w;
   }
 
   function spawnFlame(burst = false) {
@@ -127,16 +131,22 @@ onMounted(() => {
     });
   }
 
+  // Embers: thrown off the flame tips, carried by swirling air; some circle the panda
+  // (orbit > 0, the direction and strength), the rest drift off across the hero.
   function spawnSpark(burst = false) {
+    const angle = -Math.PI / 2 + gauss() * (burst ? 1.6 : 1.1);
+    const speed = (70 + Math.random() * 170) * (burst ? 1.6 : 1);
     sparks.push({
-      x: CX + gauss() * 120,
-      y: 200 + Math.random() * 160,
-      vx: (Math.random() - 0.5) * (burst ? 260 : 50),
-      vy: -(50 + Math.random() * 90) * (burst ? 2 : 1),
+      x: CX + gauss() * 100,
+      y: 130 + Math.random() * 190,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
       age: 0,
-      life: 1.4 + Math.random() * 1.8,
-      size: 3 + Math.random() * 4,
+      life: 2.2 + Math.random() * 3.6,
+      size: 2.2 + Math.random() * 3.6,
       seed: Math.random() * 1000,
+      orbit: Math.random() < 0.35 ? (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 0.6) : 0,
+      trail: [],
     });
   }
 
@@ -145,7 +155,7 @@ onMounted(() => {
     wind += (windTarget - wind) * Math.min(1, dt * 3);
     flameDebt += dt * 430;
     while (flameDebt > 1) { spawnFlame(); flameDebt--; }
-    sparkDebt += dt * 9;
+    sparkDebt += dt * 16;
     while (sparkDebt > 1) { spawnSpark(); sparkDebt--; }
 
     for (let i = flames.length - 1; i >= 0; i--) {
@@ -164,9 +174,20 @@ onMounted(() => {
       const s = sparks[i];
       s.age += dt;
       if (s.age >= s.life) { sparks.splice(i, 1); continue; }
-      s.vy -= 12 * dt;
-      s.vx += (Math.sin(time * 2.5 + s.seed) * 70 + wind * 1.4) * dt;
-      s.vx *= 1 - dt * 0.8;
+      s.trail.push(s.x, s.y);
+      if (s.trail.length > 12) s.trail.splice(0, 2);
+      // Swirling air: a cheap curl of sines over position and time.
+      s.vx += (Math.sin(s.y * 0.018 + time * 1.4 + s.seed) * 120 + wind * 1.6) * dt;
+      s.vy += (Math.cos(s.x * 0.016 + time * 1.1 + s.seed) * 90 - 18) * dt;
+      if (s.orbit) {
+        const dx = s.x - CX, dy = s.y - 250;
+        const r = Math.hypot(dx, dy) || 1;
+        const want = 175 + Math.sin(s.seed) * 35;
+        s.vx += ((-dy / r) * 150 * s.orbit + (dx / r) * (want - r) * 0.9) * dt;
+        s.vy += ((dx / r) * 150 * s.orbit + (dy / r) * (want - r) * 0.9) * dt;
+      }
+      s.vx *= 1 - dt * 0.55;
+      s.vy *= 1 - dt * 0.55;
       s.x += s.vx * dt;
       s.y += s.vy * dt;
     }
@@ -174,6 +195,8 @@ onMounted(() => {
 
   const px = (x: number) => (x - BOX.x) * scale;
   const py = (y: number) => (y - BOX.y) * scale;
+  const ex = (x: number) => (x - EBOX.x) * escale;
+  const ey = (y: number) => (y - EBOX.y) * escale;
 
   function draw() {
     bx.clearRect(0, 0, bc.width, bc.height);
@@ -202,13 +225,32 @@ onMounted(() => {
     bx.globalCompositeOperation = 'source-over';
 
     fx.globalCompositeOperation = dark ? 'lighter' : 'source-over';
+    fx.lineCap = 'round';
     for (const s of sparks) {
       const t = s.age / s.life;
-      const flicker = 0.55 + 0.45 * Math.sin(time * 22 + s.seed);
-      const size = s.size * (1 - t * 0.6) * scale;
-      fx.globalAlpha = (1 - t) * flicker;
-      const spr = sprites[Math.min(SPRITES - 1, Math.floor((0.04 + t * 0.5) * SPRITES))];
-      fx.drawImage(spr, px(s.x) - size, py(s.y) - size, size * 2, size * 2);
+      const fade = Math.min(1, s.age / 0.15) * (t > 0.6 ? (1 - t) / 0.4 : 1);
+      const flicker = 0.6 + 0.4 * Math.sin(time * 18 + s.seed) * Math.sin(time * 7.3 + s.seed * 2);
+      // Cools from orange to deep red; on a light page start hotter-red so it reads as fire, not pink.
+      const heat = Math.min(1, (dark ? 0.06 : 0.3) + t * (dark ? 0.62 : 0.45));
+      const [r, g, b] = palette(heat);
+      // Trail.
+      if (s.trail.length >= 4) {
+        fx.globalAlpha = 0.35 * fade;
+        fx.strokeStyle = `rgb(${r},${g},${b})`;
+        fx.lineWidth = Math.max(0.6, s.size * 0.45 * escale);
+        fx.beginPath();
+        fx.moveTo(ex(s.trail[0]), ey(s.trail[1]));
+        for (let k = 2; k < s.trail.length; k += 2) fx.lineTo(ex(s.trail[k]), ey(s.trail[k + 1]));
+        fx.lineTo(ex(s.x), ey(s.y));
+        fx.stroke();
+      }
+      // Glow, then a hot core.
+      const glow = s.size * (dark ? 2.6 : 1.5) * escale;
+      fx.globalAlpha = fade * flicker * (dark ? 0.75 : 0.4);
+      fx.drawImage(sprites[Math.floor(heat * (SPRITES - 1))], ex(s.x) - glow, ey(s.y) - glow, glow * 2, glow * 2);
+      const core = s.size * (dark ? 0.7 : 0.85) * escale;
+      fx.globalAlpha = fade * flicker;
+      fx.drawImage(sprites[Math.floor(heat * 0.4 * (SPRITES - 1))], ex(s.x) - core, ey(s.y) - core, core * 2, core * 2);
     }
     fx.globalAlpha = 1;
     fx.globalCompositeOperation = 'source-over';
@@ -240,7 +282,7 @@ onMounted(() => {
   function onLeave() { windTarget = 0; }
   function onDown() {
     for (let i = 0; i < 70; i++) spawnFlame(true);
-    for (let i = 0; i < 45; i++) spawnSpark(true);
+    for (let i = 0; i < 60; i++) spawnSpark(true);
     if (reduced) { for (let i = 0; i < 20; i++) step(1 / 30); draw(); }
   }
 
@@ -376,6 +418,13 @@ onBeforeUnmount(() => cleanup?.());
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
+/* Below 960px VitePress gives the hero image a fixed square (320 / 392px): fit its height. */
+@media (max-width: 959px) {
+  .pyro-panda {
+    width: auto;
+    height: 80%;
+  }
+}
 svg {
   position: relative;
   display: block;
@@ -390,6 +439,12 @@ svg {
   width: 130%;
   height: 118.1818%;
   pointer-events: none;
+}
+.front {
+  left: -85%;
+  top: -59.0909%;
+  width: 270%;
+  height: 186.3636%;
 }
 .back { z-index: 0; }
 svg { z-index: 1; }

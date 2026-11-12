@@ -132,7 +132,6 @@ export default defineConfig({
       { text: 'Fast E2E', link: '/e2e/overview', activeMatch: '^/e2e/' },
       { text: 'Scraping', link: '/scraping/overview', activeMatch: '^/scraping/' },
       { text: 'Reference', link: '/reference/cli', activeMatch: '^/reference/' },
-      { text: 'npm', link: 'https://www.npmjs.com/package/@povio/pyro' },
     ],
     sidebar: {
       '/guide/': guide,
