@@ -70,6 +70,15 @@ options:
                                         Default: on with --prepare (a test suite's
                                         prepared pages), off otherwise;
                                         env LIGHTNINGPANDA_SPARE_ENGINE=on|off
+      --engine-reuse <on|off|thread|always>
+                                       a connection that ends leaves its browser
+                                       thread to the next one, and its JavaScript
+                                       engine too when it made no page in it
+                                       (default: on; at most one waits, for at
+                                       most 10 s); thread: never the engine;
+                                       always: the engine after pages too, once
+                                       it is proven to hold nothing of them
+                                       env LIGHTNINGPANDA_ENGINE_REUSE=...
   --render-prewarm <on|off>             scan the system fonts and warm the renderer at
                                         startup, so the first screenshot or PDF does not
                                         pay for it (~3 MB while idle). Default: on with
@@ -210,6 +219,9 @@ pub struct ServeOptions {
     /// connection should not wait for an engine), off otherwise (the spare
     /// costs memory for as long as the server idles).
     pub spare_engine: Option<bool>,
+    /// `--engine-reuse` (or `LIGHTNINGPANDA_ENGINE_REUSE`): a connection's
+    /// browser thread and engine serve the next connection ([`Park`]).
+    pub engine_reuse: EngineReuse,
     /// `--render-prewarm` (or `LIGHTNINGPANDA_RENDER_PREWARM`): warm the
     /// renderer's process-wide state at startup. `None` follows the mode
     /// like `spare_engine`.
@@ -245,6 +257,46 @@ fn parse_switch(flag: &str, value: &str) -> Result<bool, String> {
         "on" | "1" | "true" => Ok(true),
         "off" | "0" | "false" => Ok(false),
         other => Err(format!("{flag}: '{other}' is not on or off")),
+    }
+}
+
+/// What a connection's end leaves to the next connection ([`Park`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EngineReuse {
+    /// Nothing: every connection has a new thread and a new engine.
+    Off,
+    /// Its browser thread. The engine is destroyed and the next connection
+    /// makes one on the thread.
+    Thread,
+    /// Its browser thread, and its engine when nothing used it
+    /// (`lp_js::Engine::untouched`: a client that connected and asked the
+    /// browser things without ever making a page). A used engine is
+    /// destroyed.
+    ///
+    /// Measured, instructions per connection that opens one page: 20.96 M
+    /// with a new thread and engine each time, 20.24 M with the thread
+    /// kept, 21.26 M with the engine kept too ([`EngineReuse::Always`]):
+    /// proving a used engine clean (delete all code, a full collection, a
+    /// walk of the heap for its counts) costs a little more than destroying
+    /// it and making another, and the next page finds no compiled code
+    /// either way. An unused engine needs none of that: 3.7 M -> 0.7 M.
+    #[default]
+    On,
+    /// Its browser thread and its engine, a used one once
+    /// `lp_js::Engine::recycle` has proven it clean: the next connection
+    /// starts without waiting for an engine, at the price above.
+    Always,
+}
+
+impl EngineReuse {
+    fn parse(flag: &str, value: &str) -> Result<Self, String> {
+        match value.trim() {
+            "thread" => Ok(Self::Thread),
+            "always" => Ok(Self::Always),
+            other => parse_switch(flag, other)
+                .map(|on| if on { Self::On } else { Self::Off })
+                .map_err(|_| format!("{flag}: '{other}' is not on, off, thread or always")),
+        }
     }
 }
 
@@ -284,6 +336,10 @@ impl Default for ServeOptions {
             fork: std::env::var(FORK_ENV).is_ok_and(|v| v.trim() == "1"),
             template: None,
             spare_engine: std::env::var(SPARE_ENGINE_ENV).ok().and_then(|v| parse_switch(SPARE_ENGINE_ENV, &v).ok()),
+            engine_reuse: std::env::var(ENGINE_REUSE_ENV)
+                .ok()
+                .and_then(|v| EngineReuse::parse(ENGINE_REUSE_ENV, &v).ok())
+                .unwrap_or_default(),
             render_prewarm: std::env::var(RENDER_PREWARM_ENV)
                 .ok()
                 .and_then(|v| parse_switch(RENDER_PREWARM_ENV, &v).ok()),
@@ -314,6 +370,9 @@ pub const FORK_ENV: &str = "LIGHTNINGPANDA_FORK";
 
 /// Environment equivalent of `--spare-engine` (`on`/`off`).
 pub const SPARE_ENGINE_ENV: &str = "LIGHTNINGPANDA_SPARE_ENGINE";
+
+/// Environment equivalent of `--engine-reuse` (`on`/`off`).
+pub const ENGINE_REUSE_ENV: &str = "LIGHTNINGPANDA_ENGINE_REUSE";
 
 /// Environment equivalent of `--render-prewarm` (`on`/`off`).
 pub const RENDER_PREWARM_ENV: &str = "LIGHTNINGPANDA_RENDER_PREWARM";
@@ -401,6 +460,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             },
             "--fork" => o.fork = true,
             "--spare-engine" => o.spare_engine = Some(parse_switch("--spare-engine", &value()?)?),
+            "--engine-reuse" => o.engine_reuse = EngineReuse::parse("--engine-reuse", &value()?)?,
             "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
             "--hyphen-digit-breaks" => o.hyphen_digit_breaks = parse_switch("--hyphen-digit-breaks", &value()?)?,
             "--parent-pid" => o.parent_pid = Some(parse_pid(&value()?)?),
@@ -586,9 +646,9 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return server.run().await;
         }
         let factory = if options.spare_engine() {
-            ThreadPerConnection::with_spare(profile)?
+            ThreadPerConnection::with_spare_and_reuse(profile, options.engine_reuse)?
         } else {
-            ThreadPerConnection::without_spare(profile)
+            ThreadPerConnection::without_spare(profile).reuse(options.engine_reuse)
         };
         let server = Server::bind(addr, options.server.clone(), factory).await?;
         if options.log_level <= LogLevel::Info {
@@ -609,11 +669,190 @@ pub fn serve_main(args: &[String]) -> ExitCode {
 /// engine already created waits in `spare`; a connection takes it and a new
 /// spare starts, so engine start (~8 ms) overlaps the client's own setup
 /// instead of delaying its first command.
+///
+/// A connection that ends leaves its thread and engine to the next one
+/// ([`Park`]).
 #[derive(Default)]
 pub struct ThreadPerConnection {
     next: AtomicU64,
     spare: std::sync::Mutex<Option<std::sync::mpsc::Sender<Assignment>>>,
     profile: Arc<BrowserProfile>,
+    park: Arc<Park>,
+}
+
+/// How long a browser thread waits with its engine for another connection.
+/// After it the thread ends and the engine goes: a server nobody connects
+/// to holds no engine, as before its first connection.
+const PARK_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A parked thread that no connection took for this long collects its
+/// engine's heap and returns the allocators' free pages to the system. Not at once: a client that
+/// reconnects right away (a test runner, one connection per test) would pay
+/// for the purge and for the page faults after it at every connection.
+const PARK_RELEASE_AFTER: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// What starts a browser thread's next turn: where its connection will
+/// come from, and whether that connection exists yet.
+struct Turn {
+    assignment: std::sync::mpsc::Receiver<Assignment>,
+    /// No connection waits yet (`ThreadPerConnection::spawn_thread`).
+    ahead: bool,
+}
+
+/// The one browser thread that waits, with its engine, for the next
+/// connection after its own ended.
+///
+/// A connection's end drops everything the connection had on its thread: the
+/// protocol state (sessions, targets, interception, emulation, bindings,
+/// permissions), the browser with its pages, contexts and storage, the
+/// event loop with its timers and tasks, the network client with its cookie
+/// jar, cache and sockets, the worker threads. Two things outlive it: the
+/// thread, whose per-thread state is then proven empty or reset
+/// (`lp_webapi::thread_state`, `lp_browser::reset_thread`), and the
+/// engine, the JavaScriptCore VM with the classes registered in it, which
+/// `lp_js::Engine::recycle` proves to hold nothing of a script. An engine
+/// or a thread that fails its proof is dropped and the thread ends, as
+/// every thread did before; so does one that finds the place taken.
+///
+/// The engine never leaves its thread: a VM entered from two threads in
+/// turn is where JavaScriptCore's lock takes a new thread for its owner.
+pub struct Park {
+    mode: std::sync::Mutex<EngineReuse>,
+    waiting: std::sync::Mutex<Option<(u64, std::sync::mpsc::Sender<Turn>)>>,
+    next: AtomicU64,
+    parked: AtomicU64,
+    reused: AtomicU64,
+    dropped: AtomicU64,
+    expired: AtomicU64,
+    refusal: std::sync::Mutex<Option<&'static str>>,
+}
+
+impl Default for Park {
+    fn default() -> Self {
+        Self {
+            mode: std::sync::Mutex::new(EngineReuse::On),
+            waiting: std::sync::Mutex::new(None),
+            next: AtomicU64::new(1),
+            parked: AtomicU64::new(0),
+            reused: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
+            expired: AtomicU64::new(0),
+            refusal: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+impl Park {
+    fn mode(&self) -> EngineReuse {
+        *self.mode.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// What connections' ends have done with their engines so far.
+    pub fn stats(&self) -> EngineReuseStats {
+        EngineReuseStats {
+            parked: self.parked.load(Ordering::Relaxed),
+            reused: self.reused.load(Ordering::Relaxed),
+            dropped: self.dropped.load(Ordering::Relaxed),
+            expired: self.expired.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Why the last engine that was not kept was dropped.
+    pub fn last_refusal(&self) -> Option<&'static str> {
+        *self.refusal.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether a thread waits with its engine now.
+    pub fn occupied(&self) -> bool {
+        self.waiting.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    }
+
+    fn refuse(&self, why: &'static str) {
+        self.dropped.fetch_add(1, Ordering::Relaxed);
+        *self.refusal.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
+        reuse_log(why);
+    }
+
+    /// Takes the place if it is free: the ticket to give it up with, and
+    /// where the thread's next turn arrives.
+    fn enter(&self) -> Option<(u64, std::sync::mpsc::Receiver<Turn>)> {
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        if waiting.is_some() {
+            return None;
+        }
+        let ticket = self.next.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = std::sync::mpsc::channel();
+        *waiting = Some((ticket, tx));
+        Some((ticket, rx))
+    }
+
+    /// Gives the place up. `false` when a connection took the thread
+    /// meanwhile: its turn is on the way.
+    fn leave(&self, ticket: u64) -> bool {
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        if waiting.as_ref().is_some_and(|(t, _)| *t == ticket) {
+            *waiting = None;
+            return true;
+        }
+        false
+    }
+
+    fn take(&self) -> Option<std::sync::mpsc::Sender<Turn>> {
+        self.waiting.lock().unwrap_or_else(|e| e.into_inner()).take().map(|(_, tx)| tx)
+    }
+}
+
+/// Counts of what connections' ends did with their engines
+/// ([`Park::stats`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EngineReuseStats {
+    /// Threads left waiting, with or without an engine.
+    pub parked: u64,
+    /// Connections served by an engine an earlier connection left.
+    pub reused: u64,
+    /// Threads that ended with their connection: the engine or the thread
+    /// was not proven clean, or the place was taken.
+    pub dropped: u64,
+    /// Threads that ended after waiting [`PARK_LIMIT`] for nothing.
+    pub expired: u64,
+}
+
+/// `LIGHTNINGPANDA_ENGINE_REUSE_LOG=1`: one line on stderr per connection
+/// end, saying what became of its engine (diagnostic).
+fn reuse_log(what: &str) {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("LIGHTNINGPANDA_ENGINE_REUSE_LOG").is_ok_and(|v| v.trim() == "1"));
+    if *ON {
+        eprintln!("lightningpanda: engine reuse: {what}");
+    }
+}
+
+/// Proves this thread and `engine` clean after their connection ended and
+/// everything else of it was dropped, resetting what is theirs to reset.
+/// The engine first: its collection is what frees the wrappers that keep
+/// closed pages' state alive.
+fn scrub(engine: &lp_js::Engine, workers_joined: bool) -> Result<(), &'static str> {
+    if !workers_joined {
+        return Err("a worker thread is still running");
+    }
+    engine.recycle(lp_browser::clean_heap())?;
+    scrub_thread(workers_joined)
+}
+
+/// The thread's part of [`scrub`], after the engine's or after the engine
+/// was dropped.
+fn scrub_thread(workers_joined: bool) -> Result<(), &'static str> {
+    if !workers_joined {
+        return Err("a worker thread is still running");
+    }
+    EngineHost::forget_thread_state();
+    lp_webapi::thread_state::reset_thread()?;
+    // Rendering state: every page's document was forgotten when it closed;
+    // the renderer still holds the font collection with the web fonts pages
+    // registered, and the fetcher of the old client's network.
+    #[cfg(feature = "render")]
+    lp_layout::release_thread();
+    lp_browser::reset_thread()
 }
 
 /// What a prepared browser thread needs to serve a connection.
@@ -630,7 +869,13 @@ impl ThreadPerConnection {
     /// A factory whose first spare thread starts creating its engine now, so
     /// the first connection (TOS uses one per process) finds it ready.
     pub fn with_spare(profile: BrowserProfile) -> std::io::Result<Self> {
-        let factory = Self { profile: Arc::new(profile), ..Self::default() };
+        Self::with_spare_and_reuse(profile, EngineReuse::On)
+    }
+
+    /// [`Self::with_spare`], with [`Self::engine_reuse`] decided before the
+    /// first thread starts.
+    pub fn with_spare_and_reuse(profile: BrowserProfile, reuse: EngineReuse) -> std::io::Result<Self> {
+        let factory = Self { profile: Arc::new(profile), ..Self::default() }.reuse(reuse);
         let spare = factory.spawn_thread(true)?;
         *factory.spare.lock().unwrap_or_else(|e| e.into_inner()) = Some(spare);
         Ok(factory)
@@ -642,16 +887,82 @@ impl ThreadPerConnection {
         Self { profile: Arc::new(profile), ..Self::default() }
     }
 
-    /// Spawns a thread that creates its engine now and serves a later
-    /// connection. `ahead` says no connection waits for it yet: only then is
-    /// the first page's realm built here too (`prepare_thread_with`).
+    /// Whether a connection's end leaves its thread and engine to the next
+    /// connection (on unless turned off here).
+    pub fn engine_reuse(self, on: bool) -> Self {
+        self.reuse(if on { EngineReuse::On } else { EngineReuse::Off })
+    }
+
+    /// What a connection's end leaves to the next connection.
+    pub fn reuse(self, mode: EngineReuse) -> Self {
+        *self.park.mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
+        self
+    }
+
+    /// Where this factory's threads wait between connections: its counts.
+    pub fn park(&self) -> Arc<Park> {
+        self.park.clone()
+    }
+
+    /// A browser thread that serves a later connection: the one that waits
+    /// with its engine ([`Park`]) if there is one, else a new thread, which
+    /// creates its engine now. `ahead` says no connection waits for it yet:
+    /// only then is the first page's realm built here too
+    /// (`prepare_thread_with`).
     fn spawn_thread(&self, ahead: bool) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
-        let n = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel::<Assignment>();
+        let mut turn = Turn { assignment: rx, ahead };
+        if let Some(parked) = self.park.take() {
+            match parked.send(turn) {
+                Ok(()) => return Ok(tx),
+                Err(unsent) => turn = unsent.0, // the thread is gone (it panicked)
+            }
+        }
+        let n = self.next.fetch_add(1, Ordering::Relaxed);
         let profile = self.profile.clone();
+        let park = self.park.clone();
         let builder = std::thread::Builder::new().name(format!("lp-browser-{n}")).stack_size(BROWSER_STACK_BYTES);
-        builder.spawn(move || {
-            let mut prepared = EngineHost::prepare_thread_with(&profile, ahead).map(|mut thread| {
+        builder.spawn(move || browser_thread(&profile, &park, turn))?;
+        Ok(tx)
+    }
+
+    /// The spare thread (started earlier) or a fresh one; then starts the next spare.
+    fn claim(&self) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
+        let taken = self.spare.lock().unwrap_or_else(|e| e.into_inner()).take();
+        // With a spare taken, the new thread is the next spare; without one
+        // it serves this connection, which is already waiting.
+        let next = self.spawn_thread(taken.is_some());
+        match taken {
+            Some(tx) => {
+                if let Ok(next) = next {
+                    *self.spare.lock().unwrap_or_else(|e| e.into_inner()) = Some(next);
+                }
+                Ok(tx)
+            }
+            None => next,
+        }
+    }
+}
+
+/// A browser thread's life: one connection after another, each with a new
+/// browser around the thread's engine, for as long as the engine and the
+/// thread come out of a connection provably clean and [`Park`] has room.
+fn browser_thread(profile: &Arc<BrowserProfile>, park: &Park, first: Turn) {
+    let mut turn = first;
+    let mut engine: Option<lp_js::Engine> = None;
+    loop {
+        let Turn { assignment: rx, ahead } = turn;
+        if engine.is_some() {
+            park.reused.fetch_add(1, Ordering::Relaxed);
+        }
+        // Where the browser leaves the engine when it is dropped.
+        let mode = park.mode();
+        let left = (mode != EngineReuse::Off).then(lp_browser::EngineSlot::default);
+        {
+            let mut prepared = EngineHost::prepare_thread_around(profile, ahead, engine.take()).map(|mut thread| {
+                if let Some(left) = &left {
+                    thread.return_engine(left.clone());
+                }
                 let prebooted = EngineHost::preboot(&mut thread, &profile.prepared);
                 (thread, prebooted)
             });
@@ -683,27 +994,59 @@ impl ThreadPerConnection {
                     a
                 }
             };
-            let _finished = a.finished;
-            run_browser_thread(prepared, &profile, a.socket, &a.buffered, a.config);
-        })?;
-        Ok(tx)
-    }
-
-    /// The spare thread (started earlier) or a fresh one; then starts the next spare.
-    fn claim(&self) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
-        let taken = self.spare.lock().unwrap_or_else(|e| e.into_inner()).take();
-        // With a spare taken, the new thread is the next spare; without one
-        // it serves this connection, which is already waiting.
-        let next = self.spawn_thread(taken.is_some());
-        match taken {
-            Some(tx) => {
-                if let Ok(next) = next {
-                    *self.spare.lock().unwrap_or_else(|e| e.into_inner()) = Some(next);
+            let finished = a.finished;
+            let workers_joined = run_browser_thread(prepared, profile, a.socket, &a.buffered, a.config);
+            // The connection is over for its client and for the server's
+            // count: what follows delays nobody.
+            drop(finished);
+            let Some(left) = left.and_then(|left| left.borrow_mut().take()) else { return };
+            let keep = match mode {
+                EngineReuse::Always => true,
+                EngineReuse::On => left.untouched(),
+                EngineReuse::Thread | EngineReuse::Off => false,
+            };
+            if !keep {
+                // The engine goes; what its wrappers held goes with it.
+                drop(left);
+                if let Err(why) = scrub_thread(workers_joined) {
+                    park.refuse(why);
+                    return;
                 }
-                Ok(tx)
+            } else {
+                if let Err(why) = scrub(&left, workers_joined) {
+                    park.refuse(why);
+                    return; // drops the engine
+                }
+                engine = Some(left);
             }
-            None => next,
         }
+        let Some((ticket, turns)) = park.enter() else {
+            park.refuse("another engine already waits");
+            return;
+        };
+        park.parked.fetch_add(1, Ordering::Relaxed);
+        reuse_log("parked");
+        let waited = turns.recv_timeout(PARK_RELEASE_AFTER).or_else(|_| {
+            // Collects, and returns the free pages of JavaScriptCore's
+            // allocator and of the process's to the system.
+            if let Some(engine) = &engine {
+                engine.settle_idle();
+            }
+            turns.recv_timeout(PARK_LIMIT.saturating_sub(PARK_RELEASE_AFTER))
+        });
+        turn = match waited {
+            Ok(turn) => turn,
+            Err(_) => {
+                if park.leave(ticket) {
+                    park.expired.fetch_add(1, Ordering::Relaxed);
+                    reuse_log("expired");
+                    return;
+                }
+                // Taken at the last moment: the turn was or is being sent.
+                let Ok(turn) = turns.recv() else { return };
+                turn
+            }
+        };
     }
 }
 
@@ -781,7 +1124,7 @@ pub(crate) fn run_browser_thread(
     socket: std::net::TcpStream,
     buffered: &[u8],
     config: ServerConfig,
-) {
+) -> bool {
     let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
     let host = match prepared.and_then(|(t, prebooted)| {
         let mut host = EngineHost::with_thread(t, outbox.clone(), EngineHost::body_budget())?;
@@ -795,11 +1138,11 @@ pub(crate) fn run_browser_thread(
             if let Ok(conn) = Conn::new(socket, buffered, outbound, config) {
                 conn.finish(); // a normal close, as when a session ends
             }
-            return;
+            return true;
         }
     };
     let browser = Browser::with_prepared(host, profile.prepared.clone());
-    serve_browser(browser, outbox, outbound, socket, buffered, config, AfterServe::TearDown);
+    serve_browser(browser, outbox, outbound, socket, buffered, config, AfterServe::TearDown)
 }
 
 /// What a connection's end leaves to do in the process that served it.
@@ -816,6 +1159,8 @@ pub(crate) enum AfterServe {
 
 /// Serves one connection with protocol state that already exists: `browser`
 /// writes to `outbox`, whose frames `outbound` carries to the socket.
+/// Whether every worker thread of its pages has ended (`TearDown` only;
+/// `false` when one outlasted the wait for it).
 pub(crate) fn serve_browser(
     mut browser: Browser<EngineHost>,
     outbox: Outbox,
@@ -824,12 +1169,12 @@ pub(crate) fn serve_browser(
     buffered: &[u8],
     config: ServerConfig,
     after: AfterServe,
-) {
+) -> bool {
     let conn = match Conn::new(socket, buffered, outbound, config) {
         Ok(conn) => conn,
         Err(e) => {
             eprintln!("lightningpanda: CDP connection: {e}");
-            return;
+            return true;
         }
     };
     // Network threads that exceed the budget wake this loop to close (1008).
@@ -954,9 +1299,10 @@ pub(crate) fn serve_browser(
         browser.host().thread.browser.engine.skip_release_until_exit();
     }
     browser.shutdown();
+    let mut workers_joined = true;
     if after == AfterServe::TearDown {
         browser.host_mut().close_all();
-        lp_webapi::join_stopped(std::time::Duration::from_secs(1));
+        workers_joined = lp_webapi::join_stopped(std::time::Duration::from_secs(1));
     }
     drop(sink);
     match Rc::try_unwrap(conn) {
@@ -967,11 +1313,24 @@ pub(crate) fn serve_browser(
     if after == AfterServe::Exit {
         std::mem::forget(browser);
     }
+    workers_joined
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engine_reuse_flag() {
+        assert_eq!(parse_args(&[]).unwrap().engine_reuse, EngineReuse::On);
+        let with = |value: &str| parse_args(&["--engine-reuse".to_owned(), value.to_owned()]);
+        assert_eq!(with("off").unwrap().engine_reuse, EngineReuse::Off);
+        assert_eq!(with("on").unwrap().engine_reuse, EngineReuse::On);
+        assert_eq!(with("thread").unwrap().engine_reuse, EngineReuse::Thread);
+        assert_eq!(with("always").unwrap().engine_reuse, EngineReuse::Always);
+        assert!(with("sometimes").is_err());
+        assert!(parse_args(&["--engine-reuse".to_owned()]).is_err());
+    }
 
     #[test]
     fn local_storage_flag_and_document() {
