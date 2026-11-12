@@ -159,6 +159,10 @@ pub(crate) struct EngineInner {
     owner_dropped: Cell<bool>,
     /// When [`Engine::release_closed`] actually collects.
     release_gate: ReleaseGate,
+    /// The process footprint when this VM was made, last settled or forked:
+    /// what [`Engine::settle_if_grown`] measures growth from (`u64::MAX`
+    /// where the footprint cannot be read, so it never collects there).
+    idle_floor: Cell<u64>,
     /// Payloads of the member functions made with the patched JSC's
     /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer, and
     /// for no live realm: they live as long as the engine, which outlives
@@ -380,6 +384,18 @@ impl ReleaseGate {
         self.put_off.set(0);
     }
 }
+
+/// The growth of the process footprint past which a quiet VM is collected
+/// ([`Engine::settle_if_grown`]): bytes, and percent of the footprint it grew
+/// from, whichever is larger. A full collection costs the live heap, so a
+/// large process waits for proportionally more.
+const IDLE_GROWTH: (u64, u64) = (16 << 20, 12);
+
+/// Whether this process is a fork made with an engine alive
+/// ([`Engine::did_fork`]): a forked connection's, which exits when the
+/// connection ends. Its threads' engines, a worker's included, do not collect
+/// when quiet ([`Engine::settle_if_grown`]).
+static FORK_CHILD: AtomicBool = AtomicBool::new(false);
 
 /// The process's physical footprint in bytes: what the system charges it for,
 /// without the reclaimable pages that resident size still counts.
@@ -757,6 +773,7 @@ impl Engine {
             shut_down: Cell::new(false),
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
+            idle_floor: Cell::new(process_footprint().unwrap_or(u64::MAX)),
             member_payloads: RefCell::new(Vec::new()),
             retired_members: RefCell::new(Vec::new()),
             collections: crate::interned::Collections::new(),
@@ -981,6 +998,62 @@ impl Engine {
         }
         self.inner.release_gate.pending.set(false);
         self.inner.release_gate.put_off.set(0);
+        self.inner.idle_floor.set(process_footprint().unwrap_or(u64::MAX));
+    }
+
+    /// [`Engine::settle`] for a thread that has gone quiet with its pages
+    /// still open, when the process grew by [`IDLE_GROWTH`] since this VM
+    /// was last settled. Whether it collected.
+    ///
+    /// JavaScriptCore collects when script allocates, and while collections
+    /// follow one another closely it lets the young generation reach 8 heap
+    /// steps (32 MB) before the next one. A VM whose script then stops keeps
+    /// that garbage, and what the garbage holds outside the heap, for as long
+    /// as it stays quiet: the timers that collect an idle VM (JSC's GC
+    /// activity callbacks) need a run loop that only the system framework
+    /// has.
+    ///
+    /// This trades CPU for memory. Measured with a 2.7 MB app that a service
+    /// worker precaches (17 MB fetched), page open and both threads quiet:
+    /// 148 MB footprint instead of 198 MB (JavaScriptCore's allocator holds
+    /// 67 MB of objects instead of 108 MB); the page alone, without the
+    /// worker, 106 MB instead of 118 MB. The page's collection costs 110 to
+    /// 150 M instructions and 23 to 32 ms of CPU, 2 to 4% of what loading
+    /// that app costs, at a moment the thread had nothing to do; a command
+    /// that arrives during it waits for it. A run whose commands follow one
+    /// another never pays it. `LIGHTNINGPANDA_IDLE_COLLECT=0` turns it off.
+    ///
+    /// Not in a forked connection's process unless
+    /// `LIGHTNINGPANDA_IDLE_COLLECT=1`: it exits with its connection, so the
+    /// memory comes back anyway, and pages that paused there for 2.5 s cost
+    /// 1.4% more instructions (for 44 MB less while one is open).
+    ///
+    /// The alternative, a lower young-generation limit
+    /// (`JSC_maxEdenSizeForRateLimitingMultiplier`), gives the same memory
+    /// and costs the bursts their speed: a Playwright locator over 2000 rows
+    /// took 16% more instructions with the limit at 4 MB, 8% at 8 MB, 3% at
+    /// 16 MB.
+    pub fn settle_if_grown(&self) -> bool {
+        let on = match std::env::var("LIGHTNINGPANDA_IDLE_COLLECT").as_deref() {
+            Ok("0") => false,
+            Ok("1") => true,
+            _ => !FORK_CHILD.load(Ordering::Relaxed),
+        };
+        if !on {
+            return false;
+        }
+        let Some(now) = process_footprint() else { return false };
+        let floor = self.inner.idle_floor.get();
+        if now < floor {
+            // Another thread released, or this one did without settling.
+            self.inner.idle_floor.set(now);
+            return false;
+        }
+        if now - floor < IDLE_GROWTH.0.max(floor / 100 * IDLE_GROWTH.1) {
+            return false;
+        }
+        self.settle();
+        true
     }
 
     /// A full synchronous collection and what follows from it on the Rust
@@ -1085,7 +1158,9 @@ impl Engine {
         unsafe {
             did_fork(child);
             if child {
+                FORK_CHILD.store(true, Ordering::Relaxed);
                 self.inner.release_gate.forked();
+                self.inner.idle_floor.set(process_footprint().unwrap_or(u64::MAX));
                 reseed(self.inner.root);
                 for (global, realm) in self.inner.realms.borrow().iter() {
                     if realm.strong_count() > 0 {

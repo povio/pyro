@@ -386,6 +386,21 @@ is what puts a Playwright locator level with Chrome. The speed follows the cap (
 mid-size SPA held 8 to 23 MB more `ps` RSS across runs, and the same as before once its page was closed.
 `JSC_smallHeapSize=1048576` in the environment restores the old trade.
 
+That young generation is garbage a VM keeps once its script stops: JSC collects when script allocates, and the timers
+that collect an idle VM need a run loop only the system framework has. A thread of `serve` that has been quiet for a
+second with its pages open (no command or task, under 5 ms of CPU in the last half second: `lp_runtime::IdleWatch`),
+the page's and each worker's alike, therefore runs `Engine::settle_if_grown`: a full collection with the free pages
+returned, when the process grew by 16 MB or 12% since that VM was last settled. This buys memory with CPU. Measured
+with a 2.7 MB app whose service worker precaches 17 MB, page open and quiet: 148 MB footprint instead of 198 MB (the
+page alone 106 instead of 118 MB), for 110 to 150 M instructions and 23 to 32 ms of CPU per collected page VM, 2 to 4%
+of that app's load, at a moment nothing else ran; a run whose commands follow one another never pays it. A forked
+connection's process does not do it (it exits with its connection; pages that paused 2.5 s there cost 1.4% more
+instructions for 44 MB less while open). `LIGHTNINGPANDA_IDLE_COLLECT=0` turns it off, `=1` on in forks too. Capping
+the young generation instead (`JSC_maxEdenSizeForRateLimitingMultiplier`) gives the same memory and costs the locator
+its speed: 16% more instructions per locator call over 2000 rows at 4 MB, 8% at 8 MB, 3% at 16 MB. Bun's process
+options (`useConcurrentJIT=false`, `numberOfGCMarkers=1`, `useConcurrentGC=false`) were measured in both modes and
+change instructions per page by less than the run-to-run spread (-1.6% to +2.1%), so none is set.
+
 Patch `0009` keeps the JS lock held across C API callbacks, because a VM stays on one thread: stock JSC drops and
 retakes it around every callback. `JSC_dropLocksInAPICallbacks=true` restores the stock behavior.
 
