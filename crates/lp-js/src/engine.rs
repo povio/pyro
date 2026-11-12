@@ -145,6 +145,13 @@ pub(crate) struct EngineInner {
     terminate: Arc<TerminateState>,
     /// Payload headers queued by GC finalizers, which may run on any thread.
     pub(crate) finalized: Arc<class::FinalizeQueue>,
+    /// Payloads of the owned wrappers that were alive when `shutdown` took
+    /// them from the collector, until the VM is released.
+    pub(crate) orphaned: RefCell<Vec<usize>>,
+    /// Where JavaScriptCore counts the dead owned wrappers whose payloads it
+    /// holds for `class::drain_tracked` (null without that SPI, and once the
+    /// VM is released): asked after every native callback, so one load.
+    dead_tracked: Cell<*const std::sync::atomic::AtomicUsize>,
     /// Set once the VM has been torn down; `Persistent`s then skip unprotect.
     shut_down: Cell<bool>,
     /// The owning `Engine` handle was dropped: callbacks no longer resolve to
@@ -504,7 +511,19 @@ impl EngineInner {
 
     /// Payloads of finalized wrappers waiting for [`Self::drain_finalized`].
     pub(crate) fn pending_finalizers(&self) -> usize {
-        self.finalized.len()
+        self.finalized.len() + self.dead_tracked()
+    }
+
+    /// Dead owned wrappers whose payloads the collector holds for
+    /// `class::drain_tracked`.
+    #[inline]
+    pub(crate) fn dead_tracked(&self) -> usize {
+        let counter = self.dead_tracked.get();
+        if counter.is_null() {
+            return 0;
+        }
+        // SAFETY: the live group's counter (nulled before the VM is released).
+        unsafe { (*counter).load(std::sync::atomic::Ordering::Relaxed) }
     }
 
     /// Finds the realm owning global context `global`.
@@ -548,6 +567,10 @@ impl EngineInner {
         class::drain_finalized(self);
         self.collections.release(self.group);
         self.release_retired_members();
+        // Owned wrappers have no finalizer: their payloads are taken from the
+        // collector's list, the live ones' too.
+        class::drain_tracked(self, true);
+        self.dead_tracked.set(std::ptr::null());
         self.shut_down.set(true);
         // SAFETY: no realm, scope or callback remains; the root context and
         // group are owned here. Releasing the group destroys the VM, which
@@ -563,6 +586,18 @@ impl EngineInner {
         }
         let was_current = self.is_current();
         class::drain_finalized(self);
+        loop {
+            let orphaned = std::mem::take(&mut *self.orphaned.borrow_mut());
+            if orphaned.is_empty() {
+                break;
+            }
+            for h in orphaned {
+                let h = h as *mut class::Header;
+                // SAFETY: handed over once by `class::drain_tracked`; the VM
+                // that held their objects is gone.
+                unsafe { ((*h).drop_fn)(h) };
+            }
+        }
         self.classes.borrow_mut().release_all();
         self.hook_state.placeholders.set(0);
         // Payload destructors above may have created a new engine on this
@@ -711,6 +746,12 @@ impl Engine {
             next_realm_id: Cell::new(1),
             terminate: terminate.clone(),
             finalized: Arc::new(class::FinalizeQueue::default()),
+            orphaned: RefCell::new(Vec::new()),
+            dead_tracked: Cell::new(match sys::spi::get().tracked() {
+                // SAFETY: the group just made; the address lives as long as it.
+                Some(tracked) => unsafe { (tracked.dead_counter)(group) },
+                None => std::ptr::null(),
+            }),
             shut_down: Cell::new(false),
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),

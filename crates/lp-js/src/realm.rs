@@ -72,14 +72,14 @@ impl WrapperRef {
     /// The wrapper's payload has not been dropped.
     pub unsafe fn set_kept(self, keep: bool) {
         let h = self.0 as *mut Header;
-        unsafe { (*h).keep_alive.store(u8::from(keep), std::sync::atomic::Ordering::Relaxed) };
+        unsafe { (*h).flags[Header::KEEP].store(u8::from(keep), std::sync::atomic::Ordering::Relaxed) };
     }
 
     /// # Safety
     /// The wrapper's payload has not been dropped.
     pub unsafe fn is_kept(self) -> bool {
         let h = self.0 as *mut Header;
-        unsafe { (*h).keep_alive.load(std::sync::atomic::Ordering::Relaxed) != 0 }
+        unsafe { (*h).flags[Header::KEEP].load(std::sync::atomic::Ordering::Relaxed) != 0 }
     }
 }
 
@@ -349,10 +349,6 @@ pub(crate) struct RealmInner {
     /// One weakly held JavaScript string per interned host string (atoms:
     /// ids, class values, local names), see `crate::interned`.
     pub(crate) interned: RefCell<crate::interned::InternedStrings>,
-    /// The realm's owned wrappers (`IdentityKey::OWNED`), linked through
-    /// their payload headers: `dispose` releases their weak handles, which
-    /// must not outlive the VM.
-    pub(crate) owned_head: Cell<*mut Header>,
     /// The payloads of this realm's member functions (patched JSC only):
     /// `dispose` clears their `realm`, so they do not keep this allocation
     /// alive, and hands them to the engine, which frees them once the
@@ -569,23 +565,12 @@ impl RealmInner {
             for (_, w) in self.identity.borrow_mut().drain() {
                 unsafe { release(self.engine.group(), w) };
             }
-            // Owned wrappers: nothing keeps them any more, and their handles
-            // go now (the payloads stay until their objects die).
-            let mut h = self.owned_head.replace(ptr::null_mut());
-            while !h.is_null() {
-                // SAFETY: a payload leaves the list before it is freed
-                // (`class::release_owned`), so every entry is live.
-                unsafe {
-                    let next = (*h).owned_next.replace(ptr::null_mut());
-                    (*h).owned_prev.set(ptr::null_mut());
-                    (*h).keep_alive.store(0, std::sync::atomic::Ordering::Relaxed);
-                    let weak = (*h).weak.replace(ptr::null_mut());
-                    if !weak.is_null() {
-                        release(self.engine.group(), weak);
-                    }
-                    h = next;
-                }
-            }
+        }
+        if let Some(tracked) = sys::spi::get().tracked() {
+            // Owned wrappers: nothing keeps them any more (the payloads stay
+            // until their objects die).
+            // SAFETY: the realm's still-retained context.
+            unsafe { (tracked.release)(ctx) };
         }
         for (_, (_, v)) in self.shared_strings.borrow_mut().drain() {
             // SAFETY: protected by `shared_string` on this still-live context.
@@ -1344,10 +1329,9 @@ impl<'s> Scope<'s> {
     }
 
     /// Whether [`IdentityKey::OWNED`] wrappers can be made (patched
-    /// JavaScriptCore with `JSWeakCreateKeptWhile`).
+    /// JavaScriptCore with `JSObjectMakeTrackedWrapper`).
     pub fn owned_wrappers(&self) -> bool {
-        let spi = sys::spi::get();
-        spi.weak_create_kept_while.is_some() && spi.weak().is_some()
+        sys::spi::get().object_make_tracked_wrapper.is_some()
     }
 
     /// The reference of an owned wrapper of this realm (`None` for any other
@@ -1356,7 +1340,7 @@ impl<'s> Scope<'s> {
         // SAFETY: a live object of this VM.
         let h = unsafe { self.header_of_object(object.raw) }?;
         // SAFETY: the object's live payload.
-        (!unsafe { (*h).weak.get() }.is_null()).then_some(WrapperRef(h as usize))
+        (!unsafe { (*h).object.get() }.is_null()).then_some(WrapperRef(h as usize))
     }
 
     /// The wrapper `r` refers to, if it is still alive.
@@ -1365,13 +1349,14 @@ impl<'s> Scope<'s> {
     /// The wrapper's payload has not been dropped (see [`WrapperRef`]).
     pub unsafe fn wrapper(&self, r: WrapperRef) -> Option<Object<'s>> {
         let h = r.0 as *mut Header;
+        // The collector sets the byte with the engine's thread stopped: an
+        // object it has not found dead is one this thread may use, as it may
+        // the object behind a weak handle.
         unsafe {
-            let weak = (*h).weak.get();
-            if weak.is_null() {
+            if (*h).flags[Header::DEAD].load(std::sync::atomic::Ordering::Relaxed) != 0 {
                 return None;
             }
-            let (_, _, get) = sys::spi::get().weak()?;
-            let o = get(weak);
+            let o = (*h).object.get();
             (!o.is_null()).then(|| Object::from_raw(self.ctx, o))
         }
     }
@@ -1395,37 +1380,61 @@ impl<'s> Scope<'s> {
         let owned = key.filter(|k| k.is_owned());
         let key = key.filter(|k| !k.is_owned());
         let spi = sys::spi::get();
-        let kept_while = match owned {
-            Some(_) => Some(spi.weak_create_kept_while.ok_or(JsError::Unsupported(&"JSWeakCreateKeptWhile"))?),
-            None => None,
-        };
-        let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, key, data);
         if let Some(mode) = owned {
-            // Before the handle exists: the collector reads it from then on.
-            // SAFETY: h is the payload just made.
-            unsafe {
-                (*h).keep_alive.store(u8::from(mode == IdentityKey::OWNED_KEPT), std::sync::atomic::Ordering::Relaxed)
+            // One call makes the object in a cell with no destructor and
+            // lists it with the collector, which reads the payload's two
+            // bytes from then on: no weak handle, no finalizer.
+            let make = spi.object_make_tracked_wrapper.ok_or(JsError::Unsupported(&"JSObjectMakeTrackedWrapper"))?;
+            let (shape, proto) = match proto {
+                WrapperProto::Shape(shape) => (shape, ptr::null()),
+                WrapperProto::Value(proto) => (ptr::null_mut(), proto.raw),
             };
+            let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, None, data);
+            // SAFETY: h is the payload just made, of a registered class
+            // (`info`); its bytes live as long as it does, and it is freed
+            // only once JSC hands it back (`class::drain_tracked`).
+            let obj = unsafe {
+                let class = (*(*h).info).instance_class;
+                (*h).flags[Header::KEEP]
+                    .store(u8::from(mode == IdentityKey::OWNED_KEPT), std::sync::atomic::Ordering::Relaxed);
+                let flags = (*h).flags.as_ptr() as *mut u8;
+                let obj = make(self.ctx, shape, class, proto, h as *mut c_void, flags);
+                if obj.is_null() && !shape.is_null() {
+                    // JSC refused the shape: another global object made it
+                    // (never so while a realm's scopes run in its context).
+                    match self.proto(id) {
+                        Ok(proto) => make(self.ctx, ptr::null_mut(), class, proto.raw, h as *mut c_void, flags),
+                        Err(_) => obj,
+                    }
+                } else {
+                    obj
+                }
+            };
+            if obj.is_null() {
+                // SAFETY: no object holds the payload.
+                unsafe { ((*h).drop_fn)(h) };
+                return Err(JsError::Unsupported(&"JSObjectMakeTrackedWrapper"));
+            }
+            // SAFETY: as above.
+            unsafe { (*h).object.set(obj) };
+            return Ok(unsafe { Object::from_raw(self.ctx, obj) });
         }
-        let (obj, mut weak) = match proto {
+        let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, key, data);
+        let obj = match proto {
             WrapperProto::Shape(shape) => {
-                // Object, prototype and handle in one call (patched JSC).
+                // Object and prototype in one call (patched JSC).
                 let make = spi.object_make_wrapper.expect("shapes are made with JSObjectMakeWrapper present");
-                let mut weak: sys::JSWeakRef = ptr::null();
-                // SAFETY: the flag byte lives as long as the payload, which
-                // outlives the handle (see below).
-                let keep = if owned.is_some() { unsafe { (*h).keep_alive.as_ptr() as *const u8 } } else { ptr::null() };
                 // SAFETY: a shape made in this realm.
-                let obj = unsafe { make(self.ctx, shape, h as *mut c_void, keep, &mut weak) };
+                let obj = unsafe { make(self.ctx, shape, h as *mut c_void, ptr::null(), ptr::null_mut()) };
                 if !obj.is_null() {
-                    (obj, weak)
+                    obj
                 } else {
                     // JSC refused the shape: another global object made it
                     // (never so while a realm's scopes run in its context).
                     // The old way, then.
                     match self.proto(id) {
                         // SAFETY: no object holds the payload yet.
-                        Ok(proto) => (unsafe { self.make_object(id, h, proto.raw) }, ptr::null()),
+                        Ok(proto) => unsafe { self.make_object(id, h, proto.raw) },
                         Err(e) => {
                             // SAFETY: as above; dropped once.
                             unsafe { ((*h).drop_fn)(h) };
@@ -1435,26 +1444,9 @@ impl<'s> Scope<'s> {
                 }
             }
             // SAFETY: no object holds the payload yet.
-            WrapperProto::Value(proto) => (unsafe { self.make_object(id, h, proto.raw) }, ptr::null()),
+            WrapperProto::Value(proto) => unsafe { self.make_object(id, h, proto.raw) },
         };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
-        if let (Some(_), Some(kept_while)) = (owned, kept_while) {
-            // SAFETY: h is the live payload of obj; its flag byte lives as
-            // long as the payload, which outlives the handle (released in
-            // `class::release_owned` or `RealmInner::dispose`).
-            unsafe {
-                if weak.is_null() {
-                    weak = kept_while(self.realm.engine.group(), obj.raw, (*h).keep_alive.as_ptr());
-                }
-                (*h).weak.set(weak);
-                let head = self.realm.owned_head.get();
-                (*h).owned_next.set(head);
-                if !head.is_null() {
-                    (*head).owned_prev.set(h);
-                }
-                self.realm.owned_head.set(h);
-            }
-        }
         if let Some(k) = key {
             let (create, release, _) = sys::spi::get().weak().ok_or(JsError::Unsupported(&"JSWeak"))?;
             let weak = unsafe { create(self.realm.engine.group(), obj.raw) };
@@ -2066,7 +2058,6 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
         interned: RefCell::new(crate::interned::InternedStrings::new()),
-        owned_head: Cell::new(ptr::null_mut()),
         member_fns: RefCell::new(Vec::new()),
         helpers: RefCell::new(None),
         helper_cache: RefCell::new(rustc_hash::FxHashMap::default()),
