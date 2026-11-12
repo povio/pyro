@@ -2511,7 +2511,7 @@ fn make_member_fn(
     engine: &EngineInner,
     class: sys::JSClassRef,
     call: class::MemberCall,
-    pure: Option<class::MethodHFn>,
+    pure: Option<class::PureCall>,
     name: &str,
     length: u32,
     keys: &MemberKeys,
@@ -2636,7 +2636,7 @@ fn install_members_raw(
     };
     let member_class = engine.classes.borrow().member;
     let keys = MemberKeys::new(realm);
-    let native_pure = |name: &str, length: u32, call: class::MemberCall, pure: Option<class::MethodHFn>| -> JsResult<Object<'_>> {
+    let native_pure = |name: &str, length: u32, call: class::MemberCall, pure: Option<class::PureCall>| -> JsResult<Object<'_>> {
         let f = make_member_fn(ctx, engine, member_class, call, pure, name, length, &keys)?;
         if let Some(p) = function_proto {
             f.set_prototype(p);

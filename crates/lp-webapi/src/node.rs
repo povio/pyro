@@ -499,20 +499,20 @@ impl JsClass for Node {
             crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });
-        def.pure_method("contains", 1, |s, n, a| {
+        def.pure_method_of_wrappers("contains", 1, |s, n, a| {
             let Some(o) = opt_node_arg(s, a.get(0), "contains")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().contains(n.id, o).js()?))
         });
-        def.pure_method("compareDocumentPosition", 1, |s, n, a| {
+        def.pure_method_of_wrappers("compareDocumentPosition", 1, |s, n, a| {
             a.require(1, "Node.compareDocumentPosition")?;
             let o = node_arg(s, a.get(0), "compareDocumentPosition")?;
             Ok(s.number(n.page().dom.borrow().compare_document_position(n.id, o).js()? as f64))
         });
-        def.pure_method("isSameNode", 1, |s, n, a| {
+        def.pure_method_of_wrappers("isSameNode", 1, |s, n, a| {
             let o = opt_node_arg(s, a.get(0), "isSameNode")?;
             Ok(s.boolean(o == Some(n.id)))
         });
-        def.pure_method("isEqualNode", 1, |s, n, a| {
+        def.pure_method_of_wrappers("isEqualNode", 1, |s, n, a| {
             let Some(o) = opt_node_arg(s, a.get(0), "isEqualNode")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().is_equal_node(n.id, o).js()?))
         });
