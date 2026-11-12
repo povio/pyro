@@ -407,6 +407,11 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
                 evaluated(false);
             }
             tear_down(event_loop, state);
+            // The VM is gone: its pages go back now, and the thread that
+            // started the worker learns that what the worker kept alive
+            // there can be collected.
+            lp_js::release_thread_memory();
+            poster(Box::new(crate::worker::note_ended));
         }
         Err(_) if service.is_some() => evaluated(false),
         Err(_) => poster(Box::new(move || deliver_up(id, Up::LoadFailed))),

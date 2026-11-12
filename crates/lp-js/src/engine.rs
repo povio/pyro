@@ -374,7 +374,7 @@ impl ReleaseGate {
 
 /// The process's physical footprint in bytes: what the system charges it for,
 /// without the reclaimable pages that resident size still counts.
-fn process_footprint() -> Option<u64> {
+pub fn process_footprint() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
         /// `struct rusage_info_v0` from `<sys/resource.h>`: a 16-byte UUID,
@@ -1447,6 +1447,19 @@ pub fn set_allocator_trim(trim: fn()) {
 fn trim_memory() {
     if let Some(trim) = ALLOCATOR_TRIM.get() {
         trim();
+    }
+}
+
+/// For a thread whose engine is gone (a worker's, about to exit): returns
+/// what the engine's heap and the thread's Rust heap left free to the
+/// operating system. Nobody else does: the thread that started the worker
+/// releases on its own closes, and JavaScriptCore's scavenger may not run
+/// again in an idle process.
+pub fn release_thread_memory() {
+    release_memory();
+    if let Some(f) = sys::spi::get().release_free_memory {
+        // SAFETY: the call takes no group (the allocator is process-wide).
+        unsafe { f(std::ptr::null_mut()) };
     }
 }
 

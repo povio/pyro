@@ -74,6 +74,27 @@ pub(crate) fn is_held() -> bool {
     HOLD.load(Ordering::Relaxed)
 }
 
+thread_local! {
+    /// A worker this thread started has ended since [`take_ended`].
+    static ENDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// On the thread that started it: a worker's thread has torn down its VM.
+pub(crate) fn note_ended() {
+    ENDED.with(|ended| ended.set(true));
+}
+
+/// Whether a worker this thread started has ended and nobody has asked yet.
+pub fn worker_ended() -> bool {
+    ENDED.with(|ended| ended.get())
+}
+
+/// [`worker_ended`], forgetting it: the caller collects what the worker
+/// kept alive on this thread (the page side of its ports and messages).
+pub fn take_worker_ended() -> bool {
+    ENDED.with(|ended| ended.replace(false))
+}
+
 /// Remembers a worker thread for [`join_stopped`].
 pub(crate) fn track_thread(thread: std::thread::JoinHandle<()>) {
     THREADS.with(|threads| {
