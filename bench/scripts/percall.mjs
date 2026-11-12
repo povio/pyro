@@ -113,6 +113,10 @@ const CASES = [
     mutate: true,
     calls: 4,
   },
+  // The same loop cut short, to see what each step of it adds (per element, not per call).
+  { name: 'mutate.step.create', what: 'the `mutate.element` loop with only `createElement`', mutate: true, steps: 1 },
+  { name: 'mutate.step.class', what: '... and `className`', mutate: true, steps: 2 },
+  { name: 'mutate.step.text', what: '... and `textContent`', mutate: true, steps: 3 },
 ].filter((c) => c.baseline || !FILTER || FILTER.test(c.name));
 
 function caseSource(c) {
@@ -121,10 +125,12 @@ function caseSource(c) {
     return `function (n) { let acc = 0; for (let x = window.__walk.firstChild; x !== null; x = x.nextSibling) acc++; return acc; }`;
   }
   if (c.mutate) {
+    const steps = c.steps ?? 4;
     return `function (n) { const doc = document; let acc = 0; let box = null;
       for (let i = 0; i < n; i++) {
         if (i % 1000 === 0) { if (box) box.remove(); box = doc.createElement('div'); doc.body.appendChild(box); }
-        const e = doc.createElement('p'); e.className = 'x' + (i % 10); e.textContent = 'p' + (i % 1000); box.appendChild(e); acc++;
+        const a = 'x' + (i % 10), b = 'p' + (i % 1000);
+        const e = doc.createElement('p');${steps > 1 ? ' e.className = a;' : ''}${steps > 2 ? ' e.textContent = b;' : ''}${steps > 3 ? ' box.appendChild(e);' : ''} acc += a.length + b.length > 0 ? 1 : 0;
       }
       if (box) box.remove();
       return acc; }`;
