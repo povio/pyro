@@ -29,9 +29,8 @@ A cold JavaScriptCore build takes about 7 minutes on a hosted runner (measured o
 the first run). `jsc.yml` rebuilds on `main` whenever the patches or
 `scripts/jsc/build.sh` change, so a tag normally finds the build cached.
 
-The npm package's arm64 browser is the fork build with its JavaScriptCore
-bundled (`scripts/release/bundle-jsc.sh`); its Intel browser is the standard
-build. Every release archive's client therefore carries the fork browser, but
+The npm package's arm64 browser is the fork build, with the patched
+JavaScriptCore linked into it; its Intel browser is the standard build. Every release archive's client therefore carries the fork browser, but
 launches the browser of its own archive first.
 Intel binaries are inspected in CI but never executed (no Rosetta on the
 runners).
@@ -53,15 +52,14 @@ Publish these six assets for a release version `X.Y.Z`:
 
 - `lightningpanda-rust-vX.Y.Z-macos-arm64.tar.gz`: system JavaScriptCore.
 - `lightningpanda-rust-vX.Y.Z-macos-x64.tar.gz`: system JavaScriptCore.
-- `lightningpanda-rust-vX.Y.Z-macos-arm64-fork.tar.gz`: bundled patched JavaScriptCore.
+- `lightningpanda-rust-vX.Y.Z-macos-arm64-fork.tar.gz`: patched JavaScriptCore, linked statically.
 - `povio-lightning-panda-X.Y.Z.tgz`: the same client included in all binary archives.
 - `lightningpanda-jsc-source-vX.Y.Z.tar.gz`: matching patched JavaScriptCore source.
 - `SHA256SUMS.txt`: hashes of the five payload assets after signing and packing.
 
 The standard builds use `LP_JSC=system`; the fork build uses the matching
 `LP_JSC_DIR`. They are separate builds: source JSC selects a different module-loader
-shim and timer integration, so changing only a binary's dynamic-library path does
-not convert it to a system-JSC build. Build the browser and comparison worker with
+shim and timer integration, and is linked into the binary. Build the browser and comparison worker with
 `--features render -p lightningpanda -p lp-render` from the repository directory so
 its Cargo linker/signing configuration applies. Keep each completed build in a
 separate staging location before building another variant.
@@ -70,18 +68,22 @@ Stage both standard macOS binaries in `packages/lightning-panda/native/` as
 described in [NPM_PUBLISHING.md](NPM_PUBLISHING.md), then use
 `scripts/pack-test-client.sh OUT_DIR` once. Unpack that exact resulting TGZ as
 `lightning-panda/` beside the browser in every platform archive. Keep `LICENSE`
-and `NOTICE` in each archive. Signing or relocation must affect staged copies,
-never the original build outputs or the cached JavaScriptCore library.
+and `NOTICE` in each archive. Signing must affect staged copies, never the
+original build outputs.
 
-## Bundled JavaScriptCore
+## Patched JavaScriptCore
 
-Place the copied patched library at `lib/libJavaScriptCore.dylib`. Change the
-copied browser's dependency to `@loader_path/lib/libJavaScriptCore.dylib` and the
-copied library's install ID to `@rpath/libJavaScriptCore.dylib`. The comparison
-worker currently has no JavaScriptCore dependency. Re-sign the relocated library,
-then both executables; executables retain `scripts/macos/jit.entitlements`.
-Verify signatures and reject dynamic dependencies on a developer's home directory
-or build cache.
+The fork browser holds the patched JavaScriptCore: `scripts/jsc/build.sh` builds
+one static archive (`lib/libJavaScriptCore.a`: JavaScriptCore, WTF, bmalloc) and
+the build links it in, so the archive ships no library beside the browser (macOS;
+Linux ships the ICU libraries the browser loads in `lib/`,
+`scripts/release/bundle-icu-linux.sh`). The executables keep the signature and
+`scripts/macos/jit.entitlements` the build's linker wrapper gave them. Verify
+signatures and reject dynamic dependencies outside `/System` and `/usr/lib`.
+
+JavaScriptCore is LGPL: a user who rebuilds it from the source asset relinks the
+browser from this repository's source (AGPL, public) with `LP_JSC_DIR` pointing at
+their build.
 
 The fork archive includes upstream license/notices files under
 `third-party/JavaScriptCore/` and a pointer to its matching source asset. Preserve
@@ -98,14 +100,15 @@ same JSC-only CMake configuration; do not apply the patches again:
 cmake -G Ninja -S webkit -B build \
   -DPORT=JSCOnly -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-  -DENABLE_STATIC_JSC=OFF -DDEVELOPER_MODE=OFF -DENABLE_TOOLS=OFF
-ninja -C build -j 2 JavaScriptCore
+  -DENABLE_STATIC_JSC=ON -DDEVELOPER_MODE=OFF -DENABLE_TOOLS=OFF
+lightningpanda/scripts/jsc/archive.sh build out/lib/libJavaScriptCore.a
 ```
 
 Use a real Ruby executable if the build environment's version-manager shim does
-not work from the build directory. The built library is under
-`build/lib/JavaScriptCore.framework/Versions/`; copy its `JavaScriptCore` binary,
-set its install ID as described above and sign the copy. The accompanying
+not work from the build directory. `archive.sh` builds the static libraries and
+merges them, with the JIT subtarget's objects, into the one archive the browser
+links (`LP_JSC_DIR=out`, with `inputs/` copied from a released build or from
+`crates/lp-jsc-sys/webkit`). The accompanying
 `lightningpanda/scripts/jsc/build.sh` can instead fetch a **fresh** upstream
 checkout and apply the recorded inputs; do not point it at the supplied
 already-patched tree.

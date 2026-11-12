@@ -498,9 +498,11 @@ pub const SOURCE_BUILD: bool = cfg!(lp_jsc_source);
 /// `JSObjectRefPrivate.h`, `JSBasePrivate.h`). Signatures follow WebKit
 /// `Source/JavaScriptCore/API`.
 ///
-/// They are resolved at runtime with `dlsym`, never linked, so a JavaScriptCore
-/// build without one of them still loads; callers must handle `None` and report
-/// the capability as unsupported.
+/// Against a shared JavaScriptCore (the system framework, or a patched dylib)
+/// they are resolved at runtime with `dlsym`, never linked, so a build without
+/// one of them still loads; callers must handle `None` and report the
+/// capability as unsupported. With the patched build linked statically
+/// (`cfg(lp_jsc_static)`, the default) every one is a linked symbol.
 pub mod spi {
     use super::*;
     use std::sync::OnceLock;
@@ -907,14 +909,33 @@ pub mod spi {
         DIRECT.get_or_init(|| get().direct_strings()).as_ref()
     }
 
+    #[cfg(not(lp_jsc_static))]
     unsafe extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
-    #[cfg(target_vendor = "apple")]
+    #[cfg(all(not(lp_jsc_static), target_vendor = "apple"))]
     const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
-    #[cfg(not(target_vendor = "apple"))]
+    #[cfg(all(not(lp_jsc_static), not(target_vendor = "apple")))]
     const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
 
+    // JavaScriptCore linked into the executable: the names are not in a
+    // dynamic symbol table to look up, and the archive is this checkout's
+    // patched build, so each entry point is referenced directly. One the
+    // archive lacks fails the link instead of reporting `None` at run time.
+    #[cfg(lp_jsc_static)]
+    macro_rules! resolve {
+        ($name:literal) => {{
+            unsafe extern "C" {
+                #[link_name = $name]
+                fn entry();
+            }
+            // SAFETY: the address of the named function of the linked
+            // archive, whose signature is declared by the target fn type.
+            Some(unsafe { core::mem::transmute::<unsafe extern "C" fn(), _>(entry) })
+        }};
+    }
+
+    #[cfg(not(lp_jsc_static))]
     macro_rules! resolve {
         ($name:literal) => {{
             // SAFETY: dlsym with RTLD_DEFAULT and a NUL-terminated name; the
