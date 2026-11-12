@@ -813,6 +813,24 @@ impl Realm {
 pub struct WeakRealm(std::rc::Weak<RealmInner>);
 
 impl WeakRealm {
+    /// [`Realm::pending_finalizers`] of the realm while it is alive and not
+    /// disposed, else 0, with no reference count touched: for a check that
+    /// runs after every native callback.
+    pub fn pending_finalizers(&self) -> usize {
+        if self.0.strong_count() == 0 {
+            return 0;
+        }
+        // SAFETY: a strong count above zero means the value is alive, and it
+        // stays so: `Rc` is single-threaded and nothing below drops a
+        // handle. The borrowed handle is never dropped, so no count changes.
+        let realm = std::mem::ManuallyDrop::new(Realm { inner: unsafe { Rc::from_raw(self.0.as_ptr()) } });
+        if realm.is_disposed() {
+            0
+        } else {
+            realm.pending_finalizers()
+        }
+    }
+
     /// The realm, if still alive and not disposed.
     pub fn upgrade(&self) -> Option<Realm> {
         self.0.upgrade().map(|inner| Realm { inner }).filter(|r| !r.is_disposed())
@@ -2187,7 +2205,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     for (i, info) in reg.classes.iter().enumerate() {
         let native = match info.def.constructor {
             Some(c) => {
-                make_member_fn(scope.ctx, &realm.engine, reg.member, c, false, info.name, info.def.ctor_length, &keys)?
+                make_member_fn(scope.ctx, &realm.engine, reg.member, c, None, info.name, info.def.ctor_length, &keys)?
                     .value()
             }
             None => scope.null(),
@@ -2215,7 +2233,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     if !factories.is_empty() {
         let legacy_factory = realm.helper(scope, "legacyFactory")?;
         for (id, name, length, call) in factories {
-            let native = make_member_fn(scope.ctx, &realm.engine, reg.member, call, false, name, length, &keys)?;
+            let native = make_member_fn(scope.ctx, &realm.engine, reg.member, call, None, name, length, &keys)?;
             legacy_factory.call(
                 None,
                 &[
@@ -2493,7 +2511,7 @@ fn make_member_fn(
     engine: &EngineInner,
     class: sys::JSClassRef,
     call: class::MemberCall,
-    pure: bool,
+    pure: Option<class::PureCall>,
     name: &str,
     length: u32,
     keys: &MemberKeys,
@@ -2618,14 +2636,14 @@ fn install_members_raw(
     };
     let member_class = engine.classes.borrow().member;
     let keys = MemberKeys::new(realm);
-    let native_pure = |name: &str, length: u32, call: class::MemberCall, pure: bool| -> JsResult<Object<'_>> {
+    let native_pure = |name: &str, length: u32, call: class::MemberCall, pure: Option<class::PureCall>| -> JsResult<Object<'_>> {
         let f = make_member_fn(ctx, engine, member_class, call, pure, name, length, &keys)?;
         if let Some(p) = function_proto {
             f.set_prototype(p);
         }
         Ok(f)
     };
-    let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, false);
+    let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, None);
     let members = helper("members")?;
     // Where custom accessors go: for the global's own members, the object
     // behind its proxy.
@@ -2660,20 +2678,9 @@ fn install_members_raw(
             // dispatch takes the lean path for the global's payload, as does
             // one of a class that asked for that
             // (`ClassDef::attributes_without_jit_getters`).
-            let ok = match (crate::accessors::pure_result(slot), sys::spi::get().set_fast_getter) {
-                (Some(result), Some(fast)) if !on_global && jit_getters => unsafe {
-                    fast(
-                        ctx,
-                        holder,
-                        n,
-                        getter,
-                        setter,
-                        attributes,
-                        Some(crate::accessors::fast_getter_dispatch),
-                        usize::from(slot) as *mut c_void,
-                        result,
-                        true,
-                    )
+            let ok = match (crate::accessors::fast_entry(slot), sys::spi::get().set_fast_getter) {
+                (Some((entry, context, result)), Some(fast)) if !on_global && jit_getters => unsafe {
+                    fast(ctx, holder, n, getter, setter, attributes, Some(entry), context, result, true)
                 },
                 _ => unsafe { install(ctx, holder, n, getter, setter, attributes) },
             };

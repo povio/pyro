@@ -7021,3 +7021,186 @@ fn ids_read_once_do_not_accumulate() {
     e.main.dispose();
     assert_eq!(e.main.interned_string_count(), 0);
 }
+
+/// Name arguments are resolved by the identity of the JavaScript string from
+/// its second sighting on (`names.rs`): every call, whichever path it takes,
+/// answers as the text path does.
+#[test]
+fn names_passed_as_the_same_string_resolve_as_their_text_does() {
+    let e = env(
+        "<!doctype html><body><div id=d data-k=v></div><svg id=s viewBox='0 0 1 1'></svg></body>",
+    );
+    let r = &e.main;
+    eval(r, "globalThis.d = document.getElementById('d'); globalThis.s = document.getElementById('s'); 'ok'");
+    // One literal, many calls: text path, resolving call, table hits.
+    assert_eq!(
+        eval(r, "(() => { const out = []; for (let i = 0; i < 6; i++) out.push(d.getAttribute('data-k') + d.hasAttribute('data-k') + d.hasAttribute('nope') + d.getAttribute('nope')); return out.join(); })()"),
+        ["vtruefalsenull"; 6].join(",")
+    );
+    // Uppercase lowercases on an HTML element and matches exactly on an SVG one,
+    // for one string used on both.
+    assert_eq!(
+        eval(r, "(() => { const out = []; for (let i = 0; i < 5; i++) { const k = 'viewBox'; d.setAttribute(k, 'h' + i); out.push(d.getAttribute('VIEWBOX') + d.attributes[d.attributes.length - 1].name + s.getAttribute(k) + s.getAttribute('viewbox') + s.hasAttribute('VIEWBOX') + d.hasAttribute(k)); } return out.join(); })()"),
+        (0..5).map(|i| format!("h{i}viewbox0 0 1 1nullfalsetrue")).collect::<Vec<_>>().join(",")
+    );
+    // set, has, remove on one name.
+    assert_eq!(
+        eval(r, "(() => { const out = []; for (let i = 0; i < 5; i++) { d.setAttribute('q', i); const a = d.getAttribute('q'); d.removeAttribute('q'); out.push(a + d.hasAttribute('q') + d.getAttribute('q')); d.removeAttribute('q'); } return out.join(); })()"),
+        (0..5).map(|i| format!("{i}falsenull")).collect::<Vec<_>>().join(",")
+    );
+    // An invalid name throws the same error on every call, and sets nothing.
+    assert_eq!(
+        eval(r, "(() => { const out = []; for (let i = 0; i < 5; i++) { try { d.setAttribute('a b', 1); out.push('set'); } catch (x) { out.push(x.name); } try { document.createElement('1x'); out.push('made'); } catch (x) { out.push(x.name); } out.push(d.hasAttribute('a b')); out.push(d.getAttribute('a b')); } return out.join(); })()"),
+        ["InvalidCharacterError,InvalidCharacterError,false,"; 5].join(",")
+    );
+    // createElement: case, custom names, names built per call.
+    assert_eq!(
+        eval(r, "(() => { const out = []; for (let i = 0; i < 5; i++) { const a = document.createElement('DIV'), b = document.createElement('x-row'), c = document.createElement('y-' + (i % 2)); out.push(a.localName + a.tagName + (a instanceof HTMLDivElement) + b.localName + (b instanceof HTMLElement) + c.tagName); } return out.join(); })()"),
+        (0..5).map(|i| format!("divDIVtruex-rowtrueY-{}", i % 2)).collect::<Vec<_>>().join(",")
+    );
+    // Not Latin-1, not ASCII, not a string: the text path, every time.
+    assert_eq!(
+        eval(r, "(() => { const out = []; for (let i = 0; i < 4; i++) { d.setAttribute('\\u017e', i); d.setAttribute('\\u00e9', i); d.setAttribute(null, i); d.setAttribute(7, i); out.push(d.getAttribute('\\u017e') + d.getAttribute('\\u00e9') + d.getAttribute('null') + d.getAttribute('7') + d.getAttribute({ toString() { return 'id'; } })); } return out.join(); })()"),
+        (0..4).map(|i| format!("{i}{i}{i}{i}d")).collect::<Vec<_>>().join(",")
+    );
+}
+
+/// Strings built per call come and go: an address is another string's after
+/// a collection, and a name must never be answered with an earlier string's
+/// atoms.
+#[test]
+fn names_built_per_call_survive_collections_and_address_reuse() {
+    let e = env("<!doctype html><body><div id=d></div></body>");
+    let r = &e.main;
+    eval(r, "globalThis.d = document.getElementById('d'); globalThis.bad = 0; globalThis.round = 0; 'ok'");
+    for _ in 0..6 {
+        assert_eq!(
+            eval(r, "(() => { round++; for (let i = 0; i < 4000; i++) { const n = 'k' + (1000 + (i * 7 + round) % 97); const v = round + ':' + i; d.setAttribute(n, v); if (d.getAttribute('k' + (1000 + (i * 7 + round) % 97)) !== v) bad++; if (!d.hasAttribute(n)) bad++; if (i % 3 === 0) { d.removeAttribute(n); if (d.hasAttribute(n)) bad++; } } return bad; })()"),
+            "0"
+        );
+        collect(&e);
+    }
+    // A resolved string whose character buffer the engine replaces (used as
+    // a property key when an atom with its text exists): the freed buffer's
+    // address goes to other strings of its length, which are other names.
+    // (The scenario `JSString::swapToAtomString` allows. A table keyed by
+    // the buffer passed this too when tried: the case guards the behaviour,
+    // it is not a reproduction.)
+    assert_eq!(
+        eval(r, "(() => { let bad = 0; d.setAttribute('data-swap', 'right'); for (let round = 0; round < 200; round++) { const x = ['data', 'swap'].join('-'); if (d.getAttribute(x) !== 'right' || d.getAttribute(x) !== 'right') bad++; const o = { 'data-swap': 1 }; if (o[x] !== 1) bad++; const made = []; for (let i = 0; i < 40; i++) { const y = ['data', 'sw' + String.fromCharCode(97 + (i + round) % 26) + 'q'].join('-'); made.push(y); if (d.getAttribute(y) !== null || d.hasAttribute(y) || d.getAttribute(y) !== null) bad++; } if (d.getAttribute(x) !== 'right') bad++; } return bad; })()"),
+        "0"
+    );
+    // Names of one length made in a row, each used twice in a row.
+    assert_eq!(
+        eval(r, "(() => { let bad = 0; for (let i = 0; i < 3000; i++) { const n = 'z' + (10000 + i); d.setAttribute(n, i); if (d.getAttribute(n) !== String(i)) bad++; d.removeAttribute(n); if (d.hasAttribute(n)) bad++; } return bad + ':' + d.attributes.length; })()").split(':').next().unwrap(),
+        "0"
+    );
+}
+
+/// Collection rounds until the store holds `want` nodes (a stale pointer on
+/// the conservatively scanned stack can delay a wrapper by a round).
+fn collect_until_live(e: &Env, want: usize) -> usize {
+    for _ in 0..6 {
+        collect(e);
+        if e.page.dom.borrow().live_nodes() == want {
+            break;
+        }
+    }
+    let live = e.page.dom.borrow().live_nodes();
+    live
+}
+
+/// The wrapper invariant (`NodeData`): a wrapper's reference keeps its node,
+/// and the detached tree the node is in, out of the node collection, so the
+/// slot it names is never another node's while the wrapper exists.
+#[test]
+fn a_wrapper_keeps_its_removed_node_through_collections_and_slot_reuse() {
+    let e = env("<!doctype html><body><div id=d data-k=v><span id=s>t</span></div></body>");
+    let r = &e.main;
+    eval(r, "globalThis.k = document.getElementById('d'); k.remove(); 'ok'");
+    e.page.after_task();
+    collect(&e);
+    let live = e.page.dom.borrow().live_nodes();
+    // Elements made and dropped: their slots are freed and given out again,
+    // round after round, and never the kept tree's.
+    for _ in 0..4 {
+        eval(r, "(() => { for (let i = 0; i < 500; i++) { const x = document.createElement('p'); x.id = 'n' + i; x.setAttribute('data-k', 'other'); x.textContent = 'n'; } return 'ok'; })()");
+        assert_eq!(collect_until_live(&e, live), live, "the dropped elements are collected");
+        assert_eq!(
+            eval(r, "[k.id, k.tagName, k.getAttribute('data-k'), k.firstChild.id, k.firstChild.textContent, k.parentNode, k.isConnected, k.childNodes.length, k.ownerDocument === document].join()"),
+            "d,DIV,v,s,t,,false,1,true"
+        );
+    }
+    // The wrapper dropped: its tree (div, span, text) is collected, and the
+    // nodes that take the slots answer as themselves.
+    eval(r, "globalThis.k = null; 'ok'");
+    assert_eq!(collect_until_live(&e, live - 3), live - 3, "the kept tree is collected with its wrapper");
+    eval(r, "globalThis.fresh = []; for (let i = 0; i < 8; i++) { const x = document.createElement('b'); x.id = 'f' + i; fresh.push(x); } 'ok'");
+    collect(&e);
+    assert_eq!(
+        eval(r, "fresh.map(x => x.id + x.tagName + x.childNodes.length + x.hasAttribute('data-k')).join()"),
+        (0..8).map(|i| format!("f{i}B0false")).collect::<Vec<_>>().join(",")
+    );
+}
+
+/// Adoption changes the node's document, not its slot: the wrapper is the
+/// same object before, in the other document, and back.
+#[test]
+fn a_wrapper_follows_its_node_into_another_document_and_back() {
+    let e = env("<!doctype html><body><div id=d data-k=v><span id=s>t</span></div></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "(() => { globalThis.d = document.getElementById('d'); globalThis.sp = d.firstChild; globalThis.other = document.implementation.createHTMLDocument('o'); const a = other.adoptNode(d); return [a === d, d.ownerDocument === other, sp.ownerDocument === other, d.parentNode, d.isConnected, d.id, d.getAttribute('data-k'), d.firstChild === sp, document.getElementById('d')].join(); })()"),
+        "true,true,true,,false,d,v,true,"
+    );
+    collect(&e);
+    assert_eq!(
+        eval(r, "(() => { other.body.appendChild(d); d.className = 'c'; return [other.getElementById('d') === d, d.parentNode === other.body, sp.textContent, d.tagName, d.className, sp.parentNode === d].join(); })()"),
+        "true,true,t,DIV,c,true"
+    );
+    collect(&e);
+    assert_eq!(
+        eval(r, "(() => { document.body.appendChild(d); return [d.ownerDocument === document, document.getElementById('d') === d, sp.ownerDocument === document, d.isConnected, other.getElementById('d'), d.getAttribute('data-k'), d.hasAttribute('data-k'), d.className].join(); })()"),
+        "true,true,true,true,,v,true,c"
+    );
+    // The other document dropped; the node stays the wrapper's.
+    eval(r, "globalThis.other = null; 'ok'");
+    collect(&e);
+    assert_eq!(eval(r, "[d.id, sp.id, d.firstChild === sp, document.getElementById('s') === sp].join()"), "d,s,true,true");
+}
+
+/// Pure operations that read an argument only as a node take the lean
+/// dispatch with a wrapper argument; any other object goes the full way and
+/// is rejected there, and no argument is ever converted.
+#[test]
+fn node_argument_operations_answer_alike_on_both_dispatches() {
+    let e = env("<!doctype html><body><div id=d><span id=c>t</span></div></body>");
+    let r = &e.main;
+    eval(r, "globalThis.d = document.getElementById('d'); globalThis.c = d.firstChild; 'ok'");
+    let got = eval(
+        r,
+        "(() => { const out = []; let ran = 0;
+            const spy = { toString() { ran++; return 'x'; }, valueOf() { ran++; return 1; }, [Symbol.toPrimitive]() { ran++; return 1; } };
+            const ev = new Event('x');
+            for (let i = 0; i < 4; i++) {
+                out.push(d.contains(c), c.contains(d), d.contains(d), d.contains(null), d.contains(undefined),
+                    d.compareDocumentPosition(c), c.compareDocumentPosition(d), d.isSameNode(d), d.isSameNode(c), d.isSameNode(null),
+                    d.isEqualNode(d.cloneNode(true)), d.isEqualNode(c), d.contains(c, spy), document.contains(c));
+                for (const bad of [spy, {}, ev, window, new Proxy({}, {}), () => 1])
+                    for (const m of ['contains', 'compareDocumentPosition', 'isSameNode', 'isEqualNode']) {
+                        try { d[m](bad); out.push('no'); } catch (x) { out.push(x.name); }
+                    }
+            }
+            return ran + ':' + out.join(); })()",
+    );
+    let round = format!(
+        "true,false,true,false,false,20,10,true,false,false,true,false,true,true,{}",
+        ["TypeError"; 24].join(",")
+    );
+    assert_eq!(got, format!("0:{}", [round.as_str(); 4].join(",")));
+    // A receiver that is not a node, with a node argument.
+    assert_eq!(
+        eval(r, "(() => { try { Node.prototype.contains.call({}, c); return 'no'; } catch (x) { return x.name; } })()"),
+        "TypeError"
+    );
+}

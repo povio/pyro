@@ -72,8 +72,18 @@ pub(crate) struct MethodSpec {
     pub name: &'static str,
     pub length: u32,
     pub call: MemberCall,
-    /// See [`ClassDef::pure_method`].
-    pub pure: bool,
+    /// See [`ClassDef::pure_method`]. The lean dispatch calls this with the
+    /// receiver's payload header.
+    pub pure: Option<PureCall>,
+}
+
+/// The lean dispatch of a pure operation.
+#[derive(Clone, Copy)]
+pub(crate) struct PureCall {
+    pub invoke: MethodHFn,
+    /// Whether an argument may be a wrapper object (see
+    /// [`ClassDef::pure_method_of_wrappers`]).
+    pub wrapper_args: bool,
 }
 
 pub(crate) struct AccessorSpec {
@@ -88,6 +98,9 @@ pub(crate) struct AccessorSpec {
     pub result: GetterResult,
     /// A pure getter's invoker from the receiver's payload header.
     pub get_h: Option<InvokeHFn>,
+    /// A pure getter's entry from the JITs (`crate::accessors::fast_getter`):
+    /// one per class and getter kind, like the invokers.
+    pub fast: Option<crate::accessors::FastGetterFn>,
     /// The setter's invoker from the receiver's payload header, for a
     /// setter of the class's own data (`ClassDef::accessor`).
     pub set_h: Option<SetHFn>,
@@ -116,6 +129,12 @@ pub(crate) type InvokeFn = unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *co
 /// receiver's payload header, in a scope of the receiver's realm.
 pub(crate) type InvokeHFn =
     unsafe fn(&Scope<'_>, *mut Header, sys::JSObjectRef, *const ()) -> JsResult<sys::JSValueRef>;
+
+/// A pure operation invoked with its receiver's payload header, in a scope of
+/// the receiver's realm. `None`: the payload is not one of the operation's
+/// class (the full dispatch then decides).
+pub(crate) type MethodHFn =
+    unsafe fn(&Scope<'_>, *mut Header, sys::JSObjectRef, Args<'_>, *const ()) -> Option<JsResult<sys::JSValueRef>>;
 
 /// A setter invoked with its receiver's payload header and the new value,
 /// in a scope of the receiver's realm.
@@ -372,7 +391,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
-            pure: false,
+            pure: None,
         });
         self
     }
@@ -386,7 +405,24 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
-            pure: true,
+            pure: Some(PureCall { invoke: method_invoke_h::<C>, wrapper_args: false }),
+        });
+        self
+    }
+
+    /// [`ClassDef::pure_method`] for an operation that reads an object
+    /// argument only as a wrapper (`contains(node)`,
+    /// `compareDocumentPosition(node)`): a call whose object arguments are
+    /// all wrappers takes the lean dispatch too. `f` must not convert an
+    /// object argument to a string, a number or a dictionary, and must not
+    /// read a property of one: any of those runs page script, which the lean
+    /// dispatch does not allow for.
+    pub fn pure_method_of_wrappers(&mut self, name: &'static str, length: u32, f: MethodFn<C>) -> &mut Self {
+        self.methods.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
+            pure: Some(PureCall { invoke: method_invoke_h::<C>, wrapper_args: true }),
         });
         self
     }
@@ -402,6 +438,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: None,
             enumerable: true,
         });
@@ -432,6 +469,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_invoke_h::<C>),
+            fast: Some(crate::accessors::fast_getter::<C>),
             set_h: None,
             enumerable: true,
         });
@@ -449,7 +487,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_this_invoke::<C>, f: f as *const () },
-            pure: false,
+            pure: None,
         });
         self
     }
@@ -460,7 +498,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_this_invoke::<C>, f: f as *const () },
-            pure: true,
+            pure: Some(PureCall { invoke: method_this_invoke_h::<C>, wrapper_args: false }),
         });
         self
     }
@@ -476,6 +514,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: None,
             enumerable: true,
         });
@@ -503,6 +542,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_this_invoke_h::<C>),
+            fast: Some(crate::accessors::fast_getter_this::<C>),
             set_h: None,
             enumerable: true,
         });
@@ -521,6 +561,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: Some(setter_invoke_h::<C>),
             enumerable: true,
         });
@@ -545,6 +586,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: Some(setter_invoke_h::<C>),
             enumerable: true,
         });
@@ -571,6 +613,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_invoke_h::<C>),
+            fast: Some(crate::accessors::fast_getter::<C>),
             set_h: Some(setter_invoke_h::<C>),
             enumerable: true,
         });
@@ -605,6 +648,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            fast: None,
             set_h: None,
             enumerable: true,
         });
@@ -620,7 +664,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: ctor_invoke, f: f as *const () },
-            pure: false,
+            pure: None,
         });
         self
     }
@@ -695,7 +739,7 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: static_invoke, f: f as *const () },
-            pure: false,
+            pure: None,
         });
         self
     }
@@ -1212,7 +1256,7 @@ fn shared_class<C: JsClass>(parent: Option<&'static ClassDefErased>) -> &'static
     // prototype property it installs last.
     for a in def.accessors.iter_mut().rev() {
         a.slot =
-            crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h, a.set_h);
+            crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h, a.set_h, a.fast);
     }
     let class: &'static ClassShared = Box::leak(Box::new(ClassShared {
         upcast: def.upcast,
@@ -1266,7 +1310,7 @@ pub(crate) struct MemberPayload {
     pub tag: PayloadTag,
     pub call: MemberCall,
     /// See [`ClassDef::pure_method`].
-    pub pure: bool,
+    pub pure: Option<PureCall>,
     /// The realm the function was made in, whose context JSC passes to its
     /// calls: the full dispatch's candidate realm. `None` once that realm is
     /// disposed (`RealmInner::member_fns` lists the payloads to clear, so the
@@ -1925,6 +1969,36 @@ unsafe fn method_invoke<C: JsClass>(
         return member_in_receiver_realm(scope, realm, |s| f(s, data, Args { ctx: s.ctx, raw }).map(|v| v.raw));
     }
     f(scope, data, args).map(|v| v.raw)
+}
+
+/// [`method_invoke`] from the receiver's payload header `h`, in the receiver's
+/// realm: the lean dispatch found `h` already.
+unsafe fn method_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    _this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> Option<JsResult<sys::JSValueRef>> {
+    let data = unsafe { data_of_header::<C>(h) }?;
+    // SAFETY: stored by `ClassDef::pure_method` from exactly this fn-pointer type.
+    let f: MethodFn<C> = unsafe { std::mem::transmute(f) };
+    Some(f(scope, data, args).map(|v| v.raw))
+}
+
+/// [`method_this_invoke`] from the receiver's payload header.
+unsafe fn method_this_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> Option<JsResult<sys::JSValueRef>> {
+    let data = unsafe { data_of_header::<C>(h) }?;
+    // SAFETY: stored by `ClassDef::pure_method_this` from exactly this fn-pointer type.
+    let f: MethodThisFn<C> = unsafe { std::mem::transmute(f) };
+    // SAFETY: `this` is the wrapper whose payload `h` is, rooted by the caller.
+    Some(f(scope, data, unsafe { Object::from_raw(scope.ctx, this) }, args).map(|v| v.raw))
 }
 
 /// The data of `C` in the instance payload `h` (the payload's class or a
@@ -2687,8 +2761,8 @@ pub(crate) unsafe extern "C" fn member_call_data(
 ) -> sys::JSValueRef {
     unsafe {
         let payload = data as *const MemberPayload;
-        if !payload.is_null() && (*payload).pure {
-            if let Some(v) = pure_member_call(&*payload, ctx, this, argc, argv, exc) {
+        if let Some(pure) = payload.as_ref().and_then(|p| p.pure) {
+            if let Some(v) = pure_member_call(&*payload, pure, ctx, this, argc, argv, exc) {
                 return v;
             }
         }
@@ -2712,11 +2786,12 @@ pub(crate) unsafe extern "C" fn member_call_data(
 
 /// The lean dispatch of a pure operation (`ClassDef::pure_method`), in the
 /// receiver's realm: `None` sends the call through the full dispatch (a
-/// receiver that is not a wrapper, a disposed realm, an object argument, a
-/// panic, termination, or an error in a realm other than the one JSC calls
-/// the function in).
+/// receiver that is not a wrapper, a disposed realm, an object argument the
+/// operation may convert, a panic, termination, or an error in a realm other
+/// than the one JSC calls the function in).
 unsafe fn pure_member_call(
     payload: &MemberPayload,
+    pure: PureCall,
     caller_ctx: sys::JSContextRef,
     this: sys::JSObjectRef,
     argc: usize,
@@ -2728,7 +2803,7 @@ unsafe fn pure_member_call(
             return None;
         }
         let h = sys::JSObjectGetPrivate(this) as *mut Header;
-        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
+        if h.is_null() || (*h).tag != PayloadTag::Wrapper {
             return None;
         }
         // `live` lends the realm without a count: sound only because nothing
@@ -2738,13 +2813,26 @@ unsafe fn pure_member_call(
         // `Symbol.toPrimitive`, a getter) runs page script, which may drop
         // the receiver's realm (borrowed here without a count) and must not
         // run twice when the call then falls back to the full dispatch.
-        if argc > 0 && std::slice::from_raw_parts(argv, argc).iter().any(|&v| sys::JSValueIsObject(ctx, v)) {
-            return None;
+        // An operation that reads its object arguments only as wrappers
+        // (`PureCall::wrapper_args`) converts nothing: a wrapper's payload is
+        // read, and no script runs. Any other object sends it the full way.
+        if argc > 0 {
+            for &v in std::slice::from_raw_parts(argv, argc) {
+                if sys::JSValueIsObject(ctx, v) {
+                    if !pure.wrapper_args {
+                        return None;
+                    }
+                    let arg = sys::JSObjectGetPrivate(v as sys::JSObjectRef) as *const Header;
+                    if arg.is_null() || (*arg).tag != PayloadTag::Wrapper {
+                        return None;
+                    }
+                }
+            }
         }
         let scope = Scope::new(ctx, realm);
         let call = payload.call;
         let _lean = LeanCall::enter();
-        catch_unwind(AssertUnwindSafe(|| match (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f) {
+        catch_unwind(AssertUnwindSafe(|| match (pure.invoke)(&scope, h, this, Args::from_raw(ctx, argc, argv), call.f)? {
             Ok(v) if !v.is_null() => Some(v),
             // The full dispatch would run the same body in the same realm
             // (the one of `caller_ctx`) and throw the same error: throw it

@@ -1047,3 +1047,96 @@ impl lp_render::Fetcher for NoFetch {
         done(Err(format!("{url}: offline")));
     }
 }
+
+// ---- Node wrappers and the pages they outlive ----
+
+/// Every kind of entry into a node wrapper: pure getters (the per-class fast
+/// path), getters returning nodes, pure methods taking names, setters, and
+/// methods that mutate.
+const PROBE_NODE: &str = r#"(() => { const out = [];
+    for (const f of [() => __el.id, () => __el.tagName, () => __el.firstChild && __el.firstChild.nodeName,
+                     () => __el.getAttribute('data-k'), () => __el.hasAttribute('data-k'), () => __el.childNodes.length,
+                     () => __el.textContent, () => __el.parentNode === null, () => __el.isConnected,
+                     () => { __el.className = 'z'; return __el.className; },
+                     () => { __el.setAttribute('q', '1'); return __el.getAttribute('q'); },
+                     () => __el.appendChild(__el.firstChild) === __el.firstChild,
+                     () => { __el.removeAttribute('q'); return __el.hasAttribute('q'); }]) {
+        try { out.push(String(f())); } catch (e) { out.push('threw'); } }
+    return out.join('|'); })()"#;
+
+/// Opens a page, hands its `#d` to `keeper` and closes the page. Its own
+/// frame is gone before any collection runs.
+#[inline(never)]
+fn keep_node_and_close(lab: &Lab, keeper: &Realm, drops: &Rc<Cell<u32>>) {
+    let (page, realm) = lab.open("<body><div id=d data-k=v class=c><span>t</span></div>");
+    plant_sentinel(&realm, drops);
+    run(&realm, "globalThis.__el = document.getElementById('d'); __el.getAttribute('data-k'); __el.getAttribute('data-k');");
+    transfer(&realm, keeper, "__el", "__el");
+    lab.close(&page, &realm);
+}
+
+/// The wrapper invariant (`NodeData`) across a closed page: the payload owns
+/// the page and a reference on the node, so a wrapper another realm kept
+/// reads a node that is still there, or throws; it never reads freed memory,
+/// collection after collection. Released, it lets the closed realm go.
+#[test]
+fn a_node_wrapper_kept_after_its_page_closed_stays_sound() {
+    let lab = Lab::new();
+    let (_keeper_page, keeper) = lab.open("<body>");
+    let drops = Rc::new(Cell::new(0u32));
+    keep_node_and_close(&lab, &keeper, &drops);
+    // The wrapper's realm is disposed: every entry fails in the binding
+    // layer, before the node is read.
+    let first = eval(&keeper, PROBE_NODE);
+    assert_eq!(first, ["threw"; 13].join("|"));
+    for _ in 0..4 {
+        scrub_stack();
+        lab.gc_live();
+        // Other pages come and go in between: their nodes and wrappers take
+        // whatever memory the closed page gave back.
+        let (page, realm) = lab.open("<body><p id=d data-k=other>x</p>");
+        run(&realm, "for (let i = 0; i < 200; i++) { const e = document.createElement('i'); e.id = 'n' + i; document.body.appendChild(e); }");
+        lab.close(&page, &realm);
+        assert_eq!(eval(&keeper, PROBE_NODE), first);
+    }
+    run(&keeper, "globalThis.__el = null;");
+    lab.settle(|| drops.get() == 1);
+    assert_eq!(drops.get(), 1, "the closed realm is collected once its node wrapper is released");
+}
+
+/// One realm of a page disposed while the page and its other realm live: the
+/// disposed realm's wrapper throws, the node it named is untouched, and the
+/// live realm's wrapper of the same node works.
+#[test]
+fn a_node_wrapper_of_a_disposed_realm_throws_while_the_node_lives() {
+    let lab = Lab::new();
+    let (page, a) = lab.open("<body><div id=d data-k=v class=c><span>t</span></div>");
+    let b = new_realm(&lab.engine, lab.window_class, &page, "other");
+    run(&a, "globalThis.__el = document.getElementById('d');");
+    transfer(&a, &b, "__el", "__el");
+    lifecycle::realm_disposed(&page, a.id());
+    a.dispose();
+    drop(a);
+    lab.gc_live();
+    assert_eq!(eval(&b, PROBE_NODE), ["threw"; 13].join("|"));
+    lab.gc_live();
+    assert_eq!(
+        eval(&b, "(() => { const d = document.getElementById('d'); return [d === __el, d.id, d.className, d.getAttribute('data-k'), d.hasAttribute('q'), d.firstChild.textContent].join(); })()"),
+        "false,d,c,v,false,t"
+    );
+}
+
+/// A name's entry roots a string, never an object: names used by a page do
+/// not keep its closed realm.
+#[test]
+fn names_resolved_by_string_identity_do_not_retain_the_closed_realm() {
+    assert_eq!(
+        closed_realm_drops(
+            "(function () { const d = document.createElement('div'); document.body.appendChild(d); \
+             for (let i = 0; i < 8; i++) { d.setAttribute('data-kept', i); d.getAttribute('data-kept'); d.hasAttribute('data-kept'); \
+             d.removeAttribute('data-gone'); document.createElement('section'); } globalThis.__d = d; })()"
+        ),
+        1,
+        "closed realm survived the bounded collection rounds (name table roots)"
+    );
+}

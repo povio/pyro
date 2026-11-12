@@ -11,11 +11,44 @@ use lp_dom::{DocumentKind, NodeId, NodeKind, NodeType, ShadowRootMode};
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Scope, Value};
 
 use crate::collections::{self, CollectionKind};
+use crate::names::NameArg;
 use crate::page::PageDom;
 use crate::target::{page_of, EventTarget, EventTargetData};
 use crate::util::*;
 
 /// Payload of every Node wrapper.
+///
+/// # What a wrapper holds on its node
+///
+/// The payload is the whole path from the JavaScript object to the node: the
+/// object's private data is this payload, `target.page` is the page whose
+/// store the node lives in, and `id` is the node's slot in that store. No
+/// map is consulted and nothing is looked up by key.
+///
+/// The invariant that makes this sound whatever goes away first:
+///
+/// - **The store outlives the wrapper.** `target.page` is an `Rc`, and the
+///   page owns its `Dom`. A closed page (`PageDom::dispose`) drops its roots
+///   and hooks, not the store: a wrapper another realm kept still reads a
+///   node that is there.
+/// - **The slot is this node's for as long as the wrapper exists.** A wrapper
+///   holds one reference on its node (`Dom::add_ref` in `wrap_node`, released
+///   in `Drop` below). `Dom::collect_garbage` frees a detached tree only when
+///   no node in it is referenced, and a slot is given to another node only
+///   after it was freed. So the node is not freed by removal from its
+///   document, by its document being dropped, or by adoption into another
+///   document (which changes the node's owner, never its slot). The
+///   generation in `id` is checked on access and is never what keeps an
+///   access right: a mismatch would be a broken reference count, and it
+///   surfaces as a `StaleNode` error, not as another node's data.
+/// - **The realm is not reached through the node.** A call into a wrapper
+///   whose realm is disposed fails in the binding layer (`Header::core`),
+///   before this payload is read.
+///
+/// Tests: `a_wrapper_keeps_its_removed_node_through_collections_and_slot_reuse`,
+/// `a_wrapper_follows_its_node_into_another_document_and_back` (`dom_js.rs`),
+/// `a_node_wrapper_kept_after_its_page_closed_stays_sound`
+/// (`payload_cycles.rs`).
 pub struct NodeData {
     pub target: EventTargetData,
     pub id: NodeId,
@@ -499,20 +532,20 @@ impl JsClass for Node {
             crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });
-        def.pure_method("contains", 1, |s, n, a| {
+        def.pure_method_of_wrappers("contains", 1, |s, n, a| {
             let Some(o) = opt_node_arg(s, a.get(0), "contains")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().contains(n.id, o).js()?))
         });
-        def.pure_method("compareDocumentPosition", 1, |s, n, a| {
+        def.pure_method_of_wrappers("compareDocumentPosition", 1, |s, n, a| {
             a.require(1, "Node.compareDocumentPosition")?;
             let o = node_arg(s, a.get(0), "compareDocumentPosition")?;
             Ok(s.number(n.page().dom.borrow().compare_document_position(n.id, o).js()? as f64))
         });
-        def.pure_method("isSameNode", 1, |s, n, a| {
+        def.pure_method_of_wrappers("isSameNode", 1, |s, n, a| {
             let o = opt_node_arg(s, a.get(0), "isSameNode")?;
             Ok(s.boolean(o == Some(n.id)))
         });
-        def.pure_method("isEqualNode", 1, |s, n, a| {
+        def.pure_method_of_wrappers("isEqualNode", 1, |s, n, a| {
             let Some(o) = opt_node_arg(s, a.get(0), "isEqualNode")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().is_equal_node(n.id, o).js()?))
         });
@@ -1213,12 +1246,17 @@ impl JsClass for Element {
             Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
         def.pure_method("getAttribute", 1, |s, n, a| {
-            crate::util::with_arg_str(&a, 0, "Element.getAttribute", |name| {
-                let dom = n.page().dom.borrow();
-                Ok(match dom.get_attribute_qualified_atom(n.id, name).js()? {
-                    Some((value, atom)) => attr_value(s, value, atom),
-                    None => s.null(),
-                })
+            a.require(1, "Element.getAttribute")?;
+            let name = a.get(0);
+            let name = n.page().names.arg(s, &name)?;
+            let dom = n.page().dom.borrow();
+            let found = match &name {
+                NameArg::Name(name) => dom.get_attribute_named_atom(n.id, name),
+                NameArg::Text(name) => dom.get_attribute_qualified_atom(n.id, name),
+            };
+            Ok(match found.js()? {
+                Some((value, atom)) => attr_value(s, value, atom),
+                None => s.null(),
             })
         });
         def.pure_method("getAttributeNS", 2, |s, n, a| {
@@ -1231,11 +1269,15 @@ impl JsClass for Element {
         def.method("setAttribute", 2, |s, n, a| {
             a.require(2, "Element.setAttribute")?;
             let (name, value) = (a.get(0), a.get(1));
-            let name = str_of(&name)?;
+            let name = n.page().names.arg(s, &name)?;
             let value = str_of(&value)?;
-            n.page().dom.borrow_mut().set_attribute(n.id, &name, &value).js()?;
-            handler_attribute_changed(s, n, &name, Some(&value))?;
-            crate::input::blur_if_focus_disabled(n.page(), n.id, &name);
+            match &name {
+                NameArg::Name(name) => n.page().dom.borrow_mut().set_attribute_named(n.id, name, &value),
+                NameArg::Text(name) => n.page().dom.borrow_mut().set_attribute(n.id, name, &value),
+            }
+            .js()?;
+            handler_attribute_changed(s, n, name.text(), Some(&value))?;
+            crate::input::blur_if_focus_disabled(n.page(), n.id, name.text());
             Ok(s.undefined())
         });
         def.method("setAttributeNS", 3, |s, n, a| {
@@ -1250,13 +1292,18 @@ impl JsClass for Element {
             Ok(s.undefined())
         });
         def.method("removeAttribute", 1, |s, n, a| {
-            with_arg_str(&a, 0, "Element.removeAttribute", |name| {
-                let removed = n.page().dom.borrow_mut().remove_attribute(n.id, name).js()?;
-                if removed {
-                    handler_attribute_changed(s, n, name, None)?;
-                }
-                Ok(s.undefined())
-            })
+            a.require(1, "Element.removeAttribute")?;
+            let name = a.get(0);
+            let name = n.page().names.arg(s, &name)?;
+            let removed = match &name {
+                NameArg::Name(name) => n.page().dom.borrow_mut().remove_attribute_named(n.id, name),
+                NameArg::Text(name) => n.page().dom.borrow_mut().remove_attribute(n.id, name),
+            }
+            .js()?;
+            if removed {
+                handler_attribute_changed(s, n, name.text(), None)?;
+            }
+            Ok(s.undefined())
         });
         def.method("removeAttributeNS", 2, |s, n, a| {
             a.require(2, "Element.removeAttributeNS")?;
@@ -1266,9 +1313,18 @@ impl JsClass for Element {
             Ok(s.undefined())
         });
         def.pure_method("hasAttribute", 1, |s, n, a| {
-            crate::util::with_arg_str(&a, 0, "Element.hasAttribute", |name| {
-                Ok(s.boolean(n.page().dom.borrow().has_attribute_qualified(n.id, name).js()?))
-            })
+            a.require(1, "Element.hasAttribute")?;
+            let name = a.get(0);
+            // Converted before the DOM is borrowed: an object's conversion runs script.
+            let name = n.page().names.arg(s, &name)?;
+            let dom = n.page().dom.borrow();
+            Ok(s.boolean(
+                match name {
+                    NameArg::Name(name) => dom.has_attribute_named(n.id, &name),
+                    NameArg::Text(name) => dom.has_attribute_qualified(n.id, &name),
+                }
+                .js()?,
+            ))
         });
         def.pure_method("hasAttributeNS", 2, |s, n, a| {
             let ns = opt_dom_string(a.get(0))?;
@@ -1748,9 +1804,13 @@ impl JsClass for Document {
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::Name(name))?.value())
         });
         def.method("createElement", 1, |s, n, a| {
-            let el = with_arg_str(&a, 0, "Document.createElement", |name| {
-                n.page().dom.borrow_mut().create_element(n.id, name).js()
-            })?;
+            a.require(1, "Document.createElement")?;
+            let name = a.get(0);
+            let el = match n.page().names.arg(s, &name)? {
+                NameArg::Name(name) => n.page().dom.borrow_mut().create_element_named(n.id, &name),
+                NameArg::Text(name) => n.page().dom.borrow_mut().create_element(n.id, &name),
+            }
+            .js()?;
             if let Some(is) = a
                 .opt(1)
                 .and_then(|o| o.as_object())
