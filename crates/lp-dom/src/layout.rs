@@ -397,11 +397,34 @@ struct HitIndexState {
     /// Tests of this epoch answered without an index, and what they took.
     tests: u32,
     rented: std::time::Duration,
-    /// What the last descent took, and the last index to build (`None`:
-    /// none was built yet).
-    descent_cost: std::time::Duration,
-    build_cost: Option<std::time::Duration>,
+    /// What a descent takes and what an index takes to build (nothing
+    /// before the first of each).
+    descent_cost: CostEstimate,
+    build_cost: CostEstimate,
+    /// What the descents since the last build took, over every layout.
+    rented_since_build: std::time::Duration,
+    /// Layouts indexed at their first test since a descent was last timed.
+    bought_unseen: u32,
     builds: u64,
+}
+
+/// What one of the two hit-test paths costs, from the clock: the lesser of
+/// its last two measurements. A measurement is the work plus whatever the
+/// thread waited inside it (descheduled on a busy machine, a cold first
+/// run), so one alone can be orders of magnitude too high, and the choice
+/// made from it stops the path being measured again; two in a row that
+/// high are a cost that rose.
+#[derive(Default)]
+struct CostEstimate([Option<std::time::Duration>; 2]);
+
+impl CostEstimate {
+    fn record(&mut self, took: std::time::Duration) {
+        self.0 = [self.0[1], Some(took)];
+    }
+
+    fn get(&self) -> Option<std::time::Duration> {
+        self.0.iter().flatten().min().copied()
+    }
 }
 
 /// The observation stamp and viewport a geometry source was synced at.
@@ -1619,7 +1642,9 @@ impl Layout {
         let took = started.elapsed();
         let mut state = self.hit_index.borrow_mut();
         state.rented += took;
-        state.descent_cost = took;
+        state.rented_since_build += took;
+        state.descent_cost.record(took);
+        state.bought_unseen = 0;
         hit
     }
 
@@ -1648,6 +1673,17 @@ impl Layout {
     /// The first index of a document is built at the second test of a
     /// layout (its price is not known before). The answer is the same by
     /// either path: only the cost depends on the clock.
+    ///
+    /// Each choice stops the other path being timed, so a price that was
+    /// wrong or has changed would stand for the life of the document. Both
+    /// are therefore taken again at a bounded cost: a descent answers the
+    /// first test of every [`Self::HIT_DESCENT_EVERY`]th layout in a row
+    /// that would be indexed at once, and an index is built when the
+    /// descents since the last one have cost [`Self::HIT_BUILD_AFTER`]
+    /// times its price (see also [`CostEstimate`]).
+    const HIT_DESCENT_EVERY: u32 = 32;
+    const HIT_BUILD_AFTER: u32 = 16;
+
     fn hit_index_for(&self, dom: &Dom, force: bool) -> Option<Rc<HitIndex>> {
         self.synced_geometry_source(dom)?;
         let epoch = (self.syncs.get(), self.scroll_generation);
@@ -1663,9 +1699,13 @@ impl Layout {
                 return Some(index.clone());
             }
             state.tests += 1;
-            let buy = match state.build_cost {
+            let buy = match state.build_cost.get() {
                 None => state.tests >= 2,
-                Some(build) => build <= state.descent_cost || state.rented >= build,
+                Some(build) if state.tests == 1 && state.descent_cost.get().is_some_and(|descent| build <= descent) => {
+                    state.bought_unseen += 1;
+                    state.bought_unseen < Self::HIT_DESCENT_EVERY
+                }
+                Some(build) => state.rented >= build || state.rented_since_build >= build * Self::HIT_BUILD_AFTER,
             };
             if !force && !buy {
                 return None;
@@ -1674,7 +1714,8 @@ impl Layout {
         let started = std::time::Instant::now();
         let index = Rc::new(self.build_hit_index(dom));
         let mut state = self.hit_index.borrow_mut();
-        state.build_cost = Some(started.elapsed());
+        state.build_cost.record(started.elapsed());
+        state.rented_since_build = std::time::Duration::ZERO;
         state.builds += 1;
         state.index = Some(index.clone());
         Some(index)
@@ -3370,5 +3411,163 @@ mod scroll_to_origin {
         assert!(layout.window_scroll_to(&dom, Some(0), Some(0)));
         assert_eq!(layout.scroll_y(), 0);
         assert_eq!(source.0.get(), 1);
+    }
+}
+
+#[cfg(test)]
+mod hit_index_policy {
+    use super::*;
+    use crate::geometry::HitVisit;
+    use std::cell::Cell;
+    use std::time::Duration;
+
+    /// Boxes of 30 x 12 px in rows of 25, with a descent that reads only
+    /// the box at the point. Each stall is served once: the thread sleeps
+    /// inside the next descent or the next read of every box, as one
+    /// descheduled there would.
+    struct Tiles {
+        boxes: Vec<(u64, ExternalBox)>,
+        stall_descent: Cell<Option<Duration>>,
+        stall_geometry: Cell<Option<Duration>>,
+        style: style::servo_arc::Arc<style::properties::ComputedValues>,
+    }
+
+    impl GeometrySource for Tiles {
+        fn sync(&self, _dom: &Dom, _layout: &Layout) {}
+        fn element_box(&self, key: u64) -> Option<ExternalBox> {
+            self.boxes.iter().find(|(k, _)| *k == key).map(|(_, b)| *b)
+        }
+        fn geometry(&self) -> Option<ExternalGeometry> {
+            if let Some(stall) = self.stall_geometry.take() {
+                std::thread::sleep(stall);
+            }
+            Some(ExternalGeometry {
+                boxes: self.boxes.clone(),
+                document_width: 800.0,
+                document_height: 600.0,
+                ..Default::default()
+            })
+        }
+        fn hit_candidates(
+            &self,
+            probe: &HitProbe,
+            _offset: &dyn Fn(u64) -> (f64, f64),
+            _shifted: &[u64],
+        ) -> Option<Vec<HitVisit>> {
+            if let Some(stall) = self.stall_descent.take() {
+                std::thread::sleep(stall);
+            }
+            let at = (probe.y / 12.0) as usize * 25 + (probe.x / 30.0) as usize;
+            Some(
+                self.boxes
+                    .get(at)
+                    .map(|&(key, bounds)| HitVisit { key, order: at as u32, bounds, hit: true })
+                    .into_iter()
+                    .collect(),
+            )
+        }
+        fn document_size(&self) -> Option<(f64, f64)> {
+            Some((800.0, 600.0))
+        }
+        fn has_sticky(&self) -> bool {
+            false
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+            Some(self.style.clone())
+        }
+    }
+
+    fn tiles(count: usize) -> (Dom, Vec<NodeId>, Rc<Tiles>, Layout) {
+        use crate::parse::{parse_document, DomRef};
+        let html = format!(
+            "<!doctype html><body>{}</body>",
+            (0..count).map(|i| format!("<div id=c{i}></div>")).collect::<String>()
+        );
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", &html);
+        let dom = Rc::try_unwrap(dom_ref).ok().unwrap().into_inner();
+        let nodes: Vec<_> =
+            (0..count).map(|i| dom.get_element_by_id(doc, &format!("c{i}")).unwrap().unwrap()).collect();
+        let boxes = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, &node)| {
+                let bounds = ExternalBox {
+                    x: (i % 25 * 30) as f64,
+                    y: (i / 25 * 12) as f64,
+                    width: 30.0,
+                    height: 12.0,
+                    ..Default::default()
+                };
+                (crate::snapshot::render_key(node), bounds)
+            })
+            .collect();
+        let source = Rc::new(Tiles {
+            boxes,
+            stall_descent: Cell::new(None),
+            stall_geometry: Cell::new(None),
+            style: style::properties::ComputedValues::initial_values_with_font_override(
+                style::properties::style_structs::Font::initial_values(),
+            ),
+        });
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.set_geometry_source(Some(source.clone()));
+        (dom, nodes, source, layout)
+    }
+
+    /// A large page that changes between pointer events is answered by
+    /// descents. One descent that took long for a reason of its own (the
+    /// thread was descheduled inside it) must not make every later pointer
+    /// event read all the boxes of the page.
+    #[test]
+    fn one_slow_descent_does_not_index_a_large_changing_page_at_every_event() {
+        let (mut dom, nodes, source, layout) = tiles(20_000);
+        let target = nodes[421];
+        let hit = |dom: &Dom| layout.element_from_point(dom, 635.0, 198.0);
+        // The first index: two tests of one layout.
+        assert_eq!(hit(&dom), Some(target));
+        assert_eq!(hit(&dom), Some(target));
+        assert_eq!(layout.hit_index_stats(&dom).0, 1);
+        let mut round = 0;
+        let mut change_and_hit = |dom: &mut Dom| {
+            round += 1;
+            dom.set_attribute(target, "data-round", &round.to_string()).unwrap();
+            assert_eq!(layout.element_from_point(dom, 635.0, 198.0), Some(target));
+        };
+        for _ in 0..10 {
+            change_and_hit(&mut dom);
+        }
+        let before = layout.hit_index_stats(&dom).0;
+        source.stall_descent.set(Some(Duration::from_millis(1500)));
+        for _ in 0..12 {
+            change_and_hit(&mut dom);
+        }
+        let built = layout.hit_index_stats(&dom).0 - before;
+        assert!(built <= 2, "{built} indexes of 20000 boxes built for 12 pointer events after one slow descent");
+    }
+
+    /// A small page whose click handler writes to the DOM is indexed at
+    /// each click. One index that took long to build (the first: cold, or
+    /// the thread was descheduled) must not leave the page to descents for
+    /// good.
+    #[test]
+    fn one_slow_build_does_not_leave_a_small_page_without_an_index_for_good() {
+        let (mut dom, nodes, source, layout) = tiles(8);
+        let target = nodes[3];
+        source.stall_geometry.set(Some(Duration::from_millis(4)));
+        let mut builds = 0;
+        for round in 0..200_000 {
+            dom.set_attribute(target, "data-round", &round.to_string()).unwrap();
+            assert_eq!(layout.element_from_point(&dom, 95.0, 5.0), Some(target));
+            assert_eq!(layout.element_from_point(&dom, 95.0, 5.0), Some(target));
+            builds = layout.hit_index_stats(&dom).0;
+            if builds >= 3 {
+                break;
+            }
+        }
+        assert!(builds >= 3, "{builds} index(es) built: the slow one's price was never measured again");
     }
 }
