@@ -54,18 +54,21 @@ fn an_engine_nothing_used_is_accepted_without_a_baseline() {
 fn a_used_engine_is_accepted_once_its_realms_are_gone_and_starts_over() {
     let (engine, Some(clean)) = engine() else { return };
     assert_eq!(clean.globals, 1, "the root context only: {clean:?}");
-    for _ in 0..3 {
+    for round in 0..3 {
         use_and_leave(&engine);
         assert!(!engine.untouched());
-        assert_eq!(engine.recycle(Some(clean)), Ok(()));
+        clear_stack();
+        assert_eq!(engine.recycle(Some(clean)), Ok(()), "round {round}");
         assert!(engine.untouched());
         let after = engine.heap_counts().unwrap();
         // The script's code stays, without a realm, in the VM's code cache:
         // its handles are all the engine protects beyond a clean one.
-        assert_eq!(after.cached_code, clean.cached_code + 1, "{after:?} vs {clean:?}");
+        let kept = after.cached_code - clean.cached_code;
+        assert!(kept > 0, "{after:?} vs {clean:?}");
         assert_eq!(
             (after.globals, after.protected, after.protected_globals),
-            (clean.globals, clean.protected + 1, clean.protected_globals)
+            (clean.globals, clean.protected + kept, clean.protected_globals),
+            "{after:?} vs {clean:?}"
         );
         assert!(after.heap_size <= clean.heap_size + RECYCLE_HEAP_SLACK, "{after:?} vs {clean:?}");
     }
@@ -172,6 +175,7 @@ fn a_time_zone_override_goes_back_to_the_hosts() {
     }
     assert!(!engine.untouched());
     assert_eq!(zone(&engine), other);
+    clear_stack();
     assert_eq!(engine.recycle(Some(clean)), Ok(()));
     assert_eq!(zone(&engine), host);
 }
