@@ -563,7 +563,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
         lp_render::use_fork_safe_fonts();
     }
 
-    let mut thread = EngineHost::prepare_thread_with(&profile).map_err(|e| e.message)?;
+    let mut thread = EngineHost::prepare_thread_with(&profile, true).map_err(|e| e.message)?;
     precompile_static_modules(&thread.browser.engine, &profile.net.static_files);
     let profiles: Vec<PreparedProfile> = profile.prepared.iter().map(one_page).collect();
     let pages = EngineHost::preboot(&mut thread, &profiles);

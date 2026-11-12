@@ -610,7 +610,7 @@ impl ThreadPerConnection {
     /// the first connection (TOS uses one per process) finds it ready.
     pub fn with_spare(profile: BrowserProfile) -> std::io::Result<Self> {
         let factory = Self { profile: Arc::new(profile), ..Self::default() };
-        let spare = factory.spawn_spare()?;
+        let spare = factory.spawn_thread(true)?;
         *factory.spare.lock().unwrap_or_else(|e| e.into_inner()) = Some(spare);
         Ok(factory)
     }
@@ -621,14 +621,16 @@ impl ThreadPerConnection {
         Self { profile: Arc::new(profile), ..Self::default() }
     }
 
-    /// Spawns a thread that creates its engine now and serves a later connection.
-    fn spawn_spare(&self) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
+    /// Spawns a thread that creates its engine now and serves a later
+    /// connection. `ahead` says no connection waits for it yet: only then is
+    /// the first page's realm built here too (`prepare_thread_with`).
+    fn spawn_thread(&self, ahead: bool) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
         let n = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel::<Assignment>();
         let profile = self.profile.clone();
         let builder = std::thread::Builder::new().name(format!("lp-browser-{n}")).stack_size(BROWSER_STACK_BYTES);
         builder.spawn(move || {
-            let mut prepared = EngineHost::prepare_thread_with(&profile).map(|mut thread| {
+            let mut prepared = EngineHost::prepare_thread_with(&profile, ahead).map(|mut thread| {
                 let prebooted = EngineHost::preboot(&mut thread, &profile.prepared);
                 (thread, prebooted)
             });
@@ -669,7 +671,9 @@ impl ThreadPerConnection {
     /// The spare thread (started earlier) or a fresh one; then starts the next spare.
     fn claim(&self) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
         let taken = self.spare.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let next = self.spawn_spare();
+        // With a spare taken, the new thread is the next spare; without one
+        // it serves this connection, which is already waiting.
+        let next = self.spawn_thread(taken.is_some());
         match taken {
             Some(tx) => {
                 if let Ok(next) = next {
