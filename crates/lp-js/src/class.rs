@@ -236,6 +236,7 @@ impl OwnGetter {
             result,
             Some(getter_invoke_h::<C>),
             None,
+            None,
         );
         Self { name, slot }
     }
