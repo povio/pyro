@@ -21,6 +21,10 @@ pub(crate) fn key_of(page: &PageDom, id: NodeId) -> Option<TargetKey> {
 /// Fires a trusted simple `Event` at `node`. Returns false if canceled.
 pub fn fire_simple(page: &Rc<PageDom>, node: NodeId, ty: &str, bubbles: bool, cancelable: bool) -> bool {
     let Some(key) = key_of(page, node) else { return true };
+    // An event nobody listens for is not made (`crate::target::unheard`).
+    if crate::target::unheard(page, ty) {
+        return true;
+    }
     let ev = EventCore::trusted(page, EventInterface::Event, ty, bubbles, cancelable);
     fire(page, key, &ev)
 }
@@ -43,6 +47,9 @@ fn fire_input_event(
     cancelable: bool,
 ) -> bool {
     let Some(key) = key_of(page, node) else { return true };
+    if crate::target::unheard(page, ty) {
+        return true;
+    }
     let ev = EventCore::trusted(page, EventInterface::InputEvent, ty, true, cancelable);
     {
         let mut f = ev.fields.borrow_mut();
@@ -54,6 +61,9 @@ fn fire_input_event(
 
 fn fire_focus_event(page: &Rc<PageDom>, node: NodeId, ty: &str, bubbles: bool, related: Option<NodeId>) {
     let Some(key) = key_of(page, node) else { return };
+    if crate::target::unheard(page, ty) {
+        return;
+    }
     let ev = EventCore::trusted(page, EventInterface::FocusEvent, ty, bubbles, false);
     ev.fields.borrow_mut().related_target = related.and_then(|r| key_of(page, r));
     fire(page, key, &ev);
@@ -1083,8 +1093,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 page.pointer_modality.set(false);
                 let _ = page.dom.borrow_mut().set_focus_visible(doc, true);
             }
-            let ev = key_event(page, "keydown", k, 0);
-            let ok = fire(page, tkey, &ev);
+            let ok = crate::target::unheard(page, "keydown") || fire(page, tkey, &key_event(page, "keydown", k, 0));
             if !ok || page.document() != doc || !accepts_keyboard(page) {
                 return;
             }
@@ -1109,8 +1118,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
         }
         KeyKind::Char => press_char(page, target, k),
         KeyKind::KeyUp => {
-            let ev = key_event(page, "keyup", k, 0);
-            let ok = fire(page, tkey, &ev);
+            let ok = crate::target::unheard(page, "keyup") || fire(page, tkey, &key_event(page, "keyup", k, 0));
             if k.key == " " && page.space_target.get().is_some() {
                 set_active(page, doc, None);
             }
@@ -1138,10 +1146,10 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         return;
     }
     let code = k.text.chars().next().map_or(0, |c| c as u32);
-    let ev = key_event(page, "keypress", k, code);
     let Some(tkey) = key_of(page, target) else { return };
     let doc = page.document();
-    if !fire(page, tkey, &ev) || page.document() != doc || !accepts_keyboard(page) {
+    let ok = crate::target::unheard(page, "keypress") || fire(page, tkey, &key_event(page, "keypress", k, code));
+    if !ok || page.document() != doc || !accepts_keyboard(page) {
         return;
     }
     let Some(target) = key_target(page) else { return };
@@ -1821,6 +1829,21 @@ pub(crate) fn mouse_event(
     ev
 }
 
+/// Fires the trusted mouse or pointer event `ty` at `target`; `false` when
+/// it was canceled. An event nobody listens for (`crate::target::unheard`)
+/// is not made: its dispatch would run nothing, and the default actions
+/// around it are the caller's either way.
+fn fire_mouse(
+    page: &Rc<PageDom>,
+    target: TargetKey,
+    iface: EventInterface,
+    ty: &str,
+    m: &MouseInput,
+    cancelable: bool,
+) -> bool {
+    crate::target::unheard(page, ty) || fire(page, target, &mouse_event(page, iface, ty, m, cancelable))
+}
+
 /// The hit-test target at a viewport point. With `root_fallback`, empty
 /// viewport space targets the root element, as Chrome hit-tests it; the
 /// synthetic layout leaves such gaps (e.g. at Playwright's initial mouse
@@ -1906,26 +1929,34 @@ fn dispatch_boundary_events(
     let prev_connected = prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
     let (left, entered) = boundary_chains(page, prev, target);
     let prev_key = prev.and_then(|p| key_of(page, p));
-    let related = |ev: EventData, key: Option<TargetKey>| {
-        ev.fields.borrow_mut().related_target = key;
-        ev
+    // An event nobody listens for is not made (see `fire_mouse`).
+    let boundary = |iface: EventInterface, ty: &str, at: TargetKey, cancelable: bool, related: Option<TargetKey>| {
+        if crate::target::unheard(page, ty) {
+            return;
+        }
+        let ev = mouse_event(page, iface, ty, m, cancelable);
+        ev.fields.borrow_mut().related_target = related;
+        fire(page, at, &ev);
     };
-    for (iface, prefix) in [(EventInterface::PointerEvent, "pointer"), (EventInterface::MouseEvent, "mouse")] {
+    for (iface, [out, leave, over, enter]) in [
+        (EventInterface::PointerEvent, ["pointerout", "pointerleave", "pointerover", "pointerenter"]),
+        (EventInterface::MouseEvent, ["mouseout", "mouseleave", "mouseover", "mouseenter"]),
+    ] {
         if touch.is_some() && iface == EventInterface::PointerEvent {
             continue;
         }
         if let Some(p) = prev_key.filter(|_| prev_connected) {
-            fire(page, p, &related(mouse_event(page, iface, &format!("{prefix}out"), m, true), Some(tkey)));
+            boundary(iface, out, p, true, Some(tkey));
         }
         for &n in &left {
             if let Some(k) = key_of(page, n) {
-                fire(page, k, &related(mouse_event(page, iface, &format!("{prefix}leave"), m, false), Some(tkey)));
+                boundary(iface, leave, k, false, Some(tkey));
             }
         }
-        fire(page, tkey, &related(mouse_event(page, iface, &format!("{prefix}over"), m, true), prev_key));
+        boundary(iface, over, tkey, true, prev_key);
         for &n in entered.iter().rev() {
             if let Some(k) = key_of(page, n) {
-                fire(page, k, &related(mouse_event(page, iface, &format!("{prefix}enter"), m, false), prev_key));
+                boundary(iface, enter, k, false, prev_key);
             }
         }
     }
@@ -2175,10 +2206,10 @@ fn dispatch_mouse_inner(
                 dispatch_boundary_events(page, prev, target, tkey, m, touch);
             }
             if touch.is_none() {
-                fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
+                fire_mouse(page, tkey, EventInterface::PointerEvent, "pointermove", m, true);
             }
             if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
-                fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
+                fire_mouse(page, tkey, EventInterface::MouseEvent, "mousemove", m, true);
             }
             if m.buttons & 1 != 0 {
                 text_select_move(page, target, m);
@@ -2199,8 +2230,8 @@ fn dispatch_mouse_inner(
                 set_active(page, page.document(), Some(target));
             }
             let pd = touch.is_some()
-                || fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
-            let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
+                || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true);
+            let md = !pd || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true);
             page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));
             note_buttons(page, m);
@@ -2270,7 +2301,7 @@ fn dispatch_mouse_inner(
                 set_active(page, page.document(), None);
             }
             if touch.is_none() {
-                fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
+                fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerup", m, true);
                 // Implicit release right after pointerup: lostpointercapture
                 // before the compatibility mouseup and the click.
                 let mut c = page.mouse_capture.get();
@@ -2283,7 +2314,7 @@ fn dispatch_mouse_inner(
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
             if !page.compat_mouse_suppressed.replace(false) {
-                fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseup", m, true));
+                fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true);
             }
             let pressed = page.take_press_target();
             // click targets the common ancestor of press and release targets;
@@ -2310,7 +2341,7 @@ fn dispatch_mouse_inner(
                 dispatch_with_activation(page, ct, &ev);
                 if name == "click" && m.click_count == 2 {
                     if let Some(k) = key_of(page, ct) {
-                        fire(page, k, &mouse_event(page, EventInterface::MouseEvent, "dblclick", m, true));
+                        fire_mouse(page, k, EventInterface::MouseEvent, "dblclick", m, true);
                     }
                 }
             }
@@ -2320,7 +2351,7 @@ fn dispatch_mouse_inner(
             // 571-615): each axis scrolls the nearest container that can still
             // move, else the viewport, then `scroll` fires as a task.
             let doc = page.document();
-            if !fire(page, tkey, &mouse_event(page, EventInterface::WheelEvent, "wheel", m, true))
+            if !fire_mouse(page, tkey, EventInterface::WheelEvent, "wheel", m, true)
                 || page.is_disposed()
                 || page.document() != doc
             {
