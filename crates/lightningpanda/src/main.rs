@@ -530,3 +530,48 @@ fn fetch(args: &[String]) -> ExitCode {
     thread.browser.close_all();
     ExitCode::SUCCESS
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::c_void;
+
+    /// mimalloc's `mi_heap_area_t`, the fields read here.
+    #[repr(C)]
+    struct Area {
+        blocks: *mut c_void,
+        reserved: usize,
+        committed: usize,
+        used: usize,
+        block_size: usize,
+        full_block_size: usize,
+        page: *const c_void,
+    }
+    type Visitor = extern "C" fn(*const c_void, *const Area, *mut c_void, usize, *mut c_void) -> bool;
+    unsafe extern "C" {
+        fn mi_heap_main() -> *mut c_void;
+        fn mi_heap_visit_blocks(heap: *mut c_void, visit_blocks: bool, visitor: Visitor, arg: *mut c_void) -> bool;
+    }
+
+    /// The build turns off mimalloc's shared pages for blocks of 64 to
+    /// 512 KiB (`MI_ENABLE_LARGE_PAGES=0`, set in `.cargo/config.toml`), so
+    /// that freeing such a block returns its memory: a 100 KiB block sits in
+    /// an area of about its own size, not in a 4 MiB page.
+    #[test]
+    fn the_build_gives_a_large_block_a_page_of_its_own() {
+        extern "C" fn visit(_heap: *const c_void, area: *const Area, _block: *mut c_void, _size: usize, arg: *mut c_void) -> bool {
+            // SAFETY: mimalloc passes a valid area, and `arg` is the pair below.
+            let (area, found) = unsafe { (&*area, &mut *(arg as *mut (usize, usize))) };
+            let start = area.blocks as usize;
+            if (start..start + area.reserved).contains(&found.0) {
+                found.1 = area.reserved;
+            }
+            true
+        }
+        let block = vec![1u8; 100 << 10];
+        let mut found = (block.as_ptr() as usize, 0usize);
+        // SAFETY: mimalloc's public API; the visitor only reads the area.
+        unsafe { mi_heap_visit_blocks(mi_heap_main(), false, visit, (&raw mut found).cast()) };
+        assert!(found.1 >= 100 << 10, "the block's area was not found");
+        assert!(found.1 < 1 << 20, "a 100 KiB block shares an area of {} bytes", found.1);
+    }
+}
