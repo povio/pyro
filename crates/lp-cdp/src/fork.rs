@@ -1348,7 +1348,7 @@ impl TemplateProcess {
         browser.set_fork_child(Box::new(RootRegistry { root, lease: RefCell::new(None) }));
         lp_webapi::release_after_fork();
         let after = if fast_exit() { crate::serve::AfterServe::Exit } else { crate::serve::AfterServe::TearDown };
-        crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone(), after);
+        crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone(), after, None);
         crate::fork_stats::mark("dropped");
         crate::fork_stats::child_done(kind, profile);
         drop(finished);
