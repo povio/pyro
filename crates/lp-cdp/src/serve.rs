@@ -71,14 +71,14 @@ options:
                                         prepared pages), off otherwise;
                                         env LIGHTNINGPANDA_SPARE_ENGINE=on|off
       --engine-reuse <on|off|thread|always>
-                                       a connection that ends without having made
-                                       a page leaves its browser thread and its
-                                       JavaScript engine to the next one
-                                       (default: on; at most one waits, for at
-                                       most 10 s); thread: the thread after pages
-                                       too, never the engine;
-                                       always: the engine after pages too, once
-                                       it is proven to hold nothing of them
+                                       a connection that ends leaves its browser
+                                       thread and its JavaScript engine to the
+                                       next one, once the engine is proven to
+                                       hold nothing of its pages (default:
+                                       always; at most one waits, for at most
+                                       10 s); on: only an engine no page was
+                                       made in; thread: the thread, never the
+                                       engine; off: neither
                                        env LIGHTNINGPANDA_ENGINE_REUSE=...
   --render-prewarm <on|off>             scan the system fonts and warm the renderer at
                                         startup, so the first screenshot or PDF does not
@@ -279,7 +279,6 @@ pub enum EngineReuse {
     /// browser things without ever making a page). A used engine is
     /// destroyed and its thread ends with it. An unused engine needs no
     /// proof: 3.7 M instructions for such a connection become 0.7 M.
-    #[default]
     On,
     /// Its browser thread and its engine, a used one once
     /// `lp_js::Engine::recycle` has proven it clean. The proof keeps the
@@ -292,6 +291,7 @@ pub enum EngineReuse {
     /// thread and engine each time): 17.6 M instructions against 29.0 M,
     /// 13.6 to 14.4 M cycles against 20.2 to 21.7 M, 11.3 to 14.2 ms
     /// against 12.5 to 17.6 ms.
+    #[default]
     Always,
 }
 
@@ -1559,7 +1559,7 @@ mod tests {
 
     #[test]
     fn engine_reuse_flag() {
-        assert_eq!(parse_args(&[]).unwrap().engine_reuse, EngineReuse::On);
+        assert_eq!(parse_args(&[]).unwrap().engine_reuse, EngineReuse::Always);
         let with = |value: &str| parse_args(&["--engine-reuse".to_owned(), value.to_owned()]);
         assert_eq!(with("off").unwrap().engine_reuse, EngineReuse::Off);
         assert_eq!(with("on").unwrap().engine_reuse, EngineReuse::On);
