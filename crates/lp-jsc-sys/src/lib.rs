@@ -561,6 +561,8 @@ pub mod spi {
     pub type JSGlobalContextReseedRandomFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
     /// Patched JavaScriptCore only (`webkit/patches/0003-complete-jit-plans.patch`).
     pub type JSCompleteJITPlansFn = unsafe extern "C" fn(group: JSContextGroupRef, wait: bool);
+    /// Patched JavaScriptCore only (`webkit/patches/0030-first-vm-no-bundle-no-time-zone-table.patch`).
+    pub type JSPrepareTimeZonesFn = unsafe extern "C" fn();
     /// Patched JavaScriptCore only (`webkit/patches/0006-vm-time-zone.patch`).
     pub type JSSetWrapperPropertyAddedCallbackFn =
         unsafe extern "C" fn(callback: Option<unsafe extern "C" fn(JSContextRef, JSObjectRef)>);
@@ -825,6 +827,7 @@ pub mod spi {
         pub did_fork: Option<JSDidForkFn>,
         pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
         pub complete_jit_plans: Option<JSCompleteJITPlansFn>,
+        pub prepare_time_zones: Option<JSPrepareTimeZonesFn>,
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
@@ -977,6 +980,7 @@ pub mod spi {
             did_fork: resolve!("JSDidFork"),
             reseed_random: resolve!("JSGlobalContextReseedRandom"),
             complete_jit_plans: resolve!("JSCompleteJITPlans"),
+            prepare_time_zones: resolve!("JSPrepareTimeZones"),
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),

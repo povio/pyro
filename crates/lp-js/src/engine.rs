@@ -1318,6 +1318,21 @@ pub fn prepare_process_for_fork() {
     });
 }
 
+/// Builds JavaScriptCore's table of time zones on a thread of its own, which
+/// the first `Intl` or `Temporal` use of a zone in a process otherwise does
+/// (2.2 ms; patched JSC, where creating a VM no longer does). For a process
+/// that forks its pages: built once here, beside engine creation, no page
+/// builds it again. Call after [`prepare_process_for_fork`] and with the
+/// `JSC_*` environment final (this may be what initializes JavaScriptCore);
+/// join the thread before any `fork`. `None`: nothing to build, or no thread.
+pub fn prepare_time_zones() -> Option<std::thread::JoinHandle<()>> {
+    let build = sys::spi::get().prepare_time_zones?;
+    configure_process();
+    // SAFETY: the entry point takes no argument, initializes JavaScriptCore
+    // itself and builds the table under a `std::call_once`.
+    std::thread::Builder::new().name("lp-time-zones".into()).spawn(move || unsafe { build() }).ok()
+}
+
 pub(crate) struct TerminateState {
     requested: AtomicBool,
 }
