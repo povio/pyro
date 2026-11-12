@@ -10,6 +10,7 @@
 
 mod accessors;
 mod autorelease;
+pub mod bytecode_cache;
 mod class;
 mod engine;
 mod error;
@@ -20,10 +21,11 @@ mod string;
 mod value;
 
 pub use accessors::slot_usage as accessor_slot_usage;
+pub use bytecode_cache::BytecodeCache;
 pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent, OwnName};
 pub use engine::{
     configure_process, entry_realm, is_process_default, prepare_process_for_fork, prepare_time_zones, Capabilities,
-    ConsoleLevel, Engine, EngineHooks, FunctionCoverage, HeapCounts, ImpureNames, ModulePrecompileStats,
+    BytecodeCacheStats, ConsoleLevel, Engine, EngineHooks, FunctionCoverage, HeapCounts, ImpureNames, ModulePrecompileStats,
     ScriptCoverage, TerminateHandle, WrapperPropertyHook, RECYCLE_HEAP_SLACK,
 };
 pub use engine::{process_footprint, release_thread_memory, set_allocator_release, set_allocator_trim};

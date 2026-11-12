@@ -4,6 +4,7 @@
 
 mod atom_names_review;
 mod binding_shortcuts;
+mod bytecode_cache;
 mod callback_hook;
 mod callback_lock;
 mod class_lengths;

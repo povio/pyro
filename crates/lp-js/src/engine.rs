@@ -11,6 +11,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 pub use sys::modules::ModulePrecompileStats;
+pub use sys::spi::JSBytecodeCacheStats as BytecodeCacheStats;
 
 /// Optional engine features, detected at runtime. Missing private SPI never
 /// crashes: the dependent operation reports `JsError::Unsupported`.
@@ -184,6 +185,12 @@ pub(crate) struct EngineInner {
     pub(crate) coverage_realms: RefCell<Option<rustc_hash::FxHashMap<usize, RealmId>>>,
     /// [`Engine::set_time_zone`] has overridden the host's zone.
     time_zone_set: Cell<bool>,
+    /// The bytecode cache this engine's scripts and modules go through.
+    bytecode_cache: RefCell<Option<Arc<crate::BytecodeCache>>>,
+    /// The cached modules [`Engine::precompile_module`] took from the cache:
+    /// the engine keeps their records and code, so a load of one needs
+    /// neither from its entry.
+    pub(crate) precompiled_from_cache: RefCell<rustc_hash::FxHashSet<crate::bytecode_cache::Key>>,
 }
 
 /// A script compiled while coverage was on ([`Engine::new_scripts`],
@@ -418,6 +425,15 @@ struct RetiredMembers {
 }
 
 impl EngineInner {
+    /// The bytecode cache, for a source of `len` bytes that it handles.
+    /// None while coverage is on: code is then compiled with counters, which
+    /// cached code does not have, and must not be written as an entry.
+    pub(crate) fn bytecode_cache_for(&self, len: usize) -> Option<Arc<crate::BytecodeCache>> {
+        let cache = self.bytecode_cache.borrow();
+        let cache = cache.as_ref()?;
+        (cache.handles(len) && self.coverage_users.get() == 0).then(|| cache.clone())
+    }
+
     /// Takes the member payloads of a realm being disposed, whose global
     /// object `global` is still alive: they go with it (see
     /// `retired_members`), or with the engine when no weak handle can watch
@@ -766,6 +782,8 @@ impl Engine {
             coverage_cursor: Cell::new(0),
             coverage_realms: RefCell::new(None),
             time_zone_set: Cell::new(false),
+            bytecode_cache: RefCell::new(crate::bytecode_cache::default()),
+            precompiled_from_cache: RefCell::default(),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -1300,6 +1318,9 @@ impl Engine {
         if !Self::has_module_precompile() {
             return false;
         }
+        if !functions && self.precompile_cached_module(source, url) {
+            return true;
+        }
         let text = crate::realm::module_source_with_url(source, url);
         // SAFETY: the root context is alive and used by this thread only; the
         // slices outlive the call, which copies them.
@@ -1313,6 +1334,60 @@ impl Engine {
                 std::os::raw::c_int::from(functions),
             ) == 1
         }
+    }
+
+    /// [`Engine::precompile_module`] through the bytecode cache: the module's
+    /// record and top-level code come from its entry (written first if there
+    /// is none), and its functions are decoded from the entry's mapping at
+    /// their first call, in the process that calls. `false` when the cache
+    /// does not handle the module: it is then precompiled from its source.
+    fn precompile_cached_module(&self, source: &str, url: &str) -> bool {
+        use crate::bytecode_cache::{CachedSource, Find, SourceKind};
+        let prefix = crate::realm::module_prefix(url);
+        let Some(cache) = self.inner.bytecode_cache_for(prefix.len() + source.len()) else { return false };
+        let (key, entry) = match cache.find(SourceKind::Module, url, &[&prefix, source]) {
+            Find::Skip => return false,
+            Find::Hit(key, entry) => (key, entry),
+            Find::Miss(key) => {
+                let text = prefix + source;
+                match cache.write_now(self.inner.root, key, SourceKind::Module, url, text) {
+                    Some(entry) => (key, entry),
+                    None => return false,
+                }
+            }
+        };
+        let url = crate::JsString::new(url);
+        let cached = CachedSource::new(&entry, true);
+        // SAFETY: the root context is alive and used by this thread only;
+        // `cached` is given to this one call, which releases its text.
+        let kept = unsafe { (cache.spi().precompile)(self.inner.root, &cached.raw, url.as_raw()) };
+        if kept {
+            self.inner.precompiled_from_cache.borrow_mut().insert(key);
+        }
+        kept
+    }
+
+    /// Sets the bytecode cache this engine's scripts and modules go through
+    /// (`None`: none). A new engine uses [`crate::bytecode_cache::default`].
+    pub fn set_bytecode_cache(&self, cache: Option<Arc<crate::BytecodeCache>>) {
+        *self.inner.bytecode_cache.borrow_mut() = cache;
+    }
+
+    /// The engine's bytecode cache.
+    pub fn bytecode_cache(&self) -> Option<Arc<crate::BytecodeCache>> {
+        self.inner.bytecode_cache.borrow().clone()
+    }
+
+    /// What JavaScriptCore did with the cached sources given to this engine:
+    /// all zero without the patched JavaScriptCore. A forked process starts
+    /// from its parent's values.
+    pub fn bytecode_cache_stats(&self) -> BytecodeCacheStats {
+        let mut stats = BytecodeCacheStats::default();
+        if let Some(spi) = sys::spi::get().bytecode_cache() {
+            // SAFETY: the group is alive and used by this thread only.
+            unsafe { (spi.stats)(self.inner.group, &mut stats) };
+        }
+        stats
     }
 
     /// What [`Engine::precompile_module`] keeps and how loads have used it.

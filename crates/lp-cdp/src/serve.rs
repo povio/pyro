@@ -61,6 +61,12 @@ options:
                                         quiet (default, one extra booted app) or once the
                                         acquired page's context closes (no extra app;
                                         env LIGHTNINGPANDA_PREPARE_REFILL)
+  --bytecode-cache <DIR>                keep the bytecode of scripts and modules in DIR and
+                                        load it from there instead of parsing them, in this
+                                        and in later runs. DIR is created if missing and must
+                                        be yours alone (mode 0700): what is in it runs as
+                                        code, unchecked. Off without it;
+                                        env LIGHTNINGPANDA_BYTECODE_CACHE
   --fork                                serve every connection from a fork() of a process
                                         that booted the prepared pages once (patched
                                         JavaScriptCore only; env LIGHTNINGPANDA_FORK=1)
@@ -209,6 +215,9 @@ pub struct ServeOptions {
     /// `--prepare-refill after-close`: replacements wait for the acquired
     /// page's context to close.
     pub prepare_refill_after_close: bool,
+    /// `--bytecode-cache DIR` (or `LIGHTNINGPANDA_BYTECODE_CACHE`): the
+    /// directory of [`lp_js::BytecodeCache`].
+    pub bytecode_cache: Option<PathBuf>,
     /// `--fork` (or `LIGHTNINGPANDA_FORK=1`): connections are forks of a
     /// template process ([`crate::fork`]).
     pub fork: bool,
@@ -343,6 +352,9 @@ impl Default for ServeOptions {
                 .map(|v| v.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_owned).collect())
                 .unwrap_or_default(),
             prepare_refill_after_close: std::env::var(PREPARE_REFILL_ENV).is_ok_and(|v| v.trim() == "after-close"),
+            bytecode_cache: std::env::var_os(lp_js::bytecode_cache::DIR_ENV)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from),
             fork: std::env::var(FORK_ENV).is_ok_and(|v| v.trim() == "1"),
             template: None,
             spare_engine: std::env::var(SPARE_ENGINE_ENV).ok().and_then(|v| parse_switch(SPARE_ENGINE_ENV, &v).ok()),
@@ -468,6 +480,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
                 "after-close" => o.prepare_refill_after_close = true,
                 other => return Err(format!("--prepare-refill: '{other}' is not quiet or after-close")),
             },
+            "--bytecode-cache" => o.bytecode_cache = Some(PathBuf::from(value()?)),
             "--fork" => o.fork = true,
             "--spare-engine" => o.spare_engine = Some(parse_switch("--spare-engine", &value()?)?),
             "--engine-reuse" => o.engine_reuse = EngineReuse::parse("--engine-reuse", &value()?)?,
@@ -561,6 +574,14 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     // same arguments): every renderer takes the default when it is made.
     #[cfg(feature = "render")]
     lp_render::set_hyphen_digit_breaks(options.hyphen_digit_breaks);
+    // Before any engine, and before the template is forked: it and its
+    // forks use the same cache. Only the directory is looked at here.
+    if let Some(dir) = &options.bytecode_cache {
+        if let Err(e) = lp_js::bytecode_cache::use_dir(dir) {
+            eprintln!("lightningpanda serve: --bytecode-cache {}: {e}", dir.display());
+            return ExitCode::from(2);
+        }
+    }
     if let Some(socket) = &options.template {
         return crate::fork::template_main(&options, socket);
     }
@@ -1433,6 +1454,17 @@ mod tests {
         assert!(!args(&["--hyphen-digit-breaks", "off"]).unwrap().hyphen_digit_breaks);
         assert!(args(&["--hyphen-digit-breaks", "maybe"]).is_err());
         assert!(args(&["--hyphen-digit-breaks"]).is_err());
+    }
+
+    #[test]
+    fn bytecode_cache_flag() {
+        let args = |a: &[&str]| parse_args(&a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        // Off unless a directory is given.
+        if std::env::var_os(lp_js::bytecode_cache::DIR_ENV).is_none() {
+            assert_eq!(args(&[]).unwrap().bytecode_cache, None);
+        }
+        assert_eq!(args(&["--bytecode-cache", "/tmp/c"]).unwrap().bytecode_cache, Some(PathBuf::from("/tmp/c")));
+        assert!(args(&["--bytecode-cache"]).is_err());
     }
 
     #[test]

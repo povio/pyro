@@ -40,6 +40,7 @@ fn main() {
     for v in ["LP_JSC", "LP_JSC_DIR", "LP_JSC_CACHE", "HOME", "XDG_CACHE_HOME"] {
         println!("cargo:rerun-if-env-changed={v}");
     }
+    println!("cargo:rustc-env=LP_JSC_INPUTS_HASH={:016x}", inputs_hash(&inputs));
     println!("cargo::rustc-check-cfg=cfg(lp_jsc_source)");
     println!("cargo::rustc-check-cfg=cfg(lp_jsc_static)");
 
@@ -162,16 +163,35 @@ fn source_jsc(
     found.cloned()
 }
 
+/// REVISION and the patches of `root`, by name.
+fn input_files(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out = vec![(PathBuf::from("REVISION"), fs::read(root.join("REVISION")).unwrap_or_default())];
+    let mut patches: Vec<_> = fs::read_dir(root.join("patches")).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    patches.sort();
+    for p in patches {
+        out.push((PathBuf::from(p.file_name().unwrap()), fs::read(&p).unwrap_or_default()));
+    }
+    out
+}
+
 /// True when `built` holds exactly the REVISION and patches of `inputs`.
 fn same_inputs(inputs: &Path, built: &Path) -> bool {
-    let files = |root: &Path| -> Vec<(PathBuf, Vec<u8>)> {
-        let mut out = vec![(PathBuf::from("REVISION"), fs::read(root.join("REVISION")).unwrap_or_default())];
-        let mut patches: Vec<_> = fs::read_dir(root.join("patches")).into_iter().flatten().flatten().map(|e| e.path()).collect();
-        patches.sort();
-        for p in patches {
-            out.push((PathBuf::from(p.file_name().unwrap()), fs::read(&p).unwrap_or_default()));
+    input_files(inputs) == input_files(built)
+}
+
+/// FNV-1a over REVISION and the patches (names and contents): part of the
+/// version of the bytecode cache, whose entries only the JavaScriptCore that
+/// wrote them may read.
+fn inputs_hash(inputs: &Path) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut feed = |bytes: &[u8]| {
+        for b in (bytes.len() as u64).to_le_bytes().iter().chain(bytes) {
+            hash = (hash ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3);
         }
-        out
     };
-    files(inputs) == files(built)
+    for (name, contents) in input_files(inputs) {
+        feed(name.to_string_lossy().as_bytes());
+        feed(&contents);
+    }
+    hash
 }
