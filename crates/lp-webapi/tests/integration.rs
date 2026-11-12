@@ -31,6 +31,7 @@ mod observable_js;
 mod popover_dialog_js;
 mod storage_js;
 mod support;
+mod thread_state;
 mod traversal_js;
 mod uievents_js;
 mod url_conformance;

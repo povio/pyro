@@ -558,3 +558,15 @@ pub(crate) fn decode_with_ports<'s>(
         }
     }
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    if CLONE_SOURCE.with(|c| c.borrow().is_some()) {
+        return Some("structured_clone::CLONE_SOURCE");
+    }
+    if WIRE_BLOBS.with(|b| !b.borrow().is_empty()) {
+        return Some("structured_clone::WIRE_BLOBS");
+    }
+    WIRE_CANVASES.with(|c| !c.borrow().is_empty()).then_some("structured_clone::WIRE_CANVASES")
+}

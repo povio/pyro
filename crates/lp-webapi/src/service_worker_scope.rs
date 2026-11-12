@@ -452,3 +452,19 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
     PENDING.with(|p| p.borrow_mut().insert(key, job));
     call(s, "dispatchFetch", &[s.number(key as f64), value, s.string(&client), s.string(&resulting)]);
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    if GLUE.with(|g| g.borrow().is_some()) {
+        return Some("service_worker_scope::GLUE");
+    }
+    if PENDING.with(|p| !p.borrow().is_empty()) {
+        return Some("service_worker_scope::PENDING");
+    }
+    if QUERIES.get() != 0 {
+        return Some("service_worker_scope::QUERIES");
+    }
+    NEXT_KEY.set(1);
+    None
+}

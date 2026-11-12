@@ -46,6 +46,13 @@ pub(crate) fn enable_manual() {
     MANUAL.set(true);
 }
 
+/// The page clock of a thread no browser has used ([`crate::reset_thread`]).
+pub(crate) fn reset() {
+    SKEW.set(Duration::ZERO);
+    MANUAL.set(false);
+    FROZEN.set(None);
+}
+
 /// The page clock now, as an `Instant` (comparable to timer deadlines kept
 /// on this clock).
 pub fn now() -> Instant {

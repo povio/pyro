@@ -86,6 +86,7 @@ mod storage_manager;
 mod streams;
 mod structured_clone;
 pub mod target;
+pub mod thread_state;
 pub mod traversal;
 pub mod url;
 pub mod url_search_params;
@@ -192,6 +193,15 @@ thread_local! {
     /// own wrapper table.
     static DOM_PAGES: std::cell::RefCell<rustc_hash::FxHashMap<usize, Rc<std::cell::RefCell<Vec<std::rc::Weak<PageDom>>>>>> =
         Default::default();
+}
+
+/// [`thread_state::reset_thread`]'s part for `DOM_PAGES`.
+fn dom_pages_leftover() -> Option<&'static str> {
+    DOM_PAGES.with(|map| {
+        let mut map = map.borrow_mut();
+        map.retain(|_, pages| pages.borrow().iter().any(|p| p.strong_count() > 0));
+        (!map.is_empty()).then_some("lib::DOM_PAGES")
+    })
 }
 
 /// A node holding listeners keeps its wrapper (and so the listeners) from the

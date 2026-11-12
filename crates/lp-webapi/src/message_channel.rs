@@ -876,3 +876,21 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<MessageChannel>();
     engine.register::<BroadcastChannel>();
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    REMOTE.with(|r| r.borrow_mut().retain(|_, port| port.strong_count() > 0));
+    if REMOTE.with(|r| !r.borrow().is_empty()) {
+        return Some("message_channel::REMOTE");
+    }
+    MADE.with(|m| m.borrow_mut().retain(|(_, pipe)| pipe.is_live()));
+    if MADE.with(|m| !m.borrow().is_empty()) {
+        return Some("message_channel::MADE");
+    }
+    if EXPORT_DEPTH.get() != 0 {
+        return Some("message_channel::EXPORT_DEPTH");
+    }
+    CHANNELS.with(|c| c.borrow_mut().retain(|channel| channel.strong_count() > 0));
+    CHANNELS.with(|c| !c.borrow().is_empty()).then_some("message_channel::CHANNELS")
+}

@@ -1526,3 +1526,9 @@ mod tests {
         assert!(isolated.databases("http://one.test").is_empty());
     }
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    REALMS.with(|r| !r.borrow().is_empty()).then_some("indexeddb::REALMS")
+}

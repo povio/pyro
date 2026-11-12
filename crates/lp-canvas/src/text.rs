@@ -62,6 +62,14 @@ thread_local! {
     static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
 }
 
+/// Drops this thread's text shaping state, the font collection included
+/// (the web fonts pages registered are in it): the next [`layout`] makes it
+/// again.
+pub fn release_thread() {
+    let context = CONTEXT.with(|cell| cell.try_borrow_mut().ok().and_then(|mut cell| cell.take()));
+    drop(context);
+}
+
 /// HTML "text preparation": ASCII whitespace becomes spaces (one line).
 fn prepare(text: &str) -> Cow<'_, str> {
     if text.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\x0c' | b'\r')) {

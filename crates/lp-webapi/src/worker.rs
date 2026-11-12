@@ -559,3 +559,17 @@ pub(crate) fn message_taken(shared: &Shared, size: usize) {
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<Worker>();
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    LIVE.with(|l| l.borrow_mut().retain(|_, worker| worker.strong_count() > 0));
+    if LIVE.with(|l| !l.borrow().is_empty()) {
+        return Some("worker::LIVE");
+    }
+    HELD.with(|h| h.borrow_mut().retain(|worker| worker.strong_count() > 0));
+    if HELD.with(|h| !h.borrow().is_empty()) {
+        return Some("worker::HELD");
+    }
+    THREADS.with(|t| !t.borrow().is_empty()).then_some("worker::THREADS")
+}

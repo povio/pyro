@@ -2053,3 +2053,12 @@ impl PageDom {
         out
     }
 }
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    if HANDED.with(|h| h.borrow().is_some()) {
+        return Some("canvas::HANDED");
+    }
+    PLACEHOLDER_HANDED.with(|h| h.borrow().is_some()).then_some("canvas::PLACEHOLDER_HANDED")
+}
