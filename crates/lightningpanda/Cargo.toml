@@ -13,6 +13,9 @@ path = "src/main.rs"
 default = ["render", "av1", "h264"]
 # CDP stage timers (LP.perfStats); for profiling builds only.
 perf-trace = ["lp-cdp/perf-trace"]
+# Sampling profile of the live Rust heap (src/heap_profile.rs,
+# bench/scripts/heap-profile.mjs); for memory attribution builds only.
+heap-profile = []
 # Blitz (lp-render): layout geometry, screenshots and PDFs. Without it
 # nothing is laid out.
 render = ["lp-cdp/render", "dep:lp-render"]
@@ -33,7 +36,8 @@ lp-render = { workspace = true, optional = true }
 # Only for the codec features above.
 lp-media.workspace = true
 mimalloc = { version = "0.1.52", default-features = false }
-# Only for the `lp_pgo_training` signal handler (scripts/pgo).
+# Only for the `lp_pgo_training` signal handler (scripts/pgo) and the
+# `heap-profile` feature.
 libc = "0.2"
 
 [dev-dependencies]

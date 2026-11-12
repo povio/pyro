@@ -951,7 +951,12 @@ impl Browser {
             self.close_page(p);
         }
         let before = self.contexts.len();
-        self.contexts.retain(|c| c.id != id);
+        self.contexts.retain(|c| {
+            if c.id == id {
+                c.services.close();
+            }
+            c.id != id
+        });
         before != self.contexts.len()
     }
 

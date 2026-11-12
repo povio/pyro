@@ -407,6 +407,18 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
                 evaluated(false);
             }
             tear_down(event_loop, state);
+            // The VM is gone. When a closed browser context ended the
+            // worker, its pages go back now and the thread that started it
+            // learns that what the worker kept alive there can be collected.
+            // Not for a worker its live page ended: the release is 2.8M
+            // instructions per worker, and the collection walks that page's
+            // whole heap (measured with 20 workers started and terminated
+            // by a page holding 380 MB: 0.4 G instructions without either,
+            // 35.9 G with both).
+            if shared.report_end.load(Ordering::Acquire) {
+                lp_js::release_thread_memory();
+                poster(Box::new(crate::worker::note_ended));
+            }
         }
         Err(_) if service.is_some() => evaluated(false),
         Err(_) => poster(Box::new(move || deliver_up(id, Up::LoadFailed))),

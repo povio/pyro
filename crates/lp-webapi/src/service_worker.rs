@@ -217,11 +217,33 @@ impl Registry {
     }
 }
 
-impl Drop for Registry {
-    fn drop(&mut self) {
-        for registration in self.registrations.get_mut().drain(..) {
+impl Registry {
+    /// Ends every registration's workers. `report`: their threads tell this
+    /// one when they have ended (`crate::worker::note_ended`).
+    fn close(&self, report: bool) {
+        for registration in self.registrations.take() {
+            if report {
+                registration.report_ends();
+            }
             registration.clear();
         }
+    }
+}
+
+impl Drop for Registry {
+    fn drop(&mut self) {
+        self.close(false);
+    }
+}
+
+impl crate::navigator_extras::ContextServices {
+    /// The browser context is closed: its service workers end now. The
+    /// registry itself lives as long as a closed page's wrappers refer to
+    /// it, which is until a later collection; measured after the close of a
+    /// context with one controlled page, the worker's thread and its VM
+    /// stayed for five seconds in an idle server.
+    pub fn close(&self) {
+        self.service_workers.close(true);
     }
 }
 
@@ -375,6 +397,16 @@ impl Registration {
             slot(&self.active),
             matches,
         )
+    }
+
+    /// Before [`Registration::clear`] for a closed browser context: each
+    /// version's thread reports its end (`Shared::report_end`).
+    fn report_ends(&self) {
+        for slot in [&self.evaluating, &self.installing, &self.waiting, &self.active] {
+            if let Some(version) = slot.borrow().as_ref() {
+                version.shared.report_end.store(true, Ordering::Release);
+            }
+        }
     }
 
     /// Ends every version (the registration is gone).

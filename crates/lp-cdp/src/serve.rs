@@ -1005,11 +1005,15 @@ fn browser_thread(profile: &Arc<BrowserProfile>, park: &Park, first: Turn) {
                 }
             };
             let finished = a.finished;
+            let before = lp_js::process_footprint();
             let workers_joined = run_browser_thread(prepared, profile, a.socket, &a.buffered, a.config);
             // The connection is over for its client and for the server's
             // count: what follows delays nobody.
             drop(finished);
-            let Some(left) = left.and_then(|left| left.borrow_mut().take()) else { return };
+            let Some(left) = left.and_then(|left| left.borrow_mut().take()) else {
+                release_if_grown(before);
+                return;
+            };
             let keep = match mode {
                 EngineReuse::Always => true,
                 EngineReuse::On => left.untouched(),
@@ -1018,6 +1022,7 @@ fn browser_thread(profile: &Arc<BrowserProfile>, park: &Park, first: Turn) {
             if !keep {
                 // The engine goes; what its wrappers held goes with it.
                 drop(left);
+                release_if_grown(before);
                 if mode == EngineReuse::On {
                     // A thread that ran pages is not kept (`EngineReuse::On`).
                     park.refuse("the engine was used");
@@ -1030,7 +1035,9 @@ fn browser_thread(profile: &Arc<BrowserProfile>, park: &Park, first: Turn) {
             } else {
                 if let Err(why) = scrub(&left, workers_joined) {
                     park.refuse(why);
-                    return; // drops the engine
+                    drop(left);
+                    release_if_grown(before);
+                    return;
                 }
                 engine = Some(left);
             }
@@ -1172,6 +1179,34 @@ pub(crate) enum AfterServe {
     Exit,
 }
 
+/// A connection's thread returns the free memory its engine leaves behind
+/// when the process ends up this much larger than the connection found it
+/// (`release_if_grown`).
+const THREAD_END_RELEASE_GROWTH: u64 = 8 << 20;
+
+/// For a browser thread whose connection ended and whose engine is gone
+/// (not kept for the next connection): returns what the engine and its
+/// pages left free, when the process grew by `THREAD_END_RELEASE_GROWTH`
+/// since `before`. Nobody else returns it (the heap's pages of an exited
+/// thread are purged only when another one collects). Measured after a run
+/// of five SPA loads, the server idle again: 118 MB resident (64 MB
+/// footprint) without this call, 83 MB (29 MB) with it. Only for a
+/// connection that left the process larger: the release is 1.9M
+/// instructions, half of what a connection that opens nothing costs. Where
+/// the footprint cannot be read (not macOS) nothing is released, as before:
+/// releasing at every connection's end is that cost with no measurement of
+/// what it returns there. An engine that is kept releases while parked
+/// (`Engine::settle_idle`).
+fn release_if_grown(before: Option<u64>) {
+    let grown = match (before, lp_js::process_footprint()) {
+        (Some(before), Some(after)) => after.saturating_sub(before) >= THREAD_END_RELEASE_GROWTH,
+        _ => false,
+    };
+    if grown {
+        lp_js::release_thread_memory();
+    }
+}
+
 /// Serves one connection with protocol state that already exists: `browser`
 /// writes to `outbox`, whose frames `outbound` carries to the socket.
 /// Whether every worker thread of its pages has ended (`TearDown` only;
@@ -1239,6 +1274,15 @@ pub(crate) fn serve_browser(
             continue;
         }
         let engine = &browser.host().thread.browser.engine;
+        // A closed context's service worker has ended: what it kept alive
+        // on this thread is collectable only now, so its end counts as a
+        // close. Measured closing a context whose page a service worker
+        // controlled: 182 MB before this collection, 85 MB after; the one
+        // inside the close itself had freed 71 of 317 MB. A worker that a
+        // live page ended is not reported (`lp_webapi::worker_ended`).
+        if lp_webapi::take_worker_ended() {
+            engine.release_closed();
+        }
         let code_at = engine.code_release_pending().then(|| quiet_since + CODE_QUIET);
         let release_at = engine.release_pending().then(|| quiet_since + RELEASE_QUIET).or(code_at);
         if release_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
@@ -1259,7 +1303,7 @@ pub(crate) fn serve_browser(
         };
         let outcome = browser.host_mut().run_until_work(deadline, || {
             conn.borrow_mut().service(&mut inbox);
-            !inbox.is_empty()
+            !inbox.is_empty() || lp_webapi::worker_ended()
         });
         browser.host_mut().flush();
         browser.adopt_popups(&mut sink);
