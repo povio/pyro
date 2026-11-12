@@ -130,6 +130,9 @@ fn fast_exit() -> bool {
 /// library's exit handlers and destructors: nothing in it is needed any more.
 fn exit_child(code: i32) -> ! {
     if fast_exit() {
+        // `_exit` skips the profile runtime's exit hook.
+        #[cfg(lp_pgo_training)]
+        crate::pgo_training::write();
         // SAFETY: ends the process at once; its files close with it.
         unsafe { libc::_exit(code) }
     }
@@ -299,6 +302,8 @@ impl Template {
             return Err(std::io::Error::last_os_error());
         }
         if pid == 0 {
+            #[cfg(lp_pgo_training)]
+            crate::pgo_training::forked();
             drop(ours);
             // SAFETY: both descriptors are ours.
             unsafe { libc::dup2(stdin.as_raw_fd(), 0) };
@@ -403,7 +408,9 @@ static TEMPLATE_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 /// socket file of this server. Callable from any thread.
 pub fn cleanup_for_exit() {
     let pid = TEMPLATE_PID.swap(0, std::sync::atomic::Ordering::Relaxed);
-    if pid > 0 {
+    // A training build lets the template end by itself (it does when this
+    // server's exit closes its stdin), so that it writes its profile.
+    if pid > 0 && !cfg!(lp_pgo_training) {
         // SAFETY: our own child, not reaped yet (only the Template reaps it).
         unsafe { libc::kill(pid, libc::SIGKILL) };
     }
@@ -1395,6 +1402,8 @@ fn fork_process(snapshot: &Snapshot, kind: &str) -> Forked {
     let pid = unsafe { libc::fork() };
     let fork_us = forking.elapsed().as_micros() as u64;
     if pid == 0 {
+        #[cfg(lp_pgo_training)]
+        crate::pgo_training::forked();
         crate::fork_stats::child_started();
         // SAFETY: the network is stopped and this is the sole surviving thread.
         // Keep inherited handles, but isolate their pipe from sibling readers.

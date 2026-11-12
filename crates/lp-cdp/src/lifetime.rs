@@ -64,6 +64,9 @@ pub fn cleanup_on_signals(cleanup: fn()) -> std::io::Result<()> {
             }
         }
         cleanup();
+        // Dying of the signal skips the profile runtime's exit hook.
+        #[cfg(lp_pgo_training)]
+        crate::pgo_training::write();
         let signal = libc::c_int::from(byte[0]);
         // SAFETY: back to the default action, then the same signal again.
         unsafe {
