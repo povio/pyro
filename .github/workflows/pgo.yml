@@ -40,10 +40,13 @@ concurrency:
 
 jobs:
   pgo:
-    runs-on: macos-15
+    # The self-hosted Apple Silicon runner (label lp-m1), as the jsc job.
+    runs-on: lp-m1
     timeout-minutes: 150
     env:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/pgo-build
