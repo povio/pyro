@@ -174,8 +174,6 @@ Global setup signs in with whichever `chromium` the switch loaded:
 
 ```ts
 // e2e/global-setup.ts
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { chromium } from './fixtures';
 import { authFile, baseURL, signIn } from './auth';
 
@@ -184,7 +182,6 @@ export default async function globalSetup() {
   const context = await browser.newContext({ baseURL });
   const page = await context.newPage();
   await signIn(page);
-  mkdirSync(dirname(authFile), { recursive: true }); // storageState({ path }) does not create it
   await context.storageState({ path: authFile });
   await browser.close();
 }
@@ -447,5 +444,5 @@ Once the comparison shows no differences you care about:
 ## Next
 
 - Fix what differs: [Triage the first failures](/recipes/playwright-triage-first-failures).
-- Move CI over: [CI without sharding](/recipes/playwright-ci-without-sharding).
+- Move CI over: [Sharding in CI](/recipes/playwright-ci-without-sharding).
 - Every known difference: [Behaviour differences](/playwright/differences).

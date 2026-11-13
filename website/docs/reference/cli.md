@@ -1,6 +1,6 @@
 # CLI
 
-The `pyro` command ships in the npm package `@povio/pyro` (its `bin`). It has two halves: the native browser binary (`version`, `eval`, `serve`, `fetch`) and two test runners written in TypeScript that need [Bun](https://bun.sh) (`run`, `e2e`).
+The `pyro` command ships in the npm package `@povio/pyro` (its `bin`). It has three parts: the native browser binary (`version`, `eval`, `serve`, `fetch`), two commands for AI agents written in TypeScript that run under Node.js 22+ or Bun (`mcp`, `profile`), and two test runners written in TypeScript that need [Bun](https://bun.sh) (`run`, `e2e`).
 
 ```sh
 bunx pyro <command> [options]
@@ -12,17 +12,20 @@ bun add -d @povio/pyro
 | Command | What it does | Runs on |
 | --- | --- | --- |
 | [`version`](#version) | Prints the version and engine capabilities | native binary |
-| [`eval`](#eval) | Runs JavaScript in an `about:blank` page until idle | native binary |
+| [`eval`](#eval) | Runs JavaScript in an `about:blank` page until no task, timer or request is left | native binary |
 | [`serve`](#serve) | CDP server over WebSocket | native binary |
 | [`fetch`](#fetch) | Loads a URL (scripts run) and prints the DOM after `load` | native binary |
+| [`mcp`](#pyro-mcp) | MCP server that gives an AI agent a browser | Node.js or Bun |
+| [`profile`](#profile) | Stored identities for agents, signed in by a person | Node.js or Bun |
 | [`run`](#run) | Playwright-style test runner (`playwright test` replacement) | Bun |
 | [`e2e`](#e2e) | One-process runner for `@povio/pyro/e2e` specs | Bun |
-| `help`, `--help`, `-h`, no command | Prints the usage summary | native binary |
+| `help`, `--help`, `-h`, no command | Prints the usage summary: the native binary's commands, then the npm package's | native binary |
 
 ## How the npm `pyro` command dispatches {#dispatch}
 
 The npm `bin` is a small Node/Bun script (`dist/cli.js`):
 
+- `mcp` and `profile` run in-process, under Node.js or Bun.
 - `run` and `e2e` run in-process when the script runs under Bun. Under Node it re-launches itself with `bun` on `PATH`; with no Bun it prints `pyro run: needs Bun (https://bun.sh) on PATH` (or `pyro e2e: …`) and exits 1.
 - Every other command is forwarded, arguments unchanged, to the native binary. `SIGINT`, `SIGTERM` and `SIGHUP` are forwarded to it, and its exit code (or signal) becomes the wrapper's.
 
@@ -45,7 +48,7 @@ Native commands:
 | `2` | Usage error: unknown command, unknown or malformed option, unreadable `eval` file; `serve --fork` on a build without fork support |
 | `124` | `eval` / `fetch`: the `--timeout-ms` deadline passed |
 
-`run` and `e2e` exit `0` when every test passed, `1` on any failure, and `2` on a usage error. `e2e` interrupted by a signal exits `128 + signal` (130 for `SIGINT`).
+`run` and `e2e` exit `0` when every test passed, `1` on any failure, and `2` on a usage error. `e2e` interrupted by a signal exits `128 + signal` (130 for `SIGINT`). `mcp` and `profile` exit `2` on a usage error; `profile` exits `1` when a command failed (a sign-in that did not complete, for example).
 
 ## version {#version}
 
@@ -68,7 +71,9 @@ engine: JavaScriptCore; capabilities: Capabilities { weak_refs: true, modules: t
 pyro eval [--timeout-ms N] (-e CODE | FILE | -)
 ```
 
-Runs JavaScript in a fresh `about:blank` page, then keeps the event loop running until the page is idle (timers, promises and tasks done) or the deadline passes. No network is set up: use [`fetch`](#fetch) or [`serve`](#serve) to load pages.
+Runs JavaScript in a fresh `about:blank` page, then keeps the event loop running until no task, timer or request is left, or the deadline passes.
+
+The network is on: `fetch()`, XHR and `import()` work, and the run waits for their responses. The page's origin is opaque (`about:blank`), so a response from another origin needs CORS headers, as in a browser. Releases up to 0.0.33 set up no network for `eval`. To load a page, use [`fetch`](#fetch) or [`serve`](#serve).
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -118,7 +123,7 @@ pyro: CDP server listening on ws://127.0.0.1:9222/ (fork mode)
 ## fetch {#fetch}
 
 ```text
-pyro fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] URL
+pyro fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] [--bytecode-cache DIR] URL
 ```
 
 Loads `URL` with the network enabled, runs its scripts, waits for the `load` event, and prints the serialized DOM to stdout.
@@ -127,10 +132,11 @@ Loads `URL` with the network enabled, runs its scripts, waits for the `load` eve
 | --- | --- | --- | --- |
 | `URL` | URL | required | `http:`, `https:`, `data:` or `file:` (exactly one; an argument starting with `-` is an option). |
 | `--dump html\|none` | enum | `html` | `html`: print `<!DOCTYPE html>` (when the document has a doctype) and the `outerHTML` of the root element. `none`: print nothing (exit code only). |
-| `--wait-ms N` | integer (ms) | `0` | After `load`, keep running the page until no timer or queued task is left, or `N` ms pass. A `fetch()` or XHR still in flight does not keep it running, so data loaded by a request may be missing; see [fetch](/scraping/fetch). Bounded by `--timeout-ms`. |
+| `--wait-ms N` | integer (ms) | `0` | After `load`, keep running the page until it is quiet (no queued task, no timer, no request in flight) or `N` ms pass, then dump. A page that polls never becomes quiet and is dumped after `N` ms. Releases up to 0.0.33 did not wait for requests; see [fetch](/scraping/fetch#wait-ms). Bounded by `--timeout-ms`. |
 | `--timeout-ms N` | integer (ms) | `30000` | Overall deadline. If `load` has not fired by then, or the wait runs past it, the command exits `124`. |
+| `--bytecode-cache DIR` | path | `$PYRO_BYTECODE_CACHE`, else off | Keep the bytecode of the page's scripts and modules in `DIR` and load it from there in later runs, as [`serve --bytecode-cache`](/reference/serve#bytecode-cache) does. The command writes what it compiled before it exits. A directory that cannot be used prints `pyro: --bytecode-cache <dir>: <error>` and exits `2`. Newer than 0.0.33. |
 
-Console output of the page goes to stdout/stderr as for [`eval`](#eval). A failed navigation prints `pyro: <url>: <error>` (for example `net::ERR_CONNECTION_REFUSED`) and exits `1`. `fetch` has no `--help` (it is a usage error).
+Console output of the page goes to stdout/stderr as for [`eval`](#eval). A failed navigation prints `pyro: <url>: <error>` (for example `net::ERR_CONNECTION_REFUSED`) and exits `1`. `fetch` has no `--help` (it is a usage error). When the reader of stdout goes away (`pyro fetch URL | head -1`), the command ends at once, quietly, with status `0`.
 
 ```sh
 pyro fetch https://example.com > page.html
@@ -140,18 +146,67 @@ pyro fetch --dump none https://example.com && echo reachable
 
 See [One-off fetches](/scraping/fetch) for recipes.
 
+## mcp {#pyro-mcp}
+
+```text
+pyro mcp [options]
+```
+
+Starts a [Model Context Protocol](https://modelcontextprotocol.io) server that gives an AI agent (Claude Code, Cursor, Codex and other MCP clients) a Pyro browser: tools to navigate, read the page as an accessibility snapshot, click, type, take screenshots and print PDFs. It speaks MCP over stdio by default and over Streamable HTTP with `--port`. It runs under Node.js 22+ or Bun and launches its own browser unless `--ws` is given. Newer than 0.0.33.
+
+The flags, the tools and the client configuration are in [AI agents: MCP and tool calling](/scraping/agents). `pyro mcp --help` prints the flags of the installed version. A usage error prints `pyro mcp: <message>` and exits `2`.
+
+```sh
+pyro mcp                                  # stdio, for an MCP client that starts it
+pyro mcp --port 8931                      # Streamable HTTP on 127.0.0.1
+pyro mcp --profile work --allowed-origins https://app.example.com
+```
+
+## profile {#profile}
+
+```text
+pyro profile login <name> --url <url> [options]
+pyro profile list [--json]
+pyro profile show <name> [--json]
+pyro profile delete <name> [--all]
+```
+
+Manages the stored identities that `pyro mcp --profile <name>` and the agent tools load: a saved session (cookies and `localStorage`, in Playwright's `storageState` format) and, optionally, an identity file (user agent, proxy, locale, viewport). A person signs an identity in, not the agent. These are files in a directory of yours, not the [profiles](/guide/profiles) a server boots pages for. It runs under Node.js 22+ or Bun. Newer than 0.0.33. Guide: [Stored identities](/scraping/agents#stored-identities).
+
+| Command | What it does |
+| --- | --- |
+| `login <name> --url <url>` | Reads a sign-in link (typed without echo, or from stdin), opens it in a fresh headless context, waits until the sign-in completes, checks the session in a second fresh context, and saves it to `<profile-dir>/<name>.json` (mode 600). The link is never printed or stored. |
+| `list` | The stored identities: sites, cookie counts, expiries. |
+| `show <name>` | One identity, without secrets: files, origins, counts, expiries. |
+| `delete <name> [--all]` | Deletes the saved session. `--all` deletes the identity file too. |
+
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `--profile-dir <dir>` | path | `~/.pyro/profiles` | Where the identities live. |
+| `--json` | flag | | `list` and `show` print JSON (still without secrets). |
+| `--url <url>` | URL | required for `login` | The app's start URL. It is opened once signed in, to save its `localStorage` and to check the session, now and each time the identity is loaded. |
+| `--identity <file>` | path | `<name>.identity.json` in the profile directory, when it exists | How the identity looks: `userAgent`, `proxy`, `locale`, `timezoneId`, `viewport`, `deviceScaleFactor` and so on. A file given here is saved to the profile directory under that name. |
+| `--wait-for-url <pattern>` | glob or `/regex/` | | `login`: the sign-in is done when the URL matches. |
+| `--wait-for-selector <css>` | selector | | `login`: the sign-in is done when this element shows. Without either wait option, it is done when the page left the link and the network is idle. |
+| `--timeout <ms>` | integer | `60000` | `login`: how long the sign-in may take. |
+| `--ws <url>` | URL | launch one | `login`: use a running `pyro serve`. |
+| `-h`, `--help` | flag | | Print the usage and exit `0`. |
+
+Options also take the `--name=value` form. A usage error prints `pyro profile: <message>` (or `pyro profile <command>: <message>`) and exits `2`; a command that fails exits `1`.
+
 ## run {#run}
 
 ```text
 pyro run [options] [test-filter...]
 ```
 
-Runs tests written against `@povio/pyro/wright` the way `playwright test` does: it reads the config, finds each project's test files (`testDir`, `testMatch`, `testIgnore`), starts `webServer`s and runs `globalSetup` once, then runs the files with `bun test` in worker processes, one browser per worker. Needs Bun. Guide: [Config and the test runner](/playwright/runner).
+Runs tests written against `@povio/pyro/wright` the way `playwright test` does: it reads the config, finds each project's test files (`testDir`, `testMatch`, `testIgnore`), adds the projects they depend on (`dependencies`, and the `teardown` projects of those), starts `webServer`s and runs `globalSetup` once, then runs the files with `bun test` in worker processes, one browser per worker. A project starts once the projects it depends on have finished, and does not run when one of them failed. Needs Bun. Guide: [Config and the test runner](/playwright/runner).
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
 | `-c`, `--config <file>` | path | `$PYRO_CONFIG`, else `$PLAYWRIGHT_CONFIG`, else `pyro.config.{ts,mts,mjs,js}`, else `playwright.config.{ts,mts,mjs,js}` in the working directory | Config file. Sets `PYRO_CONFIG` for the workers. |
-| `--project <name>` | string | all projects | Only this project (repeatable). Unknown names are skipped; when none of the names exists it prints `pyro run: no project named <names>` and exits `1`. |
+| `--project <name>` | string | all projects | Only this project and the projects it depends on (repeatable). Names match in any case, and `*` matches any text. Every name must match a project: otherwise it prints `pyro run: no project named "<name>" (projects: "<name>", …)` and exits `1`. |
+| `--no-deps` | flag | | Do not run the projects' dependencies. |
 | `-j`, `--workers <n\|n%>` | count or percentage of CPUs | the config's `workers`, else half the CPUs | Worker processes. |
 | `-g`, `--grep <regex>` | regex | | Only tests whose title path matches. |
 | `--grep-invert <regex>` | regex | | Skip tests whose title path matches. |
@@ -159,10 +214,11 @@ Runs tests written against `@povio/pyro/wright` the way `playwright test` does: 
 | `--timeout <ms>` | integer | config's `timeout` (30000) | Test timeout (sets `PYRO_TIMEOUT`). |
 | `-u`, `--update-snapshots [mode]` | `changed` \| `all` \| `missing` \| `none` | `changed` when the flag is given | Rewrite snapshots and screenshot baselines (sets `PYRO_UPDATE_SNAPSHOTS` to the mode). |
 | `--fully-parallel` | flag | config's `fullyParallel` | Run every file's tests in parallel across workers. |
+| `--shard <i/n>` | `i/n` | config's `shard` | Run part `i` of `n` of the tests, split as Playwright splits them: by test count, a file's tests together unless they are parallel. Dependencies run in full in each shard that needs them. A shard with no tests prints `pyro run: shard <i> of <n> has no tests` and exits `0`. See [Sharding](/playwright/runner#sharding). |
 | `-x` | flag | | Stop after the first failure (as `--max-failures=1`). |
 | `--max-failures <n>` | integer | | Stop after `n` failures (workers get `SIGTERM`). |
 | `--reporter <name>` | `list` \| `line` \| `dot` | `list` | Console reporter. |
-| `--list` | flag | | List the tests without running them (one worker, no web servers or global setup). |
+| `--list` | flag | | List the tests without running them (no browser, no web servers or global setup). With `--shard`, lists that part's tests. |
 | `-q`, `--quiet` | flag | | Do not print the tests' own output. |
 | `--headed`, `--debug`, `--ui` | flag | | Accepted; print `pyro run: <flag> has no effect (pyro is headless)`. |
 | `-h`, `--help` | flag | | Print the usage and exit `0`. |
@@ -175,6 +231,7 @@ The browser is `$PYRO_WS` when set (an already running `serve`), else each worke
 pyro run                        # every project
 pyro run -j 8 --project chromium login
 pyro run -u all e2e/visual      # rewrite all baselines of matching files
+pyro run --shard 2/4            # part 2 of 4, one part per CI job
 ```
 
 ## e2e {#e2e}
@@ -191,7 +248,7 @@ Without paths it runs every `*.test.*` / `*.spec.*` file (also `_test`/`_spec`; 
 | --- | --- | --- | --- |
 | `-j`, `--concurrency <n>` | integer ≥ 1 | the CPU count | Tests at a time across all files. |
 | `--max-concurrency <n>` | integer ≥ 1 | unlimited | Tests of one file at a time (as `bun test`'s). |
-| `--timeout <ms>` | integer | `5000` | Default timeout of tests and hooks without their own. |
+| `--timeout <ms>` | integer | `30000` | Default timeout of tests and hooks without their own. A step's own timeout (5000 ms) passes first, so a failing step reports its reason. |
 | `-t`, `--test-name-pattern <re>` | regex | | Only tests whose name (describes and test joined by spaces) matches. |
 | `--only` | flag | | Only tests and describes marked `.only`. |
 | `--shard <i>/<n>` | `i/n`, `1 ≤ i ≤ n` | | Run shard `i` of `n`. Files are split by `--timings` (longest first onto the least-loaded shard; files without a timing count as the average). |

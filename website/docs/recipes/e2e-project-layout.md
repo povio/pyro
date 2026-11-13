@@ -264,7 +264,7 @@ bun add --dev @povio/pyro
 
 `@povio/pyro` is not on npm yet: until its first release, see [Before the first release](/guide/installation#try-today).
 
-The scripts call `pyro` by name, so they use the binary from `node_modules/.bin`. `--timeout 30000` gives each test more time than its steps (5 s each by default), so a failing step reports its reason instead of the test timing out first.
+The scripts call `pyro` by name, so they use the binary from `node_modules/.bin`. `--timeout 30000` is the default, written out: it gives each test more time than its steps (5 s each by default), so a failing step reports its reason instead of the test timing out first.
 
 ```text
 # .gitignore
@@ -515,11 +515,11 @@ pyro: CDP server listening on ws://127.0.0.1:49303/ (fork mode)
 ✓ e2e/projects.test.ts > projects > a member creates a project [64.26ms]
 ✓ e2e/projects.test.ts > projects > an admin deletes a seeded project [66.79ms]
 ✗ e2e/users.test.ts > users > a member is refused [5.06s]
-    Error: step 1 (expect Visible {"text":"Only admins may see users"}): timed out after 5000 ms: expect Visible {"text":"Only admins may see users"}: expected Visible null, got false
+    RunError: step 1 (expect Visible {"text":"Only admins may see users"}): timed out after 5000 ms: expect Visible {"text":"Only admins may see users"}: expected Visible null, got false
         at run (.../node_modules/@povio/pyro/src/index.ts:517:17)
         at async <anonymous> (/path/to/projects-app/e2e/users.test.ts:18:16)
 ✗ e2e/users.test.ts > users > an admin sees every user [5.06s]
-    Error: step 2 (expect Count {"role":"row"}): timed out after 5000 ms: expect Count {"role":"row"}: expected Count 4, got 3
+    RunError: step 2 (expect Count {"role":"row"}): timed out after 5000 ms: expect Count {"role":"row"}: expected Count 4, got 3
         at run (.../node_modules/@povio/pyro/src/index.ts:517:17)
         at async <anonymous> (/path/to/projects-app/e2e/users.test.ts:9:16)
 
@@ -534,7 +534,7 @@ Ran 4 tests across 2 files. [5.08s]
 
 The exit code is 1, and `junit.xml` carries each message in a `<failure>` element. `step 1` is the index in that test's `page.run` array. The text after the last colon is what the browser saw: no visible match for the first, 3 rows instead of 4 for the second. [Debugging failures](/e2e/debugging) lists every reason.
 
-Without `--timeout 30000`, both tests would show only `TimeoutError: test timed out after 5000 ms`, because the test's default timeout equals the step's.
+With `--timeout 5000`, both tests would show only `TimeoutError: test timed out after 5000 ms`, because the test's timeout would equal the step's.
 
 ## Adapting it to your project
 

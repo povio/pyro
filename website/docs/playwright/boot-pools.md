@@ -43,7 +43,7 @@ A page has no browser target until its first command. That first command decides
 1. It is the **first page of its context** to get a target. Later pages of the same context, and popups, are fresh.
 2. Its **first call is `page.goto(url)`**. Any other first call that talks to the page (`evaluate`, `setContent`, `setViewportSize`, a locator action) gives a fresh page. Calls that only register state, such as `page.route()`, `page.on()`, `waitForResponse()` and `addInitScript()`, do not count as the first call.
 3. The target URL **equals a spec's `url`, or matches its `routes` on the same origin**.
-4. The context has **no cookies** (from `storageState` or `addCookies`), **no `extraHTTPHeaders`**, **no `userAgent`**, and **no media emulation** beyond the defaults (`colorScheme` other than `light`, `reducedMotion` other than `no-preference`).
+4. The context has **no cookies** (from `storageState` or `addCookies`), **no `extraHTTPHeaders`**, **no `userAgent`**, **no media emulation** beyond the defaults (`colorScheme` other than `light`, `reducedMotion` other than `no-preference`), and **no option that changes how a page loads**: `proxy`, `locale`, `timezoneId`, `geolocation`, `permissions`, `httpCredentials`, `isMobile`, `hasTouch`, `screen`, a `deviceScaleFactor` other than 1, `offline`, `javaScriptEnabled: false`, `ignoreHTTPSErrors`, `bypassCSP`, `serviceWorkers: 'block'` or `acceptDownloads: false`.
 
 Then:
 
@@ -59,7 +59,7 @@ The usual Playwright sign-in, a setup step that saves `storageState` with a sess
 :::
 
 ::: warning device descriptors set userAgent
-`...devices['Desktop Chrome']` sets `userAgent`, which rule 4 excludes. A project that spreads a device descriptor gets no booted pages. Set `viewport` directly instead.
+`...devices['Desktop Chrome']` sets `userAgent`, which rule 4 excludes, and the mobile descriptors set `isMobile`, `hasTouch` and `deviceScaleFactor` too. A project that spreads a device descriptor gets no booted pages. Set `viewport` directly instead.
 :::
 
 ## Profiles

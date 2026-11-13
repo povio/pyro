@@ -79,12 +79,14 @@ The SDK asks the server for `Pyro.capabilities` on connect. A fork-mode server a
 | Call | On a shared server |
 |---|---|
 | `pyro.profile(name, def)` | No profile has the name: it is registered and boots. Another client registered **the same definition** under it: this client adopts it and nothing boots again. **A different definition** while another client holds the name: refused |
-| `pyro.adopt(name)` | Holds the profile another client registered, without redeclaring it. Throws `no profile <name> on this server: declare it with pyro.profile()` when there is none |
+| `pyro.adopt(name)` | Holds the profile another client registered, without redeclaring it. Throws `no profile <name> on this server: declare it with pyro.profile()` when there is none, and the profile's `ProfileSetupError` when its setup failed (the profile is then not held) |
 | `pyro.page({ as: name })` | Uses this client's profile, or adopts the server's profile of that name by itself |
 | `base: name` in `pyro.profile()` | Adopts the base by itself, so a worker can derive from a profile only the launcher declared |
 | `pyro.releaseProfile(name)` | Drops this client's hold |
 
-"The same definition" compares `url`, the init scripts (including those made from `localStorage`), `viewport`, `setup` and `base`. `pool` is ignored: the template keeps one page per profile.
+"The same definition" compares `url`, the init scripts (including those made from `localStorage`), `viewport`, `setup`, `base`, `userAgent`, `proxyServer` and `proxyBypassList`. `pool` is ignored: the template keeps one page per profile.
+
+A profile whose setup failed stays registered until its holders release it. A worker that asks for it (`pyro.page({ as })`, `pyro.adopt()`) gets its `ProfileSetupError`, not a page. Registering the same definition again runs the setup again.
 
 ### Name conflicts
 

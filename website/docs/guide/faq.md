@@ -40,11 +40,13 @@ No. Pyro has no window and no GPU. To see a page, take a screenshot (`Page.captu
 
 ## Is there a trace viewer, video recording or HTML report?
 
-No. The Playwright module accepts the `trace`, `video` and `screenshot` options so existing configs load, but records nothing. `pyro run` reports with `list`, `line` or `dot`. `pyro e2e` writes JUnit XML (`--junit`). For failures, the native `RunError` names the failing step and why it was waiting, and every run reply lists the requests the page made. See [Debugging failures](/e2e/debugging).
+Video and failure screenshots, yes, in the Playwright module: `recordVideo` on a context, and the runner's `video` and `screenshot` options, write a WebM per page and a PNG per open page of a failed test. Video needs an ffmpeg on the machine. See [Video](/playwright/runner#video) and [Screenshots of failed tests](/playwright/runner#screenshots-of-failed-tests).
+
+Traces and the HTML report, no. The `trace` option is accepted so existing configs load, and records nothing. `pyro run` reports with `list`, `line` or `dot`. `pyro e2e` writes JUnit XML (`--junit`). For failures, the native `RunError` names the failing step and why it was waiting, and every run reply lists the requests the page made. See [Debugging failures](/e2e/debugging).
 
 ## Can I shard a suite across machines?
 
-With `pyro e2e`, yes: `--shard i/n` splits files by recorded durations (`--timings`). `pyro run` (the Playwright runner) has no sharding. See [Suite runner](/e2e/runner).
+Yes, with both runners. `pyro e2e --shard i/n` splits files by recorded durations (`--timings`); see [Suite runner](/e2e/runner). `pyro run --shard i/n` (the Playwright runner) splits by test count, as `playwright test --shard` does; see [Sharding](/playwright/runner#sharding).
 
 ## Why does my spinner assertion fail?
 
@@ -89,3 +91,7 @@ The package, including the TypeScript client, is licensed under AGPL-3.0-only, a
 ## Can AI coding agents write tests for it?
 
 Yes. The package ships `LLM.md`, a complete guide for coding agents writing native tests. Point your agent at `node_modules/@povio/pyro/LLM.md`. See [Writing tests with AI agents](/e2e/ai-agents).
+
+## Can an AI agent drive the browser?
+
+Yes. `pyro mcp` is an MCP server with browser tools (navigate, snapshot, click, type, screenshot and more), and `@povio/pyro/agent` gives the same tools to code that calls a model API itself. See [AI agents: MCP and tool calling](/scraping/agents).

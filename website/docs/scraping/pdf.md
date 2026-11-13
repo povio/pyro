@@ -150,11 +150,58 @@ await page.screenshot({ path: 'out/top.jpg', type: 'jpeg', quality: 70, clip: { 
 await page.locator('h1').screenshot({ path: 'out/heading.png' }); // one element's box
 ```
 
-The Playwright library passes `path`, `type` (`png` or `jpeg`, also taken from the file extension), `quality`, `clip` (document CSS pixels) and `fullPage`. Other Playwright screenshot options (`omitBackground`, `scale`, `animations`, `mask`, `caret`) are not passed on. The image is at a pixel ratio of 1; for 2x or 3x images, set `deviceScaleFactor` with CDP `Emulation.setDeviceMetricsOverride` (see [Proxies, user agents, headers](/scraping/identity#viewport-pixel-ratio-mobile)).
+The Playwright library passes `path`, `type` (`png` or `jpeg`, also taken from the file extension), `quality`, `clip` (document CSS pixels), `fullPage` and `omitBackground` (a transparent background, PNG only). `scale`, `animations`, `mask` and `caret` are not passed on.
 
-Over CDP the command is `Page.captureScreenshot`: `format` `png` or `jpeg` (`webp` is refused), `quality`, `clip` with `scale`, and `captureBeyondViewport` for the whole document. `Emulation.setDefaultBackgroundColorOverride` sets the background behind transparent pages. Puppeteer's `page.screenshot()` uses it and works.
+The image is in device pixels. For 2x or 3x images, make the context with `deviceScaleFactor: 2` or `3`: a 1920 × 1080 viewport at `deviceScaleFactor: 2` gives a 3840 × 2160 image. Other clients set it with CDP `Emulation.setDeviceMetricsOverride` (see [Proxies, user agents, headers](/scraping/identity#viewport-pixel-ratio-mobile)). In releases up to 0.0.33 the library does not pass `omitBackground`, and its `deviceScaleFactor` option has no effect, so the CDP command is the only way there.
+
+Over CDP the command is `Page.captureScreenshot`: `format` `png` or `jpeg` (`webp` is refused), `quality`, `clip` with `scale`, and `captureBeyondViewport` for the whole document. JPEGs use 4:2:0 chroma at every quality, as Chromium's do. `Emulation.setDefaultBackgroundColorOverride` sets the background behind transparent pages. Puppeteer's `page.screenshot()` uses it and works.
+
+The reply carries, beside `data`, a `pyro` object: `{ width, height, bytes, sceneHash, ms }`, where `ms` has the time of each stage (`snapshot`, `fetch`, `layout`, `scene`, `raster`, `encode`, `write`, `total`) and `cpu`, the browser process's CPU time while it rendered. In releases up to 0.0.33 this object is named `lp`.
+
+Frames of 4 million device pixels or more (3840 × 2160 is 8.3 million) are rasterized on several threads: one less than the cores, at most 8. `PYRO_RASTER_THREADS=n` in the server's environment sets the count; `0` keeps every frame on the connection's render thread, which uses less CPU time per frame and suits many pages rendering at once.
 
 The picture is rendered from a snapshot of the live DOM, off the browser thread, and includes the hover and focus styles of where the pointer and focus are. Pixels differ from Chromium's (no font hinting, a different layout engine), so do not compare them with Chrome screenshots. For visual regression tests against Pyro's own baselines, see [Visual tests](/e2e/screenshots).
+
+### Raw frames
+
+Newer than 0.0.33. To make a video from a page you step frame by frame, or to hand pixels to an image library, skip the image encoder: Pyro returns the frame as raw pixels. From the native SDK:
+
+```ts
+const frame = await page.captureFrame({ format: 'rgba' });
+// { width, height, bytes, data: Buffer, ms: { snapshot, layout, scene, raster, encode, write, total, cpu } }
+```
+
+| Option | Meaning |
+| --- | --- |
+| `format` | `'rgba'` (default; the render as it is), `'rgb24'` (alpha dropped) or `'yuv420p'` (I420, BT.601 limited range). The names are ffmpeg's `-pix_fmt` values. |
+| `path` | An absolute path on the browser's machine. The browser appends the frame to that file, or to a FIFO, and `data` comes back empty. |
+| `clip` | `{ x, y, width, height, scale? }` in document CSS pixels. Default: the viewport. |
+
+`width` and `height` are in device pixels: the viewport times the device scale factor. A page's pending `route` or navigation runs before the capture.
+
+`FrameFifo` streams frames into a reader such as ffmpeg without a file in between. This is the example from the package's README; it was not run for this page:
+
+```ts
+import { spawn } from 'node:child_process';
+import { FrameFifo, evaluate } from '@povio/pyro';
+
+const fifo = new FrameFifo('/tmp/frames.fifo'); // mkfifo; the path must be absolute and must not exist
+const ffmpeg = spawn('ffmpeg', ['-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-s', '3840x2160', '-r', '30', '-i', fifo.path, 'out.mp4']);
+await fifo.open();                              // resolves once ffmpeg has opened the FIFO
+for (let f = 0; f < 300; f++) {
+  await page.run([evaluate(`frame(${f / 30})`)]); // your page's function that draws time t
+  await page.captureFrame({ format: 'yuv420p', path: fifo.path });
+}
+await fifo.close();                             // ends the stream and removes the FIFO
+```
+
+- Start the reader before `fifo.open()`. A capture into a FIFO that has no reader fails at once, and a reader that takes nothing for 30 s fails the capture.
+- The browser opens and closes the path for each frame. `FrameFifo` holds the FIFO open in between, so the reader sees one stream until `close()`.
+- `-s` must be the frame's size in device pixels (`frame.width` × `frame.height`).
+- `FrameFifo` works on macOS and Linux.
+- Against `pyro serve --fork` each page is a process of its own, so several pages render frames in parallel.
+
+Other clients use the same capture: the Playwright library with `page.screenshot({ raw: { format, path } })` (see [Raw frames](/playwright/snapshots#raw-frames)), and CDP with `Page.captureScreenshot { format: 'rgba' | 'rgb24' | 'yuv420p', path }`. To record what a page does as it runs, without stepping it, use the Playwright library's [`recordVideo`](/playwright/runner#video) or CDP `Page.startScreencast`.
 
 ## Next
 

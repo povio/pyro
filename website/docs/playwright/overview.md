@@ -49,9 +49,11 @@ test('closes a position', async ({ page }) => {
 ## What you get
 
 - **The runner** on `bun test`: `test`, `test.describe` (`only`, `skip`, `fixme`, `serial`, `parallel`, `configure`), the four hooks with fixtures, `test.extend` (test and worker fixtures, options, `auto`, overrides), `test.use`, `test.step`, `test.info()`, `skip` / `fixme` / `fail` / `slow`, retries and timeouts. See [Fixtures, hooks and steps](/playwright/fixtures).
-- **The config file**: `playwright.config.ts` is read as it is, with `use`, `projects`, `webServer`, `globalSetup`, `testDir` / `testMatch` / `testIgnore`, `workers`, `fullyParallel` and more. See [Config and the test runner](/playwright/runner).
+- **The config file**: `playwright.config.ts` is read as it is, with `use`, `projects` (and their `dependencies` and `teardown`), `webServer`, `globalSetup`, `testDir` / `testMatch` / `testIgnore`, `workers`, `fullyParallel`, `shard` and more. See [Config and the test runner](/playwright/runner).
 - **`expect`** with every web-first matcher on locators, pages and API responses, plus `.not`, `.soft`, `.poll`, `.configure`, `.extend` and `toPass`. See [Assertions](/playwright/assertions).
 - **The library**: `Browser`, `BrowserContext`, `Page`, `Frame`, `Locator`, `FrameLocator`, handles, `Request`, `Response`, `Route`, `Download`, `Dialog`, `Worker`, `FileChooser`, `WebSocket`, `request`, `devices`, `errors`, `selectors`. See [API coverage](/playwright/api-coverage) for a method-by-method table.
+- **Context options and devices**: `viewport`, `deviceScaleFactor`, `isMobile`, `locale`, `timezoneId`, `geolocation`, `permissions`, `proxy`, `httpCredentials`, `offline` and the rest, with Playwright's `devices` table. See [use options](/playwright/runner#use-options).
+- **Screenshots and video of failed tests**: the `screenshot` and `video` options and `recordVideo`. See [Video](/playwright/runner#video).
 - **Network control**: `page.route()`, `context.route()`, `routeFromHAR` (replay and recording), `recordHar`, `waitForRequest` / `waitForResponse`, WebSocket events. See [Network, routes and HAR](/playwright/network).
 - **Snapshots**: `toHaveScreenshot`, `toMatchSnapshot`, `toMatchAriaSnapshot` at Playwright's snapshot paths. See [Screenshots and snapshots](/playwright/snapshots).
 - **Clock, coverage, ARIA snapshots** including `mode: 'ai'` and `aria-ref=` locators. See [Clock, coverage, ARIA](/playwright/advanced).
@@ -98,14 +100,10 @@ These numbers come from one flow on one machine. Your app's own JavaScript is of
 | Playwright feature | Status |
 | --- | --- |
 | HTML report (`--reporter html`) | Not available. Reporters are `list`, `line` and `dot`. The config's `reporter` field is ignored. |
-| Trace viewer, `trace` option | Not available. `context.tracing` methods exist and do nothing. |
-| Video, `video` option | Not available. `page.video()` returns `null`. |
-| Screenshot on failure, `screenshot` option | Accepted, no effect. |
-| Sharding (`--shard`) | Not available in `pyro run` (unknown option). Size the workers, then split files across CI jobs yourself: [CI without sharding](/recipes/playwright-ci-without-sharding). |
-| Project `dependencies` (setup projects) | Accepted and ignored: a setup project's files run as ordinary tests, alongside the others. Sign in from `globalSetup` instead: [Sign in once with storageState](/recipes/playwright-setup-project-auth). |
+| Trace viewer, `trace` option | Not available. The option is accepted and records nothing; `context.tracing` methods exist and do nothing. |
 | UI mode, `--headed`, `--debug` | Print a warning and have no effect. Pyro is headless. |
 | Codegen, inspector, `page.pause()` | Not available. `page.pause()` returns at once. |
-| Firefox and WebKit | Every project runs on Pyro. |
+| Firefox and WebKit | Every project runs on Pyro, so a three-browser matrix runs every test three times on the same browser. |
 | Custom selector engines (`selectors.register`) | Throws. |
 | Component testing | Not available. |
 | JUnit / JSON / blob reporters, `merge-reports` | Not in `pyro run`. Results are in the log; the exit status is 1 on failure. |
@@ -119,8 +117,8 @@ Before you commit, find out what your suite will need. The work usually comes fr
 1. **Transient-state assertions.** Actions settle before they return, so checks on a spinner or "Saving..." between an action and its result fail. Every such test needs a small rewrite.
 2. **Screenshot baselines.** Every Chromium baseline fails once. Plan a review of the new images, per platform.
 3. **Selector-first page methods** (`page.click(selector)`, ...). `tsc --noEmit` against the new import lists them all.
-4. **Setup projects and sharding.** Both need a change to the config or the CI workflow, not to tests.
-5. **Shadow DOM, context options without effect, missing web APIs.** These depend on your app. Running the suite on both browsers finds them.
+4. **Reports and traces.** A CI workflow that uploads the HTML report or traces needs a change. Setup projects, `--shard`, and the `screenshot` and `video` options work as they are.
+5. **Shadow DOM and missing web APIs.** These depend on your app. Running the suite on both browsers finds them.
 
 [Triage the first red run](/recipes/playwright-triage-first-failures) shows each failure as you will see it, with the fix. One run of your suite on both browsers, grouped by error, tells you most of the cost.
 

@@ -27,7 +27,8 @@ The per-page driver commands `Pyro.run`, `Pyro.idle` and the rest of the `Pyro.*
 | [`preparedPages`](#preparedpages) | — | List the pages waiting on this connection. |
 | [`unregisterPreparedPage`](#unregisterpreparedpage) | — (`name` needs `--fork`) | Retire a profile or release a named one. |
 | [`adoptPreparedPage`](#adoptpreparedpage) | `--fork` | Hold a profile another client registered by name. |
-| [`preparedProfiles`](#preparedprofiles) | — (empty without `--fork`) | List named profiles and their holders. |
+| [`preparedProfiles`](#preparedprofiles) | — (empty without `--fork`) | List named profiles, their holders and their state. |
+| [`preparedProfileStatus`](#preparedprofilestatus) (newer than 0.0.33) | — | How far a profile is: booting, ready, or failed and why. |
 
 Profiles come from two places:
 
@@ -45,11 +46,16 @@ Profiles come from two places:
 | `viewport` | `{width, height}` (integers) | server default (1920x1080) | Viewport set before the navigation. |
 | `pool` | integer 1–8 | `1` | Pages kept booted per profile. Each acquisition starts booting the next one. Outside 1–8: `-32602 pool must be between 1 and 8`. Ignored in fork mode, where the template keeps exactly one page per profile. The SDK sends `2` by default. |
 | `refillAfterClose` | boolean | `false` | Boot the replacement only once the acquired page's browser context closes, not as soon as the thread is quiet. You get at most `pool` booted apps instead of `pool` + 1, but the next test waits for the boot when tests run back to back. The per-request form of `--prepare-refill after-close`. Ignored in fork mode. |
-| `setup` | object[] | `[]` | [`Pyro.run` steps](/reference/pyro-run) run once on the booted page before any test gets it. **`--fork` only**: the template runs them, and every connection forked afterwards starts from the state they leave. The steps must finish within 60 s. The call returns before they run: a failing step is reported on the server's stderr (`pyro: template: setup of profile <id>: step <i>: <reason>`), not as an error of this call. |
+| `setup` | object[] | `[]` | [`Pyro.run` steps](/reference/pyro-run) run once on the booted page before any test gets it. **`--fork` only**: the template runs them, and every connection forked afterwards starts from the state they leave. The steps must finish within 60 s. The call returns before they run, with `state: "booting"`: poll [`preparedProfileStatus`](#preparedprofilestatus) for the outcome. A failing step makes the profile `failed` with the error `setup step <i> (<step>): <reason>`, and the server prints `pyro: template: profile <id>: setup step <i> (<step>): <reason>` on its stderr. See [Failed profiles](#failed-profiles). Releases up to 0.0.33 only print the failure on stderr (`pyro: template: setup of profile <id>: step <i> ...`) and still offer the profile. |
 | `base` | integer (profile id) | — | Start from another profile's page instead of booting `url`. The template forks that profile's snapshot and runs only this profile's `setup` on it. **`--fork` only.** Pages of a derived profile are never booted from `url`. |
 | `name` | string | — | Register as a shared, named profile. **`--fork` only.** Empty: `-32602 name must not be empty`. See [Shared profiles](#shared-profiles). |
+| `userAgent` | string | Pyro's own | The `User-Agent` of every request of the profile's pages (the document, subresources, `fetch` and XHR, what layout, screenshots and PDFs load, the `setup` steps' requests) and their `navigator.userAgent`. Empty or not a header value: `-32602 userAgent must be a non-empty header value`. Newer than 0.0.33. |
+| `proxyServer` | string | the server's `--proxy` | HTTP proxy of the profile's pages, as `Target.createBrowserContext` takes it: `http://[user:pass@]host:port`, or `direct://` for none. A value that does not parse: `-32602 proxyServer: <reason>`. Newer than 0.0.33. |
+| `proxyBypassList` | string | — | Hosts that skip `proxyServer`, in Chrome's `--proxy-bypass-list` syntax. Without `proxyServer`: `-32602 proxyBypassList needs proxyServer`. Newer than 0.0.33. |
 
 Without `--fork`, `setup` or `base` returns `-32602 setup and base need serve --fork`, and `name` returns `-32602 profile names need serve --fork`.
+
+A profile with a `base` has its base's `userAgent` and proxy. `userAgent`, `proxyServer` and `proxyBypassList` are part of the definition that shared names compare.
 
 ## capabilities
 
@@ -73,7 +79,7 @@ Declares a profile and starts booting its pages.
 
 **Params:** the [profile object](#the-profile-object).
 
-**Result:** `{ "profileId": number }`
+**Result:** `{ "profileId": number }`. In fork mode (newer than 0.0.33) also `"state"`: `"booting"`, `"ready"` or `"failed"`, and `"error"` when it failed. See [`preparedProfileStatus`](#preparedprofilestatus).
 
 **Errors:** the invalid-params cases in the profile table. In fork mode the registry can also return:
 
@@ -118,6 +124,7 @@ With both filters empty, any waiting page matches. A loaded page is preferred. O
 **Errors:**
 
 - No page matches: `-32602 No prepared page for that url: register one with Pyro.registerPreparedPage or serve --prepare`. The SDK catches this code and opens a fresh page instead.
+- `profileId` names a [failed profile](#failed-profiles): `-32000 profile <id>: <error>`, with `data: { "setupError": "<error>" }`. It is a server error, not the `-32602` above, so that a client does not boot a fresh page in its place.
 - The connection already has 256 targets: `-32000 Too many targets`.
 
 ```json
@@ -175,12 +182,15 @@ Retires a profile, or, in fork mode, releases this connection's hold on a named 
 | `viewport` | `{width, height}` \| null | |
 | `setup` | object[] | The profile's setup steps. |
 | `base` | integer \| null | The profile it derives from. |
+| `userAgent`, `proxyServer`, `proxyBypassList` | string \| null | As registered. Newer than 0.0.33. |
+| `state` | string | `"booting"` or `"ready"`. Newer than 0.0.33. |
 
 **Errors:**
 
 - `-32602 adopting a profile needs serve --fork`
 - `-32602 name is required`
 - `-32000 no profile <name>`
+- `-32000 profile <name>: <error>`, with `data: { "setupError": "<error>" }`: the profile's setup failed. The connection does not hold it.
 
 ## preparedProfiles
 
@@ -188,16 +198,49 @@ Lists the named (shared) profiles the fork template keeps. Without `--fork`, it 
 
 **Params:** none.
 
-**Result:** `{ "profiles": [{ "name": string, "profileId": number, "holders": number, "url": string, "base"?: number }] }`
+**Result:** `{ "profiles": [{ "name": string, "profileId": number, "holders": number, "url": string, "base"?: number, "state": string, "error"?: string }] }`
 
-`holders` is the number of connections that hold the name.
+`holders` is the number of connections that hold the name. `state` and `error` are as in [`preparedProfileStatus`](#preparedprofilestatus) (newer than 0.0.33).
+
+## preparedProfileStatus
+
+Newer than 0.0.33. Says how far a profile is. In fork mode a profile's page boots and its `setup` runs in the template after `registerPreparedPage` has returned; poll this to learn the outcome. The SDK's `pyro.profile()` does.
+
+**Params:** `{ "profileId": number }` (required)
+
+**Result:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `state` | string | `"booting"`: its page is loading, or its setup has not finished. `"ready"`: loaded and set up; connections start from it. `"failed"`: see below. |
+| `error` | string | With `"failed"` only: why. |
+
+Without `--fork` a profile has no setup, so the answer is `ready` (or `failed`), never `booting`; whether its pages have loaded is in [`preparedPages`](#preparedpages).
+
+**Errors:** an id that is not an active profile is an error (without `--fork`: `-32602 Unknown prepared profile`).
+
+```json
+{ "id": 4, "method": "Pyro.preparedProfileStatus", "params": { "profileId": 2 } }
+{ "id": 4, "result": { "state": "failed",
+                       "error": "setup step 2 (Click {\"role\":\"button\",\"name\":\"Sign in\"}): timed out after 5000 ms: ..." } }
+```
+
+### Failed profiles
+
+A fork-mode profile fails when:
+
+- a `setup` step fails: `setup step <i> (<step>): <reason>`, where `<i>` is the step's index in `setup` and the rest is [`Pyro.run`'s error](/reference/pyro-run#errors) for it;
+- its page does not load within 30 s: `setup: the page did not load within 30 s (<url>: <why>)`;
+- the profile it starts from (`base`) failed: `base profile <base> failed: <that profile's error>`.
+
+No page of a failed profile is handed out: `acquirePreparedPage` and `adoptPreparedPage` fail with its error, and profiles derived from it fail with it. It stays registered until it is retired. Registering the same definition again boots it and runs the setup again; under a name, the name and its holders move to the new attempt.
 
 ## Shared profiles
 
 With [`--fork`](/reference/serve#fork), several clients can share one server, for example test workers in separate processes ([One server, many workers](/e2e/shared-server)):
 
 1. A client calls `registerPreparedPage { name: "admin", url, … }`. The template boots the profile, and the client holds the name.
-2. Registering the **same definition** under the same name finds the profile already booted and adds a holder. A **different definition** is refused while another client holds the name. With no holders left, the name moves to the new definition.
+2. Registering the **same definition** under the same name finds the profile already booted and adds a holder. A **different definition** (another `userAgent` or proxy included) is refused while another client holds the name. With no holders left, the name moves to the new definition.
 3. Another client calls `adoptPreparedPage { name: "admin" }` to hold it without knowing the definition.
 4. `unregisterPreparedPage { name }` releases a hold. A connection's holds also end when it closes. A profile is retired once nobody holds it and no other profile is derived from it.
 

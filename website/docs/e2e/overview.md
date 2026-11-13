@@ -96,7 +96,7 @@ The suite numbers are wall time for an app whose own JavaScript dominates the co
 
 ## When not to use it
 
-- **You need Playwright's HTML report, trace viewer or video.** Neither layer provides them.
+- **You need Playwright's HTML report or trace viewer.** Neither layer provides them. Video is recorded by the Playwright layer only (`recordVideo`, `use.video`); the native SDK has screenshots and [raw frames](/scraping/pdf#raw-frames).
 - **You must assert a transient state between an action and its result**, such as a spinner that shows only while a request is in flight. An action settles before the next step runs, so the spinner may be gone by then. Hold the request with a [mock](/e2e/network#holding-a-request) to keep the state on screen while you check it.
 - **The test needs Chromium-specific behaviour or pixels.** Pyro is its own engine. See [Behaviour differences](/playwright/differences) and [Web platform support](/reference/web-platform).
 

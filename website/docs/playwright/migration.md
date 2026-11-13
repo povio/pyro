@@ -78,12 +78,12 @@ A `pyro.config.ts` beside it takes precedence. That is how both runners can shar
 
 Things to check in the config:
 
-- **Projects for other browsers.** All projects run on Pyro, and `pyro run` runs each file once, under the first project whose `testDir` / `testMatch` include it. A config with `chromium`, `firefox` and `webkit` projects therefore runs each test once, with the `chromium` project's `use`. Select one with `--project`.
-- **`devices`.** Only five descriptors exist: `Desktop Chrome`, `Desktop Chrome HiDPI`, `Desktop Edge`, `Pixel 7` and `iPhone 15`. Any other name is `undefined`, and spreading it adds nothing. Of a descriptor, `viewport` and `userAgent` take effect; `deviceScaleFactor`, `isMobile` and `hasTouch` do not.
-- **Setup projects.** Project `dependencies` are ignored, and a setup project's files run as ordinary tests, at the same time as the tests that need their `storageState`. Move the sign-in into `globalSetup`: see [Sign in once with storageState](/recipes/playwright-setup-project-auth).
-- **`globalSetup`** receives the config object as written, not Playwright's resolved `FullConfig`: `config.projects[0].use` lacks the top-level `use`. Read `baseURL` and similar values from a shared module.
+- **Projects for other browsers.** All projects run on Pyro, and a file runs in each project that matches it, as in Playwright. A config with `chromium`, `firefox` and `webkit` projects therefore runs each test three times on the same browser. Remove the other two projects, or select one with `--project`.
+- **`devices`** is Playwright 1.59.1's table. A descriptor's `viewport`, `userAgent`, `deviceScaleFactor`, `isMobile` and `hasTouch` take effect; `defaultBrowserType` does not. See [Mobile emulation](/playwright/runner#mobile-emulation). A descriptor sets `userAgent`, so its project gets no [booted pages](/playwright/boot-pools).
+- **Setup projects** work as in Playwright: project `dependencies` run first, and `teardown` projects last. See [Sign in once with a setup project](/recipes/playwright-setup-project-auth).
+- **`globalSetup`** receives Playwright's resolved `FullConfig`, so `config.projects[0].use.baseURL` works.
 - **`reporter`** is ignored. Pass `--reporter list|line|dot` on the command line.
-- **`use.trace`, `use.video`, `use.screenshot`** are accepted and do nothing.
+- **`use.trace`** is accepted and records nothing. **`use.screenshot`** and **`use.video`** work; video needs an ffmpeg on the machine. See [Video](/playwright/runner#video).
 
 [Config and the test runner](/playwright/runner) lists every field that is honoured.
 
@@ -115,7 +115,7 @@ The difference: under plain `bun test`, Bun reports a test that calls `test.skip
 }
 ```
 
-Drop scripts that use `playwright show-report`, `playwright codegen`, `--ui`, `--trace` or `--shard`. They have no equivalent (see [Overview](/playwright/overview#what-is-not-there)).
+Drop scripts that use `playwright show-report`, `playwright codegen`, `--ui` or `--trace`. They have no equivalent (see [Overview](/playwright/overview#what-is-not-there)).
 
 ## 6. Remove Playwright
 
@@ -147,11 +147,11 @@ jobs:
 Compared with a Playwright job:
 
 - Remove the `npx playwright install --with-deps` step and any browser cache.
-- Replace `--shard=i/n` matrices; `pyro run` has no sharding. Use more workers (`-j`) first; if one machine is not enough, split the files across jobs with a script: [CI without sharding](/recipes/playwright-ci-without-sharding).
+- Keep a `--shard=i/n` matrix if you have one: `pyro run --shard i/n` splits the tests as Playwright does. Remove the `merge-reports` job that follows it, since there are no blob reports. A suite often needs fewer jobs on Pyro; try more workers (`-j`) on one machine first.
 - Remove steps that upload `playwright-report/` or traces. On failure, `test-results/` (the `outputDir`) still holds `-actual`, `-expected` and `-diff` images of screenshot mismatches.
 - The runner exits with status 1 when a test fails.
 
-[CI without sharding](/recipes/playwright-ci-without-sharding) has a complete workflow with caching and a job matrix. [CI recipes](/e2e/ci) covers the native runner, `pyro e2e`.
+[Sharding in CI](/recipes/playwright-ci-without-sharding) has a complete workflow with caching and a job matrix. [CI recipes](/e2e/ci) covers the native runner, `pyro e2e`.
 
 ## 8. Re-baseline screenshots
 
@@ -214,19 +214,16 @@ export const expect: typeof pyro.expect = stock ? (stock.expect as any) : pyro.e
 | --- | --- | --- |
 | `page.click is not a function` (also `page.fill`, `page.textContent(selector)`, `page.isVisible(selector)`, ...) | Playwright's selector-first page methods are not implemented. | Use locators: `page.locator(selector).click()`. |
 | Every `toHaveScreenshot` fails | Baselines came from Chromium. | Re-baseline with `-u all` (step 8). |
-| `unknown field 'animations'` (or `mask`, `caret`, `scale`, `omitBackground`) | `toHaveScreenshot` accepts only `threshold`, `maxDiffPixels`, `maxDiffPixelRatio`, `clip`, `fullPage` and `timeout`. | Remove the option. |
+| `unknown field 'animations'` (or `mask`, `caret`, `scale`) | `toHaveScreenshot` accepts only `threshold`, `maxDiffPixels`, `maxDiffPixelRatio`, `clip`, `fullPage`, `omitBackground` and `timeout`. | Remove the option. |
 | An assertion on a loading spinner or "Saving..." text times out | Actions settle before they return; the transient state is already gone. | Assert the final state, or wait for the request. See [Behaviour differences](/playwright/differences#actions-settle-before-they-return). |
 | A `confirm()` dialog acts as if Cancel was pressed | A dialog with no `page.on('dialog')` listener is dismissed. | Register a listener before the action, as Playwright requires. |
 | `toHaveRole('button')` fails on a `<button>` | `toHaveRole` reads the `role` attribute only, not implicit roles. | Use `getByRole('button')` to find it, or drop the assertion. |
 | An element inside an open shadow root is not found | CSS and `getByRole` locators do not enter shadow roots; `getByText` does. | Locate by text, or test through the host element's API. |
-| Each test runs once although there are three browser projects | All projects run on Pyro, each file once. | Expected. Use `--project` to pick one. |
-| `await page.goto(url)` returns `null`, or its response has no headers | Pooled pages turn `goto` into a route change, which returns `null`; a normal `goto` response carries status and URL only. | Check status with `waitForResponse`, or read headers from `page.request`. |
-| `afterEach` that takes a screenshot when `testInfo.status !== testInfo.expectedStatus` never fires | `testInfo.status` stays `'passed'` during hooks. | See [Behaviour differences](/playwright/differences#test-runner). |
+| Each test runs three times, once per browser project | All projects run on Pyro. | Remove the Firefox and WebKit projects, or use `--project` to pick one. |
+| `await page.goto(url)` returns `null` | A [booted page](/playwright/boot-pools) turns `goto` into a route change, which returns `null`. | Check status with `waitForResponse`, or leave that route out of `boot`. |
+| `browser.newContext: recordVideo encodes videos with ffmpeg, and there is none` | `video` or `recordVideo` is set and the machine has no ffmpeg. | Install one, or set `PYRO_FFMPEG`. See [Video](/playwright/runner#video). |
 | `getByTestId(/regex/)` or `click({ clickCount: 3 })` throws "not supported yet" | Not implemented. | Use a string test id; use `dblclick()` or `evaluate` for triple clicks. |
-| `pyro run: unknown option --shard` | Flag not supported. | Remove it; see [CI without sharding](/recipes/playwright-ci-without-sharding). |
-| `ENOENT: no such file or directory, open 'e2e/.auth/user.json'` in every test | A setup project was meant to write the storage state first; `dependencies` do not run. | Sign in from `globalSetup`: [Sign in once with storageState](/recipes/playwright-setup-project-auth). |
-| `ENOENT` from `writeFileSync` in `context.storageState({ path })` | The directory does not exist. Pyro does not create it; Playwright does. | `mkdirSync(dirname(path), { recursive: true })` first. |
-| `Cannot destructure property 'baseURL' from null or undefined value` in global setup | `globalSetup` gets the config as written; `config.projects[0].use` is the project's own `use` or `undefined`. | Read the values from a shared module. |
+| `ENOENT: no such file or directory, open 'e2e/.auth/user.json'` under plain `bun test` | Plain `bun test` runs no project dependencies, so the setup project did not write the storage state. | Use `pyro run`, or run the setup file first. |
 | `Missing bundled browser: .../native/<platform>/pyro` | The package was installed from a checkout, which has no bundled browsers. | Set `PYRO_BIN`; see [Before the first release](/guide/installation#try-today). |
 | App code reports an unsupported browser, or a web API is undefined | Pyro is not Chromium: its UA and API surface differ. | See [Web platform support](/reference/web-platform). |
 
@@ -235,13 +232,12 @@ export const expect: typeof pyro.expect = stock ? (stock.expect as any) : pyro.e
 - [ ] `@povio/pyro` installed; `bun --version` works locally and in CI.
 - [ ] No imports of `@playwright/test`, `playwright`, `playwright/test` or `playwright-core` left (`grep -rn`).
 - [ ] Config file found (`bunx pyro run --list` lists your tests).
-- [ ] Setup projects moved into `globalSetup`.
-- [ ] Browser-specific projects reviewed; `devices` names exist.
+- [ ] Browser-specific projects reviewed: Firefox and WebKit projects removed or left out with `--project`.
 - [ ] Unsupported screenshot options removed; baselines rewritten with `-u all` and committed with their `.json` files.
 - [ ] `page.click(selector)`-style calls rewritten as locators.
 - [ ] Dialog listeners registered where the app uses `confirm`, `alert` or `prompt`.
 - [ ] Assertions on transient states rewritten.
-- [ ] `package.json` scripts and CI updated; `playwright install`, report uploads and sharding removed.
+- [ ] `package.json` scripts and CI updated; `playwright install`, report uploads and `merge-reports` removed.
 - [ ] Playwright packages removed.
 - [ ] Optional: slow app boots moved to [booted pages](/playwright/boot-pools).
 

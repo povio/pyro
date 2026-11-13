@@ -81,4 +81,4 @@ What does not help: raising timeouts, adding waits, and splitting a scenario int
 
 ### Profile-guided optimization
 
-The repository has a profile-guided optimization (PGO) build script for **source builds**, trained on a Playwright suite, a CSS benchmark and, optionally, your own workload. On an M1 Max it measured 5-7% less CPU on the Playwright suite and 5-16% on DOM edit and layout loops, with PDF output byte-identical. The npm package's binaries are not built with PGO. See the repository README if you build from source.
+The repository has a profile-guided optimization (PGO) build script for **source builds**, trained on a Playwright suite, a CSS benchmark and, optionally, your own workload. On an M1 Max it measured 5-7% less CPU on the Playwright suite and 5-16% on DOM edit and layout loops, with PDF output byte-identical. The binaries of releases up to 0.0.33 are not built with PGO. Newer than 0.0.33, release CI builds the package's macOS arm64 browser and its Linux browsers with PGO. See the repository README if you build from source.

@@ -237,7 +237,7 @@ For a list of unknown length, run a few wheel steps at a time and repeat until t
 
 ## Downloads
 
-Downloads are always accepted. Playwright library:
+Downloads are accepted unless the context was made with `acceptDownloads: false` (releases up to 0.0.33 always accept them). Playwright library:
 
 ```ts
 await page.goto('http://127.0.0.1:4500/downloads');

@@ -39,7 +39,7 @@ The three paths share one browser and can be mixed in the same project. [Choosin
 - **It does not run V8.** JavaScript runs on JavaScriptCore. Code that depends on V8-specific behaviour, such as the text of stack traces, may behave differently.
 - **Web API coverage is partial.** Common application APIs work: DOM, events, fetch and XHR, Web Storage, IndexedDB, workers, WebSocket, Canvas 2D, custom elements, shadow DOM, observers. Others are absent, for example WebGL, WebGPU, WebRTC and `SharedWorker`. See [Web platform support](/reference/web-platform).
 - **Screenshots are not Chromium pixels.** Rendering uses Blitz (Stylo, Taffy, Parley) and a CPU rasterizer. Baselines must come from Pyro itself. See [Rendering](/guide/rendering).
-- **It has no headed mode, trace viewer, video recording or Playwright HTML report.**
+- **It has no headed mode, trace viewer or Playwright HTML report.** The Playwright module records video and screenshots of failed tests; see [Video](/playwright/runner#video).
 - **It does not run on Windows.** Windows machines can connect to a browser running on macOS or Linux. See [Platforms](/guide/platforms).
 
 ## Status

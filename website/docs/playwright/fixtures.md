@@ -65,7 +65,7 @@ test.describe('todos', () => {
 | `request` | test | An `APIRequestContext` with `baseURL`, `extraHTTPHeaders`, `httpCredentials`, `ignoreHTTPSErrors`, `userAgent` and `storageState`; disposed after the test. |
 | `playwright` | worker | `{ chromium, request, devices, errors, selectors }`. |
 | `browserName` | worker option | `'chromium'` unless `use` sets it. |
-| every `use` option | test or worker option | `baseURL`, `viewport`, `storageState`, `testIdAttribute`, `actionTimeout`, ... and `pyro`. |
+| every `use` option | test or worker option | `baseURL`, `viewport`, `isMobile`, `locale`, `storageState`, `testIdAttribute`, `actionTimeout`, `screenshot`, `video`, ... and `pyro`. An option you do not set has Playwright's default: `isMobile`, `hasTouch`, `offline`, `bypassCSP` and `ignoreHTTPSErrors` are `false`, `javaScriptEnabled` and `acceptDownloads` are `true`, `locale` is `'en-US'`, `colorScheme` is `'light'`. So `test.skip(({ isMobile }) => isMobile)` skips on mobile projects only. |
 
 `browser.newContext()` inside a test starts from the test's `use` options (viewport, `baseURL`, storage state, timeouts, test id attribute), as in Playwright.
 
@@ -83,9 +83,11 @@ Everything Playwright's `test.extend` does is supported:
 
 `{ timeout }` on a fixture is accepted and not applied separately; the fixture counts against the test's timeout.
 
-### Where worker fixtures differ
+### Worker fixtures
 
-A worker fixture's value is shared by the tests of a file in that worker, and **torn down after each file**, not at the end of the worker. A worker that runs three files sets up a worker fixture three times. The built-in `browser` is the exception: it lives as long as the worker.
+Under `pyro run`, a worker fixture lives as long as the worker process, across its files, as in Playwright: one instance per worker and set of fixture parameters. It is torn down when the worker ends. An error in that teardown is reported as an error outside any test.
+
+Under plain `bun test` with several files, the runner cannot always tell which file is the last one. Then worker fixtures are torn down after each file.
 
 ## Hooks
 
@@ -98,9 +100,12 @@ test.afterAll(async () => { /* after the describe's last test in this worker */ 
 
 - Hooks take an optional title first: `test.beforeEach('sign in', async ({ page }) => {})`.
 - `beforeEach` and `afterEach` get the test's fixtures and `testInfo`. They run outer describe first (`beforeEach`) and inner first (`afterEach`).
-- `beforeAll` and `afterAll` get worker fixtures only. Asking for a test fixture such as `page` throws: `"page" is a test fixture: beforeAll and afterAll get worker fixtures only`. Create a page from `browser` instead.
-- A describe's `beforeAll` / `afterAll` run only in workers that run some of its tests.
+- `beforeAll` and `afterAll` get worker fixtures, and test fixtures of their own: an instance set up for the hook and torn down after it. `page` and `context` are refused, as in Playwright, with an error that starts `"context" and "page" fixtures are not supported in "beforeAll" since they are created on a per-test basis.` Create a page from `browser` instead.
+- A describe's `beforeAll` hooks run with the first of its tests a worker runs, and its `afterAll` hooks after the last. They run only in workers that run some of its tests.
+- An error in `beforeAll` fails that first test, and the describe's other tests do not run. An error in `afterAll` fails the last test.
+- A hook has the project's timeout. Past it, the hook fails with `"beforeAll" hook timeout of <ms>ms exceeded.`
 - An error in `afterEach` fails the test. All `afterEach` hooks still run.
+- `afterEach` hooks also run after a test that timed out, with the page as it was at the timeout. See [Timeouts](/playwright/runner#timeouts).
 
 ## test.step
 
@@ -115,7 +120,7 @@ const id = await test.step('create the order', async () => {
 
 - Steps are not shown in the report. There is no report that would show them.
 - `box: true` is accepted and has no effect.
-- `step.skip()` inside the body skips the **whole test**, not only the step.
+- `step.skip()` inside the body ends that step, which returns `undefined`. The test goes on, as in Playwright.
 - `test.step.skip(title, body)` does not run the body and returns `undefined`.
 
 ## test.info()
@@ -125,16 +130,16 @@ const id = await test.step('create the order', async () => {
 | Member | Notes |
 | --- | --- |
 | `title`, `titlePath`, `file`, `testId` | `titlePath` starts with the file path relative to the working directory. |
-| `project`, `config` | The resolved project (`name`, `use`, `outputDir`, `testDir`, `timeout`, `retries`, `metadata`) and the config object. |
-| `retry`, `workerIndex`, `parallelIndex` | `parallelIndex` equals `workerIndex`. |
+| `project`, `config` | Playwright's resolved `FullProject` (`name`, `use` with the config's `use` merged in, `outputDir`, `testDir`, `timeout`, `retries`, `metadata`, `dependencies`, ...) and `FullConfig`. |
+| `retry`, `workerIndex`, `parallelIndex` | Under `pyro run`, `workerIndex` is the worker process's number in the run and `parallelIndex` its slot, below the worker count. Both are 0 under plain `bun test`. |
 | `timeout`, `setTimeout(ms)` | Changing it re-arms the running test's timer. |
 | `annotations` | Filled by `skip`, `fixme`, `fail`, `slow`. |
-| `attach(name, { body, path, contentType })` | Stored in `attachments`. No report shows them. |
+| `attach(name, { body, path, contentType })` | Stored in `attachments`. `pyro run` lists a failed test's attached files under its error. |
 | `outputDir`, `outputPath(...parts)` | `<outputDir>/<title path slug>[-retryN]`; `outputPath` creates the directory. |
 | `snapshotDir`, `snapshotPath(name, { kind })`, `snapshotSuffix` | Playwright's snapshot paths. See [Snapshots](/playwright/snapshots). |
 | `skip()`, `fixme()`, `fail()`, `slow()` | As the `test.*` forms. |
 | `expectedStatus` | `'passed'`, or `'skipped'` / `'failed'` after `skip` / `fail`. |
-| `status`, `error`, `errors`, `duration` | Not updated while the test runs: `status` stays `'passed'` in `afterEach`. |
+| `status`, `error`, `errors`, `duration` | `status` becomes `'failed'` or `'timedOut'` at the test's first error (a failed soft assertion counts), so `afterEach` hooks and fixture teardown see it. |
 | `repeatEachIndex`, `line`, `column` | Always 0. |
 
 ## skip, fixme, fail, slow
@@ -163,10 +168,6 @@ test.describe('admin', () => {
 - `test.slow()` triples the timeout.
 - `test.slow(title, fn)` is an error, as it is not a Playwright form.
 
-::: warning Unset boolean options are undefined
-Context options that you do not set (`isMobile`, `hasTouch`, `javaScriptEnabled`, `offline`, ...) are `undefined`, not `false` as in Playwright. `test.skip(undefined)` skips, like `test.skip()`. So `test.skip(isMobile)` skips every test unless `isMobile` is set in `use`. Write `test.skip(isMobile === true)` or set the option explicitly.
-:::
-
 ## describe modes
 
 ```ts
@@ -185,7 +186,7 @@ test.describe.fixme('broken', () => { /* ... */ });   // same as skip
 | Mode | Behaviour |
 | --- | --- |
 | `default` | Tests run in order in the file's worker. A failure does not stop the others. |
-| `serial` | Tests run in order in the file's worker. After a failure (retries used up), the rest of the group is skipped with "an earlier test of its serial group failed". |
+| `serial` | Tests run in order in the file's worker. After a failure (retries used up), the rest of the group does not run. Those tests are counted as "did not run", with the reason "an earlier test of its serial group failed". |
 | `parallel` | Tests spread over the workers. Within one worker they still run one after another unless `PYRO_CONCURRENT=1`. |
 
 `configure({ retries, timeout })` applies to the describe and the describes inside it.
@@ -208,7 +209,7 @@ The number of retries comes from the innermost `test.describe.configure({ retrie
 | `expect` | 5 000 ms | `expect.timeout` in config, `expect.configure({ timeout })`, per call |
 | Action, navigation | 30 000 ms cap | `actionTimeout`, `navigationTimeout`, `page.setDefaultTimeout()`, per call |
 
-A timed-out test is reported as "timed out" with `Test timeout of <ms>ms exceeded.` Its fixtures are torn down at once.
+A timed-out test is reported as "timed out" with `Test timeout of <ms>ms exceeded.` It keeps its pages: the call it waited on is cancelled, then the `afterEach` hooks and fixture teardown run. See [Timeouts](/playwright/runner#timeouts).
 
 ## Next
 

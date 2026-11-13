@@ -12,8 +12,8 @@ This recipe uses the native SDK (`@povio/pyro`). Fork mode runs on macOS on Appl
 | Survives a server restart | yes, the files are on disk | no; register the profiles again at start |
 | Session state kept | cookies and `localStorage` | everything: cookies, all storage, IndexedDB, live JavaScript state |
 | Sessions per identity | one per file | one per profile, shared by every fork |
-| Per-identity proxy | one server per proxy | one fork server per proxy |
-| Per-identity user agent | context option, sent at sign-in too | set on each forked page; **sign-in uses Pyro's default user agent** |
+| Per-identity proxy | the context's `proxy` option | the profile's `proxyServer` (releases up to 0.0.33: one fork server per proxy) |
+| Per-identity user agent | context option, sent at sign-in too | the profile's `userAgent`, sent at sign-in too (releases up to 0.0.33: set on each forked page, and the sign-in uses Pyro's default user agent) |
 | API | Playwright library or SDK | native SDK only |
 | Platforms | all | macOS Apple silicon, Linux x64/arm64 |
 
@@ -246,21 +246,21 @@ sign-in bob from Mozilla/5.0 (compatible; pyro/0.0.17)
 sign-in alice from Mozilla/5.0 (compatible; pyro/0.0.17)
 ```
 
-The sign-in ran in the server's template with Pyro's default user agent; the jobs then sent each identity's own. Profiles have no user agent option, and `setup` steps cannot send CDP commands. If the site ties a session to the user agent it signed in with, use state files for that site.
+The sign-in ran in the server's template with Pyro's default user agent; the jobs then sent each identity's own. That is what this recipe's code does: it sets the user agent on each forked page. Newer than 0.0.33, a profile has a `userAgent` option that covers the sign-in too. See [User agent](#how-the-parts-work) below.
 
 ## How the parts work
 
 **One profile per identity.** Every fork of a profile starts from the same snapshot, so all of alice's jobs share one session cookie. To the site, that is one user with many tabs. Register one profile per account to spread jobs over several sessions.
 
-**Signing in.** `pyro.profile(name, { url, setup })` boots `url` in the template and runs `setup` there once. `pyro.warm(name)` waits until the snapshot is ready. A failing `setup` step is printed on the server's stderr (your script's stderr with `Pyro.launch`), and the client is not told; the profile is still offered in whatever state the steps reached. That is why every job checks first.
+**Signing in.** `pyro.profile(name, { url, setup })` boots `url` in the template and runs `setup` there once. `pyro.warm(name)` waits until the snapshot is ready. When a `setup` step fails, `pyro.profile()` rejects with a `ProfileSetupError` that names the step and the reason, and no page of the profile is handed out. In releases up to 0.0.33 the failure is only printed on the server's stderr (your script's stderr with `Pyro.launch`) and the profile is still offered in whatever state the steps reached. Either way a session can end after the sign-in, which is why every job checks first.
 
 **Detecting a signed-out page.** The first steps of every job are `goto(url)` and `waitForUrl('/account', { timeout: 300 })`. On a signed-out page the site redirects to `/login`, the check fails, and `page.run` throws a `RunError` whose `step` is `1`. Other failures (a missing element, a slow page) have other step numbers and are not taken for an expired session. Use whatever check fits your site; keep its timeout short, since the page is already loaded when it runs.
 
 **Re-sign-in.** `releaseProfile(name)` drops this client's hold, and the server retires the old snapshot once no client holds it; `profile(name, ...)` then signs in again. The `signingIn` map makes jobs that fail at the same moment share one sign-in. Pages already open keep running from the old snapshot. If other processes adopted the profile (see below), they hold it too; then register the new sign-in under a new name, such as `alice-2`, and point new jobs at it.
 
-**User agent.** `page.send('Emulation.setUserAgentOverride', ...)` on each forked page sets the `User-Agent` header and `navigator.userAgent` for everything the job does after it.
+**User agent.** `page.send('Emulation.setUserAgentOverride', ...)` on each forked page sets the `User-Agent` header and `navigator.userAgent` for everything the job does after it. Newer than 0.0.33, put the user agent in the profile instead (`pyro.profile(name, { url, userAgent: IDENTITIES[name].userAgent, setup })`) and drop the call: the `setup` steps and every fork then send it, so the site sees the same user agent at sign-in and in the jobs. That variant was not run for this page.
 
-**Proxies.** A fork server has one proxy, given with `--proxy`; forks and their `setup` use it. For identities behind different proxies, launch one fork server per proxy and register each identity on its proxy's server:
+**Proxies.** A fork server's `--proxy` is the default for every profile; forks and their `setup` use it. Newer than 0.0.33, a profile's `proxyServer` (`http://user:pass@host:port`) replaces it for that profile, so one fork server holds identities behind different proxies. See [Proxy and user agent per identity](/scraping/fork-profiles#proxy-and-user-agent-per-identity). In releases up to 0.0.33, launch one fork server per proxy and register each identity on its proxy's server:
 
 ```ts
 const de = await Pyro.launch({ args: ['--fork', '--proxy', 'http://user:pass@proxy-de.example.net:3128'] });

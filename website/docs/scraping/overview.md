@@ -50,9 +50,9 @@ What does not work, or works differently:
 
 - **No persistent profile directory.** All storage is in memory and per browser context. There is no `--user-data-dir` and no `launchPersistentContext`. Save state to a file with `storageState` instead. See [Stored profiles](/scraping/profiles).
 - **No SOCKS proxies and no HTTPS proxies.** Only `http://` forward proxies. See [Proxies, user agents, headers](/scraping/identity).
-- **Some emulation is missing in the Playwright library.** The `proxy`, `locale`, `timezoneId`, `geolocation`, `permissions`, `httpCredentials`, `deviceScaleFactor`, `isMobile`, `hasTouch`, `offline` and `javaScriptEnabled` context options are accepted but have no effect on pages. Most of them can be set through a CDP session or a server flag instead; [Proxies, user agents, headers](/scraping/identity#quick-reference) lists how.
+- **Emulation has a few limits.** The Playwright library's context options (`proxy`, `locale`, `timezoneId`, `geolocation`, `permissions`, `httpCredentials`, `deviceScaleFactor`, `isMobile`, `hasTouch`, `offline`, `javaScriptEnabled`) work as Playwright's do. What remains: `timezoneId` fails on the Intel macOS browser, `locale` does not reach `Intl` inside workers, and mobile emulation has no pinch zoom or touch input. [Proxies, user agents, headers](/scraping/identity#quick-reference) lists each setting.
 - **Layout and pixels are not Chromium's.** Positions can differ by a few pixels, and screenshots do not match Chrome's pixel for pixel. Text extraction is not affected.
-- **No video, no tracing, no trace viewer, no `Page.startScreencast`.**
+- **No tracing and no trace viewer.** Video works: the Playwright library's `recordVideo` writes a WebM per page (it needs an ffmpeg), and CDP `Page.startScreencast` sends frames. See [Video](/playwright/runner#video).
 - **Other gaps.** Some web APIs are partial. A site that depends on one of them may break. [Web platform support](/reference/web-platform) and [CDP coverage](/reference/cdp) list the details.
 - **Browser fingerprint.** The default user agent says `pyro`, and the JavaScript engine is JavaScriptCore, not V8. Sites that block automated or non-Chrome browsers can tell. Pyro has no stealth mode or captcha solving.
 

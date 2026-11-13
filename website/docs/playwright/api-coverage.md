@@ -14,7 +14,7 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 | `chromium` | Partial | `launch`, `connectOverCDP`, `connect`, `name`. |
 | `firefox`, `webkit`, `_android`, `_electron` | Not supported | |
 | `request` | Supported | `request.newContext()`. |
-| `devices` | Partial | Five descriptors: `Desktop Chrome`, `Desktop Chrome HiDPI`, `Desktop Edge`, `Pixel 7`, `iPhone 15`. |
+| `devices` | Supported | Playwright 1.59.1's table of descriptors. Every field takes effect except `defaultBrowserType`: all of them run on Pyro. |
 | `errors` | Partial | `errors.TimeoutError` only. |
 | `selectors` | Partial | `setTestIdAttribute()` is a no-op (use the `testIdAttribute` option); `register()` throws. |
 | Types (`Page`, `Locator`, `BrowserContext`, `PlaywrightTestConfig`, ...) | Supported | Playwright's shapes. |
@@ -49,7 +49,7 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 | `addInitScript(script, arg)` | Supported | Function, string, `{ path }` or `{ content }`. |
 | `addCookies()`, `cookies(urls)` | Supported | A cookie needs `url` or `domain`. |
 | `clearCookies(options)` | Partial | Clears all cookies; filter options are ignored. |
-| `storageState({ path })` | Partial | `localStorage` only of origins with an open page; `indexedDB` is not saved; the directory of `path` must exist. |
+| `storageState({ path })` | Partial | `localStorage` only of origins with an open page; `indexedDB` is not saved. Missing directories of `path` are made. |
 | `route()`, `unroute()`, `unrouteAll()` | Supported | `unrouteAll`'s `behavior` is ignored. |
 | `routeFromHAR(path, options)` | Supported | Replay, and recording with `update: true`. |
 | `routeWebSocket()` | Not supported | |
@@ -62,23 +62,32 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 | `tracing` | No-op | `start`, `stop`, `startChunk`, `stopChunk`, `group`, `groupEnd`. |
 | `waitForEvent(event, options)` | Supported | Default timeout 30 s. |
 | `on/once/off` | Partial | Events `page`, `close`, `console`, `request`, `response`, `requestfinished`, `requestfailed`. No `dialog`, `weberror`, `serviceworker`, `backgroundpage`. |
-| `grantPermissions()`, `clearPermissions()`, `setGeolocation()`, `setOffline()` | No-op | |
+| `grantPermissions(permissions, { origin })`, `clearPermissions()` | Supported | Playwright's permission names; an unknown one throws `Unknown permission: <name>`. |
+| `setGeolocation()`, `setOffline()` | Supported | `setGeolocation(null)` clears the position. |
 | `setHTTPCredentials()`, `serviceWorkers()`, `backgroundPages()`, `removeAllListeners()` | Not supported | |
 
 ### Context options
 
+Options have Playwright's meaning and defaults. [Config and the test runner](/playwright/runner#use-options) says what each one does, and [What differs from Playwright](/playwright/differences#context-options) lists the limits.
+
 | Option | Status |
 | --- | --- |
-| `baseURL`, `viewport`, `storageState`, `extraHTTPHeaders`, `userAgent`, `colorScheme`, `reducedMotion`, `acceptDownloads`, `recordHar` | Supported |
-| `httpCredentials`, `ignoreHTTPSErrors` | Partial: applied to `context.request` only |
-| `screen`, `forcedColors`, `bypassCSP`, `deviceScaleFactor`, `geolocation`, `hasTouch`, `isMobile`, `javaScriptEnabled`, `locale`, `offline`, `permissions`, `proxy`, `serviceWorkers`, `strictSelectors`, `timezoneId`, `recordVideo` | Accepted, no effect |
+| `baseURL`, `viewport`, `screen`, `deviceScaleFactor`, `hasTouch`, `storageState`, `extraHTTPHeaders`, `userAgent`, `colorScheme`, `reducedMotion`, `geolocation`, `permissions`, `httpCredentials`, `ignoreHTTPSErrors`, `offline`, `javaScriptEnabled`, `acceptDownloads`, `recordHar` | Supported |
+| `isMobile` | Partial: `<meta name="viewport">` layout as in Chromium; no pinch zoom |
+| `locale` | Partial: not in the `Intl` of workers |
+| `timezoneId` | Partial: an error on the Intel macOS browser |
+| `proxy` | Partial: HTTP proxies only; SOCKS and HTTPS proxies are an error; `context.request` does not go through it |
+| `bypassCSP` | Partial: Pyro enforces no Content-Security-Policy, so the option only lifts the nonce hiding |
+| `serviceWorkers` | Supported: `'block'` makes `register()` register nothing |
+| `recordVideo` | Partial: `dir` and `size`; needs ffmpeg; `showActions` draws nothing. See [Video](/playwright/runner#video) |
+| `forcedColors`, `strictSelectors` | Accepted, no effect |
 
 ## Page
 
 | Method | Status | Notes |
 | --- | --- | --- |
-| `goto(url, options)` | Partial | `waitUntil` (`load`, `domcontentloaded`, `commit` as `domcontentloaded`, `networkidle`), `timeout`. The returned `Response` has URL and status only; `null` on a [booted page](/playwright/boot-pools). `referer` is ignored. |
-| `reload()` | Partial | Same response limits as `goto`. |
+| `goto(url, options)` | Partial | `waitUntil` (`load`, `domcontentloaded`, `commit` as `domcontentloaded`, `networkidle`), `timeout`. Returns the document's `Response` (status, headers, redirects, body); `null` on a [booted page](/playwright/boot-pools). `referer` is ignored. |
+| `reload()` | Supported | Returns the document's `Response`, as `goto`. |
 | `goBack()`, `goForward()` | Partial | Return `null`. |
 | `url()`, `title()`, `content()`, `setContent()` | Supported | |
 | `locator()`, `getByRole()`, `getByText()`, `getByLabel()`, `getByPlaceholder()`, `getByAltText()`, `getByTitle()`, `getByTestId()`, `frameLocator()` | Supported | `getByAltText`, `getByTitle`, `getByTestId`: strings only. |
@@ -103,13 +112,13 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 | `setExtraHTTPHeaders()` | Supported | |
 | `setViewportSize()`, `viewportSize()` | Supported | |
 | `emulateMedia()` | Partial | `colorScheme`, `reducedMotion`, `media`; `forcedColors` is ignored. |
-| `screenshot()` | Partial | `path`, `fullPage`, `clip`, `type`, `quality`. Rendered by Pyro. |
-| `pdf()` | Partial | Options go to CDP `Page.printToPDF` unchanged (`paperWidth`, `marginTop`, ... in inches). |
+| `screenshot()` | Partial | `path`, `fullPage`, `clip`, `type`, `quality`, `omitBackground` (PNG only), and Pyro's own `raw` (see [Raw frames](/playwright/snapshots#raw-frames)). `mask`, `animations`, `caret`, `scale` and `style` are ignored. Rendered by Pyro, in device pixels. |
+| `pdf()` | Partial | Options go to CDP `Page.printToPDF` unchanged (`paperWidth`, `marginTop`, ... in inches). Missing directories of `path` are made. |
 | `ariaSnapshot()` | Supported | Includes `mode: 'ai'`. |
 | `workers()` | Supported | |
 | `setDefaultTimeout()`, `setDefaultNavigationTimeout()` | Supported | |
-| `opener()` | Partial | Always `null`. |
-| `video()` | Partial | Always `null`. |
+| `opener()` | Partial | Always `null`, also for a popup. |
+| `video()` | Supported | A `Video` (`path()`, `saveAs()`, `delete()`) when the context has `recordVideo`, else `null`. |
 | `bringToFront()`, `pause()` | No-op | |
 | `click()`, `dblclick()`, `fill()`, `type()`, `press()`, `check()`, `uncheck()`, `setChecked()`, `hover()`, `tap()`, `focus()`, `selectOption()`, `setInputFiles()`, `dispatchEvent()`, `dragAndDrop()`, `textContent()`, `innerText()`, `innerHTML()`, `inputValue()`, `getAttribute()`, `isVisible()`, `isHidden()`, `isEnabled()`, `isDisabled()`, `isChecked()`, `isEditable()` (selector-first forms) | Not supported | Use locators. |
 | `waitForNavigation()`, `accessibility` | Not supported | Deprecated in Playwright. |
@@ -151,7 +160,7 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 | `evaluate()`, `evaluateAll()`, `evaluateHandle()`, `elementHandle()`, `elementHandles()` | Supported | |
 | `waitFor()` | Supported | |
 | `ariaSnapshot()` | Supported | `mode: 'ai'`, `depth`. |
-| `screenshot()` | Partial | Page screenshot clipped to the bounding box. |
+| `screenshot()` | Partial | Page screenshot clipped to the bounding box. `path`, `type`, `quality`, `omitBackground`. |
 | `highlight()` | No-op | |
 | `describe()` | Not supported | |
 | `type()` | Not supported | Deprecated in Playwright. |
@@ -197,7 +206,7 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 | Method | Status | Notes |
 | --- | --- | --- |
 | `url()`, `status()`, `statusText()`, `ok()`, `headers()`, `allHeaders()`, `headerValue()`, `request()`, `frame()`, `finished()` | Supported | |
-| `body()`, `text()`, `json()` | Partial | Not on the response `goto()` returns. |
+| `body()`, `text()`, `json()` | Partial | Not for a redirect or a response a route answered. The browser keeps a body for a while only: read it soon after the response. |
 | `headersArray()`, `headerValues()`, `securityDetails()`, `serverAddr()`, `fromServiceWorker()` | Not supported | |
 
 ## Route
@@ -212,7 +221,7 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 
 | Method | Status | Notes |
 | --- | --- | --- |
-| `page()`, `url()`, `suggestedFilename()`, `path()`, `saveAs()`, `failure()`, `createReadStream()`, `delete()` | Supported | |
+| `page()`, `url()`, `suggestedFilename()`, `path()`, `saveAs()`, `failure()`, `createReadStream()`, `delete()` | Supported | With `acceptDownloads: false` nothing is saved: `failure()` returns Playwright's message and `path()`, `saveAs()` and `createReadStream()` throw it. |
 | `cancel()` | No-op | |
 
 ## Dialog
@@ -252,7 +261,7 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 | Method | Status | Notes |
 | --- | --- | --- |
 | `get()`, `post()`, `put()`, `patch()`, `delete()`, `head()`, `fetch()` | Partial | `params`, `headers`, `data`, `form`, `multipart`, `timeout`, `failOnStatusCode`, `ignoreHTTPSErrors`, `maxRedirects` (0 or follow). `maxRetries` ignored. |
-| `storageState()` | Partial | Cookies only. |
+| `storageState()` | Partial | Cookies only. Missing directories of `path` are made. |
 | `dispose()` | Supported | |
 | `APIResponse`: `url()`, `status()`, `statusText()`, `ok()`, `headers()`, `headersArray()`, `body()`, `text()`, `json()`, `dispose()` | Supported | |
 
@@ -296,7 +305,7 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 
 ## Not present at all
 
-Tracing files, video recording, the HTML reporter, the trace viewer, codegen, the inspector, UI mode, component testing, Android and Electron automation, and Firefox and WebKit browsers.
+Tracing files, the HTML reporter, the trace viewer, codegen, the inspector, UI mode, component testing, Android and Electron automation, and Firefox and WebKit browsers.
 
 ## Next
 

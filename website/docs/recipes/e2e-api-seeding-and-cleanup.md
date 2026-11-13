@@ -470,7 +470,7 @@ pyro: CDP server listening on ws://127.0.0.1:50282/ (fork mode)
 ✓ e2e/projects-api.test.ts > lists projects seeded for this test [51.63ms]
 ✓ e2e/projects-api.test.ts > deletes a seeded project [58.28ms]
 ✗ e2e/projects-api.test.ts > the create form posts exactly the name [5.06s]
-    Error: step 2 (request {"body":"\"name\":\"Budget 5befe355\"","bodyKeys":["name","owner"],"count":1,"headers":{"authorization":"[REDACTED]"},"method":"POST","path":"/api/projects","status":201}): timed out after 5000 ms: request {"body":"\"name\":\"Budget 5befe355\"","bodyKeys":["name","owner"],"count":1,"headers":{"authorization":"[REDACTED]"},"method":"POST","path":"/api/projects","status":201}: 0 matching requests (0 finished), want 1
+    RunError: step 2 (request {"body":"\"name\":\"Budget 5befe355\"","bodyKeys":["name","owner"],"count":1,"headers":{"authorization":"[REDACTED]"},"method":"POST","path":"/api/projects","status":201}): timed out after 5000 ms: request {"body":"\"name\":\"Budget 5befe355\"","bodyKeys":["name","owner"],"count":1,"headers":{"authorization":"[REDACTED]"},"method":"POST","path":"/api/projects","status":201}: 0 matching requests (0 finished), want 1
 ✗ e2e/setup.ts > (teardown)
     Error: tests left 1 projects behind: Budget 5befe355
 

@@ -459,7 +459,7 @@ await p.run([mock('/api/projects', { method: 'GET', json: [] }), check(text('No 
 
 ```text
 ✗ e2e/x.test.ts > mock after the route (wrong) [1.05s]
-    Error: step 1 (expect Visible {"text":"No projects yet"}): timed out after 1000 ms: expect Visible {"text":"No projects yet"}: expected Visible null, got false
+    RunError: step 1 (expect Visible {"text":"No projects yet"}): timed out after 1000 ms: expect Visible {"text":"No projects yet"}: expected Visible null, got false
 ```
 
 The screen shows the real list, so the empty-state text never appears. Put the `mock` first and the `route` after it.

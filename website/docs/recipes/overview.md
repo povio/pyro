@@ -12,8 +12,8 @@ You have a Playwright suite and want it to run on Pyro without rewriting tests.
 
 | Recipe | What it covers |
 | --- | --- |
-| [Sign in once with a setup project's storageState](/recipes/playwright-setup-project-auth) | Why a setup project fails under `pyro run`, and a `globalSetup` that signs in once and shares the state with every test. |
-| [Run a large suite in CI without --shard](/recipes/playwright-ci-without-sharding) | Sizing workers, splitting files across CI jobs by size or tag, a GitHub Actions matrix. |
+| [Sign in once with a setup project's storageState](/recipes/playwright-setup-project-auth) | A setup project that signs in once and shares the state with every test, a teardown project, and the `globalSetup` variant. |
+| [Run a large suite in CI with --shard](/recipes/playwright-ci-without-sharding) | Sizing workers, sharding across CI jobs, splitting by tag, a GitHub Actions matrix. |
 | [Run the same suite on Chromium and Pyro](/recipes/playwright-side-by-side) | One switch for the browser, separate baselines, a script that lists tests whose results differ, and fair timing. |
 | [Triage the first red run](/recipes/playwright-triage-first-failures) | Checks before the first run, grouping failures, and the six failures you are most likely to see, with fixes. |
 

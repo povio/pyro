@@ -132,7 +132,7 @@ const [download] = await Promise.all([
 await download.saveAs('out/export.csv');
 ```
 
-`Download` has `page`, `url`, `suggestedFilename`, `path`, `saveAs`, `failure`, `createReadStream` and `delete`. `cancel()` does nothing. Files land in a temporary directory that is removed when the browser closes. `acceptDownloads` defaults to `true`. Both an HTTP response with `Content-Disposition: attachment` and a click on an `<a download>` link to a `data:` URL raise the event.
+`Download` has `page`, `url`, `suggestedFilename`, `path`, `saveAs`, `failure`, `createReadStream` and `delete`. `cancel()` does nothing. Files land in a temporary directory that is removed when the browser closes, and `saveAs` makes missing directories. `acceptDownloads` defaults to `true`. With `acceptDownloads: false` nothing is saved: the event still fires, `download.failure()` returns Playwright's `Pass { acceptDownloads: true } when you are creating your browser context.`, and `path()`, `saveAs()` and `createReadStream()` throw it. Both an HTTP response with `Content-Disposition: attachment` and a click on an `<a download>` link to a `data:` URL raise the event.
 
 ## Popups
 
@@ -144,7 +144,9 @@ const [popup] = await Promise.all([
 await expect(popup).toHaveURL(/\/report/);
 ```
 
-A target opened by a page (`window.open`, `target="_blank"`) becomes a page of the opener's context. It is announced by `page.on('popup')` and `context.on('page')`. `page.opener()` always returns `null`.
+A target opened by a page (`window.open`, `target="_blank"`) becomes a page of the opener's context. It is announced by `page.on('popup')` and `context.on('page')` once the popup's document has committed, so `popup.url()` is its own URL. A popup has the context's options, init scripts, exposed functions, routes and extra headers from its first document on. `page.opener()` always returns `null`.
+
+A popup whose navigation is answered with an attachment becomes a download on the opener, and the popup closes, as in Chrome. A popup whose navigation fails shows Chromium's error document, `chrome-error://chromewebdata/`.
 
 ## Dialogs
 

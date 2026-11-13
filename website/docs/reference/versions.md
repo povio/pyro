@@ -9,7 +9,7 @@ Pyro ships as one npm package, `@povio/pyro`, that holds the SDK, the `pyro` CLI
 | npm name | `@povio/pyro` |
 | License | AGPL-3.0-only |
 | Binary | `pyro` (`node_modules/.bin/pyro`) |
-| Entry points | `@povio/pyro` (SDK), `@povio/pyro/e2e` (suite runner API), `@povio/pyro/wright` and `@povio/pyro/test` (Playwright drop-in) |
+| Entry points | `@povio/pyro` (SDK), `@povio/pyro/e2e` (suite runner API), `@povio/pyro/wright` and `@povio/pyro/test` (Playwright drop-in), `@povio/pyro/agent` (tools for AI agents, newer than 0.0.33) |
 | Install scripts | None. The browsers are inside the tarball; nothing is downloaded at install time. |
 
 Check what you have installed:
@@ -30,6 +30,8 @@ bunx pyro version
 | `next` | `vX.Y.Z-rc.N` or `vX.Y.Z-rc` | Release candidates. Publishing a stable version does not move `next`; it keeps pointing at the last RC. |
 
 `@povio/pyro` is published from the first release after the rename. To try the new names before then, see [Before the first `@povio/pyro` release](/guide/installation#try-today). Releases up to 0.0.33 are on npm as `@povio/lightning-panda` (there `latest` is `0.0.33` and `next` is the old `0.0.17-rc.1`). Use `next` only when a release candidate is announced.
+
+State on 2026-11-13: npm lists one version of `@povio/pyro`, the release candidate `0.0.34-rc.1`, and both `latest` and `next` point at it. It has the new names. Its package has no `@povio/pyro/agent` entry point, so it was built before the AI agent tools (#323) and what came after them in [Newer than 0.0.33](#unreleased). No stable `@povio/pyro` version is on npm. A GitHub release `v0.0.34` exists under the old names ("Rust Lightpanda v0.0.34", up to #310) and was not published to npm. The pages of this site still describe the package as not released under the new name.
 
 ```sh
 bun add @povio/pyro          # latest
@@ -95,12 +97,27 @@ A new version can take a while to appear on npm after its release: npm has liste
 
 ## Newer than 0.0.33 {#unreleased}
 
-In the first `@povio/pyro` release (not on npm yet), on top of 0.0.33:
+On the main branch, on top of 0.0.33. No stable release holds these yet; see [Release channels](#channels) for what is on npm.
 
 - **Renamed to Pyro.** The package is `@povio/pyro` and every name moved with it; see [Renamed from Lightningpanda](#renamed-from-lightningpanda).
+- **Breaking: screenshot and PDF replies** (#332). The extra report in the replies of `Page.captureScreenshot` and `Page.printToPDF` is under `pyro`, not `lp`. The SDK and the Playwright module read the new name; change raw CDP clients that read `lp`.
 - **Faster connection start and fork mode** (#303): no JavaScript realm is created before a connection's first command; the fork template is forked from the server process.
 - **Engine reuse across connections** (#304): a connection that made no page leaves its browser thread and engine to the next ([`--engine-reuse`](/reference/serve#engine-reuse), `PYRO_ENGINE_REUSE`); the patched JavaScriptCore is linked statically (the arm64 macOS package no longer carries a `lib/` directory beside the browser); memory is returned after pages close.
 - **Vendored engines updated** (#302): Blitz, Taffy and Stylo 0.24.0.
+- **Engine keeps its code across connections** (#307): [`--engine-reuse`](/reference/serve#engine-reuse) defaults to `always`; new [`--bytecode-cache`](/reference/serve#bytecode-cache); an idle server collects its heap and returns memory.
+- **Release builds with profile-guided optimization** (#309, #310): the macOS arm64 browser and the Linux browsers of the package.
+- **Playwright context options** (#313, #316, #318, #321): `userAgent`, `proxy`, `locale`, `timezoneId`, `bypassCSP`, `serviceWorkers`, `acceptDownloads` and others do what Playwright's do; a context's proxy and user agent also cover what layout loads (images, fonts, imported style sheets). See [Context options](/playwright/differences#context-options).
+- **`pyro run`** (#315, #319): project `dependencies` and `teardown`, `--shard`, hooks, fixtures and `testInfo` as in Playwright; a test that timed out keeps its page for its after hooks; the `screenshot` option. See [Config and the test runner](/playwright/runner).
+- **Video** (#320, #326): `recordVideo` and `use: { video }` in the Playwright module, `Page.startScreencast` over CDP. See [Video](/playwright/runner#video).
+- **Mobile emulation** (#322): `isMobile` lays a page out by its `<meta name="viewport">`, as Chrome does. See [Mobile emulation](/playwright/runner#mobile-emulation).
+- **AI agents** (#323, #325): the [`pyro mcp`](/reference/cli#pyro-mcp) server, the `@povio/pyro/agent` tools, and stored identities with `pyro profile login`. See [AI agents](/scraping/agents).
+- **Screenshots** (#326): faster large captures (4:2:0 JPEG, several raster threads), raw frames, `page.captureFrame()`. See [Raw frames](/scraping/pdf#raw-frames).
+- **Profiles** (#316): a profile whose setup fails rejects `pyro.profile()` with a [`ProfileSetupError`](/reference/sdk#profilesetuperror); profiles take `userAgent`, `proxyServer` and `proxyBypassList`.
+- **`pyro e2e`** (#311): a test times out after 30 s (was 5 s); a failed run's error is named `RunError`. See [Suite runner](/e2e/runner).
+- **CLI** (#312): `fetch --wait-ms` and `eval` wait for requests in flight. See [One-off fetches](/scraping/fetch#wait-ms).
+- **Run steps** (#297): a settle no longer waits for the frame clock, and follows only the requests its own action started. New [`Pyro.cancelRun`](/reference/pyro-run#pyro-cancel-run). See [Settling and auto-waiting](/guide/settling).
+- **Popups, downloads, failed navigations** (#324, #328): a download from a `target=_blank` link is reported on the opener; a new window whose navigation fails shows Chrome's error document. See [CDP coverage](/reference/cdp).
+- **Rendering** (#327, #334, #337): input placeholders, `text-overflow: ellipsis`, inline `<svg>` without a `viewBox`, table cells that ignore `max-width`, line heights rounded to CSS pixels at any device scale factor. See [Rendering](/guide/rendering).
 
 ## Renamed from Lightningpanda {#renamed-from-lightningpanda}
 

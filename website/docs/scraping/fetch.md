@@ -7,7 +7,7 @@ Use them for quick jobs. For sign-in, clicking, proxies, custom headers or many 
 ## `fetch`
 
 ```sh
-pyro fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] URL
+pyro fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] [--bytecode-cache DIR] URL
 ```
 
 If you installed the npm package locally, run it as `npx pyro` or `bunx pyro`.
@@ -17,17 +17,18 @@ If you installed the npm package locally, run it as `npx pyro` or `bunx pyro`.
 | `URL` | required | The page to load. One URL per run. |
 | `--dump html` | yes | Print the DOM after the page loaded, as `<!DOCTYPE html>` plus the `<html>` element's outer HTML. |
 | `--dump none` | | Load the page and print nothing. Useful to check that a page loads, or to see its console output. |
-| `--wait-ms N` | `0` | After `load`, keep running the page's timers and queued tasks until none is left or `N` ms have passed, whichever comes first. Requests still in flight do not count (see below). |
+| `--wait-ms N` | `0` | After `load`, keep running the page until it is quiet (no queued task, no timer, no request in flight) or `N` ms have passed, whichever comes first. |
 | `--timeout-ms N` | `30000` | Deadline for the whole run, the `load` and the wait included. Running JavaScript is stopped when it passes. |
+| `--bytecode-cache DIR` | off | Keep the compiled bytecode of the page's scripts in `DIR` and load it from there in later runs instead of parsing them again. See [`--bytecode-cache`](/reference/serve#bytecode-cache) for what the directory must be. |
 
 How a run goes:
 
 1. The browser navigates to `URL`, running the page's scripts as they load.
 2. It waits for the `load` event.
-3. With `--wait-ms`, it keeps running timers and queued tasks until none is left, or until `N` ms have passed.
+3. With `--wait-ms`, it keeps running the page until no task, timer or request is left, or until `N` ms have passed.
 4. It prints the DOM and exits.
 
-### `--wait-ms` and JavaScript-rendered pages
+### `--wait-ms` and JavaScript-rendered pages {#wait-ms}
 
 Without `--wait-ms`, the DOM is printed right at `load`. Anything a page adds later is not there yet. A test page that inserts `<div id="fetched">` from a 200 ms timer:
 
@@ -38,15 +39,17 @@ $ pyro fetch --wait-ms 1000 http://127.0.0.1:4500/late | grep -c 'id="fetched"'
 1
 ```
 
-`--wait-ms` is a cap, not a sleep. The run ends as soon as no timer or task is left: `--wait-ms 5000` on that page finished in 0.2 s. A page that never goes idle (polling, a ticking clock) runs until the cap. Set the cap to the longest you are willing to wait.
+`--wait-ms` is a cap, not a sleep. The run ends as soon as the page is quiet: `--wait-ms 5000` on that page finished in 0.2 s. A page that never goes quiet (polling, a ticking clock, any `setInterval`) runs until the cap and is printed as it is then. Set the cap to the longest you are willing to wait.
 
-::: warning `--wait-ms` does not wait for requests
-A `fetch()` or XHR that is still in flight does not keep the run going. If the page has no timer or task pending while it waits for a response, the run ends and prints the DOM without that data. A page that builds its content from an API call made after `load` often comes out empty, whatever the cap. For those pages, use a script and wait for the element or the API response you need. [Data from single-page apps](/recipes/scraping-spa-data) shows the ways, starting from a page where `pyro fetch --wait-ms 5000` prints only `Loading...`.
+::: info `--wait-ms` waits for requests
+A `fetch()` or XHR still in flight keeps the run going, and so does what its response starts (a callback's next request, a timer). A page that builds its content from an API call made after `load` is printed with that content, as long as the cap is long enough. Releases up to 0.0.33 did not count requests: there the run ended while a response was on its way and printed the DOM without the data.
+
+The wait cannot know what you need. A page that loads more on scroll or on a click, or one that polls, still needs a script that waits for the element or the API response. [Data from single-page apps](/recipes/scraping-spa-data) shows the ways.
 :::
 
 ### Output and exit codes
 
-The HTML goes to stdout. The page's `console.log` and `console.info` go to stdout too, and `console.warn`, `console.error`, uncaught exceptions and errors go to stderr. Keep that in mind when you pipe stdout: a page that logs to the console mixes its log lines into the HTML. Use `--dump none` to see only the console output. If the reading end of a pipe closes early (`| head`), `fetch` fails to write and prints a Rust panic message to stderr; the output you did read is complete up to that point.
+The HTML goes to stdout. The page's `console.log` and `console.info` go to stdout too, and `console.warn`, `console.error`, uncaught exceptions and errors go to stderr. Keep that in mind when you pipe stdout: a page that logs to the console mixes its log lines into the HTML. Use `--dump none` to see only the console output. If the reading end of a pipe closes early (`| head -1`), `fetch` ends at once, quietly, with exit code `0`.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -72,7 +75,7 @@ For any of those, start `pyro serve` and drive it from a script.
 pyro eval [--timeout-ms N] (-e CODE | FILE | -)
 ```
 
-`eval` runs JavaScript in an `about:blank` page until the event loop is idle. Pass the code with `-e`, as a file path, or on stdin with `-`.
+`eval` runs JavaScript in an `about:blank` page until no task, timer or request is left. Pass the code with `-e`, as a file path, or on stdin with `-`.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
@@ -90,8 +93,10 @@ $ echo 'console.log(JSON.stringify({ ok: 1 }))' | pyro eval -
 {"ok":1}
 ```
 
-::: warning eval has no network
-The `eval` page has no network. `fetch()` rejects with `Page networking is not installed`. Use `eval` to test JavaScript behaviour of the engine, not to scrape. To run code against a loaded page, use `page.evaluate()` from a script.
+::: info eval and the network
+The `eval` page has the network: `fetch()`, XHR and `import()` work, and the command waits for their responses before it exits. The page is `about:blank`, whose origin is opaque, so a response from another origin can only be read when the server sends CORS headers (`Access-Control-Allow-Origin`), as in a browser. Releases up to 0.0.33 had no network in `eval`.
+
+Use `eval` to test JavaScript behaviour of the engine or to call an API that allows any origin. To run code against a loaded page, use `page.evaluate()` from a script.
 :::
 
 ## Piping into other tools

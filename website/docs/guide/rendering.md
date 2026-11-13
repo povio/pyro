@@ -17,13 +17,16 @@ There are three ways to take one:
 | `matchScreenshot('name')` step, or `page.matchScreenshot()` (native SDK) | visual regression tests, compared in the browser |
 | `expect(page).toHaveScreenshot()`, `page.screenshot()` (Playwright module) | Playwright-style visual tests |
 | CDP `Page.captureScreenshot` | any client; `png` (default) or `jpeg` with `quality`, `clip`, `captureBeyondViewport` for the full page |
+| `page.captureFrame()` (native SDK), `page.screenshot({ raw })` (Playwright module), newer than 0.0.33 | raw pixels (`rgba`, `rgb24`, `yuv420p`) with nothing encoded, for ffmpeg or an image library. See [Raw frames](/scraping/pdf#raw-frames) |
+
+Images are in device pixels: at a device scale factor of 2, a 1920 × 1080 viewport gives a 3840 × 2160 image. The Playwright module's `recordVideo` and CDP `Page.startScreencast` capture a page as it runs, through the same renderer (newer than 0.0.33; see [Video](/playwright/runner#video)).
 
 How a screenshot is made:
 
 1. **Snapshot.** The browser thread copies the live DOM: form state (input values, checked boxes, selected options) goes into the copy, as do style sheets including CSSOM edits, the viewport, device scale factor, color scheme and scroll position. Scripts are dropped and shadow trees flattened.
 2. **Layout.** A render thread (one per connection) lays the copy out with Blitz. Images, `@font-face` fonts and `@import`ed sheets are fetched through the page's own network stack, so cookies, mocks and interception apply. The first layout waits for the fonts and images the document asked for, so web fonts are in the first picture.
 3. **Display list and hash.** The painted scene gets a content hash.
-4. **Raster** on the CPU with `vello_cpu`.
+4. **Raster** on the CPU with `vello_cpu`. Frames of 4 million device pixels or more are rasterized on several threads (`PYRO_RASTER_THREADS` sets how many); the pixels are the same either way.
 
 Repeat screenshots of the same page update the render thread's document with only what changed, so Stylo and Taffy restyle and re-lay out only that.
 
@@ -39,6 +42,8 @@ The native `matchScreenshot` step compares in the browser. Baselines live in `__
 - running CSS animations and transitions, which render at their current computed values.
 
 Known gaps in Blitz's painting: no synthetic bold, synthetic italic slants the wrong way, inline boxes do not paint `padding` or `border-radius`, table column widths differ from Chromium's, and text has no hinting.
+
+Newer than 0.0.33, these are painted: the `placeholder` of an empty `<input>` or `<textarea>`, in its `::placeholder` style; the "…" of `text-overflow: ellipsis`; an inline `<svg>` without a `viewBox`, at the size of its box. At a device scale factor above 1, line heights are rounded to whole CSS pixels and macOS's system font is tracked for its CSS size, both as in Chromium.
 
 ## Screenshots versus Chromium
 

@@ -97,13 +97,17 @@ Each page of `app` starts from the state the sign-in left: the token in `localSt
 - opening a view, selecting a tenant, dismissing a cookie banner
 - filling filters that a group of tests shares
 
-A setup that fails does **not** make `pyro.profile()` throw. The setup runs in the template after registration, and the server prints the failure on its standard error:
+`pyro.profile()` resolves once the setup ran. When a step fails it rejects with a `ProfileSetupError` (exported by `@povio/pyro`) that names the profile, the step and the reason:
 
 ```text
-pyro: template: setup of profile 2: step 0 (expect Visible {"text":"missing"}): timed out after 300 ms: expect Visible {"text":"missing"}: expected Visible null, got false
+profile app: setup step 0 (expect Visible {"text":"missing"}): timed out after 300 ms: expect Visible {"text":"missing"}: expected Visible null, got false
 ```
 
-Pages of that profile still open, from wherever the setup stopped, so the tests fail later with less obvious messages. End a setup with a check of the state it should reach (as `check(text('Signed in')).visible()` above), keep the server's stderr visible in CI, and look there first when every test of one profile fails.
+The error has `.profile` (the name) and `.step` (the index of the failed step in this profile's `setup`, from 0; `undefined` when the base profile failed instead). No page of a failed profile is handed out: `pyro.page({ as })` and `pyro.warm()` throw the same error, and profiles with `base` on it fail with `profile <name>: base profile <base> failed: ...`. Declaring the profile again runs the setup again. The server also prints the failure on its standard error, as `pyro: template: profile 2: setup step 0 (...): ...`.
+
+With `pyro.profile()` in a `beforeAll`, a failed setup fails every test of that scope with the step's reason. End a setup with a check of the state it should reach (as `check(text('Signed in')).visible()` above), so that a sign-in that did not work is a setup failure and not a later, less obvious one.
+
+In releases up to 0.0.33 a failed setup does not make `pyro.profile()` throw. The server prints `pyro: template: setup of profile 2: step 0 (...)` on its standard error and pages of the profile still open, from wherever the setup stopped. There, keep the server's stderr visible in CI and look there first when every test of one profile fails.
 
 ## Base chains
 

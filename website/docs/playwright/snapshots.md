@@ -24,6 +24,7 @@ The page (or the locator's element) is rendered and compared inside the browser.
 | `maxDiffPixelRatio` | none | Differing pixels allowed, as a fraction of the image. With `maxDiffPixels` too, the stricter limit applies. |
 | `clip` | none | `{ x, y, width, height }` in CSS pixels. |
 | `fullPage` | `false` | The whole document, not only the viewport. |
+| `omitBackground` | `false` | The page's default white background is left transparent for this capture. |
 | `timeout` | `expect` timeout | |
 
 Defaults for `threshold`, `maxDiffPixels` and `maxDiffPixelRatio` can be set in the config:
@@ -37,7 +38,7 @@ export default defineConfig({
 `threshold` here is a per-channel tolerance. Playwright's `threshold` (default 0.2) is a perceptual color distance. Both are 0 to 1, but the same number does not mean the same thing.
 
 ::: warning Other options are errors
-`animations`, `caret`, `mask`, `maskColor`, `omitBackground`, `scale` and `stylePath` are in the types but the browser rejects them:
+`animations`, `caret`, `mask`, `maskColor`, `scale` and `stylePath` are in the types but the browser rejects them:
 
 ```text
 Pyro.run: step 0: unknown field `animations`, expected one of `name`, `baseline`, `sceneHash`, `threshold`, ...
@@ -47,6 +48,8 @@ Remove them when you migrate. Pyro renders a still frame, so there is no animati
 :::
 
 `expect(...).not.toHaveScreenshot()` is not supported.
+
+The image is rendered at the context's `deviceScaleFactor`: with `deviceScaleFactor: 2`, a 1280x720 viewport gives a 2560x1440 baseline. Playwright's default for `toHaveScreenshot` is `scale: 'css'`, one image pixel per CSS pixel, and there is no `scale` option here. A project that spreads a HiDPI device descriptor therefore gets larger baselines than it had in Playwright.
 
 ### Names and paths
 
@@ -137,7 +140,23 @@ const png = await page.screenshot({ fullPage: true });
 await page.locator('#chart').screenshot({ path: 'out/chart.png' });
 ```
 
-`page.screenshot()` takes `path`, `fullPage`, `clip`, `type` (`png` or `jpeg`, also from the path's extension) and `quality`. Other options (`mask`, `animations`, `omitBackground`, `scale`, `caret`, `style`) are ignored. `locator.screenshot()` clips the page screenshot to the element's bounding box.
+`page.screenshot()` takes `path`, `fullPage`, `clip`, `type` (`png` or `jpeg`, also from the path's extension), `quality` and `omitBackground` (PNG only). Other options (`mask`, `animations`, `scale`, `caret`, `style`) are ignored. The image is in device pixels: the viewport times the context's `deviceScaleFactor`. Missing directories of `path` are made. `locator.screenshot()` clips the page screenshot to the element's bounding box and takes `path`, `type`, `quality` and `omitBackground`.
+
+To capture the pages of failed tests without code, set the runner's `screenshot` option: see [Screenshots of failed tests](/playwright/runner#screenshots-of-failed-tests). For a video of each test, see [Video](/playwright/runner#video).
+
+### Raw frames
+
+`raw` is Pyro's own option. It returns the pixels as they are, with nothing encoded:
+
+```ts
+const frame = await page.screenshot({ raw: { format: 'rgba' } });   // width * height * 4 bytes
+await page.screenshot({ raw: { format: 'yuv420p', path: '/tmp/frames.yuv' } });
+```
+
+- `format` is `'rgba'`, `'rgb24'` or `'yuv420p'`, named as ffmpeg's `-pix_fmt` values.
+- With `raw.path` (an absolute path), the browser appends each frame to that file and the returned buffer is empty. The path can be a FIFO that ffmpeg reads, which turns a page stepped frame by frame into a video without an image encoder in between.
+
+Use it to feed frames to ffmpeg or to an image library. [Screenshots and PDFs](/scraping/pdf#raw-frames) covers the same capture from the SDK, with `FrameFifo`.
 
 Both need the browser's rendering support, which the npm package's builds include.
 
@@ -148,5 +167,5 @@ Both need the browser's rendering support, which the npm package's builds includ
 ## Next
 
 - The first red run, screenshots included: [Triage the first red run](/recipes/playwright-triage-first-failures).
-- Writing Linux baselines for CI: [CI without sharding](/recipes/playwright-ci-without-sharding#screenshot-baselines-in-ci).
+- Writing Linux baselines for CI: [Sharding in CI](/recipes/playwright-ci-without-sharding#screenshot-baselines-in-ci).
 - How pages are drawn: [Rendering](/guide/rendering).

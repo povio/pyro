@@ -112,10 +112,11 @@ Styles are computed by Stylo (Firefox's style engine) and laid out by Blitz and 
 | `innerText` | Yes | Follows computed `display` (blockification, tables, `display: contents`). |
 | CSSOM | Partial | `cssRules` parses on first access; `CSSStyleRule` exists. The `media` and `disabled` CSSOM APIs are missing and `cssRules` is a live array, not a real `CSSRuleList` (per `docs/browser/STYLESHEETS.md`). Constructed stylesheets and `adoptedStyleSheets` work. |
 | Linked stylesheets | Yes | Load with `load`/`error` events, block parser scripts and `load`, SRI enforced. Per document: 128 stylesheets, 4 MiB per response, 16 MiB total source. |
+| `<style>` elements | Yes | Newer than 0.0.33: `load` once the sheet and the `@import`s it starts with have arrived, `error` when one of its own imports failed. Several text changes in one task fire one event (Chromium fires one per change). |
 | Web fonts | Partial | `@font-face` with `unicode-range` selection (0.0.31). `FontFace` and `document.fonts`' `FontFaceSet` constructor are undefined; `document.fonts` exists. |
 | Web Animations | Partial | `Element.animate`, `Animation` and `KeyframeEffect` exist; completeness is not recorded. |
 | Top layer | Yes | Modal dialogs and popovers paint above the document with `::backdrop`. |
-| `visualViewport` | Yes | Present on 0.0.33. Explicit screen orientation and `MediaQueryList` change events are missing. |
+| `visualViewport` | Yes | Present on 0.0.33, where explicit screen orientation and `MediaQueryList` change events are missing. Newer than 0.0.33: under mobile emulation it is the device at the page scale, viewport changes fire `resize` and then the `change` of media query lists, and an emulated screen orientation is reported by `screen.orientation`. There is no pinch zoom: `offsetLeft` and `offsetTop` stay 0. |
 
 ## Networking {#networking}
 

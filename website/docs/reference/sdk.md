@@ -21,10 +21,11 @@ pyro.close();
 
 | Import | Contents | Documented in |
 | --- | --- | --- |
-| `@povio/pyro` | `Pyro`, `Page`, `RunError`, types, every step and locator builder, `Cdp`, `CdpError`, screenshot helpers | this page, [steps](/reference/steps) |
+| `@povio/pyro` | `Pyro`, `Page`, `RunError`, `ProfileSetupError`, `FrameFifo`, types, every step and locator builder, `Cdp`, `CdpError`, screenshot helpers | this page, [steps](/reference/steps) |
 | `@povio/pyro/e2e` | Spec-file API for `pyro e2e` | [below](#e2e) |
 | `@povio/pyro/wright` | Playwright-compatible API (`chromium`, `Browser`, `Page`, `Locator`, `expect`, `test`, ...) | [Coming from Playwright](/playwright/overview) |
 | `@povio/pyro/test` | `@playwright/test` replacement (`test`, `expect`, config helpers) | [Config and the test runner](/playwright/runner) |
+| `@povio/pyro/agent` (newer than 0.0.33) | Browser tools for a model's tool-calling loop: `createBrowserTools`, `toAnthropicTools`, `toOpenAITools` | [AI agents: MCP and tool calling](/scraping/agents) |
 
 Under Bun the package's `bun` export condition loads the TypeScript sources directly. Other runtimes load the built `dist/*.js`.
 
@@ -98,8 +99,9 @@ Declares a kind of page that tests ask for by name (`pyro.page({ as: name })`). 
 - Declaring a name again with a different definition replaces this client's own.
 - Against `serve --fork` the name is shared by every client of the server. If another client registered the same definition under the name, this client adopts it and nothing boots again. A different definition is refused while another client holds the name.
 - `base` must name a profile this client knows or can adopt, else it throws `no prepared profile <base> to start from`.
+- Against `serve --fork`, a profile with `setup` or `base` resolves once the server has run its steps, and rejects with a [`ProfileSetupError`](#profilesetuperror) when a step fails or its base failed. Declaring it again tries again. Other profiles resolve once the server has registered them. In releases up to 0.0.33 `profile()` never waits for the setup and does not reject when it fails.
 
-Calls to `profile`, `adopt` and `releaseProfile` run one after another, in call order.
+Calls to `profile`, `adopt` and `releaseProfile` run one after another, in call order. The wait for a setup is outside that queue, so profiles declared meanwhile boot alongside.
 
 ### Profile {#profile-type}
 
@@ -113,6 +115,9 @@ type Profile = {
   prepare?: boolean;
   setup?: StepLike[];
   base?: string;
+  userAgent?: string;
+  proxyServer?: string;
+  proxyBypassList?: string;
 };
 ```
 
@@ -125,7 +130,31 @@ type Profile = {
 | `pool` | `number` | `2` | Pages kept booted per connection (1-8). Ignored with `--fork`: the template keeps one snapshot per profile. |
 | `prepare` | `boolean` | `true` | `false`: nothing is booted ahead; each `page({ as })` boots a fresh page and navigates to `url`. |
 | `setup` | [`StepLike[]`](/reference/steps) | | `serve --fork` only: steps run once on the booted page in the template. Every page of the profile starts from their result (for example a signed-in state). |
-| `base` | `string` | | `serve --fork` only: start from another profile's snapshot. Its page forks from that profile's, and only this profile's `setup` runs on it. The base may be a profile another client of the server registered. |
+| `base` | `string` | | `serve --fork` only: start from another profile's snapshot. Its page forks from that profile's, and only this profile's `setup` runs on it. The base may be a profile another client of the server registered. The profile has the base's `userAgent` and proxy, and fails when the base does. |
+| `userAgent` | `string` | Pyro's own | The `User-Agent` of every request of the profile's pages (the document, its subresources, `fetch` and XHR, what layout, screenshots and PDFs load, the `setup` steps' requests) and their `navigator.userAgent`. Newer than 0.0.33. |
+| `proxyServer` | `string` | the server's `--proxy` | HTTP proxy of every request of the profile's pages: `http://[user:pass@]host:port` (CONNECT for https), or `direct://` for none. Newer than 0.0.33. |
+| `proxyBypassList` | `string` | | Hosts that skip `proxyServer`, in Chrome's `--proxy-bypass-list` syntax. Loopback always skips it unless the list has `<-loopback>`. Needs `proxyServer`. Newer than 0.0.33. |
+
+`userAgent`, `proxyServer` and `proxyBypassList` are part of the definition: under a shared name, a profile with a different one is refused while another client holds the name.
+
+### ProfileSetupError {#profilesetuperror}
+
+```ts
+class ProfileSetupError extends Error {
+  readonly profile: string;
+  readonly step: number | undefined;
+}
+```
+
+Newer than 0.0.33. A profile's `setup` failed (`serve --fork`), or that of the profile it starts from (`base`). Thrown by `pyro.profile()`, `pyro.adopt()`, `pyro.warm()` and `pyro.page({ as })`.
+
+| Member | Description |
+| --- | --- |
+| `message` | `profile <name>: <reason>`. For a failed step the reason is `setup step <i> (<step>): <why>`, as a run's errors are (`profile app: setup step 2 (Click …): timed out after 5000 ms: …`). For a failed base: `base profile <base> failed: <its reason>`. For a page that did not load: `setup: the page did not load within 30 s (<url>: <why>)`. |
+| `profile` | The profile's name. |
+| `step` | Index of the failed step in the profile's own `setup`, from 0. `undefined` when its base failed, or no step did. |
+
+No page of a failed profile is handed out, and profiles derived from it fail with it. Declaring the profile again (the same definition, or a changed one) runs the setup again. `name` is `Error`: test for it with `instanceof`.
 
 ### pyro.adopt() {#adopt}
 
@@ -133,7 +162,7 @@ type Profile = {
 adopt(name: string): Promise<void>
 ```
 
-Holds the profile another client of this server registered as `name` (`serve --fork`), so `page({ as: name })` and `base: name` work here too. Nothing boots: pages fork from the server's snapshot. `page()` and `profile()` adopt unknown names by themselves. Without `--fork` it throws `no profile <name>: adopting a profile needs pyro serve --fork`. If the server has no such profile it throws `no profile <name> on this server: declare it with pyro.profile()`.
+Holds the profile another client of this server registered as `name` (`serve --fork`), so `page({ as: name })` and `base: name` work here too. Nothing boots: pages fork from the server's snapshot. `page()` and `profile()` adopt unknown names by themselves. Without `--fork` it throws `no profile <name>: adopting a profile needs pyro serve --fork`. If the server has no such profile it throws `no profile <name> on this server: declare it with pyro.profile()`. If the profile's setup failed it throws that profile's [`ProfileSetupError`](#profilesetuperror) and does not hold it.
 
 ### pyro.releaseProfile() {#release-profile}
 
@@ -149,7 +178,7 @@ Releases one name. Against `serve --fork` this drops this client's hold, and the
 warm(name: string, timeoutMs = 5000): Promise<void>
 ```
 
-Waits until profile `name` is fully booted. Without `--fork` it waits for each connection's pool to have `pool` ready pages. With `--fork` it waits until a new connection, forked from the template, finds the profile's page ready. Throws `no booted page for <name> after <ms> ms` past the timeout. Does nothing for an unknown name or a `prepare: false` profile.
+Waits until profile `name` is fully booted. Without `--fork` it waits for each connection's pool to have `pool` ready pages. With `--fork` it waits until a new connection, forked from the template, finds the profile's page ready. Throws `no booted page for <name> after <ms> ms` past the timeout, and the profile's [`ProfileSetupError`](#profilesetuperror) when its setup failed. Does nothing for an unknown name or a `prepare: false` profile.
 
 ### pyro.page() {#page}
 
@@ -164,7 +193,7 @@ page(opts?: { as?: string; route?: string; url?: string; initScripts?: string[] 
 | `url` | Full navigation, run as the first step of the first `run()` (a [`goto`](/reference/steps#goto) step). Replaces the navigation to the profile `url` of a fresh page. |
 | `initScripts` | Run in every document of this page after the profile's scripts. A booted page already ran its document, so with `initScripts` the page always boots fresh instead of coming from the pool. |
 
-A pooled page that is still booting when taken gets a [`loaded()`](/reference/steps#loaded) step first. With `--fork` the page gets a connection of its own (`ws://…/?profile=<id>`), forked from the profile's snapshot. Closing the page ends that process. An unknown `as` throws `no profile <name>: declare it with pyro.profile()`.
+A pooled page that is still booting when taken gets a [`loaded()`](/reference/steps#loaded) step first. With `--fork` the page gets a connection of its own (`ws://…/?profile=<id>`), forked from the profile's snapshot. Closing the page ends that process. An unknown `as` throws `no profile <name>: declare it with pyro.profile()`. A profile whose setup is still running is waited for; one whose setup failed throws its [`ProfileSetupError`](#profilesetuperror).
 
 ### pyro.close() {#close}
 
@@ -232,7 +261,7 @@ class RunError extends Error {
 }
 ```
 
-Its `name` is `Error` (runners print `Error: step …`); check for it with `instanceof RunError`. `step` is the index of the failing step in the array you passed. It is negative when a prefix step (the page's opening `route`, `url` or `loaded()`) failed. The message starts with `step <n> (<what>):` or `opening the page (<step JSON>):`, followed by the browser's reason:
+Its `name` is `RunError` (runners print `RunError: step …`); check for it with `instanceof RunError`. `step` is the index of the failing step in the array you passed. It is negative when a prefix step (the page's opening `route`, `url` or `loaded()`) failed. The message starts with `step <n> (<what>):` or `opening the page (<step JSON>):`, followed by the browser's reason:
 
 ```text
 step 0 (Click {"name":"Nope","role":"button"}): timed out after 100 ms: Click {"name":"Nope","role":"button"}: {"name":"Nope","role":"button"} matched no element
@@ -245,6 +274,50 @@ matchScreenshot(name: string, opts?: ScreenshotOptions): Promise<ScreenshotResul
 ```
 
 Runs one [`matchScreenshot`](/reference/steps#matchscreenshot) step and returns its result. Throws `ScreenshotMismatchError` on a mismatch. Guide: [Visual tests](/e2e/screenshots).
+
+### page.captureFrame() {#capture-frame}
+
+```ts
+captureFrame(opts?: {
+  format?: RawFormat;            // 'rgba' (default) | 'rgb24' | 'yuv420p'
+  path?: string;
+  clip?: { x: number; y: number; width: number; height: number; scale?: number };
+}): Promise<Frame>
+
+type RawFormat = 'rgba' | 'rgb24' | 'yuv420p';
+type Frame = { width: number; height: number; bytes: number; data: Buffer; ms: Record<string, number> };
+```
+
+Newer than 0.0.33. What the page shows now as raw pixels, with nothing encoded (`Page.captureScreenshot` with one of Pyro's raw formats). The frame is the viewport at its device scale factor, or `clip` in document CSS px. A page's pending route or navigation runs first.
+
+| Field | Description |
+| --- | --- |
+| `format` | `rgba`: the render as it is. `rgb24`: alpha dropped. `yuv420p`: I420, BT.601 limited range. The names are ffmpeg's `-pix_fmt` values. |
+| `path` | Absolute path on the browser's machine. The browser appends the frame to that file, or to a FIFO a reader such as ffmpeg holds open, and `data` is empty. |
+| `Frame.width`, `Frame.height` | Device px. |
+| `Frame.bytes` | The frame's size in bytes, also when it went to `path`. |
+| `Frame.ms` | The browser's timings in ms: `snapshot`, `layout`, `scene`, `raster`, `encode` (the pixel conversion), `write` (to `path`), `total` (wall) and `cpu` (the browser process's CPU time for the frame, all threads). |
+
+Guide: [Raw frames](/scraping/pdf#raw-frames).
+
+### FrameFifo {#frame-fifo}
+
+```ts
+class FrameFifo {
+  constructor(path: string);
+  readonly path: string;
+  open(): Promise<void>;
+  close(): Promise<void>;
+}
+```
+
+Newer than 0.0.33. A FIFO to stream `page.captureFrame({ path })` frames into a reader such as ffmpeg (`-f rawvideo -pix_fmt rgba -s 3840x2160 -r 30 -i <path>`). macOS and Linux.
+
+- The constructor makes the FIFO with `mkfifo -m 600`. `path` must be absolute and must not exist; otherwise it throws `mkfifo <path>: <reason>`.
+- `open()` holds the FIFO open for writing and resolves once its reader has opened it. Start the reader first.
+- `close()` ends the stream (the reader sees its end once the last frame is read) and removes the FIFO.
+
+The browser opens the path, appends a frame and closes it again for each capture. `FrameFifo` holds the FIFO open in between, so the reader sees one stream until `close()`.
 
 ### page.addInitScript() {#add-init-script}
 
@@ -412,7 +485,7 @@ describe('positions', () => {
 | `describe.serial` | Its tests run one at a time, in order. |
 | `describe.skip`, `.todo`, `.only`, `.if(cond)`, `.skipIf(cond)` | As for `test`. |
 | `beforeAll`, `afterAll`, `beforeEach`, `afterEach` | `(fn, timeout?)`. `beforeEach` runs outer hooks first and `afterEach` inner hooks first. At the top level of a file they apply to that file. In a `--preload` module they apply to every test. |
-| `setDefaultTimeout(ms)` | Timeout of tests and hooks without their own (default 5000, or `--timeout`). |
+| `setDefaultTimeout(ms)` | Timeout of tests and hooks without their own (default 30000, or `--timeout`). |
 | `defer(fn)` | Runs `fn` once what is running now is done. From a test (or its `beforeEach`/`afterEach`): after that test. From a describe's `beforeAll`/`afterAll`, or while it registers: after that describe's last test and its `afterAll` hooks. Later calls run first. |
 | `browser()` | `Promise<Pyro>`: the run's browser, `pyro serve --fork` launched on first use with the setup module's `browser()` options and closed when the run ends. Pages a test opens through it close when the test ends, including a test that timed out. |
 | `setupResult<T>()` | What the setup module's `setup()` returned. Throws without `--setup`. |

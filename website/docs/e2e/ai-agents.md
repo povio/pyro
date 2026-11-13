@@ -2,6 +2,8 @@
 
 The package ships a guide written for coding agents: `LLM.md`. It states the model (seed, then one run), every locator and step, the porting table from Playwright, how to read a failure, and what not to do, in a form an agent can follow. Point your agent at it before it writes or ports a test.
 
+This page is about agents that write tests. For a model that drives the browser itself through tools (`pyro mcp`, `@povio/pyro/agent`), see [AI agents: MCP and tool calling](/scraping/agents).
+
 ## Where the file is
 
 `LLM.md` is part of the npm package, next to its README:

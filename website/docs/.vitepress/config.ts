@@ -88,6 +88,7 @@ const scraping = [
       { text: 'Concurrency at scale', link: '/scraping/concurrency' },
       { text: 'Screenshots and PDFs', link: '/scraping/pdf' },
       { text: 'Puppeteer and raw CDP', link: '/scraping/cdp' },
+      { text: 'AI agents: MCP and tool calling', link: '/scraping/agents' },
       { text: 'Running as a service', link: '/scraping/service' },
     ],
   },
@@ -97,7 +98,7 @@ const pwRecipes = {
   text: 'Recipes',
   items: [
     { text: 'Sign in once (setup project)', link: '/recipes/playwright-setup-project-auth' },
-    { text: 'CI without sharding', link: '/recipes/playwright-ci-without-sharding' },
+    { text: 'Sharding in CI', link: '/recipes/playwright-ci-without-sharding' },
     { text: 'Chromium and Pyro side by side', link: '/recipes/playwright-side-by-side' },
     { text: 'Triage the first red run', link: '/recipes/playwright-triage-first-failures' },
   ],

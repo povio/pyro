@@ -15,7 +15,7 @@ await using page = await pyro.page({ as: 'employee', route: `/positions/${id}` }
 
 ## `pyro.profile(name, profile)`
 
-Declares the profile and starts booting its pages. It resolves once the server has registered it, not when the pages are booted (use [`warm`](#warm) for that).
+Declares the profile and starts booting its pages. It resolves once the server has registered it, not when the pages are booted (use [`warm`](#warm) for that). In fork mode a profile with `setup` or `base` resolves once its setup ran, and rejects with a `ProfileSetupError` when a step fails. See [Setup steps](/e2e/fork#setup-steps).
 
 | Option | Type | Default | Meaning |
 |---|---|---|---|
@@ -27,8 +27,11 @@ Declares the profile and starts booting its pages. It resolves once the server h
 | `prepare` | `boolean` | `true` | `false` declares the profile without booting ahead: each `pyro.page({ as })` then boots a fresh page |
 | `setup` | `StepLike[]` | | Steps run once on the booted page before tests get it. Fork mode only |
 | `base` | `string` | | Start from another profile's snapshot. Fork mode only |
+| `userAgent` | `string` | Pyro's own | The `User-Agent` of every request of the profile's pages and their `navigator.userAgent`. Newer than 0.0.33 |
+| `proxyServer` | `string` | the server's `--proxy` | An HTTP proxy for the profile's pages: `http://[user:pass@]host:port`, or `direct://` for none. Newer than 0.0.33 |
+| `proxyBypassList` | `string` | | Hosts that skip `proxyServer`, in Chrome's `--proxy-bypass-list` syntax. Newer than 0.0.33 |
 
-Declaring `setup` or `base` against a server without `--fork` fails with `Pyro.registerPreparedPage: setup and base need serve --fork`. A `pool` outside 1 to 8 fails with `Pyro.registerPreparedPage: pool must be between 1 and 8`.
+Declaring `setup` or `base` against a server without `--fork` fails with `Pyro.registerPreparedPage: setup and base need serve --fork`. A `pool` outside 1 to 8 fails with `Pyro.registerPreparedPage: pool must be between 1 and 8`. A `proxyBypassList` without `proxyServer` fails with `Pyro.registerPreparedPage: proxyBypassList needs proxyServer`.
 
 ### Signing in with `localStorage`
 

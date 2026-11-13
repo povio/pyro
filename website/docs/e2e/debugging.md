@@ -8,7 +8,7 @@ When a run fails, the browser tells you which step failed and why it was still w
 step 2 (request {"method":"POST","path":"/api/items","status":200}): timed out after 300 ms: request {"method":"POST","path":"/api/items","status":200}: last match was {"error":null,"method":"POST",...,"status":201,"url":"http://localhost:51142/api/items"}
 ```
 
-That is the error's message. `RunError` does not set its own `name`, so runners print it as `Error: step 2 ...` (`pyro e2e`) or `error: step 2 ...` (`bun test`). Check for it with `instanceof RunError`.
+That is the error's message. The error's `name` is `RunError`, so `pyro e2e` and `bun test` print it as `RunError: step 2 ...`. Check for it with `instanceof RunError`.
 
 | Part | Meaning |
 |---|---|
@@ -42,7 +42,7 @@ A `matchScreenshot` mismatch throws `ScreenshotMismatchError` instead (see [Visu
 
 ```text
 ✗ e2e/todos.test.ts > todos > deletes a seeded todo [5.06s]
-    Error: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
+    RunError: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
         at run (.../node_modules/@povio/pyro/src/index.ts:517:17)
         at async <anonymous> (/path/to/e2e/todos.test.ts:28:16)
 
@@ -50,7 +50,7 @@ A `matchScreenshot` mismatch throws `ScreenshotMismatchError` instead (see [Visu
   ✗ e2e/todos.test.ts > todos > deletes a seeded todo: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
 ```
 
-If you see only `TimeoutError: test timed out after 5000 ms` (or Bun's `this test timed out after 5000ms`), the test's timeout ran out at the same moment as the step's, and the step's reason was lost. Both default to 5,000 ms. Give tests more time than steps: `pyro e2e --timeout 10000`, `bun test --timeout 10000`.
+If you see only `TimeoutError: test timed out after 5000 ms` (or Bun's `this test timed out after 5000ms`), the test's timeout ran out at the same moment as the step's, and the step's reason was lost. Give tests more time than steps. `pyro e2e` does by default (30,000 ms for a test, 5,000 ms for a step), so there it takes a `--timeout` or a test timeout of 5,000 ms or less. `bun test` stops a test after 5,000 ms by default: run it with `bun test --timeout 10000` or more.
 
 ## Reasons a step waits
 
@@ -126,7 +126,7 @@ Errors that `pyro.profile()`, `pyro.page()`, `pyro.warm()`, `Pyro.launch()` and 
 
 | Message | Cause |
 |---|---|
-| `no profile X: declare it with pyro.profile()` | `pyro.page({ as: 'X' })` for a profile this client did not declare (`lp` is the SDK's name for the `Pyro` instance) |
+| `no profile X: declare it with pyro.profile()` | `pyro.page({ as: 'X' })` for a profile this client did not declare |
 | `no profile X on this server: declare it with pyro.profile()` | The same on a fork-mode server, where no client registered `X` either; also for `base: 'X'` and `pyro.adopt('X')` |
 | `no profile X: adopting a profile needs pyro serve --fork` | `pyro.adopt('X')` on a server without `--fork` |
 | `filter before first() / last() / nth()` | A filter chained after a pick |
@@ -205,20 +205,22 @@ Messages logged before `Runtime.enable` are delivered when it is enabled. In for
 `pyro serve --log-level <debug|info|warn|error|fatal>` (default `info`) controls the server's own messages on standard error: at `info` it prints what `--static` serves, what `--local-storage` seeds, which pages `--prepare` boots, and the listening address. Errors such as a failed fork-mode profile `setup` are printed there too:
 
 ```text
-pyro: template: setup of profile 2: step 0 (expect Visible {"text":"missing"}): ...
+pyro: template: profile 2: setup step 0 (expect Visible {"text":"missing"}): ...
 ```
+
+The client gets the same failure: `pyro.profile()` rejects with a `ProfileSetupError` (`profile app: setup step 0 (...): ...`), and so does every `pyro.page({ as })` of that profile. See [Setup steps](/e2e/fork#setup-steps). In releases up to 0.0.33 the stderr line (`pyro: template: setup of profile 2: step 0 ...`) is the only report.
 
 `Pyro.launch()` passes the server's standard error through to your test process, so these lines appear in the test output. Keep them visible in CI. The log level does not add page console output or per-request logs.
 
 ## A checklist
 
-1. Only `test timed out after 5000 ms`? Raise the test timeout above the step timeout and run again to see the step's reason.
+1. Only `test timed out after N ms`? Raise the test timeout above the step timeout and run again to see the step's reason.
 2. Read the reason after the last colon.
 3. `matched no element`: check the step before; check the locator with `count`.
 4. `strict mode violation`: scope or filter.
 5. `intercepts pointer events`: something covers the element.
 6. A request check: compare with `r.requests`; keep the check in the same run as the action.
-7. Every test of one profile fails: look for a `setup of profile` line on the server's stderr.
+7. Every test of one profile fails with `profile <name>: setup step ...`: the profile's `setup` failed. The step and the reason are in the message, and on the server's stderr.
 8. Only under load: look for `settled: false` in the results before the failing step.
 9. Every test fails after one test signs out, or data from one test shows up in another: the tests share your backend. See [What tests still share](/e2e/fork#what-tests-still-share).
 

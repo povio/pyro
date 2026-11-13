@@ -4,14 +4,9 @@ A single-page app sends an almost empty HTML page. Its scripts start after `load
 
 ## The trap
 
-`page.goto()` returns when the document fires `load`. In the Playwright library and in the native SDK's `goto` step, it does not wait for requests that the page's scripts start after that. Neither does `pyro fetch --wait-ms`. On the test site below:
+`page.goto()` returns when the document fires `load`. In the Playwright library and in the native SDK's `goto` step, it does not wait for requests that the page's scripts start after that. `pyro fetch` without `--wait-ms` prints the DOM at `load` too. On the test site below, the DOM at `load` is the shell, `<div id="app">Loading...</div>`, and the first line of the script further down prints `right after goto: 0 products`. Always wait for the data itself.
 
-```
-$ pyro fetch --wait-ms 5000 http://127.0.0.1:4602/products | grep -o '<div id="app">.\{0,40\}'
-<div id="app">Loading...</div><script>
-```
-
-and the first line of the script further down prints `right after goto: 0 products`. Always wait for the data itself.
+On the command line, `pyro fetch --wait-ms N` is that wait: it runs the page until no task, timer or request is left, up to `N` ms (see [One-off fetches](/scraping/fetch#wait-ms)). Releases up to 0.0.33 did not wait for requests there. In a script you choose what to wait for, as below.
 
 ## Files
 

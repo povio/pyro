@@ -24,7 +24,7 @@ The browser caps any timeout at 600,000 ms. When a step's timeout passes, the ru
 
 ## Settling
 
-After an action, the next step waits until the page is quiet: no task queued, no request the action started still in flight, no `setTimeout` due within 50 ms, no animation frame pending and no navigation short of `DOMContentLoaded`. Intervals, timers due later and animation loops do not count. The step's result records `settleMs`.
+After an action, the next step waits until the page is quiet: no task queued, no request the action started still in flight, no `setTimeout` due within 50 ms, no animation frame pending, no `scroll` event or ResizeObserver callback owed by the next rendering update, and no navigation short of `DOMContentLoaded`. Intervals, timers due later, animation loops and requests that were in flight before the action do not count. The step's result records `settleMs`.
 
 Settling gives up after **1,000 ms** and carries on. The result then has `settled: false` and `pending`, which says what was still busy:
 
@@ -32,7 +32,7 @@ Settling gives up after **1,000 ms** and carries on. The result then has `settle
 { "pending": { "requests": 1 }, "settleMs": 1002.07, "settled": false }
 ```
 
-These steps settle: every locator action except `focus()` and `blur()`, `mouse(...)`, `route(...)`, `viewport(...)` and `media(...)`. Pass `{ settle: false }` to an action whose requests never finish (polling, streaming, a request a mock holds) or that you do not want to wait for. An action that does not settle, an `evaluate` and an `advanceTime` still give the page one event-loop turn before the next step, so work they queued with `setTimeout(fn, 0)` runs first. See [Settling and auto-waiting](/guide/settling).
+These steps settle: every locator action except `focus()` and `blur()`, `mouse(...)`, `route(...)`, `viewport(...)` and `media(...)`. Pass `{ settle: false }` to an action whose requests never finish (polling, streaming, a request a mock holds) or that you do not want to wait for. An action that does not settle, an `evaluate` and an `advanceTime` still give the page one event-loop turn before the next step, so work they queued with `setTimeout(fn, 0)` runs first. Newer than 0.0.33, an `evaluate` that left the page nothing to run (no task, timer, request, DOM change or observer work) is followed by the next step directly. See [Settling and auto-waiting](/guide/settling).
 
 ## Actions
 

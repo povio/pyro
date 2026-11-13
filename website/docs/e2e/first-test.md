@@ -271,7 +271,7 @@ bun test v1.4.3 (c6da4a4d3)
 pyro: CDP server listening on ws://127.0.0.1:54218/
 
 todos.test.ts:
-error: step 3 (expect Visible {"text":"Added Buy bread"}): timed out after 5000 ms: expect Visible {"text":"Added Buy bread"}: expected Visible null, got false
+RunError: step 3 (expect Visible {"text":"Added Buy bread"}): timed out after 5000 ms: expect Visible {"text":"Added Buy bread"}: expected Visible null, got false
  step: 3,
 
       at run (.../node_modules/@povio/pyro/src/index.ts:517:13)

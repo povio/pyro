@@ -1,6 +1,6 @@
 # Triage the first red run
 
-The first `pyro run` of a migrated suite usually fails in a handful of ways, each repeated across many tests. This page is a checklist: catch what you can before running, run once and group the errors, then fix each kind with the pattern below. Every failure here was reproduced on a small suite whose tests all pass on Chromium, and every fix was run on both Pyro and Chromium (Playwright 1.59.1), with Bun 1.4 on macOS.
+The first `pyro run` of a migrated suite usually fails in a handful of ways, each repeated across many tests. This page is a checklist: catch what you can before running, run once and group the errors, then fix each kind with the pattern below. Every failure here was reproduced on a small suite whose tests all pass on Chromium, and every fix was run on both Pyro and Chromium (Playwright 1.59.1), with Bun 1.4 on macOS. The output shown is from those runs.
 
 ## Before the first run
 
@@ -19,7 +19,7 @@ e2e/first-run.spec.ts(5,14): error TS2339: Property 'fill' does not exist on typ
 Unsupported `toHaveScreenshot` options (`animations`, `mask`, ...) are in the types, so `tsc` does not catch them. Search for them:
 
 ```sh
-grep -rnE "animations|mask|maskColor|caret|omitBackground|scale|stylePath" e2e --include='*.ts' | grep -i screenshot
+grep -rnE "animations|mask|maskColor|caret|scale|stylePath" e2e --include='*.ts' | grep -i screenshot
 ```
 
 ```text
@@ -31,14 +31,15 @@ The search only finds options written on the same line as the call.
 **2. Search for runner features that are not there.**
 
 ```sh
-grep -rn "dependencies" playwright.config.ts                 # setup projects: they do not run first
-grep -rn "testInfo.status\|testInfo.error" e2e --include='*.ts'  # stays 'passed' in afterEach
-grep -rn "\-\-shard\|show-report\|--ui\|--trace" package.json .github
+grep -rn "show-report\|merge-reports\|\-\-ui\|\-\-trace\|\-\-headed\|\-\-debug" package.json .github
+grep -rn "reporter\|trace" playwright.config.ts
 ```
 
-- A setup project with `dependencies` does not run first. Move it to `globalSetup`: see [Sign in once with a setup project's storageState](/recipes/playwright-setup-project-auth).
-- `testInfo.status` and `testInfo.error` are not updated while a test runs, so an `afterEach` that acts on failures never fires. See [Behaviour differences](/playwright/differences#test-runner).
-- `--shard`, `--trace`, `--ui` and report scripts fail or do nothing. See [CI without sharding](/recipes/playwright-ci-without-sharding).
+- `--trace` is an unknown option and ends the run with status 2. `--ui`, `--headed` and `--debug` print a warning and do nothing.
+- `show-report` and `merge-reports` are not commands of `pyro run`. The reporters are `list`, `line` and `dot`; the config's `reporter` is ignored.
+- `use.trace` is accepted and records nothing. For a failed test's evidence use `screenshot` and `video`: see [Config and the test runner](/playwright/runner#screenshots-of-failed-tests).
+
+Setup projects (`dependencies`, `teardown`), `--shard`, and `testInfo.status` in an `afterEach` work as in Playwright and need no change.
 
 **3. Check the browser starts.** Before the first `@povio/pyro` release, a package installed from a checkout has no bundled browser. The first run then fails in global setup or in the first test with:
 
@@ -57,12 +58,11 @@ bunx pyro run --reporter dot > run.txt 2>&1
 grep -E '^    [A-Za-z]*Error' run.txt | cut -c1-120 | sort | uniq -c | sort -rn
 ```
 
-On the example suite below, with its six typical failures:
+On the example suite below, with its five typical failures:
 
 ```text
    1     TypeError: page.fill is not a function. (In 'page.fill("input[name=text]", "Call mum")', 'page.fill' is undefined)
    1     TimeoutError: locator.click: Timeout 2000ms exceeded.
-   1     Error: expect(received).toBe(expected)
    1     Error: expect(locator).toHaveText(expected) failed
    1     Error: Pyro.run: step 0: unknown field `animations`, expected one of `name`, `baseline`, `sceneHash`, `threshold`, `
    1     Error: Pyro.run: step 0 (matchScreenshot /private/tmp/docs-r2-pw/r4/e2e/first-run.spec.ts-snapshots/login-chromium-d
@@ -74,7 +74,7 @@ While you fix, rerun only what you touch: `bunx pyro run e2e/checkout` (a file p
 
 ## The example suite
 
-All six tests pass on Chromium with stock Playwright, with baselines it wrote. Under `pyro run` all six fail.
+All five tests pass on Chromium with stock Playwright, with baselines it wrote. Under `pyro run` all five fail.
 
 ::: details The suite: app, sign-in helpers and global setup (as in the sign-in recipe), config
 
@@ -203,8 +203,6 @@ export async function signIn(page: Page, email = 'ana@example.com') {
 
 ```ts
 // e2e/global-setup.ts
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { chromium } from '@povio/pyro/wright';
 import { authFile, baseURL, signIn } from './auth';
 
@@ -213,7 +211,6 @@ export default async function globalSetup() {
   const context = await browser.newContext({ baseURL });
   const page = await context.newPage();
   await signIn(page);
-  mkdirSync(dirname(authFile), { recursive: true }); // storageState({ path }) does not create it
   await context.storageState({ path: authFile });
   await browser.close();
 }
@@ -265,11 +262,6 @@ test('login page, animations off', async ({ page }) => {
   await page.goto('/login');
   await expect(page).toHaveScreenshot('login-still.png', { animations: 'disabled' });
 });
-
-test('goto response headers', async ({ page }) => {
-  const response = await page.goto('/todos');
-  expect(response!.headers()['content-type']).toBe('text/html');
-});
 ```
 
 
@@ -283,7 +275,6 @@ Running 1 file using 5 workers
   ✘   3 e2e/first-run.spec.ts › transient "Saving..." (5186ms)
   ✘   4 e2e/first-run.spec.ts › login page looks right (23ms)
   ✘   5 e2e/first-run.spec.ts › login page, animations off (4ms)
-  ✘   6 e2e/first-run.spec.ts › goto response headers (4ms)
 ```
 
 ## The failures, one by one
@@ -356,7 +347,7 @@ await page.route('**/api/todos', async (route) => {
 Error: Pyro.run: step 0: unknown field `animations`, expected one of `name`, `baseline`, `sceneHash`, `threshold`, `maxDiffPixels`, `maxDiffPixelRatio`, `clip`, `fullPage`, `locator`, `update`, `captureOnly`, `as`, `timeout` at line 1 column 132
 ```
 
-**Spot it:** `unknown field` in a `toHaveScreenshot` call. Pyro accepts `threshold`, `maxDiffPixels`, `maxDiffPixelRatio`, `clip`, `fullPage` and `timeout`.
+**Spot it:** `unknown field` in a `toHaveScreenshot` call. Pyro accepts `threshold`, `maxDiffPixels`, `maxDiffPixelRatio`, `clip`, `fullPage`, `omitBackground` and `timeout`.
 
 **Fix:** remove the option. Pyro renders a still frame, so there is no animation or caret to turn off. `mask` has no replacement; clip the screenshot to a stable region, or screenshot a locator.
 
@@ -386,25 +377,6 @@ Running 2 files using 5 workers
 ```
 
 Each baseline gets a `.json` file beside it (`login-chromium-darwin.json`). Commit both. See [Screenshots and snapshots](/playwright/snapshots#re-baselining-on-migration).
-
-### Response headers from goto
-
-```text
-Error: expect(received).toBe(expected)
-
-Expected: "text/html"
-Received: undefined
-```
-
-**Spot it:** a check on `(await page.goto(url)).headers()` or `.body()` fails. The response `goto` returns carries the URL and status only. On a [booted page](/playwright/boot-pools) `goto` returns `null`.
-
-**Fix:** wait for the response instead:
-
-```ts
-const doc = page.waitForResponse('**/todos');
-await page.goto('/todos');
-expect((await doc).headers()['content-type']).toBe('text/html');
-```
 
 ## The fixed tests
 
@@ -443,12 +415,6 @@ test('"Saving..." with a held request', async ({ page }) => {
   await page.getByRole('button', { name: 'Add' }).click();
   await expect(page.getByRole('status')).toHaveText('Saving...');
 });
-
-test('response headers', async ({ page }) => {
-  const doc = page.waitForResponse('**/todos');
-  await page.goto('/todos');
-  expect((await doc).headers()['content-type']).toBe('text/html');
-});
 ```
 
 
@@ -461,9 +427,6 @@ Running 1 file using 5 workers
   ✓   2 e2e/fixed.spec.ts › sign out button by text (6ms)
   ✓   3 e2e/fixed.spec.ts › final state after saving (163ms)
   ✓   4 e2e/fixed.spec.ts › "Saving..." with a held request (14ms)
-  ✓   5 e2e/fixed.spec.ts › response headers (23ms)
-
-  5 passed (0.3s)
 ```
 
 The same file, with its import changed to `@playwright/test`, on Chromium:
@@ -473,9 +436,6 @@ The same file, with its import changed to `@playwright/test`, on Chromium:
   ✓  2 [chromium] › e2e/fixed.spec.ts:9:1 › sign out button by text (85ms)
   ✓  3 [chromium] › e2e/fixed.spec.ts:15:1 › final state after saving (247ms)
   ✓  4 [chromium] › e2e/fixed.spec.ts:24:1 › "Saving..." with a held request (128ms)
-  ✓  5 [chromium] › e2e/fixed.spec.ts:35:1 › response headers (54ms)
-
-  5 passed (2.3s)
 ```
 
 Each fix keeps the test valid on Chromium, so you can make them while both browsers still run the suite.
@@ -488,7 +448,8 @@ These did not occur in the example suite, but show up in real ones. Each has a r
 - `toHaveRole('button')` fails on a `<button>`: Pyro's `toHaveRole` reads the `role` attribute only.
 - `getByTestId(/regex/)` or `click({ clickCount: 3 })` throws "not supported yet".
 - The app shows an "unsupported browser" page, or a web API is `undefined`: see [Web platform support](/reference/web-platform).
-- `test.skip(isMobile)` skips everything: unset options are `undefined`, not `false`.
+- `page.goto()` returns `null` and the test reads `.status()` of it: the page was a [booted page](/playwright/boot-pools), whose app changes route without loading a document.
+- A context with `recordVideo`, or a test with `video` on, fails with a message about ffmpeg: install one or set `PYRO_FFMPEG`. See [Video](/playwright/runner#video).
 - Code that parses V8 stack traces gets JavaScriptCore's format.
 
 ## Next

@@ -81,7 +81,7 @@ Things that differ from Chrome:
 - `browser.pages()` is empty after connecting. Pyro does not create a placeholder page; call `newPage()`.
 - `browser.version()` and `browser.userAgent()` report the Chrome 124 strings from `/json/version`, not the page user agent.
 - Closing the connection (`disconnect()`, or the process ending) disposes every context and page it made.
-- Commands Pyro does not implement fail with `... is not supported by pyro` instead of succeeding silently. Among them: `DOM.getDocument`, `DOM.querySelector`, `DOM.getOuterHTML`, `Tracing.*`, `Page.startScreencast`, `HeapProfiler.collectGarbage`. Puppeteer features built on those (tracing, screencasts, some `ElementHandle` internals) do not work.
+- Commands Pyro does not implement fail with `... is not supported by pyro` instead of succeeding silently. Among them: `DOM.getDocument`, `DOM.querySelector`, `DOM.getOuterHTML`, `Tracing.*`, `HeapProfiler.collectGarbage`. Puppeteer features built on those (tracing, some `ElementHandle` internals) do not work. `Page.startScreencast`, which Puppeteer's `page.screencast()` sends, is refused by releases up to 0.0.33 and implemented in newer ones; `page.screencast()` itself was not run for this page.
 
 The [CDP coverage](/reference/cdp) page lists every method with its status.
 

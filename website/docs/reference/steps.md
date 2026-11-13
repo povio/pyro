@@ -24,7 +24,7 @@ Guides: [Locators](/e2e/locators), [Steps and checks](/e2e/steps), [Requests and
 - **Timeouts.** Each step's timeout is its own `timeout` option, else the `timeout` of `page.run(steps, { timeout })`, else 5000 ms. The maximum is 600000 ms.
 - **Strictness.** A step that needs one element (actions, `read` other than `count`, and most checks) fails at once with `strict mode violation: <locator> matched N elements: …` when several elements match. Narrow the locator, or pick one with `nth`, `first` or `last`.
 - **Actionability.** An action needs exactly one match (unless you pick one with `nth`, `first` or `last`) that is visible, not covered at the point it acts on, and editable for `fill` and `type`. `click`, `dblclick`, `fill`, `check`, `uncheck`, `press` and `type` also need it enabled. `hover`, `focus`, `blur`, `wheel` and `drag` do not.
-- **Settle.** After an action (`settle` defaults to `true`), and after `route`, `viewport`, `media` and `mouse`, the next step waits until the page is quiet. Quiet means no queued task, no timer due within 50 ms, no pending animation frame, no navigation short of `DOMContentLoaded`, and no more requests in flight than before the action. That wait is capped at 1 s. The run then goes on, and the step's result records `settled: false` and what was `pending`. See [Settling and auto-waiting](/guide/settling).
+- **Settle.** After an action (`settle` defaults to `true`), and after `route`, `viewport`, `media` and `mouse`, the next step waits until the page is quiet. Quiet means no queued task, no timer due within 50 ms, no pending animation frame, no `scroll` event or ResizeObserver callback owed by the next rendering update, no navigation short of `DOMContentLoaded`, and no request the action started still in flight. That wait is capped at 1 s. The run then goes on, and the step's result records `settled: false` and what was `pending`. See [Settling and auto-waiting](/guide/settling).
 - **Input timing.** Each input event of a pointer action is dispatched in its own task, with an event-loop turn between events, as Chromium delivers input.
 
 ## Text matching {#text-match}
@@ -281,7 +281,7 @@ Waits until the page URL contains (or matches) `url`, like Playwright's `waitFor
 idle(opts?: { timeout?: number }): StepLike
 ```
 
-Waits until the page is quiet: no queued task, no request in flight, no timer due within 50 ms, no pending animation frame and no unfinished navigation. It never fails. When `timeout` passes first, its result has `settled: false` and `pending` (counts of `tasks`, `requests`, `timers`, `frames`, `observers`, `navigations`).
+Waits until the page is quiet: no queued task, no request in flight, no timer due within 50 ms, no pending animation frame and no unfinished navigation. It never fails. When `timeout` passes first, its result has `settled: false` and `pending` (counts of `tasks`, `requests`, `timers`, `frames`, `observers`, `scrolls`, `navigations`; `scrolls` is newer than 0.0.33).
 
 ### evaluate() {#evaluate}
 

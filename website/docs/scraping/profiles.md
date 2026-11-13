@@ -79,9 +79,11 @@ An identity file holds the context options for that identity, plus the settings 
 | Field | How it is applied |
 | --- | --- |
 | `userAgent`, `viewport`, `extraHTTPHeaders` | Context options; the library honors them. |
-| `locale` | CDP `Emulation.setLocaleOverride`: `navigator.language(s)` and `Accept-Language`. `Intl` and `Date` formatting keep the process locale. The library's own `locale` option has no effect. |
-| `timezoneId` | CDP `Emulation.setTimezoneOverride`: `Date`, `Intl`, `Temporal`. It applies to the whole connection, so two contexts on one connection cannot have different zones. The library's own `timezoneId` option has no effect. |
-| `proxy`, `proxyBypass` | `pyro serve --proxy` and `--proxy-bypass`: one browser server per distinct proxy. The library's `proxy` context option has no effect. Loopback hosts (`localhost`, `127.0.0.1`) skip the proxy unless `proxyBypass` contains `<-loopback>`. |
+| `locale` | CDP `Emulation.setLocaleOverride`: `navigator.language(s)` and `Accept-Language`. `Intl` and `Date` formatting keep the process locale. |
+| `timezoneId` | CDP `Emulation.setTimezoneOverride`: `Date`, `Intl`, `Temporal`. It applies to the whole connection, so two contexts on one connection cannot have different zones. |
+| `proxy`, `proxyBypass` | `pyro serve --proxy` and `--proxy-bypass`: one browser server per distinct proxy. Loopback hosts (`localhost`, `127.0.0.1`) skip the proxy unless `proxyBypass` contains `<-loopback>`. |
+
+The store applies the last three rows this way because in releases up to 0.0.33 the library's own `locale`, `timezoneId` and `proxy` context options have no effect. Newer than 0.0.33 they do what Playwright's do: `locale` also sets the default locale of `Intl`, each `timezoneId` gets a connection of its own, and `proxy: { server, username, password, bypass }` gives a context its own HTTP proxy on one server. The store below still works as written; it was not rewritten to use the options for this page.
 
 [Proxies, user agents, headers](/scraping/identity) explains each setting and what else is available.
 

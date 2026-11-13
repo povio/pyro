@@ -268,7 +268,7 @@ export default {
 
 ## Sign in once per role
 
-`signIn()` returns steps, so a profile's `setup` and a test can both use them. End every setup with a check of the state it should reach. A setup that fails does not make `pyro.profile()` throw; the server prints the failure on stderr and tests of that profile fail later (see [Setup steps](/e2e/fork#setup-steps)).
+`signIn()` returns steps, so a profile's `setup` and a test can both use them. End every setup with a check of the state it should reach. A setup that fails makes `pyro.profile()` reject with a `ProfileSetupError` that names the step, and no page of that profile is handed out (see [Setup steps](/e2e/fork#setup-steps)).
 
 ```ts
 // e2e/profiles.ts: boot once, sign in once per role, through the real sign-in form.
@@ -412,26 +412,15 @@ pyro: CDP server listening on ws://127.0.0.1:57627/ (fork mode)
 Ran 4 tests across 2 files. [133.06ms]
 ```
 
-Here is what happens when `signs out` takes its page from `member` instead (`page({ as: 'member', route: '/projects' })`, then only the Sign out click and the heading check), run with `-j 1`:
+Here is what happens when `signs out` takes its page from `member` instead (`page({ as: 'member', route: '/projects' })`, then only the Sign out click and the heading check), run with `-j 1`.
+
+The sign-out test passes. The damage shows elsewhere: `member-projects` forks from `member` after the token was revoked, its list request gets a 401, and its setup fails. `pyro.profile('member-projects', ...)` in the describe's `beforeAll` rejects with a `ProfileSetupError`, and both tests of `projects` fail with it:
 
 ```text
-$ bunx pyro e2e e2e --setup e2e/setup.ts --timeout 30000 -j 1
-pyro: serving http://localhost:57650 from /path/to/projects-app/dist
-pyro: CDP server listening on ws://127.0.0.1:57651/ (fork mode)
-✓ e2e/auth.test.ts > an admin opens the users page [68.04ms]
-✓ e2e/auth.test.ts > signs out [14.75ms]
-pyro: template: setup of profile 3: step 1 (expect Visible {"label":"Project name"}): timed out after 5000 ms: expect Visible {"label":"Project name"}: expected Visible null, got false
-✗ e2e/projects.test.ts > projects > creates a project [10.04s]
-    Error: step 0 (Fill {"label":"Project name"}): timed out after 5000 ms: Fill {"label":"Project name"}: {"label":"Project name"} matched no element
-✗ e2e/projects.test.ts > projects > shows a project created after the snapshot [5.01s]
-    Error: step 1 (expect Visible {"testId":"project-1"}): timed out after 5000 ms: expect Visible {"testId":"project-1"}: expected Visible null, got false
-
- 2 pass
- 2 fail
-Ran 4 tests across 2 files. [15.15s]
+HookError: beforeAll of describe 'projects' failed: profile member-projects: setup step 1 (expect Visible {"label":"Project name"}): timed out after 5000 ms: expect Visible {"label":"Project name"}: expected Visible null, got false
 ```
 
-The sign-out test passes. The damage shows elsewhere: `member-projects` forked from `member` after the token was revoked, its list request got a 401, and its setup failed. The `pyro: template: setup of profile 3` line on stderr is the first clue. With more concurrency the same mistake fails other tests at random, depending on which runs first.
+The step and its reason were recorded with a release up to 0.0.33, where they appear only on the server's stderr (`pyro: template: setup of profile 3: step 1 (...)`), `pyro.profile()` does not reject, and the two tests fail later on their own steps (`Fill {"label":"Project name"} matched no element`). With more concurrency the same mistake fails other tests at random, depending on which runs first.
 
 ## Keeping tests independent
 

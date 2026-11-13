@@ -74,6 +74,11 @@ What the profile options do:
 | `viewport` | `{ width, height }` of the page. |
 | `pool` | Pages kept booted ahead per connection, 1 to 8 (default 2). Without `--fork` only; the fork template keeps one page per profile. |
 | `prepare` | `false` boots each page when a job asks for it instead of ahead. |
+| `userAgent` | The `User-Agent` of every request of the profile's pages, and their `navigator.userAgent`. The `setup` steps run with it too. |
+| `proxyServer` | An HTTP proxy for the profile's pages, `http://[user:pass@]host:port`, in place of the server's `--proxy`. `direct://` for none. |
+| `proxyBypassList` | Hosts that skip `proxyServer`, in Chrome's `--proxy-bypass-list` syntax. Needs `proxyServer`. |
+
+`userAgent`, `proxyServer` and `proxyBypassList` are newer than 0.0.33. See [Proxy and user agent per identity](#proxy-and-user-agent-per-identity).
 
 A page taken with `pyro.page({ as })` is where `setup` left it, here on `/account`. Pass `url` to navigate first (`pyro.page({ as: 'alice', url: 'https://example.com/orders' })`), or `route` for a same-document navigation in a single-page app, which changes the route without booting the app again.
 
@@ -83,20 +88,53 @@ Every fork starts from the same snapshot, so every page of a profile sends the s
 
 ### Proxy and user agent per identity
 
-A profile has no proxy or user agent option, and `setup` steps cannot send CDP commands.
+A profile carries its own user agent and proxy, so one fork server holds identities behind different proxies:
 
-- **Proxy.** The template and its forks use the server's `--proxy`. For identities behind different proxies, launch one fork server per proxy (`Pyro.launch({ args: ['--fork', '--proxy', url] })`) and register each identity on its proxy's server.
-- **User agent.** Set it on each forked page before its first run: `await page.send('Emulation.setUserAgentOverride', { userAgent })`. It applies to everything the job does after that. The sign-in in `setup` runs with Pyro's default user agent, `Mozilla/5.0 (compatible; pyro/<version>)`. A site that ties a session to the user agent it signed in with may reject the forks; use [stored profiles](/scraping/profiles) for that site.
+```ts
+await pyro.profile('alice', {
+  url: 'https://example.com/login',
+  userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+  proxyServer: 'http://user:pass@proxy-de.example.net:3128',
+  setup: signIn('alice@example.com', process.env.ALICE_PASSWORD!),
+});
+```
+
+This snippet was not run for this page; the options and their rules are from the SDK and the server's code.
+
+- **User agent.** `userAgent` is sent with every request of the profile's pages: the document, its subresources, `fetch` and XHR, and what layout, screenshots and PDFs load. `navigator.userAgent` reports it too. The `setup` steps run with it, so the sign-in and every job after it use the same one. Without the option the pages use Pyro's default, `Mozilla/5.0 (compatible; pyro/<version>)`.
+- **Proxy.** `proxyServer` is an HTTP proxy (`http://[user:pass@]host:port`, CONNECT for https) used in place of the server's `--proxy`. `direct://` means no proxy. `proxyBypassList` lists hosts that skip it, in Chrome's `--proxy-bypass-list` syntax. Loopback addresses always skip the proxy unless the list contains `<-loopback>`. `proxyBypassList` without `proxyServer` is refused.
+- **Derived profiles.** A profile with `base` has its base's user agent and proxy.
+- **Shared names.** Both are part of the definition. Under a name that another client holds, a profile with a different user agent or proxy is refused, as any different definition is.
+
+Releases up to 0.0.33 have neither option. There, launch one fork server per proxy (`Pyro.launch({ args: ['--fork', '--proxy', url] })`) and set the user agent on each forked page before its first run with `await page.send('Emulation.setUserAgentOverride', { userAgent })`. The sign-in in `setup` then runs with Pyro's default user agent.
 
 ### When `setup` fails
 
-The template runs `setup` in the server, not in your script. A failing step is reported on the server's stderr, for example:
+The template runs `setup` in the server. `pyro.profile()` resolves once the steps ran, and rejects with a `ProfileSetupError` when one fails. The message names the profile, the step and the reason, as a run's errors do:
 
-```
-pyro: template: setup of profile 0: step 4 (read Text {"css":".order"}): strict mode violation: ...
+```text
+profile alice: setup step 4 (read Text {"css":".order"}): strict mode violation: ...
 ```
 
-The client is not told. The profile is still offered, in whatever state the steps reached, so a job may get a page that is not signed in. Make your first step check that it is (`check(css('#who')).visible()` from the SDK fails the run with a clear error), and watch the server's stderr while you write the `setup`. A launched server's stderr is your script's stderr.
+```ts
+import { ProfileSetupError } from '@povio/pyro';
+
+try {
+  await pyro.profile('alice', { url, setup });
+} catch (e) {
+  if (!(e instanceof ProfileSetupError)) throw e;
+  console.error(e.profile, e.step, e.message); // 'alice', 4, 'profile alice: setup step 4 ...'
+}
+```
+
+- `step` is the index of the failed step in the profile's own `setup`, counted from 0. It is `undefined` when no step failed: the base profile failed (`profile orders: base profile alice failed: ...`), or the page did not load within 30 s.
+- No page of a failed profile is handed out. `pyro.page({ as })`, `pyro.warm()` and `pyro.adopt()` throw the same error, and profiles with `base` on it fail with it.
+- Declaring the profile again, with the same definition or a changed one, runs the setup again.
+- The server prints the failure on its stderr too, as `pyro: template: profile 0: setup step 4 (...): ...`, with the server's number for the profile. A launched server's stderr is your script's stderr.
+
+End the `setup` with a check of the state it should reach (`check(css('#who')).visible()`), so that a sign-in that did not work fails the profile instead of giving jobs a page that is not signed in.
+
+Releases up to 0.0.33 only print the failure on the server's stderr (as `pyro: template: setup of profile 0: step 4 (...)`): `pyro.profile()` does not reject, and the profile is still offered in whatever state the steps reached.
 
 ## Base chains: one sign-in, many starting points
 
@@ -201,8 +239,8 @@ Without fork mode, `pyro.profile()` still helps: each connection keeps `pool` pa
 | Session state kept | cookies and `localStorage` only | everything: cookies, all storage, IndexedDB, the live JavaScript state |
 | Sign-in | your script, once per expiry | `setup` steps in the server, once per registration |
 | Sessions | one per file | one per profile, shared by all its forks |
-| Proxy per identity | one server per proxy | one fork server per proxy |
-| User agent at sign-in | the identity's | Pyro's default; the identity's on each fork afterwards |
+| Proxy per identity | the context's `proxy` option | the profile's `proxyServer` |
+| User agent | the context's `userAgent` option | the profile's `userAgent`, at sign-in and on every fork |
 | API | Playwright library or SDK | native SDK, `--fork` server |
 | Platforms | all | macOS Apple silicon, Linux x64/arm64 |
 

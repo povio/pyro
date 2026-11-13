@@ -61,7 +61,9 @@ await context.close(); // frees the context's pages and their memory on the serv
 
 `browser.newPage()` makes a context with a single page, closed together with the page.
 
-Context options that take effect: `storageState`, `userAgent`, `viewport`, `extraHTTPHeaders`, `baseURL`, `colorScheme`, `reducedMotion`, `recordHar`. Downloads are always accepted. Others are accepted and ignored; [Proxies, user agents, headers](/scraping/identity) lists them and shows the CDP calls that work instead.
+Context options do what Playwright's do: `storageState`, `userAgent`, `viewport`, `extraHTTPHeaders`, `baseURL`, `colorScheme`, `reducedMotion`, `recordHar`, and also `locale`, `timezoneId`, `geolocation`, `permissions`, `proxy`, `httpCredentials`, `offline`, `deviceScaleFactor`, `isMobile`, `hasTouch`, `javaScriptEnabled`, `ignoreHTTPSErrors`, `acceptDownloads` and `recordVideo`. [Proxies, user agents, headers](/scraping/identity#quick-reference) lists them with their limits and the CDP command behind each; [Behaviour differences](/playwright/differences#context-options) lists what still differs from Chromium.
+
+Releases up to 0.0.33 apply only the first eight, accept the others without effect, and always accept downloads.
 
 ## Navigate, wait, read
 
@@ -192,7 +194,7 @@ await page.send('Emulation.setTimezoneOverride', { timezoneId: 'America/New_York
 | Stored `storageState` profiles | yes (`newContext({ storageState })`) | no; `localStorage` seeds and sign-in `setup` steps instead |
 | Fork mode and pre-booted signed-in pages | not used | yes |
 | Network events, `route`, HAR | yes | `mock` steps and the run's `requests` list |
-| Per-identity proxy | one server per proxy (`launch({ args: ['--proxy', url] })`) | one server per proxy, or a context with `proxyServer` over CDP |
+| Per-identity proxy | the context's `proxy` option (releases up to 0.0.33: one server per proxy, `launch({ args: ['--proxy', url] })`) | a profile's `proxyServer`, or a context with `proxyServer` over CDP |
 | Known API | Playwright's | its own, Playwright-shaped |
 
 You can mix them: use the Playwright library to sign in and save profiles, and the native SDK for the bulk of the crawl. For the choice in general, see [Choosing an API](/guide/choosing-an-api).

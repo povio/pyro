@@ -43,6 +43,11 @@ await using page = await pyro.page({ as: 'employee', route: '/positions/42' });
 | `prepare` | `false` boots each page only when a test asks for it, instead of ahead. |
 | `setup` | Steps run once on the booted page before tests get it. Fork mode only. |
 | `base` | Start from another profile's snapshot. Fork mode only. |
+| `userAgent` | The `User-Agent` of every request of the profile's pages, and their `navigator.userAgent`, instead of Pyro's own. |
+| `proxyServer` | An HTTP proxy for the profile's pages (`http://[user:pass@]host:port`, `direct://` for none), in place of the server's `--proxy`. |
+| `proxyBypassList` | Hosts that skip `proxyServer`, in Chrome's `--proxy-bypass-list` syntax. |
+
+`userAgent`, `proxyServer` and `proxyBypassList` are newer than 0.0.33. See [Proxies, user agents, headers](/scraping/identity#a-proxy-per-context).
 
 `setup` and `base` are covered in [Fork mode](/guide/fork-mode#setup-and-snapshots).
 

@@ -107,7 +107,7 @@ There is no browser download step to cache: the binaries are inside the npm pack
 
 `--shard i/n` splits the spec files across jobs by their recorded durations, longest first onto the least loaded shard. Every shard computes the same split from the same `timings.json`.
 
-This is `pyro e2e` only. Playwright suites under `pyro run` have no `--shard`; see [CI without sharding](/recipes/playwright-ci-without-sharding).
+This split is `pyro e2e`'s. Playwright suites under `pyro run` have a `--shard` of their own, which splits by test count as Playwright's does; see [Sharding in CI](/recipes/playwright-ci-without-sharding).
 
 ```yaml
 jobs:
@@ -200,7 +200,7 @@ With plain `bun test`, launch the server in the test files (`Pyro.launch()`) or 
 - `ubuntu-24.04` or newer (glibc 2.39), or `macos-15`.
 - `oven-sh/setup-bun`; no Node needed for the native suite.
 - The app's build served with `--static`, the API started in `setup()` and stopped in `teardown()`.
-- Server stderr visible in the job log (it is by default): failed profile setups are printed there.
+- Server stderr visible in the job log (it is by default): the server's own errors are printed there. A failed profile setup also fails the tests of that profile with a `ProfileSetupError`.
 - `timings.json` committed when sharding.
 - Per-OS screenshot baselines.
 

@@ -14,6 +14,7 @@ The `Pyro.*` commands on this page are page-session commands: send them with the
 | [`Pyro.query`](#pyro-query) | one [`read`](#read) step body | `{value}` |
 | [`Pyro.idle`](#pyro-idle) | `{timeout?}` | the [`idle`](#idle) step's result |
 | [`Pyro.dialogs`](#pyro-dialogs) | `{block}` | `{}` |
+| [`Pyro.cancelRun`](#pyro-cancel-run) | none | `{cancelled}` |
 | [`Pyro.geometryStats`](#pyro-geometry-stats) | none | layout counters (diagnostic) |
 
 ## Pyro.run {#pyro-run}
@@ -151,7 +152,7 @@ Navigates as the address bar would and waits for the event. Result `{}`.
 { "idle": { "timeout": 2000 } }
 ```
 
-Waits until the page is quiet, up to its timeout, and never fails. Result: `{settleMs}`, plus `settled: false` and `pending` (`{tasks?, requests?, timers?, frames?, observers?, navigations?}`, nonzero counts only) if the timeout passed first.
+Waits until the page is quiet, up to its timeout, and never fails. Result: `{settleMs}`, plus `settled: false` and `pending` (`{tasks?, requests?, timers?, frames?, observers?, scrolls?, navigations?}`, nonzero counts only; `scrolls` is newer than 0.0.33) if the timeout passed first.
 
 ### url {#url}
 
@@ -354,7 +355,7 @@ Removes the mocks whose `url` pattern text equals the given one, or all mocks of
 { "release": { "hold": "save", "body": "{\"ok\":false}", "timeout": 5000 } }
 ```
 
-Lets go of what a mock holds under `hold`. It waits until at least one request or response is held there. `body` replaces the response body (32 MiB at most). Result `{released: n}`.
+Lets go of what a mock holds under `hold`. It waits until at least one request or response is held there. `body` replaces the response body (32 MiB at most). Result `{released: n}`. Newer than 0.0.33, the next step starts once the page has the replies that were released to it.
 
 ### held {#held}
 
@@ -507,6 +508,28 @@ Runs one [`idle`](#idle) step: it waits until the page is quiet, with no request
 ```
 
 With `block: true`, dialogs (`alert`, `confirm`, `prompt`) opened by this page's driver steps wait for `Page.handleJavaScriptDialog`, like other dialogs. By default they return what a dismissed dialog gives. Result `{}`.
+
+## Pyro.cancelRun {#pyro-cancel-run}
+
+Newer than 0.0.33.
+
+```json
+{ "method": "Pyro.cancelRun", "sessionId": "…" }
+```
+
+Cancels what the session still waits on. Its runs (`Pyro.run`, `Pyro.act`, `Pyro.expect`, `Pyro.idle`) and its `Runtime.evaluate` calls with `awaitPromise` that are still waiting each reply at once with an error. The error says that the command was cancelled, at which step, and what the step was still waiting for, as a timeout would:
+
+```text
+step 0 (Click {...}): cancelled: Click {...}: {...} matched no element
+```
+
+Other forms of the text after `cancelled: ` are `waiting for load`, `waiting for DOMContentLoaded`, `waiting for the page to go quiet (pending {...})`, `waiting for the replies it released to reach the page`, `waiting for the screenshot` and, for an evaluation, `waiting for the promise to settle`.
+
+The page stays as it is. A navigation, a render or a promise that is under way goes on. A script of a run that does not return (`while (true) {}` in an `eval` step or in an event handler of an action) is stopped first, and the page stays usable. That run fails with `cancelled: ... the script it ran was still running and was stopped`.
+
+Result `{cancelled: n}`: how many commands it answered or stopped, `0` when nothing was in flight. The replies of the cancelled commands arrive before this one.
+
+`pyro e2e` and `pyro run` send it when a test times out, so the test's after hooks find the page as it was at the timeout.
 
 ## Pyro.geometryStats {#pyro-geometry-stats}
 

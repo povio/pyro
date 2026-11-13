@@ -28,9 +28,10 @@ Options take their value as the next argument (`--port 9333`; the `--port=9333` 
 | [`--proxy-bypass`](#proxy-bypass) | list | | |
 | [`--prepare`](#prepare) | URL (repeatable) | | `PYRO_PREPARE` (`;`-separated) |
 | [`--prepare-refill`](#prepare-refill) | `quiet` \| `after-close` | `quiet` | `PYRO_PREPARE_REFILL` |
+| [`--bytecode-cache`](#bytecode-cache) (newer than 0.0.33) | directory | off | `PYRO_BYTECODE_CACHE` |
 | [`--fork`](#fork) | flag | off | `PYRO_FORK=1` |
 | [`--spare-engine`](#spare-engine) | `on` \| `off` | on with `--prepare`, else off | `PYRO_SPARE_ENGINE` |
-| [`--engine-reuse`](#engine-reuse) (newer than 0.0.33) | `on` \| `off` \| `thread` \| `always` | `on` | `PYRO_ENGINE_REUSE` |
+| [`--engine-reuse`](#engine-reuse) (newer than 0.0.33) | `on` \| `off` \| `thread` \| `always` | `always` | `PYRO_ENGINE_REUSE` |
 | [`--render-prewarm`](#render-prewarm) | `on` \| `off` | on with `--prepare`, else off | `PYRO_RENDER_PREWARM` |
 | [`--hyphen-digit-breaks`](#hyphen-digit-breaks) | `on` \| `off` | `off` | `PYRO_HYPHEN_DIGIT_BREAKS` |
 | [`--parent-pid`](#parent-pid) | PID | | `PYRO_PARENT_PID` |
@@ -163,7 +164,9 @@ Pages booted ahead of the test that takes them. Guide: [Profiles and pre-booted 
 
 `--prepare <URL>`, repeatable; env `PYRO_PREPARE` with `;`-separated URLs (flags add to them). Each URL must be absolute (else exit `2`). Every connection boots a page at `URL` in its own browser context (with the [`--local-storage`](#local-storage) seed) before any command arrives, and boots the next one each time a test takes it.
 
-A client takes a page with the browser-level command `Pyro.acquirePreparedPage {url?, profileId?, attach?}` → `{targetId, browserContextId, sessionId?, ready}`. The page is announced like a new target (`Target.targetCreated` / `attachedToTarget`), so Playwright sees it as a page of its default context. `Pyro.registerPreparedPage {url, initScripts?, viewport?, pool?}` declares more profiles at run time; `Pyro.preparedPages` lists what is waiting. A `--prepare` profile keeps one page booted.
+A client takes a page with the browser-level command `Pyro.acquirePreparedPage {url?, profileId?, attach?}` → `{targetId, browserContextId, sessionId?, ready}`. The page is announced like a new target (`Target.targetCreated` / `attachedToTarget`), so Playwright sees it as a page of its default context. `Pyro.registerPreparedPage {url, initScripts?, viewport?, pool?, userAgent?, proxyServer?, proxyBypassList?}` declares more profiles at run time; `Pyro.preparedPages` lists what is waiting. A `--prepare` profile keeps one page booted.
+
+A profile's `userAgent` is the `User-Agent` of every request of its pages' browser context, and what `navigator.userAgent` reports there. Its `proxyServer` (with `proxyBypassList`) takes the place of [`--proxy`](#proxy) for that context, in the syntax of `Target.createBrowserContext`, which takes `userAgent` too.
 
 Giving `--prepare` turns on test-suite defaults: [`--spare-engine`](#spare-engine) and [`--render-prewarm`](#render-prewarm) default to `on`.
 
@@ -178,6 +181,26 @@ Giving `--prepare` turns on test-suite defaults: [`--spare-engine`](#spare-engin
 
 Applies to `--prepare` profiles; `registerPreparedPage` takes its own `refillAfterClose`.
 
+## Bytecode cache {#bytecode-cache-section}
+
+### `--bytecode-cache` {#bytecode-cache}
+
+::: info Newer than 0.0.33
+`--bytecode-cache` ships since the first `@povio/pyro` release (PR #307).
+:::
+
+`--bytecode-cache <DIR>`; env `PYRO_BYTECODE_CACHE`. Off without it. Keeps the bytecode of scripts and modules in `DIR` and loads it from there instead of parsing them, in this run and in later ones. A script or module is written after an engine evaluated it; the next load of the same text, in this process or another, maps the file. Sources shorter than 4096 bytes are not cached.
+
+- `DIR` is created if missing, with mode `0700`. It must be a directory (not a symbolic link) that belongs to the current user and is closed to everyone else: what is in it runs as code, unchecked. Otherwise the server prints `pyro serve: --bytecode-cache <dir>: <reason>` and exits `2`.
+- It needs the patched JavaScriptCore; on a build without it the option fails with `the bytecode cache needs the patched JavaScriptCore (scripts/jsc/build.sh)`.
+- Entries are tied to the build that wrote them. Entries of other builds are never read, and the first write removes those unused for two weeks.
+- In [fork mode](#fork) the template and its forks use the same cache.
+- [`pyro fetch`](/reference/cli#fetch) takes the same option and variable.
+
+```sh
+pyro serve --bytecode-cache ~/.cache/pyro-bytecode
+```
+
 ## Fork mode {#fork-mode}
 
 ### `--fork` {#fork}
@@ -191,10 +214,12 @@ Applies to `--prepare` profiles; `registerPreparedPage` takes its own `refillAft
 - Each template keeps `PYRO_FORK_SPARES` (default `2`) forks waiting, so a connection does not wait for its fork.
 - Forks run without JavaScriptCore's DFG/FTL tiers (connections are too short for them to pay off) unless `JSC_useDFGJIT=true` is set; see [env](/reference/env#jsc).
 - The template starts while the server begins listening; the first connection waits for it. A template that fails to start ends the server (exit `1`).
-- A profile's `setup` that fails is reported on the server's stderr (`pyro: template: setup of profile <id>: step <i>: <reason>`), not to the `registerPreparedPage` call, which has already returned the id.
+- `registerPreparedPage` replies `{profileId, state}`, and `Pyro.preparedProfileStatus {profileId}` → `{state, error?}` says how far a profile is: `booting` until its page has loaded and its setup ran, then `ready`, or `failed` with the reason. The reason is the step that failed (`setup step 2 (Click ...): timed out after 5000 ms: ...`), a page that did not load within 30 s, or a base profile that failed. The server's stderr has it too (`pyro: template: profile <id>: <reason>`).
+- No page of a failed profile is handed out: `Pyro.acquirePreparedPage` fails with its error. Profiles derived from it fail with it. Registering the same definition again tries again. The SDK turns the failure into a [`ProfileSetupError`](/reference/sdk#profilesetuperror).
+- A profile with a `base` has its base's `userAgent` and proxy.
 - `--render-prewarm` does not apply (the template must not start threads before it forks).
 
-**Shared profiles.** Several clients (test workers in other processes) can use one server. `registerPreparedPage {name, ...}` registers a profile under a name every client shares: the same definition under the same name finds it already booted; a different one is refused while another client holds it. `Pyro.adoptPreparedPage {name}` → `{profileId, url, initScripts, viewport, setup, base}` holds a profile another client registered, `unregisterPreparedPage {name}` releases this connection's hold, and `Pyro.preparedProfiles` lists the names with their holders. A connection's holds end when it closes; a profile is retired once no connection holds it and no other profile derives from it.
+**Shared profiles.** Several clients (test workers in other processes) can use one server. `registerPreparedPage {name, ...}` registers a profile under a name every client shares: the same definition under the same name finds it already booted; a different one (another `userAgent` or proxy included) is refused while another client holds it. `Pyro.adoptPreparedPage {name}` → `{profileId, url, initScripts, viewport, setup, base, userAgent, proxyServer, proxyBypassList, state}` holds a profile another client registered (one whose setup failed is refused with its error, and not held), `unregisterPreparedPage {name}` releases this connection's hold, and `Pyro.preparedProfiles` lists the names with their holders and state. A connection's holds end when it closes; a profile is retired once no connection holds it and no other profile derives from it. A failed profile stays registered until then, so that its adopters learn why.
 
 ```sh
 pyro serve --fork --static http://app.test=./dist --prepare http://app.test/ --cdp-max-connections 128
@@ -211,17 +236,17 @@ Guides: [Connections and fork mode](/guide/fork-mode), [Fork mode in tests](/e2e
 ### `--engine-reuse` {#engine-reuse}
 
 ::: info Newer than 0.0.33
-`--engine-reuse` ships since the first `@povio/pyro` release (PR #304). The 0.0.33 binary of `@povio/lightning-panda` rejects it as an unknown option.
+`--engine-reuse` ships since the first `@povio/pyro` release (PR #304, default `always` since PR #307). The 0.0.33 binary of `@povio/lightning-panda` rejects it as an unknown option.
 :::
 
-`--engine-reuse <on|off|thread|always>`, default `on`; env `PYRO_ENGINE_REUSE`. What a connection that ends leaves to the next connection. At most one thread waits, for at most 10 s, then it ends and its engine is destroyed.
+`--engine-reuse <on|off|thread|always>`, default `always`; env `PYRO_ENGINE_REUSE`. What a connection that ends leaves to the next connection. At most one thread waits, for at most 10 s, then it ends and its engine is destroyed.
 
 | Value | Kept for the next connection |
 | --- | --- |
+| `always` (default) | The browser thread and its engine, also after pages, once the engine is proven to hold nothing of them. The engine keeps its code cache, so the next connection parses neither JavaScriptCore's builtins nor a script the last connection also ran. |
 | `on` | The browser thread and its engine, only when the connection never made a page (an untouched engine). After pages, thread and engine are dropped. |
-| `off` | Nothing: every connection gets a new thread and a new engine. |
 | `thread` | The browser thread, also after pages; the engine is always destroyed and recreated on it. |
-| `always` | The thread and the engine, also after pages, once the engine is proven to hold nothing of them (all code deleted, full collection, heap walk). Costs slightly more CPU than a new engine. |
+| `off` | Nothing: every connection gets a new thread and a new engine. |
 
 Not used in fork mode. `PYRO_ENGINE_REUSE_LOG=1` prints one stderr line per connection end saying what became of its engine.
 

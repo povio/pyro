@@ -104,6 +104,8 @@ await pyro.profile('positions', {
 
 This builds a tree: boot on the login page once, sign in once, then one snapshot per area of the app. Each derived snapshot lives in a derived template process, which serves forks for it.
 
+`pyro.profile()` resolves once the `setup` ran. When a step fails it rejects with a `ProfileSetupError` that names the step and the reason (`profile signed-in: setup step 2 (...): timed out after 5000 ms: ...`). No page of a failed profile is handed out, profiles built on it with `base` fail with it, and declaring it again tries again. In releases up to 0.0.33 the failure is only printed on the server's stderr and the profile's pages still open.
+
 ## Shared profiles
 
 A fork-mode server keeps profiles by **name** for all its clients. This lets one process launch the server and register profiles, and many worker processes use them without booting anything:

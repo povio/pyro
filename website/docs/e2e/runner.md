@@ -110,7 +110,7 @@ pyro: CDP server listening on ws://127.0.0.1:55043/ (fork mode)
 ✓ e2e/settings.test.ts > opens settings [99.61ms]
 ✓ e2e/todos.test.ts > todos > adds a todo [55.05ms]
 ✗ e2e/todos.test.ts > todos > deletes a seeded todo [5.06s]
-    Error: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
+    RunError: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
         at run (.../node_modules/@povio/pyro/src/index.ts:517:17)
         at async <anonymous> (/path/to/e2e/todos.test.ts:28:16)
 
@@ -124,14 +124,14 @@ Ran 3 tests across 2 files. [5.13s]
 
 The failed test prints its error under its line, and the summary repeats the first line of each failure. The exit code is 1. `step 2` is the index in the array passed to `page.run`, and the text after the last colon says what the step saw: zero matches where the test wanted one. The last stack line points at the `page.run` call in your spec. [Debugging failures](/e2e/debugging) lists every reason.
 
-**Set `--timeout` above the step timeout.** The default test timeout and the default step timeout are both 5,000 ms. With both at their defaults, the test times out at the same moment as its failing step, and all you get is:
+**Keep `--timeout` above the step timeout.** The default test timeout is 30,000 ms and the default step timeout is 5,000 ms, so a failing step reports its reason first. With `--timeout 5000`, the test times out at the same moment as its failing step, and all you get is:
 
 ```text
 ✗ e2e/todos.test.ts > todos > deletes a seeded todo [5.01s]
     TimeoutError: test timed out after 5000 ms
 ```
 
-Use `--timeout 10000` or more (`30000` in CI) so the step fails first and reports its reason.
+Leave the default, or use `--timeout 10000` or more, so the step fails first and reports its reason.
 
 ## Options
 
@@ -143,7 +143,7 @@ pyro e2e [options] [path | dir | glob | filter ...]
 |---|---|---|
 | `-j`, `--concurrency <n>` | CPU count | Tests running at once across all files |
 | `--max-concurrency <n>` | no limit | Tests of one file running at once (as in `bun test`) |
-| `--timeout <ms>` | `5000` | Default timeout of tests and hooks |
+| `--timeout <ms>` | `30000` | Default timeout of tests and hooks |
 | `-t`, `--test-name-pattern <re>` | | Only tests whose name (describe names and test name joined by spaces) matches the regular expression |
 | `--only` | | Only tests and describes marked `.only` |
 | `--shard <i>/<n>` | | Run shard `i` of `n`; files are split by `--timings` |
@@ -274,7 +274,7 @@ Use serial tests for steps that depend on each other's server state. Prefer inde
 
 ### Timeouts
 
-A test's timeout covers its `beforeEach` hooks, the test, its `afterEach` hooks and its deferred cleanups. A test that times out fails with `TimeoutError: test timed out after N ms`, and its pages are closed. Hooks without a timeout of their own use the default. Step timeouts inside `page.run` are separate (5 s per step by default); see [Steps and checks](/e2e/steps#timeouts).
+A test's timeout applies to the test function, and to each of its `beforeEach` hooks, `afterEach` hooks and deferred cleanups on its own. A test that times out fails with `TimeoutError: test timed out after N ms`. The runs its pages were still waiting on are cancelled, so its `afterEach` hooks and deferred cleanups find the pages as they were at the timeout and can use them; then the pages are closed. Hooks without a timeout of their own use the default (30,000 ms, or `--timeout`). Step timeouts inside `page.run` are separate (5 s per step by default); see [Steps and checks](/e2e/steps#timeouts).
 
 ## Failures and exit code
 

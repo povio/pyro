@@ -15,16 +15,18 @@ Every environment variable Pyro reads, by the component that reads it. The brows
 | [`PYRO_TIMEOUT`](#pyro-timeout) | Playwright drop-in | config | Test timeout, ms |
 | [`PYRO_UPDATE_SNAPSHOTS`](#pyro-update-snapshots) | SDK, Playwright drop-in, `e2e` | unset | Write screenshot baselines |
 | [`PYRO_CONCURRENT`](#pyro-concurrent) | Playwright drop-in | unset | Run parallel describes concurrently in a worker |
+| [`PYRO_FFMPEG`](#pyro-ffmpeg) | Playwright drop-in | `ffmpeg` on `PATH` | The ffmpeg that encodes `recordVideo` videos |
 | [`NO_COLOR`](#no-color) | `run`, `e2e` reporters | unset | Disable colors |
 | [`PYRO_LOCAL_STORAGE`](#pyro-local-storage) | `serve` | | `--local-storage` |
 | [`PYRO_STATIC`](#pyro-static) | `serve` | | `--static` entries |
 | [`PYRO_PREPARE`](#pyro-prepare) | `serve` | | `--prepare` URLs |
 | [`PYRO_PREPARE_REFILL`](#pyro-prepare-refill) | `serve` | `quiet` | `--prepare-refill` |
+| [`PYRO_BYTECODE_CACHE`](#pyro-bytecode-cache) | `serve`, `fetch` (newer than 0.0.33) | off | `--bytecode-cache` directory |
 | [`PYRO_FORK`](#pyro-fork) | `serve` | off | `--fork` |
 | [`PYRO_FORK_SPARES`](#pyro-fork-spares) | `serve --fork` | `2` | Forks kept waiting |
 | [`PYRO_FORK_PRECOMPILE`](#pyro-fork-precompile) | `serve --fork` | `modules` | Precompile static module scripts |
 | [`PYRO_SPARE_ENGINE`](#pyro-spare-engine) | `serve` | on with `--prepare` | `--spare-engine` |
-| [`PYRO_ENGINE_REUSE`](#pyro-engine-reuse) | `serve` (newer than 0.0.33) | `on` | `--engine-reuse` |
+| [`PYRO_ENGINE_REUSE`](#pyro-engine-reuse) | `serve` (newer than 0.0.33) | `always` | `--engine-reuse` |
 | [`PYRO_RENDER_PREWARM`](#pyro-render-prewarm) | `serve` | on with `--prepare` | `--render-prewarm` |
 | [`PYRO_HYPHEN_DIGIT_BREAKS`](#pyro-hyphen-digit-breaks) | `serve` | `off` | `--hyphen-digit-breaks` |
 | [`PYRO_PARENT_PID`](#pyro-parent-pid) | `serve` | set by `launch()` | `--parent-pid` |
@@ -88,11 +90,15 @@ Any value turns off ANSI colors in the `pyro run` and `pyro e2e` console output.
 
 `pyro run` passes these to its `bun test` workers. They are internal: do not set them yourself.
 
-`PYRO_WORKER`, `PYRO_WORKERS`, `PYRO_WORKER_INDEX`, `PYRO_RESULTS`, `PYRO_FILE_PROJECTS`, `PYRO_FILE_OWNERS`, `PYRO_FULLY_PARALLEL`, `PYRO_GREP`, `PYRO_GREP_INVERT` and `PYRO_LIST`.
+`PYRO_WORKER`, `PYRO_PLAN`, `PYRO_WORKER_INDEX`, `PYRO_WORKER_ID`, `PYRO_RESULTS`, `PYRO_RUN_WORKERS`, `PYRO_SHARD`, `PYRO_GREP`, `PYRO_GREP_INVERT` and `PYRO_LIST`. A run started inside another run does not inherit them.
 
 ### `PYRO_CONCURRENT` {#pyro-concurrent}
 
 `1` makes the Playwright drop-in run the tests of a `mode: 'parallel'` describe concurrently inside one worker. By default a file's tests run one after another in their worker, since they may share module state that hooks set. *Experimental.*
+
+### `PYRO_FFMPEG` {#pyro-ffmpeg}
+
+Path of the ffmpeg executable that encodes videos (`recordVideo`, the runner's `video` option). Default: `ffmpeg` on `PATH`, else the one Playwright installs (`playwright install ffmpeg`). When it is set to something that is not an executable, recording fails and the error says so. See [Video](/playwright/runner#video).
 
 ## serve {#serve}
 
@@ -118,6 +124,10 @@ PYRO_STATIC='http://app.test=./dist;http://cdn.test=./public'
 
 `after-close` means [`--prepare-refill after-close`](/reference/serve#prepare-refill). Any other value means `quiet`.
 
+### `PYRO_BYTECODE_CACHE` {#pyro-bytecode-cache}
+
+The directory for [`--bytecode-cache`](/reference/serve#bytecode-cache). `pyro serve` and `pyro fetch` read it. Unset means no cache. Newer than 0.0.33.
+
 ### `PYRO_FORK` {#pyro-fork}
 
 `1` means [`--fork`](/reference/serve#fork). Other values are ignored.
@@ -142,7 +152,7 @@ What the root fork-mode template does with the module scripts of the [`--static`
 
 ### `PYRO_ENGINE_REUSE` {#pyro-engine-reuse}
 
-`on`, `off`, `thread` or `always` (also `1`/`0`, `true`/`false`) for [`--engine-reuse`](/reference/serve#engine-reuse). Newer than 0.0.33: since the first `@povio/pyro` release.
+`on`, `off`, `thread` or `always` (also `1`/`0`, `true`/`false`) for [`--engine-reuse`](/reference/serve#engine-reuse). Default `always`. Newer than 0.0.33: since the first `@povio/pyro` release.
 
 ### `PYRO_RENDER_PREWARM` {#pyro-render-prewarm}
 
@@ -189,6 +199,9 @@ A positive integer turns on a process-wide cache of public static assets shared 
 | `PYRO_HEAP_ARENA` (macOS, newer than 0.0.33) | on | `0`: use mimalloc's own arenas for the Rust heap instead of one reserved range whose freed pages leave the resident set at once |
 | `PYRO_FORK_FAST_EXIT` | on | `0`: a forked connection process tears down as a shared process does instead of exiting at once |
 | `PYRO_STATIC_DIRECT` | on | `0`: `--static` hits go through the I/O thread instead of being answered on the browser thread |
+| `PYRO_IDLE_COLLECT` (newer than 0.0.33) | on, off in fork-mode forks | `0`: a browser thread that goes quiet with its pages still open no longer collects garbage then. `1`: forked connection processes do it too |
+| `PYRO_RASTER_THREADS` (newer than 0.0.33) | one less than the cores, at most 8 | Threads that rasterize large frames (4 million device pixels or more, such as a 3840x2160 screenshot). `0`: every frame is rasterized on the render thread |
+| `PYRO_BYTECODE_CACHE_MIN_BYTES` (newer than 0.0.33) | `4096` | Sources shorter than this are not written to the [bytecode cache](/reference/serve#bytecode-cache) |
 
 ## Diagnostics {#diagnostics}
 
@@ -198,6 +211,7 @@ A positive integer turns on a process-wide cache of public static assets shared 
 | --- | --- |
 | `PYRO_FORK_STATS=<file>` | JSON lines appended to `<file>`, one per fork, reaped child, child life step and precompile in `serve --fork` |
 | `PYRO_ENGINE_REUSE_LOG=1` (newer than 0.0.33) | One stderr line per connection end (`pyro: engine reuse: …`): what became of its engine |
+| `PYRO_BYTECODE_CACHE_LOG` (any value, newer than 0.0.33) | One stderr line per [bytecode cache](/reference/serve#bytecode-cache) lookup (`pyro: bytecode cache: hit …`, `miss …`) |
 | `PYRO_TRACE_MODULES=1` | One stderr line per step of every ES module load |
 | `PYRO_FLOW_STATS=1` | Layout flow statistics |
 | `PYRO_GEOMETRY_PROFILE` (any value) | Time spent in layout syncs, whole-document reads and box reads, printed to stderr every 250 syncs |

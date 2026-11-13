@@ -56,7 +56,7 @@ Sessions use flat mode only. `Target.attachToTarget` and `Target.setAutoAttach` 
 | Unknown `sessionId` | `{"code": -32001, "message": "Session with given id not found."}` |
 | Bad params | `-32602` with the parse or validation message (Chrome's text where Chrome has one) |
 
-Known unsupported methods that Playwright 1.59 may send: `Browser.cancelDownload`, `Browser.getWindowBounds`, `Browser.setDockTile`, `Emulation.setScriptExecutionDisabled`, `HeapProfiler.collectGarbage`, `Network.loadNetworkResource`, `Page.setFontFamilies`, `Page.startScreencast`, `Tracing.start`, `Tracing.end`. `Runtime.queryObjects` also fails explicitly, because JavaScriptCore's API has no heap iteration.
+Known unsupported methods that Playwright 1.59 may send: `Browser.getWindowBounds`, `Browser.setDockTile`, `HeapProfiler.collectGarbage`, `Network.loadNetworkResource`, `Page.setFontFamilies`, `Tracing.start`, `Tracing.end`. Releases up to 0.0.33 also refuse `Browser.cancelDownload`, `Emulation.setScriptExecutionDisabled` and `Page.startScreencast`. `Runtime.queryObjects` also fails explicitly, because JavaScriptCore's API has no heap iteration.
 
 ## Browser-level methods
 
@@ -71,7 +71,7 @@ These are sent without a `sessionId`, or on a browser session from `Target.attac
 | `Target.getTargets` | implemented | |
 | `Target.getTargetInfo` | implemented | |
 | `Target.getBrowserContexts` | implemented | The default context is not listed, as in Chrome. |
-| `Target.createBrowserContext` | implemented | Several contexts per connection, each with its own network client, cookies and storage. `proxyServer` takes one HTTP proxy (CONNECT for https, absolute-form for http; `direct://` for none), and `proxyBypassList` takes Chrome's syntax (`<local>`, `<-loopback>`, CIDR, wildcards). SOCKS, `https://` proxies and per-scheme lists are refused. |
+| `Target.createBrowserContext` | implemented | Several contexts per connection, each with its own network client, cookies and storage. `proxyServer` takes one HTTP proxy (CONNECT for https, absolute-form for http; `direct://` for none), and `proxyBypassList` takes Chrome's syntax (`<local>`, `<-loopback>`, CIDR, wildcards). SOCKS, `https://` proxies and per-scheme lists are refused. Newer than 0.0.33: `userAgent` (Pyro's own parameter) is the context's default `User-Agent` header and `navigator.userAgent`. The proxy and the user agent also cover what the engine loads for the context's pages by itself (layout's images, `@font-face` fonts and `@import`ed sheets, screenshots, PDFs). `serviceWorkers: "block"` (Pyro's own parameter, Playwright's option) makes `navigator.serviceWorker.register()` register nothing and resolve with `undefined` after a console warning. |
 | `Target.disposeBrowserContext` | implemented | The default context cannot be disposed. |
 | `Target.createTarget` | implemented | Page targets only. Page-opened popups (`target=_blank`, named targets, `window.open`) become targets in the opener's context with `openerId`. There is no cross-page WindowProxy: `window.open` returns a minimal object (`closed`, `close()`, `focus()`, `blur()`, `location`). |
 | `Target.closeTarget` | implemented | |
@@ -85,7 +85,8 @@ These are sent without a `sessionId`, or on a browser session from `Target.attac
 | Method | Status | Notes |
 | --- | --- | --- |
 | `Browser.getVersion` | implemented | `product` `Chrome/124.0.6367.29`, `protocolVersion` `1.3`, Chrome-like `userAgent`. `revision` and `jsVersion` are empty. |
-| `Browser.setDownloadBehavior` | implemented | Per browser context. `deny`, `default`, `allow`, `allowAndName`. The allow modes need `downloadPath`. `<a download>` to blob:, data: or same-origin URLs, and navigations answered with `Content-Disposition: attachment`, are written to disk. `Browser.downloadWillBegin` and `Browser.downloadProgress` are emitted when `eventsEnabled` is set. |
+| `Browser.setDownloadBehavior` | implemented | Per browser context. `deny`, `default`, `allow`, `allowAndName`. The allow modes need `downloadPath`. `<a download>` to blob:, data: or same-origin URLs, and navigations answered with `Content-Disposition: attachment`, are written to disk. `Browser.downloadWillBegin` and `Browser.downloadProgress` are emitted when `eventsEnabled` is set. Newer than 0.0.33: `deny` and `default` write nothing and, with `eventsEnabled`, report the download as headless Chrome does (`downloadWillBegin`, then `downloadProgress` `inProgress` and `canceled` with 0 bytes). A popup that was opened only for a download closes after `downloadWillBegin`, as Chrome's tab does. |
+| `Browser.cancelDownload` | implemented | Newer than 0.0.33. Answers `{}` for a download that was announced in that browser context. Pyro announces a download once it completed or was canceled, so there is never one in progress to cancel. Any other `guid` fails with Chrome's `-32602 No download item found for the given GUID`. |
 | `Browser.grantPermissions` | implemented | Per context (the default context without `browserContextId`). Drives `navigator.permissions.query`, live `PermissionStatus` change events and the context clipboard. Chrome's messages for unknown types. |
 | `Browser.resetPermissions` | implemented | Back to Chrome's defaults (`clipboard-write` granted, the rest `prompt`). |
 | `Browser.setPermission` | implemented | One permission for one origin, or for every origin. |
@@ -96,7 +97,7 @@ These are sent without a `sessionId`, or on a browser session from `Target.attac
 
 ### Pyro
 
-`Pyro.capabilities`, `registerPreparedPage`, `acquirePreparedPage`, `preparedPages`, `unregisterPreparedPage`, `adoptPreparedPage`, `preparedProfiles`. See [Pyro CDP domain](/reference/cdp-domain).
+`Pyro.capabilities`, `registerPreparedPage`, `acquirePreparedPage`, `preparedPages`, `unregisterPreparedPage`, `adoptPreparedPage`, `preparedProfiles`, `preparedProfileStatus` (newer than 0.0.33). See [Pyro CDP domain](/reference/cdp-domain).
 
 ## Page-session methods
 
@@ -107,22 +108,23 @@ These are sent with the `sessionId` of an attached page.
 | Method | Status | Notes |
 | --- | --- | --- |
 | `Page.enable` / `disable` | implemented | |
-| `Page.navigate` | implemented | about:blank, data:, file: (unless [`PYRO_FILE_URLS=0`](/reference/env#pyro-file-urls)) and HTTP(S) documents. `frameId` can target child frames. A download response fails the navigation with `net::ERR_ABORTED`. |
-| `Page.reload` | implemented | Same limits as `navigate`. |
-| `Page.getFrameTree` | implemented | Nested frames with loader ids and security origins. |
+| `Page.navigate` | implemented | about:blank, data:, file: (unless [`PYRO_FILE_URLS=0`](/reference/env#pyro-file-urls)) and HTTP(S) documents. `frameId` can target child frames. A download response fails the navigation with `net::ERR_ABORTED`. Newer than 0.0.33: when the navigation of a new window (a popup or a new target that still shows its first `about:blank`) fails on the network, Chrome's error document commits after the `errorText` reply: `frameNavigated` at `chrome-error://chromewebdata/` with `unreachableUrl`. A page that has a document of its own keeps it. |
+| `Page.reload` | implemented | Same limits as `navigate`. Newer than 0.0.33: on an error document it fetches the URL that failed. |
+| `Page.getFrameTree` | implemented | Nested frames with loader ids and security origins. Newer than 0.0.33: a frame that shows the error document of a failed navigation has `unreachableUrl`. |
 | `Page.setLifecycleEventsEnabled` | implemented | Per-frame lifecycle events. Milestones already reached are replayed. |
 | `Page.addScriptToEvaluateOnNewDocument` / `removeScriptToEvaluateOnNewDocument` | implemented | |
 | `Page.createIsolatedWorld` | implemented | Named isolated worlds per frame. |
 | `Page.getNavigationHistory` | implemented | Main-frame history. Only the current entry has a `title`. `transitionType` is always `other`. |
 | `Page.navigateToHistoryEntry` | implemented | Same-document entries fire `popstate`. Others re-fetch (no bfcache). |
-| `Page.getLayoutMetrics` | implemented | CSS px from Pyro's layout. No pinch zoom: the visual viewport equals the layout viewport. |
-| `Page.captureScreenshot` | implemented | Rendered on the CPU by the Blitz renderer. `png` and `jpeg` (`quality`), `clip` with `scale`, `captureBeyondViewport`. `webp`, `fromSurface: false` and `optimizeForSpeed` are ignored or refused. Pixels differ from Chromium's. See [Rendering](/guide/rendering). |
-| `Page.printToPDF` | implemented | Paper size, `landscape`, margins, `scale` (0.1–2), `printBackground`, `pageRanges`, `generateTaggedPDF`, links, `transferMode: ReturnAsStream`. Paged by `.pz-page` boxes (Paprize) or by cutting the document at Chrome-like break points. `displayHeaderFooter` and its templates, `preferCSSPageSize` and `generateDocumentOutline` are accepted and ignored. The page prints with its emulated media (screen unless set to `print`), not Chrome's print media. See [Rendering](/guide/rendering). |
+| `Page.getLayoutMetrics` | implemented | CSS px from Pyro's layout. No pinch zoom: the visual viewport equals the layout viewport. Newer than 0.0.33: under mobile emulation the layout viewport is the window (`innerWidth`, `innerHeight`) and the visual viewport is the device at the page scale, as in Chrome. |
+| `Page.captureScreenshot` | implemented | Rendered on the CPU by the Blitz renderer. `png` and `jpeg` (`quality`), `clip` with `scale`, `captureBeyondViewport`. `webp`, `fromSurface: false` and `optimizeForSpeed` are ignored or refused. Pixels differ from Chromium's. The reply also has an object with Pyro's report (`width`, `height`, `bytes`, `sceneHash`, `ms`). It is named `pyro`; in releases up to 0.0.33 it is named `lp`. Newer than 0.0.33: JPEG uses 4:2:0 chroma at every quality, as Chromium's does; the raw formats `rgba`, `rgb24` and `yuv420p` and an absolute `path` to write to are Pyro's own ([Raw frames](/scraping/pdf#raw-frames)); under mobile emulation a capture without a clip is the visual viewport in the device's size. See [Rendering](/guide/rendering). |
+| `Page.startScreencast` / `stopScreencast` / `screencastFrameAck` | implemented | Newer than 0.0.33. `Page.screencastFrame` events as Chromium sends them: one at once, then one whenever what the page shows changes. `format` `png` (default) or `jpeg` (`quality`, default 80), `maxWidth` and `maxHeight` in device pixels. At most one frame every 40 ms (`everyNthFrame` n: one every n × 40 ms), and one at a time: the next frame waits for the ack of the last. A page that does not change sends nothing. One screencast per session. As in screenshots, CSS animations show at their end state and iframe contents are not drawn. Pyro's own `format: "yuv420p"` with `socket` (a Unix socket path the client listens on) sends raw frames there instead of events; the Playwright module's `recordVideo` uses it. |
+| `Page.printToPDF` | implemented | Paper size, `landscape`, margins, `scale` (0.1–2), `printBackground`, `pageRanges`, `generateTaggedPDF`, links, `transferMode: ReturnAsStream`. Paged by `.pz-page` boxes (Paprize) or by cutting the document at Chrome-like break points. `displayHeaderFooter` and its templates, `preferCSSPageSize` and `generateDocumentOutline` are accepted and ignored. The page prints with its emulated media (screen unless set to `print`), not Chrome's print media. The reply's extra report (`pages`, `stats`, `ms`) is under `pyro`; in releases up to 0.0.33 it is under `lp`. See [Rendering](/guide/rendering). |
 | `Page.handleJavaScriptDialog` | implemented | `alert`, `confirm`, `prompt` and `beforeunload` block while a session has Page enabled. During `Pyro.*` driver commands dialogs are dismissed instead, unless `Pyro.dialogs {block: true}` is set. |
 | `Page.setInterceptFileChooserDialog` | implemented | Emits `Page.fileChooserOpened`. |
 | `Page.setDocumentContent` | implemented | `document.open`, `write`, `close` on the current document. URL and contexts stay. No `frameNavigated`. |
 | `Page.close` | implemented | Fires `beforeunload`. A cancelling handler opens a dialog. |
-| `Page.setBypassCSP` | accepted | There is no CSP enforcement. |
+| `Page.setBypassCSP` | implemented | Newer than 0.0.33 (accepted and ignored before). Per page, from its next document. Pyro enforces no CSP directive, so this lifts the one effect a policy has: with a policy in a response header, the `nonce` attribute of an element that a script inserts reads back empty. |
 | `Page.bringToFront` | accepted | Each page is always in the foreground. |
 
 ### Runtime
@@ -170,7 +172,8 @@ These are sent with the `sessionId` of an attached page.
 
 | Method | Status | Notes |
 | --- | --- | --- |
-| `Emulation.setDeviceMetricsOverride` / `clearDeviceMetricsOverride` | partial | Width, height, DPR, screen size and resize events. `mobile: true` is accepted, but `<meta name=viewport>` has no effect. Transforms and non-trivial `screenOrientation` are refused. |
+| `Emulation.setDeviceMetricsOverride` / `clearDeviceMetricsOverride` | partial | Width, height, DPR, screen size, `screenOrientation` and resize events. `mobile: true` lays the main frame out as Chrome's mobile emulation does: in the layout viewport that the document's `<meta name="viewport">` asks for (980 px without one), shown at a page scale. Child frames ignore it. Transforms (`scale`, `positionX`, `positionY`, `viewport`) are refused. Releases up to 0.0.33 accept `mobile: true` but ignore the viewport tag, and refuse a `screenOrientation` that does not match the screen size. |
+| `Emulation.setScriptExecutionDisabled` | implemented | Newer than 0.0.33. Per page, from its next document: that document and its frames run no script of their own (script elements, event handlers, timers, `javascript:` URLs), and `<noscript>` is parsed as markup. `Runtime.evaluate` and the other protocol evaluations still run. Unlike Chrome, timers and animation frames run in no world of such a document, so stock Playwright's actionability waits time out there. |
 | `Emulation.setEmulatedMedia` | implemented | `print`/`screen`, `prefers-color-scheme` and `prefers-reduced-motion` reach matchMedia, CSS, layout and rendering. Other features are accepted and not evaluated. |
 | `Emulation.setUserAgentOverride` | implemented | Per page. `userAgentMetadata` drives `navigator.userAgentData` and the low-entropy `Sec-CH-UA*` headers. |
 | `Emulation.setLocaleOverride` | partial | `navigator.language(s)` and `Accept-Language` only. `Intl` and `Date` keep the process locale. |
@@ -245,6 +248,7 @@ These are sent with the `sessionId` of an attached page.
 | `Security.*` | see [Browser, Storage, Security](#browser-storage-security) | |
 | `Target.getTargets`, `Target.getTargetInfo`, `Target.setAutoAttach` | implemented | On a page session, `setAutoAttach` attaches the page's dedicated workers. Iframes are frames of the page, not separate targets. |
 | `Pyro.run`, `Pyro.idle`, `Pyro.act`, `Pyro.expect`, `Pyro.query`, `Pyro.dialogs` | implemented | Pyro's native driver. See [Pyro.run wire format](/reference/pyro-run). |
+| `Pyro.cancelRun` | implemented | Newer than 0.0.33. Cancels the session's waiting runs and `awaitPromise` evaluations; see [Pyro.cancelRun](/reference/pyro-run#pyro-cancel-run). |
 | `Pyro.geometryStats` | implemented | Diagnostic layout counters; see [Pyro.geometryStats](/reference/pyro-run#pyro-geometry-stats). |
 
 ### Worker sessions
@@ -260,7 +264,7 @@ A `tab` target session (Puppeteer's auto-attach filter) accepts `Target.setAutoA
 | Domain | Events |
 | --- | --- |
 | Target | `targetCreated`, `targetDestroyed`, `attachedToTarget`, `detachedFromTarget` (no `targetInfoChanged`) |
-| Page | `frameAttached`, `frameDetached`, `frameNavigated`, `frameStartedNavigating`, `frameStartedLoading`, `frameStoppedLoading`, `frameRequestedNavigation`, `frameScheduledNavigation`, `frameClearedScheduledNavigation`, `navigatedWithinDocument`, `lifecycleEvent`, `domContentEventFired`, `loadEventFired`, `javascriptDialogOpening`, `javascriptDialogClosed`, `fileChooserOpened` |
+| Page | `frameAttached`, `frameDetached`, `frameNavigated`, `frameStartedNavigating`, `frameStartedLoading`, `frameStoppedLoading`, `frameRequestedNavigation`, `frameScheduledNavigation`, `frameClearedScheduledNavigation`, `navigatedWithinDocument`, `lifecycleEvent`, `domContentEventFired`, `loadEventFired`, `javascriptDialogOpening`, `javascriptDialogClosed`, `fileChooserOpened`, `screencastFrame` (newer than 0.0.33) |
 | Runtime | `executionContextCreated`, `executionContextDestroyed`, `executionContextsCleared`, `consoleAPICalled` (with object previews and the caller's stack trace), `exceptionThrown`, `bindingCalled` |
 | Network | `requestWillBeSent`, `responseReceived`, `dataReceived`, `loadingFinished`, `loadingFailed`, `webSocketCreated`, `webSocketWillSendHandshakeRequest`, `webSocketHandshakeResponseReceived`, `webSocketFrameSent`, `webSocketFrameReceived`, `webSocketFrameError`, `webSocketClosed` (no `*ExtraInfo` events: `hasExtraInfo` is `false`) |
 | Fetch | `requestPaused`, `authRequired` |

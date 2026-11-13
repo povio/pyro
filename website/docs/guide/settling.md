@@ -28,18 +28,21 @@ After an action (`click`, `dblclick`, `fill`, `press`, `type`, `check`, `uncheck
 | No timer due soon | a `setTimeout` due within the next **50 ms** |
 | No animation frame pending | a `requestAnimationFrame` callback, unless it is part of an animation loop |
 | No ResizeObserver work | queued ResizeObserver gathering or notifications |
+| No scroll work | a `scroll` event the next rendering update owes, or scroll offsets to clamp again after a DOM change (newer than 0.0.33) |
 | No navigation in progress | a frame whose navigation has not reached `DOMContentLoaded` |
 
 Microtasks (promise reactions, MutationObserver records) always run to completion before a task ends, so they never appear as pending. Readiness is checked between event loop tasks, so the next step starts right after the last piece of work.
 
 An action waits at most **1 second** for the page to go quiet. After that the run carries on, and the step's result records what was still pending.
 
+Newer than 0.0.33, a settle does not wait for the frame clock. When only `scroll` events or ResizeObserver work are left, which a browser delivers at its next rendering update, the settle runs that update at once.
+
 ### What does not hold up settling
 
 These are excluded on purpose, because they would otherwise keep a page busy forever:
 
 - `setInterval` timers, and `setTimeout` timers due more than 50 ms in the future (polling, debounces, toasts that hide after 5 s);
-- requests that were already in flight before the action (long polls);
+- requests that were already in flight before the action (long polls). A poll that the page sends again while the action settles counts as started by the action;
 - established `text/event-stream` responses (server-sent events);
 - open WebSockets;
 - animation loops: a frame callback requested from a frame callback that was itself requested from one. A single frame, or the double-frame "after paint" idiom, still counts;
@@ -58,7 +61,9 @@ await page.run([
 ]);
 ```
 
-An action with `settle: false` still gets one event loop turn before the next step. `route(path, { settle: false })` changes the route without waiting for the requests it starts.
+An action with `settle: false` still gets one event loop turn before the next step. The tasks it queued run in that turn, and the `scroll` events it caused are delivered. `focus()` and `blur()` never settle and get the same turn. `route(path, { settle: false })` changes the route without waiting for the requests it starts.
+
+Newer than 0.0.33, an `evaluate` step gets that turn only when its expression left the page something to run: a task, a timer, a request, a DOM change or observer work. After an `evaluate` that only read, the next step starts directly. To wait for something a later step needs, use a check, not an `evaluate`.
 
 ## The `idle` step
 
@@ -118,7 +123,7 @@ await page.run([
 ]);
 ```
 
-Without `settle: false` the run still passes, but the click waits the full second for its held request before the next step starts. In the Playwright module, a `page.route` handler that waits on a promise you resolve after the assertion does the same job.
+Without `settle: false` the run still passes, but the click waits the full second for its held request before the next step starts. Newer than 0.0.33, the step after `release` starts once the page has the released reply. A request that `release` sends on to the backend is not waited for. In the Playwright module, a `page.route` handler that waits on a promise you resolve after the assertion does the same job.
 
 ## Debugging a step that never settles
 
@@ -126,5 +131,6 @@ Without `settle: false` the run still passes, but the click waits the full secon
 - `timers` that never clears: a `setTimeout` chain shorter than 50 ms (a polling loop written with `setTimeout`). Use `settle: false` on the action, or check the outcome directly.
 - `requests` that never clears: a request the action started that does not finish, such as a long poll started by the click. Use `settle: false`.
 - `navigations`: the page started a navigation that has not reached `DOMContentLoaded`.
+- `PYRO_RUN_STEP_TRACE=1` in the server's environment logs each step, its stages and what it waited on to stderr.
 
 See [Debugging failures](/e2e/debugging) for reading `RunError` messages.

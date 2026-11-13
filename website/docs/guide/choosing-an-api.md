@@ -33,7 +33,7 @@ test('saves', async ({ page }) => {
 });
 ```
 
-The module is a reimplementation of Playwright's API, not a wrapper around Playwright: the library (`chromium.launch`, `connectOverCDP`, contexts, pages, locators, routes, ...), the test runner with fixtures and projects, and `expect`. Each awaited call becomes one `Pyro.run` command, so locating, actionability checks and settling run in the browser. Playwright's HTML report, trace viewer, video and sharding are not available. See [Coming from Playwright](/playwright/overview) and [API coverage](/playwright/api-coverage).
+The module is a reimplementation of Playwright's API, not a wrapper around Playwright: the library (`chromium.launch`, `connectOverCDP`, contexts, pages, locators, routes, ...), the test runner with fixtures and projects, and `expect`. Each awaited call becomes one `Pyro.run` command, so locating, actionability checks and settling run in the browser. Projects with dependencies, `--shard`, video and screenshots of failed tests work as in Playwright. Playwright's HTML report and trace viewer are not available. See [Coming from Playwright](/playwright/overview) and [API coverage](/playwright/api-coverage).
 
 ## Native SDK
 
@@ -85,6 +85,10 @@ await browser.disconnect();
 ```
 
 Pyro implements most of the CDP commands Playwright 1.59 sends (stock Playwright's `chromium.connectOverCDP` works against it), plus its own `Pyro.*` domain. A basic Puppeteer flow (connect, new page, `goto`, `$eval`, `click`) works with `puppeteer-core` 25, but Puppeteer is not part of the project's tested matrix, and commands outside the implemented set return an explicit error rather than a fake success. Every round trip costs a hop over the socket, so raw CDP is the slowest way to drive a test. See [Puppeteer and raw CDP](/scraping/cdp), [CDP coverage](/reference/cdp) and the [Pyro CDP domain](/reference/cdp-domain).
+
+## AI agents
+
+Newer than 0.0.33, a model can drive the browser through tools instead of code you write. `pyro mcp` is a Model Context Protocol server for clients that speak MCP, and `@povio/pyro/agent` gives the same tools as functions for your own tool-calling loop. Both are built on the Playwright module. See [AI agents: MCP and tool calling](/scraping/agents).
 
 ## Mixing them
 

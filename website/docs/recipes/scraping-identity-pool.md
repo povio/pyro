@@ -9,7 +9,7 @@ What the pool does:
 - **A limit per identity.** At most `perIdentity` jobs run as one account at the same time. Other jobs wait for a free identity.
 - **Re-sign-in on expiry.** A job throws `SignedOut` when the page shows the session is gone. The pool signs that identity in once (other jobs of the same identity wait for that sign-in), then retries the job once.
 - **Atomic saves.** State files are written to a temporary file and renamed, mode `600`. A crash or a parallel save never leaves a half-written file.
-- **One browser server per proxy.** The Playwright library ignores the `proxy` context option, so the pool starts one `pyro serve --proxy ...` per distinct proxy and opens each identity's contexts there.
+- **One browser server per proxy.** In releases up to 0.0.33 the Playwright library ignores the `proxy` context option, so the pool starts one `pyro serve --proxy ...` per distinct proxy and opens each identity's contexts there. Newer than 0.0.33 the option works and one server could hold every identity (see [A proxy per context](/scraping/identity#a-proxy-per-context)); the pool below was not rewritten for it and still works as it is.
 
 ## Files
 
@@ -517,7 +517,7 @@ Do not wait for data right after `goto` without a check. `goto` returns at the `
 
 **What is saved.** After every successful job the pool saves the context's state again, so a site that rolls its session cookie keeps the file current. `storageState()` reads `localStorage` only from the origins of the open pages. A job that ends on another origin would drop the token from the file, so the pool keeps the old file's origins that the new state does not have. A sign-in replaces the file whole.
 
-**Proxies.** The proxy is a server flag, so identities with the same proxy share a server and identities with different proxies do not. A server with no pages costs little (about 8 MB on macOS). Keep each identity on the same proxy across runs: many sites end a session when it shows up from a new IP address.
+**Proxies.** The pool sets the proxy as a server flag, so identities with the same proxy share a server and identities with different proxies do not. A server with no pages costs little (about 8 MB on macOS). Keep each identity on the same proxy across runs: many sites end a session when it shows up from a new IP address.
 
 **Round robin or least recently used.** With `pick: 'lru'` (the default), the identity idle the longest gets the next job; with equal jobs this is a round robin, and when one identity is slow the others take more jobs. `pick: 'round-robin'` keeps a fixed order and skips identities at their limit.
 

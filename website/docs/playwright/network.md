@@ -98,7 +98,7 @@ test('seeds then checks', async ({ request, page }) => {
 | `storageState({ path })` | Cookies only. |
 | `dispose()` | |
 
-`newContext` options: `baseURL`, `extraHTTPHeaders`, `storageState` (its cookies), `timeout`, `failOnStatusCode`, `ignoreHTTPSErrors`, `userAgent`, `httpCredentials` (always sent as Basic auth). `maxRetries`, `proxy` and client certificates are not supported.
+`newContext` options: `baseURL`, `extraHTTPHeaders`, `storageState` (its cookies), `timeout`, `failOnStatusCode`, `ignoreHTTPSErrors`, `userAgent`, `httpCredentials` (`{ username, password, origin?, send? }`: Basic credentials sent after a 401 challenge, or with every request with `send: 'always'`, and only to `origin` when it is set). `maxRetries`, `proxy` and client certificates are not supported.
 
 The context keeps its own cookie jar from `storageState` and `Set-Cookie` responses. Unlike Playwright, `context.request` and `page.request` do **not** share cookies with the browser context: cookies the page sets are not sent by `page.request`, and the other way around.
 
@@ -168,15 +168,16 @@ const hash = await page.evaluate(() => (window as any).sha256('abc'));
 | --- | --- |
 | `extraHTTPHeaders` (option), `context.setExtraHTTPHeaders()`, `page.setExtraHTTPHeaders()` | Supported. |
 | `userAgent` (option) | Supported. |
-| `httpCredentials` (option) | Used by `request` only. Page requests do not send them. Put credentials in `extraHTTPHeaders` (`authorization: 'Basic ...'`) for pages. |
-| `proxy` (option) | No effect. Pass the browser flag instead: `use: { pyro: { args: ['--proxy', 'http://user:pass@host:3128'] } }`. HTTP proxies only, `CONNECT` for HTTPS, no SOCKS. `--proxy-bypass` takes a bypass list. See [serve options](/reference/serve). |
-| `offline`, `context.setOffline()` | No effect. Use a route that aborts: `context.route('**/*', (r) => r.abort('internetdisconnected'))`. |
-| `ignoreHTTPSErrors` (option) | Used by `request` only. |
+| `httpCredentials` (option) | Supported. A page's 401 challenge gets the Basic credentials once, from `origin` only when it is set. Wrong credentials end in the 401 response. Other origins and proxies get nothing. `request` sends them after a 401 too, or with every request with `send: 'always'`. |
+| `proxy` (option) | An HTTP proxy for the context: `server` as `host:port` or `http://host:port`, `bypass`, `username`, `password`. Requests to loopback addresses go through it too, as with Playwright. The credentials go to the proxy with the first request. SOCKS and HTTPS proxies are an error. `context.request` and the `request` fixture do not go through it. For one proxy for the whole browser, `use: { pyro: { args: ['--proxy', 'http://user:pass@host:3128'] } }` also works; see [serve options](/reference/serve). |
+| `offline`, `context.setOffline()` | Supported. |
+| `ignoreHTTPSErrors` (option) | Supported, for pages and `request`. |
+| `context.setHTTPCredentials()` | Not supported (deprecated in Playwright). |
 
 ## storageState and cookies
 
 ```ts
-// Save after signing in (for example in globalSetup)
+// Save after signing in (for example in a setup project)
 const context = await browser.newContext();
 const page = await context.newPage();
 await page.goto('/login');
@@ -188,15 +189,15 @@ export default defineConfig({ use: { storageState: 'e2e/.auth/user.json' } });
 ```
 
 - `storageState` (a path or an object) seeds cookies and `localStorage`. Local storage entries are written once per context, by an init script, the first time a document of that origin loads. A marker key, `__pyroStorageState`, stays in `localStorage` so later documents do not overwrite the app's changes. Code that lists every key of `localStorage` sees it.
-- `context.storageState({ path })` returns cookies and the `localStorage` of the origins of the context's open pages. Origins with no open page are not included. `indexedDB` is not saved. It does not create the directory of `path` (Playwright does): create it with `mkdirSync(dirname(path), { recursive: true })` first.
+- `context.storageState({ path })` returns cookies and the `localStorage` of the origins of the context's open pages. Origins with no open page are not included. `indexedDB` is not saved. Missing directories of `path` are made, as in Playwright.
 - A relative `storageState` path is read from the working directory.
 - A context with cookies from `storageState` does not take [booted pages](/playwright/boot-pools#when-goto-becomes-a-route-change).
 - `context.addCookies()`, `context.cookies(urls?)` and `context.clearCookies()` work. A cookie needs `url` or `domain`. Before the context's first page exists, cookies are held and set when the page gets its target. `clearCookies` options are ignored; it clears all cookies.
 
-To set up storage once for the whole run, use `globalSetup`, since project `dependencies` do not run (see [Config and the test runner](/playwright/runner#accepted-and-ignored)). [Sign in once with storageState](/recipes/playwright-setup-project-auth) is a complete, tested setup, including signed-out tests. Pyro also has its own way to keep signed-in pages booted; see [Booting pages ahead](/playwright/boot-pools) and, for the native API, [Profiles and page pools](/e2e/profiles).
+To set up storage once for the whole run, use a setup project that the other projects depend on, as in Playwright (see [Dependencies and teardown](/playwright/runner#dependencies-and-teardown)), or `globalSetup`. [Sign in once with a setup project](/recipes/playwright-setup-project-auth) is a complete setup, including signed-out tests. Pyro also has its own way to keep signed-in pages booted; see [Booting pages ahead](/playwright/boot-pools) and, for the native API, [Profiles and page pools](/e2e/profiles).
 
 ## Next
 
-- Sign in once for the whole run: [Sign in once with storageState](/recipes/playwright-setup-project-auth).
+- Sign in once for the whole run: [Sign in once with a setup project](/recipes/playwright-setup-project-auth).
 - What else behaves differently: [Behaviour differences](/playwright/differences#network).
 - Screenshots and visual baselines: [Screenshots and snapshots](/playwright/snapshots).
