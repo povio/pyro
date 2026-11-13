@@ -56,7 +56,9 @@ struct Stored {
     status_text: String,
     headers: Vec<(String, String)>,
     redirected: bool,
-    body: Option<Bytes>,
+    /// In the pieces the network delivered it in, which whatever else keeps
+    /// the response's bytes (the protocol's body store) shares.
+    body: Option<Vec<Bytes>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -68,6 +70,18 @@ pub struct CacheHandle;
 impl JsClass for CacheHandle {
     const NAME: &'static str = "CacheHandle";
     type Data = CacheRef;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.not_exposed();
+    }
+}
+
+/// A response body as `cache.put` reads it (`ReadKind::Chunks`): the pieces
+/// themselves, not a copy in a script buffer.
+pub struct StoredBody;
+impl JsClass for StoredBody {
+    const NAME: &'static str = "StoredBody";
+    type Data = Vec<Bytes>;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.not_exposed();
@@ -296,9 +310,15 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.array(&items)?.value())
     })?;
     native.set_atom("keys", f.value())?;
+    // read(response): a promise of the response's body for a 'put' (a
+    // StoredBody, or an ArrayBuffer for a script's stream), or null for a
+    // null body; the body is used afterwards.
+    let f = s.function("read", |s, _, a| crate::response::read_for_cache(s, a.get(0)))?;
+    native.set_atom("read", f.value())?;
     // batch(handle, operations): "Batch Cache Operations", all or nothing.
     // An operation is ['put', url, method, headers, type, responseURL,
-    // status, statusText, responseHeaders, redirected, body | null] or
+    // status, statusText, responseHeaders, redirected, body | null] (body:
+    // what `read` resolved with) or
     // ['delete', url, method, headers, ignoreSearch, ignoreMethod,
     // ignoreVary]. Returns whether each delete removed something.
     let f = s.function("batch", |s, _, a| {
@@ -320,8 +340,10 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                 let body = at(10)?;
                 let body = if body.is_nullish() {
                     None
+                } else if let Some(chunks) = s.unwrap::<StoredBody>(body) {
+                    Some(chunks.clone())
                 } else {
-                    Some(Bytes::from(crate::encoding::buffer_source_bytes(s, body)?.unwrap_or_default()))
+                    Some(vec![Bytes::from(crate::encoding::buffer_source_bytes(s, body)?.unwrap_or_default())])
                 };
                 let response = Stored {
                     kind: at(4)?.to_string()?,
@@ -345,41 +367,46 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                 }));
             }
         }
+        let same_request = |entry: &Entry| Query {
+            url: entry.url.clone(),
+            method: entry.method.clone(),
+            headers: entry.headers.clone(),
+            ignore_search: false,
+            ignore_method: false,
+            ignore_vary: false,
+        };
+        // The one way a batch fails is the same request twice in it (addAll),
+        // which the cache's entries have no part in: checked first, so the
+        // operations then run on the cache itself, with nothing to undo.
+        let mut puts: Vec<&Entry> = Vec::new();
+        for op in &ops {
+            if let Op::Put(entry) = op {
+                let q = same_request(entry);
+                if puts.iter().any(|e| q.matches(e)) {
+                    return Err(JsError::dom(
+                        "InvalidStateError",
+                        "Failed to execute 'addAll' on 'Cache': duplicate requests",
+                    ));
+                }
+                puts.push(entry);
+            }
+        }
         let mut entries = lock(&cache);
-        // Run on a copy: a failing operation leaves the cache as it was.
-        let mut next = entries.clone();
-        let mut added: Vec<Entry> = Vec::new();
         let mut results = Vec::new();
         for op in ops {
             match op {
                 Op::Delete(q) => {
-                    let before = next.len();
-                    next.retain(|e| !q.matches(e));
-                    results.push(next.len() != before);
+                    let before = entries.len();
+                    entries.retain(|e| !q.matches(e));
+                    results.push(entries.len() != before);
                 }
                 Op::Put(entry) => {
-                    let q = Query {
-                        url: entry.url.clone(),
-                        method: entry.method.clone(),
-                        headers: entry.headers.clone(),
-                        ignore_search: false,
-                        ignore_method: false,
-                        ignore_vary: false,
-                    };
-                    // The same request twice in one batch (addAll).
-                    if added.iter().any(|e| q.matches(e)) {
-                        return Err(JsError::dom(
-                            "InvalidStateError",
-                            "Failed to execute 'addAll' on 'Cache': duplicate requests",
-                        ));
-                    }
-                    next.retain(|e| !q.matches(e));
-                    added.push(entry.clone());
-                    next.push(entry);
+                    let q = same_request(&entry);
+                    entries.retain(|e| !q.matches(e));
+                    entries.push(entry);
                 }
             }
         }
-        *entries = next;
         drop(entries);
         let items: Vec<Value<'_>> = results.iter().map(|r| s.boolean(*r)).collect();
         Ok(s.array(&items)?.value())

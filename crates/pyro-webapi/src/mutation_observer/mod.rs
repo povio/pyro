@@ -455,8 +455,13 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>, helper: pyro_js::Value<
     let weak = Rc::downgrade(page);
     let realm = s.realm().downgrade();
     s.realm().set_native_callback_pending(Some(Rc::new(move || {
-        weak.upgrade().is_some_and(|page| hook_pending(&page))
-            || realm.upgrade().is_some_and(|realm| realm.pending_finalizers() >= FINALIZER_DRAIN)
+        // Runs after every native callback that is not a pure one: the page
+        // is read through the weak handle with no reference count touched.
+        // SAFETY: a strong count above zero means the page is alive, and it
+        // stays so while `hook_pending` runs (`Rc` is single-threaded, and
+        // the check runs no script and drops no handle).
+        (weak.strong_count() != 0 && hook_pending(unsafe { &*weak.as_ptr() }))
+            || realm.pending_finalizers() >= FINALIZER_DRAIN
     })))?;
     Ok(())
 }

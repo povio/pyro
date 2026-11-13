@@ -507,6 +507,10 @@ pub mod spi {
     use super::*;
     use std::sync::OnceLock;
 
+    /// A hash of what the linked JavaScriptCore was built from
+    /// (`webkit/REVISION` and `webkit/patches` of this checkout).
+    pub const JSC_INPUTS_HASH: &str = env!("PYRO_JSC_INPUTS_HASH");
+
     pub type JSShouldTerminateCallback = Option<unsafe extern "C" fn(ctx: JSContextRef, context: *mut c_void) -> bool>;
 
     pub type JSWeakCreateFn = unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef) -> JSWeakRef;
@@ -831,6 +835,102 @@ pub mod spi {
     pub type JSContextGroupTakeCoverageFn =
         unsafe extern "C" fn(group: JSContextGroupRef, callback: JSCoverageSourceCallback, data: *mut c_void);
 
+    /// A source text with what a bytecode cache holds for it (patch 0031).
+    ///
+    /// The bytecode is trusted: bytes that `JSBytecodeCacheGenerate` did not
+    /// make for exactly this text, kind and [`JSBytecodeCacheVersionFn`] value
+    /// are memory-unsafe to hand over.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct JSCachedSource {
+        /// Latin-1 bytes when `source_is_8bit`, else UTF-16 code units.
+        pub source: *const c_void,
+        /// In characters.
+        pub source_length: usize,
+        pub source_is_8bit: bool,
+        /// `None`: the text is copied. Otherwise it is borrowed until
+        /// `release(release_info)`, called exactly once whatever the callee
+        /// returns, on any thread (a collector's included).
+        pub release: Option<unsafe extern "C" fn(info: *mut c_void)>,
+        pub release_info: *mut c_void,
+        /// The hash a [`JSBytecodeCacheSink`] was given for the text, or 0.
+        pub source_hash: c_uint,
+        /// A file whose first `bytecode_length` bytes are the bytecode, or -1.
+        /// Mapped by the callee; the descriptor stays the caller's.
+        pub bytecode_file_descriptor: c_int,
+        pub bytecode_length: usize,
+        /// A module's record, or null. Copied.
+        pub module_record: *const u8,
+        pub module_record_length: usize,
+    }
+    /// Changes with the JavaScriptCore build and the options bytecode depends on.
+    pub type JSBytecodeCacheVersionFn = unsafe extern "C" fn() -> u64;
+    /// `JSEvaluateScript` for a [`JSCachedSource`].
+    pub type JSEvaluateScriptCachedFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        source: *const JSCachedSource,
+        this_object: JSObjectRef,
+        source_url: JSStringRef,
+        starting_line_number: c_int,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    /// The module source of a [`JSCachedSource`].
+    pub type JSModuleSourceCreateCachedFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        source: *const JSCachedSource,
+        url: JSStringRef,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    /// `pyro_jsc_module_precompile` for a [`JSCachedSource`]: record and code
+    /// come from the cache where it has them.
+    pub type JSModuleSourcePrecompileCachedFn =
+        unsafe extern "C" fn(ctx: JSContextRef, source: *const JSCachedSource, url: JSStringRef) -> bool;
+    /// Receives what `JSBytecodeCacheGenerate` made; the bytes are valid
+    /// during the call. `module_record` is null for a script.
+    pub type JSBytecodeCacheSink = unsafe extern "C" fn(
+        info: *mut c_void,
+        bytecode: *const u8,
+        bytecode_length: usize,
+        module_record: *const u8,
+        module_record_length: usize,
+        source_hash: c_uint,
+    );
+    /// Compiles a source with every function in it and calls `sink` once.
+    /// Runs nothing. False for a source that does not parse.
+    pub type JSBytecodeCacheGenerateFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        source: *const JSCachedSource,
+        url: JSStringRef,
+        module: bool,
+        sink: JSBytecodeCacheSink,
+        info: *mut c_void,
+    ) -> bool;
+    /// Counters of a context group's cached sources.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct JSBytecodeCacheStats {
+        /// Scripts and modules whose code was decoded from cached bytecode,
+        /// and those whose bytecode JavaScriptCore refused.
+        pub code_accepted: usize,
+        pub code_rejected: usize,
+        /// Modules whose record came from the cache, and refused records.
+        pub record_accepted: usize,
+        pub record_rejected: usize,
+    }
+    pub type JSContextGroupGetBytecodeCacheStatsFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, stats: *mut JSBytecodeCacheStats);
+
+    /// See [`Spi::bytecode_cache`].
+    #[derive(Debug, Clone, Copy)]
+    pub struct BytecodeCacheSpi {
+        pub version: JSBytecodeCacheVersionFn,
+        pub evaluate: JSEvaluateScriptCachedFn,
+        pub module_source: JSModuleSourceCreateCachedFn,
+        pub precompile: JSModuleSourcePrecompileCachedFn,
+        pub generate: JSBytecodeCacheGenerateFn,
+        pub stats: JSContextGroupGetBytecodeCacheStatsFn,
+    }
+
     /// See [`Spi::tracked`].
     #[derive(Debug, Clone, Copy)]
     pub struct TrackedWrappers {
@@ -900,6 +1000,12 @@ pub mod spi {
         pub set_coverage_enabled: Option<JSContextGroupSetCoverageEnabledFn>,
         pub coverage_new_sources: Option<JSContextGroupCoverageNewSourcesFn>,
         pub take_coverage: Option<JSContextGroupTakeCoverageFn>,
+        pub bytecode_cache_version: Option<JSBytecodeCacheVersionFn>,
+        pub evaluate_script_cached: Option<JSEvaluateScriptCachedFn>,
+        pub module_source_create_cached: Option<JSModuleSourceCreateCachedFn>,
+        pub module_source_precompile_cached: Option<JSModuleSourcePrecompileCachedFn>,
+        pub bytecode_cache_generate: Option<JSBytecodeCacheGenerateFn>,
+        pub bytecode_cache_stats: Option<JSContextGroupGetBytecodeCacheStatsFn>,
     }
 
     impl Spi {
@@ -944,6 +1050,18 @@ pub mod spi {
             JSContextGroupTakeCoverageFn,
         )> {
             Some((self.set_coverage_enabled?, self.coverage_new_sources?, self.take_coverage?))
+        }
+
+        /// The bytecode cache (patch 0031), all or nothing.
+        pub fn bytecode_cache(&self) -> Option<BytecodeCacheSpi> {
+            Some(BytecodeCacheSpi {
+                version: self.bytecode_cache_version?,
+                evaluate: self.evaluate_script_cached?,
+                module_source: self.module_source_create_cached?,
+                precompile: self.module_source_precompile_cached?,
+                generate: self.bytecode_cache_generate?,
+                stats: self.bytecode_cache_stats?,
+            })
         }
 
         /// fork() support needs all three entry points.
@@ -1070,6 +1188,12 @@ pub mod spi {
             set_coverage_enabled: resolve!("JSContextGroupSetCoverageEnabled"),
             coverage_new_sources: resolve!("JSContextGroupCoverageNewSources"),
             take_coverage: resolve!("JSContextGroupTakeCoverage"),
+            bytecode_cache_version: resolve!("JSBytecodeCacheVersion"),
+            evaluate_script_cached: resolve!("JSEvaluateScriptCached"),
+            module_source_create_cached: resolve!("JSModuleSourceCreateCached"),
+            module_source_precompile_cached: resolve!("JSModuleSourcePrecompileCached"),
+            bytecode_cache_generate: resolve!("JSBytecodeCacheGenerate"),
+            bytecode_cache_stats: resolve!("JSContextGroupGetBytecodeCacheStats"),
         })
     }
 }

@@ -574,6 +574,34 @@ impl Shared {
     }
 }
 
+/// A response's headers with the values in one allocation of their own.
+/// hyper's HTTP/1 parser hands out values that are slices of the connection's
+/// read buffer, which grows to 400 KB on a busy connection: a head that is
+/// kept (by Cache Storage, by a `Response` a script holds, by the HTTP cache,
+/// by the protocol's body store) would keep the buffer it arrived in.
+fn own_headers(received: &HeaderMap) -> HeaderMap {
+    let mut all = Vec::with_capacity(received.values().map(HeaderValue::len).sum());
+    for value in received.values() {
+        all.extend_from_slice(value.as_bytes());
+    }
+    let all = Bytes::from(all);
+    let mut headers = received.clone();
+    let mut at = 0;
+    for value in headers.values_mut() {
+        let own = all.slice(at..at + value.len());
+        at += value.len();
+        // The same map in the same order, so the same bytes.
+        if own != value.as_bytes() {
+            continue;
+        }
+        // SAFETY: `own` holds the bytes of `value`, a valid header value.
+        let mut own = unsafe { HeaderValue::from_maybe_shared_unchecked(own) };
+        own.set_sensitive(value.is_sensitive());
+        *value = own;
+    }
+    headers
+}
+
 /// A response head as the current request task times it ([`crate::timing`]).
 fn response_head(
     url: &Url,
@@ -2018,7 +2046,7 @@ impl Io {
                 }
             };
             let status = resp.status();
-            let resp_headers = resp.headers().clone();
+            let resp_headers = own_headers(resp.headers());
             let protocol = resp.version();
             // A connection opened for this request reports its phases; the
             // request went out once it was ready.
@@ -2799,6 +2827,25 @@ mod decoder_tests {
         }
         decoded.extend_from_slice(&decoder.finish().unwrap());
         assert_eq!(decoded, vec![b'a'; 100_000]);
+    }
+
+    /// A response's header values leave the connection's read buffer too.
+    #[test]
+    fn kept_headers_do_not_share_the_read_buffer() {
+        let read_buffer = Bytes::from(vec![b'a'; 4096]);
+        let mut received = HeaderMap::new();
+        received.insert(header::CONTENT_TYPE, HeaderValue::from_maybe_shared(read_buffer.slice(10..19)).unwrap());
+        received.append(header::SET_COOKIE, HeaderValue::from_maybe_shared(read_buffer.slice(30..40)).unwrap());
+        let mut secret = HeaderValue::from_maybe_shared(read_buffer.slice(50..53)).unwrap();
+        secret.set_sensitive(true);
+        received.append(header::SET_COOKIE, secret);
+        received.insert(header::ETAG, HeaderValue::from_static(""));
+        let headers = own_headers(&received);
+        assert_eq!(headers, received);
+        for value in headers.values() {
+            assert!(!read_buffer.as_ptr_range().contains(&value.as_bytes().as_ptr()));
+        }
+        assert_eq!(headers.get_all(header::SET_COOKIE).iter().map(HeaderValue::is_sensitive).collect::<Vec<_>>(), [false, true]);
     }
 
     fn decode(enc: &str, body: &[u8], chunk: usize) -> Result<Vec<u8>, NetError> {

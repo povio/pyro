@@ -151,11 +151,18 @@ pub struct ModuleRequest {
 // JavaScriptCore's module SPI creates an empty import.meta object. Initialize
 // the canonical module key before evaluating source so user code sees its URL.
 pub(crate) fn module_source_with_url(source: &str, url: &str) -> String {
+    let mut text = module_prefix(url);
+    text.push_str(source);
+    text
+}
+
+/// What [`module_source_with_url`] puts before the source.
+pub(crate) fn module_prefix(url: &str) -> String {
     let url = serde_json::to_string(url)
         .expect("a URL string is serializable")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029");
-    format!("import.meta.url = {url};\n{source}")
+    format!("import.meta.url = {url};\n")
 }
 
 impl ModuleRequest {
@@ -170,8 +177,57 @@ impl ModuleRequest {
 
     /// Provides module source text (a [`ModuleType::JavaScript`] request).
     pub fn resolve(self, scope: &Scope<'_>, source: &str) -> JsResult<()> {
-        let source = module_source_with_url(source, &self.key);
-        self.resolve_source(scope, &source, sys::modules::MODULE_TYPE_JAVASCRIPT)
+        use crate::bytecode_cache::{Find, SourceKind};
+        let prefix = module_prefix(&self.key);
+        if let Some(cache) = scope.realm.engine.bytecode_cache_for(prefix.len() + source.len()) {
+            match cache.find(SourceKind::Module, &self.key, &[&prefix, source]) {
+                Find::Hit(key, entry) => return self.resolve_cached(scope, &cache, key, &entry),
+                Find::Miss(key) => {
+                    let text = prefix + source;
+                    let url = self.key.clone();
+                    let result = self.resolve_source(scope, &text, sys::modules::MODULE_TYPE_JAVASCRIPT);
+                    cache.submit(scope.ctx, key, SourceKind::Module, &url, move || text);
+                    return result;
+                }
+                Find::Skip => {}
+            }
+        }
+        self.resolve_source(scope, &(prefix + source), sys::modules::MODULE_TYPE_JAVASCRIPT)
+    }
+
+    /// [`ModuleRequest::resolve`] with the source's entry in the bytecode
+    /// cache: the text is the entry's mapping, and the module's record and
+    /// code are read from the entry instead of being parsed and compiled.
+    fn resolve_cached(
+        mut self,
+        scope: &Scope<'_>,
+        cache: &crate::BytecodeCache,
+        key: crate::bytecode_cache::Key,
+        entry: &std::sync::Arc<crate::bytecode_cache::store::Entry>,
+    ) -> JsResult<()> {
+        self.done = true;
+        let ctx = scope.realm.global_ctx()?;
+        // The engine itself has what it precompiled from the entry.
+        let precompiled = scope.realm.engine.precompiled_from_cache.borrow().contains(&key);
+        let url = JsString::new(&self.key);
+        let cached = crate::bytecode_cache::CachedSource::new(entry, !precompiled);
+        let mut exc: sys::JSValueRef = ptr::null();
+        // SAFETY: a live context of this thread; `cached` is given to this
+        // one call, which releases its text.
+        let script = unsafe { (cache.spi().module_source)(ctx, &cached.raw, url.as_raw(), &mut exc) };
+        if script.is_null() {
+            // SAFETY: `exc` is the exception of the call above, or null.
+            let message = if exc.is_null() { ptr::null_mut() } else { unsafe { sys::JSValueToStringCopy(ctx, exc, ptr::null_mut()) } };
+            let msg = if message.is_null() {
+                "module creation failed".to_string()
+            } else {
+                unsafe { JsString::from_raw_owned(message) }.to_string()
+            };
+            let e = JsError::Type(msg.into()).to_value(scope);
+            return self.reject.get(scope).as_object().expect("reject fn").call(None, &[e]).map(|_| ());
+        }
+        let script = unsafe { Value::from_raw(scope.ctx, script) };
+        self.resolve.get(scope).as_object().expect("resolve fn").call(None, &[script]).map(|_| ())
     }
 
     /// Provides the text of a [`ModuleType::Json`] request; the module's
@@ -813,6 +869,24 @@ impl Realm {
 pub struct WeakRealm(std::rc::Weak<RealmInner>);
 
 impl WeakRealm {
+    /// [`Realm::pending_finalizers`] of the realm while it is alive and not
+    /// disposed, else 0, with no reference count touched: for a check that
+    /// runs after every native callback.
+    pub fn pending_finalizers(&self) -> usize {
+        if self.0.strong_count() == 0 {
+            return 0;
+        }
+        // SAFETY: a strong count above zero means the value is alive, and it
+        // stays so: `Rc` is single-threaded and nothing below drops a
+        // handle. The borrowed handle is never dropped, so no count changes.
+        let realm = std::mem::ManuallyDrop::new(Realm { inner: unsafe { Rc::from_raw(self.0.as_ptr()) } });
+        if realm.is_disposed() {
+            0
+        } else {
+            realm.pending_finalizers()
+        }
+    }
+
     /// The realm, if still alive and not disposed.
     pub fn upgrade(&self) -> Option<Realm> {
         self.0.upgrade().map(|inner| Realm { inner }).filter(|r| !r.is_disposed())
@@ -959,19 +1033,52 @@ impl<'s> Scope<'s> {
     pub fn eval(&self, source: &str, url: Option<&str>, line: i32) -> JsResult<Value<'s>> {
         let _pool = crate::autorelease::Pool::new();
         let _entry = crate::engine::EntryGuard::enter(self.ctx);
+        let cache = self.realm.engine.bytecode_cache_for(source.len());
+        let mut missed = None;
+        if let Some(cache) = &cache {
+            use crate::bytecode_cache::{CachedSource, Find, SourceKind};
+            match cache.find(SourceKind::Classic, url.unwrap_or(""), &[source]) {
+                Find::Hit(_, entry) => {
+                    let url = url.map(JsString::new);
+                    let cached = CachedSource::new(&entry, true);
+                    let mut exc = ptr::null();
+                    // SAFETY: a live context of this thread; `cached` is given
+                    // to this one call, which releases its text.
+                    let v = unsafe {
+                        (cache.spi().evaluate)(
+                            self.ctx,
+                            &cached.raw,
+                            ptr::null_mut(),
+                            url.as_ref().map_or(ptr::null_mut(), |u| u.as_raw()),
+                            line.max(1),
+                            &mut exc,
+                        )
+                    };
+                    check(self.ctx, exc)?;
+                    return Ok(unsafe { Value::from_raw(self.ctx, v) });
+                }
+                Find::Miss(key) => missed = Some(key),
+                Find::Skip => {}
+            }
+        }
         let src = JsString::new(source);
-        let url = url.map(JsString::new);
+        let js_url = url.map(JsString::new);
         let mut exc = ptr::null();
         let v = unsafe {
             sys::JSEvaluateScript(
                 self.ctx,
                 src.as_raw(),
                 ptr::null_mut(),
-                url.as_ref().map_or(ptr::null(), |u| u.as_raw()),
+                js_url.as_ref().map_or(ptr::null(), |u| u.as_raw()),
                 line.max(1),
                 &mut exc,
             )
         };
+        // A script that ran is written to the cache (one that threw may not
+        // even parse).
+        if let (Some(cache), Some(key), true) = (&cache, missed, exc.is_null()) {
+            cache.submit(self.ctx, key, crate::bytecode_cache::SourceKind::Classic, url.unwrap_or(""), || source.to_owned());
+        }
         check(self.ctx, exc)?;
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
@@ -2187,7 +2294,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     for (i, info) in reg.classes.iter().enumerate() {
         let native = match info.def.constructor {
             Some(c) => {
-                make_member_fn(scope.ctx, &realm.engine, reg.member, c, false, info.name, info.def.ctor_length, &keys)?
+                make_member_fn(scope.ctx, &realm.engine, reg.member, c, None, info.name, info.def.ctor_length, &keys)?
                     .value()
             }
             None => scope.null(),
@@ -2215,7 +2322,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     if !factories.is_empty() {
         let legacy_factory = realm.helper(scope, "legacyFactory")?;
         for (id, name, length, call) in factories {
-            let native = make_member_fn(scope.ctx, &realm.engine, reg.member, call, false, name, length, &keys)?;
+            let native = make_member_fn(scope.ctx, &realm.engine, reg.member, call, None, name, length, &keys)?;
             legacy_factory.call(
                 None,
                 &[
@@ -2493,7 +2600,7 @@ fn make_member_fn(
     engine: &EngineInner,
     class: sys::JSClassRef,
     call: class::MemberCall,
-    pure: bool,
+    pure: Option<class::MethodHFn>,
     name: &str,
     length: u32,
     keys: &MemberKeys,
@@ -2618,14 +2725,14 @@ fn install_members_raw(
     };
     let member_class = engine.classes.borrow().member;
     let keys = MemberKeys::new(realm);
-    let native_pure = |name: &str, length: u32, call: class::MemberCall, pure: bool| -> JsResult<Object<'_>> {
+    let native_pure = |name: &str, length: u32, call: class::MemberCall, pure: Option<class::MethodHFn>| -> JsResult<Object<'_>> {
         let f = make_member_fn(ctx, engine, member_class, call, pure, name, length, &keys)?;
         if let Some(p) = function_proto {
             f.set_prototype(p);
         }
         Ok(f)
     };
-    let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, false);
+    let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, None);
     let members = helper("members")?;
     // Where custom accessors go: for the global's own members, the object
     // behind its proxy.
@@ -2660,20 +2767,9 @@ fn install_members_raw(
             // dispatch takes the lean path for the global's payload, as does
             // one of a class that asked for that
             // (`ClassDef::attributes_without_jit_getters`).
-            let ok = match (crate::accessors::pure_result(slot), sys::spi::get().set_fast_getter) {
-                (Some(result), Some(fast)) if !on_global && jit_getters => unsafe {
-                    fast(
-                        ctx,
-                        holder,
-                        n,
-                        getter,
-                        setter,
-                        attributes,
-                        Some(crate::accessors::fast_getter_dispatch),
-                        usize::from(slot) as *mut c_void,
-                        result,
-                        true,
-                    )
+            let ok = match (crate::accessors::fast_entry(slot), sys::spi::get().set_fast_getter) {
+                (Some((entry, context, result)), Some(fast)) if !on_global && jit_getters => unsafe {
+                    fast(ctx, holder, n, getter, setter, attributes, Some(entry), context, result, true)
                 },
                 _ => unsafe { install(ctx, holder, n, getter, setter, attributes) },
             };

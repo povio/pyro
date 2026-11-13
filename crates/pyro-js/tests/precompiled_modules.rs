@@ -19,7 +19,7 @@ fn eval_str(realm: &Realm, src: &str) -> String {
 /// fields, generators, async functions, accessors, a dynamic import, a module
 /// with top-level await, `import.meta`, a `sourceURL` comment, and an error's
 /// position.
-const GRAPH: &[(&str, &str)] = &[
+pub(super) const GRAPH: &[(&str, &str)] = &[
     (
         "/app/main.js",
         "import def, { count, inc, Shape, gen, later, pair, fail } from './lib.js';\n\
@@ -69,9 +69,9 @@ const GRAPH: &[(&str, &str)] = &[
     ),
 ];
 
-struct Files {
-    origin: &'static str,
-    files: &'static [(&'static str, &'static str)],
+pub(super) struct Files {
+    pub(super) origin: &'static str,
+    pub(super) files: &'static [(&'static str, &'static str)],
 }
 
 impl ModuleFetcher for Files {
@@ -87,7 +87,7 @@ impl ModuleFetcher for Files {
 
 /// Loads the graph from `origin` in a new realm; what its entry module left
 /// in `globalThis.out`.
-fn load(engine: &Engine, origin: &'static str, files: &'static [(&'static str, &'static str)]) -> String {
+pub(super) fn load(engine: &Engine, origin: &'static str, files: &'static [(&'static str, &'static str)]) -> String {
     let realm = engine.create_realm(RealmOptions { origin: Some(origin.into()), ..Default::default() }).unwrap();
     realm.set_module_fetcher(Some(Rc::new(Files { origin, files })));
     let s = realm.scope().unwrap();
@@ -105,7 +105,7 @@ fn precompile(engine: &Engine, origin: &str, files: &[(&str, &str)], functions: 
 }
 
 // The error's line counts the `import.meta.url` line the loader puts first.
-const EXPECTED: &str = "lib|2|9|Shape:shape:3|4|012|10|42|http://site.test/app/lazy.js|http://site.test/app/main.js|\
+pub(super) const EXPECTED: &str = "lib|2|9|Shape:shape:3|4|012|10|42|http://site.test/app/lazy.js|http://site.test/app/main.js|\
                         Shape,count,fail,gen,inc,later,ns,pair,renamed|true|2|3|undefined|\
                         boom@http://site.test/app/lib.js:16:63";
 

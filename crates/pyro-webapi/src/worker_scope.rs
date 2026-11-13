@@ -41,7 +41,7 @@ use pyro_js::{
 };
 use pyro_net::http::HeaderMap;
 use pyro_net::{Credentials, Destination, NetClient, Request, RequestMode, ResponseEvent, ResponseKind};
-use pyro_runtime::{EventLoop, LoopHandle, LoopState, Scheduler, TaskSource, TimerId};
+use pyro_runtime::{EventLoop, IdleWatch, LoopHandle, LoopState, RunOutcome, Scheduler, TaskSource, TimerId};
 
 use crate::event::{EventCore, EventInterface};
 use crate::identity::UserAgentOverride;
@@ -398,11 +398,10 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
     };
     match set_up(&event_loop, start) {
         Ok((mut state, script)) => {
-            let closing = shared.clone();
             if let Some(script) = script {
                 let ok = !shared.closing.load(Ordering::Acquire) && run_script(&state, &script, module);
                 evaluated(ok);
-                event_loop.run_until(&mut state, None, false, move |_| closing.closing.load(Ordering::Acquire));
+                run_collecting_when_quiet(&mut event_loop, &mut state, &shared);
             } else {
                 evaluated(false);
             }
@@ -422,6 +421,38 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
         }
         Err(_) if service.is_some() => evaluated(false),
         Err(_) => poster(Box::new(move || deliver_up(id, Up::LoadFailed))),
+    }
+}
+
+/// Runs the worker's loop until it is closing. A worker that has gone quiet
+/// (awake for nothing, next to no CPU for a second) has its VM collected if
+/// the process grew since it last was (`Engine::settle_if_grown`): what its
+/// script left behind, a service worker's precache run for one, otherwise
+/// stays for as long as the worker waits for its next event. A worker that
+/// sleeps is not woken for this: the watch starts with its next task.
+fn run_collecting_when_quiet(event_loop: &mut EventLoop<WorkerLoop>, state: &mut WorkerLoop, shared: &Shared) {
+    let mut idle = IdleWatch::new();
+    loop {
+        let watching = idle.deadline();
+        // Not watching: come back after the first turn of the loop that
+        // follows a wait, with its task still queued or just run.
+        let mut turns = 0u32;
+        let outcome = event_loop.run_until(state, watching, false, |_| {
+            turns += 1;
+            shared.closing.load(Ordering::Acquire) || (watching.is_none() && turns > 1)
+        });
+        if shared.closing.load(Ordering::Acquire) {
+            return;
+        }
+        match outcome {
+            RunOutcome::Done => idle.note_work(Instant::now()),
+            RunOutcome::TimedOut => {
+                if idle.quiet(Instant::now()) {
+                    state.engine.settle_if_grown();
+                }
+            }
+            RunOutcome::Idle | RunOutcome::Stopped => return,
+        }
     }
 }
 
@@ -1102,6 +1133,7 @@ fn register(engine: &Engine, service: bool) -> pyro_js::ClassId {
     engine.register::<crate::xhr::XMLHttpRequestUpload>();
     engine.register::<crate::indexeddb::IdbFactory>();
     engine.register::<crate::cache_storage::CacheHandle>();
+    engine.register::<crate::cache_storage::StoredBody>();
     engine.register::<crate::request::Request>();
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();

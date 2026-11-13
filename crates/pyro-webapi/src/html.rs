@@ -41,20 +41,26 @@ macro_rules! reflect_bool {
     };
 }
 
+/// A USVString attribute reflecting a URL. The getter is pure (it reads the
+/// attribute and the document's base URL): `a.href` and `link.href` are read
+/// in loops (Vite's preload helper compares every `<link>`'s `href` with each
+/// module it preloads).
 macro_rules! reflect_url {
     ($def:expr, $prop:literal, $attr:literal) => {
-        $def.accessor(
-            $prop,
-            |s, n| {
-                let dom = n.page().dom.borrow();
-                let Some(v) = dom.get_attribute(n.id, $attr).js()? else { return Ok(s.string("")) };
-                Ok(s.string(&resolve_reflected_url(n.page(), &dom, n.id, v)))
-            },
-            |_s, n, v| {
-                let arg0 = dom_string(v)?;
-                n.page().dom.borrow_mut().set_attribute(n.id, $attr, &arg0).js()
-            },
-        );
+        $def.pure_accessor_typed($prop, pyro_js::GetterResult::String, reflect_url!(@get $attr), reflect_url!(@set $attr));
+    };
+    (@get $attr:literal) => {
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            let Some(v) = dom.get_attribute(n.id, $attr).js()? else { return Ok(s.string("")) };
+            Ok(s.string(&resolve_reflected_url(n.page(), &dom, n.id, v)))
+        }
+    };
+    (@set $attr:literal) => {
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, $attr, &arg0).js()
+        }
     };
 }
 
@@ -293,7 +299,39 @@ fn resolve_against(base: Option<&pyro_net::Url>, value: &str, enc: &'static enco
             &|q| std::borrow::Cow::Owned(crate::encoding::encode_with_ncr(enc, q, "%26%23", "%3B"));
         pyro_net::Url::options().base_url(Some(b)).encoding_override(Some(encode)).parse(value)
     };
-    joined.map(|u| u.to_string()).unwrap_or_else(|_| value.to_owned())
+    joined.map(String::from).unwrap_or_else(|_| value.to_owned())
+}
+
+/// `value` resolved against `base` when that is a concatenation: `base` is an
+/// http(s) URL and `value` a path-absolute reference, or `base`'s own origin
+/// followed by one, whose path holds only characters the URL parser keeps as
+/// they are (no percent-encoding, no query or fragment, no backslash) and no
+/// `.` or `..` segment. The parser returns the same string for these
+/// (`simple_paths_resolve_as_the_parser_does`); `None` sends the rest to it.
+fn resolve_simple(base: &pyro_net::Url, value: &str) -> Option<String> {
+    if !matches!(base.scheme(), "http" | "https") {
+        return None;
+    }
+    let origin = &base[..url::Position::BeforePath];
+    let (path, absolute) = match value.strip_prefix(origin) {
+        Some(rest) => (rest, true),
+        None => (value, false),
+    };
+    let rest = path.strip_prefix('/')?;
+    if rest.starts_with('/') {
+        return None;
+    }
+    let plain = |b: u8| b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@/".contains(&b);
+    if !rest.bytes().all(plain) || rest.split('/').any(|seg| seg == "." || seg == "..") {
+        return None;
+    }
+    if absolute {
+        return Some(value.to_owned());
+    }
+    let mut out = String::with_capacity(origin.len() + path.len());
+    out.push_str(origin);
+    out.push_str(path);
+    Some(out)
 }
 
 /// One bounded entry, with no node or JavaScript references. The actual base
@@ -322,7 +360,11 @@ fn resolve_reflected_url(page: &PageDom, dom: &Dom, node: NodeId, value: &str) -
         }
         *cache = Some(ReflectedUrlBase { source: base.to_owned(), parsed });
     }
-    resolve_against(cache.as_ref().and_then(|entry| entry.parsed.as_ref()), value, document_output_encoding(dom, node))
+    let parsed = cache.as_ref().and_then(|entry| entry.parsed.as_ref());
+    if let Some(url) = parsed.and_then(|b| resolve_simple(b, value)) {
+        return url;
+    }
+    resolve_against(parsed, value, document_output_encoding(dom, node))
 }
 
 // ----- attribute reflection helpers -------------------------------------------
@@ -3375,4 +3417,89 @@ fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value
     };
     crate::input::focus_element_with_options(n.page(), n.id, prevent_scroll);
     Ok(s.undefined())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_against, resolve_simple};
+
+    /// `resolve_simple` answers only where the URL parser returns the same
+    /// string, over bases and values around each of its conditions.
+    #[test]
+    fn simple_paths_resolve_as_the_parser_does() {
+        let bases = [
+            "http://127.0.0.1:5173/",
+            "http://127.0.0.1:5173/app/page?q=1#f",
+            "https://example.com/a/b/c",
+            "https://user:pw@example.com:8443/x/",
+            "http://EXAMPLE.com/",
+            "http://example.com:80/",
+            "file:///tmp/x.html",
+            "data:text/html,x",
+            "about:blank",
+            "blob:http://example.com/uuid",
+        ];
+        let values = [
+            "/assets/index-B8Zr9I8L.js",
+            "/assets/__root-BOYMu7E6.js",
+            "/",
+            "/a//b",
+            "//cdn.example.com/x.js",
+            "/./x",
+            "/a/../x",
+            "/a/..",
+            "/a/.",
+            "/.hidden/..x/x..",
+            "/a/b%20c",
+            "/a b",
+            "/a?b",
+            "/a#b",
+            "/a\\b",
+            "/a\tb",
+            "/é",
+            "/a:b@c;d=e,f+g*h(i)j'k&l$m!n~o_p.q-r",
+            "/a^b",
+            "/a|b",
+            "/a{b}",
+            "/a`b",
+            "/a\"b",
+            "/a<b>",
+            " /a",
+            "/a ",
+            "x.js",
+            "./x.js",
+            "../x.js",
+            "",
+            "http://127.0.0.1:5173/assets/x.js",
+            "http://127.0.0.1:5173//x.js",
+            "http://127.0.0.1:5173/./x.js",
+            "http://127.0.0.1:51730/x.js",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5173?x",
+            "https://example.com/a/b",
+            "https://example.com:443/a",
+            "https://user:pw@example.com:8443/y",
+            "http://example.com/",
+            "http://example.com:80/x",
+            "HTTP://example.com/x",
+        ];
+        let mut answered = 0;
+        for b in bases {
+            let base = pyro_net::Url::parse(b).unwrap();
+            for v in values {
+                let parser = resolve_against(Some(&base), v, encoding_rs::UTF_8);
+                if let Some(simple) = resolve_simple(&base, v) {
+                    assert_eq!(simple, parser, "base {b:?}, value {v:?}");
+                    answered += 1;
+                }
+            }
+        }
+        assert!(answered >= 20, "{answered} values answered without the parser");
+        let base = pyro_net::Url::parse("http://127.0.0.1:5173/").unwrap();
+        assert_eq!(resolve_simple(&base, "/assets/x.js").as_deref(), Some("http://127.0.0.1:5173/assets/x.js"));
+        assert_eq!(
+            resolve_simple(&base, "http://127.0.0.1:5173/assets/x.js").as_deref(),
+            Some("http://127.0.0.1:5173/assets/x.js")
+        );
+    }
 }

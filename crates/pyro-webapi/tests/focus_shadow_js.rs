@@ -394,3 +394,207 @@ fn active_restyles_only_when_a_sheet_uses_it() {
     mouse(&e.page, input::MouseKind::Released, 10.0, 10.0, 0);
     assert_ne!(eval(r, "getComputedStyle(b).color"), "rgb(4, 5, 6)");
 }
+
+/// A press and a release on the button at (10, 10).
+fn click(page: &Rc<PageDom>) {
+    mouse(page, input::MouseKind::Pressed, 10.0, 10.0, 1);
+    mouse(page, input::MouseKind::Released, 10.0, 10.0, 0);
+}
+
+const CLICK_PAGE: &str = "<!DOCTYPE html><style>button{position:absolute;width:50px;height:30px;border:0}</style>\
+     <body style='margin:0'><button id=b style='left:0;top:0'>b</button><input id=t style='position:absolute;top:100px'></body>";
+
+/// `log` and a listener that notes each event it hears (the test page runs no
+/// `<script>`).
+const NOTE: &str = "window.log = []; window.note = (e) => log.push(e.type + '@' + (e.currentTarget === window ? 'window' : \
+     e.currentTarget === document ? 'document' : e.currentTarget.id) + (e.isTrusted ? '' : '!'));";
+
+/// The click page with `NOTE` evaluated and layout done.
+fn click_env() -> Env {
+    let e = env(CLICK_PAGE);
+    eval(&e.main, NOTE);
+    eval(&e.main, "b.getBoundingClientRect()");
+    e
+}
+
+// The events of a click nobody listens for are not made (`target::unheard`).
+// What a page can see must not depend on that.
+
+#[test]
+fn a_click_nobody_listens_for_still_does_its_default_actions() {
+    let e = click_env();
+    let r = &e.main;
+    eval(r, "t.focus(); b.getBoundingClientRect()");
+    for ty in ["pointerdown", "mousedown", "pointerup", "mouseup", "click"] {
+        assert!(!e.page.dom.borrow().listens_for(ty), "{ty}");
+    }
+    mouse(&e.page, input::MouseKind::Pressed, 10.0, 10.0, 1);
+    // Focus moved to the button, the press shows in `:active`.
+    assert_eq!(eval(r, "[document.activeElement.id, b.matches(':active')].join()"), "b,true");
+    mouse(&e.page, input::MouseKind::Released, 10.0, 10.0, 0);
+    assert_eq!(eval(r, "[document.activeElement.id, b.matches(':active')].join()"), "b,false");
+    // Activation behaviour runs with no listener anywhere: a checkbox
+    // toggles, and its `change` listener (another type) hears it.
+    eval(
+        r,
+        "b.remove(); const c = document.createElement('input'); c.type = 'checkbox'; c.id = 'c'; \
+         c.style = 'position:absolute;left:0;top:0;width:20px;height:20px;margin:0'; document.body.append(c); \
+         c.addEventListener('change', note); c.getBoundingClientRect()",
+    );
+    assert!(!e.page.dom.borrow().listens_for("click"));
+    click(&e.page);
+    assert_eq!(eval(r, "[c.checked, log.join()].join(' ')"), "true change@c");
+}
+
+#[test]
+fn a_listener_added_during_a_click_hears_the_later_events_of_that_click() {
+    let e = click_env();
+    let r = &e.main;
+    eval(r, "b.getBoundingClientRect()");
+    // Only `pointerdown` is listened for at first. Its listener adds one for
+    // `mousedown`, that one adds one for `pointerup` on the document, and so
+    // on down to `click`: each event is asked about right before it fires.
+    eval(
+        r,
+        "b.addEventListener('pointerdown', (e) => { note(e); \
+           b.addEventListener('mousedown', (e) => { note(e); \
+             document.addEventListener('pointerup', (e) => { note(e); \
+               window.addEventListener('mouseup', (e) => { note(e); \
+                 document.body.addEventListener('click', note, {capture: true, once: true}); \
+               }, {once: true}); \
+             }, {once: true}); \
+           }, {once: true}); \
+         }, {once: true});",
+    );
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "pointerdown@b,mousedown@b,pointerup@document,mouseup@window,click@");
+    // Every one was `once`: the next click is unheard again, from the start.
+    for ty in ["pointerdown", "mousedown", "pointerup", "mouseup", "click"] {
+        assert!(!e.page.dom.borrow().listens_for(ty), "{ty}");
+    }
+    click(&e.page);
+    assert_eq!(eval(r, "log.length"), "5");
+}
+
+#[test]
+fn a_listener_on_the_window_only_hears_each_event_of_a_click() {
+    let e = click_env();
+    let r = &e.main;
+    eval(r, "b.getBoundingClientRect()");
+    eval(r, "window.addEventListener('mouseup', note)");
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "mouseup@window");
+    eval(r, "window.addEventListener('pointerdown', note, true); window.onclick = note; log.length = 0");
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "pointerdown@window,mouseup@window,click@window");
+    // Removed again, the three ways: the events go back to unheard.
+    eval(
+        r,
+        "window.removeEventListener('mouseup', note); window.removeEventListener('pointerdown', note, true); \
+         window.onclick = null; log.length = 0",
+    );
+    for ty in ["pointerdown", "mouseup", "click"] {
+        assert!(!e.page.dom.borrow().listens_for(ty), "{ty}");
+    }
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "");
+    // A removal with the wrong capture flag removes nothing.
+    eval(r, "window.addEventListener('mousedown', note); window.removeEventListener('mousedown', note, true)");
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "mousedown@window");
+}
+
+#[test]
+fn an_event_handler_attribute_or_property_set_later_hears_the_click() {
+    let e = env(
+        "<!DOCTYPE html><style>button{position:absolute;width:50px;height:30px;border:0}</style>\
+         <body style='margin:0' onpointerup=\"log.push('pointerup:body-attr')\">\
+         <button id=b style='left:0;top:0' onmousedown=\"log.push('mousedown:parsed-attr')\">b</button>\
+         </body>",
+    );
+    let r = &e.main;
+    eval(r, "window.log = []; b.getBoundingClientRect()");
+    // Attributes the parser saw, never touched by script before the click.
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "mousedown:parsed-attr,pointerup:body-attr");
+    // An attribute set later, a property set later, and one set from a
+    // listener of an earlier event of the same click.
+    eval(
+        r,
+        "log.length = 0; b.removeAttribute('onmousedown'); document.body.removeAttribute('onpointerup'); \
+         b.setAttribute('onpointerdown', \"log.push('pointerdown:attr'); \
+           document.documentElement.setAttribute('onmouseup', \\\"log.push('mouseup:attr-during')\\\")\"); \
+         document.onclick = () => log.push('click:property');",
+    );
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "pointerdown:attr,mouseup:attr-during,click:property");
+    // Taken away again (attribute removed, property nulled).
+    eval(
+        r,
+        "log.length = 0; b.removeAttribute('onpointerdown'); document.documentElement.removeAttribute('onmouseup'); \
+         document.onclick = null;",
+    );
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "");
+    for ty in ["pointerdown", "mousedown", "pointerup", "mouseup", "click"] {
+        assert!(!e.page.dom.borrow().listens_for(ty), "{ty}");
+    }
+}
+
+#[test]
+fn listeners_in_and_around_a_shadow_tree_hear_a_click_inside_it() {
+    let e = env(
+        "<!DOCTYPE html><body style='margin:0'><div id=host style='position:absolute;left:0;top:0;width:60px;height:40px'>\
+         </div></body>",
+    );
+    let r = &e.main;
+    eval(
+        r,
+        "window.log = []; window.note = (e) => log.push(e.type + '@' + e.currentTarget.id + '>' + e.target.id); \
+         window.sr = host.attachShadow({mode: 'closed'}); \
+         sr.innerHTML = '<button id=inner style=\"position:absolute;left:0;top:0;width:50px;height:30px;border:0\">x</button>'; \
+         host.getBoundingClientRect()",
+    );
+    // Nothing listens: the click still focuses the button in the tree.
+    click(&e.page);
+    assert_eq!(eval(r, "[document.activeElement.id, sr.activeElement.id].join()"), "host,inner");
+    // A listener inside the tree only, then one on the host only (it sees
+    // the event retargeted), each for a different event of the click.
+    eval(r, "sr.getElementById('inner').addEventListener('mousedown', note)");
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "mousedown@inner>inner");
+    eval(r, "log.length = 0; host.addEventListener('mouseup', note); host.addEventListener('click', note)");
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "mousedown@inner>inner,mouseup@host>host,click@host>host");
+    // The tree's listeners go with its nodes' listeners removed.
+    eval(
+        r,
+        "log.length = 0; sr.getElementById('inner').removeEventListener('mousedown', note); \
+         host.removeEventListener('mouseup', note); host.removeEventListener('click', note)",
+    );
+    click(&e.page);
+    assert_eq!(eval(r, "log.join()"), "");
+}
+
+#[test]
+fn unheard_moves_and_boundary_events_keep_hover_state_and_later_listeners_hear_them() {
+    let e = click_env();
+    let r = &e.main;
+    eval(r, "b.getBoundingClientRect()");
+    mouse(&e.page, input::MouseKind::Moved, 10.0, 10.0, 0);
+    assert_eq!(eval(r, "b.matches(':hover')"), "true");
+    eval(
+        r,
+        "for (const ty of ['mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'pointerover', 'pointerout', \
+           'pointerenter', 'pointerleave', 'mousemove', 'pointermove']) b.addEventListener(ty, note);",
+    );
+    mouse(&e.page, input::MouseKind::Moved, 12.0, 10.0, 0);
+    mouse(&e.page, input::MouseKind::Moved, 300.0, 300.0, 0);
+    mouse(&e.page, input::MouseKind::Moved, 10.0, 10.0, 0);
+    assert_eq!(
+        eval(r, "log.join()"),
+        "pointermove@b,mousemove@b,pointerout@b,pointerleave@b,mouseout@b,mouseleave@b,\
+         pointerover@b,pointerenter@b,mouseover@b,mouseenter@b,pointermove@b,mousemove@b"
+    );
+    assert_eq!(eval(r, "b.matches(':hover')"), "true");
+}

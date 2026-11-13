@@ -1014,6 +1014,85 @@ impl<S: LoopState + 'static> EventLoop<S> {
     }
 }
 
+/// How long a thread goes without work before [`IdleWatch`] looks at it, and
+/// the span it then measures: a thread is quiet one step after its last
+/// noted work at the earliest, and two steps after it when nothing else ran.
+pub const IDLE_STEP: Duration = Duration::from_millis(500);
+
+/// The CPU time a thread may use in one [`IDLE_STEP`] and still count as
+/// quiet (1%): a page's polling timer stays below it, a page that is still
+/// loading or a worker that is still fetching does not.
+const IDLE_CPU: Duration = Duration::from_millis(5);
+
+/// Tells a loop when its thread has gone quiet, for work worth doing only
+/// then (a collection of the garbage a burst of script left behind). The
+/// owner notes its work ([`IdleWatch::note_work`]: a command, a wake-up),
+/// waits until [`IdleWatch::deadline`] and asks [`IdleWatch::quiet`], which
+/// compares the thread's CPU time over the last step: work the owner does
+/// not see (the page's own timers and network callbacks) keeps the thread
+/// busy as well, and noted work alone would call a booting page quiet.
+#[derive(Default)]
+pub struct IdleWatch {
+    next: Option<Instant>,
+    /// The thread's CPU time at the last look since the last noted work.
+    sample: Option<Duration>,
+}
+
+impl IdleWatch {
+    pub const fn new() -> Self {
+        Self { next: None, sample: None }
+    }
+
+    /// Work ran at `now`: the next look is one step later.
+    pub fn note_work(&mut self, now: Instant) {
+        self.next = Some(now + IDLE_STEP);
+        self.sample = None;
+    }
+
+    /// When to call [`IdleWatch::quiet`] (`None`: no work since the last
+    /// time it said yes).
+    pub fn deadline(&self) -> Option<Instant> {
+        self.next
+    }
+
+    /// Whether the thread used next to no CPU since the previous look. The
+    /// first look after noted work only takes the reading. `true` ends the
+    /// watch until work is noted again; `false` asks for another look one
+    /// step later.
+    pub fn quiet(&mut self, now: Instant) -> bool {
+        let cpu = thread_cpu_time();
+        match (std::mem::replace(&mut self.sample, cpu), cpu) {
+            (Some(before), Some(cpu)) if cpu.saturating_sub(before) <= IDLE_CPU => {
+                self.next = None;
+                self.sample = None;
+                true
+            }
+            // No clock for the thread: never quiet, and nothing to wait for.
+            (_, None) => {
+                self.next = None;
+                false
+            }
+            _ => {
+                self.next = Some(now + IDLE_STEP);
+                false
+            }
+        }
+    }
+}
+
+/// CPU time the calling thread has used.
+fn thread_cpu_time() -> Option<Duration> {
+    #[cfg(unix)]
+    {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: valid timespec out-pointer.
+        let done = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        (done == 0).then(|| Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
+    }
+    #[cfg(not(unix))]
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1028,6 +1107,30 @@ mod tests {
         }
         #[cfg(not(unix))]
         Duration::ZERO
+    }
+
+    /// A thread that sleeps is quiet at the second look; one that works in
+    /// between is not, and noted work starts the watch over.
+    #[test]
+    fn idle_watch_is_quiet_after_a_step_without_cpu() {
+        let mut watch = IdleWatch::new();
+        assert!(watch.deadline().is_none());
+        let start = Instant::now();
+        watch.note_work(start);
+        assert_eq!(watch.deadline(), Some(start + IDLE_STEP));
+        assert!(!watch.quiet(start), "the first look only takes the reading");
+        // By CPU time, not wall time: on a loaded machine the thread may get little of it.
+        let before = thread_cpu();
+        while thread_cpu() - before < Duration::from_millis(20) {
+            std::hint::black_box((0..1000u64).sum::<u64>());
+        }
+        assert!(!watch.quiet(Instant::now()), "20 ms of CPU since the last look");
+        assert!(watch.deadline().is_some());
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(watch.quiet(Instant::now()));
+        assert!(watch.deadline().is_none());
+        watch.note_work(Instant::now());
+        assert!(!watch.quiet(Instant::now()));
     }
 
     /// With every remote sender gone, the loop still waits for its deadline

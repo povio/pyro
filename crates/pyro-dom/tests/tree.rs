@@ -669,3 +669,53 @@ fn dropped_nodes_are_freed_between_candidates_of_kept_trees() {
     assert_eq!(dom.live_nodes(), live);
     assert!(dom.is_alive(doc), "the active document stays");
 }
+
+#[test]
+fn the_store_gives_back_the_slots_of_a_large_document_that_ended() {
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let open = |html: &str| {
+        let d = parse_document(&dom, "http://test/", html);
+        dom.borrow_mut().set_document_active(d, true).unwrap();
+        d
+    };
+    let close = |d: NodeId| {
+        let mut dom = dom.borrow_mut();
+        dom.set_document_active(d, false).unwrap();
+        dom.collect_garbage();
+        assert!(!dom.is_alive(d));
+    };
+    let large = open(&format!("<body>{}</body>", "<p class=a>row</p>".repeat(6000)));
+    let grown = dom.borrow().slot_count();
+    assert!(grown > 12000);
+    let last = {
+        let d = dom.borrow();
+        let body = d.body(large).unwrap().unwrap();
+        d.last_child(body).unwrap().unwrap()
+    };
+    // The next document is made while the large one is alive: the store
+    // keeps its room while the documents of the last while needed it.
+    let second = open("<body><p id=x>second</p></body>");
+    close(large);
+    assert!(dom.borrow().slot_count() >= grown);
+    // Once the documents since the last one ended are small, the free list
+    // is remade lowest first: the next document takes the bottom slots, and
+    // the store ends after it once the one before is gone.
+    let third = open("<body><p id=x>third</p></body>");
+    close(second);
+    let fourth = open("<body><p id=x>fourth</p></body>");
+    close(third);
+    let small = dom.borrow().slot_count();
+    assert!(small < 64, "{small} slots for one small document");
+    assert!(!dom.borrow().is_alive(last));
+    // A node made at an index given back is not the node that lived there.
+    let mut d = dom.borrow_mut();
+    let body = d.body(fourth).unwrap().unwrap();
+    for _ in 0..grown {
+        let p = d.create_element(fourth, "p").unwrap();
+        d.append_child(body, p).unwrap();
+    }
+    assert!(d.slot_count() > last.index());
+    assert!(!d.is_alive(last));
+    assert_eq!(d.node(last).unwrap_err(), DomError::StaleNode);
+    assert_eq!(d.text_content(d.get_element_by_id(fourth, "x").unwrap().unwrap()).unwrap().unwrap(), "fourth");
+}

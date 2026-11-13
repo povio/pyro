@@ -747,6 +747,20 @@ pub(crate) fn current_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     Ok(s.current_event().unwrap_or(s.undefined()))
 }
 
+/// Whether an event of type `ty` dispatched in `page` now would reach no
+/// listener, whatever its target: none is registered for the type on any
+/// node, document, window or other target of the page's tree, as a listener
+/// or as an event handler attribute or property (`Dom::listens_for`; the
+/// handler attributes the parser left are registered first, as a dispatch
+/// does). Such a dispatch runs no script and nothing can observe the event
+/// object, so a caller that has no other use for the object need not make
+/// it, as long as it goes on as after an event nobody canceled. Asked right
+/// before each event: a listener an earlier event's listener added counts.
+pub(crate) fn unheard(page: &PageDom, ty: &str) -> bool {
+    crate::handlers::drain_inline(page);
+    !page.dom.borrow().listens_for(ty)
+}
+
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
 pub fn fire(page: &PageDom, target: TargetKey, event: &EventData) -> bool {
     fire_with(page, target, event, &mut |_| {})
@@ -772,18 +786,23 @@ pub(crate) fn fire_with(
     // A callback can detach ancestors and run GC during dispatch. The path
     // is built once, here, and dispatched on below.
     let path = page.dom.borrow().event_path(target, &event.state.borrow());
-    let ids: Box<[NodeId]> = {
+    // No listener for the type on any target: no callback runs, so the path
+    // needs no holding and no invocation target is asked about its tree.
+    let heard = page.dom.borrow().listens_for(&event.state.borrow().ty);
+    let ids: Box<[NodeId]> = if heard {
         let dom = page.dom.borrow();
         path.iter().filter_map(|(key, _)| dom.key_node(*key)).collect()
+    } else {
+        Box::default()
     };
     // The path's nodes are live (`key_node`), so each can be held.
-    let _path_holds = crate::collections::NodeHolds::new(&event.page, ids).ok();
+    let _path_holds = heard.then(|| crate::collections::NodeHolds::new(&event.page, ids).ok()).flatten();
     // A node whose root is a shadow root has that root on the path after it,
     // so a path without one (nearly all) needs no root walks.
     let in_shadow = {
         let dom = page.dom.borrow();
         let shadow_root = |id: NodeId| dom.is_shadow_root(id).unwrap_or(false);
-        if path.iter().any(|(key, _)| dom.key_node(*key).is_some_and(shadow_root)) {
+        if heard && path.iter().any(|(key, _)| dom.key_node(*key).is_some_and(shadow_root)) {
             let in_shadow_tree = |key: &TargetKey| {
                 dom.key_node(*key).and_then(|id| dom.root_node(id, false).ok()).is_some_and(shadow_root)
             };

@@ -432,12 +432,31 @@ async fn workers_timers_and_pending_requests_end_with_their_client() {
     b.close().await;
 }
 
-/// The default: a used engine is destroyed and its thread ends; an unused
-/// engine serves on, on its thread.
+/// The default: a used engine serves the next connection once it is proven
+/// clean, with the code it has parsed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn by_default_an_engine_a_page_ran_in_is_not_kept_and_neither_is_its_thread() {
-    let (url, requests) = site();
+async fn by_default_an_engine_a_page_ran_in_serves_the_next_connection() {
     let (addr, park) = serve(ThreadPerConnection::default()).await;
+    for round in 0..3u64 {
+        let mut c = Client::new(addr).await;
+        c.page("about:blank").await;
+        // The same text every round: the kept engine has its code, and
+        // nothing of what the code did.
+        assert_eq!(c.eval("typeof leaked + ' ' + (globalThis.leaked = 6 * 7)").await, "undefined 42");
+        assert_eq!(park.stats().reused, round);
+        c.close().await;
+        let stats = decided(&park, round + 1).await;
+        assert_eq!(stats, EngineReuseStats { parked: round + 1, reused: round, dropped: 0, expired: 0 });
+        assert_eq!(park.last_refusal(), None);
+    }
+}
+
+/// `on`: a used engine is destroyed and its thread ends; an unused engine
+/// serves on, on its thread.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reuse_of_unused_engines_only_keeps_neither_an_engine_a_page_ran_in_nor_its_thread() {
+    let (url, requests) = site();
+    let (addr, park) = serve(ThreadPerConnection::default().reuse(EngineReuse::On)).await;
     let mut a = Client::new(addr).await;
     a.page(&url).await;
     let before: Value = serde_json::from_str(a.eval(PROBE).await.as_str().unwrap()).unwrap();

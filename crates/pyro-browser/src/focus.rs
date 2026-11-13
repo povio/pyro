@@ -2,6 +2,7 @@
 use crate::frames::{FrameHost, FrameKey};
 use crate::{Browser, Frame, LoaderId, PageId};
 use pyro_webapi::{FocusTarget, FocusTransition};
+use std::rc::Rc;
 
 pub(crate) struct FocusState {
     target: FrameKey,
@@ -13,15 +14,27 @@ impl FocusState {
     }
 }
 
+/// What focus routing reads of a frame, snapshotted: the document it had,
+/// its bindings and its owner element in the parent.
+struct FocusLink {
+    key: FrameKey,
+    loader_id: LoaderId,
+    page_dom: Option<Rc<pyro_webapi::PageDom>>,
+    owner: Option<pyro_dom::NodeId>,
+}
+
 impl FrameHost {
     /// Root-to-leaf snapshots. A missing ancestor invalidates the entire chain.
-    fn focus_chain(&self, leaf: FrameKey) -> Option<Vec<(FrameKey, Frame)>> {
+    fn focus_chain(&self, leaf: FrameKey) -> Option<Vec<FocusLink>> {
         let mut chain = Vec::new();
         let mut key = leaf;
         loop {
-            let frame = self.frame(key)?;
-            let parent = frame.parent.clone();
-            chain.push((key, frame));
+            let (link, parent) = self.with_frame(key, |f| {
+                let link =
+                    FocusLink { key, loader_id: f.loader_id.clone(), page_dom: f.page_dom.clone(), owner: f.owner };
+                (link, f.parent.clone())
+            })?;
+            chain.push(link);
             match parent {
                 Some(id) => key = self.key(&id)?,
                 None => break,
@@ -31,17 +44,31 @@ impl FrameHost {
         Some(chain)
     }
 
-    fn focus_chain_current(&self, chain: &[(FrameKey, Frame)], token: &FocusTransition) -> bool {
+    /// The length of [`Self::focus_chain`] of `leaf`.
+    fn focus_depth(&self, leaf: FrameKey) -> Option<usize> {
+        let mut depth = 0;
+        let mut key = leaf;
+        loop {
+            let parent = self.with_frame(key, |f| f.parent.clone())?;
+            depth += 1;
+            match parent {
+                Some(id) => key = self.key(&id)?,
+                None => return Some(depth),
+            }
+        }
+    }
+
+    fn focus_chain_current(&self, chain: &[FocusLink], token: &FocusTransition) -> bool {
         token.is_current()
-            && chain.iter().all(|(key, f)| {
-                self.matches(*key, &f.loader_id) && f.page_dom.as_ref().is_some_and(|p| !p.is_disposed())
+            && chain.iter().all(|link| {
+                self.matches(link.key, &link.loader_id) && link.page_dom.as_ref().is_some_and(|p| !p.is_disposed())
             })
     }
 
     pub fn is_focused(&self, key: FrameKey, loader: &LoaderId) -> bool {
         self.focus.borrow().target == key
             && self.matches(key, loader)
-            && self.frame(key).and_then(|f| f.page_dom).is_some_and(|p| !p.is_disposed())
+            && self.page_dom(key).is_some_and(|p| !p.is_disposed())
     }
 
     /// Called by native bindings before local focusing steps, including no-op
@@ -88,19 +115,19 @@ impl FrameHost {
             .keys()
             .into_iter()
             .filter_map(|key| {
-                let depth = self.focus_chain(key)?.len();
-                Some((depth, key, self.frame(key)?))
+                let depth = self.focus_depth(key)?;
+                Some((depth, key, self.with_frame(key, |f| f.page_dom.clone())?))
             })
             .collect();
         old.sort_by_key(|(depth, _, _)| std::cmp::Reverse(*depth));
-        for (_, key, frame) in old {
+        for (_, key, page) in old {
             if !self.focus_chain_current(&chain, token) {
                 return false;
             }
-            let Some(page) = frame.page_dom else { continue };
+            let Some(page) = page else { continue };
             let current = page.dom.borrow().focused(page.document()).ok().flatten();
             // Local native steps preserve same-document relatedTarget.
-            if current.is_some() && !chain.iter().any(|(k, _)| *k == key) {
+            if current.is_some() && !chain.iter().any(|link| link.key == key) {
                 pyro_webapi::input::blur_document_with_transition(&page, token);
             }
         }
@@ -108,7 +135,7 @@ impl FrameHost {
             if !self.focus_chain_current(&chain, token) {
                 return false;
             }
-            if let (Some(page), Some(owner)) = (&pair[0].1.page_dom, pair[1].1.owner) {
+            if let (Some(page), Some(owner)) = (&pair[0].page_dom, pair[1].owner) {
                 pyro_webapi::input::focus_element_with_transition(page, owner, token);
             }
         }
@@ -116,7 +143,7 @@ impl FrameHost {
             return false;
         }
         if redirected.is_some() {
-            if let Some(page) = &chain.last().expect("nonempty chain").1.page_dom {
+            if let Some(page) = &chain.last().expect("nonempty chain").page_dom {
                 pyro_webapi::input::focus_window_with_transition(page, token);
             }
             false
@@ -131,7 +158,7 @@ impl FrameHost {
     pub fn invalidate_focus(&self, key: FrameKey, detached: bool) {
         let selected = self.focus.borrow().target;
         let Some(chain) = self.focus_chain(selected) else { return };
-        if !chain.iter().any(|(k, _)| *k == key) {
+        if !chain.iter().any(|link| link.key == key) {
             return;
         }
         let fallback = if detached { self.page.into() } else { key };
@@ -142,9 +169,9 @@ impl FrameHost {
             }
             state.target = fallback;
         }
-        for (frame_key, frame) in chain {
-            if detached || frame_key == key {
-                if let Some(page) = frame.page_dom {
+        for link in chain {
+            if detached || link.key == key {
+                if let Some(page) = link.page_dom {
                     pyro_webapi::input::clear_document_focus(&page);
                 }
             }

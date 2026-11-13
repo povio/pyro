@@ -11,6 +11,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 pub use sys::modules::ModulePrecompileStats;
+pub use sys::spi::JSBytecodeCacheStats as BytecodeCacheStats;
 
 /// Optional engine features, detected at runtime. Missing private SPI never
 /// crashes: the dependent operation reports `JsError::Unsupported`.
@@ -159,6 +160,10 @@ pub(crate) struct EngineInner {
     owner_dropped: Cell<bool>,
     /// When [`Engine::release_closed`] actually collects.
     release_gate: ReleaseGate,
+    /// The process footprint when this VM was made, last settled or forked:
+    /// what [`Engine::settle_if_grown`] measures growth from (`u64::MAX`
+    /// where the footprint cannot be read, so it never collects there).
+    idle_floor: Cell<u64>,
     /// Payloads of the member functions made with the patched JSC's
     /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer, and
     /// for no live realm: they live as long as the engine, which outlives
@@ -184,6 +189,12 @@ pub(crate) struct EngineInner {
     pub(crate) coverage_realms: RefCell<Option<rustc_hash::FxHashMap<usize, RealmId>>>,
     /// [`Engine::set_time_zone`] has overridden the host's zone.
     time_zone_set: Cell<bool>,
+    /// The bytecode cache this engine's scripts and modules go through.
+    bytecode_cache: RefCell<Option<Arc<crate::BytecodeCache>>>,
+    /// The cached modules [`Engine::precompile_module`] took from the cache:
+    /// the engine keeps their records and code, so a load of one needs
+    /// neither from its entry.
+    pub(crate) precompiled_from_cache: RefCell<rustc_hash::FxHashSet<crate::bytecode_cache::Key>>,
 }
 
 /// A script compiled while coverage was on ([`Engine::new_scripts`],
@@ -381,6 +392,18 @@ impl ReleaseGate {
     }
 }
 
+/// The growth of the process footprint past which a quiet VM is collected
+/// ([`Engine::settle_if_grown`]): bytes, and percent of the footprint it grew
+/// from, whichever is larger. A full collection costs the live heap, so a
+/// large process waits for proportionally more.
+const IDLE_GROWTH: (u64, u64) = (16 << 20, 12);
+
+/// Whether this process is a fork made with an engine alive
+/// ([`Engine::did_fork`]): a forked connection's, which exits when the
+/// connection ends. Its threads' engines, a worker's included, do not collect
+/// when quiet ([`Engine::settle_if_grown`]).
+static FORK_CHILD: AtomicBool = AtomicBool::new(false);
+
 /// The process's physical footprint in bytes: what the system charges it for,
 /// without the reclaimable pages that resident size still counts.
 pub fn process_footprint() -> Option<u64> {
@@ -418,6 +441,15 @@ struct RetiredMembers {
 }
 
 impl EngineInner {
+    /// The bytecode cache, for a source of `len` bytes that it handles.
+    /// None while coverage is on: code is then compiled with counters, which
+    /// cached code does not have, and must not be written as an entry.
+    pub(crate) fn bytecode_cache_for(&self, len: usize) -> Option<Arc<crate::BytecodeCache>> {
+        let cache = self.bytecode_cache.borrow();
+        let cache = cache.as_ref()?;
+        (cache.handles(len) && self.coverage_users.get() == 0).then(|| cache.clone())
+    }
+
     /// Takes the member payloads of a realm being disposed, whose global
     /// object `global` is still alive: they go with it (see
     /// `retired_members`), or with the engine when no weak handle can watch
@@ -757,6 +789,7 @@ impl Engine {
             shut_down: Cell::new(false),
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
+            idle_floor: Cell::new(process_footprint().unwrap_or(u64::MAX)),
             member_payloads: RefCell::new(Vec::new()),
             retired_members: RefCell::new(Vec::new()),
             collections: crate::interned::Collections::new(),
@@ -766,6 +799,8 @@ impl Engine {
             coverage_cursor: Cell::new(0),
             coverage_realms: RefCell::new(None),
             time_zone_set: Cell::new(false),
+            bytecode_cache: RefCell::new(crate::bytecode_cache::default()),
+            precompiled_from_cache: RefCell::default(),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -981,6 +1016,62 @@ impl Engine {
         }
         self.inner.release_gate.pending.set(false);
         self.inner.release_gate.put_off.set(0);
+        self.inner.idle_floor.set(process_footprint().unwrap_or(u64::MAX));
+    }
+
+    /// [`Engine::settle`] for a thread that has gone quiet with its pages
+    /// still open, when the process grew by [`IDLE_GROWTH`] since this VM
+    /// was last settled. Whether it collected.
+    ///
+    /// JavaScriptCore collects when script allocates, and while collections
+    /// follow one another closely it lets the young generation reach 8 heap
+    /// steps (32 MB) before the next one. A VM whose script then stops keeps
+    /// that garbage, and what the garbage holds outside the heap, for as long
+    /// as it stays quiet: the timers that collect an idle VM (JSC's GC
+    /// activity callbacks) need a run loop that only the system framework
+    /// has.
+    ///
+    /// This trades CPU for memory. Measured with a 2.7 MB app that a service
+    /// worker precaches (17 MB fetched), page open and both threads quiet:
+    /// 148 MB footprint instead of 198 MB (JavaScriptCore's allocator holds
+    /// 67 MB of objects instead of 108 MB); the page alone, without the
+    /// worker, 106 MB instead of 118 MB. The page's collection costs 110 to
+    /// 150 M instructions and 23 to 32 ms of CPU, 2 to 4% of what loading
+    /// that app costs, at a moment the thread had nothing to do; a command
+    /// that arrives during it waits for it. A run whose commands follow one
+    /// another never pays it. `PYRO_IDLE_COLLECT=0` turns it off.
+    ///
+    /// Not in a forked connection's process unless
+    /// `PYRO_IDLE_COLLECT=1`: it exits with its connection, so the
+    /// memory comes back anyway, and pages that paused there for 2.5 s cost
+    /// 1.4% more instructions (for 44 MB less while one is open).
+    ///
+    /// The alternative, a lower young-generation limit
+    /// (`JSC_maxEdenSizeForRateLimitingMultiplier`), gives the same memory
+    /// and costs the bursts their speed: a Playwright locator over 2000 rows
+    /// took 16% more instructions with the limit at 4 MB, 8% at 8 MB, 3% at
+    /// 16 MB.
+    pub fn settle_if_grown(&self) -> bool {
+        let on = match std::env::var("PYRO_IDLE_COLLECT").as_deref() {
+            Ok("0") => false,
+            Ok("1") => true,
+            _ => !FORK_CHILD.load(Ordering::Relaxed),
+        };
+        if !on {
+            return false;
+        }
+        let Some(now) = process_footprint() else { return false };
+        let floor = self.inner.idle_floor.get();
+        if now < floor {
+            // Another thread released, or this one did without settling.
+            self.inner.idle_floor.set(now);
+            return false;
+        }
+        if now - floor < IDLE_GROWTH.0.max(floor / 100 * IDLE_GROWTH.1) {
+            return false;
+        }
+        self.settle();
+        true
     }
 
     /// A full synchronous collection and what follows from it on the Rust
@@ -1085,7 +1176,9 @@ impl Engine {
         unsafe {
             did_fork(child);
             if child {
+                FORK_CHILD.store(true, Ordering::Relaxed);
                 self.inner.release_gate.forked();
+                self.inner.idle_floor.set(process_footprint().unwrap_or(u64::MAX));
                 reseed(self.inner.root);
                 for (global, realm) in self.inner.realms.borrow().iter() {
                     if realm.strong_count() > 0 {
@@ -1155,12 +1248,69 @@ impl Engine {
                 let number = sys::JSValueToNumber(root, value, &mut exc);
                 (exc.is_null() && number.is_finite() && number >= 0.0).then_some(number as u64)
             };
+            // Cells alive by class name; a class without one is absent.
+            let types = {
+                let name = crate::string::JsString::new("objectTypeCounts");
+                let mut exc = std::ptr::null();
+                let value = sys::JSObjectGetProperty(root, object, name.as_raw(), &mut exc);
+                if !exc.is_null() || value.is_null() || !sys::JSValueIsObject(root, value) {
+                    return None;
+                }
+                sys::JSValueToObject(root, value, &mut exc)
+            };
+            if types.is_null() {
+                return None;
+            }
+            let alive = |class: &str| -> Option<u64> {
+                let name = crate::string::JsString::new(class);
+                let mut exc = std::ptr::null();
+                let value = sys::JSObjectGetProperty(root, types, name.as_raw(), &mut exc);
+                if !exc.is_null() || value.is_null() {
+                    return None;
+                }
+                if sys::JSValueIsUndefined(root, value) {
+                    return Some(0);
+                }
+                let number = sys::JSValueToNumber(root, value, &mut exc);
+                (exc.is_null() && number.is_finite() && number >= 0.0).then_some(number as u64)
+            };
             Some(HeapCounts {
                 heap_size: read("heapSize")?,
                 protected: read("protectedObjectCount")?,
                 globals: read("globalObjectCount")?,
                 protected_globals: read("protectedGlobalObjectCount")?,
+                cached_code: alive("UnlinkedProgramCodeBlock")?
+                    + alive("UnlinkedEvalCodeBlock")?
+                    + alive("UnlinkedModuleProgramCodeBlock")?,
             })
+        }
+    }
+
+    /// JavaScriptCore's account of this VM's heap as JSON (a diagnostic):
+    /// `heapSize` (live cells and their out-of-line storage, plus
+    /// `extraMemorySize`), `heapCapacity` (the blocks that hold them, plus
+    /// `extraMemorySize`), `extraMemorySize` (what cells reported they own
+    /// outside the heap: string characters, array buffers, compiled code),
+    /// `objectCount` and `objectTypeCounts` (cells by class). Walks the
+    /// heap; `None` on the system framework.
+    pub fn memory_statistics_json(&self) -> Option<String> {
+        let stats = sys::spi::get().memory_usage_statistics?;
+        let root = self.inner.root_ctx();
+        // SAFETY: the root context is alive and used by this thread only. The
+        // object is a plain one made in the root context with data properties
+        // only (numbers, and one plain object of numbers): serialising it runs
+        // no script.
+        unsafe {
+            let object = stats(root);
+            if object.is_null() {
+                return None;
+            }
+            let mut exc = std::ptr::null();
+            let json = sys::JSValueCreateJSONString(root, object as sys::JSValueRef, 0, &mut exc);
+            if !exc.is_null() || json.is_null() {
+                return None;
+            }
+            Some(crate::string::JsString::from_raw_owned(json).to_string())
         }
     }
 
@@ -1186,19 +1336,43 @@ impl Engine {
     /// - no script was ever terminated in it (JavaScriptCore keeps the
     ///   termination pending in places this code cannot see);
     /// - coverage is off and no module was precompiled into the VM;
-    /// - after every compiled and cached code is deleted (the source-keyed
-    ///   code cache with it) and a full synchronous collection, the VM holds
-    ///   exactly one global object, the engine's own root, which no script
-    ///   ever ran in, and exactly the protected values a clean engine has.
+    /// - after a full synchronous collection, the VM holds exactly one
+    ///   global object, the engine's own root, which no script ever ran in.
     ///   Every other JavaScript object reaches its realm's global object
     ///   through its structure, and so does a queued microtask, a pending
-    ///   promise reaction, a module record or a timer's callback: with no
-    ///   second global object alive, none of them is.
+    ///   promise reaction, a module record, a timer's callback or a piece
+    ///   of code linked to a realm: with no second global object alive,
+    ///   none of them is;
+    /// - it protects exactly the values a clean engine protects, plus one
+    ///   per top-level code block left alive in its unlinked form
+    ///   ([`HeapCounts::cached_code`]). With no realm alive only the VM's
+    ///   source-keyed code cache refers to those, with one strong handle
+    ///   for each, so the count leaves no room for a handle to anything
+    ///   else. (A balance of two counts, not the cache's own count, which
+    ///   JavaScriptCore does not report: a code block kept alive by a stale
+    ///   word on the stack instead of the cache would make room for one
+    ///   handle. Only one to a value that refers to no global object could
+    ///   use it: a string, a symbol, a number. Every object keeps its
+    ///   global object alive and fails the count above.);
     /// - the live heap is no more than [`RECYCLE_HEAP_SLACK`] above the
     ///   clean engine's.
     ///
+    /// An engine that fails the last two (the cache also holds what a
+    /// `Function` constructor compiled, which the count cannot tell from a
+    /// handle of somebody's; a large application's code is above the
+    /// bound) has every compiled and cached code deleted and is collected
+    /// and compared once more: it must then protect exactly what a clean
+    /// engine does.
+    ///
     /// What survives is VM-wide and carries no script-visible state: the
-    /// atom table, the structures of the root context, the classes.
+    /// atom table, the structures of the root context, the classes, and the
+    /// code cache with JavaScriptCore's own builtins in their unlinked form:
+    /// source text and the bytecode made from it, which refer to no realm
+    /// and no object of one. The next owner's realm does not parse the
+    /// builtins again, nor a script whose text and URL the last owner also
+    /// ran; that it starts faster for it is all it can learn. An owner that
+    /// does not come soon finds no code either
+    /// ([`Engine::settle_idle`]).
     pub fn recycle(&self, clean: Option<HeapCounts>) -> Result<(), &'static str> {
         let inner = &self.inner;
         let tls = callback_tls();
@@ -1234,15 +1408,39 @@ impl Engine {
         if inner.time_zone_set.get() && !self.set_time_zone(None).unwrap_or(false) {
             return Err("the time zone override stays");
         }
+        // Memory is not returned to the system here: the next owner may
+        // come at once, and one that does not leaves time for `settle_idle`.
+        //
+        // With the code kept first; an engine that cannot be proven clean
+        // that way (a `Function` constructor's source in the cache, more
+        // code than the heap bound allows) is tried once more as an engine
+        // without any code.
+        if self.prove_clean(clean, false).is_err() {
+            self.prove_clean(clean, true)?;
+        }
+        if Rc::strong_count(inner) != 1 {
+            return Err("a handle still refers to the engine");
+        }
+        inner.next_realm_id.set(1);
+        inner.coverage_cursor.set(0);
+        inner.release_gate.forked();
+        Ok(())
+    }
+
+    /// One attempt at [`Engine::recycle`]'s proof: collects, after deleting
+    /// every compiled and cached code when `delete_code`, and compares what
+    /// is left with `clean`.
+    fn prove_clean(&self, clean: HeapCounts, delete_code: bool) -> Result<(), &'static str> {
+        let inner = &self.inner;
         // A payload freed by the first collection may have held the last
         // handle of another object: collect until nothing more is freed.
         let mut counts = None;
-        // Memory is not returned to the system here: the next owner may
-        // come at once, and one that does not leaves time for `settle_idle`.
         for _ in 0..3 {
-            if let Some(f) = sys::spi::get().delete_all_code {
-                // SAFETY: the group is alive and used by this thread only.
-                unsafe { f(inner.group()) };
+            if delete_code {
+                if let Some(f) = sys::spi::get().delete_all_code {
+                    // SAFETY: the group is alive and used by this thread only.
+                    unsafe { f(inner.group()) };
+                }
             }
             self.collect_and_finalize(true);
             counts = self.heap_counts();
@@ -1263,21 +1461,20 @@ impl Engine {
         if !inner.held.borrow_mut().reset(inner.root_ctx()) {
             return Err("a held value survived");
         }
+        // What a clean engine protects and, with the code kept, the code
+        // cache's handles: one per top-level code block alive.
+        let expected = |c: &HeapCounts| {
+            clean.protected + if delete_code { 0 } else { c.cached_code.saturating_sub(clean.cached_code) }
+        };
         // The array of held values was protected; the count is read again
         // only when it was there.
-        let counts = if counts.protected == clean.protected { counts } else { self.heap_counts().unwrap_or(counts) };
-        if counts.protected != clean.protected {
+        let counts = if counts.protected == expected(&counts) { counts } else { self.heap_counts().unwrap_or(counts) };
+        if counts.protected != expected(&counts) {
             return Err("a protected value survived");
         }
         if counts.heap_size > clean.heap_size + RECYCLE_HEAP_SLACK {
             return Err("the heap stayed above its bound");
         }
-        if Rc::strong_count(inner) != 1 {
-            return Err("a handle still refers to the engine");
-        }
-        inner.next_realm_id.set(1);
-        inner.coverage_cursor.set(0);
-        inner.release_gate.forked();
         Ok(())
     }
 
@@ -1300,6 +1497,9 @@ impl Engine {
         if !Self::has_module_precompile() {
             return false;
         }
+        if !functions && self.precompile_cached_module(source, url) {
+            return true;
+        }
         let text = crate::realm::module_source_with_url(source, url);
         // SAFETY: the root context is alive and used by this thread only; the
         // slices outlive the call, which copies them.
@@ -1313,6 +1513,60 @@ impl Engine {
                 std::os::raw::c_int::from(functions),
             ) == 1
         }
+    }
+
+    /// [`Engine::precompile_module`] through the bytecode cache: the module's
+    /// record and top-level code come from its entry (written first if there
+    /// is none), and its functions are decoded from the entry's mapping at
+    /// their first call, in the process that calls. `false` when the cache
+    /// does not handle the module: it is then precompiled from its source.
+    fn precompile_cached_module(&self, source: &str, url: &str) -> bool {
+        use crate::bytecode_cache::{CachedSource, Find, SourceKind};
+        let prefix = crate::realm::module_prefix(url);
+        let Some(cache) = self.inner.bytecode_cache_for(prefix.len() + source.len()) else { return false };
+        let (key, entry) = match cache.find(SourceKind::Module, url, &[&prefix, source]) {
+            Find::Skip => return false,
+            Find::Hit(key, entry) => (key, entry),
+            Find::Miss(key) => {
+                let text = prefix + source;
+                match cache.write_now(self.inner.root, key, SourceKind::Module, url, text) {
+                    Some(entry) => (key, entry),
+                    None => return false,
+                }
+            }
+        };
+        let url = crate::JsString::new(url);
+        let cached = CachedSource::new(&entry, true);
+        // SAFETY: the root context is alive and used by this thread only;
+        // `cached` is given to this one call, which releases its text.
+        let kept = unsafe { (cache.spi().precompile)(self.inner.root, &cached.raw, url.as_raw()) };
+        if kept {
+            self.inner.precompiled_from_cache.borrow_mut().insert(key);
+        }
+        kept
+    }
+
+    /// Sets the bytecode cache this engine's scripts and modules go through
+    /// (`None`: none). A new engine uses [`crate::bytecode_cache::default`].
+    pub fn set_bytecode_cache(&self, cache: Option<Arc<crate::BytecodeCache>>) {
+        *self.inner.bytecode_cache.borrow_mut() = cache;
+    }
+
+    /// The engine's bytecode cache.
+    pub fn bytecode_cache(&self) -> Option<Arc<crate::BytecodeCache>> {
+        self.inner.bytecode_cache.borrow().clone()
+    }
+
+    /// What JavaScriptCore did with the cached sources given to this engine:
+    /// all zero without the patched JavaScriptCore. A forked process starts
+    /// from its parent's values.
+    pub fn bytecode_cache_stats(&self) -> BytecodeCacheStats {
+        let mut stats = BytecodeCacheStats::default();
+        if let Some(spi) = sys::spi::get().bytecode_cache() {
+            // SAFETY: the group is alive and used by this thread only.
+            unsafe { (spi.stats)(self.inner.group, &mut stats) };
+        }
+        stats
     }
 
     /// What [`Engine::precompile_module`] keeps and how loads have used it.
@@ -1556,6 +1810,11 @@ pub struct HeapCounts {
     /// Global objects alive: the engine's root and one per realm.
     pub globals: u64,
     pub protected_globals: u64,
+    /// Top-level code blocks alive in their unlinked form (programs,
+    /// indirect evals, modules): bytecode without a realm. Once no realm's
+    /// global object is alive, these are the entries of the VM's
+    /// source-keyed code cache, which protects each with a strong handle.
+    pub cached_code: u64,
 }
 
 /// How far above a clean engine's live heap [`Engine::recycle`] accepts.

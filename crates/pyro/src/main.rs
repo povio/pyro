@@ -186,8 +186,10 @@ commands:
   eval [--timeout-ms N] (-e CODE | FILE | -)
                                run JavaScript in an about:blank page until idle
   serve [--host H] [--port P]  CDP server (see `serve --help`)
-  fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] URL
-                               load a page (scripts run), dump the DOM after `load`
+  fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] [--bytecode-cache DIR] URL
+                               load a page (scripts run), dump the DOM after `load`.
+                               --bytecode-cache (env PYRO_BYTECODE_CACHE):
+                               as for serve, see `serve --help`
 ";
 
 /// PGO training builds (`scripts/pgo/generate.sh`, `--cfg pyro_pgo_training`) exit
@@ -434,9 +436,15 @@ fn fetch(args: &[String]) -> ExitCode {
     let mut wait = Duration::ZERO;
     let mut timeout = Duration::from_secs(30);
     let mut url: Option<String> = None;
+    let mut cache_dir =
+        std::env::var_os(pyro_js::bytecode_cache::DIR_ENV).filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--bytecode-cache" => match it.next() {
+                Some(dir) => cache_dir = Some(dir.into()),
+                None => return usage_error("--bytecode-cache needs a directory"),
+            },
             "--dump" => match it.next().map(String::as_str) {
                 Some("html") => dump_html = true,
                 Some("none") => dump_html = false,
@@ -455,6 +463,15 @@ fn fetch(args: &[String]) -> ExitCode {
         }
     }
     let Some(url) = url else { return usage_error("fetch needs a URL") };
+    // Before the engine: it takes the cache when it is made.
+    let cache = match cache_dir.as_deref().map(pyro_js::bytecode_cache::use_dir) {
+        Some(Err(e)) => {
+            eprintln!("pyro: --bytecode-cache {}: {e}", cache_dir.unwrap_or_default().display());
+            return ExitCode::from(2);
+        }
+        Some(Ok(cache)) => Some(cache),
+        None => None,
+    };
     let mut thread = match BrowserThread::new() {
         Ok(t) => t,
         Err(e) => {
@@ -528,5 +545,57 @@ fn fetch(args: &[String]) -> ExitCode {
         }
     }
     thread.browser.close_all();
+    // The page is out; what it compiled is written for the next run before
+    // the process goes (the first run with a directory pays for this).
+    if let Some(cache) = cache {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        cache.flush(Duration::from_secs(60));
+    }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::c_void;
+
+    /// mimalloc's `mi_heap_area_t`, the fields read here.
+    #[repr(C)]
+    struct Area {
+        blocks: *mut c_void,
+        reserved: usize,
+        committed: usize,
+        used: usize,
+        block_size: usize,
+        full_block_size: usize,
+        page: *const c_void,
+    }
+    type Visitor = extern "C" fn(*const c_void, *const Area, *mut c_void, usize, *mut c_void) -> bool;
+    unsafe extern "C" {
+        fn mi_heap_main() -> *mut c_void;
+        fn mi_heap_visit_blocks(heap: *mut c_void, visit_blocks: bool, visitor: Visitor, arg: *mut c_void) -> bool;
+    }
+
+    /// The build turns off mimalloc's shared pages for blocks of 64 to
+    /// 512 KiB (`MI_ENABLE_LARGE_PAGES=0`, set in `.cargo/config.toml`), so
+    /// that freeing such a block returns its memory: a 100 KiB block sits in
+    /// an area of about its own size, not in a 4 MiB page.
+    #[test]
+    fn the_build_gives_a_large_block_a_page_of_its_own() {
+        extern "C" fn visit(_heap: *const c_void, area: *const Area, _block: *mut c_void, _size: usize, arg: *mut c_void) -> bool {
+            // SAFETY: mimalloc passes a valid area, and `arg` is the pair below.
+            let (area, found) = unsafe { (&*area, &mut *(arg as *mut (usize, usize))) };
+            let start = area.blocks as usize;
+            if (start..start + area.reserved).contains(&found.0) {
+                found.1 = area.reserved;
+            }
+            true
+        }
+        let block = vec![1u8; 100 << 10];
+        let mut found = (block.as_ptr() as usize, 0usize);
+        // SAFETY: mimalloc's public API; the visitor only reads the area.
+        unsafe { mi_heap_visit_blocks(mi_heap_main(), false, visit, (&raw mut found).cast()) };
+        assert!(found.1 >= 100 << 10, "the block's area was not found");
+        assert!(found.1 < 1 << 20, "a 100 KiB block shares an area of {} bytes", found.1);
+    }
 }

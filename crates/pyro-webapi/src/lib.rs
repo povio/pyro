@@ -61,6 +61,7 @@ pub mod media_source;
 pub mod message_channel;
 pub mod module_script;
 pub mod mutation_observer;
+mod names;
 pub mod navigator_extras;
 pub mod node;
 pub mod observable;
@@ -166,6 +167,7 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
     engine.register::<cache_storage::CacheHandle>();
+    engine.register::<cache_storage::StoredBody>();
     engine.register::<headers::Headers>();
     engine.register::<url::URL>();
     engine.register::<url_search_params::URLSearchParams>();
