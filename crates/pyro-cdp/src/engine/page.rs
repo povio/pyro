@@ -592,6 +592,9 @@ impl EngineHost {
             }
             PageEvent::FrameNavigated { frame_id, loader_id, url, reason, cdp_request_id, timestamp } => {
                 if root.as_ref() == Some(&frame_id) {
+                    if let Some(state) = self.pages.get_mut(&page) {
+                        state.uncommitted_popup_of = None;
+                    }
                     self.popup_url_committed(page, &url);
                     for session in self.sessions_of(page, |s| s.dom_enabled) {
                         self.event("DOM.documentUpdated", &json!({}), &session);
@@ -765,12 +768,15 @@ impl EngineHost {
                 self.file_chooser_opened(page, &frame_id, input, multiple);
             }
             PageEvent::DownloadStarted => {
-                if let Some(state) = self.pages.get_mut(&page) {
+                let owner = self.download_owner(page);
+                if let Some(state) = self.pages.get_mut(&owner) {
                     state.download_count += 1;
                 }
             }
             PageEvent::Download { frame_id, url, suggested_filename, body } => {
-                if let Some(state) = self.pages.get_mut(&page) {
+                let transient = self.pages.get(&page).is_some_and(|state| state.uncommitted_popup_of.is_some());
+                let owner = self.download_owner(page);
+                if let Some(state) = self.pages.get_mut(&owner) {
                     state.downloads.push(super::DownloadRecord {
                         url: url.clone(),
                         filename: suggested_filename.clone(),
@@ -788,7 +794,12 @@ impl EngineHost {
                     }
                     self.waiters.log_changed = true;
                 }
+                // Announced with the frame that started it (the popup's, as
+                // in Chrome): clients report it on the opener.
                 self.deliver_download(page, &frame_id.0, &url, &suggested_filename, body);
+                if transient {
+                    self.close_requests.push(page);
+                }
             }
             PageEvent::JavascriptDialogOpening { kind, message, default_prompt, .. } => {
                 if let Some(state) = self.pages.get_mut(&page) {
@@ -821,6 +832,20 @@ impl EngineHost {
 }
 
 impl EngineHost {
+    /// The page a download of `page` belongs to (its `Pyro.run` download
+    /// steps): the opener of a popup that committed no document of its own
+    /// (a `target=_blank` link or `window.open` whose response is an
+    /// attachment), as Playwright reports such a download on the opener,
+    /// else `page`. Chrome closes a tab it opened for a download; the
+    /// caller closes the popup once it has delivered the download.
+    fn download_owner(&self, page: PageKey) -> PageKey {
+        self.pages
+            .get(&page)
+            .and_then(|state| state.uncommitted_popup_of)
+            .filter(|opener| self.pages.contains_key(opener))
+            .unwrap_or(page)
+    }
+
     /// Delivers a page download as Chrome does under an allow behavior:
     /// Browser.downloadWillBegin, the file written to downloadPath (named by
     /// guid for allowAndName, else as suggested), then Browser.downloadProgress

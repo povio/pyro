@@ -335,7 +335,9 @@ Also covered:
   `:text-is()`, `:text-matches()`, `:visible`, `:nth-match()` and `:light()`
 - popups (`page.on('popup')`, `context.on('page')`, which come once the
   popup's document committed, so `url()` is its own), downloads
-  (`page.on('download')`, `saveAs`, `path`), file choosers
+  (`page.on('download')`, `saveAs`, `path`; a `target=_blank` link or
+  `window.open` answered with an attachment downloads on the opener, and its
+  popup closes, as in Chrome), file choosers
   (`page.on('filechooser')`, `setFiles`), workers (`page.on('worker')`,
   `worker.evaluate`)
 - `keyboard.down/up`, click modifiers

@@ -37,6 +37,15 @@ the CDP layer when the target exists):
 - **`window.close()`** asks the embedder to close the page
   (`PageEvent::CloseRequested`; the CDP layer closes the target). Only popups
   are script-closable; other pages ignore the call, as Chrome does.
+- **A download instead of a document**: when the popup's navigation is
+  answered with an attachment before it committed any document of its own
+  (a `target=_blank` link or `window.open` to a file), the download is the
+  opener's and the popup closes, as Chrome closes the tab it opened for it.
+  `Browser.downloadWillBegin` names the popup's frame (Chrome's `frameId`);
+  Playwright and pyro/wright report the download on the opener, and
+  `Pyro.run` `download` steps of the opener get it. The object `window.open`
+  returned reads `closed`. (chromium-headless-shell, Playwright's default
+  headless browser, leaves that tab open.)
 
 ## The popup object
 

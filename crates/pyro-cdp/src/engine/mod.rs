@@ -348,6 +348,11 @@ pub(crate) struct PageState {
     /// This page is a `window.open` popup; dropped with the page, which tells
     /// the opener's object it closed.
     pub(crate) popup_ticket: Option<std::rc::Rc<pyro_webapi::PopupTicket>>,
+    /// The opener of a popup (a link or `window.open`) that has committed no
+    /// document of its own yet, its initial about:blank one aside. A
+    /// download its navigation turns into is the opener's, and the popup
+    /// closes, as Chrome closes a tab it opened for a download.
+    pub(crate) uncommitted_popup_of: Option<PageKey>,
     /// A raw keydown which changes documents suppresses one following char.
     /// Keyboard input is page-scoped, including across attached sessions.
     pub(crate) suppress_next_char: bool,
@@ -622,6 +627,7 @@ impl EngineHost {
                 next_script_id: 1,
                 initial_popup: false,
                 popup_ticket: None,
+                uncommitted_popup_of: None,
                 suppress_next_char: false,
                 intercept_drags: false,
                 touches: Default::default(),
@@ -1461,6 +1467,7 @@ impl Host for EngineHost {
         }
         if let Some(state) = self.pages.get_mut(&page) {
             state.popup_ticket = ticket;
+            state.uncommitted_popup_of = Some(opener);
         }
         if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
             if let Some(state) = self.pages.get_mut(&page) {

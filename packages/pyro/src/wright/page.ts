@@ -1280,6 +1280,10 @@ export class Page extends Scope {
     return this.context().clock;
   }
   private _url = 'about:blank';
+  /** The page that opened this popup (`BrowserContext._adoptPopup`). */
+  _opener?: Page;
+  /** A main-frame document committed since the page was attached (its initial one aside). */
+  _committed = false;
   private _mainFrameId?: string;
   private _mainFrame = new Frame(this);
   private _closed = false;
@@ -1339,6 +1343,7 @@ export class Page extends Scope {
       }
       this._mainFrameId = p.frame.id;
       this._loaderId = p.frame.loaderId;
+      this._committed = true;
       this.setUrl(p.frame.url + (p.frame.urlFragment ?? ''));
     });
     on('Page.frameAttached', (p) => {
@@ -1472,8 +1477,9 @@ export class Page extends Scope {
     } else f._parent = parent;
     return f;
   }
-  get _mainFrameIdValue(): string | undefined {
-    return this._mainFrameId;
+  /** `frameId` is this page's main frame or one of its child frames. */
+  _hasFrame(frameId: string | undefined): boolean {
+    return !!frameId && (frameId === (this._mainFrameId ?? this._targetId) || this._frames.has(frameId));
   }
   /** Children of `frame`; marks their `<iframe>` elements so their locators can find them. */
   _childFrames(frame: Frame): Frame[] {

@@ -189,8 +189,14 @@ export class Browser {
     const downloads = new Map<string, Download>();
     cdp.on('Browser.downloadWillBegin', (p) => {
       for (const context of contexts()) {
-        const page = context.pages().find((page) => page._mainFrameIdValue === p.frameId) ?? (p.frameId ? undefined : context.pages()[0]);
-        if (!page) continue;
+        const from = context.pages().find((page) => page._hasFrame(p.frameId)) ?? (p.frameId ? undefined : context.pages()[0]);
+        if (!from) continue;
+        // A popup whose navigation became the download (a `target=_blank`
+        // link or `window.open` answered with an attachment) has no document
+        // of its own: as in Playwright the download is its opener's (the
+        // browser closes the popup, as Chrome closes the tab it opened).
+        const opener = from._opener;
+        const page = opener && !from._committed && !opener.isClosed() ? opener : from;
         const download = new Download(page, p.url, p.suggestedFilename, context._options.acceptDownloads === false);
         downloads.set(p.guid, download);
         page._emit('download', download);
@@ -527,12 +533,15 @@ export class BrowserContext {
     const o = this._options;
     const page = new Page(this, this.cdp, o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT));
     this._pages.add(page);
+    page._opener = opener;
     page._bind(sessionId, targetId);
     const attaching = (async (): Promise<Attachment> => {
       await this.setUp(page, true, this._initScripts);
       const { frameTree } = await page._sendNow('Page.getFrameTree');
       // ':' is the initial document of a popup that has not navigated yet.
-      page._bind(sessionId, targetId, frameTree.frame.id, frameTree.frame.url === ':' ? undefined : frameTree.frame.url);
+      const initial = frameTree.frame.url === ':';
+      if (!initial) page._committed = true;
+      page._bind(sessionId, targetId, frameTree.frame.id, initial ? undefined : frameTree.frame.url);
       page._seedFrames(frameTree);
       if (waiting) {
         const committed = navigationEnd(this.cdp, sessionId, targetId);

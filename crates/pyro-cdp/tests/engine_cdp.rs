@@ -2030,6 +2030,91 @@ fn content_disposition_attachment_navigation_becomes_download() {
 }
 
 #[test]
+fn a_download_a_popup_starts_is_its_openers_and_closes_the_popup() {
+    // Recorded from Chromium 147 (Playwright 1.59's full build): a
+    // target=_blank link answered with an attachment opens a paused popup;
+    // once resumed, its navigation becomes the download, announced with the
+    // popup's frame id, and Chrome closes the tab it opened for it
+    // (Target.detachedFromTarget). Playwright reports the download on the
+    // opener; so do `Pyro.run` download steps.
+    let (addr, server) = serve_attachment(
+        2,
+        "Content-Type: application/zip\r\nContent-Disposition: attachment; filename=report.zip\r\n",
+        b"zipbytes",
+    );
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let ctx = targets["result"]["targetInfos"].as_array().unwrap().iter().find(|t| t["targetId"] == opener).unwrap()
+        ["browserContextId"]
+        .clone();
+    let dir = std::env::temp_dir().join(format!("pyro-popup-downloads-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    h.call(
+        None,
+        "Browser.setDownloadBehavior",
+        json!({"behavior":"allowAndName","browserContextId":ctx,"downloadPath":dir,"eventsEnabled":true}),
+    );
+    h.call(None, "Target.setDiscoverTargets", json!({"discover":true}));
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({"url": format!("http://{addr}/page")}));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        until_event(&mut h, "Page.loadEventFired");
+    }
+    let session = h.session.clone();
+    let run = h.send(
+        Some(&session),
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "const a = document.getElementById('f'); a.target = '_blank'; a.click(); null"}},
+            {"download": {"as": "file"}},
+        ]}),
+    );
+    let attached =
+        h.until_event(|m| m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != opener);
+    assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
+    let popup_target = attached["params"]["targetInfo"]["targetId"].as_str().unwrap().to_owned();
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    h.call(Some(&popup), "Page.enable", json!({}));
+    h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut events = h.until_response(run);
+    // The opener's run got the download.
+    let reply = events.iter().find(|e| e["id"] == run).unwrap().clone();
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert_eq!(reply["result"]["reads"]["file"]["filename"], "report.zip", "{reply}");
+    assert_eq!(reply["result"]["reads"]["file"]["text"], "zipbytes", "{reply}");
+    // Settled: the close request goes out with the next message handled.
+    events.extend(h.run_for(100));
+    h.call(None, "Target.getTargets", json!({}));
+    events.extend(h.drain());
+    let begin = events.iter().find(|e| e["method"] == "Browser.downloadWillBegin").expect("downloadWillBegin");
+    assert_eq!(begin["params"]["frameId"], json!(popup_target), "the popup's frame, as in Chrome");
+    let completed = events
+        .iter()
+        .find(|e| e["method"] == "Browser.downloadProgress" && e["params"]["state"] == "completed")
+        .expect("completed");
+    assert_eq!(std::fs::read(completed["params"]["filePath"].as_str().unwrap()).unwrap(), b"zipbytes");
+    // No document committed in the popup, then it closed.
+    assert!(
+        !events.iter().any(|e| e["method"] == "Page.frameNavigated" && e["sessionId"] == json!(popup)),
+        "{events:#?}"
+    );
+    let at = |pred: &dyn Fn(&Value) -> bool| events.iter().position(pred);
+    let detached = at(&|e| e["method"] == "Target.detachedFromTarget" && e["params"]["sessionId"] == json!(popup))
+        .unwrap_or_else(|| panic!("popup not closed: {events:#?}"));
+    let destroyed = at(&|e| e["method"] == "Target.targetDestroyed" && e["params"]["targetId"] == json!(popup_target))
+        .expect("targetDestroyed");
+    assert!(at(&|e| e["method"] == "Browser.downloadWillBegin").unwrap() < detached && detached < destroyed);
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let ids: Vec<&Value> =
+        targets["result"]["targetInfos"].as_array().unwrap().iter().map(|t| &t["targetId"]).collect();
+    assert!(!ids.contains(&&json!(popup_target)), "{targets}");
+    assert!(ids.contains(&&json!(opener)), "{targets}");
+    server.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn input_home_end_with_mac_scroll_commands_scroll_the_document() {
     // Playwright sends Home/End with scrollTo{Beginning,End}OfDocument on
     // macOS. Outside editable content Chrome scrolls the document. Scroll
