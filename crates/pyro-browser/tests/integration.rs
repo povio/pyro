@@ -50,6 +50,7 @@ mod selection_pointer_timing;
 mod service_worker;
 mod static_plaintext;
 mod storage_events;
+mod style_load;
 mod stylesheets;
 mod stylesheets_http;
 mod subresources;

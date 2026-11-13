@@ -1720,6 +1720,11 @@ impl Browser {
                 }
             }
         }
+        // HTML queues DOMContentLoaded as a task: `<style>` events queued
+        // before it fire first (the last one comes back here).
+        if self.doc(page).is_some_and(|d| d.stylesheets.style_events_queued()) {
+            return;
+        }
         self.fire_dom_content_loaded(page);
     }
 
@@ -1866,6 +1871,7 @@ impl Browser {
         if state.main_frame.loaded
             || !state.main_frame.dom_content_loaded
             || state.stylesheets.pending() != 0
+            || state.stylesheets.styles_pending()
             || state.images.blocking_load() != 0
             || state.main_frame.page_dom.as_ref().is_some_and(|d| d.media_delays_load())
         {

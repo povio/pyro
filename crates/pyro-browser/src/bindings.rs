@@ -593,6 +593,9 @@ impl Browser {
         let mut stylesheet_nodes = std::collections::HashSet::new();
         let mut image_nodes = std::collections::HashSet::new();
         let mut preload_nodes = std::collections::HashSet::new();
+        // `<style>` elements processed by this drain (a parsed one's
+        // insertion and pop come together): once each, until removed.
+        let mut style_nodes = std::collections::HashSet::new();
         for event in events {
             let document = host.dom.borrow().owner_document(event.node).ok().flatten();
             let target =
@@ -622,6 +625,16 @@ impl Browser {
                 }
             } else {
                 bindings.apply_style_event(&event);
+                if event.kind == pyro_dom::script::ResourceKind::StyleText {
+                    if event.reason == pyro_dom::script::ResourceReason::Removed {
+                        style_nodes.remove(&event.node);
+                        self.style_element_event(target, event.node, event.reason);
+                    } else if !style_nodes.contains(&event.node)
+                        && self.style_element_event(target, event.node, event.reason)
+                    {
+                        style_nodes.insert(event.node);
+                    }
+                }
             }
         }
     }

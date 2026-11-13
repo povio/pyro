@@ -393,6 +393,9 @@ impl Dom {
     /// Parser hook: an element was closed (end tag / EOF). `<style>` content
     /// is complete at this point.
     pub(crate) fn resources_element_popped(&mut self, idx: u32) {
+        if let Some(e) = self.n_mut(idx).element_mut() {
+            e.flags &= !element_flags::STYLE_PARSING;
+        }
         if self.resources.enabled
             && self.resource_kind(idx) == Some(ResourceKind::StyleText)
             && self.connected_for_resources(idx)

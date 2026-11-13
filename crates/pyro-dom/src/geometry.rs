@@ -192,6 +192,21 @@ impl SubresourceBodies {
     pub fn arrivals(&self) -> u64 {
         self.arrivals.load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    /// A body the documents' own loader fetched (a `<style>`'s `@import`ed
+    /// sheet) that their layouts would otherwise fetch again, behind the
+    /// page's back: they take it from here. The documents laid out without
+    /// it (an empty entry, the embedder's load in flight) or with another
+    /// body lay out again.
+    pub fn provide(&self, url: &str, body: &[u8]) {
+        if body.is_empty() {
+            return;
+        }
+        let previous = self.lock().insert(url.to_owned(), std::sync::Arc::new(body.to_vec()));
+        if previous.is_some_and(|b| b.is_empty() || **b != *body) {
+            self.arrived();
+        }
+    }
 }
 
 /// The engine laying the document out (Blitz in `render` builds).
