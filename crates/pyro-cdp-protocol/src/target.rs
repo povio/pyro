@@ -123,6 +123,12 @@ pub trait Host {
             _ => Err(CdpError::unsupported("a browser context's own userAgent")),
         }
     }
+    /// Blocks service worker registration in context `key`
+    /// (`Target.createBrowserContext` `serviceWorkers: "block"`, pyro's own
+    /// parameter for Playwright's option).
+    fn block_service_workers(&mut self, _key: ContextKey) -> CdpResult<()> {
+        Err(CdpError::unsupported("Target.createBrowserContext serviceWorkers"))
+    }
     fn dispose_context(&mut self, context: ContextKey);
     /// Creates an `about:blank` page. Returns its key and target id; the target
     /// id is the main frame id, as in Chrome and upstream.
@@ -1188,6 +1194,7 @@ impl<H: Host> Browser<H> {
                         | "Browser.grantPermissions"
                         | "Browser.resetPermissions"
                         | "Browser.setPermission"
+                        | "Browser.cancelDownload"
                 ) {
                     let params: ContextParam = cmd.params()?;
                     let id = match params.browser_context_id {
@@ -1543,11 +1550,22 @@ impl<H: Host> Browser<H> {
                     proxy_server: Option<String>,
                     proxy_bypass_list: Option<String>,
                     user_agent: Option<String>,
+                    /// pyro's own: Playwright's `serviceWorkers` option.
+                    service_workers: Option<String>,
                 }
                 let params: P = cmd.params()?;
                 if params.user_agent.as_ref().is_some_and(|a| a.is_empty() || http::HeaderValue::from_str(a).is_err()) {
                     return Err(CdpError::invalid_params("userAgent must be a non-empty header value"));
                 }
+                let block_service_workers = match params.service_workers.as_deref() {
+                    None | Some("allow") => false,
+                    Some("block") => true,
+                    Some(other) => {
+                        return Err(CdpError::invalid_params(format!(
+                            "serviceWorkers must be \"allow\" or \"block\", not {other:?}"
+                        )))
+                    }
+                };
                 let options = ContextOptions {
                     proxy: params
                         .proxy_server
@@ -1560,6 +1578,13 @@ impl<H: Host> Browser<H> {
                 } else {
                     self.new_context_from(|host| host.create_context_with(options), false, false)?
                 };
+                if block_service_workers {
+                    let key = self.context(&context_id)?.key;
+                    if let Err(e) = self.host.block_service_workers(key) {
+                        self.dispose_context(&context_id, &mut Discard);
+                        return Err(e);
+                    }
+                }
                 out.send(msg::result_frame(
                     id,
                     &serde_json::json!({ "browserContextId": context_id }),

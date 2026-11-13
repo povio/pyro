@@ -53,6 +53,13 @@ and for MSW (Mock Service Worker) browser mode, whose unmodified
   client nor controlled.
 - Templates of `serve --fork` and prepared pages refuse registration
   (NotSupportedError): a template must not start threads.
+- A browser context made with `Target.createBrowserContext` `serviceWorkers:
+  "block"` (Playwright's `serviceWorkers: 'block'` in `@povio/pyro/wright`)
+  registers nothing: `register()`, the prototype's method included, fetches
+  no script and resolves with `undefined` after the console warning "Service
+  Worker registration blocked by Playwright", which is what Playwright's
+  init script makes it do in Chrome. With no worker, nothing intercepts the
+  context's requests.
 
 ## Lifecycle
 
