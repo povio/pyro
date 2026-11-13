@@ -23,6 +23,7 @@ import {
   harHandler,
   initScriptSource,
   Page,
+  callOwner,
   sameRoute,
   WORKER_AUTO_ATTACH,
   type Attachment,
@@ -109,6 +110,19 @@ export interface BrowserContextEvents {
  * app's shell and boot requests come from before the test seeded anything.
  */
 export type BootSpec = { url: string; routes?: UrlMatch | UrlMatch[]; pool?: number };
+
+/** Contexts not closed yet, of every browser of this process. */
+const openContextSet = new Set<BrowserContext>();
+/** Every open context (Playwright's `_allContexts()`), oldest first. */
+export function openContexts(): BrowserContext[] {
+  return [...openContextSet];
+}
+const closingHooks = new Set<(context: BrowserContext) => Promise<void>>();
+/** Calls `fn` when a context starts closing, before its pages close (`pyro run`: their screenshots); returns the unsubscribe. */
+export function beforeContextClose(fn: (context: BrowserContext) => Promise<void>): () => void {
+  closingHooks.add(fn);
+  return () => void closingHooks.delete(fn);
+}
 
 type TestDefaults = { options: ContextOptions; timeout?: number; navigationTimeout?: number; testIdAttribute: string };
 let testDefaults: TestDefaults | undefined;
@@ -247,6 +261,7 @@ export class Browser {
     const context = new BrowserContext(this, merged);
     await context._init();
     this._contexts.add(context);
+    openContextSet.add(context);
     return context;
   }
   /** A page in a context of its own, closed with the page. */
@@ -317,6 +332,8 @@ export class BrowserContext {
   _testIdAttribute: string;
   /** `browser.newPage()`: the page whose close closes this context. */
   _ownedBy?: Page;
+  /** Who made it (`setCallOwner`; `pyro run`: the test running then). */
+  readonly _owner = callOwner();
 
   constructor(
     private _browser: Browser,
@@ -703,6 +720,8 @@ export class BrowserContext {
   async close(_options: { reason?: string } = {}): Promise<void> {
     if (this._closed) return;
     this._closed = true;
+    for (const hook of [...closingHooks]) await hook(this).catch(() => {});
+    openContextSet.delete(this);
     for (const recorder of this._har) await recorder.save();
     for (const p of [...this._pages]) await p.close();
     const id = this._id ?? (this._idPromise ? await this._idPromise.catch(() => undefined) : undefined);

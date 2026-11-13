@@ -6,12 +6,18 @@ source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 Porting an existing Playwright suite? Do not rewrite it: replace the imports
 of `playwright` and `@playwright/test` with `@povio/pyro/wright`,
 keep the Playwright code and run it with `pyro run` (README, "Playwright
-tests, unchanged"). Context options (`locale`, `timezoneId`, `proxy`,
-`geolocation` and `permissions`, `httpCredentials`, `offline`, device
-emulation, `javaScriptEnabled`, `ignoreHTTPSErrors`) mean what they mean in
-Playwright; the README's "Context options" and "Not supported" list the
-differences. Rewrite a test into one `page.run([...])` only where its last
-milliseconds matter.
+tests, unchanged"). Keep the config too: project `dependencies` and
+`teardown` (a sign-in setup project that saves `storageState`), global
+setup and teardown (they get Playwright's `FullConfig`; import its type from
+`@povio/pyro/wright`), hooks and worker fixtures work as in Playwright (a
+timed-out test keeps its page for `afterEach` hooks and fixture teardown, and
+`use: { screenshot: 'only-on-failure' }` captures it), and
+`pyro run --shard i/n` splits a run over CI jobs. Context options (`locale`,
+`timezoneId`, `proxy`, `geolocation` and `permissions`, `httpCredentials`,
+`offline`, device emulation, `javaScriptEnabled`, `ignoreHTTPSErrors`) mean
+what they mean in Playwright; the README's "Context options" and "Not
+supported" list the differences. Rewrite a test into one `page.run([...])`
+only where its last milliseconds matter.
 
 ## The model
 
@@ -107,6 +113,8 @@ describe('feature', () => {
 - Register a profile shared by many files once (memoize the promise), and
   per-describe profiles in that describe's `beforeAll` with `defer` to release.
 - Module state is shared by every file (one process): no per-file globals.
+- A test that times out has its pages' waiting runs cancelled, then its
+  `afterEach` hooks run with the pages as they were; the pages close after.
 
 ### One fork-mode server for every worker
 
@@ -137,6 +145,16 @@ await using page = await pyro.page({ as: 'app' });                              
 - A client holds what it registered or adopted until `releaseProfile(name)`
   or until it disconnects; a profile is retired once nobody holds it and no
   profile derives from it.
+- `profile()` resolves once the profile's `setup` ran. A failing step makes it
+  reject with a `ProfileSetupError` (`profile app: setup step 2 (Click …):
+  timed out after 5000 ms: …`, `.step` is the index); `page({ as })`,
+  `warm()`, `adopt()` and profiles with that `base` throw it too, and no page
+  of it is handed out. Fix the step or the app and call `profile()` again.
+- `userAgent`, `proxyServer` and `proxyBypassList` in a profile give its pages
+  (document, fetch/XHR, what layout, screenshots and PDFs load, setup steps,
+  every forked page) that `User-Agent` (`navigator.userAgent` too) and that
+  HTTP proxy: one profile per identity.
+  A derived profile has its base's.
 - `Pyro.launch()` passes its pid to the server, which exits when
   that process does (even when a runner stops it without exit handlers).
 
@@ -287,6 +305,11 @@ waiting when it timed out, for example:
 
 Do not raise timeouts to fix a failure: a step waits only for its own
 condition, so a timeout means the condition never held.
+
+A profile's `setup` fails the same way, before any test: `pyro.profile()`
+throws `ProfileSetupError` (`profile app: setup step 1 (…): …`, `.step` is the
+index into `setup`), and every `page({ as: 'app' })` throws it until the
+profile is declared again.
 
 ## Do not
 

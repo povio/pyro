@@ -44,6 +44,22 @@ test.concurrent('closes a position', async () => {
   starts from their result. `base: 'otherProfile'` builds a snapshot on top of
   another one: only its own `setup` runs, on a fork of that snapshot (boot on
   the login page once, sign in once, then one snapshot per test file).
+  `profile()` resolves once the setup ran. When a step fails it rejects with a
+  `ProfileSetupError` naming the step and why (`profile app: setup step 2
+  (Click …): timed out after 5000 ms: …`, with `.step` and `.profile`); no
+  page of that profile is handed out (`page({ as })` and `warm()` throw the
+  same error), and profiles built on it fail with it. Declaring it again (the
+  same definition after fixing the app, or a changed one) tries again.
+- **Identities.** `userAgent` in a profile is the `User-Agent` of every
+  request its pages make (the document, subresources, fetch and XHR, the
+  images, fonts and imported sheets layout, screenshots and PDFs load, the
+  `setup` steps' and, in fork mode, every page's since) and what
+  `navigator.userAgent` reports; `proxyServer` (`http://[user:pass@]host:port`)
+  and `proxyBypassList` send those requests through a proxy of its own
+  instead of the server's `--proxy`. One profile per signed-in identity, each
+  with its agent and proxy. Both are part of the definition (a different
+  agent under a shared name is refused while held); a profile with a `base`
+  has its base's.
 - **One server, many workers.** A fork-mode server keeps profiles by name
   for all its clients. Launch it once (`Pyro.launch({ args:
   ['--fork'] })` in the process that starts `bun test`), register the shared
@@ -55,8 +71,10 @@ test.concurrent('closes a position', async () => {
   another client holds is refused. A client holds the profiles it registered
   or adopted until `releaseProfile(name)` or until it disconnects, and the
   server retires a profile once no client holds it and no other profile
-  derives from it. A launched server exits with the process that launched
-  it, however that process ends.
+  derives from it. A worker adopting a profile whose setup failed (by
+  `adopt`, `page({ as })` or `base`) gets its `ProfileSetupError` and holds
+  nothing. A launched server exits with the process that launched it,
+  however that process ends.
 - **Locators** are data: `css`, `testId`, `text`, `label`, `placeholder`,
   `role` (and `button`, `dialog`, `link`, …), chained inside one another
   (`dialog().button('OK')`), filtered (`.visible()`, `.hasText()`,
@@ -131,7 +149,9 @@ pyro e2e apps/fe/e2e --setup e2e/setup.ts --concurrency 16 --timeout 30000 \
   those after it (`describe.serial`: all of them).
 - `browser()` is the run's `pyro serve --fork`, launched on first
   use and closed when the run ends, also on SIGINT/SIGTERM. Pages a test
-  opens through it are closed when the test ends, a timed-out test included.
+  opens through it are closed when the test ends, a timed-out test included;
+  a timed-out test's runs still waiting on them are cancelled first
+  (`Pyro.cancelRun`), so its `afterEach` hooks find them as they were.
 - `defer(fn)` runs `fn` when what runs now is done: after the test, or after
   the describe (or file) whose `beforeAll` called it.
 - `--setup <module>`: its `setup()` runs before any spec loads (start servers,
@@ -174,13 +194,14 @@ test('closes a position', async ({ page }) => {
 ```sh
 npx pyro run                      # as `npx playwright test`
 npx pyro run -c playwright.e2e.config.ts positions-close -j 4
+npx pyro run --shard 2/4          # this CI job's quarter of the tests
 ```
 
-`pyro run` takes Playwright's usual flags (`-c`, `--project`,
+`pyro run` takes Playwright's usual flags (`-c`, `--project`, `--no-deps`,
 `-j/--workers`, `-g/--grep`, `--grep-invert`, `--retries`, `--timeout`,
-`-u`, `-x`, `--max-failures`, `--list`, `--reporter list|line|dot`) and file
-filters. It needs [Bun](https://bun.sh) on PATH: the tests run in `bun test`
-worker processes.
+`-u`, `--fully-parallel`, `--shard`, `-x`, `--max-failures`, `--list`,
+`--reporter list|line|dot`) and file filters. It needs
+[Bun](https://bun.sh) on PATH: the tests run in `bun test` worker processes.
 
 The module is the whole of Playwright's API, implemented here:
 
@@ -192,20 +213,28 @@ The module is the whole of Playwright's API, implemented here:
   `serial`, `parallel`, `configure`), `beforeEach`/`afterEach`/
   `beforeAll`/`afterAll` with fixtures, `test.extend` (test and worker
   fixtures, options, `auto`, overrides that use the fixture they replace),
-  `test.use`, `test.step`, `test.info()`, `skip`/`fixme`/`fail`/`slow`,
-  retries and timeouts. Built-in fixtures: `browser`, `context`, `page`,
-  `request`, `playwright`, `browserName` and every context option.
+  `test.use`, `test.step` (and `test.step.skip`, a step's `skip()`),
+  `test.info()` (`status` and `errors` set for `afterEach` hooks and fixture
+  teardown), `skip`/`fixme`/`fail`/`slow`, retries and timeouts. Built-in
+  fixtures: `browser`, `context`, `page`, `request`, `playwright`,
+  `browserName` and every context option, with Playwright's defaults
+  (`isMobile`, `hasTouch`, `offline`, ... false; `javaScriptEnabled` and
+  `acceptDownloads` true; `contextOptions` first), and the `screenshot`
+  option (see "Timeouts and screenshots" below).
 - **`expect`:** every web-first matcher on locators, pages (`toHaveURL`,
   `toHaveTitle`, `toHaveScreenshot`) and API responses (`toBeOK`), plus
   `.not`, `.soft`, `.poll`, `.configure`, `.extend` and `toPass`. Other
   matchers and the asymmetric ones (`expect.any`, `objectContaining`, ...)
   are Bun's, which follow Jest as Playwright's do.
 - **The config file:** `defineConfig` with `use` (the config's, then the
-  project's), `projects` (`$PYRO_PROJECT`, else the first), `timeout`,
-  `retries`, `expect.timeout`, `outputDir`, `webServer` (started, waited for
-  and stopped; `reuseExistingServer`), `globalSetup` and `globalTeardown`. The
-  file is `$PYRO_CONFIG`, else `pyro.config.*` or `playwright.config.*`
-  in the working directory.
+  project's), `projects` (with `dependencies`, `teardown`, `fullyParallel`,
+  `grep` and `grepInvert`), `timeout`, `retries`, `expect.timeout`,
+  `outputDir`, `fullyParallel`, `shard`, `webServer` (started, waited for and
+  stopped; `reuseExistingServer`), `globalSetup` and `globalTeardown` (both
+  get Playwright's `FullConfig`: `config.projects[0].use` is that project's
+  resolved `use`; the `FullConfig` and `FullProject` types come from
+  `@povio/pyro/wright` too). The file is `$PYRO_CONFIG`, else
+  `pyro.config.*` or `playwright.config.*` in the working directory.
 
 The browser is `$PYRO_WS`, else one launched per run
 (`$PYRO_BIN` or the bundled one), configurable with `use: {
@@ -217,22 +246,69 @@ How a run goes, as with `playwright test`:
 
 - **Files:** each project's `testDir`, `testMatch` (default
   `**/*.@(spec|test).?(c|m)[jt]s?(x)`; a pattern without `/` matches file
-  names, so TOS's `*.e2e.ts` lists work) and `testIgnore`. Each file gets its
-  own project's `use`.
+  names, so TOS's `*.e2e.ts` lists work) and `testIgnore`. A file runs in
+  each project that matches it, with that project's `use`.
+- **Projects:** a project's `dependencies` run first, to completion and in
+  full (file filters, `--grep` and `--shard` apply to the selected projects
+  only; `--project` takes the dependencies along, `--no-deps` leaves them
+  out). When a dependency has a failed test, the projects that depend on it
+  do not run ("did not run"). A `teardown` project runs after every project
+  that depends on its setup project, whatever the result. So the usual
+  sign-in setup works: a `setup` project saves the storage state, and the
+  projects that depend on it start from that file.
 - **Workers:** `workers` processes (the config's, `-j`, else half the CPUs),
   each with its own browser and module state. A file's tests run in order in
   one worker. Tests that are parallel (`fullyParallel`, or a describe with
-  `mode: 'parallel'`) spread over the workers, and a describe's `beforeAll`
-  and `afterAll` run in each worker that runs some of its tests. Web servers
-  and global setup run once, in the parent.
-- **Reporting:** passes, failures (with their errors), skips (declared or
-  `test.skip()` at run time), flaky tests (passed on a retry) and expected
-  failures, then a summary. The tests' own output is shown per worker.
+  `mode: 'parallel'`) spread over the workers. Worker fixtures live as long
+  as the worker, across its files (one instance per worker and fixture
+  parameters). A describe's `beforeAll` hooks run with the first of its
+  tests a worker runs and its `afterAll` hooks after the last, in each
+  worker that runs some of its tests. A `beforeAll` error fails that first
+  test and the describe's other tests do not run; an `afterAll` error fails
+  the last test. Test fixtures in `beforeAll`/`afterAll` are the hook's own
+  (`page` and `context` are refused, as in Playwright). Web servers and
+  global setup run once, in the parent.
+- **Sharding:** `--shard i/n` (or `shard` in the config) runs part `i` of
+  `n`, split as Playwright splits it, so each CI job computes the same
+  parts: whole files, or single tests where they are parallel, in order,
+  balanced by test count. Each shard runs the dependencies it needs.
+- **Timeouts and screenshots:** a test that times out keeps its pages, as in
+  Playwright. The call its test function waits on is cancelled in the
+  browser (`Pyro.cancelRun`; a page script it runs that does not return is
+  stopped) and fails with `locator.click: Test timeout of 30000ms exceeded.`
+  and its call log, reported after the timeout error; the pages stay as they
+  were at the timeout (Playwright leaves the call waiting until the page
+  closes, after the hooks). Then the `screenshot` option's captures, the
+  `afterEach` hooks and fixture teardown run, in a time of their own: the
+  larger of the project's and the test's timeout (none when either is 0);
+  past it, `Test timeout of 30000ms exceeded while running "afterEach"
+  hook.` So an `afterEach` that screenshots or evaluates the page works for
+  a timed-out test too. If the browser does not answer the cancel within 2 s
+  (a page script that never returns outside any call, a pyro without the
+  command), the test's pages are closed instead and the run goes on.
+  `use: { screenshot }` (`'off'`, `'on'`, `'only-on-failure'`,
+  `'on-first-failure'`, or `{ mode, fullPage, omitBackground }`) captures
+  every open page right after the test function, before the `afterEach`
+  hooks, when the outcome asks for it (a failed or timed-out test for the
+  failure modes): `test-failed-N.png` or `test-finished-N.png` in
+  `testInfo.outputDir`, attached to `testInfo.attachments` as `screenshot`.
+  A context that closes while the outcome asks for it (in fixture teardown
+  after an `afterEach` failed) has its pages captured as it closes. Unlike
+  Playwright, a context closing while the test still passes is not captured
+  in case the test fails later: that would cost a screenshot per page of
+  every passing test.
+- **Reporting:** passes, failures (with their errors and the files they
+  attached, such as the screenshots), skips (declared or `test.skip()` at
+  run time), tests that did not run, flaky tests (passed on a retry),
+  expected failures and errors outside any test (a worker fixture's
+  teardown), then a summary. A test of a named project shows as
+  `[project] › file › title`. The tests' own output is shown per worker.
 
 Plain `bun test ./e2e/foo.e2e.ts` (with `$PYRO_CONFIG` naming the config) also
-runs the tests, in one process: Bun then reports a run-time `test.skip()` as
-a pass, since it cannot mark a running test as skipped. Not there either way:
-Playwright's HTML report, trace viewer, video and sharding.
+runs the tests, in one process and without project dependencies: Bun then
+reports a run-time `test.skip()` as a pass, since it cannot mark a running
+test as skipped. Not there either way: Playwright's HTML report, trace
+viewer and video.
 
 The TOS close flow (`test/wright/tos-flow.ts`, Playwright code as TOS
 writes it) takes 14.7 ms per test this way (median of 40, fresh page),
