@@ -1,0 +1,200 @@
+Pyro patch 0032: a medium or short date and a time are joined as ICU 77 joins them.
+
+ICU 78 (CLDR 48, CLDR-18370) joins a date and a time with the "atTime" pattern of the date's
+length by default. For a medium or short date that pattern now carries a word in some locales:
+English `{1} 'at' {0}` ("Oct 1 at 13:05", "Oct 1, 2026 at 1:05 PM"), French `à`, Polish `o`.
+ICU 77, which Chromium ships, joined them with the standard pattern: "Oct 1, 13:05",
+"Oct 1, 2026, 1:05 PM". macOS 27's ICU is 78.1, which JavaScriptCore links there.
+
+Where the atTime pattern of a medium or short Gregorian date quotes a literal and the standard one
+is not a bare `{1} {0}`, the standard one joins them (`dateTimeJoiningPatternBeforeCLDR48`,
+IntlCache.cpp). Where CLDR 48 moved a word out of the standard pattern into the atTime one, as
+Finnish "klo", it left the standard one bare, and ICU 77 joined with the word: that stays. The
+replacement happens in the shared date-time pattern
+generator (`udatpg_setDateTimeFormatForStyle`, for skeletons), and for `dateStyle` with `timeStyle`
+(the date and time patterns joined again in `initializeDateTimeFormat`). Long and full dates keep
+ICU's pattern ("October 1, 2026 at 1:05 PM", as in Chromium), and so do the locales whose atTime
+pattern has no word (Portuguese `{1}, {0}`, whose standard one became `{1} {0}`). Against Chromium
+147 (ICU 77): of 630 strings (45 locales, the date and time styles and 6 skeletons), 22 now equal
+Chromium's (English, French, Polish) and none differs that did not; 120 locales in 4 medium and
+short formats show the same. What still differs is CLDR 47 against 48 data (month and day period
+names, short years, Chromium's trimmed locales), which no joining pattern fixes.
+
+Patterns are read from the locale's `calendar/gregorian/DateTimePatterns` and
+`DateTimePatterns%atTime` (or its nearest parent's). An ICU before 78 (Linux's bundled one) and
+a non-Gregorian calendar keep ICU's pattern. Not Darwin-only.
+
+diff --git a/Source/JavaScriptCore/runtime/IntlCache.cpp b/Source/JavaScriptCore/runtime/IntlCache.cpp
+index 1952f36ca6..ca9c56547c 100644
+--- a/Source/JavaScriptCore/runtime/IntlCache.cpp
++++ b/Source/JavaScriptCore/runtime/IntlCache.cpp
+@@ -29,8 +29,13 @@
+ 
+ #include "IntlDateTimeFormat.h"
+ #include "IntlObject.h"
++#include <array>
+ #include <atomic>
++#include <cstring>
+ #include <mutex>
++#include <unicode/uloc.h>
++#include <unicode/ures.h>
++#include <unicode/uversion.h>
+ #include <wtf/Language.h>
+ #include <wtf/TZoneMallocInlines.h>
+ #include <wtf/Vector.h>
+@@ -58,11 +63,98 @@ IntlCache::IntlCache()
+ 
+ IntlCache::~IntlCache() = default;
+ 
++// Pyro: ICU 78 (CLDR 48) joins a date and a time with the "atTime" pattern of the
++// date's length, which for a medium or short date now carries a word in some locales:
++// "Oct 1 at 2:00 PM" in English, "à" in French, "o" in Polish, "во" in Macedonian.
++// ICU 77 and earlier, which Chromium ships, joined them with the standard pattern:
++// "Oct 1, 2:00 PM". Where the atTime pattern of a medium or short Gregorian date quotes
++// a literal and the standard one is not a bare `{1} {0}`, the standard one joins them.
++// (Where CLDR 48 moved the word out of the standard pattern into the atTime one, as
++// Finnish "klo", it left the standard one bare, and ICU 77 joined with the word: that
++// stays.) Elsewhere, and with an earlier ICU, nothing changes.
++static bool joinsWithAtTimePatterns()
++{
++    static const bool result = [] {
++        UVersionInfo version;
++        u_getVersion(version);
++        return version[0] >= 78;
++    }();
++    return result;
++}
++
++// The joining pattern of a date of `style` in the Gregorian calendar of the ICU locale ID
++// `locale` (without keywords), from it or its nearest parent that has one: the standard
++// pattern (`DateTimePatterns`, at 9 + style) or the atTime one (`DateTimePatterns%atTime`).
++static Vector<char16_t, 32> joiningPattern(const char* locale, UDateFormatStyle style, bool atTime)
++{
++    std::array<char, ULOC_FULLNAME_CAPACITY> current { };
++    memcpy(current.data(), locale, std::min(strlen(locale), current.size() - 1));
++    for (unsigned depth = 0; depth < 8; ++depth) {
++        UErrorCode status = U_ZERO_ERROR;
++        auto bundle = std::unique_ptr<UResourceBundle, ICUDeleter<ures_close>>(ures_open(nullptr, current[0] ? current.data() : "root", &status));
++        auto calendar = std::unique_ptr<UResourceBundle, ICUDeleter<ures_close>>(ures_getByKey(bundle.get(), "calendar", nullptr, &status));
++        auto gregorian = std::unique_ptr<UResourceBundle, ICUDeleter<ures_close>>(ures_getByKey(calendar.get(), "gregorian", nullptr, &status));
++        auto patterns = std::unique_ptr<UResourceBundle, ICUDeleter<ures_close>>(ures_getByKey(gregorian.get(), atTime ? "DateTimePatterns%atTime" : "DateTimePatterns", nullptr, &status));
++        if (U_SUCCESS(status)) {
++            int32_t size = ures_getSize(patterns.get());
++            int32_t index = atTime ? style : (size >= 13 ? 9 + style : 8);
++            int32_t length = 0;
++            const char16_t* data = ures_getStringByIndex(patterns.get(), index, &length, &status);
++            if (U_SUCCESS(status) && length > 0)
++                return Vector<char16_t, 32>(std::span { data, static_cast<size_t>(length) });
++        }
++        if (!current[0])
++            break;
++        std::array<char, ULOC_FULLNAME_CAPACITY> parent { };
++        UErrorCode parentStatus = U_ZERO_ERROR;
++        uloc_getParent(current.data(), parent.data(), parent.size(), &parentStatus);
++        if (U_FAILURE(parentStatus) || !strcmp(parent.data(), current.data()))
++            break;
++        current = parent;
++    }
++    return { };
++}
++
++Vector<char16_t, 32> dateTimeJoiningPatternBeforeCLDR48(const char* locale, UDateFormatStyle style)
++{
++    if (!joinsWithAtTimePatterns() || (style != UDAT_MEDIUM && style != UDAT_SHORT))
++        return { };
++    std::array<char, ULOC_FULLNAME_CAPACITY> icuLocale { };
++    UErrorCode status = U_ZERO_ERROR;
++    uloc_forLanguageTag(locale, icuLocale.data(), icuLocale.size(), nullptr, &status);
++    if (U_FAILURE(status) || !icuLocale[0])
++        return { };
++    std::array<char, ULOC_KEYWORDS_CAPACITY> calendar { };
++    status = U_ZERO_ERROR;
++    int32_t calendarLength = uloc_getKeywordValue(icuLocale.data(), "calendar", calendar.data(), calendar.size(), &status);
++    if (U_FAILURE(status) || (calendarLength > 0 && strcmp(calendar.data(), "gregorian")))
++        return { };
++    std::array<char, ULOC_FULLNAME_CAPACITY> base { };
++    status = U_ZERO_ERROR;
++    uloc_getBaseName(icuLocale.data(), base.data(), base.size(), &status);
++    if (U_FAILURE(status))
++        return { };
++    if (!joiningPattern(base.data(), style, true).contains('\''))
++        return { };
++    auto standard = joiningPattern(base.data(), style, false);
++    static constexpr char16_t bare[] = u"{1} {0}";
++    if (standard.span().size() == std::size(bare) - 1 && std::equal(standard.begin(), standard.end(), bare))
++        return { };
++    return standard;
++}
++
+ UDateTimePatternGenerator* IntlCache::cacheSharedPatternGenerator(const ASCIICString& locale, UErrorCode& status)
+ {
+     auto generator = std::unique_ptr<UDateTimePatternGenerator, ICUDeleter<udatpg_close>>(udatpg_open(locale.data(), &status));
+     if (U_FAILURE(status))
+         return nullptr;
++    for (auto style : { UDAT_MEDIUM, UDAT_SHORT }) {
++        auto pattern = dateTimeJoiningPatternBeforeCLDR48(locale.data(), style);
++        if (pattern.isEmpty())
++            continue;
++        UErrorCode setStatus = U_ZERO_ERROR;
++        udatpg_setDateTimeFormatForStyle(generator.get(), style, pattern.span().data(), pattern.size(), &setStatus);
++    }
+     m_cachedDateTimePatternGeneratorLocale = locale;
+     m_cachedDateTimePatternGenerator = WTF::move(generator);
+     return m_cachedDateTimePatternGenerator.get();
+diff --git a/Source/JavaScriptCore/runtime/IntlCache.h b/Source/JavaScriptCore/runtime/IntlCache.h
+index e17541e879..4a5785f85b 100644
+--- a/Source/JavaScriptCore/runtime/IntlCache.h
++++ b/Source/JavaScriptCore/runtime/IntlCache.h
+@@ -43,6 +43,11 @@
+ 
+ namespace JSC {
+ 
++// Pyro: the pattern that joins a date of `style` and a time for the BCP 47 `locale`,
++// where ICU's differs from what ICU 77 and earlier (and so Chromium) used; empty where
++// they agree. See IntlCache.cpp.
++Vector<char16_t, 32> dateTimeJoiningPatternBeforeCLDR48(const char* locale, UDateFormatStyle);
++
+ struct IntlDateTimeFormatImplKey {
+     std::optional<String> locales;
+     IntlDateTimeFormat::RequiredComponent required { IntlDateTimeFormat::RequiredComponent::Any };
+diff --git a/Source/JavaScriptCore/runtime/IntlDateTimeFormat.cpp b/Source/JavaScriptCore/runtime/IntlDateTimeFormat.cpp
+index a796475863..8a40112ace 100644
+--- a/Source/JavaScriptCore/runtime/IntlDateTimeFormat.cpp
++++ b/Source/JavaScriptCore/runtime/IntlDateTimeFormat.cpp
+@@ -988,6 +988,36 @@ void IntlDateTimeFormat::initializeDateTimeFormat(JSGlobalObject* globalObject,
+             return;
+         }
+ 
++        // Pyro: a date and a time joined as ICU 77 did (see IntlCache.cpp): the date alone, the
++        // time alone, and the joining pattern ({1} the date, {0} the time).
++        if (impl->m_dateStyle != DateTimeStyle::None && impl->m_timeStyle != DateTimeStyle::None) {
++            auto joining = dateTimeJoiningPatternBeforeCLDR48(dataLocaleWithExtensions.data(), parseUDateFormatStyle(impl->m_dateStyle));
++            auto patternOf = [&](UDateFormatStyle timeStyle, UDateFormatStyle dateStyle) -> std::optional<Vector<char16_t, 32>> {
++                UErrorCode partStatus = U_ZERO_ERROR;
++                auto format = std::unique_ptr<UDateFormat, UDateFormatDeleter>(udat_open(timeStyle, dateStyle, dataLocaleWithExtensions.data(), timeZoneView.upconvertedCharacters(), timeZoneView.length(), nullptr, -1, &partStatus));
++                if (U_FAILURE(partStatus))
++                    return std::nullopt;
++                Vector<char16_t, 32> part;
++                partStatus = callBufferProducingFunction(udat_toPattern, format.get(), localized, part);
++                if (U_FAILURE(partStatus))
++                    return std::nullopt;
++                return part;
++            };
++            auto datePart = joining.isEmpty() ? std::nullopt : patternOf(UDAT_NONE, parseUDateFormatStyle(impl->m_dateStyle));
++            auto timePart = joining.isEmpty() ? std::nullopt : patternOf(parseUDateFormatStyle(impl->m_timeStyle), UDAT_NONE);
++            if (datePart && timePart) {
++                Vector<char16_t, 32> joined;
++                for (size_t i = 0; i < joining.size(); ++i) {
++                    if (i + 2 < joining.size() && joining[i] == '{' && (joining[i + 1] == '0' || joining[i + 1] == '1') && joining[i + 2] == '}') {
++                        joined.appendVector(joining[i + 1] == '1' ? *datePart : *timePart);
++                        i += 2;
++                    } else
++                        joined.append(joining[i]);
++                }
++                patternBuffer = WTF::move(joined);
++            }
++        }
++
+         // It is possible that timeStyle includes dayPeriod, which is sensitive to hour-cycle.
+         // If dayPeriod is included, just replacing hour based on hourCycle / hour12 produces strange results.
+         // Let's consider about the example. The formatted result looks like "02:12:47 PM Coordinated Universal Time"
