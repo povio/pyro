@@ -1,0 +1,14 @@
+{
+  "name": "lightningpanda-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev docs",
+    "build": "vitepress build docs",
+    "preview": "vitepress preview docs",
+    "deploy": "bunx robodev@0.84.0 deploy --force"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}
