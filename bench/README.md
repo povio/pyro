@@ -281,7 +281,9 @@ same data, at the videos' size (2056x1200 CSS px at deviceScaleFactor 3), and co
 resolution and 3x downscaled (what a capture shows at 100%), mean absolute difference, diff and side-by-side images,
 and the share of each screen's difference by where it falls (placeholders, ellipsis, icons, text, the rest). It needs
 a ToS checkout built for the port; it starts and stops ToS's FE E2E stack itself. Captures hold seed data: they go
-to `~/Library/Caches/lightningpanda/fidelity/<timestamp>`, not to git.
+to `~/Library/Caches/lightningpanda/fidelity/<timestamp>`, not to git. Every capture of a screen starts its page's
+`Date` at the same instant, ten minutes ahead of the real time, so the app's relative times ("Last saved: Now" for a
+minute, then "Today, 15:46") read the same in each browser however long it took to get there.
 
 ```bash
 # once, in the ToS checkout: bun install --frozen-lockfile && FE_E2E_PORT=47300 bun scripts/fe-e2e/build.mts
