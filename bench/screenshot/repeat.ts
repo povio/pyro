@@ -126,7 +126,7 @@ for (const name of sites.keys()) {
       const t = performance.now();
       const r = await page.send('Page.captureScreenshot', { format: 'png' });
       client.push(performance.now() - t);
-      for (const [k, v] of Object.entries(r.lp.ms as Record<string, unknown>)) {
+      for (const [k, v] of Object.entries(r.pyro.ms as Record<string, unknown>)) {
         if (typeof v === 'number') (browser[k] ??= []).push(v);
       }
     }

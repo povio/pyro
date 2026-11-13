@@ -6804,7 +6804,7 @@ mod screenshot {
         load_html(&mut h, "<!doctype html><body style=margin:0><div style=height:3000px></div>");
         let pages = |h: &mut Harness, params: Value| {
             let r = h.page("Page.printToPDF", params);
-            r["result"]["lp"]["pages"].as_array().map(Vec::len).unwrap_or_else(|| panic!("{r}"))
+            r["result"]["pyro"]["pages"].as_array().map(Vec::len).unwrap_or_else(|| panic!("{r}"))
         };
         // Letter, no margins: 3000 / 1056 px.
         let none = json!({"marginTop": 0, "marginBottom": 0, "marginLeft": 0, "marginRight": 0});
@@ -6847,7 +6847,7 @@ mod screenshot {
             let pdf =
                 pyro_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
                     .unwrap();
-            (String::from_utf8_lossy(&pdf).into_owned(), r["result"]["lp"]["stats"].clone())
+            (String::from_utf8_lossy(&pdf).into_owned(), r["result"]["pyro"]["stats"].clone())
         };
         let (pdf, stats) = print(&mut h, json!({}));
         assert_eq!(stats["links"], 1, "{stats}");
@@ -7534,7 +7534,7 @@ mod screenshot {
     }
 
     fn mirror_of(r: &Value) -> Value {
-        r["result"]["lp"]["ms"]["mirror"].clone()
+        r["result"]["pyro"]["ms"]["mirror"].clone()
     }
 
     #[test]
@@ -7791,25 +7791,25 @@ mod screenshot {
         );
         let capture = |h: &mut Harness, params: Value| {
             let r = h.page("Page.captureScreenshot", params);
-            let lp = r["result"]["lp"].clone();
+            let report = r["result"]["pyro"].clone();
             let data =
                 pyro_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
                     .unwrap();
-            (lp, data)
+            (report, data)
         };
-        let (lp, rgba) = capture(&mut h, json!({"format": "rgba"}));
+        let (report, rgba) = capture(&mut h, json!({"format": "rgba"}));
         assert_eq!(
-            (lp["width"].as_u64(), lp["height"].as_u64(), lp["bytes"].as_u64()),
+            (report["width"].as_u64(), report["height"].as_u64(), report["bytes"].as_u64()),
             (Some(80), Some(40), Some(12800))
         );
         assert_eq!(rgba.len(), 80 * 40 * 4);
         let at = |x: usize, y: usize| &rgba[(y * 80 + x) * 4..(y * 80 + x) * 4 + 4];
         assert_eq!((at(10, 10), at(70, 10)), (&[255, 0, 0, 255][..], &[255, 255, 255, 255][..]));
-        assert!(lp["ms"]["cpu"].as_f64().unwrap() > 0.0, "{lp}");
-        let (lp, rgb) = capture(&mut h, json!({"format": "rgb24"}));
-        assert_eq!((lp["bytes"].as_u64(), rgb.len(), &rgb[..3]), (Some(9600), 9600, &[255, 0, 0][..]));
-        let (lp, yuv) = capture(&mut h, json!({"format": "yuv420p"}));
-        assert_eq!((lp["bytes"].as_u64(), yuv.len()), (Some(4800), 4800));
+        assert!(report["ms"]["cpu"].as_f64().unwrap() > 0.0, "{report}");
+        let (report, rgb) = capture(&mut h, json!({"format": "rgb24"}));
+        assert_eq!((report["bytes"].as_u64(), rgb.len(), &rgb[..3]), (Some(9600), 9600, &[255, 0, 0][..]));
+        let (report, yuv) = capture(&mut h, json!({"format": "yuv420p"}));
+        assert_eq!((report["bytes"].as_u64(), yuv.len()), (Some(4800), 4800));
         assert_eq!((yuv[10 * 80 + 10], yuv[10 * 80 + 70]), (82, 235), "red and white luma");
 
         let dir = std::env::temp_dir().join(format!("pyro-raw-{}", std::process::id()));
@@ -7817,10 +7817,10 @@ mod screenshot {
         let file = dir.join("frames.rgb");
         let path = file.to_str().unwrap();
         for _ in 0..2 {
-            let (lp, data) = capture(&mut h, json!({"format": "rgb24", "path": path}));
+            let (report, data) = capture(&mut h, json!({"format": "rgb24", "path": path}));
             assert!(data.is_empty(), "written, not returned");
-            assert_eq!(lp["bytes"].as_u64(), Some(9600));
-            assert!(lp["ms"]["write"].as_f64().is_some(), "{lp}");
+            assert_eq!(report["bytes"].as_u64(), Some(9600));
+            assert!(report["ms"]["write"].as_f64().is_some(), "{report}");
         }
         let written = std::fs::read(&file).unwrap();
         assert_eq!(written.len(), 2 * 9600, "appended");

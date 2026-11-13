@@ -740,7 +740,7 @@ export class Page {
       ...(opts.path ? { path: opts.path } : {}),
       ...(opts.clip ? { clip: { scale: 1, ...opts.clip } } : {}),
     });
-    return { width: r.lp.width, height: r.lp.height, bytes: r.lp.bytes, data: Buffer.from(r.data, 'base64'), ms: r.lp.ms };
+    return { width: r.pyro.width, height: r.pyro.height, bytes: r.pyro.bytes, data: Buffer.from(r.data, 'base64'), ms: r.pyro.ms };
   }
 
   /**
