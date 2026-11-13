@@ -36,6 +36,15 @@
 // the Europe/Ljubljana time zone. The app's text is `system-ui`
 // (SF Pro on macOS) and it loads no web fonts.
 //
+// Relative times: the app writes "Last saved: Now" for a minute after a save
+// and "Today, 15:46" from then on, so a screen's text depended on how long
+// after the fixtures each browser reached it (the dialog read "Now" in
+// Chromium and "Today, 15:46" in pyro, captured seconds later). Each
+// capture's page clock (`Date`, nothing else) therefore starts at one instant
+// per screen, ten minutes after that screen's first capture begins: every
+// timestamp the server made is at least ten minutes old in every browser, and
+// what the page itself saves during the capture is "Now" in every browser.
+//
 // Output (default ~/Library/Caches/lightningpanda/fidelity/<timestamp>; the
 // captures show seed data, keep them out of git): per screen
 // `<screen>/chromium.png`, `pyro.png`, `side.png` (Chromium left), `diff.png`
@@ -249,6 +258,36 @@ function signInScript(office: Office) {
   return `(() => { if (sessionStorage.getItem('__fidelitySignedIn')) return; for (const [k, v] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(k, v); sessionStorage.setItem('__fidelitySignedIn', '1'); })();`;
 }
 
+/** How far ahead of the real time a screen's page clock starts: past the app's one-minute "Now". */
+const PAGE_CLOCK_AHEAD_MS = 10 * 60_000;
+
+/**
+ * The instant every capture of one screen starts its page clock at. It stays
+ * clear of local midnight, where the app's "Today" would turn into a date
+ * between two captures.
+ */
+function pageClockStart(): number {
+  let at = Date.now() + PAGE_CLOCK_AHEAD_MS;
+  const day = (ms: number) => new Date(ms).toDateString();
+  if (day(at) !== day(at + 5 * 60_000)) at += 5 * 60_000;
+  return at;
+}
+
+/**
+ * `Date` in the page runs `offset` ms ahead: `Date.now()`, `new Date()` and
+ * `Date()`. Timers, `performance.now()` and the server keep the real time, so
+ * nothing waits longer or shorter than it would.
+ */
+function pageClockScript(offset: number) {
+  return `(() => { const offset = ${offset}; const Real = Date; const now = () => Real.now() + offset;
+    globalThis.Date = new Proxy(Real, {
+      construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [now()], newTarget),
+      apply: (target) => new target(now()).toString(),
+      get: (target, key) => (key === 'now' ? now : Reflect.get(target, key, target)),
+    });
+  })();`;
+}
+
 /** Network idle, fonts, two frames and a pause: what is left of animations and late layout. */
 async function settle(page: AnyPage, ms: number) {
   await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
@@ -276,7 +315,7 @@ async function launch(tos: string, bins: Bin[], channel: string): Promise<Browse
   return { chromium: { browser: chromium, version: chromium.version(), userAgent }, pyro };
 }
 
-async function capture(browser: 'chromium' | number, browsers: Browsers, screen: Screen, office: Office, app: string, file: string, settleMs: number) {
+async function capture(browser: 'chromium' | number, browsers: Browsers, screen: Screen, office: Office, app: string, file: string, settleMs: number, clockStart: number) {
   const kind = browser === 'chromium' ? 'chromium' : 'pyro';
   const userAgent = browsers.chromium.userAgent;
   const context =
@@ -285,6 +324,7 @@ async function capture(browser: 'chromium' | number, browsers: Browsers, screen:
       : await browsers.pyro[browser].browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: DSF, userAgent });
   try {
     await context.addInitScript(signInScript(office));
+    await context.addInitScript(pageClockScript(clockStart - Date.now()));
     const page = await context.newPage();
     await page.goto(`${app}${screen.path(office)}`, { waitUntil: 'load' });
     await screen.ready(page, office);
@@ -304,7 +344,7 @@ async function capture(browser: 'chromium' | number, browsers: Browsers, screen:
     await page.mouse.move(VIEWPORT.width - 2, VIEWPORT.height - 2);
     await page.addStyleTag({ content: '*, *::before, *::after { caret-color: transparent !important; }' });
     await settle(page, settleMs);
-    const metrics = await page.evaluate(() => ({ innerWidth, innerHeight, devicePixelRatio, userAgent: navigator.userAgent }));
+    const metrics = await page.evaluate(() => ({ innerWidth, innerHeight, devicePixelRatio, userAgent: navigator.userAgent, pageTime: new Date().toISOString() }));
     const regions = kind === 'chromium' ? await page.evaluate(REGIONS) : undefined;
     const png: Buffer = await page.screenshot({ type: 'png', ...(kind === 'chromium' ? { caret: 'initial', animations: 'allow' } : {}) });
     writeFileSync(file, png);
@@ -497,11 +537,12 @@ async function main() {
     for (const screen of screens) {
       mkdirSync(join(out, screen.name), { recursive: true });
       const office = offices[screen.office];
-      // Back to back per screen, so relative times on the screen ("Last saved: Now") read the same.
-      const c = await capture('chromium', browsers, screen, office, stack.app, join(out, screen.name, 'chromium.png'), settleMs);
+      // One page clock start per screen, so relative times on the screen ("Last saved: Today, 15:46") read the same.
+      const clockStart = pageClockStart();
+      const c = await capture('chromium', browsers, screen, office, stack.app, join(out, screen.name, 'chromium.png'), settleMs, clockStart);
       const ps = [];
       for (const [i, { bin }] of browsers.pyro.entries())
-        ps.push(await capture(i, browsers, screen, office, stack.app, join(out, screen.name, `${bin.name}.png`), settleMs));
+        ps.push(await capture(i, browsers, screen, office, stack.app, join(out, screen.name, `${bin.name}.png`), settleMs, clockStart));
       const p = ps[0];
       captured.push({ name: screen.name, chromium: c, pyro: p, ...(ps.length > 1 ? { pyros: ps } : {}) });
       console.log(`captured ${screen.name}: chromium ${c.innerWidth}x${c.innerHeight}@${c.devicePixelRatio}${ps.map((p, i) => `, ${browsers!.pyro[i].bin.name} ${p.innerWidth}x${p.innerHeight}@${p.devicePixelRatio}`).join('')}${c.scrollTop !== undefined ? `, scrollTop ${c.scrollTop} / ${ps.map((p) => p.scrollTop).join(' / ')}` : ''}`);
