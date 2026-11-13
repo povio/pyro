@@ -1,8 +1,9 @@
 name: PGO build
 
-# The macOS arm64 release browser is built with profile-guided optimization
-# (.github/actions/pgo-build, used by publish-npm.yml's `fork` job). This
-# workflow runs the same build when its inputs change, so a broken PGO build
+# The release browsers are built with profile-guided optimization: macOS arm64
+# by .github/actions/pgo-build (publish-npm.yml's `fork` job), Linux x64 and
+# arm64 by linux-build.yml with `pgo`. This workflow runs the same builds when
+# their inputs change, so a broken PGO build
 # shows on the pull request and not at release time. Runs on `main` also save
 # the instrumented JavaScriptCore to the cache release tags restore.
 
@@ -10,6 +11,7 @@ on:
   push:
     branches: [main]
     paths:
+      - .github/workflows/linux-build.yml
       - .github/actions/pgo-build/**
       - .github/workflows/pgo.yml
       - crates/pyro-cdp/src/pgo_training.rs
@@ -19,6 +21,7 @@ on:
       - scripts/pgo/**
   pull_request:
     paths:
+      - .github/workflows/linux-build.yml
       - .github/actions/pgo-build/**
       - .github/workflows/pgo.yml
       - crates/pyro-cdp/src/pgo_training.rs
@@ -61,3 +64,13 @@ jobs:
           path: target/pgo/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+  jsc:
+    uses: ./.github/workflows/jsc.yml
+
+  linux:
+    needs: jsc
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      jsc-dir: ${{ needs.jsc.outputs.dir }}
+      pgo: true
