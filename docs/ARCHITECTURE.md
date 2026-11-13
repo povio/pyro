@@ -362,9 +362,11 @@ Navigating or closing a page no longer always collects: `Engine::release_closed`
 physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. That collection runs inside the
 command that closed the page, with the closing code on the stack (scanned conservatively) and perhaps a compilation
 still running, so it can miss the closed page's heap; it therefore also arms the idle collection. `serve` collects what
-is left after 1 s without a command, with `Engine::settle_idle`: every compiled and unlinked code is dropped first
-(the bytecode cache included, so the next page re-parses its scripts; a running suite's gaps are shorter than 1 s and
-keep theirs), then the heap is collected and the allocator's free pages are returned. Measured after closing a React
+is left after 1 s without a command (`Engine::settle`: the heap is collected and the allocator's free pages are
+returned) and after 5 s with `Engine::settle_idle`: every compiled and unlinked code is dropped first (the bytecode
+cache included, so the next page re-parses its scripts; a running suite's gaps are shorter and keep theirs). A driver
+command parked on its page (`Pyro.run` between steps) is the client waiting, not a quiet client: the time counts from its
+reply, so a long run is not collected, nor its code dropped, in the middle of a test. Measured after closing a React
 app: 97 MB footprint before, 39 MB after (upstream Lightpanda: 34 MB). `PYRO_RELEASE_GROWTH=<MB>[:<percent>]`
 overrides the thresholds (`0` collects every time) and `PYRO_RELEASE_ON_CLOSE=0` turns it off, for benchmarks.
 

@@ -450,6 +450,88 @@ fn drop_fails_in_flight_requests() {
     assert_eq!(failures, 1);
 }
 
+/// Polls until the client's I/O loop has stopped (its observers are closed).
+fn wait_until_stopped(events: &NetSubscription) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match events.try_recv() {
+            Err(SubscriptionError::Closed) => return,
+            Err(SubscriptionError::Empty) => {
+                assert!(std::time::Instant::now() < deadline, "the I/O loop is still running");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn last_handle_dropped_by_a_sink_stops_the_client_from_its_own_thread() {
+    // A sink that owns a handle, as any `Send` owner may: once every other
+    // handle is gone, the client is dropped where pyro-net drops the sink.
+    struct Holder {
+        client: Option<NetClient>,
+        dropped_on: mpsc::Sender<std::thread::ThreadId>,
+    }
+    impl Drop for Holder {
+        fn drop(&mut self) {
+            // A panic in the client's drop unwinds past the send.
+            self.client.take();
+            let _ = self.dropped_on.send(std::thread::current().id());
+        }
+    }
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let events = c.subscribe();
+    let (dropped_on, dropped) = mpsc::channel();
+    let holder = Holder { client: Some(c.clone()), dropped_on };
+    c.fetch(
+        Request::get(url(&s, "/gated"), Destination::Fetch),
+        Box::new(move |_| {
+            let _ = &holder;
+        }),
+    );
+    drop(c);
+    s.open_gate();
+    let thread = dropped.recv_timeout(Duration::from_secs(5)).expect("the I/O thread dropped the client");
+    assert_ne!(thread, std::thread::current().id(), "the sink's handle was the last one");
+    wait_until_stopped(&events);
+}
+
+#[test]
+fn canceller_cancels_and_does_not_keep_the_client_alive() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let events = c.subscribe();
+    let canceller = c.canceller();
+    let (tx, rx) = mpsc::channel();
+    let id = c.fetch(Request::get(url(&s, "/gated"), Destination::Fetch), Box::new(move |ev| tx.send(ev).unwrap()));
+    canceller.cancel(id);
+    match rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+        ResponseEvent::Failed(NetError::Aborted) => {}
+        other => panic!("unexpected {other:?}"),
+    }
+    // A sink that owns a canceller: dropping the client still ends its
+    // requests at once, and the canceller then does nothing.
+    let (tx, rx) = mpsc::channel();
+    let owned = canceller.clone();
+    c.fetch(
+        Request::get(url(&s, "/gated"), Destination::Fetch),
+        Box::new(move |ev| {
+            let _ = &owned;
+            tx.send(ev).unwrap()
+        }),
+    );
+    drop(c);
+    match rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+        ResponseEvent::Failed(NetError::Aborted) => {}
+        other => panic!("unexpected {other:?}"),
+    }
+    wait_until_stopped(&events);
+    canceller.cancel(id);
+    s.open_gate();
+}
+
 #[test]
 fn regression_opaque_origin_requires_cors() {
     let s = start_server();
@@ -701,6 +783,9 @@ fn event_stream_activity_is_separate_and_cancellation_clears_both_counts() {
     let active = client.activity("sse").unwrap();
     assert_eq!((active.inflight, active.event_streams), (1, 1));
     assert!(active.idle_since.is_none());
+    // In flight, but not one of the finite requests a reading counts.
+    assert!(client.in_flight(id));
+    assert_eq!(client.inflight_after("sse", 0), 0);
     client.cancel(id);
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while client.activity("sse").unwrap().inflight != 0 {
@@ -710,6 +795,62 @@ fn event_stream_activity_is_separate_and_cancellation_clears_both_counts() {
     assert_eq!(client.activity("sse").unwrap().event_streams, 0);
     let _ = stop.send(());
     server.join().unwrap();
+}
+
+/// A mark splits a loader's requests in flight into those started before it
+/// and those started after, whichever end first, and `in_flight` follows one
+/// request until its terminal event was handed over.
+#[test]
+fn requests_in_flight_are_told_apart_by_when_they_started() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let start = |path: &str, loader: Option<&str>| {
+        let mut req = Request::get(url(&s, path), Destination::Fetch);
+        req.loader_id = loader.map(str::to_owned);
+        let (tx, rx) = mpsc::channel();
+        let id = c.fetch(
+            req,
+            Box::new(move |ev| {
+                let _ = tx.send(ev);
+            }),
+        );
+        (id, rx)
+    };
+    let ended = |id: RequestId| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while c.in_flight(id) {
+            assert!(std::time::Instant::now() < deadline, "{id:?} is still in flight");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    assert_eq!(c.request_mark(), 0);
+    let (earlier, _earlier_events) = start("/slow", Some("L"));
+    let mark = c.request_mark();
+    assert_eq!((c.inflight_after("L", 0), c.inflight_after("L", mark)), (1, 0));
+    let (later, later_events) = start("/gated", Some("L"));
+    let (other, _other_events) = start("/slow", Some("M"));
+    assert_eq!((c.inflight_after("L", 0), c.inflight_after("L", mark)), (2, 1));
+    assert_eq!(c.inflight_after("M", mark), 1, "a loader's requests are its own");
+    assert!(c.in_flight(earlier) && c.in_flight(later) && c.in_flight(other));
+    // The earlier request ends: as many in flight as at the mark, yet the
+    // one started after it still counts.
+    c.cancel(earlier);
+    ended(earlier);
+    assert_eq!((c.inflight_after("L", 0), c.inflight_after("L", mark)), (1, 1));
+    // Not in flight any more once its last event was delivered.
+    s.open_gate();
+    while !matches!(later_events.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Finished { .. }) {}
+    ended(later);
+    assert_eq!(c.inflight_after("L", mark), 0);
+    // Requests without a loader are not tracked, and a forgotten loader's
+    // are in flight for no one.
+    let (plain, _plain_events) = start("/slow", None);
+    assert!(!c.in_flight(plain));
+    c.forget_activity("M");
+    assert!(!c.in_flight(other));
+    assert_eq!(c.inflight_after("M", 0), 0);
+    c.cancel(other);
+    c.cancel(plain);
 }
 
 /// HTTPS server with a self-signed certificate for `127.0.0.1` (checked in

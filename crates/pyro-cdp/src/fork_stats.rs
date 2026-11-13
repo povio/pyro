@@ -58,6 +58,16 @@ fn tv_us(tv: libc::timeval) -> u64 {
     tv.tv_sec as u64 * 1_000_000 + tv.tv_usec as u64
 }
 
+/// CPU time the calling thread has used (the `PYRO_RUN_STEP_TRACE` wait
+/// records: a wait whose CPU time is far below its wall time was idle or
+/// had no CPU to run on).
+pub(crate) fn thread_cpu() -> std::time::Duration {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: valid timespec out-pointer.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
+
 #[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Default)]

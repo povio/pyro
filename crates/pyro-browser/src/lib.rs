@@ -36,7 +36,7 @@ pub use loader::{
 };
 pub use nav::{History, HistoryEntry, Location, PageNav, Performance};
 pub use network_idle::NetworkIdle;
-pub use quiet::{PageWork, TIMER_HORIZON};
+pub use quiet::{PageWork, WorkStamp, TIMER_HORIZON};
 pub use window::{note_client_activity, request_native_frame, Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

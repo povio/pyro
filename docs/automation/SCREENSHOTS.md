@@ -3,7 +3,7 @@
 Built with the `render` feature (`cargo build --release --features render`, off by default). pyro has no
 paint engine of its own; screenshots are rendered by **pyro-render**, which wraps
 [Blitz](https://github.com/DioxusLabs/blitz) 0.3.0-beta.4: html5ever, Stylo (Firefox's style engine), Taffy
-(flex/grid/block layout), Parley (text), painted with Vello's CPU rasterizer (`vello_cpu`, 8 threads). The prototype
+(flex/grid/block layout), Parley (text), painted with Vello's CPU rasterizer (`vello_cpu`). The prototype
 and the measurements that led here are on the `proto/blitz-screenshot` branch (`bench/screenshot-blitz/RESULTS.md`).
 
 ## Pipeline
@@ -33,9 +33,16 @@ and the measurements that led here are on the `proto/blitz-screenshot` branch (`
    where connections are served by forks of the template process.
 3. **Display list** (`anyrender` recording) and its xxh3 **scene hash**. Glyph fonts are hashed by content, so the
    hash is stable across processes.
-4. **Raster** (vello_cpu) and readback to RGBA. The CPU backend is bit-exact across runs. The GPU backend (vello on
-   wgpu/Metal, pyro-render feature `gpu`) is not: in the prototype, 1-2 pixels flipped on some frames.
-5. The result is queued to the browser thread, which wakes its loop and replies or settles the waiting step. The
+4. **Raster** (vello_cpu) and readback to RGBA. Frames of 4 M device px or more (3840x2160 is 8.3 M) are
+   rasterized on vello_cpu's own threads, one less than the cores and at most 8 (`PYRO_RASTER_THREADS=n` sets the
+   count, 0 keeps every frame on the render thread): 0.35-0.45 of the time for 20-60 % more CPU time (M1 Max). Smaller
+   frames stay on the render thread, where threads would cost twice the CPU for little time saved. The pixels are the
+   same either way. Many pages rendering at once (`serve --fork`, a page per process) get more frames out of the CPU
+   with `PYRO_RASTER_THREADS=0`: a feature-video frame took 29 ms of CPU time on the render thread, 35 on threads. The CPU backend is bit-exact across runs. The GPU backend (vello on wgpu/Metal, pyro-render
+   feature `gpu`) is not: in the prototype, 1-2 pixels flipped on some frames.
+5. **Encode**: PNG, JPEG (libjpeg-turbo, 4:2:0 chroma at every quality as Chromium's; an image of 4 M px or more in
+   bands on up to 4 threads, spliced with restart markers), or nothing for pyro's raw formats.
+6. The result is queued to the browser thread, which wakes its loop and replies or settles the waiting step. The
    event loop never blocks on a render.
 
 ## Repeat screenshots
@@ -66,7 +73,25 @@ differ from a fresh one. `bun bench/screenshot/repeat.ts` measures repeat screen
 
 `format` `png` (default) or `jpeg` (`quality`). `clip` is `{x, y, width, height, scale}` in document CSS px.
 `captureBeyondViewport: true` captures the whole document. `webp` is refused; `fromSurface` and `optimizeForSpeed`
-are ignored. The reply also carries `pyro: {width, height, sceneHash, ms}`.
+are ignored. The reply also carries `pyro: {width, height, bytes, sceneHash, ms}`; `ms` has the stages (`snapshot`,
+`fetch`, `layout`, `scene`, `raster`, `encode`, `write`, `total`, wall ms) and `cpu`, the browser process's CPU time
+while it rendered (all its threads: with `serve --fork`, one page per process, that is the frame's).
+
+JPEG is 4:2:0, as Chromium's at every quality (Chrome 147, q50-q100). 3840x2160, q95, M1 Max, CPU time per
+screenshot: 144 / 72 / 79 ms before (jpeg-encoder, scalar 4:4:4) and 57 / 22.5 / 27.5 ms now on a photo / gradient /
+text page; the JPEGs are 0.64 / 0.63 / 0.94 of the size.
+
+**Raw frames** (pyro's formats, for ffmpeg's `-f rawvideo -pix_fmt <format> -s <width>x<height>`): `rgba` is the
+render as it is (nothing converted), `rgb24` drops alpha, `yuv420p` is I420 (BT.601 limited range, chroma the mean
+of each 2x2 block). `path` (absolute) appends the image to that file, or to a FIFO ffmpeg reads, instead of
+returning it base64 in `data` (empty then); a FIFO without a reader fails at once, and a reader that takes nothing
+for 30 s fails the capture. The browser opens and closes the path for each frame, so whoever streams through a
+FIFO holds it open for writing in between (`FrameFifo` in `@povio/pyro`, with `page.captureFrame()`; wright:
+`page.screenshot({ raw: { format, path } })`). Stepping a page frame by frame (set styles, capture) this way skips
+image encoding and the WebSocket: a 3840x2160 frame of a page showing a 6168x3600 screenshot in a rounded stage
+(the feature videos' scene, `lp-breakdown.mjs`) took 42-45 ms as PNG and 102-113 ms as JPEG before; now 15-25 ms as
+PNG, 13-18 ms as JPEG, 6-8 ms as `rgba` and 11-15 ms as `yuv420p` (M1 Max under load, threaded raster; 31-34 ms of CPU
+time as `rgba`).
 
 ## `Pyro.run` step `matchScreenshot`
 

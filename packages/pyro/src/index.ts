@@ -22,7 +22,8 @@
 // starts the server and registers profiles, and workers in other processes
 // `connect()` to `lp.wsEndpoint` and `adopt()` them (or `page({ as })` them
 // directly) instead of booting their own.
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { open, rm, type FileHandle } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { resolveBinary } from './binary.js';
 import { Cdp, CdpError } from './cdp.js';
@@ -157,6 +158,56 @@ type Conn = {
   /** Opened for one page (fork mode): closed with it. */
   own?: boolean;
 };
+
+/** Raw pixel layouts of `page.captureFrame()`, by ffmpeg's `-pix_fmt` names. */
+export type RawFormat = 'rgba' | 'rgb24' | 'yuv420p';
+
+/** A frame `page.captureFrame()` captured. */
+export type Frame = {
+  /** Device px. */
+  width: number;
+  height: number;
+  /** The frame's size in bytes (also when it went to `path`). */
+  bytes: number;
+  /** The pixels; empty when they went to `path`. */
+  data: Buffer;
+  /**
+   * The browser's timings (ms): `snapshot`, `layout`, `scene`, `raster`,
+   * `encode` (the pixel conversion), `write` (to `path`), `total` (wall), and
+   * `cpu`: the browser process's CPU time for the frame, all threads.
+   */
+  ms: Record<string, number>;
+};
+
+/**
+ * A FIFO to stream `page.captureFrame({ path })` frames through into a
+ * reader such as ffmpeg (`-f rawvideo -pix_fmt rgba -s 3840x2160 -r 30 -i
+ * <path>`). The browser opens the path, appends a frame and closes it again
+ * for each capture; this holds the FIFO open for writing in between, so the
+ * reader sees one stream until `close()`. Start the reader first: `open()`
+ * waits for it. macOS and Linux.
+ */
+export class FrameFifo {
+  private handle?: FileHandle;
+
+  /** Makes the FIFO at `path` (absolute; it must not exist). */
+  constructor(readonly path: string) {
+    const r = spawnSync('mkfifo', ['-m', '600', path], { encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`mkfifo ${path}: ${r.error?.message ?? r.stderr.trim()}`);
+  }
+
+  /** Holds the FIFO open for writing; resolves once its reader opened it. */
+  async open(): Promise<void> {
+    this.handle ??= await open(this.path, 'w');
+  }
+
+  /** Ends the stream (the reader sees its end once the last frame is read) and removes the FIFO. */
+  async close(): Promise<void> {
+    await this.handle?.close();
+    this.handle = undefined;
+    await rm(this.path, { force: true });
+  }
+}
 
 export type ConnectOptions = {
   /**
@@ -669,6 +720,27 @@ export class Page {
     const step = matchScreenshot(name, opts);
     const r = await this.run([step]);
     return r.screenshots[step.name];
+  }
+
+  /**
+   * What the page shows now as raw pixels, nothing encoded (pyro's
+   * `Page.captureScreenshot` formats `rgba`, `rgb24` and `yuv420p`): frames for
+   * ffmpeg's `-f rawvideo -pix_fmt <format> -s <width>x<height>`. With `path`
+   * (absolute) the browser appends the frame to that file, or to a FIFO ffmpeg
+   * reads, and `data` is empty; a FIFO needs its reader first, and stays open
+   * only while someone holds it open for writing (`frameFifo()`). `clip` is
+   * in document CSS px; the frame is the viewport by default, at the device
+   * scale factor. A page's pending route or navigation runs first.
+   */
+  async captureFrame(opts: { format?: RawFormat; path?: string; clip?: { x: number; y: number; width: number; height: number; scale?: number } } = {}): Promise<Frame> {
+    // The page's route or navigation first, as a run would.
+    if (this.prefix.length) await this.run([]);
+    const r = await this.send('Page.captureScreenshot', {
+      format: opts.format ?? 'rgba',
+      ...(opts.path ? { path: opts.path } : {}),
+      ...(opts.clip ? { clip: { scale: 1, ...opts.clip } } : {}),
+    });
+    return { width: r.pyro.width, height: r.pyro.height, bytes: r.pyro.bytes, data: Buffer.from(r.data, 'base64'), ms: r.pyro.ms };
   }
 
   /**

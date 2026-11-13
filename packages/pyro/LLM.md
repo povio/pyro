@@ -33,9 +33,11 @@ only where its last milliseconds matter.
 - **Actions settle.** After `click`, `fill`, `press`, `check`, `uncheck` and
   `route`, the next step starts only when the page is quiet: the requests the
   action started have finished, no task is queued, no timeout is due within
-  50 ms, no animation frame is pending and no navigation is half done. Intervals,
-  later timeouts and animation loops do not count. Assert the outcome with the
-  next `check`; do not wait for the request.
+  50 ms, no animation frame, `scroll` event or ResizeObserver callback is
+  pending and no navigation is half done. Intervals, later timeouts, animation
+  loops and requests that were in flight before the action (a long poll) do
+  not count. Assert the outcome with the next `check`; do not wait for the
+  request.
 - **Requests are recorded, not awaited.** `check.request(method, path)` looks
   at the requests made during *this* run (it waits for one to appear and
   finish). Put it in the same `run` as the action that sends the request.
@@ -247,7 +249,14 @@ does.
 
 Every action and check takes `{ timeout }` (ms); `page.run(steps, { timeout })`
 sets the default for the run. Pass `{ settle: false }` to an action whose
-requests never finish (polling, streaming) or that you do not want to wait for.
+requests never finish (polling, streaming: a poll the page sends again while
+the action settles counts as started by it) or that you do not want to wait
+for. `focus()` and `blur()` never settle. A step that does not settle is
+followed by one turn of the page's event loop, in which the tasks it queued
+run and the `scroll` events it caused are delivered. `evaluate` gets that turn
+when its expression left the page something to run (a task, timer, request
+or DOM change); after one that only read, the next step starts directly, so
+wait for what a later step needs with a `check`, not with an `evaluate`.
 
 ### Requests and mocks in detail
 
@@ -268,8 +277,10 @@ requests never finish (polling, streaming) or that you do not want to wait for.
   `release('save')`, then answers it (or sends it on, without a response
   option); with `passthrough: true` (or `patch`) the request reaches the
   backend and its response is held instead. `release` waits until something
-  is held, so it can come before the action's request starts; holds outlive
-  the run. The native `advanceTime` step explicitly advances page Date and timers;
+  is held, so it can come before the action's request starts; the step after
+  it starts once the page has the released replies (a request sent on to the
+  backend is not waited for); holds outlive the run. The native `advanceTime`
+  step explicitly advances page Date and timers;
   mock `delay` remains a network delay.
 
 ## Porting from Playwright
@@ -356,5 +367,12 @@ await page.matchScreenshot('dashboard', { maxDiffPixels: 20 });  // one-step for
   pixels, iframe contents, element scroll offsets, `:hover`/`:focus` styles,
   the caret, running animations. Pixels come from pyro's renderer
   (Blitz), never compare them with Chromium screenshots.
+
+Frames for a video (a page stepped frame by frame: set styles, capture), raw
+and unencoded: `await page.captureFrame({ format: 'yuv420p', path })` appends
+one frame to `path` (a file, or a `FrameFifo` an ffmpeg with `-f rawvideo
+-pix_fmt yuv420p -s <w>x<h>` reads); `ms.cpu` in its result is the browser's
+CPU time for it. Against `pyro serve --fork` each page renders in its own
+process, in parallel.
 
 `downloadCount(as)` reads the current page's native initiated-download count without consuming positive download waits. Compare snapshots before and after a settled preview action to assert no new downloads; the count persists across batches on the same page.

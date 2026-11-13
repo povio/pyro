@@ -1464,12 +1464,15 @@ pub(crate) fn serve_browser(
     let mut sink = outbox;
     let mut inbox: VecDeque<Inbound> = VecDeque::new();
     let closed = |inbox: &VecDeque<Inbound>| matches!(inbox.back(), Some(Inbound::Closed));
-    // When the last command that was not a prepared-page status query ran.
+    // When the last command that was not a prepared-page status query
+    // arrived.
     let mut quiet_since = std::time::Instant::now();
     // Watches for this thread going quiet with pages open (no command and
     // next to no CPU for a second): the VM is then collected if the process
     // grew since it last was (`Engine::settle_if_grown`).
     let mut idle = pyro_runtime::IdleWatch::new();
+    // When a driver command was last seen parked on its page.
+    let mut parked_at: Option<std::time::Instant> = None;
     'serve: loop {
         // A prepared page was taken: boot its replacement once no page is
         // open (the test closed its page), else only after a quiet moment
@@ -1488,6 +1491,15 @@ pub(crate) fn serve_browser(
             browser.refill_prepared();
             continue;
         }
+        // A driver command parked on its page (an `Pyro.run` between steps) is
+        // the client waiting for the page, not a quiet client: no release is
+        // due while one is, and the quiet moment starts at its reply. Counted
+        // from the command's arrival, every run of over a second after a
+        // reload ran the full collection the reload left pending in the
+        // middle of the test, and one of over five dropped the page's
+        // compiled code.
+        let parked = browser.host().driver_parked();
+        let idle_since = parked_at.map_or(quiet_since, |at| at.max(quiet_since));
         let engine = &browser.host().thread.browser.engine;
         // A closed context's service worker has ended: what it kept alive
         // on this thread is collectable only now, so its end counts as a
@@ -1498,8 +1510,8 @@ pub(crate) fn serve_browser(
         if pyro_webapi::take_worker_ended() {
             engine.release_closed();
         }
-        let code_at = engine.code_release_pending().then(|| quiet_since + CODE_QUIET);
-        let release_at = engine.release_pending().then(|| quiet_since + RELEASE_QUIET).or(code_at);
+        let code_at = (!parked && engine.code_release_pending()).then(|| idle_since + CODE_QUIET);
+        let release_at = (!parked && engine.release_pending()).then(|| idle_since + RELEASE_QUIET).or(code_at);
         if release_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
             if code_at.is_some_and(|at| std::time::Instant::now() >= at) {
                 engine.settle_idle();
@@ -1509,8 +1521,9 @@ pub(crate) fn serve_browser(
             continue;
         }
         // After the collections a close left pending: they settle the same
-        // VM, and this one then finds no growth.
-        let idle_at = idle.deadline();
+        // VM, and this one then finds no growth. Not while a driver command
+        // is parked: the client is waiting for the page, not quiet.
+        let idle_at = if parked { None } else { idle.deadline() };
         if idle_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
             if idle.quiet(std::time::Instant::now()) && !engine.release_pending() {
                 engine.settle_if_grown();
@@ -1530,6 +1543,11 @@ pub(crate) fn serve_browser(
             !inbox.is_empty() || pyro_webapi::worker_ended()
         });
         browser.host_mut().flush();
+        if parked {
+            let now = std::time::Instant::now();
+            parked_at = Some(now);
+            idle.note_work(now);
+        }
         browser.adopt_popups(&mut sink);
         conn.borrow_mut().flush(&mut inbox);
         if closed(&inbox) || (matches!(outcome, RunOutcome::Idle | RunOutcome::Stopped) && inbox.is_empty()) {

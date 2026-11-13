@@ -21,7 +21,16 @@
 //! made while a frame renders or waits for its ack gets a frame of its own
 //! once that one is acked, so the page's last state always has a frame.
 //! Pages without a screencast pay nothing.
+//!
+//! Pyro's own format `yuv420p` (wright's `recordVideo`) skips image encoding:
+//! frames of exactly `maxWidth` x `maxHeight` go as raw video to a Unix socket
+//! the client listens on ([`RawSink`]), written on a thread of their own, and
+//! the client acks each with a byte on the socket. No `Page.screencastFrame`
+//! events.
 
+use std::io::Write;
+use std::os::unix::net::UnixStream;
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -34,6 +43,83 @@ use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
 use crate::network_protocol::base64_encode;
 use crate::target::{PageCommand, PageKey};
+
+/// Leads each frame on a [`RawSink`] socket: format and version (`yuv420p`,
+/// BT.601 limited range), then width and height (u32), then the timestamp
+/// (f64, seconds since the epoch, as `Page.screencastFrame`'s), little-endian.
+/// The frame follows; the reader acks it with one byte.
+const RAW_MAGIC: &[u8; 4] = b"PYF1";
+
+/// The raw socket's send buffer. macOS gives a Unix socket 8 KB: a 3840x2160
+/// frame (12 MB) then took 1,500 reads, and Bun read 280 MB/s; with 4 MB
+/// Bun reads it in 25 (3.6 GB/s).
+const RAW_SEND_BUFFER: libc::c_int = 4 << 20;
+
+/// A raw screencast's output: a Unix socket the client listens on, written
+/// on a thread of its own so that a slow reader holds neither the browser
+/// nor the render thread. A frame counts as acked (`done`) when the reader
+/// acks it, so frames come no faster than the client takes them. Dropped:
+/// the socket is shut down, which also ends a write or a wait for an ack
+/// (a frame cut short is the reader's to drop).
+pub(super) struct RawSink {
+    frames: Option<Sender<(f64, Vec<u8>)>>,
+    socket: UnixStream,
+}
+
+impl RawSink {
+    fn connect(
+        path: &str,
+        size: (u32, u32),
+        done: impl Fn(Result<(), String>) + Send + 'static,
+    ) -> std::io::Result<RawSink> {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        let socket = UnixStream::connect(path)?;
+        // SAFETY: a valid socket descriptor and an int option of the right size.
+        unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&RAW_SEND_BUFFER as *const libc::c_int).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        }
+        let mut out = socket.try_clone()?;
+        let (frames, rx) = channel::<(f64, Vec<u8>)>();
+        std::thread::Builder::new().name("pyro-screencast".into()).spawn(move || {
+            for (timestamp, frame) in rx {
+                let mut head = [0u8; 20];
+                head[..4].copy_from_slice(RAW_MAGIC);
+                head[4..8].copy_from_slice(&size.0.to_le_bytes());
+                head[8..12].copy_from_slice(&size.1.to_le_bytes());
+                head[12..].copy_from_slice(&timestamp.to_le_bytes());
+                let mut ack = [0u8; 1];
+                let written =
+                    out.write_all(&head).and_then(|()| out.write_all(&frame)).and_then(|()| out.read_exact(&mut ack));
+                let failed = written.is_err();
+                done(written.map_err(|e| e.to_string()));
+                if failed {
+                    break;
+                }
+            }
+        })?;
+        Ok(RawSink { frames: Some(frames), socket })
+    }
+
+    fn send(&self, timestamp: f64, frame: Vec<u8>) {
+        if let Some(frames) = &self.frames {
+            let _ = frames.send((timestamp, frame));
+        }
+    }
+}
+
+impl Drop for RawSink {
+    fn drop(&mut self) {
+        self.frames = None;
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+    }
+}
 
 /// Shortest time between the starts of two frames of a screencast.
 pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(40);
@@ -89,6 +175,8 @@ struct Rendering {
     /// The page when its snapshot was taken.
     look: Look,
     background: Option<[u8; 4]>,
+    /// When the snapshot was taken (seconds since the epoch).
+    timestamp: f64,
     metadata: Value,
 }
 
@@ -100,6 +188,8 @@ struct Screencast {
     /// names it.
     id: u32,
     format: ImageFormat,
+    /// Where `yuv420p` frames go (instead of events).
+    sink: Option<RawSink>,
     /// `maxWidth`, `maxHeight` (device px).
     max: (Option<u32>, Option<u32>),
     interval: Duration,
@@ -171,6 +261,11 @@ impl EngineHost {
     /// `jpeg` at `quality`, default 80), `maxWidth`/`maxHeight` (device px:
     /// frames are scaled down to fit), `everyNthFrame` (frames at most every
     /// n × 40 ms). Starting again restarts with the new parameters.
+    ///
+    /// Pyro's `format: "yuv420p"` with `socket` (a Unix socket path the
+    /// client listens on): frames of exactly `maxWidth` x `maxHeight`, the
+    /// page scaled down to fit at the top left and gray around it, go there
+    /// raw ([`RawSink`], [`RAW_MAGIC`]) instead of as events.
     pub(super) fn start_screencast(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
         #[derive(Deserialize, Default)]
         #[serde(rename_all = "camelCase")]
@@ -180,30 +275,62 @@ impl EngineHost {
             max_width: Option<i64>,
             max_height: Option<i64>,
             every_nth_frame: Option<i64>,
+            socket: Option<String>,
         }
         let p = cmd.command.params::<Option<P>>()?.unwrap_or_default();
+        let positive = |v: Option<i64>| v.filter(|v| *v > 0).map(|v| v.min(i64::from(u32::MAX)) as u32);
+        let max = (positive(p.max_width), positive(p.max_height));
         // As Chromium: a quality out of 0-100 is the default.
         let quality = p.quality.filter(|q| (0..=100).contains(q)).unwrap_or(80) as u8;
         let format = match p.format.as_deref() {
             None | Some("png") => ImageFormat::Png,
             Some("jpeg") => ImageFormat::Jpeg(quality),
+            Some("yuv420p") => match max {
+                (Some(width), Some(height)) if width <= pyro_render::MAX_WIDTH && height <= pyro_render::MAX_HEIGHT => {
+                    ImageFormat::Yuv420p { width, height }
+                }
+                _ => {
+                    return Err(CdpError::invalid_params(format!(
+                        "format 'yuv420p' needs maxWidth and maxHeight, the frame size (at most {}x{})",
+                        pyro_render::MAX_WIDTH,
+                        pyro_render::MAX_HEIGHT
+                    )))
+                }
+            },
             Some(other) => {
-                return Err(CdpError::invalid_params(format!("format '{other}' is not supported (jpeg, png)")))
+                return Err(CdpError::invalid_params(format!(
+                    "format '{other}' is not supported (jpeg, png, and pyro's yuv420p)"
+                )))
             }
         };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
-        let positive = |v: Option<i64>| v.filter(|v| *v > 0).map(|v| v.min(i64::from(u32::MAX)) as u32);
         let every = p.every_nth_frame.filter(|n| *n > 0).unwrap_or(1).min(1000) as u32;
+        self.screencasts.forget_session(cmd.session_id);
+        let id = self.screencasts.next_id.wrapping_add(1).max(1);
+        self.screencasts.next_id = id;
+        let sink = match (format, p.socket.as_deref()) {
+            (ImageFormat::Yuv420p { width, height }, Some(path)) => {
+                let deliver = self.renders.deliver(self.thread.handle());
+                let done = move |r| deliver(super::screenshot::Finished::Written(id, r));
+                let sink = RawSink::connect(path, (width, height), done).map_err(|e| {
+                    CdpError::server(format!("Page.startScreencast: cannot write frames to socket {path}: {e}"))
+                })?;
+                Some(sink)
+            }
+            (ImageFormat::Yuv420p { .. }, None) => {
+                return Err(CdpError::invalid_params("format 'yuv420p' needs socket, a Unix socket to write frames to"))
+            }
+            _ => None,
+        };
         let casts = &mut self.screencasts;
-        casts.forget_session(cmd.session_id);
-        casts.next_id = casts.next_id.wrapping_add(1).max(1);
         casts.list.push(Screencast {
             session: cmd.session_id.to_owned(),
             page: cmd.page,
             pid,
-            id: casts.next_id,
+            id,
             format,
-            max: (positive(p.max_width), positive(p.max_height)),
+            sink,
+            max,
             interval: FRAME_INTERVAL * every,
             seen: None,
             hash: None,
@@ -270,7 +397,7 @@ impl EngineHost {
                         "scrollOffsetX": view.scroll_x, "scrollOffsetY": view.scroll_y,
                         "timestamp": timestamp,
                     });
-                    s.rendering = Some(Rendering { token, look, background, metadata });
+                    s.rendering = Some(Rendering { token, look, background, timestamp, metadata });
                 }
                 // Not retried until the page changes again.
                 Err(_) => s.seen = Some((look, background)),
@@ -291,9 +418,29 @@ impl EngineHost {
         let Ok(Some(frame)) = result else { return };
         s.hash = Some(frame.scene_hash);
         s.unacked = true;
+        if let Some(sink) = &s.sink {
+            // Acked by `screencast_written` once the client acked it on the socket.
+            sink.send(r.timestamp, frame.bytes);
+            return;
+        }
         let params = json!({ "data": base64_encode(&frame.bytes), "metadata": r.metadata, "sessionId": s.id });
         let session = s.session.clone();
         self.event("Page.screencastFrame", &params, &session);
+    }
+
+    /// A raw frame of screencast `id` was written to its socket and acked
+    /// by the client, or could not be: the reader is gone, and the
+    /// screencast ends.
+    pub(super) fn screencast_written(&mut self, id: u32, result: Result<(), String>) {
+        let list = &mut self.screencasts.list;
+        match result {
+            Ok(()) => {
+                if let Some(s) = list.iter_mut().find(|s| s.id == id) {
+                    s.unacked = false;
+                }
+            }
+            Err(_) => list.retain(|s| s.id != id),
+        }
     }
 }
 

@@ -10,6 +10,13 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/render/border.rs`: skip zero-width border edges (Tailwind's preflight
   `border: 0 solid`); their degenerate polygons cover nothing in a raster but
   print as hairlines in PDF output.
+- `src/render/box_shadow.rs`: an outset shadow without blur (a spread ring, such
+  as Tailwind's `ring` or a spotlight's `box-shadow: 0 0 0 6000px`) is filled as
+  a rounded rectangle path, antialiased, instead of with vello's blurred-rectangle
+  paint, which evaluated `powf` for every pixel it covered (and, at a standard
+  deviation of 0, drew aliased edges): a ring covering a 3840x2160 frame cost 60
+  of the frame's 88 ms of CPU time. The geometry (the border box grown by the
+  spread, its average radius) is upstream's.
 - `src/debug_overlay.rs`: use the real root-element predicate for fixed boxes;
   adapted from https://github.com/DioxusLabs/blitz/pull/1224.
 - `src/lib.rs`, `src/text.rs`, `src/render.rs`: `paint_scene_recording_text` paints like

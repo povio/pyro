@@ -18,7 +18,7 @@ for host in ports.ubuntu.com azure.archive.ubuntu.com archive.ubuntu.com securit
 done
 "${sudo[@]}" apt-get update
 "${sudo[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential cmake ninja-build ruby perl python3 libicu-dev patchelf pkg-config \
+    build-essential cmake ninja-build nasm ruby perl python3 libicu-dev patchelf pkg-config \
     git ca-certificates curl wget gnupg lsb-release software-properties-common \
     libfontconfig-dev libfreetype-dev
 curl -sSf https://apt.llvm.org/llvm.sh | "${sudo[@]}" bash -s -- "$llvm"

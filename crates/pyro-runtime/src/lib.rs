@@ -374,6 +374,8 @@ struct Inner<S> {
     timers: RefCell<HashMap<TimerId, Timer<S>>>,
     next_timer: Cell<u32>,
     seq: Cell<u64>,
+    /// Tasks posted from this thread and timers set, ever ([`Scheduler::scheduled`]).
+    scheduled: Cell<u64>,
     stop: Cell<bool>,
     /// Live timers with `keeps_alive` (kept in sync with `timers`).
     keepalive: Cell<usize>,
@@ -447,7 +449,16 @@ impl<S> Clone for Scheduler<S> {
 
 impl<S: 'static> Scheduler<S> {
     pub fn post(&self, source: TaskSource, task: impl FnOnce(&mut S) + 'static) {
+        self.inner.scheduled.set(self.inner.scheduled.get() + 1);
         self.inner.tasks.borrow_mut().push_back((Instant::now(), source, Box::new(task)));
+    }
+
+    /// How many tasks this thread has posted and timers (idle ones included)
+    /// it has set so far. Two equal readings mean the code that ran between
+    /// them scheduled nothing on this loop; tasks posted from other threads
+    /// (a response on its way) are not counted.
+    pub fn scheduled(&self) -> u64 {
+        self.inner.scheduled.get()
     }
 
     /// Schedules `task` after `delay` (repeating every `delay` if `repeat`).
@@ -462,6 +473,7 @@ impl<S: 'static> Scheduler<S> {
     ) -> TimerId {
         let id = TimerId(self.inner.next_timer.get());
         self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
+        self.inner.scheduled.set(self.inner.scheduled.get() + 1);
         self.inner.insert_timer(id, Timer { task: Rc::new(task), interval: repeat.then_some(delay), keeps_alive });
         let base = match self.inner.virtual_now.get() {
             Some(now) if repeat || !delay.is_zero() => now,
@@ -478,6 +490,7 @@ impl<S: 'static> Scheduler<S> {
     pub fn set_idle_timer(&self, keeps_alive: bool, task: impl Fn(&mut S) + 'static) -> TimerId {
         let id = TimerId(self.inner.next_timer.get());
         self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
+        self.inner.scheduled.set(self.inner.scheduled.get() + 1);
         self.inner.insert_timer(id, Timer { task: Rc::new(task), interval: None, keeps_alive });
         self.inner.idle.borrow_mut().push_back(id);
         id
@@ -700,6 +713,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
                     timers: RefCell::new(HashMap::new()),
                     next_timer: Cell::new(1),
                     seq: Cell::new(0),
+                    scheduled: Cell::new(0),
                     stop: Cell::new(false),
                     keepalive: Cell::new(0),
                     idle: RefCell::new(VecDeque::new()),
@@ -1153,6 +1167,32 @@ mod tests {
         assert!(start.elapsed() < Duration::from_millis(120), "late: {:?}", start.elapsed());
         assert!(cpu < Duration::from_millis(15), "spun for {cpu:?} of {:?}", start.elapsed());
         assert!(!lp.remote_open);
+    }
+
+    /// `scheduled` counts what this thread asked the loop to run (a task, a
+    /// timer, an idle timer). Running them, a repeating timer's next round
+    /// and a post from another thread do not move it.
+    #[test]
+    fn scheduled_counts_the_tasks_and_timers_this_thread_asked_for() {
+        let mut lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        let mut st = St::default();
+        let s = lp.scheduler();
+        assert_eq!(s.scheduled(), 0);
+        s.post(TaskSource::DomManipulation, |st| st.log.push("task".into()));
+        assert_eq!(s.scheduled(), 1);
+        let every = s.set_timer(Duration::from_millis(1), true, true, |st| st.log.push("tick".into()));
+        assert_eq!(s.scheduled(), 2);
+        s.set_idle_timer(true, |st| st.log.push("idle".into()));
+        assert_eq!(s.scheduled(), 3);
+        handle.post(|st| st.log.push("remote".into())).unwrap();
+        let count = |st: &St, what: &str| st.log.iter().filter(|l| *l == what).count();
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |st| {
+            count(st, "tick") >= 2 && count(st, "task") == 1 && count(st, "idle") == 1 && count(st, "remote") == 1
+        });
+        assert_eq!(r, RunOutcome::Done, "{:?}", st.log);
+        s.clear_timer(every);
+        assert_eq!(s.scheduled(), 3, "{:?}", st.log);
     }
 
     /// A remote post while the loop sleeps on a far deadline wakes it promptly

@@ -1465,7 +1465,35 @@ impl PageDom {
     /// Request a current gather for input actionability without bypassing
     /// the observer callback task or changing ordinary background pacing.
     pub fn request_resize_observer_update_for_input(&self) {
-        crate::resize_observer::request_update_for_input(self);
+        crate::resize_observer::request_update(self);
+    }
+
+    /// The next rendering update still has scroll steps to run: `scroll`
+    /// events queued for it, or the re-clamp of scroll offsets a DOM change
+    /// owes. Their handlers can change the page (a virtualized list renders
+    /// the rows scrolled to).
+    pub fn pending_scroll_work(&self) -> bool {
+        !self.pending_scrolls.borrow().is_empty() || self.scroll_clamp.get().1
+    }
+
+    /// Runs what the page's next rendering update owes now instead of at
+    /// the frame interval: the scroll steps as a task of their own, then a
+    /// ResizeObserver gather (callbacks keep their own task). For a page
+    /// with nothing else left to do, which would only sleep the interval
+    /// out; a busy page keeps it, so that it does not lay out after every
+    /// task.
+    pub fn request_rendering_update(self: &Rc<Self>) {
+        if self.is_disposed() {
+            return;
+        }
+        if !self.pending_scroll_work() {
+            return crate::resize_observer::request_update(self);
+        }
+        let page = self.clone();
+        self.post_task(Box::new(move || {
+            crate::layout_api::run_scroll_steps(&page);
+            crate::resize_observer::request_update(&page);
+        }));
     }
 
     /// Failure-only input diagnostics: observers present, callback queued,

@@ -476,7 +476,7 @@ impl Drop for Watchdog {
 /// the loop's, so `run_until_idle` alone returned while a `fetch` was still
 /// on its way.
 fn settled(browser: &Browser, page: PageId) -> bool {
-    browser.page_work(page).is_none_or(|work| work.quiet(0) && browser.scheduler().active_timers() == 0)
+    browser.page_work(page).is_none_or(|work| work.quiet() && browser.scheduler().active_timers() == 0)
 }
 
 /// How long [`run_until_settled`] sleeps at most before it looks again.

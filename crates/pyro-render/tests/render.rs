@@ -641,6 +641,68 @@ fn jpeg_screenshots_decode_close_to_the_render() {
     assert!(low_size < mid_size && mid_size < high_size, "sizes {low_size} < {mid_size} < {high_size}");
 }
 
+/// An outset shadow without blur is a solid ring the spread wide around the box, antialiased
+/// where its rounded edge cuts pixels, and nothing inside the box; a 6000 px spread (a
+/// spotlight) dims everything around it. Both are filled as paths, not blurred rectangles.
+#[test]
+fn blur_free_box_shadows_are_solid_rings() {
+    let page = |shadow: &str| {
+        format!(
+            "<!doctype html><body style='margin:0;background:#fff'><div style='position:absolute;left:100px;top:100px;\
+             width:100px;height:60px;border-radius:12px;box-shadow:{shadow}'></div>"
+        )
+    };
+    let mut r = Renderer::new();
+    let (ring, _, _) = r.render(&snap(&page("0 0 0 20px #f00")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&ring, 90, 130), [255, 0, 0, 255], "the ring left of the box");
+    assert_eq!(pixel(&ring, 150, 85), [255, 0, 0, 255], "above it");
+    assert_eq!(pixel(&ring, 150, 130), [255, 255, 255, 255], "not inside the box");
+    assert_eq!(pixel(&ring, 75, 130), [255, 255, 255, 255], "not past the spread");
+    // The ring's rounded corners (radius 12 at 20 px out) leave partly covered pixels.
+    let corner = (70..90).flat_map(|y| (70..90).map(move |x| (x, y))).map(|(x, y)| pixel(&ring, x, y)[1]);
+    assert!(corner.clone().any(|g| g > 0 && g < 255), "antialiased corner");
+    let (spot, _, _) =
+        r.render(&snap(&page("0 0 0 6000px rgba(0,0,0,.5)")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    for (x, y) in [(10, 10), (390, 290)] {
+        let p = pixel(&spot, x, y);
+        assert!(p[..3].iter().all(|c| (126..=129).contains(c)) && p[3] == 255, "dimmed far from the box: {p:?}");
+    }
+    assert_eq!(pixel(&spot, 150, 130), [255, 255, 255, 255], "the box shows through");
+}
+
+/// JPEG screenshots subsample chroma 4:2:0 at every quality, as Chromium's do (Skia's
+/// encoder; Chrome 147 screenshots and screencast frames at q50-q100): the frame header
+/// (SOF0) gives luma 2x2 samples per chroma sample. A 3840x2160 capture, encoded in bands
+/// with restart markers, decodes to its size.
+#[test]
+fn jpeg_screenshots_are_4_2_0_as_chromiums() {
+    let sampling = |jpeg: &[u8]| -> Vec<(u8, u8)> {
+        let mut at = 2;
+        loop {
+            assert_eq!(jpeg[at], 0xFF, "a marker at {at}");
+            let len = u16::from_be_bytes([jpeg[at + 2], jpeg[at + 3]]) as usize;
+            if jpeg[at + 1] == 0xC0 {
+                let components = jpeg[at + 9] as usize;
+                return (0..components).map(|c| (jpeg[at + 10 + c * 3], jpeg[at + 11 + c * 3])).collect();
+            }
+            at += 2 + len;
+        }
+    };
+    let mut r = Renderer::new();
+    let (img, _, _) = r.render(&snap(TEXT_PAGE), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    for quality in [50, 80, 95, 100] {
+        let ids_and_factors = sampling(&encode_jpeg(&img, quality).unwrap());
+        assert_eq!(ids_and_factors, vec![(1, 0x22), (2, 0x11), (3, 0x11)], "q{quality}: Y 2x2, Cb and Cr 1x1");
+    }
+    let mut big = snap(TEXT_PAGE);
+    (big.width, big.height, big.device_scale_factor) = (1920, 1080, 2.0);
+    let (img, _, _) = r.render(&big, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let bytes = encode_jpeg(&img, 90).unwrap();
+    assert_eq!(sampling(&bytes), vec![(1, 0x22), (2, 0x11), (3, 0x11)]);
+    let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (3840, 2160));
+}
+
 // Review (perf/encoders-and-shaping): the style metrics take each style's first available font
 // from the shaper's font selector, and the glyph cache carries run metrics. Pages that stress
 // font matching must render the same on a fresh thread (empty glyph cache, every font queried)

@@ -11,6 +11,9 @@
 //! `passthrough` keeps the request unsent until `{"release": {...}}`, then
 //! answers it (status/body given) or lets it through. Held replies are
 //! `oneshot` senders parked here; releasing one is a send, from any thread.
+//! `release` tells its caller which of them go straight to the page (every
+//! one but a held request that continues to the network), so that the step
+//! can wait until the page has them.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -126,14 +129,25 @@ fn merge_patch(target: &mut Value, patch: &Value) {
 
 /// A reply parked under a hold name.
 enum Held {
-    Request(oneshot::Sender<InterceptDecision>, InterceptDecision),
+    Request(RequestId, oneshot::Sender<InterceptDecision>, InterceptDecision),
     Response(oneshot::Sender<ResponseDecision>, ResponseDecision, PausedResponse),
 }
 
 impl Held {
+    /// The request whose response the page gets as soon as this is released:
+    /// a held response, or a held request the rule answers or fails. `None`
+    /// for a held request that goes on to the network.
+    fn delivers(&self) -> Option<RequestId> {
+        match self {
+            Held::Request(id, _, InterceptDecision::Fulfill { .. } | InterceptDecision::Fail(_)) => Some(*id),
+            Held::Request(..) => None,
+            Held::Response(_, _, original) => Some(original.id),
+        }
+    }
+
     fn release(self, body: Option<&Bytes>) {
         match self {
-            Held::Request(tx, decision) => {
+            Held::Request(_, tx, decision) => {
                 let _ = tx.send(decision);
             }
             Held::Response(tx, decision, mut original) => {
@@ -217,14 +231,15 @@ impl DriverMocks {
                         }
                         Some(response)
                     }
-                    Held::Request(_, _) => None,
+                    Held::Request(..) => None,
                 }
             })
             .collect()
     }
 
-    /// Releases every reply held under `name`; how many.
-    pub(super) fn release(&self, name: &str, body: Option<&Bytes>) -> Result<usize, String> {
+    /// Releases every reply held under `name`: how many, and the requests
+    /// among them whose response goes straight to the page ([`Held::delivers`]).
+    pub(super) fn release(&self, name: &str, body: Option<&Bytes>) -> Result<(usize, Vec<RequestId>), String> {
         let released: Vec<_> = {
             let mut holds = self.holds.lock().unwrap();
             if body.is_some()
@@ -243,10 +258,11 @@ impl DriverMocks {
             out
         };
         let count = released.len();
+        let delivered = released.iter().filter_map(|(_, _, held)| held.delivers()).collect();
         for (_, _, held) in released {
             held.release(body);
         }
-        Ok(count)
+        Ok((count, delivered))
     }
 
     fn release_one(&self, id: u64) {
@@ -339,7 +355,7 @@ impl Interceptor for ContextInterceptor {
                 None if rule.hold.is_some() && !rule.responds => continue_unmodified(),
                 None => InterceptDecision::Fulfill { status: rule.status, headers: rule.headers, body: rule.body },
             };
-            self.mocks.hold(rule.hold, Held::Request(reply, decision), rule.delay);
+            self.mocks.hold(rule.hold, Held::Request(request.id, reply, decision), rule.delay);
             return;
         }
         match &self.fetch {

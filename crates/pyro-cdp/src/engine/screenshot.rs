@@ -29,7 +29,7 @@ use std::time::Instant;
 
 use pyro_browser::{Browser, PageId, ResourceKind};
 use pyro_dom::NodeId;
-use pyro_render::worker::{Baseline, Captured, ImageFormat, Job, MatchOptions, MatchOutcome, RenderWorker};
+use pyro_render::worker::{Baseline, Captured, ImageFormat, Job, MatchOptions, MatchOutcome, RawFormat, RenderWorker};
 use pyro_render::{Area, Backend, Fetcher, Live, Snapshot, Timings, Tree, TreeKind, TreeNode};
 use pyro_runtime::LoopHandle;
 use serde::Deserialize;
@@ -41,7 +41,7 @@ use crate::msg::{self, CdpError, CdpResult};
 use crate::network_protocol::base64_encode;
 use crate::target::PageCommand;
 
-enum Finished {
+pub(super) enum Finished {
     /// Layout sub-resources arrived or a parked PDF's deadline passed.
     Fetched,
     Capture(u64, Result<Captured, String>),
@@ -49,6 +49,8 @@ enum Finished {
     Match(u64, Result<MatchOutcome, String>),
     /// A screencast frame (`screencast.rs`); `None`: the last frame's pixels.
     Frame(u64, Result<Option<Captured>, String>),
+    /// A raw screencast frame was written to its socket (`screencast.rs`), by screencast id.
+    Written(u32, Result<(), String>),
 }
 
 /// The page as a screencast frame shows it: its viewport (CSS px) and scroll.
@@ -126,7 +128,7 @@ impl Renders {
     }
 
     /// Callback the render thread calls with a result: queue it, wake the loop.
-    fn deliver(&self, handle: LoopHandle<Browser>) -> impl Fn(Finished) + Send + Clone + 'static {
+    pub(super) fn deliver(&self, handle: LoopHandle<Browser>) -> impl Fn(Finished) + Send + Clone + 'static {
         let finished = self.finished.clone();
         let ready = self.ready.clone();
         let posted = self.posted.clone();
@@ -245,6 +247,9 @@ fn timings_json(t: &Timings, snapshot_ms: f64, total_ms: f64) -> Value {
         "raster": ms(t.raster),
         "compare": ms(t.compare),
         "encode": ms(t.encode),
+        "write": ms(t.write),
+        // CPU time of the browser process while it rendered (all threads).
+        "cpu": ms(t.cpu),
         "total": total_ms,
         // How the page's persistent document was used: `rebuilt` names why
         // it was built from scratch (null: updated in place).
@@ -265,6 +270,8 @@ struct CaptureParams {
     clip: Option<ClipParams>,
     #[serde(default)]
     capture_beyond_viewport: bool,
+    /// pyro: append the image to this file (or FIFO) instead of replying with it.
+    path: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug)]
@@ -381,9 +388,21 @@ impl EngineHost {
         let format = match p.format.as_deref() {
             None | Some("png") => ImageFormat::Png,
             Some("jpeg") => ImageFormat::Jpeg(p.quality.unwrap_or(80)),
+            // pyro's raw formats (no encoding), by ffmpeg's pixel format names.
+            Some("rgba") => ImageFormat::Raw(RawFormat::Rgba),
+            Some("rgb24") => ImageFormat::Raw(RawFormat::Rgb24),
+            Some("yuv420p") => ImageFormat::Raw(RawFormat::Yuv420p),
             Some(other) => {
-                return Err(CdpError::invalid_params(format!("format '{other}' is not supported (png, jpeg)")))
+                return Err(CdpError::invalid_params(format!(
+                    "format '{other}' is not supported (png, jpeg, and pyro's rgba, rgb24, yuv420p)"
+                )))
             }
+        };
+        let out = match p.path {
+            Some(path) if !std::path::Path::new(&path).is_absolute() => {
+                return Err(CdpError::invalid_params(format!("path '{path}' is not absolute")))
+            }
+            path => path.map(std::path::PathBuf::from),
         };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let area = match (p.clip, p.capture_beyond_viewport) {
@@ -403,6 +422,7 @@ impl EngineHost {
             format,
             backend: Backend::Cpu,
             fetcher,
+            out,
             done: Box::new(move |r| deliver(Finished::Capture(token, r))),
         };
         self.renders.worker()?.submit(job).map_err(|_| CdpError::server("the render thread is gone"))?;
@@ -634,9 +654,9 @@ impl EngineHost {
     }
 
     /// The `printToPDF` reply: the PDF (inline, or as an `IO` stream) and
-    /// pyro's report (`lp`: pages, overflow, mapping stats, timings).
+    /// pyro's report (`pyro`: pages, overflow, mapping stats, timings).
     fn pdf_body(&mut self, o: pyro_render::PdfOutput, stream: bool, token: u64, snapshot_ms: f64, total: f64) -> Value {
-        let lp = json!({
+        let report = json!({
             "pages": o.pages.iter().map(|p| json!({
                 "x": p.rect.x0, "y": p.rect.y0, "width": p.rect.width(), "height": p.rect.height(),
                 "overflowRight": p.overflow_right, "overflowBottom": p.overflow_bottom, "culprit": p.culprit,
@@ -652,9 +672,9 @@ impl EngineHost {
         if stream {
             let handle = format!("pyro-pdf-{token}");
             self.renders.streams.insert(handle.clone(), (o.bytes, 0));
-            json!({ "data": "", "stream": handle, "lp": lp })
+            json!({ "data": "", "stream": handle, "pyro": report })
         } else {
-            json!({ "data": base64_encode(&o.bytes), "lp": lp })
+            json!({ "data": base64_encode(&o.bytes), "pyro": report })
         }
     }
 
@@ -781,9 +801,10 @@ impl EngineHost {
                     let frame = match result {
                         Ok(c) => {
                             let total = ms(wait.started.elapsed());
+                            // `bytes`: the image's size, also when it went to the capture's file.
                             let body = json!({
                                 "data": base64_encode(&c.bytes),
-                                "lp": { "width": c.width, "height": c.height, "sceneHash": format!("{:016x}", c.scene_hash), "ms": timings_json(&c.timings, wait.snapshot_ms, total) },
+                                "pyro": { "width": c.width, "height": c.height, "bytes": c.size, "sceneHash": format!("{:016x}", c.scene_hash), "ms": timings_json(&c.timings, wait.snapshot_ms, total) },
                             });
                             msg::result_frame(wait.id, &body, Some(&wait.session))
                         }
@@ -811,6 +832,7 @@ impl EngineHost {
                     *wait.settled.borrow_mut() = Some(outcome);
                 }
                 Finished::Frame(token, result) => self.screencast_rendered(token, result),
+                Finished::Written(id, result) => self.screencast_written(id, result),
             }
         }
         if fetched && !self.renders.pdf_waits.is_empty() {

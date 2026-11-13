@@ -39,9 +39,14 @@ permissions:
 
 jobs:
   jsc:
-    runs-on: macos-15
+    # The self-hosted Apple Silicon runner (label lp-m1).
+    runs-on: lp-m1
     # A cold build at -j2 took 7 minutes; cached builds take a minute.
     timeout-minutes: 360
+    env:
+      # That Mac has a stray macOS 27.0 SDK next to the 26.6 Command Line Tools,
+      # whose linker cannot read it (ld: tapi error: malformed file). Use the 26.5 SDK.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     outputs:
       dir: ${{ steps.key.outputs.dir }}
     steps:
@@ -64,7 +69,7 @@ jobs:
           # about 3 GB per job.
           JOBS: '2'
         run: |
-          brew install ninja
+          command -v ninja >/dev/null || brew install ninja
           scripts/jsc/build.sh
       - uses: actions/cache/save@v4
         if: steps.cache.outputs.cache-hit != 'true'
