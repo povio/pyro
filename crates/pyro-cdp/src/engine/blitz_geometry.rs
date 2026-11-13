@@ -119,6 +119,18 @@ impl Fetcher for LocalFiles {
         })();
         done(body.ok_or_else(|| format!("{url}: not a local resource")));
     }
+
+    /// Kept with the network bodies: a layout takes it from the cache
+    /// rather than fetching it (again, behind the page's back).
+    fn provide(&self, url: &str, body: &[u8]) -> bool {
+        if body.is_empty() || !url.starts_with("http") {
+            return false;
+        }
+        let Ok(mut cache) = NETWORK_BODIES.lock() else { return false };
+        let previous = cache.insert(url.to_owned(), Arc::new(body.to_vec()));
+        // An empty entry: a layout asked and laid out without it.
+        previous.is_some_and(|b| b.is_empty() || **b != *body)
+    }
 }
 
 fn wake_pdf() {

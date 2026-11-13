@@ -433,13 +433,33 @@ type SyncedAt = ((u64, u64, u32, u32), (u32, u32));
 /// Makes the geometry source of a new document.
 pub type GeometrySourceFactory = Rc<dyn Fn() -> Rc<dyn GeometrySource>>;
 
+/// Takes a sub-resource body the page's loader fetched (URL, bytes).
+pub type ResourceSink = Rc<dyn Fn(&str, &[u8])>;
+
 thread_local! {
     static GEOMETRY_SOURCE: RefCell<Option<GeometrySourceFactory>> = const { RefCell::new(None) };
+    static RESOURCE_SINK: RefCell<Option<ResourceSink>> = const { RefCell::new(None) };
 }
 
 /// Installs the factory of geometry sources for this thread's new documents.
 pub fn set_geometry_source_factory(factory: Option<GeometrySourceFactory>) {
     GEOMETRY_SOURCE.with(|f| *f.borrow_mut() = factory);
+}
+
+/// Installs where [`provide_resource`] hands bodies: the geometry sources'
+/// fetcher, which loads the sub-resources of their sheets on its own.
+pub fn set_resource_sink(sink: Option<ResourceSink>) {
+    RESOURCE_SINK.with(|s| *s.borrow_mut() = sink);
+}
+
+/// A sub-resource the page's loader fetched that the geometry sources
+/// would fetch again (a `<style>`'s `@import`ed sheet): they lay out with
+/// this body instead, from their next sync.
+pub fn provide_resource(url: &str, body: &[u8]) {
+    let sink = RESOURCE_SINK.with(|s| s.borrow().clone());
+    if let Some(sink) = sink {
+        sink(url, body);
+    }
 }
 
 impl Layout {

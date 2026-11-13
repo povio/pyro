@@ -130,9 +130,9 @@ case each new entry makes its object for the observing realms.
 - Unloading the previous document is not timed (`unloadEventStart/End` are
   0), and the time origin is the document fetch's start rather than the
   start of the navigation (before `beforeunload`).
-- Initiator types not distinguished: `css` (`@import`, fonts and
-  backgrounds are fetched only by the renderer, which reports no entries),
-  `input`, `video`, `audio`, `track`, `object`, `embed`, `body`; workers'
+- Initiator types not distinguished: `css` beyond the `@import`s of
+  `<style>` elements (a linked sheet's imports, fonts and backgrounds are
+  fetched only by the renderer, which reports no entries), `input`, `video`, `audio`, `track`, `object`, `embed`, `body`; workers'
   scripts report `script`. Parser-blocking scripts are `non-blocking`.
 - `serverTiming` is always empty; `workerStart` and
   `firstInterimResponseStart` are 0; `finalResponseHeadersStart` equals

@@ -280,6 +280,10 @@ pub mod element_flags {
     pub const CUSTOM_FAILED: u8 = 32;
     /// A form-associated custom element (`static formAssociated = true`).
     pub const FORM_ASSOCIATED: u8 = 64;
+    /// An HTML `<style>` a parser created and has not popped off its stack
+    /// of open elements yet: its text is still coming, so it has no style
+    /// block to process (HTML "update a style block" runs at the pop).
+    pub const STYLE_PARSING: u8 = 128;
 }
 
 impl ElementData {
