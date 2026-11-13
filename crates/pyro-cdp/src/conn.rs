@@ -193,9 +193,10 @@ impl Conn {
     /// read-ahead bound and [`INFLIGHT`] held messages, answers pings, and
     /// returns true when the running script must stop: the client closed or
     /// left, the outbound budget was exceeded, the session took nothing
-    /// for `stall_timeout` while the read-ahead buffer was full, or the
-    /// client sent `Runtime.terminateExecution`.
-    pub(crate) fn check_during_script(&mut self) -> bool {
+    /// for `stall_timeout` while the read-ahead buffer was full, the client
+    /// sent `Runtime.terminateExecution`, or a `Pyro.cancelRun` for the
+    /// session whose command runs the script (`running`).
+    pub(crate) fn check_during_script(&mut self, running: &crate::engine::RunningCommand) -> bool {
         if self.state == State::Open && self.out.is_exceeded() {
             // The writer would close (1008) at once; the script must stop too.
             self.start_close(1008, "outbound buffer limit exceeded");
@@ -206,12 +207,12 @@ impl Conn {
             let mut held = std::mem::take(&mut self.held);
             let before = held.len();
             self.decode(&mut held);
-            // Runtime.terminateExecution stops the running script; the
-            // command itself is answered once the session takes it.
-            terminate |= held
-                .iter()
-                .skip(before)
-                .any(|m| matches!(m, Inbound::Text(t) if t.contains("\"Runtime.terminateExecution\"")));
+            // Runtime.terminateExecution stops the running script, and so
+            // does a Pyro.cancelRun for its command's session; the command
+            // itself is answered once the session takes it.
+            terminate |= held.iter().skip(before).any(
+                |m| matches!(m, Inbound::Text(t) if t.contains("\"Runtime.terminateExecution\"") || running.cancels(t)),
+            );
             self.held = held;
             if self.state != State::Open {
                 break;

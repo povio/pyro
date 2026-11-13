@@ -3,7 +3,7 @@
 //! (see tests/engine_cdp.rs and tests/e2e for the JSC-backed checks).
 
 use pyro_cdp_protocol::msg::{self, CdpResult, Command};
-use pyro_cdp_protocol::target::{Browser, ContextKey, Host, PageCommand, PageKey, Sink};
+use pyro_cdp_protocol::target::{Browser, ContextKey, ContextOptions, Host, PageCommand, PageKey, Sink};
 use pyro_cdp_protocol::ws::OutFrame;
 use serde_json::{json, Value};
 
@@ -14,6 +14,9 @@ struct Recorder {
     fail_navigation: bool,
     /// What `page_loaded` reports.
     loaded: bool,
+    /// Creates contexts with a `userAgent` and proxy of their own (else
+    /// refuses them, as a host without them does).
+    context_options: bool,
 }
 
 impl Recorder {
@@ -32,6 +35,18 @@ impl Host for Recorder {
     fn create_context(&mut self) -> CdpResult<ContextKey> {
         self.next += 1;
         self.calls.push(format!("create_context -> {}", self.next));
+        Ok(self.next)
+    }
+    fn create_context_with(&mut self, options: ContextOptions<'_>) -> CdpResult<ContextKey> {
+        if options.is_empty() {
+            return self.create_context();
+        }
+        if !self.context_options {
+            return Err(msg::CdpError::unsupported("a browser context's own userAgent or proxyServer"));
+        }
+        self.next += 1;
+        let proxy = options.proxy.map(|p| format!("{} bypass {:?}", p.server, p.bypass_list));
+        self.calls.push(format!("create_context agent {:?} proxy {proxy:?} -> {}", options.user_agent, self.next));
         Ok(self.next)
     }
     fn dispose_context(&mut self, context: ContextKey) {
@@ -711,4 +726,121 @@ fn retiring_a_base_requires_its_live_derived_profiles_to_retire_first() {
     assert!(!b.prepared_profile_active(0));
     assert!(b.unregister_prepared_profile(1000).is_err());
     b.shutdown();
+}
+
+/// A profile's `userAgent` and proxy are its pages' browser context's: the
+/// host creates that context with them (and `Target.createBrowserContext`
+/// takes the same). Values the host could not use are refused up front.
+#[test]
+fn prepared_profile_user_agent_and_proxy_make_its_context() {
+    let mut b = Browser::new(Recorder { context_options: true, ..Default::default() });
+    let r = send(
+        &mut b,
+        json!({"id":1,"method":"Pyro.registerPreparedPage","params":{
+            "url":"http://app.test/","userAgent":"Agent/1.0 (profile)",
+            "proxyServer":"http://user:pass@127.0.0.1:3128","proxyBypassList":"<-loopback>"}}),
+    );
+    assert_eq!(r[0]["result"]["profileId"], 0, "{r:?}");
+    assert!(r[0]["result"].get("state").is_none(), "only fork mode reports a state: {r:?}");
+    assert_eq!(
+        b.host().calls[..2],
+        [
+            r#"create_context agent Some("Agent/1.0 (profile)") proxy Some("http://user:pass@127.0.0.1:3128 bypass Some(\"<-loopback>\")") -> 1"#,
+            "create_page 1 -> 2",
+        ],
+    );
+    // Without a template a profile has no setup to wait for.
+    let r = send(&mut b, json!({"id":2,"method":"Pyro.preparedProfileStatus","params":{"profileId":0}}));
+    assert_eq!(r[0]["result"], json!({"state": "ready"}));
+    let r = send(&mut b, json!({"id":3,"method":"Pyro.preparedProfileStatus","params":{"profileId":7}}));
+    assert_eq!(r[0]["error"]["code"], -32602, "{r:?}");
+
+    for (params, why) in [
+        (json!({"url":"http://app.test/","userAgent":""}), "userAgent"),
+        (json!({"url":"http://app.test/","userAgent":"line\nbreak"}), "userAgent"),
+        (json!({"url":"http://app.test/","proxyBypassList":"<local>"}), "proxyBypassList needs proxyServer"),
+        (json!({"url":"http://app.test/","proxyServer":"socks5://127.0.0.1:1080"}), "SOCKS"),
+        // Setup steps stay a fork-mode feature.
+        (json!({"url":"http://app.test/","setup":[{"eval":{"expression":"1"}}]}), "need serve --fork"),
+    ] {
+        let r = send(&mut b, json!({"id":4,"method":"Pyro.registerPreparedPage","params":params}));
+        assert_eq!(r[0]["error"]["code"], -32602, "{params}: {r:?}");
+        assert!(r[0]["error"]["message"].as_str().unwrap().contains(why), "{params}: {r:?}");
+    }
+    assert_eq!(b.prepared_profiles().len(), 1, "nothing registered for a refused profile");
+
+    let r = send(&mut b, json!({"id":5,"method":"Target.createBrowserContext","params":{"userAgent":"Agent/2.0"}}));
+    assert!(r[0]["result"]["browserContextId"].is_string(), "{r:?}");
+    assert_eq!(b.host().calls.last().unwrap(), r#"create_context agent Some("Agent/2.0") proxy None -> 3"#);
+    let r = send(&mut b, json!({"id":6,"method":"Target.createBrowserContext","params":{"userAgent":""}}));
+    assert_eq!(r[0]["error"]["code"], -32602, "{r:?}");
+    b.shutdown();
+}
+
+/// `serve --fork` marks a profile whose setup failed: its waiting page is
+/// closed, no new one boots, and acquiring one fails with the setup's error
+/// (not "no page waiting", after which a client would boot a fresh page).
+#[test]
+fn a_failed_profile_hands_out_no_page_and_says_why() {
+    let mut b = Browser::with_prepared(
+        Recorder::loaded(),
+        vec![
+            serde_json::from_value(json!({"url":"http://app.test/a"})).unwrap(),
+            serde_json::from_value(json!({"url":"http://app.test/b"})).unwrap(),
+        ],
+    );
+    let error = r##"setup step 1 (Click {"css":"#missing"}): timed out after 300 ms: no element matches"##;
+    b.fail_prepared_profile(0, error.to_owned());
+    assert_eq!(b.prepared_profile_failure(0), Some(error));
+    assert!(b.host().calls.contains(&"close_page 2".to_owned()), "{:?}", b.host().calls);
+    assert!(b.host().calls.contains(&"dispose_context 1".to_owned()), "{:?}", b.host().calls);
+    let r = send(&mut b, json!({"id":1,"method":"Pyro.preparedPages"}));
+    assert_eq!(r[0]["result"]["pages"], json!([{"profileId": 1, "url": "http://app.test/b", "ready": true}]));
+
+    let r = send(&mut b, json!({"id":2,"method":"Pyro.acquirePreparedPage","params":{"profileId":0,"attach":true}}));
+    assert_eq!(r[0]["error"]["code"], -32000, "{r:?}");
+    assert_eq!(r[0]["error"]["message"], format!("profile 0: {error}"));
+    assert_eq!(r[0]["error"]["data"]["setupError"], error);
+    let r = send(&mut b, json!({"id":3,"method":"Pyro.preparedProfileStatus","params":{"profileId":0}}));
+    assert_eq!(r[0]["result"], json!({"state": "failed", "error": error}));
+
+    // The other profile is untouched, and the failed one is not booted again.
+    let r = send(&mut b, json!({"id":4,"method":"Pyro.acquirePreparedPage","params":{"profileId":1,"attach":true}}));
+    assert!(r.last().unwrap()["result"]["sessionId"].is_string(), "{r:?}");
+    b.refill_prepared();
+    let boots = b.host().calls.iter().filter(|c| c.starts_with("navigate") && c.ends_with("/a")).count();
+    assert_eq!(boots, 1, "{:?}", b.host().calls);
+
+    // Retiring it forgets the failure with the profile.
+    let r = send(&mut b, json!({"id":5,"method":"Pyro.unregisterPreparedPage","params":{"profileId":0}}));
+    assert_eq!(r[0]["result"]["removed"], true);
+    assert_eq!(b.prepared_profile_failure(0), None);
+    let r = send(&mut b, json!({"id":6,"method":"Pyro.preparedProfileStatus","params":{"profileId":0}}));
+    assert_eq!(r[0]["error"]["code"], -32602, "{r:?}");
+    b.shutdown();
+}
+
+/// What `Pyro.preparedProfiles` lists for a named profile carries its status.
+#[test]
+fn named_profiles_carry_their_status_on_the_wire() {
+    use pyro_cdp_protocol::target::{NamedProfile, ProfileStatus};
+    let failed = NamedProfile {
+        name: "app".into(),
+        profile_id: 3,
+        holders: 1,
+        url: "http://app.test/".into(),
+        base: None,
+        status: ProfileStatus::Failed { error: "setup step 0 (eval): boom".into() },
+    };
+    let wire = serde_json::to_value(&failed).unwrap();
+    assert_eq!(
+        wire,
+        json!({"name":"app","profileId":3,"holders":1,"url":"http://app.test/","state":"failed","error":"setup step 0 (eval): boom"})
+    );
+    assert_eq!(serde_json::from_value::<NamedProfile>(wire).unwrap(), failed);
+    let booting = NamedProfile { status: ProfileStatus::Booting, base: Some(1), ..failed };
+    let wire = serde_json::to_value(&booting).unwrap();
+    assert_eq!(wire["state"], "booting");
+    assert!(wire.get("error").is_none());
+    assert_eq!(serde_json::from_value::<NamedProfile>(wire).unwrap(), booting);
 }

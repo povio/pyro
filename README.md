@@ -113,6 +113,9 @@ pages 3-6 points faster without costing cdp-perf. Fat LTO on top of PGO was meas
 pyro version
 pyro eval -e 'setTimeout(() => console.log("hi"), 10)'
 pyro eval script.js --timeout-ms 5000
+# Load a page, run its scripts and print its DOM once it is quiet (its
+# requests answered, its timers run), at most 5 s after `load`:
+pyro fetch --wait-ms 5000 https://example.com
 pyro serve --port 9222
 # Test runs that need no front-end server and no per-context auth setup:
 # serve a build directory in place of its origin and preload localStorage.
@@ -131,9 +134,12 @@ or the connection has no open page.
 A test takes it with the browser-level CDP command
 `Pyro.acquirePreparedPage {url}`: the page is announced like a new
 target, so Playwright sees it as a page of its default context, already loaded.
-`Pyro.registerPreparedPage {url, initScripts, viewport, pool}` declares
-a profile at run time, including the scripts a test would otherwise install
-with `addInitScript`; `Pyro.preparedPages` lists what is waiting.
+`Pyro.registerPreparedPage {url, initScripts, viewport, pool, userAgent,
+proxyServer, proxyBypassList}` declares a profile at run time, including the
+scripts a test would otherwise install with `addInitScript`; its pages send
+`userAgent` on every request (and report it as `navigator.userAgent`) and go
+through their own proxy, which suits one profile per signed-in identity.
+`Pyro.preparedPages` lists what is waiting.
 
 Memory: every booted page is a full copy of the app, so a pool of N holds N
 of them plus one in use. `--prepare-refill after-close` (or `refillAfterClose`
@@ -150,6 +156,9 @@ with those pages booted and sharing their memory copy-on-write. Open one
 connection per test; it costs about 20 ms however long the app takes to boot,
 and its process exits when the connection closes. `@povio/pyro` does
 this by itself when the server reports `Pyro.capabilities {fork: true}`.
+A profile's `setup` steps (a sign-in, say) run once in that process; when
+one fails, `Pyro.preparedProfileStatus` reports the step and why, and no page
+of the profile is handed out (`pyro.profile()` rejects with that error).
 
 ### Fast E2E tests: `Pyro.run` and `@povio/pyro`
 
@@ -240,6 +249,18 @@ another page of the run's browser context: the `as` key of an earlier
 reply's `requests` stay the starting page's. A popup paused by
 `Target.setAutoAttach {waitForDebuggerOnStart: true}` navigates only after
 the client's `Runtime.runIfWaitingForDebugger`.
+
+`Pyro.cancelRun` on a page session cancels what the session still waits on:
+its runs (`Pyro.run`, `Pyro.act`, `Pyro.expect`, `Pyro.idle`) and
+`awaitPromise` evaluations each reply at once with an error that says it was
+cancelled, at which step and what the step was still waiting for, as a
+timeout would (`step 0 (Click {...}): cancelled: Click {...}: {...} matched
+no element`), and the page stays as it is. A run's script that does not
+return (`while (true) {}` in an `eval` step or an action's event handler) is
+stopped first, at the engine watchdog's next poll, and the page stays usable.
+The reply is `{"cancelled": n}`, 0 when nothing was in flight. `pyro run`
+sends it when a test times out, so that the test's after hooks find its page
+as it was at the timeout.
 
 ## License
 

@@ -28,8 +28,9 @@ use crate::timing::{ConnInfo, ConnTimes, TimedResolver, CONNECTING};
 const MAX_TUNNEL_HEAD: usize = 64 * 1024;
 
 /// A parsed proxy setting. Credentials in the URL are sent preemptively; others
-/// come from the `Fetch.authRequired` challenge.
-#[derive(Clone)]
+/// come from the `Fetch.authRequired` challenge. Two are equal when they send
+/// the same requests the same way (server, credentials and bypass rules).
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProxyConfig {
     uri: Uri,
     origin: String,
