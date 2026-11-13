@@ -1,15 +1,19 @@
 // Playwright's config file, read by the runner: `defineConfig`, `devices`,
 // `use` (config, then the selected project), `timeout`, `retries`,
 // `expect.timeout`, `outputDir`, `webServer`, `globalSetup` and
-// `globalTeardown`. The file is `$PYRO_CONFIG` (or `$PLAYWRIGHT_CONFIG`), else
-// `pyro.config.*` or `playwright.config.*` in the working
-// directory; the project is `$PYRO_PROJECT`, else the first.
+// `globalTeardown`, project `dependencies` and `teardown`. The file is
+// `$PYRO_CONFIG` (or `$PLAYWRIGHT_CONFIG`), else `pyro.config.*` or
+// `playwright.config.*` in the working directory; the project is
+// `$PYRO_PROJECT`, else the first.
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { connect } from 'node:net';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { KeyValue, PlaywrightTestConfig as Typed } from './types.js';
+import type { FullConfig, FullProject, KeyValue, PlaywrightTestConfig as Typed } from './types.js';
+
+/** The Playwright release whose API this runner follows (`config.version`). */
+const PLAYWRIGHT_VERSION = '1.59.1';
 
 export type WebServer = {
   command: string;
@@ -56,20 +60,13 @@ export const devices: Record<string, Record<string, unknown>> = {
   'iPhone 15': { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1', viewport: { width: 393, height: 659 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, defaultBrowserType: 'webkit' },
 };
 
-export type ResolvedProject = {
-  name: string;
+/** Playwright's FullProject (`testInfo.project`), plus what the runner needs. */
+export type ResolvedProject = FullProject & {
   /** Its index in `config.projects` (0 without projects). */
   index: number;
-  use: Record<string, unknown>;
-  outputDir: string;
-  testDir: string;
-  testMatch: Matcher;
-  testIgnore: Matcher;
-  timeout: number;
-  retries: number;
-  metadata: Record<string, unknown>;
+  /** The project's `fullyParallel`, else the config's. */
+  fullyParallel: boolean;
   /** Where snapshots live (`snapshotDir`, else testDir) and their path template. */
-  snapshotDir: string;
   snapshotPathTemplate?: string;
   /** The config file's directory: snapshot paths resolve against it, as in Playwright. */
   configDir: string;
@@ -78,11 +75,191 @@ export type ResolvedProject = {
 type Matcher = string | RegExp | (string | RegExp)[];
 export type Loaded = {
   config: PlaywrightTestConfig;
+  /** The config file (absolute), if there is one. */
+  file?: string;
   /** The default project: `$PYRO_PROJECT`, else the first. */
   project: ResolvedProject;
   projects: ResolvedProject[];
   dir: string;
+  /** Playwright's FullConfig of this run: `testInfo.config`, and (in a run without `pyro run`) global setup's argument. */
+  full: FullConfig;
 };
+
+/** What `pyro run` resolved for this run (FullConfig's run-time fields). */
+export type RunOptions = {
+  workers?: number;
+  shard?: { total: number; current: number } | null;
+  grep?: RegExp;
+  grepInvert?: RegExp;
+  maxFailures?: number;
+  quiet?: boolean;
+  fullyParallel?: boolean;
+  updateSnapshots?: FullConfig['updateSnapshots'];
+};
+
+const asList = <T>(v: T | T[] | undefined | null): T[] => (v === undefined || v === null ? [] : Array.isArray(v) ? v : [v]);
+
+/** Playwright's FullConfig for `l`, with what the run resolved (`pyro run`'s flags). */
+export function fullConfig(l: Omit<Loaded, 'full'>, o: RunOptions = {}): FullConfig {
+  const c = l.config;
+  const firstOf = (v: string | string[] | undefined) => (asList(v).length ? resolve(l.dir, asList(v)[0]) : null);
+  const reporter = (typeof c.reporter === 'string' ? [[c.reporter, undefined]] : Array.isArray(c.reporter) ? c.reporter.map((r) => (typeof r === 'string' ? [r, undefined] : r)) : [['list', undefined]]) as FullConfig['reporter'];
+  return {
+    configFile: l.file,
+    rootDir: c.testDir === undefined ? l.dir : resolve(l.dir, c.testDir as string),
+    forbidOnly: !!c.forbidOnly,
+    fullyParallel: o.fullyParallel ?? !!c.fullyParallel,
+    globalSetup: firstOf(c.globalSetup),
+    globalTeardown: firstOf(c.globalTeardown),
+    globalTimeout: (c.globalTimeout as number | undefined) ?? 0,
+    grep: o.grep ?? (c.grep as RegExp | RegExp[] | undefined) ?? /.*/,
+    grepInvert: o.grepInvert ?? (c.grepInvert as RegExp | RegExp[] | undefined) ?? null,
+    maxFailures: o.maxFailures ?? (c.maxFailures as number | undefined) ?? 0,
+    metadata: { ...((c.metadata as object | undefined) ?? {}) },
+    preserveOutput: (c.preserveOutput as FullConfig['preserveOutput'] | undefined) ?? 'always',
+    projects: l.projects,
+    quiet: o.quiet ?? !!c.quiet,
+    reporter,
+    reportSlowTests: c.reportSlowTests === null ? null : ((c.reportSlowTests as FullConfig['reportSlowTests']) ?? { max: 5, threshold: 300_000 }),
+    shard: o.shard ?? (c.shard as FullConfig['shard'] | undefined) ?? null,
+    tags: [],
+    updateSnapshots: o.updateSnapshots ?? (c.updateSnapshots as FullConfig['updateSnapshots'] | undefined) ?? 'missing',
+    updateSourceMethod: 'patch',
+    version: PLAYWRIGHT_VERSION,
+    // Playwright gives a lone web server here, and null for a list of them.
+    webServer: c.webServer && !Array.isArray(c.webServer) ? ({ ...c.webServer } as FullConfig['webServer']) : null,
+    workers: o.workers ?? 1,
+  };
+}
+
+/** `--shard` / `config.shard` as `{ current, total }` (1-based), or an error message. */
+export function parseShard(v: string): { current: number; total: number } | string {
+  const m = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(v);
+  const current = Number(m?.[1]);
+  const total = Number(m?.[2]);
+  if (!m || total < 1 || current < 1 || current > total) return `--shard "${v}": expected "current/total", 1-based, for example "3/5"`;
+  return { current, total };
+}
+
+/**
+ * The FullConfig fields a `pyro run` worker gets from its parent
+ * (`$PYRO_RUN_WORKERS`, `$PYRO_SHARD`, `$PYRO_GREP`, ...).
+ */
+function runOptionsFromEnv(): RunOptions {
+  const e = process.env;
+  const shard = e.PYRO_SHARD ? parseShard(e.PYRO_SHARD) : null;
+  return {
+    workers: e.PYRO_RUN_WORKERS ? Number(e.PYRO_RUN_WORKERS) : undefined,
+    shard: typeof shard === 'string' ? null : shard,
+    grep: e.PYRO_GREP ? new RegExp(e.PYRO_GREP) : undefined,
+    grepInvert: e.PYRO_GREP_INVERT ? new RegExp(e.PYRO_GREP_INVERT) : undefined,
+    updateSnapshots: e.PYRO_UPDATE_SNAPSHOTS ? ((['1', 'true'].includes(e.PYRO_UPDATE_SNAPSHOTS) ? 'changed' : e.PYRO_UPDATE_SNAPSHOTS) as RunOptions['updateSnapshots']) : undefined,
+  };
+}
+
+/** A project by name, for `dependencies` and `teardown` (names must be unique, as in Playwright). */
+function named(projects: ResolvedProject[], name: string, of: ResolvedProject, what: 'dependency' | 'teardown'): ResolvedProject {
+  const found = projects.filter((p) => p.name === name);
+  if (!found.length) throw new Error(`pyro: project '${of.name}' has unknown ${what === 'teardown' ? 'teardown project' : 'dependency'} '${name}'`);
+  if (found.length > 1) throw new Error(`pyro: project ${what === 'teardown' ? 'teardowns' : 'dependencies'} need unique project names, there are ${found.length} named '${name}'`);
+  return found[0];
+}
+
+/** Playwright's checks of `dependencies` and `teardown`. */
+function checkDependencies(projects: ResolvedProject[]): void {
+  const teardowns = new Set<ResolvedProject>();
+  for (const p of projects) {
+    for (const d of p.dependencies) named(projects, d, p, 'dependency');
+    if (p.teardown) teardowns.add(named(projects, p.teardown, p, 'teardown'));
+  }
+  for (const t of teardowns) if (t.dependencies.length) throw new Error(`pyro: teardown project '${t.name}' must not have dependencies`);
+  for (const p of projects) {
+    for (const d of p.dependencies) {
+      const dep = named(projects, d, p, 'dependency');
+      if (teardowns.has(dep)) throw new Error(`pyro: project '${p.name}' must not depend on teardown project '${dep.name}'`);
+    }
+  }
+}
+
+export const dependenciesOf = (l: { projects: ResolvedProject[] }, p: ResolvedProject): ResolvedProject[] => p.dependencies.map((d) => named(l.projects, d, p, 'dependency'));
+export const teardownOf = (l: { projects: ResolvedProject[] }, p: ResolvedProject): ResolvedProject | undefined => (p.teardown ? named(l.projects, p.teardown, p, 'teardown') : undefined);
+
+/**
+ * Playwright's project closure: `roots` are 'top-level', the projects they
+ * depend on (and those projects' teardown projects) 'dependency'.
+ */
+export function projectClosure(l: { projects: ResolvedProject[] }, roots: ResolvedProject[]): Map<ResolvedProject, 'top-level' | 'dependency'> {
+  const out = new Map<ResolvedProject, 'top-level' | 'dependency'>();
+  const visit = (depth: number, p: ResolvedProject) => {
+    if (depth > 100) throw new Error('pyro: circular dependency between projects');
+    if (out.get(p) !== 'dependency') out.set(p, depth ? 'dependency' : 'top-level');
+    for (const d of dependenciesOf(l, p)) visit(depth + 1, d);
+    const t = teardownOf(l, p);
+    if (t) visit(depth + 1, t);
+  };
+  for (const p of roots) visit(0, p);
+  // In config order, as Playwright lists them.
+  return new Map(l.projects.filter((p) => out.has(p)).map((p) => [p, out.get(p)!]));
+}
+
+/**
+ * Playwright's phases: each project runs once the projects it depends on
+ * finished; a teardown project once every project that depends on its setup
+ * project finished. Projects of one phase run together.
+ */
+export function projectPhases(l: { projects: ResolvedProject[] }, projects: ResolvedProject[]): ResolvedProject[][] {
+  const inRun = new Set(projects);
+  const dependents = (setups: ResolvedProject[]): Set<ResolvedProject> => {
+    const out = new Set<ResolvedProject>();
+    const visit = (depth: number, p: ResolvedProject) => {
+      if (depth > 100) throw new Error('pyro: circular dependency between projects');
+      out.add(p);
+      for (const q of projects) if (dependenciesOf(l, q).includes(p)) visit(depth + 1, q);
+      const t = teardownOf(l, p);
+      if (t) visit(depth + 1, t);
+    };
+    for (const s of setups) visit(0, s);
+    return out;
+  };
+  const waitFor = new Map<ResolvedProject, ResolvedProject[]>();
+  for (const p of projects) {
+    const setups = projects.filter((s) => teardownOf(l, s) === p);
+    const after = setups.length ? [...dependents(setups)].filter((q) => q !== p) : [];
+    waitFor.set(p, [...dependenciesOf(l, p), ...after].filter((q) => inRun.has(q)));
+  }
+  const phases: ResolvedProject[][] = [];
+  const done = new Set<ResolvedProject>();
+  while (done.size < projects.length) {
+    const phase = projects.filter((p) => !done.has(p) && waitFor.get(p)!.every((q) => done.has(q)));
+    if (!phase.length) throw new Error('pyro: circular dependency between projects');
+    for (const p of phase) done.add(p);
+    phases.push(phase);
+  }
+  return phases;
+}
+
+/** How `pyro run` places a test file in a worker process (`$PYRO_PLAN`). */
+export type FilePlan = {
+  /** The project's index in `config.projects`. */
+  project: number;
+  /** The worker (slot) that runs the file's tests that are not parallel. */
+  owner: number;
+  fullyParallel: boolean;
+  /** The run's `--grep`/`--grep-invert` apply (not to a project that runs as a dependency). */
+  grep: boolean;
+  /** The project's `grep`/`grepInvert` (RegExp sources and flags). */
+  projectGrep?: [string, string][];
+  projectGrepInvert?: [string, string][];
+  /** With `--shard`: whether this shard runs the file's tests that are not parallel, and which parallel ones (by index in the file). */
+  shard?: { general: boolean; parallel: number[] };
+};
+export type RunPlan = { slots: number; files: Record<string, FilePlan> };
+let plan: RunPlan | null | undefined = null;
+/** The plan of this `pyro run` worker process, or undefined (plain `bun test`). */
+export function runPlan(): RunPlan | undefined {
+  if (plan === null) plan = process.env.PYRO_PLAN ? (JSON.parse(readFileSync(process.env.PYRO_PLAN, 'utf8')) as RunPlan) : undefined;
+  return plan;
+}
 
 const DEFAULT_MATCH = '**/*.@(spec|test).?(c|m)[jt]s?(x)';
 
@@ -145,13 +322,10 @@ export function projectFiles(p: ResolvedProject): string[] {
   return out;
 }
 
-/** The project a test file belongs to: `$PYRO_FILE_PROJECTS` (set by `pyro run`), else the first whose files include it. */
+/** The project a test file belongs to: the `pyro run` worker's plan, else the first whose files include it. */
 export function projectFor(l: Loaded, file: string): ResolvedProject {
-  const map = process.env.PYRO_FILE_PROJECTS;
-  if (map) {
-    const i = (JSON.parse(map) as Record<string, number>)[file];
-    if (i !== undefined && l.projects[i]) return l.projects[i];
-  }
+  const i = runPlan()?.files[file]?.project;
+  if (i !== undefined && l.projects[i]) return l.projects[i];
   if (process.env.PYRO_PROJECT === undefined && l.projects.length > 1) {
     const found = l.projects.find((p) => file.startsWith(p.testDir + sep) && matches(p.testMatch, file, p.testDir));
     if (found) return found;
@@ -179,6 +353,13 @@ export async function loadConfig(): Promise<Loaded> {
     name: p.name ?? '',
     index,
     use: { ...(config.use ?? {}), ...(p.use ?? {}) },
+    dependencies: [...((p.dependencies as string[] | undefined) ?? [])],
+    ...(p.teardown ? { teardown: p.teardown as string } : {}),
+    fullyParallel: !!(p.fullyParallel ?? config.fullyParallel),
+    grep: (p.grep ?? config.grep ?? /.*/) as RegExp | RegExp[],
+    grepInvert: (p.grepInvert ?? config.grepInvert ?? null) as RegExp | RegExp[] | null,
+    ignoreSnapshots: !!(p.ignoreSnapshots ?? config.ignoreSnapshots),
+    repeatEach: (p.repeatEach ?? config.repeatEach ?? 1) as number,
     outputDir: resolve(dir, (p.outputDir ?? config.outputDir ?? 'test-results') as string),
     testDir: resolve(dir, (p.testDir ?? config.testDir ?? '.') as string),
     testMatch: (p.testMatch ?? config.testMatch ?? DEFAULT_MATCH) as Matcher,
@@ -193,11 +374,13 @@ export async function loadConfig(): Promise<Loaded> {
     expect: { ...(((p.expect ?? config.expect) as object) ?? {}) },
   });
   const projects = config.projects?.length ? config.projects.map(resolveProject) : [resolveProject({}, 0)];
+  checkDependencies(projects);
   const want = process.env.PYRO_PROJECT;
   const project = want === undefined ? projects[0] : projects.find((p) => p.name === want);
   if (!project) throw new Error(`pyro: no project named ${JSON.stringify(want)} in ${file}`);
   if (process.env.PYRO_TIMEOUT) for (const p of projects) p.timeout = Number(process.env.PYRO_TIMEOUT);
-  return { config, project, projects, dir };
+  const l = { config, file, project, projects, dir };
+  return { ...l, full: fullConfig(l, runOptionsFromEnv()) };
 }
 
 const children: ChildProcess[] = [];
@@ -324,17 +507,21 @@ export async function startWebServers(l: Loaded): Promise<void> {
   }
 }
 
-/** Runs `globalSetup` and returns the teardowns (`globalTeardown`, functions it returned). */
-export async function globalSetup(l: Loaded): Promise<(() => Promise<unknown>)[]> {
+/**
+ * Runs `globalSetup` with Playwright's FullConfig (`full`, else the loaded
+ * one) and returns the teardowns: functions it returned, then `globalTeardown`
+ * (called with the same FullConfig).
+ */
+export async function globalSetup(l: Loaded, full: FullConfig = l.full): Promise<(() => Promise<unknown>)[]> {
   const teardowns: (() => Promise<unknown>)[] = [];
   const load = async (f: string) => {
     const mod = await import(pathToFileURL(resolve(l.dir, f)).href);
-    return (mod.default ?? mod) as (config: unknown) => unknown;
+    return (mod.default ?? mod) as (config: FullConfig) => unknown;
   };
-  for (const f of ([] as string[]).concat(l.config.globalSetup ?? [])) {
-    const r = await (await load(f))(l.config);
-    if (typeof r === 'function') teardowns.push(async () => r(l.config));
+  for (const f of asList(l.config.globalSetup)) {
+    const r = await (await load(f))(full);
+    if (typeof r === 'function') teardowns.push(async () => r(full));
   }
-  for (const f of ([] as string[]).concat(l.config.globalTeardown ?? [])) teardowns.push(async () => (await load(f))(l.config));
+  for (const f of asList(l.config.globalTeardown)) teardowns.push(async () => (await load(f))(full));
   return teardowns;
 }

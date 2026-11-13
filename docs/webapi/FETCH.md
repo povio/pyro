@@ -144,8 +144,10 @@ never share entries, and a context's entries are freed with it.
   (`PYRO_SHARED_ASSET_CACHE_MB` or `NetConfig.shared_asset_cache`).
 - It shares credential-free GET 200 responses that are explicitly `public` and
   fresh, with no `Set-Cookie`/`Vary`/`private`/`no-store`/`no-cache`, across
-  every context of the process. The contract is header-based, not limited to a
-  MIME type or path; see `SharedAssetCache`.
+  every context of the process that goes out as the browser does: a context with
+  a proxy or user agent of its own never uses it (its requests are its
+  identity's). The contract is header-based, not limited to a MIME type or path;
+  see `SharedAssetCache`.
 - `init.cache` maps to it: `default`, `no-store`, `reload`, `no-cache`,
   `force-cache` and `only-if-cached` follow the Fetch cache-mode rules, including
   the `Pragma`/`Cache-Control` request headers that no-store, reload and no-cache add.

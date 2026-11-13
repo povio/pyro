@@ -47,15 +47,64 @@ export type Profile = {
   prepare?: boolean;
   /**
    * Steps run once on the booted page before tests get it (`serve --fork`
-   * only): every page of this profile then starts from their result.
+   * only): every page of this profile then starts from their result. When a
+   * step fails, `profile()` rejects with a `ProfileSetupError` naming it, and
+   * no page of the profile is handed out.
    */
   setup?: StepLike[];
   /**
    * Starts from another profile's snapshot (`serve --fork` only): its page is
    * forked from that profile's, and only this profile's `setup` runs on it.
-   * The base may be a profile another client of the server registered.
+   * The base may be a profile another client of the server registered. It
+   * has the base's `userAgent` and proxy, and fails when the base does.
    */
   base?: string;
+  /**
+   * The `User-Agent` of every request of the profile's pages (the document,
+   * its subresources, fetch and XHR, what layout, screenshots and PDFs load,
+   * the `setup` steps' and every page's since) and their
+   * `navigator.userAgent`, instead of Pyro's own. Part of the definition:
+   * under a shared name a different one is refused.
+   */
+  userAgent?: string;
+  /**
+   * HTTP proxy of every request of the profile's pages, as
+   * `Target.createBrowserContext` takes it: `http://[user:pass@]host:port`
+   * (CONNECT for https), `direct://` for none. In place of the server's
+   * `--proxy`. Part of the definition.
+   */
+  proxyServer?: string;
+  /** Hosts that skip `proxyServer`, in Chrome's `--proxy-bypass-list` syntax (loopback always does unless it lists `<-loopback>`). */
+  proxyBypassList?: string;
+};
+
+/**
+ * A profile's `setup` failed (`serve --fork`), or that of the profile it
+ * starts from (`base`): the message names the step and why, as a run's
+ * errors do (`profile app: setup step 2 (Click …): timed out after 5000 ms:
+ * …`). No page of the profile is handed out; declaring it again tries again.
+ */
+export class ProfileSetupError extends Error {
+  constructor(
+    message: string,
+    /** The profile's name. */
+    readonly profile: string,
+    /** Index of the failed step in the profile's own `setup` (none when its base failed, or no step did). */
+    readonly step: number | undefined,
+  ) {
+    super(message);
+  }
+}
+
+/** `p`, its rejection handled where nothing awaits it (it still rejects where something does). */
+const handled = <T>(p: Promise<T>): Promise<T> => {
+  p.catch(() => {});
+  return p;
+};
+
+const setupError = (profile: string, error: string) => {
+  const step = /^setup step (\d+)/.exec(error);
+  return new ProfileSetupError(`profile ${profile}: ${error}`, profile, step ? Number(step[1]) : undefined);
 };
 
 export type RunResult = {
@@ -77,6 +126,8 @@ export class RunError extends Error {
     readonly step: number,
   ) {
     super(message);
+    // Runners print `RunError: step …` instead of `Error: step …`.
+    this.name = 'RunError';
   }
 }
 
@@ -89,7 +140,14 @@ type ProfileEntry = {
   scripts: string[];
   /** Shared profiles: the registered definition, to tell a changed one. */
   definition?: string;
+  /** Fork mode: settles once the server has set the profile up; rejects with its `ProfileSetupError`. */
+  ready?: Promise<void>;
+  /** Its setup failed (fork mode): no page of it is handed out. */
+  failed?: ProfileSetupError;
 };
+
+/** A registration's or adoption's reply (`state` and `error` from servers that report them). */
+type ProfileReply = { profileId: number; state?: string; error?: string; setup?: unknown[]; base?: number | null };
 
 /** One CDP connection: one browser thread, with its own page pools and screenshot baselines. */
 type Conn = {
@@ -214,9 +272,13 @@ export class Pyro {
    * adopts that profile (nothing boots again); a different definition is
    * refused while another client holds the name. Declaring a name again
    * with a different definition replaces this client's own.
+   *
+   * A profile with `setup` (or a `base`) resolves once the server has run
+   * its steps, and rejects with a `ProfileSetupError` when one fails (or
+   * its base's did); declaring it again tries again.
    */
   async profile(name: string, profile: Profile): Promise<void> {
-    return this.updateProfiles(async () => {
+    const entry = await this.updateProfiles(async (): Promise<ProfileEntry> => {
       const base = profile.base === undefined ? undefined : (await this.resolveLocked(profile.base))?.ids?.[0];
       if (profile.base !== undefined && base === undefined) throw new Error(`no prepared profile ${profile.base} to start from`);
       const scripts = [...(profile.localStorage ? [storageScript(profile.localStorage)] : []), ...(profile.initScripts ?? [])];
@@ -227,36 +289,40 @@ export class Pyro {
         pool: profile.pool ?? 2,
         ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
         ...(base !== undefined ? { base } : {}),
+        ...contextParams(profile),
       };
       const local = this.profiles.get(name);
       if (this.shared && profile.prepare !== false) {
         // The template keeps one page per profile: the pool does not matter there.
         const definition = JSON.stringify({ ...params, pool: undefined });
-        if (local?.definition === definition) return;
+        if (local?.definition === definition && !local.failed) return local;
         if (local?.ids) await this.cdp.send('Pyro.unregisterPreparedPage', { name });
         this.profiles.delete(name);
-        const { profileId } = await this.cdp.send('Pyro.registerPreparedPage', { name, ...params });
-        this.profiles.set(name, { ids: [profileId], profile, scripts, definition });
-        return;
+        const r: ProfileReply = await this.cdp.send('Pyro.registerPreparedPage', { name, ...params });
+        const entry: ProfileEntry = { ids: [r.profileId], profile, scripts, definition };
+        entry.ready = handled(this.settle(name, entry, r, false));
+        this.profiles.set(name, entry);
+        return entry;
       }
       if (local?.definition !== undefined) {
         await this.cdp.send('Pyro.unregisterPreparedPage', { name });
         this.profiles.delete(name);
       }
       if (profile.prepare === false) {
-        this.profiles.set(name, { ids: null, profile, scripts });
-        return;
+        const entry: ProfileEntry = { ids: null, profile, scripts };
+        this.profiles.set(name, entry);
+        return entry;
       }
       // Fork mode: the server's template boots the profile once for every connection.
       const conns = this.fork ? this.conns.slice(0, 1) : this.conns;
-      const ids = await Promise.all(
-        conns.map(async (c) => {
-          const { profileId } = await c.cdp.send('Pyro.registerPreparedPage', params);
-          return profileId as number;
-        }),
-      );
-      this.profiles.set(name, { ids, profile, scripts });
+      const replies = await Promise.all(conns.map((c): Promise<ProfileReply> => c.cdp.send('Pyro.registerPreparedPage', params)));
+      const entry: ProfileEntry = { ids: replies.map((r) => r.profileId), profile, scripts };
+      if (this.fork) entry.ready = handled(this.settle(name, entry, replies[0], false));
+      this.profiles.set(name, entry);
+      return entry;
     });
+    // Outside the queue: profiles declared meanwhile boot alongside this one.
+    await entry.ready;
   }
 
   /**
@@ -266,11 +332,17 @@ export class Pyro {
    * and `profile()` adopt a name they do not know by themselves; the server
    * keeps a profile while some client holds it (until it releases it with
    * `releaseProfile` or disconnects) or another profile derives from it.
+   * Rejects with the `ProfileSetupError` of a profile whose setup failed
+   * (not holding it).
    */
   async adopt(name: string): Promise<void> {
-    await this.updateProfiles(async () => {
-      if (!(await this.resolveLocked(name))) throw new Error(`no profile ${name}: adopting a profile needs pyro serve --fork`);
+    const entry = await this.updateProfiles(async () => {
+      const entry = await this.resolveLocked(name);
+      if (!entry) throw new Error(`no profile ${name}: adopting a profile needs pyro serve --fork`);
+      return entry;
     });
+    await entry.ready;
+    if (entry.failed) throw entry.failed;
   }
 
   /** This client's profile `name`, adopting the server's when it does not have one. */
@@ -284,16 +356,61 @@ export class Pyro {
       if (e instanceof CdpError && e.message.endsWith(`: no profile ${name}`)) {
         throw new Error(`no profile ${name} on this server: declare it with pyro.profile()`);
       }
+      // Its setup failed: the server did not let this client hold it.
+      const failed = e instanceof CdpError ? (e.data as { setupError?: unknown } | undefined)?.setupError : undefined;
+      if (typeof failed === 'string') throw setupError(name, failed);
       throw e;
     }
     const profile: Profile = {
       url: r.url,
       initScripts: r.initScripts ?? [],
       ...(r.viewport ? { viewport: r.viewport } : {}),
+      ...(r.userAgent != null ? { userAgent: r.userAgent } : {}),
+      ...(r.proxyServer != null ? { proxyServer: r.proxyServer } : {}),
+      ...(r.proxyBypassList != null ? { proxyBypassList: r.proxyBypassList } : {}),
     };
     const entry: ProfileEntry = { ids: [r.profileId], profile, scripts: r.initScripts ?? [], definition: '' };
+    entry.ready = handled(this.settle(name, entry, r, true));
     this.profiles.set(name, entry);
     return entry;
+  }
+
+  /**
+   * Fork mode: resolves once the server has set profile `name` up (at once
+   * when it was, or has no setup and no base, or the server does not say),
+   * and rejects with its `ProfileSetupError` when its setup failed. An
+   * adopted profile that failed is released and forgotten: asking for it
+   * again asks the server again. Released or declared anew meanwhile, it is
+   * no longer waited for.
+   */
+  private async settle(name: string, entry: ProfileEntry, reply: ProfileReply, adopted: boolean): Promise<void> {
+    let { state, error } = reply;
+    // Only a setup (its own or its base's) can fail: a profile without one is not waited for.
+    const fallible = adopted
+      ? !!reply.setup?.length || reply.base != null
+      : !!entry.profile.setup?.length || entry.profile.base !== undefined;
+    if (state !== 'failed' && !(state === 'booting' && fallible)) return;
+    const current = () => this.profiles.get(name) === entry;
+    for (let pause = 5; state === 'booting'; pause = Math.min(pause * 2, 50)) {
+      await new Promise((r) => setTimeout(r, pause));
+      if (!current()) return;
+      try {
+        ({ state, error } = await this.cdp.send('Pyro.preparedProfileStatus', { profileId: entry.ids![0] }));
+      } catch (e) {
+        if (!current()) return; // retired with its release
+        throw e;
+      }
+    }
+    if (state !== 'failed') return;
+    entry.failed = setupError(name, error ?? 'setup failed');
+    if (adopted) {
+      await this.updateProfiles(async () => {
+        if (this.profiles.get(name) !== entry) return;
+        this.profiles.delete(name);
+        await this.cdp.send('Pyro.unregisterPreparedPage', { name }).catch(() => {});
+      });
+    }
+    throw entry.failed;
   }
 
   /**
@@ -323,10 +440,16 @@ export class Pyro {
     });
   }
 
-  /** Waits until every connection's pool of profile `name` is fully booted. */
+  /**
+   * Waits until every connection's pool of profile `name` is fully booted
+   * (fork mode: once its setup ran). Rejects with the `ProfileSetupError` of
+   * a profile whose setup failed.
+   */
   async warm(name: string, timeoutMs = 5_000): Promise<void> {
     const entry = this.profiles.get(name) ?? (this.shared ? await this.updateProfiles(() => this.resolveLocked(name)) : undefined);
     if (!entry?.ids) return;
+    await entry.ready;
+    if (entry.failed) throw entry.failed;
     const deadline = Date.now() + timeoutMs;
     if (this.fork) {
       // A new connection is a fork of the template as it is now.
@@ -370,7 +493,9 @@ export class Pyro {
    * (a full navigation) runs as the first step of the first `run`.
    * `initScripts` run in every document of this page before its scripts
    * (after the profile's); a booted page already ran its document, so the
-   * page then boots fresh instead of coming from the pool.
+   * page then boots fresh instead of coming from the pool. A profile whose
+   * setup is still running is waited for; one whose setup failed throws its
+   * `ProfileSetupError`.
    */
   async page(opts: { as?: string; route?: string; url?: string; initScripts?: string[] } = {}): Promise<Page> {
     const as = opts.as;
@@ -378,6 +503,8 @@ export class Pyro {
     // Another client's profile on this server: adopt it.
     if (as !== undefined && !entry && this.shared) entry = await this.updateProfiles(() => this.resolveLocked(as));
     if (as !== undefined && !entry) throw new Error(`no profile ${as}: declare it with pyro.profile()`);
+    await entry?.ready?.catch(() => {});
+    if (entry?.failed) throw entry.failed;
     if (!this.fork) {
       const index = this.pick();
       return this.openPage(this.conns[index], index, entry, opts);
@@ -456,9 +583,19 @@ async function openConns(wsUrl: string, opts: ConnectOptions): Promise<Conn[]> {
   return cdps.map((cdp) => ({ cdp, open: 0, baselines: new Map() }));
 }
 
+/** A profile's `userAgent` and proxy as `registerPreparedPage` and `createBrowserContext` take them. */
+function contextParams(p?: Profile): { userAgent?: string; proxyServer?: string; proxyBypassList?: string } {
+  return {
+    ...(p?.userAgent !== undefined ? { userAgent: p.userAgent } : {}),
+    ...(p?.proxyServer !== undefined ? { proxyServer: p.proxyServer } : {}),
+    ...(p?.proxyBypassList !== undefined ? { proxyBypassList: p.proxyBypassList } : {}),
+  };
+}
+
 async function freshPage(conn: Conn, entry?: ProfileEntry, extra: string[] = []): Promise<Page> {
   const cdp = conn.cdp;
-  const { browserContextId } = await cdp.send('Target.createBrowserContext');
+  // The profile's agent and proxy are its context's, as for its booted pages.
+  const { browserContextId } = await cdp.send('Target.createBrowserContext', contextParams(entry?.profile));
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
   for (const source of [...(entry?.scripts ?? []), ...extra]) {

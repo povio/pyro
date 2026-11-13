@@ -142,6 +142,19 @@ function call(fn: Fn, ms: number, what: string): Promise<void> {
 
 const scopeName = (s: Scope) => (s.kind === 'run' ? 'the run' : s.kind === 'file' ? s.file : `describe '${s.name}'`);
 
+/**
+ * After a test timed out: the runs its pages still wait on are cancelled
+ * (`Pyro.cancelRun`; a run's script that never returns is stopped), so its
+ * afterEach hooks find the pages as they were at the timeout and not busy.
+ * At most `ms`; a browser that does not answer is left to the page closing.
+ */
+async function cancelRuns(pages: TestRun['pages'], ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancelled = Promise.all([...pages].map((p) => p.send?.('Pyro.cancelRun').catch(() => {})));
+  await Promise.race([cancelled, new Promise((r) => (timer = setTimeout(r, ms)))]);
+  clearTimeout(timer);
+}
+
 export class Executor {
   private readonly r = registry();
   private readonly root = newScope('run', '', '');
@@ -423,6 +436,7 @@ export class Executor {
           await call(test.fn, timeout, 'test');
         } catch (e) {
           failure = e;
+          if (e instanceof TimeoutError) await cancelRuns(run.pages, 1_000);
         }
         for (const s of [...scopes].reverse()) {
           for (const h of s.afterEach) {

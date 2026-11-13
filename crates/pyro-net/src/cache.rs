@@ -455,7 +455,8 @@ fn shared_storable(status: StatusCode, response: &HeaderMap, request: &HeaderMap
 /// [`shared_request_eligible`]). Only fresh entries are served; there is no
 /// revalidation.
 /// - Never shared: cookie jars, credentialed or non-`public` responses, and
-///   page state.
+///   page state. pyro-browser gives no handle to a context with a proxy or
+///   user agent of its own: what it loads goes out through its identity.
 /// - A server that marks a response `public` and long-lived is trusted to mean
 ///   it for every client of that origin, as with any shared HTTP cache.
 /// - In the TOS workload that motivated it, only content-hashed `/assets/` files
