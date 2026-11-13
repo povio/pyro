@@ -1,0 +1,28 @@
+<!doctype html>
+<!--
+  Not a rendering gap but a visible one: the position drawer's header shows
+  "Created At: Oct 1, 02:00" in Chromium and "Oct 1 at 02:00" in pyro.
+  CLDR 42 joins a date and a time with " at "; Chromium's ICU data keeps the
+  comma for web compatibility, JavaScriptCore uses the system ICU's CLDR.
+  The formatted strings are on the page and in window.__measure.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="420x110">
+<style> body { margin: 8px; font: 14px system-ui; color: #292c33; } p { margin: 0 0 6px; } </style>
+</head>
+<body>
+<script>
+  const date = new Date(Date.UTC(2026, 9, 1, 0, 0));
+  const cases = {
+    'month day time': { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Ljubljana' },
+    'medium date short time': { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Ljubljana' },
+    'long date short time': { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Ljubljana' },
+  };
+  const results = Object.entries(cases).map(([name, options]) => ({ case: name, text: new Intl.DateTimeFormat('en-US', options).format(date) }));
+  for (const r of results) { const p = document.createElement('p'); p.textContent = `${r.case}: ${r.text}`; document.body.append(p); }
+  window.__measure = () => results;
+</script>
+</body>
+</html>

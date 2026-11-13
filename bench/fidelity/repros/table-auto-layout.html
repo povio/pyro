@@ -1,0 +1,39 @@
+<!doctype html>
+<!--
+  Known gap check: column widths in the auto table layout (no table-layout:
+  fixed, no column widths), content of mixed lengths, a table wider than its
+  content and one narrower. The ToS screens captured here size their columns
+  with table-layout: fixed and <col> widths, which match; this page checks the
+  auto algorithm itself. Column widths are published in window.__measure.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="560x230">
+<style>
+  body { margin: 10px; font: 13px system-ui; color: #292c33; }
+  table { border-collapse: collapse; margin-bottom: 12px; }
+  td, th { border: 1px solid #b8bec8; padding: 2px 6px; text-align: left; }
+  th { background: #eceef0; }
+</style>
+</head>
+<body>
+<table id="a" style="width: 540px">
+  <tr><th>Number</th><th>Customer</th><th>Amount</th><th>Due Date</th></tr>
+  <tr><td>E2E-OUT-24</td><td>E2E Logistics Customer d.o.o.</td><td>200.00 EUR</td><td>11/01/2026</td></tr>
+  <tr><td>E2E-FIN-DRAFT-24</td><td>E2E Finance Vendor</td><td>1,120.00 EUR</td><td>01/15/2027</td></tr>
+</table>
+<table id="b" style="width: 300px">
+  <tr><th>Number</th><th>Customer</th><th>Amount</th></tr>
+  <tr><td>E2E-OUT-24</td><td>E2E Logistics Customer with a long name that wraps</td><td>200.00 EUR</td></tr>
+</table>
+<table id="c">
+  <tr><th>Charge/Fee</th><th>Quantity</th><th>Profit</th></tr>
+  <tr><td>Finance Freight</td><td>1</td><td>105.00 EUR (25.93 %)</td></tr>
+</table>
+<script>
+  window.__measure = () => ['a', 'b', 'c'].flatMap((id) =>
+    [...document.querySelectorAll(`#${id} tr:first-child > *`)].map((th, i) => ({ case: `${id} col ${i + 1}`, width: +th.getBoundingClientRect().width.toFixed(2) })));
+</script>
+</body>
+</html>

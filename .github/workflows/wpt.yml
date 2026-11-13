@@ -98,10 +98,13 @@ jobs:
   build:
     needs: [prepare, jsc]
     if: ${{ !cancelled() && !failure() && needs.prepare.outputs.browser-cached != 'true' }}
-    runs-on: macos-15
+    # The self-hosted Apple Silicon runner (label lp-m1), as the jsc job.
+    runs-on: lp-m1
     timeout-minutes: 45
     env:
       JSC_DIR: ${{ needs.prepare.outputs.jsc-dir }}
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     steps:
       - uses: actions/checkout@v6
       # The patched JavaScriptCore: the jsc job's artifact when it ran, otherwise the Actions cache.
@@ -123,6 +126,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wpt-release-fast
+          # Its post step deletes binaries it does not know from ~/.cargo/bin, rustup among them, which
+          # broke the Rust install of the self-hosted runner (lp-m1).
+          cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # release-fast: the release profile with pyro-cdp and pyro-dom split into more codegen units (Cargo.toml), so the
       # end of the build is not one core's work.
@@ -160,7 +166,7 @@ jobs:
   wpt:
     needs: [prepare, build]
     if: ${{ !cancelled() && !failure() }}
-    runs-on: macos-15
+    runs-on: lp-m1
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -227,7 +233,7 @@ jobs:
   client:
     needs: [prepare, build]
     if: ${{ !cancelled() && !failure() }}
-    runs-on: macos-15
+    runs-on: lp-m1
     timeout-minutes: 25
     defaults:
       run:
