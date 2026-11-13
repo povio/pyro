@@ -196,6 +196,9 @@ impl CssBox {
     }
 
     /// Construct a bezpath drawing the outline
+    // Unused since `draw_outline` builds the outline's own box, which follows
+    // `outline-offset`; kept as upstream has it.
+    #[allow(dead_code)]
     pub fn outline(&self) -> BezPath {
         let mut path = BezPath::new();
 
@@ -205,6 +208,24 @@ impl CssBox {
 
         self.shape(&mut path, CssBoxKind::BorderBox, Direction::Anticlockwise);
         path.move_to(self.corner(Corner::TopLeft, CssBoxKind::BorderBox));
+
+        path
+    }
+
+    /// Construct a bezpath of the whole border area: the border box less the
+    /// padding box
+    pub fn border_ring(&self) -> BezPath {
+        // Two closed contours, each starting on its own first corner (a
+        // contour started on the box's corner point would cut that corner off
+        // a rounded box).
+        let mut path = BezPath::new();
+        self.shape(&mut path, CssBoxKind::BorderBox, Direction::Clockwise);
+        path.close_path();
+
+        let mut hole = BezPath::new();
+        self.shape(&mut hole, CssBoxKind::PaddingBox, Direction::Anticlockwise);
+        hole.close_path();
+        path.extend(&hole);
 
         path
     }

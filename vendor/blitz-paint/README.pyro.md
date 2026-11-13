@@ -86,8 +86,8 @@ from the root of an upstream checkout at that commit) is the whole diff.
     the level being Skia's canonical 3-bit luminance of the colour). anyrender_vello_cpu's patch brings the amount
     to glifo's outline units; without it an unhinted run got none. Covered by
     `a_missing_bold_face_is_synthesized`.
-  - `src/render.rs` (`draw_inline_boxes`): an inline box that is not atomic paints as a box does (outline,
-    outer shadow, background, inner shadow, border with its radii), where only its background was painted,
+  - `src/render.rs` (`draw_inline_boxes`): an inline box that is not atomic paints as a box does (outer
+    shadow, background, inner shadow, border with its radii, outline), where only its background was painted,
     as wide as its glyphs. It has one fragment per line it has content on, from the start of its first
     content there to the end of its last, its own edges (blitz-dom's span edges, without their margins) among
     them, as tall as its content area plus its block-axis padding and border. The first fragment has the
@@ -95,6 +95,29 @@ from the root of an upstream checkout at that commit) is the whole diff.
     without a border style has no border. A fragment's edges are snapped to whole CSS pixels at any device
     scale, as Chromium snaps a box's decorations under an emulated device scale factor (and as block boxes
     are laid out). Covered by `crates/pyro-render/tests/inline_box_decorations.rs`.
+  - `src/render/border.rs` (`draw_dotted_dashed_sides`, `straight_side_marks`, `dash_pattern`, `dot_period`,
+    `CenterLine`), `src/kurbo_css/css_box.rs` (`border_ring`): dotted and dashed sides have Blink's marks
+    (`StyledStrokeData`, `GraphicsContext::DrawLine`, `BoxBorderPainter`), where dashes were a fixed share of a
+    side between mitred corners and dots were round at every width. In whole CSS pixels: a dash is twice the
+    width from 3px and three times it below, the gap one width and two, the gap then fitted to the length
+    (`SelectBestDashGap`); a dotted line up to 3px has square dots and gaps of its width with a dot at each end
+    (`EnforceDotsAtEndpoints`), a wider one round dots a fitted distance apart; a line of two dashes or less is
+    solid. On square corners a side runs from corner to corner and lies over its neighbours there (mitred only
+    against a neighbour of another style or colour; corner dots drawn once). On rounded corners all sides
+    stroke one closed line, inset by half the width floored to CSS pixels, starting after the top left corner,
+    clipped to each side (to the ring when all sides are alike): the pattern is sized by the length Skia
+    measures at half a CSS pixel's tolerance cut to a whole number, and laid out along the chords Skia's dash
+    effect measures at half a device pixel's (linear in the curve parameter inside a chord), which is where
+    Chromium's dashes fall to 0.05px.
+  - `src/render/border.rs` (`draw_outline`, `outline_bounds`), `src/render.rs` (`render_element`,
+    `draw_inline_boxes`): an outline is drawn as a border of its style (dotted and dashed as above, the others
+    solid) around the border box moved out by `outline-offset` plus its width, where it was always solid, on
+    the border box whatever its offset, and under the box's background. As in Chromium the width is floored to
+    whole CSS pixels (at least one), the offset cut to whole pixels and no further in than half the box, a
+    rounded corner's radius grows by the distance (a square one stays square), and the outline is painted
+    after the box's content, with the element's opacity. Not matched: one outline around the fragments of a
+    wrapped inline box (each fragment has its own), `outline-style: auto`, and a positioned descendant
+    painting over its ancestor's outline. Covered by `crates/pyro-render/tests/dotted_dashed_lines.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

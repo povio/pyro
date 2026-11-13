@@ -5,6 +5,7 @@
 mod br_flex_item;
 mod container_queries;
 mod containing_block_chain;
+mod dotted_dashed_lines;
 mod font_optical_sizing;
 mod font_unicode_range;
 mod fractional_scroll_overflow;
