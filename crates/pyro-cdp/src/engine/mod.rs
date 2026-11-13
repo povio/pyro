@@ -388,6 +388,11 @@ pub(crate) struct PageState {
     /// This page is a `window.open` popup; dropped with the page, which tells
     /// the opener's object it closed.
     pub(crate) popup_ticket: Option<std::rc::Rc<pyro_webapi::PopupTicket>>,
+    /// The opener of a popup (a link or `window.open`) that has committed no
+    /// document of its own yet, its initial about:blank one aside. A
+    /// download its navigation turns into is the opener's, and the popup
+    /// closes, as Chrome closes a tab it opened for a download.
+    pub(crate) uncommitted_popup_of: Option<PageKey>,
     /// A raw keydown which changes documents suppresses one following char.
     /// Keyboard input is page-scoped, including across attached sessions.
     pub(crate) suppress_next_char: bool,
@@ -666,6 +671,7 @@ impl EngineHost {
                 next_script_id: 1,
                 initial_popup: false,
                 popup_ticket: None,
+                uncommitted_popup_of: None,
                 suppress_next_char: false,
                 intercept_drags: false,
                 touches: Default::default(),
@@ -1528,6 +1534,7 @@ impl Host for EngineHost {
         }
         if let Some(state) = self.pages.get_mut(&page) {
             state.popup_ticket = ticket;
+            state.uncommitted_popup_of = Some(opener);
         }
         if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
             if let Some(state) = self.pages.get_mut(&page) {
@@ -1634,15 +1641,18 @@ impl Host for EngineHost {
         let Some(p) = self.thread.browser.page(state.id) else { return false };
         let navigating = state.frames.get(&p.main_frame.id).is_some_and(|f| f.navigating);
         // A prepared page always has a URL to go to: on `about:blank` it has
-        // not got there (the navigation failed, or never started).
-        p.main_frame.loaded && !navigating && p.pending_loader().is_none() && p.main_frame.url != "about:blank"
+        // not got there (the navigation failed, or never started), nor on
+        // the error document a failed first navigation commits.
+        let arrived = p.main_frame.url != "about:blank" && p.main_frame.unreachable.is_none();
+        p.main_frame.loaded && !navigating && p.pending_loader().is_none() && arrived
     }
 
     fn page_needs_navigation(&self, page: PageKey) -> bool {
         let Some(state) = self.pages.get(&page) else { return false };
         let Some(p) = self.thread.browser.page(state.id) else { return false };
         let navigating = state.frames.get(&p.main_frame.id).is_some_and(|f| f.navigating);
-        p.main_frame.url == "about:blank" && !navigating && p.pending_loader().is_none()
+        let nowhere = p.main_frame.url == "about:blank" || p.main_frame.unreachable.is_some();
+        nowhere && !navigating && p.pending_loader().is_none()
     }
 
     fn add_init_script(&mut self, page: PageKey, source: &str) {

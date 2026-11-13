@@ -2030,6 +2030,91 @@ fn content_disposition_attachment_navigation_becomes_download() {
 }
 
 #[test]
+fn a_download_a_popup_starts_is_its_openers_and_closes_the_popup() {
+    // Recorded from Chromium 147 (Playwright 1.59's full build): a
+    // target=_blank link answered with an attachment opens a paused popup;
+    // once resumed, its navigation becomes the download, announced with the
+    // popup's frame id, and Chrome closes the tab it opened for it
+    // (Target.detachedFromTarget). Playwright reports the download on the
+    // opener; so do `Pyro.run` download steps.
+    let (addr, server) = serve_attachment(
+        2,
+        "Content-Type: application/zip\r\nContent-Disposition: attachment; filename=report.zip\r\n",
+        b"zipbytes",
+    );
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let ctx = targets["result"]["targetInfos"].as_array().unwrap().iter().find(|t| t["targetId"] == opener).unwrap()
+        ["browserContextId"]
+        .clone();
+    let dir = std::env::temp_dir().join(format!("pyro-popup-downloads-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    h.call(
+        None,
+        "Browser.setDownloadBehavior",
+        json!({"behavior":"allowAndName","browserContextId":ctx,"downloadPath":dir,"eventsEnabled":true}),
+    );
+    h.call(None, "Target.setDiscoverTargets", json!({"discover":true}));
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({"url": format!("http://{addr}/page")}));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        until_event(&mut h, "Page.loadEventFired");
+    }
+    let session = h.session.clone();
+    let run = h.send(
+        Some(&session),
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "const a = document.getElementById('f'); a.target = '_blank'; a.click(); null"}},
+            {"download": {"as": "file"}},
+        ]}),
+    );
+    let attached =
+        h.until_event(|m| m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != opener);
+    assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
+    let popup_target = attached["params"]["targetInfo"]["targetId"].as_str().unwrap().to_owned();
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    h.call(Some(&popup), "Page.enable", json!({}));
+    h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut events = h.until_response(run);
+    // The opener's run got the download.
+    let reply = events.iter().find(|e| e["id"] == run).unwrap().clone();
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert_eq!(reply["result"]["reads"]["file"]["filename"], "report.zip", "{reply}");
+    assert_eq!(reply["result"]["reads"]["file"]["text"], "zipbytes", "{reply}");
+    // Settled: the close request goes out with the next message handled.
+    events.extend(h.run_for(100));
+    h.call(None, "Target.getTargets", json!({}));
+    events.extend(h.drain());
+    let begin = events.iter().find(|e| e["method"] == "Browser.downloadWillBegin").expect("downloadWillBegin");
+    assert_eq!(begin["params"]["frameId"], json!(popup_target), "the popup's frame, as in Chrome");
+    let completed = events
+        .iter()
+        .find(|e| e["method"] == "Browser.downloadProgress" && e["params"]["state"] == "completed")
+        .expect("completed");
+    assert_eq!(std::fs::read(completed["params"]["filePath"].as_str().unwrap()).unwrap(), b"zipbytes");
+    // No document committed in the popup, then it closed.
+    assert!(
+        !events.iter().any(|e| e["method"] == "Page.frameNavigated" && e["sessionId"] == json!(popup)),
+        "{events:#?}"
+    );
+    let at = |pred: &dyn Fn(&Value) -> bool| events.iter().position(pred);
+    let detached = at(&|e| e["method"] == "Target.detachedFromTarget" && e["params"]["sessionId"] == json!(popup))
+        .unwrap_or_else(|| panic!("popup not closed: {events:#?}"));
+    let destroyed = at(&|e| e["method"] == "Target.targetDestroyed" && e["params"]["targetId"] == json!(popup_target))
+        .expect("targetDestroyed");
+    assert!(at(&|e| e["method"] == "Browser.downloadWillBegin").unwrap() < detached && detached < destroyed);
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let ids: Vec<&Value> =
+        targets["result"]["targetInfos"].as_array().unwrap().iter().map(|t| &t["targetId"]).collect();
+    assert!(!ids.contains(&&json!(popup_target)), "{targets}");
+    assert!(ids.contains(&&json!(opener)), "{targets}");
+    server.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn input_home_end_with_mac_scroll_commands_scroll_the_document() {
     // Playwright sends Home/End with scrollTo{Beginning,End}OfDocument on
     // macOS. Outside editable content Chrome scrolls the document. Scroll
@@ -3592,6 +3677,92 @@ fn links_and_window_open_targeting_blank_open_paused_popups() {
             && m["params"]["sessionId"] != json!(popup)
     });
     assert_eq!(second["params"]["targetInfo"]["openerId"], json!(opener));
+}
+
+#[test]
+fn a_new_windows_failed_navigation_commits_chromes_error_document() {
+    // Recorded from Chromium 147 (Playwright 1.59's headless shell): a popup
+    // whose navigation fails (here a refused connection) commits the error
+    // document: Network.loadingFailed, then frameNavigated at
+    // chrome-error://chromewebdata/ with the URL as unreachableUrl (opaque
+    // origin "://"), its execution context after it, DOMContentLoaded and
+    // load, and only then frameStoppedLoading. Playwright's `popup` event
+    // waits for that commit.
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    h.page("Page.enable", json!({}));
+    let refused = "http://127.0.0.1:1/refused";
+    h.page("Runtime.evaluate", json!({ "expression": format!("window.open('{refused}'); 1") }));
+    let attached =
+        h.until_event(|m| m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != opener);
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let popup_frame = attached["params"]["targetInfo"]["targetId"].clone();
+    for method in ["Page.enable", "Runtime.enable", "Network.enable"] {
+        h.call(Some(&popup), method, json!({}));
+    }
+    h.call(Some(&popup), "Page.setLifecycleEventsEnabled", json!({"enabled": true}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut events = h.until_response(id);
+    let is_stopped = |m: &Value| m["method"] == "Page.frameStoppedLoading" && m["sessionId"] == json!(popup);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !events.iter().any(is_stopped) {
+        assert!(Instant::now() < deadline, "{events:#?}");
+        events.extend(h.run_for(20));
+    }
+    let mine: Vec<&Value> = events.iter().filter(|m| m["sessionId"] == json!(popup)).collect();
+    let at = |name: &str| mine.iter().position(|m| m["method"] == name || m["params"]["name"] == name);
+    let navigated = mine.iter().find(|m| m["method"] == "Page.frameNavigated").unwrap_or_else(|| panic!("{mine:#?}"));
+    let frame = &navigated["params"]["frame"];
+    assert_eq!(frame["id"], popup_frame);
+    assert_eq!(frame["url"], "chrome-error://chromewebdata/");
+    assert_eq!(frame["unreachableUrl"], refused);
+    assert_eq!(frame["securityOrigin"], "://");
+    assert_eq!(frame["secureContextType"], "InsecureScheme");
+    let failed = mine.iter().find(|m| m["method"] == "Network.loadingFailed").expect("loadingFailed");
+    assert_eq!(failed["params"]["errorText"], "net::ERR_CONNECTION_REFUSED");
+    let order: Vec<usize> = [
+        "Network.loadingFailed",
+        "Page.frameNavigated",
+        "Runtime.executionContextCreated",
+        "DOMContentLoaded",
+        "load",
+        "Page.frameStoppedLoading",
+    ]
+    .iter()
+    .map(|name| at(name).unwrap_or_else(|| panic!("{name} missing: {mine:#?}")))
+    .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}: {mine:#?}");
+    assert_eq!(mine.iter().filter(|m| m["method"] == "Page.frameStoppedLoading").count(), 1, "{mine:#?}");
+    let tree = h.call(Some(&popup), "Page.getFrameTree", json!({}));
+    assert_eq!(tree["result"]["frameTree"]["frame"]["unreachableUrl"], refused, "{tree}");
+    let r = h.call(
+        Some(&popup),
+        "Runtime.evaluate",
+        json!({"expression": "[location.href, location.origin].join()", "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "chrome-error://chromewebdata/,null", "{r}");
+
+    // A new page navigated with Page.navigate: the error first, then the commit.
+    drop(h);
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let mut events = h.page_with_events("Page.navigate", json!({"url": refused}));
+    let reply =
+        events.iter().position(|m| m["result"]["errorText"] == "net::ERR_CONNECTION_REFUSED").expect("errorText");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !events.iter().any(|m| m["method"] == "Page.frameNavigated") {
+        assert!(Instant::now() < deadline, "{events:#?}");
+        events.extend(h.run_for(20));
+    }
+    let navigated = events.iter().position(|m| m["method"] == "Page.frameNavigated").unwrap();
+    assert!(reply < navigated, "{events:#?}");
+    assert_eq!(events[navigated]["params"]["frame"]["unreachableUrl"], refused);
+    // A page with a document of its own keeps it, as before.
+    let events = h.page_with_events("Page.navigate", json!({"url": "http://127.0.0.1:1/again"}));
+    assert!(events.iter().any(|m| m["result"]["errorText"] == "net::ERR_CONNECTION_REFUSED"), "{events:#?}");
+    let later = h.run_for(100);
+    assert!(!later.iter().chain(&events).any(|m| m["method"] == "Page.frameNavigated"), "{later:#?}");
+    assert_eq!(eval_value(&mut h, "location.href"), "chrome-error://chromewebdata/");
 }
 
 #[test]

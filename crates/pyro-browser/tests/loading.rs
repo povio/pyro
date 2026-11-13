@@ -292,6 +292,77 @@ fn network_errors_fail_navigation() {
     assert!(log[1].starts_with("event:failed net::ERR_FILE_NOT_FOUND"), "{log:?}");
 }
 
+#[test]
+fn a_new_windows_failed_navigation_commits_the_error_document() {
+    // Chrome commits its error document when a navigation fails on the
+    // network (Page.navigate gets the error first, then frameNavigated at
+    // chrome-error://chromewebdata/ with the URL as unreachableUrl, then the
+    // document loads). pyro does so for a new window, a page whose frame
+    // still shows its first about:blank document, and keeps any other
+    // document. Values as Chromium 147 reads them (headless shell).
+    let mut thread = crate::browser_thread().unwrap();
+    let rec = Rc::new(Recorder::default());
+    thread.browser.set_observer(Some(rec.clone()));
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/ok", "text/html", "<title>ok</title>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader.clone()));
+    let page = thread.browser.create_page().unwrap();
+    rec.log.borrow_mut().clear();
+    let missing = "http://site.test/missing";
+    thread.browser.navigate(page, NavigateOpts::address_bar(missing)).unwrap();
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    let failed = format!("event:failed net::ERR_FILE_NOT_FOUND {missing}");
+    assert_eq!(
+        *rec.log.borrow(),
+        ["event:navigate", failed.as_str(), "event:navigated chrome-error://chromewebdata/", "event:dcl", "event:load"]
+    );
+    let p = thread.browser.page(page).unwrap();
+    assert_eq!(p.main_frame.url, ERROR_DOCUMENT_URL);
+    assert_eq!(p.main_frame.origin, "null");
+    let error = NavigationError { url: missing.into(), error: format!("net::ERR_FILE_NOT_FOUND {missing}") };
+    assert_eq!(p.main_frame.unreachable.as_ref(), Some(&error));
+    let frame = &thread.browser.frames(page)[0];
+    assert_eq!(frame.unreachable_url.as_deref(), Some(missing));
+    // Its session history entry keeps the URL it could not reach.
+    let (index, entries) = p.nav.history_entries();
+    assert_eq!((index, entries.iter().map(|e| e.url.as_str()).collect::<Vec<_>>()), (0, vec![missing]));
+    let realm = p.main_frame.main_realm().unwrap().clone();
+    let scope = realm.scope().unwrap();
+    let seen = scope
+        .eval(
+            "[location.href, location.origin, document.URL, document.compatMode, document.readyState, history.length, \
+              document.documentElement.outerHTML].join(' ')",
+            None,
+            1,
+        )
+        .unwrap()
+        .to_string()
+        .unwrap();
+    assert_eq!(
+        seen,
+        "chrome-error://chromewebdata/ null chrome-error://chromewebdata/ BackCompat complete 1 \
+         <html><head></head><body></body></html>"
+    );
+    drop(scope);
+
+    // A reload fetches the URL it could not reach again.
+    loader.insert(missing, "text/html", "<title>found</title>", Duration::ZERO);
+    thread
+        .browser
+        .navigate_with_handling(page, NavigateOpts::address_bar(ERROR_DOCUMENT_URL), HistoryHandling::Reload)
+        .unwrap();
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    let p = thread.browser.page(page).unwrap();
+    assert_eq!((p.main_frame.url.as_str(), p.main_frame.unreachable.is_none()), (missing, true));
+
+    // A page with a document of its own keeps it.
+    rec.log.borrow_mut().clear();
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/gone")).unwrap();
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(*rec.log.borrow(), ["event:navigate", "event:failed net::ERR_FILE_NOT_FOUND http://site.test/gone"]);
+    assert_eq!(thread.browser.page(page).unwrap().main_frame.url, missing);
+}
+
 /// Minimal HTTP/1.1 server on 127.0.0.1 serving `files()` (one thread per connection).
 fn serve() -> (String, std::thread::JoinHandle<()>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

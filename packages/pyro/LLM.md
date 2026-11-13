@@ -219,7 +219,7 @@ reuse them.
 | `loaded()` | wait for the page's document to load (added for you on a page still booting) |
 | `idle({ timeout })` | wait until the page is quiet, as after an action; never fails |
 | `mock('/api/items', { json: [] })` / `unmock(url?)` | answer matching requests (`status`, `body`, `headers`, `delay`, `abort`, `times`); `{ passthrough: true }` lets them through, `{ patch: { … } }` rewrites the real response, `{ hold: 'name' }` holds them until `release('name')` |
-| `download({ as, saveTo })` / `popup('name')` | wait for the next download / popup of the run |
+| `download({ as, saveTo })` / `popup('name')` | wait for the next download / popup of the run (a `target=_blank` link or `window.open` answered with an attachment is a download of the opener, and that popup closes) |
 | `viewport(w, h)` / `media({ colorScheme: 'dark' })` | resize the viewport / emulate media features mid-test |
 | `matchScreenshot('name', { … })` / `loc.matchScreenshot('name')` | renders the page (or `clip`, `fullPage`, the element) in the browser and compares it with `__screenshots__/name.png` beside the test; see Screenshots below |
 | `evaluate('expression', 'name')` | escape hatch: JSON value of a page expression into `r.values.name`; a returned promise is awaited (within the step timeout) and a rejection fails the step |

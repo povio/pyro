@@ -2,7 +2,9 @@
 //! `hashchange` (html/browsers/browsing-the-web/history-traversal/event-order);
 //! the Location setters navigate (html/browsers/history/the-location-interface);
 //! leaving or closing a document fires `pagehide`, `visibilitychange` and
-//! `unload` (html/browsers/browsing-the-web/unloading-documents).
+//! `unload` (html/browsers/browsing-the-web/unloading-documents); a document's
+//! `load`, `pageshow`, `pagehide`, `unload` and `beforeunload` have it as
+//! their target at its Window (the legacy target override flag).
 use pyro_browser::{BrowserThread, NavigateOpts, PageId, StaticLoader};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -173,4 +175,66 @@ fn closing_a_page_unloads_its_document() {
         eval(&t, other, "localStorage.log"),
         r#"["pagehide:visible:false","visibilitychange:hidden","unload:hidden"]"#
     );
+}
+
+/// Records what `rec(label)` sees, by label (with "child " for a frame's
+/// document), in the page's session storage.
+const TARGETS: &str = "<script>\
+    const n = t => t === window ? 'window' : t === document ? 'document' : t.nodeName;\
+    const prefix = window === top ? '' : 'child ';\
+    window.rec = label => function (e) { const s = JSON.parse(sessionStorage.seen || '{}');\
+      s[prefix + label] = [e.type, n(e.target), n(e.srcElement), n(e.currentTarget), n(this), e.eventPhase,\
+        e.composedPath().map(n).join('+'), e.bubbles, e.cancelable].join();\
+      sessionStorage.seen = JSON.stringify(s); };\
+    for (const type of ['load', 'pageshow', 'pagehide', 'unload', 'beforeunload']) addEventListener(type, rec(type));\
+    </script>";
+
+#[test]
+fn a_documents_load_and_page_transition_events_have_it_as_target() {
+    // HTML fires them at the Window with the legacy target override flag.
+    // What Chromium 147 reads for the same pages: `target` and `srcElement`
+    // the document, `currentTarget` and `this` the Window, the target phase,
+    // `composedPath()` the Window alone; pageshow and pagehide bubble and are
+    // cancelable. An iframe's load at its element is the element's own.
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    let parent = format!(
+        "{TARGETS}<body onload=\"rec('body onload').call(this, event)\">\
+         <iframe src='/child' onload=\"rec('iframe').call(this, event)\"></iframe></body>"
+    );
+    loader.insert("http://site.test/parent", "text/html", &parent, Duration::ZERO);
+    let child = format!("{TARGETS}<script>onload = rec('onload')</script>");
+    loader.insert("http://site.test/child", "text/html", &child, Duration::ZERO);
+    loader.insert("http://site.test/other", "text/html", "<p>other</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/parent")).unwrap();
+    settle(&mut t);
+    let seen = |t: &BrowserThread, label: &str| eval(t, page, &format!("JSON.parse(sessionStorage.seen)[{label:?}]"));
+    let load = "load,document,document,window,window,2,window,false,false";
+    let pageshow = "pageshow,document,document,window,window,2,window,true,true";
+    for (label, want) in [
+        ("load", load),
+        ("body onload", load),
+        ("pageshow", pageshow),
+        ("iframe", "load,IFRAME,IFRAME,IFRAME,IFRAME,2,IFRAME+BODY+HTML+document,false,false"),
+        ("child load", load),
+        ("child onload", load),
+        ("child pageshow", pageshow),
+    ] {
+        assert_eq!(seen(&t, label), want, "{label}");
+    }
+    eval(&t, page, "location = '/other'");
+    settle(&mut t);
+    let pagehide = "pagehide,document,document,window,window,2,window,true,true";
+    let unload = "unload,document,document,window,window,2,window,false,false";
+    for (label, want) in [
+        ("beforeunload", "beforeunload,document,document,window,window,2,window,false,true"),
+        ("pagehide", pagehide),
+        ("unload", unload),
+        ("child pagehide", pagehide),
+        ("child unload", unload),
+    ] {
+        assert_eq!(seen(&t, label), want, "{label}");
+    }
 }

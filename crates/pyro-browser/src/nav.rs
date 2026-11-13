@@ -252,19 +252,32 @@ impl PageNav {
 
     /// Records a committed cross-document navigation.
     pub(crate) fn commit_document(&self, url: &str, history: HistoryHandling, document: Option<(DomRef, NodeId)>) {
+        self.commit_document_at(url, url, history, document);
+    }
+
+    /// [`PageNav::commit_document`] of a document at `url` whose session
+    /// history entry has `entry_url`: an error document's entry keeps the
+    /// URL that could not be reached, as Chrome's does.
+    pub(crate) fn commit_document_at(
+        &self,
+        url: &str,
+        entry_url: &str,
+        history: HistoryHandling,
+        document: Option<(DomRef, NodeId)>,
+    ) {
         self.pending_frame_url.borrow_mut().take();
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let id = st.next_entry_id();
         // A push to the current entry's URL replaces it (HTML navigate step:
         // "url equals the active document's URL" -> replace).
-        let same_url = st.entries.get(st.index).is_some_and(|e| e.url == url);
+        let same_url = st.entries.get(st.index).is_some_and(|e| e.url == entry_url);
         let replaces = matches!(history, HistoryHandling::Replace) || same_url;
         let key = match st.entries.get(st.index) {
             Some(current) if replaces => current.key,
             _ => st.next_entry_id(),
         };
-        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id, key, nav_state: None };
+        let entry = Entry { url: entry_url.to_string(), state: None, doc: st.doc_seq, id, key, nav_state: None };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
         match history {
@@ -284,7 +297,7 @@ impl PageNav {
                 let (i, doc) = (st.index, st.doc_seq);
                 let e = &mut st.entries[i];
                 e.doc = doc;
-                e.url = url.to_string();
+                e.url = entry_url.to_string();
             }
             HistoryHandling::Replace => {
                 let i = st.index;

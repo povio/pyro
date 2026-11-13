@@ -5,9 +5,9 @@ use std::rc::Rc;
 use pyro_dom::NodeId;
 use pyro_js::{JsError, JsException, Persistent, RealmId, Scope};
 
-use crate::event::{EventCore, EventInterface};
+use crate::event::{EventCore, EventData, EventInterface};
 use crate::page::PageDom;
-use crate::target::fire;
+use crate::target::{fire, fire_with_target_override};
 
 /// Sets `document.readyState` and fires `readystatechange` when it changes.
 pub fn set_ready_state(page: &Rc<PageDom>, doc: NodeId, state: &'static str) {
@@ -54,24 +54,44 @@ fn flush_autofocus(page: &Rc<PageDom>, doc: NodeId) {
     }
 }
 
-/// readyState=complete, then `load` and `pageshow` at the window.
+/// readyState=complete, then `load` and `pageshow` at the window (with
+/// `doc` as their target).
 pub fn load(page: &Rc<PageDom>, doc: NodeId) {
     set_ready_state(page, doc, "complete");
     if let Some(w) = window_key(page, doc) {
         page.note_timing(|t| &mut t.load_start);
         let ev = EventCore::trusted(page, EventInterface::Event, "load", false, false);
-        fire(page, w, &ev);
+        fire_for_document(page, w, doc, &ev);
         page.note_timing(|t| &mut t.load_end);
-        let ev = EventCore::trusted(page, EventInterface::PageTransitionEvent, "pageshow", false, false);
-        fire(page, w, &ev);
+        fire_for_document(page, w, doc, &page_transition_event(page, "pageshow"));
     }
 }
 
+/// HTML fires a document's `load`, `pageshow`, `pagehide`, `unload` and
+/// `beforeunload` at its Window with the legacy target override flag: the
+/// Window's listeners run (it is the whole path, at the target phase) and
+/// the event's `target` is the document, as in Chrome (`event.target ===
+/// document`, `event.currentTarget === window`). Returns false if canceled.
+fn fire_for_document(page: &PageDom, window: pyro_dom::events::TargetKey, doc: NodeId, event: &EventData) -> bool {
+    let doc_key = page.dom.borrow().node_key(doc);
+    match doc_key {
+        Some(doc_key) => fire_with_target_override(page, window, doc_key, event),
+        None => fire(page, window, event),
+    }
+}
+
+/// HTML "fire a page transition event": `pageshow` or `pagehide`, a
+/// PageTransitionEvent that bubbles and is cancelable (`persisted` false:
+/// there is no back/forward cache).
+fn page_transition_event(page: &Rc<PageDom>, ty: &str) -> EventData {
+    EventCore::trusted(page, EventInterface::PageTransitionEvent, ty, true, true)
+}
+
 /// HTML "prompt to unload" for a document about to be navigated away from:
-/// fires `beforeunload` (cancelable) at its Window. Returns whether a
-/// listener asked for the prompt (canceled the event or set `returnValue`).
-/// There is nobody to answer one, and Chrome shows none without a user
-/// gesture, so the embedder navigates either way.
+/// fires `beforeunload` (cancelable) at its Window, the document as its
+/// target. Returns whether a listener asked for the prompt (canceled the
+/// event or set `returnValue`). There is nobody to answer one, and Chrome
+/// shows none without a user gesture, so the embedder navigates either way.
 pub fn before_unload(page: &Rc<PageDom>) -> bool {
     if page.is_disposed() || page.scripting_disabled() {
         return false;
@@ -81,7 +101,7 @@ pub fn before_unload(page: &Rc<PageDom>) -> bool {
         return false;
     }
     let ev = EventCore::trusted(page, EventInterface::BeforeUnloadEvent, "beforeunload", false, true);
-    let canceled = !fire(page, window, &ev);
+    let canceled = !fire_for_document(page, window, page.document(), &ev);
     let asked = ev.fields.borrow().data.as_deref().is_some_and(|text| !text.is_empty());
     canceled || asked
 }
@@ -90,8 +110,9 @@ pub fn before_unload(page: &Rc<PageDom>) -> bool {
 /// Chrome runs it (no back/forward cache): `pagehide` (persisted false) at
 /// the Window, the visibility state becomes "hidden" with
 /// `visibilitychange` at the document (bubbling to the Window), then
-/// `unload` at the Window. Runs once per document. Documents without
-/// listeners for any of them only get the flag set: no event is made.
+/// `unload` at the Window (`pagehide` and `unload` with the document as
+/// their target). Runs once per document. Documents without listeners for
+/// any of them only get the flag set: no event is made.
 /// The embedder calls it for a navigable's descendants first, and keeps
 /// the network running afterwards, so keepalive requests made by the
 /// listeners (`sendBeacon`, `fetch(.., {keepalive})`) go out.
@@ -107,8 +128,7 @@ pub fn unload(page: &Rc<PageDom>) {
         Err(_) => (false, false),
     };
     if listens(page).0 {
-        let ev = EventCore::trusted(page, EventInterface::PageTransitionEvent, "pagehide", false, false);
-        fire(page, window, &ev);
+        fire_for_document(page, window, doc, &page_transition_event(page, "pagehide"));
     }
     page.set_hidden(true);
     let (window_listens, document_listens) = listens(page);
@@ -118,7 +138,7 @@ pub fn unload(page: &Rc<PageDom>) {
     // A listener may have added an `unload` one: look again.
     if page.dom.try_borrow().is_ok_and(|dom| dom.has_listeners(window)) {
         let ev = EventCore::trusted(page, EventInterface::Event, "unload", false, false);
-        fire(page, window, &ev);
+        fire_for_document(page, window, doc, &ev);
     }
 }
 
