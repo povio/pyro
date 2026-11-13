@@ -105,6 +105,14 @@ test('timeouts: --timeout, or the test own', async () => {
   expect(r.out).toContain('1 fail');
 }, 30000);
 
+test('the default test timeout outlasts a step: a failing step reports why', async () => {
+  const r = await e2e(['test/e2e-fixture/step-reason/step-reason.e2e.ts']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('RunError: step 0');
+  expect(r.out).toContain('matched no element');
+  expect(r.out).not.toContain('test timed out');
+}, 60000);
+
 test('name pattern, only, skip and todo', async () => {
   const all = await e2e(['test/e2e-fixture/filter/filter.e2e.ts']);
   expect(all.code).toBe(0);

@@ -77,6 +77,8 @@ export class RunError extends Error {
     readonly step: number,
   ) {
     super(message);
+    // Runners print `RunError: step …` instead of `Error: step …`.
+    this.name = 'RunError';
   }
 }
 
