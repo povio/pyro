@@ -126,6 +126,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wpt-release-fast
+          # Its post step deletes binaries it does not know from ~/.cargo/bin, rustup among them, which
+          # broke the Rust install of the self-hosted runner (lp-m1).
+          cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # release-fast: the release profile with pyro-cdp and pyro-dom split into more codegen units (Cargo.toml), so the
       # end of the build is not one core's work.
