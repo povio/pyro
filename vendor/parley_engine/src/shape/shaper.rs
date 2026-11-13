@@ -48,6 +48,11 @@ std::thread_local! {
 pub struct ShapeOptions<'a> {
     /// The font size to shape the item with.
     pub font_size: f32,
+    /// pyro: the font size in points, for size-specific tracking (the AAT `trak` table, which
+    /// harfrust applies; San Francisco has one). The same as `font_size` unless the layout is
+    /// scaled: parley shapes a scaled layout at `font_size` times its scale, while tracking
+    /// depends on the size the text is set in (CSS pixels), as in Core Text and Chromium.
+    pub point_size: f32,
     /// The language to shape the item with.
     pub language: Option<Language>,
     /// The font features to shape the item with.
@@ -343,6 +348,7 @@ fn shape_segment(
             script: hb_script,
             language: language.as_ref(),
             font_size: options.font_size,
+            point_size: options.point_size,
             text: run_text,
             pre_context,
             post_context,
@@ -425,7 +431,7 @@ fn shape_segment(
             HarfShapeOptions::new()
                 .plan(Some(shaper_plan))
                 .features(&scx.features)
-                .point_size(Some(options.font_size)),
+                .point_size(Some(options.point_size)),
         );
 
         let metrics = shaped_text.push_run(
