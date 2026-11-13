@@ -63,7 +63,7 @@ const LIST = process.env.PYRO_LIST === '1';
 const OWNERS: Record<string, number> = process.env.PYRO_FILE_OWNERS ? JSON.parse(process.env.PYRO_FILE_OWNERS) : {};
 
 /** One line per finished test for `pyro run`'s reporter (`$PYRO_RESULTS`). */
-type Outcome = { file: string; titlePath: string[]; status: 'passed' | 'failed' | 'timedOut' | 'skipped'; flaky?: boolean; expectedFailure?: boolean; duration: number; retries: number; error?: { message: string; stack?: string }; skipReason?: string; worker: number };
+type Outcome = { file: string; titlePath: string[]; status: 'passed' | 'failed' | 'timedOut' | 'skipped'; flaky?: boolean; expectedFailure?: boolean; duration: number; retries: number; error?: { message: string; stack?: string }; skipReason?: string; attachments?: { name: string; path: string; contentType: string }[]; worker: number };
 function record(o: Omit<Outcome, 'worker'>): void {
   const out = process.env.PYRO_RESULTS;
   if (out) appendFileSync(out, JSON.stringify({ ...o, worker: WORKER_INDEX }) + '\n');
@@ -292,11 +292,33 @@ const builtins: Record<string, unknown> = {
   testIdAttribute: ['data-testid', { option: true }],
   // The use options `browser.newContext()` starts from, as in Playwright (set below).
   _contextDefaults: [undefined, { auto: true }],
-  context: async ({ browser, _contextDefaults }: any, use: any) => {
+  context: async ({ browser, _contextDefaults, video }: any, use: any, info: TestInfo) => {
     void _contextDefaults;
-    const context = await (browser as Browser).newContext();
+    // `video`: as Playwright, a video of each page in the test's output
+    // directory (`video.webm`, `video-1.webm`, ...), attached to the test.
+    const mode = videoMode(video);
+    const recording = mode === 'on' || mode === 'retain-on-failure' || (mode === 'on-first-retry' && info.retry === 1);
+    const size = typeof video === 'object' ? video?.size : undefined;
+    // `contextOptions.recordVideo` wins, as in Playwright.
+    const own = (browser as Browser)._defaults.recordVideo;
+    const context = await (browser as Browser).newContext(recording ? { recordVideo: { ...(size ? { size } : {}), ...own } } : {});
     await use(context);
+    const failed = info.status !== info.expectedStatus || (info.status === 'passed' && info._softErrors.length > 0);
+    const keep = recording && (mode !== 'retain-on-failure' || failed);
+    const videos = context._recorder?.videos ?? [];
+    // Not kept, and not asked for by the test's own options: not encoded at all.
+    if (recording && !keep && !own) for (const v of videos) v._discard();
     await context.close();
+    if (!keep) return;
+    let n = 0;
+    for (const v of videos) {
+      const path = info.outputPath(`video${n ? `-${n}` : ''}.webm`);
+      n++;
+      try {
+        await v.saveAs(path);
+        info.attachments.push({ name: 'video', path, contentType: 'video/webm' });
+      } catch {}
+    }
   },
   page: async ({ context }: any, use: any) => use(await context.newPage()),
   request: async ({ baseURL, extraHTTPHeaders, httpCredentials, ignoreHTTPSErrors, userAgent, storageState }: any, use: any) => {
@@ -305,6 +327,12 @@ const builtins: Record<string, unknown> = {
     await r.dispose();
   },
 };
+/** The `video` option's mode (Playwright's deprecated `retry-with-video` is `on-first-retry`). */
+function videoMode(video: unknown): string {
+  const mode = typeof video === 'string' ? video : ((video as { mode?: string } | undefined)?.mode ?? 'off');
+  return mode === 'retry-with-video' ? 'on-first-retry' : mode;
+}
+
 // The `_contextDefaults` fixture reads every option: its parameter list is spelled out.
 (builtins._contextDefaults as [FixtureFn, object])[0] = new Function(
   'setTestDefaults',
@@ -424,15 +452,23 @@ async function runOnce(entry: Entry, info: TestInfo): Promise<void> {
   const run = new Run(entry.defs, useOf(entry.scope), info);
   const scopes = chain(entry.scope);
   let failure: unknown;
+  // As Playwright: `afterEach` hooks and fixture teardown read how the test went (`testInfo.status`).
+  const failed = (e: unknown) => {
+    if (info.status === 'passed') info.status = e instanceof SkipError || info._skipped !== undefined ? 'skipped' : 'failed';
+  };
   try {
     await withTimeout(info, async () => {
       await run.autos();
       await conditions(entry, run, info);
       for (const s of scopes) for (const h of s.hooks) if (h.kind === 'beforeEach') await run.call(h.fn);
       await run.call(entry.fn);
-    }, () => void run.teardown().catch(() => {}));
+    }, () => {
+      info.status = 'timedOut';
+      void run.teardown().catch(() => {});
+    });
   } catch (e) {
     failure = e;
+    failed(e);
   }
   for (const s of [...scopes].reverse()) {
     for (const h of s.hooks) {
@@ -441,6 +477,7 @@ async function runOnce(entry: Entry, info: TestInfo): Promise<void> {
         await run.call(h.fn);
       } catch (e) {
         failure ??= e;
+        failed(e);
       }
     }
   }
@@ -498,7 +535,9 @@ async function runTest(entry: Entry): Promise<void> {
       }
       for (const s of scopes) if (s.mode === 'serial') s.failed = true;
       const err = e as Error;
-      record({ file: entry.scope.file, titlePath, status: err instanceof TimeoutError && /Test timeout/.test(err.message) ? 'timedOut' : 'failed', duration: Date.now() - started, retries: attempt, error: { message: String(err?.message ?? e), stack: err?.stack } });
+      // Files the failure left (videos), for the report.
+      const attachments = info.attachments.flatMap((a) => (a.path ? [{ name: a.name, path: a.path, contentType: a.contentType }] : []));
+      record({ file: entry.scope.file, titlePath, status: err instanceof TimeoutError && /Test timeout/.test(err.message) ? 'timedOut' : 'failed', duration: Date.now() - started, retries: attempt, error: { message: String(err?.message ?? e), stack: err?.stack }, ...(attachments.length ? { attachments } : {}) });
       throw e;
     }
   }

@@ -225,14 +225,15 @@ How a run goes, as with `playwright test`:
   `mode: 'parallel'`) spread over the workers, and a describe's `beforeAll`
   and `afterAll` run in each worker that runs some of its tests. Web servers
   and global setup run once, in the parent.
-- **Reporting:** passes, failures (with their errors), skips (declared or
-  `test.skip()` at run time), flaky tests (passed on a retry) and expected
-  failures, then a summary. The tests' own output is shown per worker.
+- **Reporting:** passes, failures (with their errors and the files attached
+  to them, such as videos), skips (declared or `test.skip()` at run time),
+  flaky tests (passed on a retry) and expected failures, then a summary. The
+  tests' own output is shown per worker.
 
 Plain `bun test ./e2e/foo.e2e.ts` (with `$PYRO_CONFIG` naming the config) also
 runs the tests, in one process: Bun then reports a run-time `test.skip()` as
 a pass, since it cannot mark a running test as skipped. Not there either way:
-Playwright's HTML report, trace viewer, video and sharding.
+Playwright's HTML report, trace viewer and sharding.
 
 The TOS close flow (`test/wright/tos-flow.ts`, Playwright code as TOS
 writes it) takes 14.7 ms per test this way (median of 40, fresh page),
@@ -296,6 +297,25 @@ options with Playwright's meaning:
   shows; `page.evaluate` still runs), `ignoreHTTPSErrors`, `colorScheme`,
   `reducedMotion`, `userAgent`, `extraHTTPHeaders`, `storageState`, `baseURL`
   and `recordHar`
+- `recordVideo` (`dir`, `size`): a WebM of each page, popups included, as
+  Playwright records it: VP8 at 25 frames a second, `size` or else the
+  viewport scaled down to fit 800x800, frames padded with gray to the size;
+  `page.video()` gives `path()`, `saveAs()` and `delete()`. Pyro sends a
+  frame (CDP `Page.startScreencast`) whenever what the page shows changes, at
+  most 25 a second, rendered as screenshots are (so CSS animations show at
+  their end); a page that does not change costs nothing. The frames wait in a
+  temporary directory and are encoded when the page closes, and the page's
+  state at that moment gets a frame of its own: `page.close()` and
+  `context.close()` return once the file is written (a few tenths of a
+  second per 10 s of video). The encoder is ffmpeg: `$PYRO_FFMPEG`, else
+  `ffmpeg` on PATH, else Playwright's (`bunx playwright install ffmpeg`);
+  without one, `newContext({ recordVideo })` fails and says how to get one.
+  The runner's `video` option (`'on'`, `'retain-on-failure'`,
+  `'on-first-retry'`, or `{ mode, size }`) records the `context` fixture's
+  pages into the test's output directory (`video.webm`, `video-1.webm`, ...),
+  attached to the test and listed under a failure by `pyro run`; under
+  `retain-on-failure` the pages a passing test leaves open are not encoded
+  at all
 
 Also covered:
 
@@ -396,8 +416,9 @@ JavaScriptCore).
 Not supported, accepted so configs and `devices` descriptors keep working:
 
 - context options with no effect: `bypassCSP`, `serviceWorkers`,
-  `forcedColors`, `strictSelectors`, `recordVideo`, and `acceptDownloads`
+  `forcedColors`, `strictSelectors`, and `acceptDownloads`
   (downloads are always accepted)
+- `recordVideo.showActions` and the runner's `video.show` draw no annotations
 - `isMobile` does not apply `<meta name="viewport">`: pages lay out at the
   viewport's width, as with `width=device-width`
 - `toHaveScreenshot` renders at the context's `deviceScaleFactor` (Playwright's

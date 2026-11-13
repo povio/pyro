@@ -164,6 +164,7 @@ export interface PlaywrightTestOptions {
 
 export type ScreenshotMode = 'off' | 'on' | 'only-on-failure' | 'on-first-failure';
 export type VideoMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry';
+type VideoPosition = 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right';
 export type TraceMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure';
 
 /** How tests reach pyro: `use: { pyro: { … } }`. */
@@ -187,7 +188,11 @@ export interface PlaywrightWorkerOptions {
   launchOptions: { [key: string]: unknown };
   connectOptions: { wsEndpoint: string; headers?: { [key: string]: string }; timeout?: number } | undefined;
   screenshot: ScreenshotMode | { mode: ScreenshotMode; fullPage?: boolean; omitBackground?: boolean };
-  video: VideoMode | { mode: VideoMode; size?: ViewportSize };
+  /** `show` is accepted and draws nothing. */
+  video:
+    | VideoMode
+    | /** deprecated: `on-first-retry` */ 'retry-with-video'
+    | { mode: VideoMode; size?: ViewportSize; show?: { actions?: { duration?: number; position?: VideoPosition; fontSize?: number }; test?: { level?: 'file' | 'title' | 'step'; position?: VideoPosition; fontSize?: number } } };
   trace: TraceMode | { mode: TraceMode; snapshots?: boolean; screenshots?: boolean; sources?: boolean; attachments?: boolean };
   pyro: PyroOptions;
 }

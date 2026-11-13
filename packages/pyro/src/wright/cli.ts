@@ -135,7 +135,7 @@ function parse(argv: string[]): Args {
   return a;
 }
 
-type Outcome = { file: string; titlePath: string[]; status: 'passed' | 'failed' | 'timedOut' | 'skipped'; flaky?: boolean; expectedFailure?: boolean; duration: number; retries: number; error?: { message: string; stack?: string }; skipReason?: string; worker: number };
+type Outcome = { file: string; titlePath: string[]; status: 'passed' | 'failed' | 'timedOut' | 'skipped'; flaky?: boolean; expectedFailure?: boolean; duration: number; retries: number; error?: { message: string; stack?: string }; skipReason?: string; attachments?: { name: string; path: string; contentType: string }[]; worker: number };
 
 const color = (code: number) => (s: string) => (process.stdout.isTTY && !process.env.NO_COLOR ? `\x1b[${code}m${s}\x1b[0m` : s);
 const green = color(32);
@@ -314,6 +314,7 @@ export async function main(argv: string[]): Promise<number> {
     console.log(`\n  ${i + 1}) ${r.titlePath.join(' › ')} ${'─'.repeat(Math.max(0, 60 - r.titlePath.join(' › ').length))}\n`);
     const text = r.error?.stack && r.error.stack.includes(r.error.message) ? r.error.stack : `${r.error?.message ?? ''}\n${r.error?.stack ?? ''}`;
     console.log(text.split('\n').map((l) => `    ${l}`).join('\n'));
+    for (const a of r.attachments ?? []) console.log(`\n    ${dim(`attachment: ${a.name} (${a.contentType})`)}\n    ${relative(process.cwd(), a.path)}`);
   });
   const count = (f: (r: Outcome) => boolean) => results.filter(f).length;
   const passed = count((r) => r.status === 'passed' && !r.flaky);

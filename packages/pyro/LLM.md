@@ -8,9 +8,9 @@ of `playwright` and `@playwright/test` with `@povio/pyro/wright`,
 keep the Playwright code and run it with `pyro run` (README, "Playwright
 tests, unchanged"). Context options (`locale`, `timezoneId`, `proxy`,
 `geolocation` and `permissions`, `httpCredentials`, `offline`, device
-emulation, `javaScriptEnabled`, `ignoreHTTPSErrors`) mean what they mean in
-Playwright; the README's "Context options" and "Not supported" list the
-differences. Rewrite a test into one `page.run([...])` only where its last
+emulation, `javaScriptEnabled`, `ignoreHTTPSErrors`, `recordVideo`) mean what
+they mean in Playwright; the README's "Context options" and "Not supported"
+list the differences. Rewrite a test into one `page.run([...])` only where its last
 milliseconds matter.
 
 ## The model
@@ -287,6 +287,10 @@ waiting when it timed out, for example:
 
 Do not raise timeouts to fix a failure: a step waits only for its own
 condition, so a timeout means the condition never held.
+
+Under `pyro run`, `use: { video: 'retain-on-failure' }` keeps a video of each
+page of a failed test (`video.webm` in its output directory, named under the
+failure; it needs an ffmpeg, see the README's `recordVideo`).
 
 ## Do not
 

@@ -28,6 +28,7 @@ export {
   TimeoutError,
 } from './page.js';
 export { JSHandle, ElementHandle, Download } from './handles.js';
+export { Video } from './video.js';
 export { Clock } from './clock.js';
 export { Coverage, type JSCoverageEntry, type CSSCoverageEntry } from './coverage.js';
 export { APIRequestContext, APIResponse, request } from './request.js';
