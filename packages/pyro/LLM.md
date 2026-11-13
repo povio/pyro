@@ -1,5 +1,7 @@
 # Writing E2E tests with @povio/pyro: instructions for coding agents
 
+Using Pyro as your browser (the `pyro mcp` server or `@povio/pyro/agent` tools) rather than writing tests? Read [AGENTS.md](AGENTS.md).
+
 Read this before writing or porting a test. It is the whole contract; the
 source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 

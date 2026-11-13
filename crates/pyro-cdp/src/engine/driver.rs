@@ -1999,12 +1999,13 @@ fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
                 }
             }
             "hidden" => return None,
-            "button" | "submit" | "reset" | "image" => "button",
+            // Playwright: "All browsers report it as a button" (named "Choose File").
+            "button" | "submit" | "reset" | "image" | "file" => "button",
             "checkbox" => "checkbox",
             "radio" => "radio",
             "range" => "slider",
             "number" => "spinbutton",
-            "file" | "color" | "date" | "datetime-local" | "month" | "time" | "week" => return None,
+            "color" | "date" | "datetime-local" | "month" | "time" | "week" => return None,
             _ => "textbox",
         },
         "ins" => "insertion",
@@ -2484,6 +2485,15 @@ impl Names<'_> {
                         return Some(
                             attr_text("alt").or_else(|| attr_text("title")).unwrap_or_else(|| "Submit".into()),
                         );
+                    }
+                    // Playwright's file input: its labels, else the button's text.
+                    "file" => {
+                        if opts.labelledby.is_none() {
+                            if let Some(name) = from_labels() {
+                                return Some(name);
+                            }
+                        }
+                        return Some("Choose File".into());
                     }
                     _ => {}
                 }

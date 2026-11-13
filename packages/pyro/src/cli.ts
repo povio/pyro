@@ -3,6 +3,12 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveBinary } from './binary.js';
 
+// `pyro mcp`: the MCP server for AI agents (Node or Bun). It ends the
+// process when its client goes away: the browser's connection would keep it.
+if (process.argv[2] === 'mcp') {
+  const { main } = await import('./mcp/cli.js');
+  process.exit(await main(process.argv.slice(3)));
+}
 // `pyro run`: the Playwright-style test runner, and `pyro
 // e2e`: the one-process executor of @povio/pyro/e2e specs (both run on Bun).
 if (process.argv[2] === 'run' || process.argv[2] === 'e2e') {
