@@ -501,6 +501,23 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   outbox, drained). A profile's `setup` steps run there once the page is loaded and quiet: the template
   acquires the page, runs them as an `Pyro.run`, hands the page back to the pool (`Browser::return_to_prepared`)
   and settles it. The forked child serves its socket with that same state (`serve::serve_browser`).
+- **Profile status**: the root keeps each profile's `ProfileStatus` (`booting`, `ready`, `failed` with an error),
+  which `registerPreparedPage`'s reply, `Pyro.preparedProfileStatus`, `adoptPreparedPage` and `preparedProfiles`
+  report; clients wait on it (the SDK's `profile()` does). A setup step that fails (`setup step N (…): …`), a page
+  that has not loaded after 30 s with its setup pending, or a derived template that cannot start or exits fails the
+  profile: `Browser::fail_prepared_profile` closes its waiting page, and acquiring one fails with the error
+  (code -32000, `data.setupError`) in every connection forked from then on. A derived template reports its own
+  profile's outcome to the root (`Outcome`, no reply); the root fails the profiles derived from a failed one,
+  drops their pending derives and serves their connections itself, so they never wait for a template that will
+  not come. A failed profile stays registered (named, held) until retired as usual, so that adopters get its
+  error (`adoptPreparedPage` refuses it without holding it); registering the same definition again boots a new
+  attempt, and under a name the name and its holders move to it.
+- A profile's `userAgent` and proxy (`proxyServer`, `proxyBypassList`) are its page's browser context's
+  (`Host::create_context_with`: a `NetClient` whose configured `User-Agent` and proxy they are), so the
+  document, subresources, fetch/XHR and setup steps of the template's page carry them, and so does every fork:
+  the client and its settings are copied, its I/O thread restarted. A derived profile has its base's. Layout's
+  own background loads of network images and fonts (`engine/blitz_geometry.rs`) still go through the default
+  context, as they do for `Target.createBrowserContext proxyServer` contexts.
 - Snapshots build on snapshots: a profile with `base: <id>` is never booted. The root template asks the template
   holding the base (itself or a derived one) to fork off a **derived template** listening on
   `<root socket>.<id>`; it runs only the profile's `setup` on its copy of the base page, relabels the page, and
