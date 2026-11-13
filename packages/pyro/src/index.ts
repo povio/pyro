@@ -11,7 +11,7 @@
 //   ]);
 //
 // A profile keeps signed-in pages booted ahead (Pyro.registerPreparedPage);
-// `lp.page()` takes one and attaches in one call, and its `route` becomes the
+// `pyro.page()` takes one and attaches in one call, and its `route` becomes the
 // first step of the first run. `page.run()` is one Pyro.run command: the browser
 // runs every step, waiting in place, and replies once.
 //
@@ -281,7 +281,7 @@ export class Pyro {
       r = await this.cdp.send('Pyro.adoptPreparedPage', { name });
     } catch (e) {
       if (e instanceof CdpError && e.message.endsWith(`: no profile ${name}`)) {
-        throw new Error(`no profile ${name} on this server: declare it with lp.profile()`);
+        throw new Error(`no profile ${name} on this server: declare it with pyro.profile()`);
       }
       throw e;
     }
@@ -376,7 +376,7 @@ export class Pyro {
     let entry = as === undefined ? undefined : this.profiles.get(as);
     // Another client's profile on this server: adopt it.
     if (as !== undefined && !entry && this.shared) entry = await this.updateProfiles(() => this.resolveLocked(as));
-    if (as !== undefined && !entry) throw new Error(`no profile ${as}: declare it with lp.profile()`);
+    if (as !== undefined && !entry) throw new Error(`no profile ${as}: declare it with pyro.profile()`);
     if (!this.fork) {
       const index = this.pick();
       return this.openPage(this.conns[index], index, entry, opts);

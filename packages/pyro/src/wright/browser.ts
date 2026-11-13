@@ -298,7 +298,7 @@ export class BrowserContext {
       // documents from writing the entries again over the app's changes.
       const entries = Object.fromEntries(origins.map((o) => [o.origin, o.localStorage.map((e) => [e.name, e.value])]));
       this._initScripts.push(
-        `(() => { try { const e = ${JSON.stringify(entries)}[location.origin]; if (!e || localStorage.getItem('__lpStorageState')) return; for (const [k, v] of e) localStorage.setItem(k, v); localStorage.setItem('__lpStorageState', '1'); } catch {} })();`,
+        `(() => { try { const e = ${JSON.stringify(entries)}[location.origin]; if (!e || localStorage.getItem('__pyroStorageState')) return; for (const [k, v] of e) localStorage.setItem(k, v); localStorage.setItem('__pyroStorageState', '1'); } catch {} })();`,
       );
     }
   }
@@ -467,7 +467,7 @@ export class BrowserContext {
       const origin = new URL(page.url()).origin;
       if (origins.some((x) => x.origin === origin)) continue;
       const localStorage = await page.evaluate<{ name: string; value: string }[]>(
-        `Object.keys(localStorage).filter((k) => k !== '__lpStorageState').map((name) => ({ name, value: localStorage.getItem(name) ?? '' }))`,
+        `Object.keys(localStorage).filter((k) => k !== '__pyroStorageState').map((name) => ({ name, value: localStorage.getItem(name) ?? '' }))`,
       );
       origins.push({ origin, localStorage });
     }

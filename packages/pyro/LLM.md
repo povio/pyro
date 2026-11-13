@@ -5,7 +5,7 @@ source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 
 Porting an existing Playwright suite? Do not rewrite it: replace the imports
 of `playwright` and `@playwright/test` with `@povio/pyro/wright`,
-keep the Playwright code and run it with `bun test` (README, "Playwright
+keep the Playwright code and run it with `pyro run` (README, "Playwright
 tests, unchanged"). Rewrite a test into one `page.run([...])` only where its
 last milliseconds matter.
 

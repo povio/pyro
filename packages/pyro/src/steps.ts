@@ -65,7 +65,7 @@ export interface StepLike {
 
 export type ActOptions = { settle?: boolean; timeout?: number };
 /**
- * Pointer options of `click`, `dblclick`, `hover` and `wheel` (engine 0.0.10):
+ * Pointer options of `click`, `dblclick` and `hover` (engine 0.0.10):
  * `button` (left), `position` relative to the element's top-left corner
  * (its center), `force` skips the actionability checks.
  */
@@ -441,7 +441,7 @@ export const evaluate = (expression: string, as?: string, opts: CheckOpts = {}):
 });
 /**
  * Waits for the current document's `load`. On a page taken from a pool while
- * still booting (`lp.page()` adds it), it waits for the profile URL's
+ * still booting (`pyro.page()` adds it), it waits for the profile URL's
  * navigation to commit and load, never for the `about:blank` before it.
  */
 export const loaded = (opts: CheckOpts = {}): StepLike => ({ toStep: () => ({ loaded: opts }) });
