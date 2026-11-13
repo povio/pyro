@@ -127,8 +127,10 @@ test('adds a todo', async () => {
 ```
 
 ```sh
-bun test tests/todo.test.ts
+bun test --timeout 10000 tests/todo.test.ts
 ```
+
+Give tests a longer timeout than their steps. Both default to 5,000 ms, so with the defaults a failing step shows only a test timeout, without its reason.
 
 There is no `await` per step and no polling. `button('Add').click()` waits until the page is quiet before the next step starts, so the check sees the new item. If a step never holds, `page.run` throws a `RunError` naming the step and what it was waiting for. Next: [Your first test](/e2e/first-test).
 

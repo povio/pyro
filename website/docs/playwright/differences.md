@@ -96,7 +96,9 @@ See [API coverage](/playwright/api-coverage) for the full list.
 - **`step.skip()` skips the whole test.** Steps are not reported.
 - **Unsupported flags fail.** `--shard`, `--trace`, `--repeat-each`, `--last-failed` and other flags not listed in [Config and the test runner](/playwright/runner#flags) exit with status 2.
 - **The config's `reporter` is ignored**, and there is no HTML report, trace or video.
-- **Project `dependencies` do not run.** Move setup projects into `globalSetup`.
+- **Project `dependencies` do not run.** A setup project's files run as ordinary tests, alongside the rest. Move setup projects into `globalSetup`; see [Sign in once with storageState](/recipes/playwright-setup-project-auth).
+- **`globalSetup` gets the config as written**, not a resolved `FullConfig`. `config.projects[0].use` does not include the top-level `use`.
+- **No `--shard`.** See [CI without sharding](/recipes/playwright-ci-without-sharding).
 
 ## Timeouts
 
@@ -109,7 +111,7 @@ See [API coverage](/playwright/api-coverage) for the full list.
 - **`route.fetch()` and API requests run in the test process**, with `fetch`, not in the browser.
 - **The `Response` from `page.goto()`** has the URL and status only: `headers()` is empty and `body()` throws. `page.reload()` is the same. `goBack()` and `goForward()` return `null`. A `goto` on a [booted page](/playwright/boot-pools) returns `null`.
 - **`request.frame()`** is always the main frame, and `request.timing()` fields are all -1.
-- **`context.storageState()`** collects `localStorage` only from origins with an open page.
+- **`context.storageState()`** collects `localStorage` only from origins with an open page, and `storageState({ path })` does not create missing directories.
 - **`storageState` seeding** leaves a `__pyroStorageState` key in `localStorage`.
 - **`page.routeWebSocket()`** is not implemented.
 
@@ -141,3 +143,9 @@ An app or a snapshot that serializes the DOM can see them.
 - `context.tracing.start()` / `stop()` do nothing.
 - `browser.version()` returns `'pyro'`.
 - `devices` has five entries: `Desktop Chrome`, `Desktop Chrome HiDPI`, `Desktop Edge`, `Pixel 7`, `iPhone 15`.
+
+## Next
+
+- See these differences as failures, with fixes: [Triage the first red run](/recipes/playwright-triage-first-failures).
+- Check a test against Chromium while you fix it: [Run the same suite on Chromium and Pyro](/recipes/playwright-side-by-side).
+- Method by method: [API coverage](/playwright/api-coverage).

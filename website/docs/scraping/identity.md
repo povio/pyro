@@ -165,6 +165,19 @@ Digest, NTLM and other schemes are not supported.
 
 Pyro trusts Mozilla's root certificates, built in. It does not read the operating system's certificate store. A proxy that re-signs HTTPS traffic with its own CA fails with `net::ERR_CERT_AUTHORITY_INVALID`. To accept it, turn certificate checks off for the context with CDP `Security.setIgnoreCertificateErrors { ignore: true }` on a page session (that page's context), or on the browser session for every context. Only do this for a proxy you control.
 
+### Mapping identities to proxies
+
+Give each identity one proxy and keep it. Write it in the identity's file next to its user agent (see [Stored profiles](/scraping/profiles#directory-layout)), and send every job of that identity through it. How you apply it depends on the API:
+
+| API | How an identity gets its proxy | Tested |
+| --- | --- | --- |
+| Playwright library | one server per distinct proxy: `chromium.launch({ args: ['--proxy', url] })`, and the identity's contexts on that server | [A pool of signed-in identities](/recipes/scraping-identity-pool) |
+| Native SDK, raw CDP | one server; each context created with its own `proxyServer` (above) | two contexts on one server, each through its own proxy with its own user agent |
+| Puppeteer | one server; `browser.createBrowserContext({ proxyServer })` per identity | see [Puppeteer and raw CDP](/scraping/cdp#puppeteer) |
+| Fork mode | one fork server per distinct proxy | [Fork-mode signed-in jobs](/recipes/scraping-fork-signed-in-jobs#how-the-parts-work) |
+
+Rotate jobs over identities, not proxies under one identity. A session that suddenly arrives from another IP address is a common reason for a site to end it, or to ask for a second factor. If your proxy provider changes the exit IP per request, use its "sticky session" option for signed-in identities. When an identity's proxy fails, pause that identity instead of moving it to another proxy.
+
 ## Locale
 
 ```ts
@@ -237,8 +250,9 @@ const context = await browser.newContext({ ...devices['Pixel 7'] });
 
 From a descriptor, the user agent and viewport take effect. `deviceScaleFactor`, `isMobile` and `hasTouch` do not; set them with the CDP commands above.
 
-## Related
+## Next
 
+- [A pool of signed-in identities](/recipes/scraping-identity-pool): identity files with a proxy and user agent each, applied to every job.
 - [Stored profiles](/scraping/profiles): keeping these settings per identity in a sidecar file.
 - [serve options](/reference/serve): `--proxy`, `--proxy-bypass` and the rest.
 - [CDP coverage](/reference/cdp): every Emulation, Network and Fetch command and its limits.

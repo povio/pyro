@@ -33,7 +33,7 @@ The command needs [Bun](https://bun.sh) on `PATH`. When the CLI is started by No
 | `-h, --help` | Print the help. |
 | `--headed`, `--debug`, `--ui` | Print a warning and have no effect: Pyro is headless. |
 
-Any other flag (`--shard`, `--trace`, `--repeat-each`, `--last-failed`, `--forbid-only`, `--output`, ...) is an error: the command prints the help and exits with status 2.
+Any other flag (`--shard`, `--trace`, `--repeat-each`, `--last-failed`, `--forbid-only`, `--output`, ...) is an error: the command prints the help and exits with status 2. To split a suite across CI jobs without `--shard`, pass each job its files as test filters: see [CI without sharding](/recipes/playwright-ci-without-sharding).
 
 ## Config fields
 
@@ -69,7 +69,7 @@ A project's `expect` replaces the top-level `expect` instead of merging with it,
 
 These typecheck but do nothing: `reporter`, `globalTimeout`, `maxFailures` (use `--max-failures`), `forbidOnly`, `reportSlowTests`, `quiet`, `preserveOutput`, `captureGitInfo`, `tsconfig`, `shard`, and on projects `grep`, `grepInvert`, `dependencies`, `repeatEach`, `teardown` and `fullyParallel`. In `webServer`, `gracefulShutdown`, `name` and `ignoreHTTPSErrors` are ignored.
 
-Project `dependencies` are worth a note: a "setup" project that logs in and saves `storageState` does not run first. Run that code in `globalSetup` instead.
+Project `dependencies` are worth a note: a "setup" project that logs in and saves `storageState` does not run first. Without `--project`, its files run as ordinary tests, in parallel with the tests that read the file it writes, and those fail with `ENOENT`. Run that code in `globalSetup` instead: see [Sign in once with storageState](/recipes/playwright-setup-project-auth).
 
 ## Projects
 
@@ -168,6 +168,10 @@ The worker count is not capped by the number of files, because parallel describe
 
 `globalSetup` and `globalTeardown` take a path or a list of paths, relative to the config file. Each module's default export (or the module itself) is called with the config. A function returned by a global setup runs at teardown, as in Playwright. Teardowns run after the last worker ends.
 
+Global setup runs after the web servers answer, in the `pyro run` process, once per run. Under plain `bun test`, it runs before the first file's tests.
+
+The argument is the config object as your config file exports it, not Playwright's resolved `FullConfig`, and no `FullConfig` type is exported. In particular, `config.projects[0].use` is that project's own `use`, without the top-level `use` merged in, and `undefined` when the project sets none. Playwright's common `const { baseURL, storageState } = config.projects[0].use` then throws. Keep such values in a module that both the config and the global setup import. [Sign in once with storageState](/recipes/playwright-setup-project-auth) does this.
+
 ## Reporting
 
 The report shows each test as it finishes: passes, failures, skips (declared, or `test.skip()` at run time, with the reason in parentheses), flaky tests (passed on a retry) and expected failures (`test.fail()`). The tests' own `console.log` output is printed per worker, prefixed with `[w0]`, `[w1]`, ... After the run come the failures with their errors and a summary.
@@ -201,3 +205,9 @@ PYRO_CONFIG=playwright.config.ts bun test ./e2e/foo.spec.ts
 This runs the files in one process with one browser. The config, web servers and global setup are loaded on the first file; teardowns run after the last file. Bun's own flags apply (`-t` for names, `--bail`, `-u` for snapshots).
 
 Differences from `pyro run`: no workers or `fullyParallel` spreading, Bun's reporter instead of the runner's, and a run-time `test.skip()` is reported by Bun as a pass (it prints `↳ skipped: <title>` to the log).
+
+## Next
+
+- Move a setup project into global setup: [Sign in once with storageState](/recipes/playwright-setup-project-auth).
+- Run a large suite in CI: [CI without sharding](/recipes/playwright-ci-without-sharding).
+- Fixtures, hooks and retries: [Fixtures, hooks and steps](/playwright/fixtures).

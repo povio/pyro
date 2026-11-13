@@ -4,6 +4,10 @@
 
 This section is for teams with an existing Playwright suite. It covers what carries over unchanged, what behaves differently, and what is missing.
 
+::: info Not on npm under this name yet
+`@povio/pyro` is published from its next release on. To try it today, install it from a checkout and set `PYRO_BIN`, or use `@povio/lightning-panda` 0.0.33 with the old names. See [Before the first release](/guide/installation#try-today).
+:::
+
 ## The one-line change
 
 ```ts
@@ -18,7 +22,7 @@ import { test, expect, type Page } from '@povio/pyro/wright';
 # before
 npx playwright test
 # after
-npx pyro run        # or: bunx pyro run
+npx pyro run        # or: bunx pyro run (Bun must be on PATH either way)
 ```
 
 The same module replaces both `@playwright/test` (the runner, fixtures and `expect`) and `playwright` (the library: `chromium.launch()`, `Browser`, `Page`, ...). `@povio/pyro/test` is an alias of the same module.
@@ -86,7 +90,7 @@ Pages booted ahead cut more: with `use.pyro.boot`, a test's first `goto` becomes
 The native driver (`page.run([...])`, one command per test) is faster still. In the bench run recorded in `bench/results/pyro-tos-e501cef`, the same flow took 8.6 ms on a fresh page and 2.7 ms per test over four connections, against 34.2 ms for stock Playwright over CDP on the same busy host. If you are willing to rewrite tests, see [Why a native driver](/e2e/overview).
 
 ::: tip Measure your own suite
-These numbers come from one flow on one machine. Run your suite both ways and compare wall time and CPU. Your app's own JavaScript is often the larger cost.
+These numbers come from one flow on one machine. Your app's own JavaScript is often the larger cost. To know what your suite gains, run it on both browsers from one set of files and time both: [Run the same suite on Chromium and Pyro](/recipes/playwright-side-by-side) shows how, with a script that lists the tests whose results differ.
 :::
 
 ## What is not there
@@ -97,18 +101,32 @@ These numbers come from one flow on one machine. Run your suite both ways and co
 | Trace viewer, `trace` option | Not available. `context.tracing` methods exist and do nothing. |
 | Video, `video` option | Not available. `page.video()` returns `null`. |
 | Screenshot on failure, `screenshot` option | Accepted, no effect. |
-| Sharding (`--shard`) | Not available in `pyro run` (unknown option). The native suite runner `pyro e2e` has `--shard`; see [Suite runner](/e2e/runner). |
+| Sharding (`--shard`) | Not available in `pyro run` (unknown option). Size the workers, then split files across CI jobs yourself: [CI without sharding](/recipes/playwright-ci-without-sharding). |
+| Project `dependencies` (setup projects) | Accepted and ignored: a setup project's files run as ordinary tests, alongside the others. Sign in from `globalSetup` instead: [Sign in once with storageState](/recipes/playwright-setup-project-auth). |
 | UI mode, `--headed`, `--debug` | Print a warning and have no effect. Pyro is headless. |
 | Codegen, inspector, `page.pause()` | Not available. `page.pause()` returns at once. |
 | Firefox and WebKit | Every project runs on Pyro. |
 | Custom selector engines (`selectors.register`) | Throws. |
 | Component testing | Not available. |
-| JUnit / JSON reporters | Not in `pyro run`. |
+| JUnit / JSON / blob reporters, `merge-reports` | Not in `pyro run`. Results are in the log; the exit status is 1 on failure. |
 
-If one of these is essential, keep Playwright for that job. Pyro and Playwright can run side by side during a migration; see [Migrating a suite](/playwright/migration#running-both-side-by-side).
+If one of these is essential, keep Playwright for that job. Pyro and Playwright can run side by side during a migration; see [Run the same suite on Chromium and Pyro](/recipes/playwright-side-by-side).
+
+## Judging the risk
+
+Before you commit, find out what your suite will need. The work usually comes from these:
+
+1. **Transient-state assertions.** Actions settle before they return, so checks on a spinner or "Saving..." between an action and its result fail. Every such test needs a small rewrite.
+2. **Screenshot baselines.** Every Chromium baseline fails once. Plan a review of the new images, per platform.
+3. **Selector-first page methods** (`page.click(selector)`, ...). `tsc --noEmit` against the new import lists them all.
+4. **Setup projects and sharding.** Both need a change to the config or the CI workflow, not to tests.
+5. **Shadow DOM, context options without effect, missing web APIs.** These depend on your app. Running the suite on both browsers finds them.
+
+[Triage the first red run](/recipes/playwright-triage-first-failures) shows each failure as you will see it, with the fix. One run of your suite on both browsers, grouped by error, tells you most of the cost.
 
 ## Next steps
 
 1. [Migrate a suite](/playwright/migration) step by step.
-2. Read [Behaviour differences](/playwright/differences) before you debug the first failures.
-3. Check [API coverage](/playwright/api-coverage) for any API your suite depends on.
+2. Set up [both browsers on one suite](/recipes/playwright-side-by-side), so every failure can be checked against Chromium.
+3. Work through [the first red run](/recipes/playwright-triage-first-failures).
+4. Check [API coverage](/playwright/api-coverage) for any API your suite depends on.

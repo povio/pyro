@@ -54,6 +54,10 @@ Then:
 
 If no booted page can be taken (the browser refuses), the page falls back to a fresh one.
 
+::: warning A signed-in storageState with cookies gets no booted pages
+The usual Playwright sign-in, a setup step that saves `storageState` with a session cookie, puts cookies in every context, which rule 4 excludes. With `boot` set on such a suite, `browser._stats` read `{ pooled: 0, fresh: 2 }` after two tests. Booted pages help when the signed-in state lives in `localStorage` only, or for tests that start signed out.
+:::
+
 ::: warning device descriptors set userAgent
 `...devices['Desktop Chrome']` sets `userAgent`, which rule 4 excludes. A project that spreads a device descriptor gets no booted pages. Set `viewport` directly instead.
 :::
@@ -93,3 +97,8 @@ Pyro's fork mode (`pyro serve --fork`) serves each connection from a fork of a p
 Measured with version 0.0.33 and again on the current code: with `use: { pyro: { args: ['--fork'], boot: [...] } }`, every page was fresh (`{ pooled: 0, fresh: 4 }` for four tests that took booted pages without `--fork`). Do not combine `boot` with `--fork`.
 
 Fork mode pays off with the native API, where each test opens its own connection: see [Connections and fork mode](/guide/fork-mode) and [Fork mode in tests](/e2e/fork). Pre-booted pages there are called profiles; see [Profiles and pre-booted pages](/guide/profiles).
+
+## Next
+
+- Check whether booting pays off on your suite: time it with and without `boot`, as in [Run the same suite on Chromium and Pyro](/recipes/playwright-side-by-side#time-both).
+- More levers and how to measure: [Performance](/guide/performance).

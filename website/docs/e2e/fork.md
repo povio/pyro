@@ -51,12 +51,16 @@ Nothing in the test changes. The same test file runs against a forking and a non
 
 ## A test against a forking server
 
-`APP` is the origin of a small app with a sign-in screen: an `Email` field and a `Sign in` button that store `tok-<email>` as `token` in `localStorage`, reload, and show `Signed in`.
+The app is [the example app](/e2e/first-test#the-example-app): its sign-in screen has an `Email` field and a `Sign in` button that store `tok-<email>` as `token` in `localStorage`, reload, and show `Signed in`.
 
 ```ts
+// fork.test.ts
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { Pyro, button, check, evaluate, label, text } from '@povio/pyro';
+import { startServer } from './server';
 
+const server = startServer();
+const APP = server.url.origin;
 let pyro: Pyro;
 
 beforeAll(async () => {
@@ -71,7 +75,10 @@ beforeAll(async () => {
   });
 });
 
-afterAll(() => pyro?.close());
+afterAll(() => {
+  pyro?.close();
+  server.stop(true);
+});
 
 test.concurrent('starts signed in', async () => {
   await using page = await pyro.page({ as: 'app' });
@@ -114,6 +121,15 @@ A derived profile's page is the base's page as it was after the base's setup: it
 
 Registering a profile whose base is still booting waits for the base (up to 90 s), and so do connections for it.
 
+## What tests still share
+
+Fork mode copies the browser, not your backend. Every page of a profile starts from the same snapshot, so it carries the same session token, and every test talks to the same API and database. Tests stay independent when:
+
+- **Each test creates its own data** through the API, with names no other test uses, and removes it afterwards. See [API seeding and cleanup](/recipes/e2e-api-seeding-and-cleanup).
+- **No test ends the shared session.** A test that signs out of a profile's page revokes the token on the server for every page of that profile, including pages of other tests and the setup of profiles based on it. Sign in inside the test instead, on a page of the signed-out profile. [Signing in once](/recipes/e2e-login-once#tests-that-sign-out) shows the failure and the fix.
+- **No test changes what a snapshot shows for others.** A snapshot holds the data the app fetched when it was taken. Data a test creates later appears only after the app fetches again, so take the page with `route` (or `url`) to make it fetch.
+- **Tests that must share server state are serial.** `test.serial` and `describe.serial` in [`pyro e2e`](/e2e/runner#serial-tests).
+
 ## Cost model
 
 | Cost | When | Size |
@@ -130,7 +146,7 @@ In a 10-page loop on that sign-in app, `pyro.page()` plus a two-step run took 1.
 What fork mode buys:
 
 - **No boot per test** and no pool to refill: the app boots once per profile, not once per page or per connection.
-- **Isolation**: each page is its own process. Nothing a test does reaches another test.
+- **Isolation in the browser**: each page is its own process. What a test does to its page (DOM, `localStorage`, cookies, mocks, timers) does not reach another test. Your backend is not isolated: see [What tests still share](#what-tests-still-share).
 - **Memory**: pages share the template's memory until they write to it.
 
 What it costs:
@@ -149,3 +165,8 @@ What it costs:
 ## Several processes on one forking server
 
 A forking server keeps profiles by name for all of its clients, so `bun test --parallel` workers can share profiles that one launcher booted. See [One server, many workers](/e2e/shared-server). The simpler route for large suites is [`pyro e2e`](/e2e/runner): one process, one forking browser, one queue.
+
+## Next
+
+- [Signing in once](/recipes/e2e-login-once): a sign-in profile per role, one snapshot per feature, and the independence rules above in a running suite.
+- [Suite runner: pyro e2e](/e2e/runner): fork mode is its default.

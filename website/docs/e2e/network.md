@@ -117,9 +117,11 @@ await page.run([
   mock('/api/items', { method: 'POST', status: 500, json: { error: 'down' } }),
   label('New todo').fill('Z'),
   button('Add').click(),
-  check(text('Error 500')).visible(),
+  check.request('POST', '/api/items').status(500),
 ]);
 ```
+
+In your app, follow the request check with a check of the error the user sees, for example `check(role('alert')).text('Could not save')`. [Mocking backend states](/recipes/e2e-mock-backend-states) tests an error banner, an empty list, a spinner and a disabled button this way.
 
 ### URL matching and order
 
@@ -225,7 +227,20 @@ A `RegExp` anywhere in the native API (locators, `mock`, `unmock`, `waitForUrl`,
 
 Mocks sit in front of CDP `Fetch` interception on the same context, so a request no rule answers continues to Playwright-style routes (if any) and then to the network. Combined with [`--static`](/e2e/static), mocking the API of a static origin tests a front-end build with no server at all.
 
-Mocks are scoped to the browser context of the page. To mock requests before the app's first request, the mock must run before the navigation: take a blank page and put the `mock` before a `goto`:
+Mocks are scoped to the browser context of the page, and they apply to requests made after the `mock` step. A page from a profile pool booted before the test, so the requests it made while booting have already happened.
+
+For a single-page app, the cheapest fix is a route change. Take the pooled page on a route that does not fetch what you mock, register the mock, then `route` to the screen under test. The route change makes the app fetch again, and the mock answers. With [the example app](/e2e/first-test#the-example-app), `/settings` fetches nothing:
+
+```ts
+await using page = await pyro.page({ as: 'user', route: '/settings' });
+await page.run([
+  mock('/api/items', { method: 'GET', json: [{ id: 7, title: 'Mocked item' }] }),
+  route('/'),
+  check(text('Mocked item')).visible(),
+]);
+```
+
+When the app reads the data only once at boot, put the mock before a full navigation instead: take a blank page and put the `mock` before a `goto`. Here the server runs with `--static http://app.test=./public`, as on [Serving a build](/e2e/static#a-made-up-origin):
 
 ```ts
 await using page = await pyro.page({ initScripts: ['localStorage.setItem("token", "t")'] });
@@ -236,4 +251,9 @@ await page.run([
 ]);
 ```
 
-A page from a profile pool booted before the test, so its first requests have already happened. See [Network, routes and HAR](/playwright/network) for the Playwright layer's `page.route`.
+This page boots the app for the test, so it costs a full boot. See [Network, routes and HAR](/playwright/network) for the Playwright layer's `page.route`.
+
+## Next
+
+- [Mocking backend states](/recipes/e2e-mock-backend-states): error, empty and slow states, spinners and disabled buttons, end to end.
+- [API seeding and cleanup](/recipes/e2e-api-seeding-and-cleanup): real data per test, and asserting request bodies with `check.request`.

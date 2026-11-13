@@ -1,6 +1,6 @@
 # Your first test
 
-This page builds one test from nothing: install the package, start a tiny app, launch the browser, declare a profile, take a page, run the scenario, read values back and close everything. Every file below was run as shown with Bun 1.4.
+This page builds one test from nothing: install the package, start a small app, launch the browser, declare a profile, take a page, run the scenario, read values back and close everything. Every file below was run as shown with Bun 1.4.
 
 ## Install
 
@@ -10,10 +10,21 @@ bun add --dev @povio/pyro
 
 The package bundles the browser for macOS 14+ (Apple silicon and Intel) and Linux x64 and arm64 with glibc 2.39 or newer (Ubuntu 24.04, for example). Nothing is downloaded at install time. The client runs on Bun and on Node 22+; the examples here use `bun test`. See [Installation](/guide/installation) and [Platforms and limits](/guide/platforms).
 
-## A tiny app
+`@povio/pyro` is not on npm yet. Until its first release, follow [Before the first release](/guide/installation#try-today) to install it from a checkout or use the previous package name.
 
-The app shows a list of todos from `GET /api/items` and adds one with `POST /api/items`. It treats a `token` in `localStorage` as being signed in.
+## The example app
 
+Every example in this section runs against one small app. It is plain JavaScript with no build step, but it behaves like a single-page app: a client-side router, data fetched from a REST API, a session in `localStorage`.
+
+- Without a `token` in `localStorage` it shows a sign-in form (`Email`, `Sign in`). Signing in stores `tok-<email>` as `token` and reloads.
+- Signed in, it shows `Signed in`, a nav with `Todos` and `Settings`, the list from `GET /api/items`, and a form (`New todo`, `Add`) that sends `POST /api/items` and then shows `Added <title>`.
+- Each item has a `Delete <title>` button that opens a confirmation dialog. Its `Delete` button sends `DELETE /api/items/<id>`.
+- `/settings` is a client-side route with a `Settings` heading.
+- `POST /api/seed` creates an item for tests, the same as `POST /api/items`.
+
+Put the three files below in a new directory, then install the package there. Open each block to copy the file.
+
+::: details public/index.html
 ```html
 <!-- public/index.html -->
 <!doctype html>
@@ -25,7 +36,9 @@ The app shows a list of todos from `GET /api/items` and adds one with `POST /api
   </body>
 </html>
 ```
+:::
 
+::: details public/app.js
 ```js
 // public/app.js
 const root = document.getElementById('root');
@@ -33,15 +46,42 @@ const token = localStorage.getItem('token');
 const api = (path, init = {}) =>
   fetch(path, { ...init, headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` } });
 
+// Client-side routing: links change the URL in place; back, forward and `route` fire popstate.
+addEventListener('popstate', () => render());
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('a[href^="/"]');
+  if (!link) return;
+  event.preventDefault();
+  history.pushState(null, '', link.getAttribute('href'));
+  render();
+});
+
+function signIn() {
+  root.innerHTML = `
+    <h1>Please sign in</h1>
+    <form>
+      <label for="email">Email</label> <input id="email">
+      <button type="submit">Sign in</button>
+    </form>`;
+  root.querySelector('form').onsubmit = (event) => {
+    event.preventDefault();
+    localStorage.setItem('token', `tok-${root.querySelector('#email').value}`);
+    location.reload();
+  };
+}
+
 async function render(status = '') {
-  if (!token) {
-    root.innerHTML = '<h1>Please sign in</h1>';
+  if (!token) return signIn();
+  const nav = '<p>Signed in</p><nav><a href="/">Todos</a> <a href="/settings">Settings</a></nav>';
+  if (location.pathname === '/settings') {
+    root.innerHTML = `${nav}<h1>Settings</h1>`;
     return;
   }
   const items = await (await api('/api/items')).json();
-  root.innerHTML = `
+  root.innerHTML = `${nav}
     <h1>Todos</h1>
-    <ul>${items.map((i) => `<li data-testid="item-${i.id}">${i.title}</li>`).join('')}</ul>
+    <ul>${items.map((i) => `<li><span data-testid="item-${i.id}">${i.title}</span>
+      <button aria-label="Delete ${i.title}" data-id="${i.id}">Delete</button></li>`).join('')}</ul>
     <form>
       <label for="title">New todo</label> <input id="title">
       <button type="submit">Add</button>
@@ -53,15 +93,35 @@ async function render(status = '') {
     await api('/api/items', { method: 'POST', body: JSON.stringify({ title }) });
     await render(`Added ${title}`);
   };
+  for (const button of root.querySelectorAll('li button')) {
+    button.onclick = () => confirmDelete(button.dataset.id, button.previousElementSibling.textContent);
+  }
 }
+
+function confirmDelete(id, title) {
+  const dialog = document.createElement('div');
+  dialog.setAttribute('role', 'dialog');
+  dialog.innerHTML = `<p>Delete ${title}? This cannot be undone.</p>
+    <button>Cancel</button> <button>Delete</button>`;
+  const [cancel, confirm] = dialog.querySelectorAll('button');
+  cancel.onclick = () => dialog.remove();
+  confirm.onclick = async () => {
+    await api(`/api/items/${id}`, { method: 'DELETE' });
+    dialog.remove();
+    await render(`Deleted ${title}`);
+  };
+  root.append(dialog);
+}
+
 render();
 ```
+:::
 
-A small Bun server serves the files and the API:
-
+::: details server.ts (the API, and the files for any other path)
 ```ts
 // server.ts
 const items: { id: number; title: string }[] = [];
+let nextId = 1;
 
 export function startServer(port = 0) {
   return Bun.serve({
@@ -69,11 +129,19 @@ export function startServer(port = 0) {
     async fetch(req) {
       const { pathname } = new URL(req.url);
       if (pathname === '/api/items' && req.method === 'GET') return Response.json(items);
-      if (pathname === '/api/items' && req.method === 'POST') {
-        const item = { id: items.length + 1, title: (await req.json()).title };
+      // POST /api/items is what the app calls; POST /api/seed is the same for tests.
+      if ((pathname === '/api/items' || pathname === '/api/seed') && req.method === 'POST') {
+        const item = { id: nextId++, title: (await req.json()).title };
         items.push(item);
         return Response.json(item, { status: 201 });
       }
+      const m = /^\/api\/items\/(\d+)$/.exec(pathname);
+      if (m && req.method === 'DELETE') {
+        const i = items.findIndex((item) => item.id === Number(m[1]));
+        if (i >= 0) items.splice(i, 1);
+        return new Response(null, { status: i >= 0 ? 204 : 404 });
+      }
+      // Everything else is the app: index.html for any route, app.js by name.
       const file = pathname === '/app.js' ? 'app.js' : 'index.html';
       return new Response(Bun.file(new URL(`./public/${file}`, import.meta.url)));
     },
@@ -82,8 +150,11 @@ export function startServer(port = 0) {
 
 if (import.meta.main) console.log(startServer(3000).url.href);
 ```
+:::
 
-In a real project the app is your front-end build and API. In CI you often do not need a front-end server at all: see [Serving a build: --static](/e2e/static).
+`bun server.ts` serves it on port 3000 if you want to click through it yourself. The tests start it on a free port instead.
+
+In a real project the app is your front-end build and your API. In CI you often need no front-end server at all: see [Serving a build: --static](/e2e/static). [Project layout](/recipes/e2e-project-layout) shows a whole suite for a built single-page app with an API and two roles.
 
 ## The test
 
@@ -134,14 +205,17 @@ test.concurrent('shows a todo created through the API', async () => {
 ```
 
 ```sh
-$ bun test todos.test.ts
-pyro: CDP server listening on ws://127.0.0.1:51467/
+$ bun test --timeout 10000 todos.test.ts
+bun test v1.4.3 (c6da4a4d3)
+pyro: CDP server listening on ws://127.0.0.1:53878/
 
  2 pass
  0 fail
  1 expect() calls
-Ran 2 tests across 1 file. [308.00ms]
+Ran 2 tests across 1 file. [90.00ms]
 ```
+
+Give the test a longer timeout than its steps. `bun test` stops a test after 5,000 ms by default, and a step waits up to 5,000 ms too, so with the defaults a failing step shows only `this test timed out after 5000ms` and you never see why. With `--timeout 10000` the step fails first and you get its reason (see [When it fails](#when-it-fails)).
 
 ## What each part does
 
@@ -163,7 +237,7 @@ A profile is a kind of page your tests ask for by name. The browser boots pages 
 
 Returns a `Page`. With `as`, the page comes from that profile's pool; without it, you get a blank page in its own browser context. `route` changes the URL in place as a client-side router would see a link (`pushState` plus `popstate`), so the app does not boot again. `url` navigates for real. Either one runs as the first step of the first `run`.
 
-The second test uses `url` on purpose. The pooled page booted before the test seeded its todo, and this app reads the list only when it starts, so the test reloads it. An app whose routes fetch their data when they mount can use `route` instead and skip the reload.
+The second test needs the list as it is after the seed. The pooled page booted before the test seeded its todo, so it shows the old list. `url` reloads the app to fetch it again. `route: '/'` would work as well here, because this app fetches the list each time a route renders, and it skips the reload. Use `route` when your app fetches on route changes, and `url` when it reads its data only once at boot.
 
 ### `await using`
 
@@ -185,13 +259,31 @@ Sends every step as one `Pyro.run` command and resolves with:
 
 Assert on `values` with `bun:test`'s `expect`. Everything else is asserted inside the run with `check(...)` steps, because they wait in the browser until they hold.
 
-When a step fails, `page.run` throws a `RunError` that names the step and why it was still waiting when its timeout passed:
+When a step fails, `page.run` throws a `RunError` that names the step and why it was still waiting when its timeout passed. `error.step` is the index into the array you passed. [Debugging failures](/e2e/debugging) lists the messages and what they mean.
+
+## When it fails
+
+Change the check in the first test to `check(text('Added Buy bread')).visible()` and run it again:
 
 ```text
-RunError: step 0 (expect Text {"text":"Todos"}): timed out after 300 ms: expect Text {"text":"Todos"}: expected Text "Something", got "Todos"
+$ bun test --timeout 10000 todos.test.ts
+bun test v1.4.3 (c6da4a4d3)
+pyro: CDP server listening on ws://127.0.0.1:54218/
+
+todos.test.ts:
+error: step 3 (expect Visible {"text":"Added Buy bread"}): timed out after 5000 ms: expect Visible {"text":"Added Buy bread"}: expected Visible null, got false
+ step: 3,
+
+      at run (.../node_modules/@povio/pyro/src/index.ts:517:13)
+      at async <anonymous> (/path/to/todos.test.ts:28:24)
+(fail) adds a todo [5125.87ms]
+
+ 1 pass
+ 1 fail
+Ran 2 tests across 1 file. [5.23s]
 ```
 
-`error.step` is the index into the array you passed. [Debugging failures](/e2e/debugging) lists the messages and what they mean.
+Read it from the right. `expected Visible null, got false` is the reason: nothing visible matched. `step 3` is the fourth step of the array, the check you changed. The steps before it passed, so the todo was added, and the text on screen is something else. Bun also prints a few lines of the SDK's source above the message (left out here); skip them.
 
 ## Concurrency with `bun test`
 
@@ -210,3 +302,4 @@ How much runs in parallel depends on the server:
 - [Locators](/e2e/locators): how to find elements.
 - [Steps and checks](/e2e/steps): every step a run can contain.
 - [Requests and mocks](/e2e/network): assert on requests and fake responses.
+- Starting a real suite? [Project layout](/recipes/e2e-project-layout) gives you the folders, the setup module, one profile per role and the `pyro e2e` scripts in one place.

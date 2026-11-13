@@ -16,3 +16,8 @@
 
 /* Embers fly past the hero image; keep them from widening the page. */
 .VPHome { overflow-x: clip; }
+
+/* Six nav items fit at tablet widths. */
+@media (min-width: 768px) and (max-width: 1100px) {
+  .VPNavBarMenuLink { padding: 0 9px !important; }
+}

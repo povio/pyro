@@ -119,7 +119,7 @@ These rules apply to role names, `text`, `label` and `placeholder`:
 An action, and a check that reads one element (`text`, `containsText`, `value`, `checked`, `css`, `focused`, `name`, `enabled`, `visible`, `hidden`), needs exactly one match. When the locator matches several elements, the step fails at once, without waiting for its timeout, and lists up to five of them:
 
 ```text
-RunError: step 0 (Click {"css":"li button"}): strict mode violation: {"css":"li button"} matched 3 elements: <button> "x", <button> "x", <button> "x"
+step 0 (Click {"css":"li button"}): strict mode violation: {"css":"li button"} matched 3 elements: <button> "x", <button> "x", <button> "x"
 ```
 
 Fix the locator: scope it (`row('Export').button('Edit')`), filter it (`.hasText(...)`, `.visible()`), or make the name exact. Reads (`loc.read(...)`) follow strict mode too. `check(loc).count(n)` and `read(as, 'count')` accept any number of matches.
@@ -162,3 +162,8 @@ The wire format has a few locator fields that the native builders do not produce
 | `of` | Another locator's matches as the base set, so a filter or a pick can follow a pick: `new Locator({ of: { role: 'button', nth: 0 }, filter: { hasText: 'Bold' } })` |
 
 A `Locator` built this way has every method of the builders' locators (`.click()`, `.read()`, chaining). See [SDK: locators and steps](/reference/steps) and [Pyro.run wire format](/reference/pyro-run).
+
+## Next
+
+- [Steps and checks](/e2e/steps): what a run does with a locator.
+- [Debugging failures](/e2e/debugging): what `matched no element` and `strict mode violation` mean.

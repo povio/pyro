@@ -2,7 +2,7 @@
 
 A stored profile ([Stored profiles](/scraping/profiles)) saves cookies to a file and loads them into a new context for every job. Each job still loads the site's pages and boots its JavaScript from scratch. A server-side profile goes further: the server loads the page once, runs your sign-in steps once, and keeps that signed-in page in memory. In fork mode, every job then gets its own copy of that page, already signed in, in about 20 ms.
 
-This page uses the native SDK (`@povio/pyro`). For the concept in general, see [Profiles and pre-booted pages](/guide/profiles) and [Connections and fork mode](/guide/fork-mode).
+This page uses the native SDK (`@povio/pyro`). For the concept in general, see [Profiles and pre-booted pages](/guide/profiles) and [Connections and fork mode](/guide/fork-mode). For a complete, tested script with several identities, a user agent each, and re-sign-in when a session expires, see [Fork-mode signed-in jobs](/recipes/scraping-fork-signed-in-jobs).
 
 ## How fork mode works
 
@@ -81,6 +81,13 @@ A page taken with `pyro.page({ as })` is where `setup` left it, here on `/accoun
 Every fork starts from the same snapshot, so every page of a profile sends the same session cookie. To the site it is one signed-in user with many tabs open. That is usually what you want, but a site that limits concurrent requests per session, or rotates the session on each request, sees all jobs as one user. Register one profile per account to spread jobs over several sessions.
 :::
 
+### Proxy and user agent per identity
+
+A profile has no proxy or user agent option, and `setup` steps cannot send CDP commands.
+
+- **Proxy.** The template and its forks use the server's `--proxy`. For identities behind different proxies, launch one fork server per proxy (`Pyro.launch({ args: ['--fork', '--proxy', url] })`) and register each identity on its proxy's server.
+- **User agent.** Set it on each forked page before its first run: `await page.send('Emulation.setUserAgentOverride', { userAgent })`. It applies to everything the job does after that. The sign-in in `setup` runs with Pyro's default user agent, `Mozilla/5.0 (compatible; pyro/<version>)`. A site that ties a session to the user agent it signed in with may reject the forks; use [stored profiles](/scraping/profiles) for that site.
+
 ### When `setup` fails
 
 The template runs `setup` in the server, not in your script. A failing step is reported on the server's stderr, for example:
@@ -129,7 +136,7 @@ await pyro.warm('alice', 10_000);
 
 `releaseProfile` drops this client's hold, and the server retires a profile once no client holds it and no other profile derives from it. Registering the same name with the same definition while it is still held adopts the existing snapshot instead of booting again, so release first. Other clients that adopted the profile (see the next section) hold it too: they must release it as well, or you register the fresh sign-in under a new name (`alice-2`) and point new jobs at that. Pages already open keep running from the old snapshot.
 
-A simple policy: re-register on a timer shorter than the site's session lifetime, or when a job's first check finds the page signed out.
+A simple policy: re-register on a timer shorter than the site's session lifetime, or when a job's first check finds the page signed out. To tell "signed out" from other failures, make the check a short step right after `goto`, such as `waitForUrl('/account', { timeout: 300 })`, and look at the failing step's index: `RunError.step`. [Fork-mode signed-in jobs](/recipes/scraping-fork-signed-in-jobs) does this, with jobs that fail at the same moment sharing one sign-in.
 
 ## One server, many worker processes
 
@@ -194,6 +201,8 @@ Without fork mode, `pyro.profile()` still helps: each connection keeps `pool` pa
 | Session state kept | cookies and `localStorage` only | everything: cookies, all storage, IndexedDB, the live JavaScript state |
 | Sign-in | your script, once per expiry | `setup` steps in the server, once per registration |
 | Sessions | one per file | one per profile, shared by all its forks |
+| Proxy per identity | one server per proxy | one fork server per proxy |
+| User agent at sign-in | the identity's | Pyro's default; the identity's on each fork afterwards |
 | API | Playwright library or SDK | native SDK, `--fork` server |
 | Platforms | all | macOS Apple silicon, Linux x64/arm64 |
 
@@ -206,8 +215,10 @@ Fork profiles win when you run many short jobs as the same identity against a he
 - **JIT tiers.** Forks run without JavaScriptCore's DFG and FTL optimizing tiers, because connections are usually too short for them to pay off. Set `JSC_useDFGJIT=true` in the server's environment to turn them back on for long jobs.
 - **Profile ids are per server.** A restart forgets every profile; register them again on start.
 
-## Related
+## Next
 
+- [Fork-mode signed-in jobs](/recipes/scraping-fork-signed-in-jobs): the complete script, tested.
+- [A pool of signed-in identities](/recipes/scraping-identity-pool): the stored-profile alternative.
 - [Concurrency at scale](/scraping/concurrency): worker pools and measuring.
 - [Fork mode in tests](/e2e/fork): the same machinery used for test suites.
 - [Pyro CDP domain](/reference/cdp-domain): `registerPreparedPage`, `acquirePreparedPage`, `adoptPreparedPage` on the wire.

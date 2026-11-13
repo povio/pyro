@@ -232,7 +232,7 @@ class RunError extends Error {
 }
 ```
 
-`step` is the index of the failing step in the array you passed. It is negative when a prefix step (the page's opening `route`, `url` or `loaded()`) failed. The message starts with `step <n> (<what>):` or `opening the page (<step JSON>):`, followed by the browser's reason:
+Its `name` is `Error` (runners print `Error: step …`); check for it with `instanceof RunError`. `step` is the index of the failing step in the array you passed. It is negative when a prefix step (the page's opening `route`, `url` or `loaded()`) failed. The message starts with `step <n> (<what>):` or `opening the page (<step JSON>):`, followed by the browser's reason:
 
 ```text
 step 0 (Click {"name":"Nope","role":"button"}): timed out after 100 ms: Click {"name":"Nope","role":"button"}: {"name":"Nope","role":"button"} matched no element

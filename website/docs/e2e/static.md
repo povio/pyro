@@ -34,7 +34,7 @@ With `network`, a missing path goes to the network at its original URL, navigati
 
 ## A run against a static build
 
-Here the "backend" is a Bun server that only answers `/api/items`. The HTML and JavaScript are the `public/` directory of the app from [Your first test](/e2e/first-test), served by the browser on the same origin:
+Here the "backend" is a Bun server that only answers `/api/items`. The HTML and JavaScript are the `public/` directory of [the example app](/e2e/first-test#the-example-app), served by the browser on the same origin:
 
 ```ts
 import { Pyro, check, heading, text } from '@povio/pyro';
@@ -53,7 +53,7 @@ const dist = new URL('./public/', import.meta.url).pathname;
 const pyro = await Pyro.launch({ args: ['--fork', '--static', `${origin}=${dist}`] });
 try {
   await using page = await pyro.page({
-    url: `${origin}/settings`,                                  // no such file: index.html (SPA fallback)
+    url: `${origin}/inbox`,                                     // no such file: index.html (SPA fallback)
     initScripts: ['localStorage.setItem("token", "t")'],        // the app's sign-in
   });
   const r = await page.run([
@@ -69,14 +69,12 @@ try {
 ```
 
 ```text
-pyro: serving http://localhost:62233 from /private/tmp/docs-r1-e2e/public/
-pyro: CDP server listening on ws://127.0.0.1:62234/ (fork mode)
-[ "GET http://localhost:62233/settings 200", "GET http://localhost:62233/app.js 200",
-  "GET http://localhost:62233/api/items 200"
-]
+pyro: serving http://localhost:53785 from /path/to/public/
+pyro: CDP server listening on ws://127.0.0.1:53786/ (fork mode)
+[ "GET http://localhost:53785/inbox 200", "GET http://localhost:53785/app.js 200", "GET http://localhost:53785/api/items 200" ]
 ```
 
-`/settings` and `/app.js` came from the directory; `/api/items` reached the API server, which never served a file.
+`/inbox` and `/app.js` came from the directory; `/api/items` reached the API server, which never served a file.
 
 ### A made-up origin
 
@@ -174,4 +172,4 @@ await pyro.profile('employee', { url: 'http://localhost:3000/platform', localSto
 - No port conflicts between parallel jobs for the front end; only the API needs a port, or none if it is mocked.
 - The browser answers files from memory without a socket, which is cheaper than a dev server that compiles on request.
 
-See [CI recipes](/e2e/ci) for complete workflows.
+See [CI recipes](/e2e/ci) for complete workflows, and [Project layout](/recipes/e2e-project-layout) for a whole suite that serves a single-page app's `dist/` this way.

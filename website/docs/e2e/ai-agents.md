@@ -64,7 +64,7 @@ If you prefer a short project rule over the whole guide, or want to add your pro
 - A test seeds its data through the API, then makes ONE `page.run([...])`.
   Split into several runs only when plain code must run between them.
 - Pages come from profiles: `await using page = await pyro.page({ as: 'employee', route: '/path' })`.
-  One profile per kind of user; sessions go in the profile's `localStorage`, never through the login UI.
+  One profile per kind of user; the session comes from the profile (`localStorage`, or a fork-mode `setup`), never from signing in inside a test.
 - Locators: role + name first (`button('Save')`, `dialog().button('OK')`), then `label`,
   `placeholder`, `text`, then `testId`, then `css`. Strings are case-insensitive substrings;
   use `{ exact: true }` for whole matches.
@@ -82,7 +82,7 @@ These are the mistakes agents make most often with a native driver. `LLM.md` lis
 
 - **No waits.** No `sleep`, `waitForTimeout`, retry loops, `expect.poll`, or `waitForResponse`. Every step waits in the browser until it holds, and actions settle.
 - **No try/catch around steps.** A failing step is information. Do not swallow it or retry it.
-- **No UI login or UI seeding.** Use the profile for the session and the API for data.
+- **No UI login or UI seeding in tests.** Use the profile for the session and the API for data. Signing in through the UI once, in a profile's `setup`, is fine.
 - **No one-run-per-step.** It costs a round trip per step, and request checks see only their own run.
 - **No shared pages.** Take a new page per test with `await using`.
 - **No raised timeouts to make a test pass.** A timeout means the condition never held.

@@ -87,7 +87,7 @@ An identity file holds the context options for that identity, plus the settings 
 
 ## A profile store
 
-This module opens a profile by name. It reuses the stored state when it still works, signs in again when it does not, and saves the result. Save it as `profiles.ts`:
+This module opens a profile by name. It reuses the stored state when it still works, signs in again when it does not, and saves the result. It runs one identity at a time; for many identities running jobs in parallel, with a limit per identity and re-sign-in in the middle of a run, use the [identity pool recipe](/recipes/scraping-identity-pool), which builds on the same ideas. Save it as `profiles.ts`:
 
 ```ts
 // profiles.ts: one identity per name, stored on disk, reused across runs.
@@ -174,7 +174,7 @@ export async function openProfile(
 }
 ```
 
-And a script that uses it. The site-specific parts are `signIn` (fill the login form) and `isSignedIn` (open a page that needs a session and see whether you were sent to the login page):
+And a script that uses it. The site-specific parts are `signIn` (fill the login form) and `isSignedIn` (open a page that needs a session and see whether you were sent to the login page). If the site keeps a token in `localStorage` and answers API calls with `401` once it expires, check that response too; the [identity pool recipe](/recipes/scraping-identity-pool#how-the-parts-work) shows both checks.
 
 ```ts
 // scrape.ts: bun scrape.ts alice bob
@@ -276,7 +276,7 @@ Some refinements:
   }
   ```
 
-- **Save again after long runs.** Sites that roll the session (a new cookie on each request, sliding expiry) leave the file behind. Call `saveProfile(context, name)` at the end of a job, while a page of the site is still open, so the next run starts from the newest state.
+- **Save again after long runs.** Sites that roll the session (a new cookie on each request, sliding expiry) leave the file behind. Call `saveProfile(context, name)` at the end of a job, while a page of the site is still open, so the next run starts from the newest state. `storageState()` reads `localStorage` only from the origins of the open pages: if the job ended on another origin, the site's token is missing from the new state. Merge the old file's origins into it before you save, as the [identity pool](/recipes/scraping-identity-pool) does.
 - **Detect sign-outs mid-run.** If a page you scrape suddenly shows the login form, stop that identity's jobs, sign in again, and retry the job, instead of saving the signed-out state over the good file.
 - **Keep one session per identity.** Two processes signing in as the same account at the same time can invalidate each other's sessions. Run one job per identity at a time, or share one saved state between them and sign in from one place only.
 
@@ -290,11 +290,15 @@ let turn = 0;
 const nextIdentity = () => names[turn++ % names.length];
 ```
 
+For least-recently-used assignment, a limit of jobs per identity, and waiting when every identity is busy, use the pool in [A pool of signed-in identities](/recipes/scraping-identity-pool).
+
+Rotate jobs over identities, not proxies under one identity. Keep each identity on the proxy in its file: a session that suddenly comes from another IP address is a common reason for a site to sign it out. See [Mapping identities to proxies](/scraping/identity#mapping-identities-to-proxies).
+
 Rotation is for spreading load you are allowed to make. It is not a way around a site's rate limits or bans; see [Scraping responsibly](/scraping/overview#scraping-responsibly).
 
 ## Running profiles in parallel
 
-Each profile gets its own browser context, and contexts are isolated: two contexts on one connection have separate cookie jars and storage, so `alice` and `bob` can be open at the same time in one browser. For real parallelism, give each worker its own connection; each connection is a browser thread on the server. [Concurrency at scale](/scraping/concurrency) has a worker pool that assigns jobs to profiles.
+Each profile gets its own browser context, and contexts are isolated: two contexts on one connection have separate cookie jars and storage, so `alice` and `bob` can be open at the same time in one browser. For real parallelism, give each worker its own connection; each connection is a browser thread on the server. [Concurrency at scale](/scraping/concurrency) has a worker pool that assigns jobs to profiles, and [A pool of signed-in identities](/recipes/scraping-identity-pool) adds a proxy per identity and re-sign-in.
 
 The timezone override is the exception: it applies to a whole connection, and a second context on that connection asking for a different zone fails with `Cannot set timezone`. Keep identities with different time zones on different connections.
 
@@ -334,12 +338,16 @@ A state file is as good as a password for as long as the session lives, and ofte
   const context = await browser.newContext({ storageState: state });
   ```
 
+  [Moving profiles between machines](/recipes/scraping-move-profiles-securely) is a complete version with `node:crypto`: sealed files, key rotation, and revocation.
+
 - **Do not log them.** Cookie values and tokens end up in logs, crash reports and CI output easily. Log profile names, not states.
-- **Revoke when leaked.** Signing out on the site (or changing the password) usually invalidates the session in the file.
+- **Revoke when leaked.** Signing out on the site (or changing the password) usually invalidates the session in the file. Rotating your encryption key does not: a copy that leaked with its key stays valid until the site ends the session.
 - **Mind the CDP port.** Anyone who can connect to your `pyro serve` can read every cookie of every open context. Keep it on `127.0.0.1` or a private network. See [Running as a service](/scraping/service#securing-it).
 
-## Related
+## Next
 
+- [A pool of signed-in identities](/recipes/scraping-identity-pool): many identities, a proxy and user agent each, a job limit per identity, re-sign-in on expiry. Tested end to end.
+- [Moving profiles between machines](/recipes/scraping-move-profiles-securely): encrypted profile files, key rotation, revocation.
 - [Profiles booted once (fork)](/scraping/fork-profiles): the server signs in once and forks a fresh signed-in page per job.
 - [Profiles and pre-booted pages](/guide/profiles): the concept in general.
 - [Proxies, user agents, headers](/scraping/identity): every identity setting.

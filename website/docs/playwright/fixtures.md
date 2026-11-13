@@ -209,3 +209,9 @@ The number of retries comes from the innermost `test.describe.configure({ retrie
 | Action, navigation | 30 000 ms cap | `actionTimeout`, `navigationTimeout`, `page.setDefaultTimeout()`, per call |
 
 A timed-out test is reported as "timed out" with `Test timeout of <ms>ms exceeded.` Its fixtures are torn down at once.
+
+## Next
+
+- Config, workers and global setup: [Config and the test runner](/playwright/runner).
+- Keep your custom fixtures while both browsers run the suite: [Run the same suite on Chromium and Pyro](/recipes/playwright-side-by-side).
+- Assertions: [Assertions](/playwright/assertions).

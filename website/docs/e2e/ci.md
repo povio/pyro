@@ -107,6 +107,8 @@ There is no browser download step to cache: the binaries are inside the npm pack
 
 `--shard i/n` splits the spec files across jobs by their recorded durations, longest first onto the least loaded shard. Every shard computes the same split from the same `timings.json`.
 
+This is `pyro e2e` only. Playwright suites under `pyro run` have no `--shard`; see [CI without sharding](/recipes/playwright-ci-without-sharding).
+
 ```yaml
 jobs:
   e2e:
@@ -176,7 +178,7 @@ jobs:
           path: e2e/visual/__screenshots__/linux
 ```
 
-Review the images, then commit them. On a mismatch in a normal run, upload `**/*.actual.png` and `**/*.diff.png` as artifacts to see what changed. See [Visual tests](/e2e/screenshots).
+Review the images, then commit them. On a mismatch in a normal run, upload `**/*.actual.png` and `**/*.diff.png` as artifacts to see what changed. See [Visual tests](/e2e/screenshots), and [Visual regression in CI](/recipes/e2e-visual-regression-ci) for the whole workflow.
 
 ## Concurrency
 
@@ -201,3 +203,8 @@ With plain `bun test`, launch the server in the test files (`Pyro.launch()`) or 
 - Server stderr visible in the job log (it is by default): failed profile setups are printed there.
 - `timings.json` committed when sharding.
 - Per-OS screenshot baselines.
+
+## Next
+
+- [Project layout](/recipes/e2e-project-layout): the `package.json` scripts and setup module this workflow runs.
+- [Debugging failures](/e2e/debugging): reading a failure from the job log.

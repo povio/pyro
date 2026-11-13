@@ -292,3 +292,8 @@ These are stable parts of the wire format, but they have no TypeScript types in 
 ## Step results at a glance
 
 `r.results[i]` is the result of your step `i`. Actions give `{ settleMs }` (plus `settled: false` and `pending` when settling gave up), checks `{ actual }`, reads and `evaluate` their value, `goto`/`reload`/`loaded` `{}`, `idle` and `media` `{ settleMs }`, `waitForUrl` `{ url }`, `viewport` `{ width, height, settleMs }`, `downloadCount` the number, `request` checks the matched request (or `{ count }` with `.count(n)`), `mock` `{ mockId, mocks }`, `unmock` `{ removed }`, `release` `{ released }`. The steps that `pyro.page({ route, url })` added in front of yours are not included.
+
+## Next
+
+- [Requests and mocks](/e2e/network): `check.request`, `mock`, `hold` and `release`.
+- [Profiles and page pools](/e2e/profiles): where the page a run starts on comes from.

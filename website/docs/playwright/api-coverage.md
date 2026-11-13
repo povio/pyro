@@ -49,7 +49,7 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 | `addInitScript(script, arg)` | Supported | Function, string, `{ path }` or `{ content }`. |
 | `addCookies()`, `cookies(urls)` | Supported | A cookie needs `url` or `domain`. |
 | `clearCookies(options)` | Partial | Clears all cookies; filter options are ignored. |
-| `storageState({ path })` | Partial | `localStorage` only of origins with an open page; `indexedDB` is not saved. |
+| `storageState({ path })` | Partial | `localStorage` only of origins with an open page; `indexedDB` is not saved; the directory of `path` must exist. |
 | `route()`, `unroute()`, `unrouteAll()` | Supported | `unrouteAll`'s `behavior` is ignored. |
 | `routeFromHAR(path, options)` | Supported | Replay, and recording with `update: true`. |
 | `routeWebSocket()` | Not supported | |
@@ -297,3 +297,9 @@ This page lists Playwright's library API class by class and marks what `@povio/p
 ## Not present at all
 
 Tracing files, video recording, the HTML reporter, the trace viewer, codegen, the inspector, UI mode, component testing, Android and Electron automation, and Firefox and WebKit browsers.
+
+## Next
+
+- What the gaps look like in a failing run: [Triage the first red run](/recipes/playwright-triage-first-failures).
+- Behaviour that differs even where an API exists: [Behaviour differences](/playwright/differences).
+- Start the move: [Migrating a suite](/playwright/migration).

@@ -11,6 +11,18 @@ The browser speaks the Chrome DevTools Protocol (CDP). You can drive it in four 
 | `@povio/pyro` (native SDK) | Many pages fast: a whole job is one command, and signed-in pages are booted ahead or forked | [Scripting a browser](/scraping/library), [Profiles booted once](/scraping/fork-profiles) |
 | Puppeteer or raw CDP | Existing Puppeteer code, or any language with a WebSocket client | [Puppeteer and raw CDP](/scraping/cdp) |
 
+### Which one for signed-in identities?
+
+If you keep many accounts signed in, each with its own proxy and user agent, the choice comes down to where the session lives:
+
+| Your situation | Start with |
+| --- | --- |
+| Sessions must survive restarts and move between machines; you know Playwright or Puppeteer | Session files (`storageState`) with the Playwright library: [Stored profiles](/scraping/profiles), then the [identity pool recipe](/recipes/scraping-identity-pool) |
+| Many short jobs per account against a heavy app, on a long-running Linux or Apple-silicon server | Fork profiles with the native SDK: [Profiles booted once](/scraping/fork-profiles), then the [fork-mode recipe](/recipes/scraping-fork-signed-in-jobs) |
+| Existing Puppeteer code | Puppeteer against `pyro serve`: [Puppeteer and raw CDP](/scraping/cdp#puppeteer-habits-that-change) |
+
+Both paths give each identity its own user agent and proxy; [Mapping identities to proxies](/scraping/identity#mapping-identities-to-proxies) shows how for each API. Fork profiles sign in with Pyro's default user agent, which matters for sites that tie a session to it.
+
 ## Use cases
 
 **Crawling pages rendered by JavaScript.** A single-page app sends an almost empty HTML shell, and its scripts fetch the data and build the DOM. `curl` sees only the shell. Pyro runs the scripts, waits until the page is quiet, and gives you the DOM as the user would see it. See [Extracting data](/scraping/extracting).
@@ -71,6 +83,20 @@ Pyro does what you tell it, as fast as you tell it. It does not read `robots.txt
 
 This is not legal advice. When in doubt, ask the site owner or a lawyer.
 
+## Recipes
+
+Complete scripts, each tested end to end against a local test site:
+
+- [A pool of signed-in identities](/recipes/scraping-identity-pool): stored sessions, a proxy and user agent per identity, a job limit per identity, re-sign-in on expiry, atomic saves.
+- [Fork-mode signed-in jobs](/recipes/scraping-fork-signed-in-jobs): one fork server, a signed-in profile per identity, a forked page per job.
+- [Data from single-page apps](/recipes/scraping-spa-data): waiting for data loaded with `fetch`, reading the JSON API, pagers and infinite scroll.
+- [A batch of URLs to PDF](/recipes/scraping-pdf-batch): A4 PDFs with print styles and web fonts, a few at a time, each checked.
+- [Moving profiles between machines](/recipes/scraping-move-profiles-securely): encrypted profile files, key rotation, revocation.
+
 ## License
 
 Pyro is licensed under AGPL-3.0-only. It is a derivative of Lightpanda. The AGPL adds one condition to the GPL: if you modify the program and let users interact with your modified version over a network, you must offer those users its source code (section 13). Your scripts run as separate programs and talk to the browser over CDP. See [Running as a service](/scraping/service#license) for more, and read the license itself or ask a lawyer for your case.
+
+## Next
+
+Install the package ([Installation](/guide/installation)), then read [Scripting a browser](/scraping/library) for the two APIs, or go straight to the recipe closest to your job.

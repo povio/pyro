@@ -8,7 +8,9 @@ It needs [Bun](https://bun.sh) on `PATH`: the CLI hands `e2e` over to Bun even w
 
 ## A spec file
 
-Specs import `describe`, `test`, the hooks and `expect` from `@povio/pyro/e2e` instead of `bun:test`, and get the browser from `browser()`. The app is the todo app from [Your first test](/e2e/first-test) grown a little: a sign-in screen (the same as on [Fork mode in tests](/e2e/fork)), a `/settings` route, a Delete button per item with a confirmation dialog, and `POST /api/seed`; `../server` exports its `startServer()`:
+Specs import `describe`, `test`, the hooks and `expect` from `@povio/pyro/e2e` instead of `bun:test`, and get the browser from `browser()`. The app is [the example app](/e2e/first-test#the-example-app) from Your first test, with its sign-in screen, `/settings` route, Delete buttons with a confirmation dialog, and `POST /api/seed`. `../server` is its `server.ts`.
+
+For a fuller project, with a built single-page app, a REST API, two roles and per-test data, see [Project layout](/recipes/e2e-project-layout).
 
 ```ts
 // e2e/todos.test.ts
@@ -98,6 +100,39 @@ Ran 3 tests across 2 files. [130.47ms]
 
 The first tests of a run include the profile boots they waited for.
 
+### What a failing run looks like
+
+Change the last check of `deletes a seeded todo` to `.count(1)` and run the same command:
+
+```text
+$ bunx pyro e2e e2e --setup e2e/setup.ts -j 4 --timeout 10000
+pyro: CDP server listening on ws://127.0.0.1:55043/ (fork mode)
+✓ e2e/settings.test.ts > opens settings [99.61ms]
+✓ e2e/todos.test.ts > todos > adds a todo [55.05ms]
+✗ e2e/todos.test.ts > todos > deletes a seeded todo [5.06s]
+    Error: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
+        at run (.../node_modules/@povio/pyro/src/index.ts:517:17)
+        at async <anonymous> (/path/to/e2e/todos.test.ts:28:16)
+
+1 failure:
+  ✗ e2e/todos.test.ts > todos > deletes a seeded todo: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
+
+ 2 pass
+ 1 fail
+Ran 3 tests across 2 files. [5.13s]
+```
+
+The failed test prints its error under its line, and the summary repeats the first line of each failure. The exit code is 1. `step 2` is the index in the array passed to `page.run`, and the text after the last colon says what the step saw: zero matches where the test wanted one. The last stack line points at the `page.run` call in your spec. [Debugging failures](/e2e/debugging) lists every reason.
+
+**Set `--timeout` above the step timeout.** The default test timeout and the default step timeout are both 5,000 ms. With both at their defaults, the test times out at the same moment as its failing step, and all you get is:
+
+```text
+✗ e2e/todos.test.ts > todos > deletes a seeded todo [5.01s]
+    TimeoutError: test timed out after 5000 ms
+```
+
+Use `--timeout 10000` or more (`30000` in CI) so the step fails first and reports its reason.
+
 ## Options
 
 ```text
@@ -125,6 +160,8 @@ pyro e2e [options] [path | dir | glob | filter ...]
 | `-h`, `--help` | | Print the usage |
 
 Options that take a value also accept `--option=value`. An unknown option or a bad value prints the usage and exits with code 2.
+
+`bunx` splits quoted arguments at spaces before `pyro` sees them (Bun 1.4.3), so `bunx pyro e2e -t 'projects list'` runs with the pattern `projects` and treats `list` as a path filter, which usually ends in `no spec files found`. Put the command in a `package.json` script and pass the pattern to it (`bun run e2e -t 'projects list'`), call `./node_modules/.bin/pyro` directly, or write the pattern without spaces (`-t 'projects.list'`).
 
 ### Paths
 
@@ -233,7 +270,7 @@ beforeAll(async () => {
 
 `test.serial` runs alone in its describe: after every test declared before it has finished, and before any test declared after it starts. Tests of other describes and files keep running beside it. `describe.serial` makes every test in it serial, so they run one at a time in order.
 
-Use serial tests for steps that depend on each other's server state. Prefer independent tests that each seed what they need.
+Use serial tests for steps that depend on each other's server state. Prefer independent tests that each seed what they need: [API seeding and cleanup](/recipes/e2e-api-seeding-and-cleanup) shows the pattern with `defer`.
 
 ### Timeouts
 
@@ -287,3 +324,9 @@ The runner sets `NODE_ENV=test` unless it is already set. `$PYRO_BIN` selects th
 Porting ToS (2,158 cases) took the import changes and about 20 lines of harness code (PR #289). At equal concurrency on 62 files, `bun test` took 59.0 s and 59.3 s, `pyro e2e` 51.9 s and 58.9 s; on the full suite, `pyro e2e -j 16` with one browser took 313 s against 380 s for `bun test --parallel=8` with eight.
 
 The runner has no watch mode, no coverage option and no HTML report.
+
+## Next
+
+- [Project layout](/recipes/e2e-project-layout): a complete small project for `pyro e2e`, file by file.
+- [Signing in once](/recipes/e2e-login-once): base chains per feature in fork mode, and what stays shared between tests.
+- [CI recipes](/e2e/ci): the same command in GitHub Actions, with sharding and JUnit.

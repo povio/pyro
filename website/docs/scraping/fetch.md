@@ -41,7 +41,7 @@ $ pyro fetch --wait-ms 1000 http://127.0.0.1:4500/late | grep -c 'id="fetched"'
 `--wait-ms` is a cap, not a sleep. The run ends as soon as no timer or task is left: `--wait-ms 5000` on that page finished in 0.2 s. A page that never goes idle (polling, a ticking clock) runs until the cap. Set the cap to the longest you are willing to wait.
 
 ::: warning `--wait-ms` does not wait for requests
-A `fetch()` or XHR that is still in flight does not keep the run going. If the page has no timer or task pending while it waits for a response, the run ends and prints the DOM without that data. A page that builds its content from an API call made after `load` often comes out empty, whatever the cap. For those pages, use a script: `page.goto()` in the Playwright library and the native SDK waits for the requests the page starts, and a locator waits for the element you need. See [Scripting a browser](/scraping/library).
+A `fetch()` or XHR that is still in flight does not keep the run going. If the page has no timer or task pending while it waits for a response, the run ends and prints the DOM without that data. A page that builds its content from an API call made after `load` often comes out empty, whatever the cap. For those pages, use a script and wait for the element or the API response you need. [Data from single-page apps](/recipes/scraping-spa-data) shows the ways, starting from a page where `pyro fetch --wait-ms 5000` prints only `Loading...`.
 :::
 
 ### Output and exit codes

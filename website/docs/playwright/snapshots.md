@@ -105,6 +105,8 @@ Chromium and Pyro draw text, anti-aliasing, form controls and some layout detail
 4. Commit the `.png` and `.json` files.
 5. In CI, run with `-u none` or without `-u`, so a missing baseline fails.
 
+While Chromium and Pyro both run the suite, keep their baselines apart: give Pyro's config a `snapshotPathTemplate` such as `'{testDir}/{testFilePath}-snapshots/{arg}-pyro-{platform}{ext}'`. [Run the same suite on Chromium and Pyro](/recipes/playwright-side-by-side) uses this.
+
 If a test's screenshot depends on text wrapping at hyphens next to digits (IDs, dates), `use: { pyro: { args: ['--hyphen-digit-breaks', 'on'] } }` wraps like Chrome does. It is off by default.
 
 ## toMatchSnapshot
@@ -142,3 +144,9 @@ Both need the browser's rendering support, which the npm package's builds includ
 ## page.pdf
 
 `page.pdf(options)` passes its options to CDP `Page.printToPDF` unchanged and writes `path` if given. Use CDP's option names: `paperWidth` and `paperHeight` in inches, `marginTop` / `marginBottom` / `marginLeft` / `marginRight` in inches, `landscape`, `scale`, `printBackground`, `pageRanges`. Playwright's `format: 'A4'` and `margin: { top: '1cm' }` are not translated and have no effect. See [Screenshots and PDFs](/scraping/pdf).
+
+## Next
+
+- The first red run, screenshots included: [Triage the first red run](/recipes/playwright-triage-first-failures).
+- Writing Linux baselines for CI: [CI without sharding](/recipes/playwright-ci-without-sharding#screenshot-baselines-in-ci).
+- How pages are drawn: [Rendering](/guide/rendering).

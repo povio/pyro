@@ -142,3 +142,8 @@ Measured on version 0.0.33 and again on the current code: CSS selectors, `getByR
 `isVisible()` and `isHidden()` do not wait, as in Playwright. `waitFor` takes `attached`, `detached`, `visible` (default) and `hidden`.
 
 `locator.describe()` from recent Playwright versions is not implemented.
+
+## Next
+
+- Assertions on what you located: [Assertions](/playwright/assertions).
+- Shadow DOM and other locator failures: [Triage the first red run](/recipes/playwright-triage-first-failures#elements-inside-a-shadow-root).

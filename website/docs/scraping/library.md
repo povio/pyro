@@ -95,8 +95,8 @@ await browser.close();
 
 Things to know:
 
-- **`goto` waits for more than `load`.** Every action in this library is one `Pyro.run` command, and it returns once the page is quiet: no queued task, no request the action started, no timer due within 50 ms, no pending animation frame. Data the page fetches right after `load` is usually there when `goto` returns; a timer set for later than 50 ms is not waited for, so wait for the element you need. See [Settling and auto-waiting](/guide/settling).
-- **Locators auto-wait.** `page.locator('.order').first().textContent()` waits for the element, up to the timeout (`page.setDefaultTimeout(ms)`).
+- **`goto` returns at `load`.** It does not wait for requests the page's scripts start after that. On a test page that fetched its data from an inline script, `page.locator('.o').count()` right after `goto` was `0` six times out of six, even with a 0 ms API. Wait for the element you need, or for its response; `goto(url, { waitUntil: 'networkidle' })` also waits for requests in flight, but not for ones a timer starts later. [Data from single-page apps](/recipes/scraping-spa-data) shows each way. Clicks and other actions do settle: they return once the requests they started have finished (see [Settling and auto-waiting](/guide/settling)).
+- **Locators auto-wait.** `page.locator('.order').first().textContent()` waits for the element, up to the timeout (`page.setDefaultTimeout(ms)`). `count()`, `allTextContents()` and `allInnerTexts()` do not wait, as in Playwright: they read what is there now, so call `.first().waitFor()` before them.
 - **`page.evaluate(fn, arg)`** runs a function in the page and returns its JSON result. A returned promise is awaited.
 - **`page.content()`** returns the page's HTML.
 
@@ -192,6 +192,13 @@ await page.send('Emulation.setTimezoneOverride', { timezoneId: 'America/New_York
 | Stored `storageState` profiles | yes (`newContext({ storageState })`) | no; `localStorage` seeds and sign-in `setup` steps instead |
 | Fork mode and pre-booted signed-in pages | not used | yes |
 | Network events, `route`, HAR | yes | `mock` steps and the run's `requests` list |
+| Per-identity proxy | one server per proxy (`launch({ args: ['--proxy', url] })`) | one server per proxy, or a context with `proxyServer` over CDP |
 | Known API | Playwright's | its own, Playwright-shaped |
 
 You can mix them: use the Playwright library to sign in and save profiles, and the native SDK for the bulk of the crawl. For the choice in general, see [Choosing an API](/guide/choosing-an-api).
+
+## Next
+
+- Signed-in identities stored on disk, each with its own proxy and user agent: [Stored profiles](/scraping/profiles), then the complete [identity pool recipe](/recipes/scraping-identity-pool).
+- Many short signed-in jobs on a server: [Fork-mode signed-in jobs](/recipes/scraping-fork-signed-in-jobs).
+- Pages that load their data after `load`: [Data from single-page apps](/recipes/scraping-spa-data).

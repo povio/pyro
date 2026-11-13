@@ -50,7 +50,7 @@ beforeAll(async () => {
 
 The entries are written by an init script, so they are written again in every document the page loads, including after a reload. Values are strings: serialize objects yourself.
 
-There is no cookie option. For cookie sessions, either sign in once in a `setup` (fork mode, see below) or have an init script call your app's own sign-in logic. A server-wide seed for every context exists too: [`--local-storage`](/e2e/static#seeding-localstorage-for-every-context).
+There is no cookie option. For cookie sessions, either sign in once in a `setup` (fork mode, see below and [Signing in once](/recipes/e2e-login-once)) or have an init script call your app's own sign-in logic. A server-wide seed for every context exists too: [`--local-storage`](/e2e/static#seeding-localstorage-for-every-context).
 
 ### `initScripts`
 
@@ -143,7 +143,7 @@ Declaring the same name again with a different definition replaces it.
 
 ## Recipes
 
-**One profile per kind of user.**
+**One profile per kind of user.** [Project layout](/recipes/e2e-project-layout) signs in an admin and a member through the API in the setup module and registers both profiles once per run.
 
 ```ts
 await pyro.profile('admin', { url: `${APP}/admin`, localStorage: adminTokens });
@@ -167,3 +167,8 @@ await using page = await pyro.page({ as: 'employee', initScripts: ['window.__TES
 ```
 
 This page boots fresh, so it costs a full app boot. Prefer a second profile when many tests need the same script.
+
+## Next
+
+- [Fork mode in tests](/e2e/fork): `setup` and `base`, and what tests still share.
+- [Suite runner: pyro e2e](/e2e/runner): register profiles once for a whole suite.

@@ -103,15 +103,19 @@ The tree is built in the browser from the same role and name code `getByRole` us
 
 ## Waiting for data
 
-Pyro settles after each action: `goto`, `click`, `fill` and the rest return once the page is quiet. Quiet means no queued task, no request the action started still in flight, no timer due within 50 ms, no pending animation frame, and no navigation short of `DOMContentLoaded`. Data a page fetches right after it loads is usually in the DOM when `goto` returns. See [Settling and auto-waiting](/guide/settling).
+`goto` returns when the document fires `load`. It does not wait for the requests the page's scripts start after that, so data a single-page app fetches is usually **not** in the DOM yet when `goto` returns. Read it right away and you get the empty shell.
 
-Settling does not wait for everything. A timer set for 2 seconds, a poll, a WebSocket message or a request started by a later timer can come after it. Wait for what you need, in order of preference:
+Actions (`click`, `fill` and the rest) settle: they return once the page is quiet, with no queued task, no request the action started still in flight, no timer due within 50 ms and no pending animation frame. See [Settling and auto-waiting](/guide/settling). Settling does not wait for everything either: a timer set for 2 seconds, a poll, a WebSocket message or a request started by a later timer can come after it.
+
+Wait for what you need, in order of preference:
 
 1. **The element.** `await page.locator('.order').first().waitFor()`, or any locator read, which waits by itself. In the native SDK, a `read` or `check` step waits until it holds.
 2. **The response.** `await page.waitForResponse((r) => r.url().includes('/api/orders'))`; see below.
 3. **A condition.** `await page.waitForFunction(() => window.__APP_READY__ === true)`.
-4. **Network quiet.** `await page.waitForLoadState('networkidle')`, or an `idle()` step in the native SDK, which waits until the page is quiet again and reports what was still pending if it gives up.
+4. **Network quiet.** `await page.waitForLoadState('networkidle')` or `page.goto(url, { waitUntil: 'networkidle' })`, or an `idle()` step in the native SDK, which waits until the page is quiet again and reports what was still pending if it gives up. A request that a timer starts after the page went quiet is missed.
 5. **A fixed delay**, `page.waitForTimeout(ms)`, only as a last resort.
+
+[Data from single-page apps](/recipes/scraping-spa-data) runs each of these against a test app, with a client-side pager and an infinite feed.
 
 ## Intercepting JSON APIs
 
@@ -261,6 +265,7 @@ When a link points straight at the file, you do not need the browser: `context.r
 
 ## Related
 
+- [Data from single-page apps](/recipes/scraping-spa-data): a complete, tested script for apps that load data with `fetch`.
 - [Scripting a browser](/scraping/library): the two APIs.
 - [Screenshots and PDFs](/scraping/pdf): visual output.
 - [Concurrency at scale](/scraping/concurrency): running these jobs in parallel.

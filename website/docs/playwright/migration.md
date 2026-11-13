@@ -14,6 +14,12 @@ The package bundles the browser for macOS 14+ (Apple silicon and Intel) and Linu
 
 `pyro run` runs your tests with `bun test`, so Bun must be on `PATH` even if the rest of your project uses Node. Check with `bun --version`. See [Installation](/guide/installation) for platform details.
 
+::: info Before the first `@povio/pyro` release
+The package is not on npm under this name yet. Until it is, install it from a checkout and point `PYRO_BIN` at the browser you built, or use `@povio/lightning-panda` 0.0.33. See [Before the first release](/guide/installation#try-today).
+:::
+
+Keep `@playwright/test` installed until the end of the migration if you want to [run both browsers on the same suite](/recipes/playwright-side-by-side) and compare.
+
 ## 2. Rewrite the imports
 
 Every import of `@playwright/test`, `playwright`, `playwright/test` and `playwright-core` becomes `@povio/pyro/wright`. Type-only imports change the same way.
@@ -74,6 +80,8 @@ Things to check in the config:
 
 - **Projects for other browsers.** All projects run on Pyro, and `pyro run` runs each file once, under the first project whose `testDir` / `testMatch` include it. A config with `chromium`, `firefox` and `webkit` projects therefore runs each test once, with the `chromium` project's `use`. Select one with `--project`.
 - **`devices`.** Only five descriptors exist: `Desktop Chrome`, `Desktop Chrome HiDPI`, `Desktop Edge`, `Pixel 7` and `iPhone 15`. Any other name is `undefined`, and spreading it adds nothing. Of a descriptor, `viewport` and `userAgent` take effect; `deviceScaleFactor`, `isMobile` and `hasTouch` do not.
+- **Setup projects.** Project `dependencies` are ignored, and a setup project's files run as ordinary tests, at the same time as the tests that need their `storageState`. Move the sign-in into `globalSetup`: see [Sign in once with storageState](/recipes/playwright-setup-project-auth).
+- **`globalSetup`** receives the config object as written, not Playwright's resolved `FullConfig`: `config.projects[0].use` lacks the top-level `use`. Read `baseURL` and similar values from a shared module.
 - **`reporter`** is ignored. Pass `--reporter list|line|dot` on the command line.
 - **`use.trace`, `use.video`, `use.screenshot`** are accepted and do nothing.
 
@@ -139,11 +147,11 @@ jobs:
 Compared with a Playwright job:
 
 - Remove the `npx playwright install --with-deps` step and any browser cache.
-- Remove `--shard=i/n` matrices; `pyro run` has no sharding. Use more workers (`-j`) on one machine instead.
+- Replace `--shard=i/n` matrices; `pyro run` has no sharding. Use more workers (`-j`) first; if one machine is not enough, split the files across jobs with a script: [CI without sharding](/recipes/playwright-ci-without-sharding).
 - Remove steps that upload `playwright-report/` or traces. On failure, `test-results/` (the `outputDir`) still holds `-actual`, `-expected` and `-diff` images of screenshot mismatches.
 - The runner exits with status 1 when a test fails.
 
-For more CI patterns see [CI recipes](/e2e/ci).
+[CI without sharding](/recipes/playwright-ci-without-sharding) has a complete workflow with caching and a job matrix. [CI recipes](/e2e/ci) covers the native runner, `pyro e2e`.
 
 ## 8. Re-baseline screenshots
 
@@ -196,7 +204,11 @@ export const expect: typeof pyro.expect = stock ? (stock.expect as any) : pyro.e
 
 `PW_STOCK=1 npx playwright test` runs the suite on Playwright and Chromium; `bunx pyro run` runs it on Pyro. Comparing the two runs shows which failures come from the migration.
 
+[Run the same suite on Chromium and Pyro](/recipes/playwright-side-by-side) is a complete, tested version of this: one config per runner over shared options, separate screenshot baselines, a script that lists the tests whose results differ, and how to time both.
+
 ## Typical first failures
+
+[Triage the first red run](/recipes/playwright-triage-first-failures) shows the most common of these as you will see them, how to find them before running, and how to group a large run's errors.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -211,7 +223,11 @@ export const expect: typeof pyro.expect = stock ? (stock.expect as any) : pyro.e
 | `await page.goto(url)` returns `null`, or its response has no headers | Pooled pages turn `goto` into a route change, which returns `null`; a normal `goto` response carries status and URL only. | Check status with `waitForResponse`, or read headers from `page.request`. |
 | `afterEach` that takes a screenshot when `testInfo.status !== testInfo.expectedStatus` never fires | `testInfo.status` stays `'passed'` during hooks. | See [Behaviour differences](/playwright/differences#test-runner). |
 | `getByTestId(/regex/)` or `click({ clickCount: 3 })` throws "not supported yet" | Not implemented. | Use a string test id; use `dblclick()` or `evaluate` for triple clicks. |
-| `pyro run: unknown option --shard` | Flag not supported. | Remove it (see step 7). |
+| `pyro run: unknown option --shard` | Flag not supported. | Remove it; see [CI without sharding](/recipes/playwright-ci-without-sharding). |
+| `ENOENT: no such file or directory, open 'e2e/.auth/user.json'` in every test | A setup project was meant to write the storage state first; `dependencies` do not run. | Sign in from `globalSetup`: [Sign in once with storageState](/recipes/playwright-setup-project-auth). |
+| `ENOENT` from `writeFileSync` in `context.storageState({ path })` | The directory does not exist. Pyro does not create it; Playwright does. | `mkdirSync(dirname(path), { recursive: true })` first. |
+| `Cannot destructure property 'baseURL' from null or undefined value` in global setup | `globalSetup` gets the config as written; `config.projects[0].use` is the project's own `use` or `undefined`. | Read the values from a shared module. |
+| `Missing bundled browser: .../native/<platform>/pyro` | The package was installed from a checkout, which has no bundled browsers. | Set `PYRO_BIN`; see [Before the first release](/guide/installation#try-today). |
 | App code reports an unsupported browser, or a web API is undefined | Pyro is not Chromium: its UA and API surface differ. | See [Web platform support](/reference/web-platform). |
 
 ## Checklist
@@ -219,6 +235,7 @@ export const expect: typeof pyro.expect = stock ? (stock.expect as any) : pyro.e
 - [ ] `@povio/pyro` installed; `bun --version` works locally and in CI.
 - [ ] No imports of `@playwright/test`, `playwright`, `playwright/test` or `playwright-core` left (`grep -rn`).
 - [ ] Config file found (`bunx pyro run --list` lists your tests).
+- [ ] Setup projects moved into `globalSetup`.
 - [ ] Browser-specific projects reviewed; `devices` names exist.
 - [ ] Unsupported screenshot options removed; baselines rewritten with `-u all` and committed with their `.json` files.
 - [ ] `page.click(selector)`-style calls rewritten as locators.
@@ -227,3 +244,9 @@ export const expect: typeof pyro.expect = stock ? (stock.expect as any) : pyro.e
 - [ ] `package.json` scripts and CI updated; `playwright install`, report uploads and sharding removed.
 - [ ] Playwright packages removed.
 - [ ] Optional: slow app boots moved to [booted pages](/playwright/boot-pools).
+
+## Next
+
+- Work through the first failures: [Triage the first red run](/recipes/playwright-triage-first-failures).
+- Look up a behaviour before you change a test: [Behaviour differences](/playwright/differences).
+- Every runner flag and config field: [Config and the test runner](/playwright/runner).

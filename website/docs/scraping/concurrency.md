@@ -39,6 +39,72 @@ Every open page holds a full copy of its app: its DOM, its JavaScript heap, its 
 
 Measure your own sites; app size dominates everything else.
 
+## How many jobs per server
+
+There is no fixed number. Two limits decide it:
+
+- **CPU.** Each connection runs on one core. Pages on one connection take turns, which is fine while they wait for the network and slow when they run a lot of JavaScript. Start with one connection per core for heavy single-page apps, and a few more than that for light, network-bound pages.
+- **Memory.** Every open page costs what its app costs. Multiply the cost of one open page of *your* site by the number of pages open at once, and add a few MB per connection for its JavaScript engine.
+
+To find the cost of one page, open more and more pages of your site on a server and read its resident memory. This script does that on four connections:
+
+```ts
+// measure.ts
+// Opens more and more pages of `url` on a running `pyro serve` and prints its resident memory.
+import { chromium } from '@povio/pyro/wright';
+
+const [port, pid, url, state] = process.argv.slice(2);
+const CONNECTIONS = 4;
+const mb = () => (Number(Bun.spawnSync(['ps', '-o', 'rss=', '-p', pid]).stdout.toString().trim()) / 1024).toFixed(0);
+
+console.log(`idle server: ${mb()} MB`);
+const browsers = await Promise.all(Array.from({ length: CONNECTIONS }, () => chromium.connectOverCDP(`http://127.0.0.1:${port}`)));
+console.log(`${CONNECTIONS} connections: ${mb()} MB`);
+const contexts = [];
+for (const target of [10, 40, 100]) {
+  while (contexts.length < target) {
+    const context = await browsers[contexts.length % CONNECTIONS].newContext(state ? { storageState: state } : {});
+    const page = await context.newPage();
+    await page.goto(url);
+    await page.waitForLoadState('networkidle');
+    contexts.push(context);
+  }
+  console.log(`${target} pages open: ${mb()} MB`);
+}
+for (const context of contexts) await context.close();
+await Bun.sleep(500);
+console.log(`pages closed, connections open: ${mb()} MB`);
+for (const browser of browsers) await browser.close();
+await Bun.sleep(500);
+console.log(`connections closed: ${mb()} MB`);
+```
+
+```sh
+pyro serve --port 9333 --cdp-max-connections 8 & echo "server pid $!"
+bun measure.ts 9333 <pid> http://127.0.0.1:4601/account profiles/carol.json
+```
+
+On an M1 Max with macOS, for the small signed-in test page of the [identity pool recipe](/recipes/scraping-identity-pool):
+
+```
+idle server: 8 MB
+4 connections: 32 MB
+10 pages open: 70 MB
+40 pages open: 114 MB
+100 pages open: 243 MB
+pages closed, connections open: 82 MB
+connections closed: 43 MB
+```
+
+So about 6 MB per connection and about 2 MB per open page of a tiny app. A real single-page app costs far more per page: one with a 2 MB bundle measured a 275 MB plateau over a 20-page loop (see above). After the pages close, connections that stay open keep some memory for reuse; closing the connections returns most of it.
+
+Then size the server:
+
+1. Pick the number of pages open at once: jobs in flight, plus pooled or pre-booted pages.
+2. Check memory: pages × cost per page + connections × about 6 MB, below the memory you give the server (`MemoryMax` in [the systemd unit](/scraping/service#systemd-ubuntu-24-04), `--memory` in Docker).
+3. Set `--cdp-max-connections` to at least the connections your clients open; in fork mode, to the number of jobs at once.
+4. Run your real job mix and watch CPU. Cores at 100% mean add connections or servers; idle cores with slow jobs mean the sites are the limit.
+
 ## A worker pool with identities
 
 This pool runs jobs on N connections to one server. Each job names the stored profile it runs as ([Stored profiles](/scraping/profiles)), and an identity never runs two jobs at once, so a site never sees one account in two places at the same moment. Failed jobs are retried with backoff.
@@ -143,7 +209,7 @@ That figure is for a tiny local test page; real sites are bounded by their respo
 - **A fresh context per job** isolates jobs: nothing a page stored leaks into the next job, and closing the context frees everything.
 - **The `busy` set** keeps one job per identity. Drop it if your identities may run in parallel.
 - **One server, one proxy.** `contextOptions` drops the `proxy`, `locale` and `timezoneId` of the identity files, because a context cannot set them through the library. Every job here goes out through the server's own proxy, if any. For identities with their own proxies, run one server per proxy and give each job a connection to its identity's server, as the [profile store](/scraping/profiles#a-profile-store) does; set locale and time zone over a CDP session as `newContext` there does.
-- **The signed-out check** turns an expired session into a failed job instead of scraping the login page. Combine it with `openProfile` from [Stored profiles](/scraping/profiles#a-profile-store) to sign in again.
+- **The signed-out check** turns an expired session into a failed job instead of scraping the login page. [A pool of signed-in identities](/recipes/scraping-identity-pool) signs the identity in again and retries the job instead.
 - **Per-site limits.** For crawling sites you do not own, add a per-host limiter (at most N requests in flight and M per second per host) around `runJob`.
 
 To spread load over several machines, run a server on each and give each worker an endpoint from the list.
@@ -203,3 +269,9 @@ Step and call timeouts stop waiting; they do not interrupt JavaScript that never
 - **SDK pool statistics:** `pyro.stats` counts pages taken from pools (`prepared`), pages that were still booting when taken (`preparedBooting`) and pages booted on demand (`fresh`).
 
 Read [Performance](/guide/performance) for the numbers measured on the test suites, and [Running as a service](/scraping/service) for running the server long-term.
+
+## Next
+
+- [A pool of signed-in identities](/recipes/scraping-identity-pool): the worker pool above with a proxy per identity, a job limit per identity and re-sign-in on expiry.
+- [Fork-mode signed-in jobs](/recipes/scraping-fork-signed-in-jobs): a forked, signed-in page per job.
+- [A batch of URLs to PDF](/recipes/scraping-pdf-batch): bounded concurrency for CPU-heavy work, with measured speed-up per connection.

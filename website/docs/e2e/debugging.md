@@ -5,8 +5,10 @@ When a run fails, the browser tells you which step failed and why it was still w
 ## Anatomy of a RunError
 
 ```text
-RunError: step 2 (request {"method":"POST","path":"/api/items","status":200}): timed out after 300 ms: request {"method":"POST","path":"/api/items","status":200}: last match was {"error":null,"method":"POST",...,"status":201,"url":"http://localhost:51142/api/items"}
+step 2 (request {"method":"POST","path":"/api/items","status":200}): timed out after 300 ms: request {"method":"POST","path":"/api/items","status":200}: last match was {"error":null,"method":"POST",...,"status":201,"url":"http://localhost:51142/api/items"}
 ```
+
+That is the error's message. `RunError` does not set its own `name`, so runners print it as `Error: step 2 ...` (`pyro e2e`) or `error: step 2 ...` (`bun test`). Check for it with `instanceof RunError`.
 
 | Part | Meaning |
 |---|---|
@@ -33,6 +35,22 @@ opening the page ({"goto":{"url":"http://127.0.0.1:1/","waitUntil":"load"}}) (go
 ```
 
 A `matchScreenshot` mismatch throws `ScreenshotMismatchError` instead (see [Visual tests](/e2e/screenshots#when-a-screenshot-does-not-match)).
+
+## What a failure looks like in a runner
+
+`pyro e2e` prints the failed test with its error and the stack line of your `page.run` call, then a summary:
+
+```text
+✗ e2e/todos.test.ts > todos > deletes a seeded todo [5.06s]
+    Error: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
+        at run (.../node_modules/@povio/pyro/src/index.ts:517:17)
+        at async <anonymous> (/path/to/e2e/todos.test.ts:28:16)
+
+1 failure:
+  ✗ e2e/todos.test.ts > todos > deletes a seeded todo: step 2 (expect Count {"testId":"item-1"}): timed out after 5000 ms: expect Count {"testId":"item-1"}: expected Count 1, got 0
+```
+
+If you see only `TimeoutError: test timed out after 5000 ms` (or Bun's `this test timed out after 5000ms`), the test's timeout ran out at the same moment as the step's, and the step's reason was lost. Both default to 5,000 ms. Give tests more time than steps: `pyro e2e --timeout 10000`, `bun test --timeout 10000`.
 
 ## Reasons a step waits
 
@@ -194,10 +212,17 @@ pyro: template: setup of profile 2: step 0 (expect Visible {"text":"missing"}): 
 
 ## A checklist
 
-1. Read the reason after the last colon.
-2. `matched no element`: check the step before; check the locator with `count`.
-3. `strict mode violation`: scope or filter.
-4. `intercepts pointer events`: something covers the element.
-5. A request check: compare with `r.requests`; keep the check in the same run as the action.
-6. Every test of one profile fails: look for a `setup of profile` line on the server's stderr.
-7. Only under load: look for `settled: false` in the results before the failing step.
+1. Only `test timed out after 5000 ms`? Raise the test timeout above the step timeout and run again to see the step's reason.
+2. Read the reason after the last colon.
+3. `matched no element`: check the step before; check the locator with `count`.
+4. `strict mode violation`: scope or filter.
+5. `intercepts pointer events`: something covers the element.
+6. A request check: compare with `r.requests`; keep the check in the same run as the action.
+7. Every test of one profile fails: look for a `setup of profile` line on the server's stderr.
+8. Only under load: look for `settled: false` in the results before the failing step.
+9. Every test fails after one test signs out, or data from one test shows up in another: the tests share your backend. See [What tests still share](/e2e/fork#what-tests-still-share).
+
+## Next
+
+- [CI recipes](/e2e/ci): keep the server's stderr and the JUnit report from a failed CI run.
+- [Visual regression in CI](/recipes/e2e-visual-regression-ci): get the actual and diff images of a failed screenshot out of CI.

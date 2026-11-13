@@ -206,3 +206,8 @@ Prefer locators: handles are kept for code that already uses them.
 `page.keyboard`: `press`, `type`, `insertText`, `down`, `up`. `press` and `type` act on the focused element (the body when nothing has focus). Keys held with `down()` (Shift, Control, Alt, Meta) apply to later clicks and presses until `up()`. `delay` is ignored.
 
 `page.mouse`: `click`, `dblclick`, `move`, `down`, `up`, `wheel`. `page.touchscreen` is not implemented.
+
+## Next
+
+- Every known difference: [Behaviour differences](/playwright/differences).
+- Method-by-method status: [API coverage](/playwright/api-coverage).

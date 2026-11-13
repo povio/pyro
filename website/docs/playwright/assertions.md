@@ -178,3 +178,8 @@ await expect(page.getByTestId('total')).toHaveAmount(42);
 A matcher gets `this.isNot`, `this.timeout` and `this.utils` (`printReceived`, `printExpected`, `stringify`). It may be async. Matchers are typed from their arguments, as in Playwright. At run time `extend` adds to the shared `expect`, so the matchers work everywhere once the module that extends it is loaded; for types, import the extended `expect`.
 
 `expect(locator).not.toHaveAmount(1)` works at run time but is a type error: on a locator, the type of `.not` has only the built-in locator matchers.
+
+## Next
+
+- Locators and what they find: [Locators and selectors](/playwright/locators).
+- Visual assertions: [Screenshots and snapshots](/playwright/snapshots).

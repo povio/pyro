@@ -62,13 +62,15 @@ test.concurrent('closes a position', async () => {
 });
 ```
 
-The page comes from the `employee` [profile](/e2e/profiles): it is already loaded and signed in. The `route` option changes the URL in place (`pushState` plus `popstate`), so the app does not boot again. The request check looks at the requests the page made during this run, so it sits in the same `run` as the click that sends the request.
+`api` is your own helper that calls your backend; [API seeding and cleanup](/recipes/e2e-api-seeding-and-cleanup) shows one that also removes the data after the test. The page comes from the `employee` [profile](/e2e/profiles): it is already loaded and signed in. The `route` option changes the URL in place (`pushState` plus `popstate`), so the app does not boot again. The request check looks at the requests the page made during this run, so it sits in the same `run` as the click that sends the request.
 
 Split a scenario into several `run` calls only when plain code must happen between them, for example an API call that changes data mid-test.
 
 ## Measured numbers
 
 All numbers below were measured on an Apple M1 Max under load from other work. They show the order of magnitude, not a guarantee for your app.
+
+TOS is a production web app whose E2E suite was ported to Pyro; the bench site has a copy of its close flow.
 
 **One test, TOS close flow** (`bench/results/pyro-tos-e501cef`, median of 5 rounds, TOS-shaped app in the bench site):
 
@@ -104,3 +106,11 @@ The suite numbers are wall time for an app whose own JavaScript dominates the co
 - [Locators](/e2e/locators) and [Steps and checks](/e2e/steps): everything a run can do.
 - [Profiles and page pools](/e2e/profiles) and [Fork mode in tests](/e2e/fork): how pages start booted.
 - [Suite runner: pyro e2e](/e2e/runner): one process and one browser for a whole suite.
+
+Starting a new suite for a single-page app? These recipes build one end to end, each with every file shown:
+
+- [Project layout](/recipes/e2e-project-layout): folders, the setup module, one profile per role, two features, JUnit.
+- [Signing in once](/recipes/e2e-login-once): sign in through the UI once per role in fork mode, one snapshot per feature.
+- [API seeding and cleanup](/recipes/e2e-api-seeding-and-cleanup): unique data per test, `defer` cleanup, request body checks.
+- [Mocking backend states](/recipes/e2e-mock-backend-states): errors, empty lists, spinners and slow responses.
+- [Visual regression in CI](/recipes/e2e-visual-regression-ci): baselines per OS, updating them, artifacts on a mismatch.

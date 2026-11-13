@@ -188,7 +188,15 @@ export default defineConfig({ use: { storageState: 'e2e/.auth/user.json' } });
 ```
 
 - `storageState` (a path or an object) seeds cookies and `localStorage`. Local storage entries are written once per context, by an init script, the first time a document of that origin loads. A marker key, `__pyroStorageState`, stays in `localStorage` so later documents do not overwrite the app's changes. Code that lists every key of `localStorage` sees it.
-- `context.storageState({ path })` returns cookies and the `localStorage` of the origins of the context's open pages. Origins with no open page are not included. `indexedDB` is not saved.
+- `context.storageState({ path })` returns cookies and the `localStorage` of the origins of the context's open pages. Origins with no open page are not included. `indexedDB` is not saved. It does not create the directory of `path` (Playwright does): create it with `mkdirSync(dirname(path), { recursive: true })` first.
+- A relative `storageState` path is read from the working directory.
+- A context with cookies from `storageState` does not take [booted pages](/playwright/boot-pools#when-goto-becomes-a-route-change).
 - `context.addCookies()`, `context.cookies(urls?)` and `context.clearCookies()` work. A cookie needs `url` or `domain`. Before the context's first page exists, cookies are held and set when the page gets its target. `clearCookies` options are ignored; it clears all cookies.
 
-To set up storage once for the whole run, use `globalSetup`, since project `dependencies` do not run (see [Config and the test runner](/playwright/runner#accepted-and-ignored)). Pyro also has its own way to keep signed-in pages booted; see [Booting pages ahead](/playwright/boot-pools) and, for the native API, [Profiles and page pools](/e2e/profiles).
+To set up storage once for the whole run, use `globalSetup`, since project `dependencies` do not run (see [Config and the test runner](/playwright/runner#accepted-and-ignored)). [Sign in once with storageState](/recipes/playwright-setup-project-auth) is a complete, tested setup, including signed-out tests. Pyro also has its own way to keep signed-in pages booted; see [Booting pages ahead](/playwright/boot-pools) and, for the native API, [Profiles and page pools](/e2e/profiles).
+
+## Next
+
+- Sign in once for the whole run: [Sign in once with storageState](/recipes/playwright-setup-project-auth).
+- What else behaves differently: [Behaviour differences](/playwright/differences#network).
+- Screenshots and visual baselines: [Screenshots and snapshots](/playwright/snapshots).

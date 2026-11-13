@@ -208,3 +208,9 @@ Pyro is AGPL-3.0-only, a derivative of Lightpanda; the package includes `LICENSE
 - Your scraping scripts are separate programs that talk to the browser over the CDP protocol.
 
 This is a summary, not legal advice. Read the license text, and ask a lawyer about your own case.
+
+## Next
+
+- Size the server: [How many jobs per server](/scraping/concurrency#how-many-jobs-per-server).
+- Signed-in jobs against a long-running fork server: [Fork-mode signed-in jobs](/recipes/scraping-fork-signed-in-jobs).
+- Getting profile files onto the server safely: [Moving profiles between machines](/recipes/scraping-move-profiles-securely).

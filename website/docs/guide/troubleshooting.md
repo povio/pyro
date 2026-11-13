@@ -76,6 +76,8 @@ Other causes of slow tests:
 step 0 (Click {"name":"Save","role":"button"}): timed out after 5000 ms: Click {"name":"Save","role":"button"}: {"name":"Save","role":"button"} matched no element
 ```
 
+Runners print it as `Error: step …` (`pyro e2e`) or `error: step …` (`bun test`): `RunError` does not set its own `name`.
+
 | Reason | Meaning | Fix |
 | --- | --- | --- |
 | `matched no element` | The locator found nothing before the timeout. | Check the locator, and the step before it: the UI may never have reached this state. |
@@ -83,6 +85,7 @@ step 0 (Click {"name":"Save","role":"button"}): timed out after 5000 ms: Click {
 | `<div> intercepts pointer events` | Another element covers the target at its click point. | Close the overlay first, or click what a user would click. |
 | `element is disabled`, `not editable`, `not visible` | The element exists but cannot take the action. | Wait for the state with a check, or fix the precondition. |
 | `no matching request yet` / `last match was {… status: 500 …}` | A `check.request` did not see the expected request. | The reply's `requests` lists everything the page requested; compare paths and methods. Request checks only see requests made in the same `run`. |
+| `test timed out after 5000 ms`, with no step reason | The test timeout equals the 5 s step timeout, so the test is stopped before the step can report why. | Run the tests with a longer timeout than their steps: `bun test --timeout 10000`, `pyro e2e --timeout 10000`. |
 | `expected Visible …, got false` | A check's condition never held. | The app never reached that state, or reached it and left it (see [transient states](/guide/settling#transient-states)). |
 
 Do not fix a `RunError` by raising the timeout. A step waits only for its own condition, so a timeout means the condition never held.

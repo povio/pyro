@@ -85,6 +85,18 @@ Things that differ from Chrome:
 
 The [CDP coverage](/reference/cdp) page lists every method with its status.
 
+### Puppeteer habits that change
+
+| In Puppeteer with Chrome you would... | With Pyro |
+| --- | --- |
+| `puppeteer.launch()` | Start `pyro serve` (or `systemd`, Docker) and `puppeteer.connect()` to it. |
+| `launch({ userDataDir })` to stay signed in | There is no profile directory. Save the context's cookies (`context.cookies()`; `browser.cookies()` reads only the default context) and its `localStorage` (`page.evaluate(() => JSON.stringify(localStorage))`) to a file. In a new context, restore them with `context.setCookie(...cookies)` and `page.evaluateOnNewDocument` before the first `goto`. Or use the Playwright library's `storageState` files: [Stored profiles](/scraping/profiles). |
+| `--proxy-server` per browser for each identity | One server; `browser.createBrowserContext({ proxyServer })` per identity, `page.authenticate()` for the proxy's credentials. See [Mapping identities to proxies](/scraping/identity#mapping-identities-to-proxies). |
+| `page.setUserAgent()` per page | Works the same. |
+| `page.pdf({ format: 'A4' })` | Works the same; Puppeteer converts the format to inches. Emulate print media first: `page.emulateMediaType('print')`. |
+
+Checked with puppeteer-core 25.17.0 against a local sign-in site: a context with its own proxy and user agent signed in, its cookies and `localStorage` were saved, a fresh context restored them and loaded the signed-in page, and `emulateMediaType('print')` made `matchMedia('print')` match.
+
 ## Raw CDP over a WebSocket
 
 No library needed: CDP is JSON messages over a WebSocket. Each command has an `id`, a `method` and `params`; page commands also carry a `sessionId`. The reply has the same `id` and either `result` or `error`. Messages without an `id` are events.
@@ -191,7 +203,7 @@ The other `Pyro.*` commands (on the browser session) manage pre-booted pages:
 
 In fork mode, a connection to `ws://host:port/?profile=<profileId>` is forked from that profile's snapshot. The details are in [Pyro CDP domain](/reference/cdp-domain), and the uses in [Profiles booted once (fork)](/scraping/fork-profiles).
 
-## Related
+## Next
 
 - [CDP coverage](/reference/cdp): every method and its status.
 - [Scripting a browser](/scraping/library): the Playwright library and the native SDK, which wrap all of this.

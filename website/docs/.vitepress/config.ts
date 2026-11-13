@@ -93,6 +93,42 @@ const scraping = [
   },
 ];
 
+const pwRecipes = {
+  text: 'Recipes',
+  items: [
+    { text: 'Sign in once (setup project)', link: '/recipes/playwright-setup-project-auth' },
+    { text: 'CI without sharding', link: '/recipes/playwright-ci-without-sharding' },
+    { text: 'Chromium and Pyro side by side', link: '/recipes/playwright-side-by-side' },
+    { text: 'Triage the first red run', link: '/recipes/playwright-triage-first-failures' },
+  ],
+};
+const e2eRecipes = {
+  text: 'Recipes',
+  items: [
+    { text: 'Project layout', link: '/recipes/e2e-project-layout' },
+    { text: 'Signing in once', link: '/recipes/e2e-login-once' },
+    { text: 'API seeding and cleanup', link: '/recipes/e2e-api-seeding-and-cleanup' },
+    { text: 'Mocking backend states', link: '/recipes/e2e-mock-backend-states' },
+    { text: 'Visual regression in CI', link: '/recipes/e2e-visual-regression-ci' },
+  ],
+};
+const scrapingRecipes = {
+  text: 'Recipes',
+  items: [
+    { text: 'A pool of signed-in identities', link: '/recipes/scraping-identity-pool' },
+    { text: 'Fork-mode signed-in jobs', link: '/recipes/scraping-fork-signed-in-jobs' },
+    { text: 'Data from single-page apps', link: '/recipes/scraping-spa-data' },
+    { text: 'A batch of URLs to PDF', link: '/recipes/scraping-pdf-batch' },
+    { text: 'Moving profiles securely', link: '/recipes/scraping-move-profiles-securely' },
+  ],
+};
+const recipes = [
+  { text: 'Recipes', items: [{ text: 'All recipes', link: '/recipes/overview' }] },
+  { ...pwRecipes, text: 'From Playwright' },
+  { ...e2eRecipes, text: 'Fast E2E' },
+  { ...scrapingRecipes, text: 'Scraping' },
+];
+
 const reference = [
   {
     text: 'Reference',
@@ -128,16 +164,18 @@ export default defineConfig({
     logo: '/logo.svg',
     nav: [
       { text: 'Guide', link: '/guide/introduction', activeMatch: '^/guide/' },
-      { text: 'From Playwright', link: '/playwright/overview', activeMatch: '^/playwright/' },
-      { text: 'Fast E2E', link: '/e2e/overview', activeMatch: '^/e2e/' },
+      { text: 'Playwright', link: '/playwright/overview', activeMatch: '^/playwright/' },
+      { text: 'E2E', link: '/e2e/overview', activeMatch: '^/e2e/' },
       { text: 'Scraping', link: '/scraping/overview', activeMatch: '^/scraping/' },
+      { text: 'Recipes', link: '/recipes/overview', activeMatch: '^/recipes/' },
       { text: 'Reference', link: '/reference/cli', activeMatch: '^/reference/' },
     ],
     sidebar: {
       '/guide/': guide,
-      '/playwright/': playwright,
-      '/e2e/': e2e,
-      '/scraping/': scraping,
+      '/playwright/': [...playwright, pwRecipes],
+      '/e2e/': [...e2e, e2eRecipes],
+      '/scraping/': [...scraping, scrapingRecipes],
+      '/recipes/': recipes,
       '/reference/': reference,
     },
     search: { provider: 'local' },

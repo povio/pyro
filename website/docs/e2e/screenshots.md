@@ -152,10 +152,15 @@ const dir = join(import.meta.dir, '__screenshots__', process.platform);
 await page.run([matchScreenshot('home', { dir })]);
 ```
 
-Record the Linux baselines on the same image your CI uses (for example `ubuntu-24.04`); see [CI recipes](/e2e/ci#screenshot-baselines).
+Record the Linux baselines on the same image your CI uses (for example `ubuntu-24.04`); see [CI recipes](/e2e/ci#screenshot-baselines) and [Visual regression in CI](/recipes/e2e-visual-regression-ci), which records them in CI, updates one test's baseline at a time, and uploads the actual and diff images when a screenshot does not match.
 
 Text that should wrap as Chrome wraps it between a hyphen and a digit needs `args: ['--hyphen-digit-breaks', 'on']` on the server. It is off by default.
 
 ## Playwright's toHaveScreenshot
 
 The Playwright layer implements `expect(page).toHaveScreenshot()` with Playwright's own paths (`<test file>-snapshots/<name>-<platform>.png`). See [Screenshots and snapshots](/playwright/snapshots).
+
+## Next
+
+- [Visual regression in CI](/recipes/e2e-visual-regression-ci): a complete visual suite with per-OS baselines and CI artifacts.
+- [Mocking backend states](/recipes/e2e-mock-backend-states): fixed data from mocks keeps screenshots stable.

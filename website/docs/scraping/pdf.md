@@ -30,7 +30,7 @@ await page.pdf({
 await browser.close();
 ```
 
-`page.pdf()` returns the PDF as a `Buffer`; `path` also writes it to a file.
+`page.pdf()` returns the PDF as a `Buffer`; `path` also writes it to a file. For many URLs at once, see [A batch of URLs to PDF](/recipes/scraping-pdf-batch).
 
 ### With Puppeteer or raw CDP
 
@@ -77,6 +77,8 @@ Pyro prints with the page's emulated media, which is `screen` unless you set it,
 ```ts
 await page.emulateMedia({ media: 'print' }); // CDP: Emulation.setEmulatedMedia { media: 'print' }
 ```
+
+In the native SDK: `await page.send('Emulation.setEmulatedMedia', { media: 'print' })`.
 
 In a test, a paragraph hidden by `@media print { .noprint { display: none } }` was in the PDF without this call and absent with it.
 
@@ -154,8 +156,9 @@ Over CDP the command is `Page.captureScreenshot`: `format` `png` or `jpeg` (`web
 
 The picture is rendered from a snapshot of the live DOM, off the browser thread, and includes the hover and focus styles of where the pointer and focus are. Pixels differ from Chromium's (no font hinting, a different layout engine), so do not compare them with Chrome screenshots. For visual regression tests against Pyro's own baselines, see [Visual tests](/e2e/screenshots).
 
-## Related
+## Next
 
+- [A batch of URLs to PDF](/recipes/scraping-pdf-batch): many URLs to A4 PDFs a few at a time, error pages skipped, each file's text checked. Tested end to end.
 - [Rendering: screenshots and PDF](/guide/rendering): how the renderer works.
 - [CDP coverage](/reference/cdp): `Page.printToPDF` and `Page.captureScreenshot` in full detail.
 - [serve options](/reference/serve): `--hyphen-digit-breaks`, `--render-prewarm`.
