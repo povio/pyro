@@ -3539,6 +3539,10 @@ mod aria_snapshot;
 #[path = "engine_cdp/coverage.rs"]
 mod coverage;
 
+#[cfg(feature = "render")]
+#[path = "engine_cdp/context_identity.rs"]
+mod context_identity;
+
 #[test]
 fn links_and_window_open_targeting_blank_open_paused_popups() {
     let mut h = Harness::new();

@@ -211,6 +211,13 @@ test('discovery: spec names under directories, globs and path filters', () => {
   }
 });
 
+test("a timed-out test's runs are cancelled before its afterEach hooks, which can use its page", async () => {
+  const r = await e2e(['test/e2e-fixture/browser-timeout/timeout.e2e.ts', '--timeout', '20000']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('test timed out after 1000 ms');
+  expect(r.events.filter((e) => e.event === 'after').map((e) => e.title)).toEqual(['Kept']);
+}, 60000);
+
 test('one fork-mode browser for the run: profiles per describe, pages closed, nothing left running', async () => {
   const r = await e2e(['test/e2e-fixture/browser/browser.e2e.ts', '-j', '4', '--timeout', '20000']);
   expect(r.code).toBe(1); // the last test times out on purpose

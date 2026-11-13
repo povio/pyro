@@ -1,11 +1,12 @@
 //! `pyro` executable.
 //!
-//! Commands: `version`, `eval` (JavaScript in an about:blank page until idle),
-//! `serve` (CDP server, pyro-cdp) and `fetch` (load a URL over the network, run
-//! its scripts, dump the resulting DOM).
+//! Commands: `version`, `eval` (JavaScript in an about:blank page until it
+//! settles), `serve` (CDP server, pyro-cdp) and `fetch` (load a URL over the
+//! network, run its scripts, dump the resulting DOM).
 
-use pyro_browser::{BrowserThread, PageEvent, PageId, PageObserver};
+use pyro_browser::{Browser, BrowserThread, PageEvent, PageId, PageObserver};
 use pyro_js::{ConsoleLevel, EngineHooks, JsException, Realm, Value};
+use pyro_runtime::RunOutcome;
 use std::cell::Cell;
 use std::process::ExitCode;
 use std::rc::Rc;
@@ -184,10 +185,14 @@ usage: pyro <command> [options]
 commands:
   version                      print version and engine capabilities
   eval [--timeout-ms N] (-e CODE | FILE | -)
-                               run JavaScript in an about:blank page until idle
+                               run JavaScript in an about:blank page until no
+                               task, timer or request is left
   serve [--host H] [--port P]  CDP server (see `serve --help`)
   fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] [--bytecode-cache DIR] URL
                                load a page (scripts run), dump the DOM after `load`.
+                               --wait-ms N: after `load`, run until the page is
+                               quiet (no task, timer or request in flight) or
+                               N ms pass, then dump.
                                --bytecode-cache (env PYRO_BYTECODE_CACHE):
                                as for serve, see `serve --help`
 ";
@@ -269,22 +274,65 @@ impl EngineHooks for CliHooks {
     fn console_api(&self, _realm: &Realm, level: ConsoleLevel, args: &[Value<'_>]) {
         match level {
             ConsoleLevel::Error | ConsoleLevel::Warning | ConsoleLevel::Assert => {
-                eprintln!("{}", render(args))
+                write_line(Stream::Stderr, render(args))
             }
-            _ => println!("{}", render(args)),
+            _ => write_line(Stream::Stdout, render(args)),
         }
     }
     fn exception_thrown(&self, _realm: &Realm, e: &JsException) {
         self.failed.set(true);
-        eprintln!("Uncaught {}", e.text());
+        write_line(Stream::Stderr, format_args!("Uncaught {}", e.text()));
         if let Some(stack) = &e.stack {
-            eprintln!("{stack}");
+            write_line(Stream::Stderr, stack);
         }
     }
     fn unhandled_rejection(&self, _realm: &Realm, e: &JsException) {
         self.failed.set(true);
-        eprintln!("Unhandled promise rejection: {}", e.text());
+        write_line(Stream::Stderr, format_args!("Unhandled promise rejection: {}", e.text()));
     }
+}
+
+#[derive(Clone, Copy)]
+enum Stream {
+    Stdout,
+    Stderr,
+}
+
+/// Writes `line` and a newline to `stream`. When the reader has gone away
+/// (EPIPE: `pyro fetch URL | head -1`), the process ends at once, quietly
+/// and with status 0, as SIGPIPE ends a Unix tool: nothing the command would
+/// still print can be read. Rust ignores SIGPIPE, so the write fails
+/// instead, and `println!` panicked on that, once per `console.log` of a
+/// script that went on printing. Another write error ends the process with
+/// status 1 after saying so on stderr. Either way nothing else runs, not
+/// even the script on the stack.
+fn write_line(stream: Stream, line: impl std::fmt::Display) {
+    use std::io::Write;
+    let written = match stream {
+        Stream::Stdout => writeln!(std::io::stdout().lock(), "{line}"),
+        Stream::Stderr => writeln!(std::io::stderr().lock(), "{line}"),
+    };
+    let Err(e) = written else { return };
+    let code = if e.kind() == std::io::ErrorKind::BrokenPipe {
+        0
+    } else {
+        let name = match stream {
+            Stream::Stdout => "stdout",
+            Stream::Stderr => "stderr",
+        };
+        let _ = writeln!(std::io::stderr(), "pyro: {name}: {e}");
+        1
+    };
+    // `exit` would run the process's exit handlers and static destructors
+    // while a script may still be on this thread's stack.
+    #[cfg(unix)]
+    // SAFETY: `_exit` ends the process without returning; it touches no
+    // state of this process on the way.
+    unsafe {
+        libc::_exit(code)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(code)
 }
 
 struct NoopObserver;
@@ -332,6 +380,13 @@ fn eval(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // `fetch()`, XHR and `import()` reach the network as in a page that
+    // `fetch` loads; the page's origin is opaque (about:blank), so a
+    // cross-origin response needs CORS headers, as in a browser.
+    if let Err(e) = thread.enable_network(pyro_net::NetConfig::default()) {
+        eprintln!("pyro: network init failed: {e}");
+        return ExitCode::FAILURE;
+    }
     let hooks = Rc::new(CliHooks { failed: Cell::new(false) });
     thread.browser.set_engine_hooks(Some(hooks.clone()));
     thread.browser.set_observer(Some(Rc::new(NoopObserver)));
@@ -358,7 +413,7 @@ fn eval(args: &[String]) -> ExitCode {
     }
     if !timed_out {
         timed_out =
-            thread.run_until_idle(Some(deadline)) == pyro_runtime::RunOutcome::TimedOut || Instant::now() >= deadline;
+            run_until_settled(&mut thread, page, deadline) == RunOutcome::TimedOut || Instant::now() >= deadline;
     }
     drop(watchdog);
     thread.browser.engine.clear_termination();
@@ -406,6 +461,40 @@ impl Drop for Watchdog {
         let _ = self.stop.send(());
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
+        }
+    }
+}
+
+/// Whether nothing is left that can still change `page`: the page quiet as
+/// `Pyro.idle` waits for it ([`pyro_browser::PageWork::quiet`]: no queued
+/// task, no request in flight, one that a response's callback starts
+/// counting from its start, no navigation short of DOMContentLoaded, no
+/// animation frame or ResizeObserver delivery due), and no keep-alive timer,
+/// as `run_until_idle` asked: a `setTimeout` due later than `Pyro.idle`'s
+/// 50 ms, or a `setInterval`, keeps the page running as well (a page that
+/// polls runs to the end of the wait). A request in flight is no work of
+/// the loop's, so `run_until_idle` alone returned while a `fetch` was still
+/// on its way.
+fn settled(browser: &Browser, page: PageId) -> bool {
+    browser.page_work(page).is_none_or(|work| work.quiet(0) && browser.scheduler().active_timers() == 0)
+}
+
+/// How long [`run_until_settled`] sleeps at most before it looks again.
+/// pyro-net counts a request as finished when it drops the request's sink,
+/// just after the sink posted the task that delivers the response's end,
+/// and nothing wakes the loop then: when that task ran first, the request
+/// still showed as in flight. Without another wake-up the run went on to its
+/// deadline (measured with the drop held back 30 ms: an `eval` timed out).
+const SETTLE_RECHECK: Duration = Duration::from_millis(50);
+
+/// Runs the loop until `page` has [`settled`] (`Done`) or `until` passes
+/// (`TimedOut`).
+fn run_until_settled(thread: &mut BrowserThread, page: PageId, until: Instant) -> RunOutcome {
+    loop {
+        let slice = (Instant::now() + SETTLE_RECHECK).min(until);
+        match thread.run_until(Some(slice), |browser| settled(browser, page)) {
+            RunOutcome::TimedOut if Instant::now() < until => {}
+            outcome => return outcome,
         }
     }
 }
@@ -509,15 +598,16 @@ fn fetch(args: &[String]) -> ExitCode {
         thread.browser.close_all();
         return ExitCode::FAILURE;
     }
-    if outcome == pyro_runtime::RunOutcome::TimedOut || Instant::now() >= deadline {
+    if outcome == RunOutcome::TimedOut || Instant::now() >= deadline {
         drop(watchdog);
         thread.browser.engine.clear_termination();
         eprintln!("pyro: timed out waiting for load of {url}");
         thread.browser.close_all();
         return ExitCode::from(124);
     }
+    // A page that never settles (polling) is dumped as it is after `wait`.
     if !wait.is_zero() {
-        thread.run_until_idle(Some((Instant::now() + wait).min(deadline)));
+        run_until_settled(&mut thread, page, (Instant::now() + wait).min(deadline));
     }
     drop(watchdog);
     thread.browser.engine.clear_termination();
@@ -540,7 +630,7 @@ fn fetch(args: &[String]) -> ExitCode {
             Some(out)
         });
         match html {
-            Some(h) => println!("{h}"),
+            Some(h) => write_line(Stream::Stdout, h),
             None => eprintln!("pyro: no document to dump"),
         }
     }

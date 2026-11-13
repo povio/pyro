@@ -1447,14 +1447,13 @@ pub(crate) fn serve_browser(
     let conn = Rc::new(RefCell::new(conn));
     browser.host_mut().thread.event_loop.watch_fd(Some(conn.borrow().watch()));
     // While JavaScript runs nothing else reads the socket: the watchdog asks
-    // the connection whether the client left (or stalled) and stops the script.
+    // the connection whether the client left (or stalled, or cancelled the
+    // run whose script it is) and stops the script.
     let check = conn.clone();
-    browser
-        .host()
-        .thread
-        .browser
-        .engine
-        .set_interrupt_check(Some(Rc::new(move || check.try_borrow_mut().is_ok_and(|mut c| c.check_during_script()))));
+    let running = browser.host().running_command();
+    browser.host().thread.browser.engine.set_interrupt_check(Some(Rc::new(move || {
+        check.try_borrow_mut().is_ok_and(|mut c| c.check_during_script(&running))
+    })));
     // A JavaScript dialog suspends its script while this connection is
     // served by a nested read loop until a session answers it (engine/dialog.rs).
     let paused = conn.clone();
