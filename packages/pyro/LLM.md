@@ -9,7 +9,9 @@ keep the Playwright code and run it with `pyro run` (README, "Playwright
 tests, unchanged"). Keep the config too: project `dependencies` and
 `teardown` (a sign-in setup project that saves `storageState`), global
 setup and teardown (they get Playwright's `FullConfig`; import its type from
-`@povio/pyro/wright`), hooks and worker fixtures work as in Playwright, and
+`@povio/pyro/wright`), hooks and worker fixtures work as in Playwright (a
+timed-out test keeps its page for `afterEach` hooks and fixture teardown, and
+`use: { screenshot: 'only-on-failure' }` captures it), and
 `pyro run --shard i/n` splits a run over CI jobs. Rewrite a test into one
 `page.run([...])` only where its last milliseconds matter.
 
@@ -107,6 +109,8 @@ describe('feature', () => {
 - Register a profile shared by many files once (memoize the promise), and
   per-describe profiles in that describe's `beforeAll` with `defer` to release.
 - Module state is shared by every file (one process): no per-file globals.
+- A test that times out has its pages' waiting runs cancelled, then its
+  `afterEach` hooks run with the pages as they were; the pages close after.
 
 ### One fork-mode server for every worker
 

@@ -131,7 +131,9 @@ pyro e2e apps/fe/e2e --setup e2e/setup.ts --concurrency 16 --timeout 30000 \
   those after it (`describe.serial`: all of them).
 - `browser()` is the run's `pyro serve --fork`, launched on first
   use and closed when the run ends, also on SIGINT/SIGTERM. Pages a test
-  opens through it are closed when the test ends, a timed-out test included.
+  opens through it are closed when the test ends, a timed-out test included;
+  a timed-out test's runs still waiting on them are cancelled first
+  (`Pyro.cancelRun`), so its `afterEach` hooks find them as they were.
 - `defer(fn)` runs `fn` when what runs now is done: after the test, or after
   the describe (or file) whose `beforeAll` called it.
 - `--setup <module>`: its `setup()` runs before any spec loads (start servers,
@@ -199,7 +201,8 @@ The module is the whole of Playwright's API, implemented here:
   fixtures: `browser`, `context`, `page`, `request`, `playwright`,
   `browserName` and every context option, with Playwright's defaults
   (`isMobile`, `hasTouch`, `offline`, ... false; `javaScriptEnabled` and
-  `acceptDownloads` true; `contextOptions` first).
+  `acceptDownloads` true; `contextOptions` first), and the `screenshot`
+  option (see "Timeouts and screenshots" below).
 - **`expect`:** every web-first matcher on locators, pages (`toHaveURL`,
   `toHaveTitle`, `toHaveScreenshot`) and API responses (`toBeOK`), plus
   `.not`, `.soft`, `.poll`, `.configure`, `.extend` and `toPass`. Other
@@ -251,10 +254,36 @@ How a run goes, as with `playwright test`:
   `n`, split as Playwright splits it, so each CI job computes the same
   parts: whole files, or single tests where they are parallel, in order,
   balanced by test count. Each shard runs the dependencies it needs.
-- **Reporting:** passes, failures (with their errors), skips (declared or
-  `test.skip()` at run time), tests that did not run, flaky tests (passed on
-  a retry), expected failures and errors outside any test (a worker
-  fixture's teardown), then a summary. A test of a named project shows as
+- **Timeouts and screenshots:** a test that times out keeps its pages, as in
+  Playwright. The call its test function waits on is cancelled in the
+  browser (`Pyro.cancelRun`; a page script it runs that does not return is
+  stopped) and fails with `locator.click: Test timeout of 30000ms exceeded.`
+  and its call log, reported after the timeout error; the pages stay as they
+  were at the timeout (Playwright leaves the call waiting until the page
+  closes, after the hooks). Then the `screenshot` option's captures, the
+  `afterEach` hooks and fixture teardown run, in a time of their own: the
+  larger of the project's and the test's timeout (none when either is 0);
+  past it, `Test timeout of 30000ms exceeded while running "afterEach"
+  hook.` So an `afterEach` that screenshots or evaluates the page works for
+  a timed-out test too. If the browser does not answer the cancel within 2 s
+  (a page script that never returns outside any call, a pyro without the
+  command), the test's pages are closed instead and the run goes on.
+  `use: { screenshot }` (`'off'`, `'on'`, `'only-on-failure'`,
+  `'on-first-failure'`, or `{ mode, fullPage, omitBackground }`) captures
+  every open page right after the test function, before the `afterEach`
+  hooks, when the outcome asks for it (a failed or timed-out test for the
+  failure modes): `test-failed-N.png` or `test-finished-N.png` in
+  `testInfo.outputDir`, attached to `testInfo.attachments` as `screenshot`.
+  A context that closes while the outcome asks for it (in fixture teardown
+  after an `afterEach` failed) has its pages captured as it closes. Unlike
+  Playwright, a context closing while the test still passes is not captured
+  in case the test fails later: that would cost a screenshot per page of
+  every passing test.
+- **Reporting:** passes, failures (with their errors and the files they
+  attached, such as the screenshots), skips (declared or `test.skip()` at
+  run time), tests that did not run, flaky tests (passed on a retry),
+  expected failures and errors outside any test (a worker fixture's
+  teardown), then a summary. A test of a named project shows as
   `[project] › file › title`. The tests' own output is shown per worker.
 
 Plain `bun test ./e2e/foo.e2e.ts` (with `$PYRO_CONFIG` naming the config) also
