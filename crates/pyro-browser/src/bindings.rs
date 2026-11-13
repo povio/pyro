@@ -8,6 +8,41 @@ use pyro_webapi::{NavigationRequest, PageDom, PageHooks, RemotePoster};
 use std::rc::Rc;
 use std::sync::Arc;
 
+/// The network of one document's layout (`pyro_dom::layout::SubresourceLoader`):
+/// what it is laid out with (images, fonts, imported sheets) loads through
+/// [`Browser::fetch_layout_subresource`], as the document's own sub-resources
+/// do, never through another context's client. The request starts in a task
+/// of its own: a layout never waits for it (a request held by interception
+/// needs this thread to be answered).
+struct LayoutLoader {
+    handle: LoopHandle<Browser>,
+    frame: FrameKey,
+    loader: LoaderId,
+    bodies: Arc<pyro_dom::layout::SubresourceBodies>,
+}
+
+impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
+    fn load(
+        &self,
+        url: String,
+        kind: pyro_dom::layout::SubresourceKind,
+        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+    ) {
+        let kind = match kind {
+            pyro_dom::layout::SubresourceKind::Image => crate::ResourceKind::Image,
+            pyro_dom::layout::SubresourceKind::Font => crate::ResourceKind::Font,
+            pyro_dom::layout::SubresourceKind::Style => crate::ResourceKind::Stylesheet,
+        };
+        let (frame, loader) = (self.frame, self.loader.clone());
+        // A closed loop drops `done`: its document is gone with the browser.
+        let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, done));
+    }
+
+    fn bodies(&self) -> &Arc<pyro_dom::layout::SubresourceBodies> {
+        &self.bodies
+    }
+}
+
 struct Hooks {
     page: FrameKey,
     /// Browser context of the page: native request ids are only unique
@@ -653,6 +688,14 @@ pub(crate) fn create(
         .set_document_base_url(doc, matches!(url, "about:blank" | "about:srcdoc").then_some(frame.base_url.as_str()))
         .map_err(|e| JsError::type_error(format!("{e:?}")))?;
     let bindings = PageDom::new(dom, doc);
+    // Before anything lays the document out: what its layout loads goes out
+    // as its page's requests do.
+    bindings.set_subresource_loader(Arc::new(LayoutLoader {
+        handle: host.handle.clone(),
+        frame: page,
+        loader: loader.clone(),
+        bodies: host.layout_bodies.clone(),
+    }));
     bindings.set_storage_namespaces(settings.local, settings.session);
     bindings.set_viewport(settings.viewport);
     if page.child.is_some() {

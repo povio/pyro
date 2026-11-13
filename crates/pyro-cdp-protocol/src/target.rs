@@ -68,6 +68,40 @@ pub struct PageCommand<'a, 'c> {
     pub command: &'a Command<'c>,
 }
 
+/// `Target.createBrowserContext` `proxyServer` and `proxyBypassList`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContextProxy<'a> {
+    pub server: &'a str,
+    pub bypass_list: Option<&'a str>,
+}
+
+/// What a browser context has of its own instead of the browser's:
+/// `Target.createBrowserContext {proxyServer, proxyBypassList}`, and a
+/// prepared profile's `userAgent` and proxy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContextOptions<'a> {
+    pub proxy: Option<ContextProxy<'a>>,
+    /// `User-Agent` of its requests and its pages' `navigator.userAgent`.
+    pub user_agent: Option<&'a str>,
+}
+
+impl<'a> ContextOptions<'a> {
+    /// The context of a prepared profile's page.
+    pub fn of(profile: &'a PreparedProfile) -> Self {
+        ContextOptions {
+            proxy: profile
+                .proxy_server
+                .as_deref()
+                .map(|server| ContextProxy { server, bypass_list: profile.proxy_bypass_list.as_deref() }),
+            user_agent: profile.user_agent.as_deref(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.proxy.is_none() && self.user_agent.is_none()
+    }
+}
+
 /// The engine side, implemented on the browser thread.
 ///
 /// Output contract: everything for one connection goes through that
@@ -76,19 +110,18 @@ pub struct PageCommand<'a, 'c> {
 /// host that answers later (awaited promises, navigation commits, events)
 /// must hold its own clone of the same channel ([`crate::outbox::Outbox`]),
 /// never a different destination, so that ordering is preserved.
-/// `Target.createBrowserContext` `proxyServer` and `proxyBypassList`.
-#[derive(Clone, Copy, Debug)]
-pub struct ContextProxy<'a> {
-    pub server: &'a str,
-    pub bypass_list: Option<&'a str>,
-}
-
 pub trait Host {
     /// Creates an isolated browser context (cookies, storage, cache).
     fn create_context(&mut self) -> CdpResult<ContextKey>;
-    /// `create_context` with its own proxy (`Target.createBrowserContext`).
-    fn create_proxied_context(&mut self, _proxy: ContextProxy<'_>) -> CdpResult<ContextKey> {
-        Err(CdpError::unsupported("Target.createBrowserContext proxyServer"))
+    /// `create_context` with what `options` gives it of its own.
+    fn create_context_with(&mut self, options: ContextOptions<'_>) -> CdpResult<ContextKey> {
+        match options {
+            o if o.is_empty() => self.create_context(),
+            ContextOptions { proxy: Some(_), .. } => {
+                Err(CdpError::unsupported("Target.createBrowserContext proxyServer"))
+            }
+            _ => Err(CdpError::unsupported("a browser context's own userAgent")),
+        }
     }
     /// Blocks service worker registration in context `key`
     /// (`Target.createBrowserContext` `serviceWorkers: "block"`, pyro's own
@@ -224,6 +257,88 @@ pub struct PreparedProfile {
     /// profile's `setup` on it. Pages of such a profile are never booted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<usize>,
+    /// `User-Agent` of the profile's requests (its document, subresources,
+    /// fetch/XHR and setup steps, then every connection's) and its pages'
+    /// `navigator.userAgent`, instead of the browser's. A profile with a
+    /// `base` has its base's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
+    /// HTTP proxy of the profile's requests, as `Target.createBrowserContext
+    /// proxyServer` takes it (`http://[user:pass@]host:port`; `direct://`: no
+    /// proxy), instead of the browser's (`serve --proxy`). A profile with a
+    /// `base` has its base's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_server: Option<String>,
+    /// Hosts that skip `proxy_server` (Chrome's `--proxy-bypass-list` syntax).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_bypass_list: Option<String>,
+}
+
+impl PreparedProfile {
+    /// Checks what the profile's context gets of its own (`userAgent`,
+    /// `proxyServer`, `proxyBypassList`).
+    pub fn check_context_options(&self) -> CdpResult<()> {
+        if let Some(agent) = &self.user_agent {
+            if agent.is_empty() || http::HeaderValue::from_str(agent).is_err() {
+                return Err(CdpError::invalid_params("userAgent must be a non-empty header value"));
+            }
+        }
+        match (&self.proxy_server, &self.proxy_bypass_list) {
+            (Some(server), bypass) => {
+                pyro_net::ProxyConfig::parse(server, bypass.as_deref())
+                    .map_err(|e| CdpError::invalid_params(format!("proxyServer: {e}")))?;
+            }
+            (None, Some(_)) => return Err(CdpError::invalid_params("proxyBypassList needs proxyServer")),
+            (None, None) => {}
+        }
+        Ok(())
+    }
+}
+
+/// How far a prepared profile is (`serve --fork`, where its page boots and
+/// its setup runs once, in the template).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum ProfileStatus {
+    /// Its page is loading, or its setup has not finished.
+    Booting,
+    /// Loaded and set up: connections start from it.
+    Ready,
+    /// Its setup failed, or the profile it starts from failed: `error` says
+    /// which step and why (`setup step 2 (Click …): timed out after …`).
+    /// No page of it is handed out.
+    Failed { error: String },
+}
+
+impl ProfileStatus {
+    /// The status's `state` on the wire.
+    pub fn state(&self) -> &'static str {
+        match self {
+            ProfileStatus::Booting => "booting",
+            ProfileStatus::Ready => "ready",
+            ProfileStatus::Failed { .. } => "failed",
+        }
+    }
+
+    /// Whether it is final (set up, or failed).
+    pub fn is_final(&self) -> bool {
+        !matches!(self, ProfileStatus::Booting)
+    }
+
+    /// Adds `state` (and `error`) to a reply object.
+    pub fn add_to(&self, reply: &mut serde_json::Value) {
+        reply["state"] = self.state().into();
+        if let ProfileStatus::Failed { error } = self {
+            reply["error"] = error.as_str().into();
+        }
+    }
+}
+
+/// The error for a profile whose setup failed: the message names it
+/// (`label`) and carries the setup's error; `data.setupError` holds that
+/// error alone, for clients that name the profile themselves.
+pub fn setup_failed_error(label: &str, error: &str) -> CdpError {
+    CdpError::server(format!("profile {label}: {error}")).with_data(Some(serde_json::json!({ "setupError": error })))
 }
 
 /// The `name` of a shared profile (`serve --fork`) in `Pyro.*` params.
@@ -249,16 +364,21 @@ fn default_pool() -> usize {
 /// and no other profile derives from it; a connection's holds end with it.
 pub trait ForkProfiles {
     /// Boots `profile` for every later connection, or finds the same one:
-    /// its id. With `name`, this connection also holds it under that name.
-    fn register(&self, profile: &PreparedProfile, name: Option<&str>) -> Result<usize, String>;
-    /// Holds the profile some connection registered as `name`: its id and definition.
-    fn adopt(&self, name: &str) -> Result<(usize, PreparedProfile), String>;
+    /// its id and how far it is. With `name`, this connection also holds it
+    /// under that name. A profile whose setup failed is not found: the same
+    /// definition boots again (under a name, in its place).
+    fn register(&self, profile: &PreparedProfile, name: Option<&str>) -> Result<(usize, ProfileStatus), String>;
+    /// Holds the profile some connection registered as `name`: its id,
+    /// definition and how far it is. One whose setup failed is not held.
+    fn adopt(&self, name: &str) -> Result<(usize, PreparedProfile, ProfileStatus), String>;
     /// Drops this connection's hold on `name`.
     fn release(&self, name: &str) -> Result<ProfileRelease, String>;
     /// Retires profile `id` (one registered without a name); whether it was.
     fn unregister(&self, id: usize) -> Result<bool, String>;
     /// The named profiles.
     fn list(&self) -> Result<Vec<NamedProfile>, String>;
+    /// How far profile `id` is: booting, set up, or failed and why.
+    fn status(&self, id: usize) -> Result<ProfileStatus, String>;
 }
 
 /// What releasing a named profile did.
@@ -281,6 +401,9 @@ pub struct NamedProfile {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<usize>,
+    /// How far it is (`state`, and `error` when its setup failed).
+    #[serde(flatten)]
+    pub status: ProfileStatus,
 }
 
 /// At most this many pages booting ahead per profile.
@@ -390,6 +513,9 @@ pub struct Browser<H: Host> {
     next_id: u64,
     prepared_profiles: Vec<PreparedProfile>,
     retired_profiles: HashSet<usize>,
+    /// `serve --fork`: profiles whose setup failed (or whose base's did),
+    /// with why. Their pages are closed; acquiring one fails with the error.
+    failed_profiles: HashMap<usize, String>,
     prepared: Vec<PreparedEntry>,
     /// The last refill could create nothing (limits, failures): wait for
     /// the next acquisition before trying again.
@@ -435,6 +561,7 @@ impl<H: Host> Browser<H> {
             next_id: 1,
             prepared_profiles: Vec::new(),
             retired_profiles: HashSet::new(),
+            failed_profiles: HashMap::new(),
             prepared: Vec::new(),
             refill_blocked: false,
             fork: None,
@@ -476,6 +603,22 @@ impl<H: Host> Browser<H> {
             return Ok(false);
         }
         self.retired_profiles.insert(id);
+        self.failed_profiles.remove(&id);
+        self.close_waiting_pages(id);
+        let profile = &mut self.prepared_profiles[id];
+        profile.url.clear();
+        profile.init_scripts.clear();
+        profile.setup.clear();
+        profile.viewport = None;
+        profile.base = None;
+        profile.user_agent = None;
+        profile.proxy_server = None;
+        profile.proxy_bypass_list = None;
+        Ok(true)
+    }
+
+    /// Closes profile `id`'s waiting pages, with their contexts.
+    fn close_waiting_pages(&mut self, id: usize) {
         let waiting = std::mem::take(&mut self.prepared);
         for entry in waiting {
             if entry.profile == id {
@@ -485,13 +628,24 @@ impl<H: Host> Browser<H> {
                 self.prepared.push(entry);
             }
         }
-        let profile = &mut self.prepared_profiles[id];
-        profile.url.clear();
-        profile.init_scripts.clear();
-        profile.setup.clear();
-        profile.viewport = None;
-        profile.base = None;
-        Ok(true)
+    }
+
+    /// `serve --fork`: profile `id`'s setup failed (or that of the profile it
+    /// starts from), for `error`. Its waiting pages are closed, half set up
+    /// as they are, and acquiring a page of it fails with `error` from now
+    /// on, in every connection forked afterwards too. The profile stays
+    /// registered (its names and holds) until it is retired as usual.
+    pub fn fail_prepared_profile(&mut self, id: usize, error: String) {
+        if !self.prepared_profile_active(id) {
+            return;
+        }
+        self.failed_profiles.entry(id).or_insert(error);
+        self.close_waiting_pages(id);
+    }
+
+    /// Why profile `id`'s setup failed, if it did.
+    pub fn prepared_profile_failure(&self, id: usize) -> Option<&str> {
+        self.failed_profiles.get(&id).map(String::as_str)
     }
 
     /// `new`, then starts booting `profiles`' pages right away so the first
@@ -617,7 +771,7 @@ impl<H: Host> Browser<H> {
 
     /// Whether profile `i` is below its pool and allowed to boot now.
     fn profile_wants_page(&self, i: usize) -> bool {
-        if !self.prepared_profile_active(i) {
+        if !self.prepared_profile_active(i) || self.failed_profiles.contains_key(&i) {
             return false;
         }
         let profile = &self.prepared_profiles[i];
@@ -675,7 +829,11 @@ impl<H: Host> Browser<H> {
                 if self.contexts.len() >= MAX_CONTEXTS || self.targets.len() + self.prepared.len() >= MAX_TARGETS {
                     break;
                 }
-                let Ok(context_id) = self.new_context_with(false, true) else { break };
+                let options = ContextOptions::of(&profile);
+                let Ok(context_id) = self.new_context_from(|host| host.create_context_with(options), false, true)
+                else {
+                    break;
+                };
                 let key = self.contexts.iter().find(|c| c.id == context_id).expect("just created").key;
                 let Ok((page, target_id)) = self.host.create_page(key) else {
                     self.dispose_context(&context_id, &mut Discard);
@@ -718,10 +876,16 @@ impl<H: Host> Browser<H> {
                 if name.as_deref() == Some("") {
                     return Err(CdpError::invalid_params("name must not be empty"));
                 }
+                profile.check_context_options()?;
                 if let Some(registry) = &self.fork {
-                    // The template boots it; connections forked from then on have it.
-                    let profile_id = registry.register(&profile, name.as_deref()).map_err(CdpError::server)?;
-                    out.send(msg::result_frame(id, &serde_json::json!({ "profileId": profile_id }), cmd.session_id()));
+                    // The template boots it; connections forked from then on
+                    // have it. Its setup runs later: `state` says how far it
+                    // is, `Pyro.preparedProfileStatus` how it went.
+                    let (profile_id, status) =
+                        registry.register(&profile, name.as_deref()).map_err(CdpError::server)?;
+                    let mut reply = serde_json::json!({ "profileId": profile_id });
+                    status.add_to(&mut reply);
+                    out.send(msg::result_frame(id, &reply, cmd.session_id()));
                     return Ok(());
                 }
                 if name.is_some() {
@@ -765,19 +929,24 @@ impl<H: Host> Browser<H> {
                 };
                 let ProfileName { name } = cmd.params()?;
                 let name = name.ok_or_else(|| CdpError::invalid_params("name is required"))?;
-                let (profile_id, profile) = registry.adopt(&name).map_err(CdpError::server)?;
-                out.send(msg::result_frame(
-                    id,
-                    &serde_json::json!({
-                        "profileId": profile_id,
-                        "url": profile.url,
-                        "initScripts": profile.init_scripts,
-                        "viewport": profile.viewport,
-                        "setup": profile.setup,
-                        "base": profile.base,
-                    }),
-                    cmd.session_id(),
-                ));
+                let (profile_id, profile, status) = registry.adopt(&name).map_err(CdpError::server)?;
+                // A profile whose setup failed is not held: nothing of it can be used.
+                if let ProfileStatus::Failed { error } = &status {
+                    return Err(setup_failed_error(&name, error));
+                }
+                let mut reply = serde_json::json!({
+                    "profileId": profile_id,
+                    "url": profile.url,
+                    "initScripts": profile.init_scripts,
+                    "viewport": profile.viewport,
+                    "setup": profile.setup,
+                    "base": profile.base,
+                    "userAgent": profile.user_agent,
+                    "proxyServer": profile.proxy_server,
+                    "proxyBypassList": profile.proxy_bypass_list,
+                });
+                status.add_to(&mut reply);
+                out.send(msg::result_frame(id, &reply, cmd.session_id()));
             }
             "preparedProfiles" => {
                 let profiles = match &self.fork {
@@ -785,6 +954,24 @@ impl<H: Host> Browser<H> {
                     None => Vec::new(),
                 };
                 out.send(msg::result_frame(id, &serde_json::json!({ "profiles": profiles }), cmd.session_id()));
+            }
+            "preparedProfileStatus" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    profile_id: usize,
+                }
+                let profile_id = cmd.params::<P>()?.profile_id;
+                let status = match &self.fork {
+                    Some(registry) => registry.status(profile_id).map_err(CdpError::server)?,
+                    // Without a template a profile has no setup: nothing to wait for.
+                    None if self.prepared_profile_active(profile_id) => match self.failed_profiles.get(&profile_id) {
+                        Some(error) => ProfileStatus::Failed { error: error.clone() },
+                        None => ProfileStatus::Ready,
+                    },
+                    None => return Err(CdpError::invalid_params("Unknown prepared profile")),
+                };
+                out.send(msg::result_frame(id, &status, cmd.session_id()));
             }
             "acquirePreparedPage" => {
                 #[derive(Deserialize)]
@@ -797,6 +984,11 @@ impl<H: Host> Browser<H> {
                     attach: bool,
                 }
                 let p: P = cmd.params()?;
+                // Not "no page waiting" (-32602), after which a client may
+                // boot a fresh page: none of this profile is to be used.
+                if let Some((profile, error)) = p.profile_id.and_then(|i| Some((i, self.failed_profiles.get(&i)?))) {
+                    return Err(setup_failed_error(&profile.to_string(), error));
+                }
                 let matches = |b: &Self, e: &PreparedEntry| {
                     p.profile_id.is_none_or(|i| e.profile == i)
                         && p.url.as_deref().is_none_or(|u| b.prepared_profiles[e.profile].url == u)
@@ -1350,15 +1542,21 @@ impl<H: Host> Browser<H> {
             "createBrowserContext" => {
                 // disposeOnDetach is implied: every context of a connection
                 // is disposed when it closes (see `shutdown`).
+                // `userAgent` is Pyro's own: the context's default, as a
+                // prepared profile's (pages may still override it).
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
                 struct P {
                     proxy_server: Option<String>,
                     proxy_bypass_list: Option<String>,
+                    user_agent: Option<String>,
                     /// pyro's own: Playwright's `serviceWorkers` option.
                     service_workers: Option<String>,
                 }
                 let params: P = cmd.params()?;
+                if params.user_agent.as_ref().is_some_and(|a| a.is_empty() || http::HeaderValue::from_str(a).is_err()) {
+                    return Err(CdpError::invalid_params("userAgent must be a non-empty header value"));
+                }
                 let block_service_workers = match params.service_workers.as_deref() {
                     None | Some("allow") => false,
                     Some("block") => true,
@@ -1368,12 +1566,17 @@ impl<H: Host> Browser<H> {
                         )))
                     }
                 };
-                let context_id = match &params.proxy_server {
-                    Some(server) => {
-                        let proxy = ContextProxy { server, bypass_list: params.proxy_bypass_list.as_deref() };
-                        self.new_context_from(|host| host.create_proxied_context(proxy), false, false)?
-                    }
-                    None => self.new_context(false)?,
+                let options = ContextOptions {
+                    proxy: params
+                        .proxy_server
+                        .as_deref()
+                        .map(|server| ContextProxy { server, bypass_list: params.proxy_bypass_list.as_deref() }),
+                    user_agent: params.user_agent.as_deref(),
+                };
+                let context_id = if options.is_empty() {
+                    self.new_context(false)?
+                } else {
+                    self.new_context_from(|host| host.create_context_with(options), false, false)?
                 };
                 if block_service_workers {
                     let key = self.context(&context_id)?.key;

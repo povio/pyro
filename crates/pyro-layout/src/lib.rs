@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use pyro_dom::geometry::{BoxPosition, ExternalSticky, ExternalWord};
-use pyro_dom::layout::{ExternalBox, ExternalGeometry, GeometrySource, Layout};
+use pyro_dom::layout::{ExternalBox, ExternalGeometry, GeometrySource, Layout, SubresourceLoader};
 use pyro_dom::snapshot::RenderHtml;
 use pyro_dom::style::StyleEngine;
 use pyro_dom::{Dom, NodeId};
@@ -95,7 +95,10 @@ fn geometry_debug() -> bool {
 
 /// Bumped when a sub-resource arrives that documents may have been laid out
 /// without (a font or image fetched in the background): each page's
-/// document is built again at its next layout query.
+/// document is built again at its next layout query. Bodies loaded through a
+/// document's network count in its identity's
+/// [`pyro_dom::layout::SubresourceBodies::arrived`] instead, which rebuilds
+/// only the documents of that identity.
 static RESOURCES: AtomicU64 = AtomicU64::new(0);
 
 /// A sub-resource arrived: documents laid out before it lay out again.
@@ -126,9 +129,20 @@ pub fn peek_layout_count() -> u64 {
     TOTAL_CALLS.load(Ordering::Relaxed)
 }
 
+/// Makes the fetcher of a document's sub-resources from the document's
+/// network (`None` until the embedder gives it one).
+pub type FetcherFactory = Rc<dyn Fn(Option<&Arc<dyn SubresourceLoader>>) -> Arc<dyn Fetcher>>;
+
 /// Makes this thread's new documents take their geometry from Blitz,
 /// loading sub-resources through `fetcher`.
 pub fn install(fetcher: Arc<dyn Fetcher>) {
+    install_with(Rc::new(move |_| fetcher.clone()));
+}
+
+/// [`install`] with a fetcher per document: `fetchers` makes each document's
+/// from its network ([`GeometrySource::set_subresource_loader`]), so what it
+/// is laid out with loads the way its own sub-resource requests go.
+pub fn install_with(fetchers: FetcherFactory) {
     if profile::on() {
         pyro_render::profiling::enable();
     }
@@ -145,7 +159,9 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
             sheets: Default::default(),
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
-            fetcher: fetcher.clone(),
+            fetcher: RefCell::new(fetchers(None)),
+            loader: RefCell::new(None),
+            fetchers: fetchers.clone(),
         }) as Rc<dyn GeometrySource>
     })));
 }
@@ -183,11 +199,15 @@ impl BaseUrl {
 pub struct BlitzGeometry {
     page: u64,
     base_url: RefCell<BaseUrl>,
-    fetcher: Arc<dyn Fetcher>,
+    /// Loads the document's sub-resources: made by `fetchers` from `loader`.
+    fetcher: RefCell<Arc<dyn Fetcher>>,
+    /// The document's network (`None` until the embedder gives it one).
+    loader: RefCell<Option<Arc<dyn SubresourceLoader>>>,
+    fetchers: FetcherFactory,
     /// The DOM version, style generation, viewport and style invalidations
     /// it was last synced at.
     synced: std::cell::Cell<Option<SyncedAt>>,
-    /// [`RESOURCES`] when its document was built.
+    /// [`BlitzGeometry::arrivals`] when its document was built.
     resources: std::cell::Cell<u64>,
     /// Each style sheet's owner, whether it is a `<style>`, and its text's
     /// revision (`StyleEngine::sheet_revision`), as last synced (see
@@ -265,6 +285,14 @@ impl BlitzGeometry {
     /// The page's Blitz document (`Renderer` page id on this thread).
     pub fn page(&self) -> u64 {
         self.page
+    }
+
+    /// Sub-resources that arrived for this document: through any fetcher
+    /// ([`resources_changed`]) and through its network's identity. Both only
+    /// grow, so a change in the sum is an arrival.
+    fn arrivals(&self) -> u64 {
+        let own = self.loader.borrow().as_ref().map_or(0, |l| l.bodies().arrivals());
+        RESOURCES.load(Ordering::Relaxed).wrapping_add(own)
     }
 
     /// The `<style>` text and link-to-URL resolvers the render tree uses;
@@ -419,7 +447,7 @@ impl BlitzGeometry {
         }
         *self.sheets.borrow_mut() = Self::sheet_hashes(dom, style);
         let Some(snap) = self.snapshot(dom, style) else { return };
-        let fetcher = self.fetcher.clone();
+        let fetcher = self.fetcher.borrow().clone();
         let timings = RENDERER.with(|r| {
             let mut r = r.try_borrow_mut().ok()?;
             guarded(r.get_or_insert_with(Renderer::new), self.page, |r| r.sync_layout(&snap, &fetcher).ok())
@@ -486,7 +514,7 @@ impl BlitzGeometry {
     }
 
     fn sync_inner(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
-        let resources = RESOURCES.load(Ordering::Relaxed);
+        let resources = self.arrivals();
         let rebuild = self.resources.replace(resources) != resources;
         if rebuild {
             // Build the document again: Blitz does not retry a resource
@@ -595,8 +623,17 @@ impl GeometrySource for BlitzGeometry {
         *self.base_url.borrow_mut() = BaseUrl::new(url);
     }
 
+    fn set_subresource_loader(&self, loader: Arc<dyn SubresourceLoader>) {
+        *self.fetcher.borrow_mut() = (self.fetchers)(Some(&loader));
+        *self.loader.borrow_mut() = Some(loader);
+        // What was laid out so far loaded through the fetcher before: the
+        // next query builds the document again (no count of arrivals
+        // reaches this one).
+        self.resources.set(u64::MAX);
+    }
+
     fn stale(&self) -> bool {
-        self.resources.get() != RESOURCES.load(Ordering::Relaxed)
+        self.resources.get() != self.arrivals()
     }
 
     fn sync(&self, dom: &Dom, layout: &Layout) {
@@ -849,7 +886,9 @@ mod tests {
             sheets: Default::default(),
             resources: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
-            fetcher: std::sync::Arc::new(NoFetch),
+            fetcher: RefCell::new(std::sync::Arc::new(NoFetch)),
+            loader: RefCell::new(None),
+            fetchers: Rc::new(|_| std::sync::Arc::new(NoFetch)),
         };
         assert_eq!(g.base_url.borrow().text, "about:blank");
         assert_eq!(g.base_url.borrow().parsed.as_ref().map(|u| u.as_str()), Some("about:blank"));
@@ -863,6 +902,77 @@ mod tests {
         drop(base);
         g.set_base_url("not a url");
         assert!(g.base_url.borrow().parsed.is_none());
+    }
+
+    /// Each document loads what it is laid out with through the fetcher made
+    /// from its own network, never another document's; a body arriving for
+    /// one network identity lays out again only the documents of that one.
+    #[test]
+    fn documents_load_through_their_own_network() {
+        use pyro_dom::layout::{SubresourceBodies, SubresourceKind, SubresourceLoader};
+        use std::sync::{Arc, Mutex};
+
+        struct Network(Arc<SubresourceBodies>);
+        impl SubresourceLoader for Network {
+            fn load(&self, _: String, _: SubresourceKind, _: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {}
+            fn bodies(&self) -> &Arc<SubresourceBodies> {
+                &self.0
+            }
+        }
+        type Seen = Arc<Mutex<Vec<(Option<usize>, String)>>>;
+        /// Records each URL with the identity of the network it was made from.
+        struct Recorder(Option<usize>, Seen);
+        impl pyro_render::Fetcher for Recorder {
+            fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+                self.1.lock().unwrap().push((self.0, url.clone()));
+                done(Err(format!("{url}: offline")));
+            }
+        }
+        let seen = Seen::default();
+        let made = seen.clone();
+        super::install_with(Rc::new(move |loader| {
+            let identity = loader.map(|l| Arc::as_ptr(l.bodies()) as usize);
+            std::sync::Arc::new(Recorder(identity, made.clone()))
+        }));
+        let document = |image: &str, network: Option<&Arc<SubresourceBodies>>| {
+            let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+            let html = format!("<!doctype html><div style='width:9px;height:9px;background-image:url({image})'></div>");
+            let doc = parse_document(&dom, "http://test/", &html);
+            dom.borrow_mut().set_document_active(doc, true).unwrap();
+            let mut layout = Layout::new(doc);
+            layout.style_mut().discover_style_elements(&dom.borrow());
+            if let Some(bodies) = network {
+                layout.set_subresource_loader(Arc::new(Network(bodies.clone())));
+            }
+            assert!(layout.synced_geometry_source(&dom.borrow()).is_some());
+            (dom, layout)
+        };
+        let (one, two) = (Arc::<SubresourceBodies>::default(), Arc::<SubresourceBodies>::default());
+        let (dom_a, a) = document("http://one.test/a.png", Some(&one));
+        let (dom_b, b) = document("http://two.test/b.png", Some(&two));
+        let (_dom_c, _c) = document("http://none.test/c.png", None);
+        let id = |bodies: &Arc<SubresourceBodies>| Some(Arc::as_ptr(bodies) as usize);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                (id(&one), "http://one.test/a.png".to_owned()),
+                (id(&two), "http://two.test/b.png".to_owned()),
+                (None, "http://none.test/c.png".to_owned()),
+            ]
+        );
+        let sync_both = || {
+            a.synced_geometry_source(&dom_a.borrow());
+            b.synced_geometry_source(&dom_b.borrow());
+            std::mem::take(&mut *seen.lock().unwrap())
+        };
+        seen.lock().unwrap().clear();
+        assert_eq!(sync_both(), [], "nothing changed: neither is laid out again");
+        // A body arrived for the first identity: only its document is built
+        // again (and asks again for what it lacks).
+        one.arrived();
+        assert_eq!(sync_both(), [(id(&one), "http://one.test/a.png".to_owned())]);
+        two.arrived();
+        assert_eq!(sync_both(), [(id(&two), "http://two.test/b.png".to_owned())]);
     }
 
     #[test]

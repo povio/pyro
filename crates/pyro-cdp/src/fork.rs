@@ -36,7 +36,7 @@ use crate::engine::EngineHost;
 use crate::outbox::{Outbound, OutboundRx, Outbox, DEFAULT_OUTBOUND_BUDGET};
 use crate::serve::ServeOptions;
 use crate::server::ServerConfig;
-use crate::target::{Browser, ForkProfiles, Host, NamedProfile, PreparedProfile, ProfileRelease};
+use crate::target::{Browser, ForkProfiles, Host, NamedProfile, PreparedProfile, ProfileRelease, ProfileStatus};
 use crate::ws::OutFrame;
 
 /// A connection waits at most this long for loaded pages to go quiet: a
@@ -181,6 +181,17 @@ enum Message {
     Lease,
     /// List the named profiles (root only); replies `Listed`.
     Profiles,
+    /// How far profile `profile_id` is (root only); replies `Status`.
+    Status {
+        profile_id: usize,
+    },
+    /// A derived template's own profile is set up (no `error`) or failed:
+    /// to the root, which keeps every profile's status. No reply.
+    Outcome {
+        profile_id: usize,
+        #[serde(default)]
+        error: Option<String>,
+    },
     Unregister {
         profile_id: usize,
     },
@@ -204,6 +215,9 @@ enum Message {
 struct Registered {
     profile_id: Option<usize>,
     error: Option<String>,
+    /// How far the profile is (a `Derive`'s reply has none).
+    #[serde(default)]
+    status: Option<ProfileStatus>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -217,6 +231,14 @@ struct Unregistered {
 struct Adopted {
     profile_id: Option<usize>,
     profile: Option<PreparedProfile>,
+    error: Option<String>,
+    #[serde(default)]
+    status: Option<ProfileStatus>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StatusReply {
+    status: Option<ProfileStatus>,
     error: Option<String>,
 }
 
@@ -531,11 +553,23 @@ struct ProfileState {
     /// A derived profile whose page is still labelled with its base's id:
     /// its setup turns that page into its own.
     derive_from: Option<usize>,
+    /// Booting until its page is loaded and set up, or its setup failed.
+    /// The root keeps every profile's (derived templates report theirs).
+    status: ProfileStatus,
+    /// Its final status was passed on ([`TemplateProcess::report_statuses`]).
+    reported: bool,
 }
 
 impl ProfileState {
     fn new(profile: &PreparedProfile) -> Self {
-        ProfileState { started: Instant::now(), settled: false, set_up: profile.setup.is_empty(), derive_from: None }
+        ProfileState {
+            started: Instant::now(),
+            settled: false,
+            set_up: profile.setup.is_empty(),
+            derive_from: None,
+            status: ProfileStatus::Booting,
+            reported: false,
+        }
     }
 }
 
@@ -588,6 +622,8 @@ struct TemplateProcess {
     /// take a while to exit, and this loop serves every other profile.
     terminating: Vec<(libc::pid_t, Instant, bool)>,
     is_root: bool,
+    /// A derived template's own profile (whose status it reports to the root).
+    own: Option<usize>,
     /// Root only: profiles shared by name, retired with their last holder.
     names: HashMap<String, Named>,
     /// Root only: profiles registered without a name (and `--prepare`'s),
@@ -704,6 +740,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateErr
         derived_pids: HashMap::new(),
         terminating: Vec::new(),
         is_root: true,
+        own: None,
         names: HashMap::new(),
         pinned,
         leases: HashMap::new(),
@@ -727,8 +764,13 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateErr
         t.forward_waiting();
         t.deliver_pending_derives();
         let ready = ready_to_fork(&mut t.snapshot, t.waiting.front().map(|w| w.2));
+        // Before any fork: a child must not report what this process did.
+        t.report_statuses();
         if ready {
             while let Some(derive) = t.derives.pop_front() {
+                if t.snapshot.browser.prepared_profile_failure(derive.base).is_some() {
+                    continue; // the root fails it with its base
+                }
                 if t.fork_template(derive) {
                     continue 'serve; // this process is now the derived template
                 }
@@ -789,18 +831,34 @@ impl TemplateProcess {
                 Message::Connect { .. } => {}
                 Message::Register { profile, name, lease } => {
                     let reply = match self.register(profile, name, lease) {
-                        Ok(id) => Registered { profile_id: Some(id), error: None },
-                        Err(e) => Registered { profile_id: None, error: Some(e) },
+                        Ok(id) => Registered { profile_id: Some(id), error: None, status: Some(self.status_of(id)) },
+                        Err(e) => Registered { profile_id: None, error: Some(e), status: None },
                     };
                     let _ = send(&mut stream, &reply, &[]);
                 }
                 Message::Adopt { name, lease } => {
                     let reply = match self.adopt(&name, lease) {
-                        Ok((id, profile)) => Adopted { profile_id: Some(id), profile: Some(profile), error: None },
-                        Err(e) => Adopted { profile_id: None, profile: None, error: Some(e) },
+                        Ok((id, profile)) => Adopted {
+                            profile_id: Some(id),
+                            profile: Some(profile),
+                            error: None,
+                            status: Some(self.status_of(id)),
+                        },
+                        Err(e) => Adopted { profile_id: None, profile: None, error: Some(e), status: None },
                     };
                     let _ = send(&mut stream, &reply, &[]);
                 }
+                Message::Status { profile_id } => {
+                    let reply = if !self.is_root {
+                        StatusReply { status: None, error: Some("status queries go to the root template".into()) }
+                    } else if self.snapshot.browser.prepared_profile_active(profile_id) {
+                        StatusReply { status: Some(self.status_of(profile_id)), error: None }
+                    } else {
+                        StatusReply { status: None, error: Some(format!("no profile {profile_id}")) }
+                    };
+                    let _ = send(&mut stream, &reply, &[]);
+                }
+                Message::Outcome { profile_id, error } => self.outcome(profile_id, error),
                 Message::Release { name, lease } => {
                     let reply = match self.release(&name, lease) {
                         Ok(release) => Released { release: Some(release), error: None },
@@ -834,7 +892,7 @@ impl TemplateProcess {
                 Message::Taken => {}
                 Message::Derive { base, id, profile, socket } => {
                     self.derives.push_back(Derive { base, id, profile, socket });
-                    let _ = send(&mut stream, &Registered { profile_id: Some(id), error: None }, &[]);
+                    let _ = send(&mut stream, &Registered { profile_id: Some(id), error: None, status: None }, &[]);
                 }
             }
         }
@@ -859,7 +917,10 @@ impl TemplateProcess {
         if profile.is_some_and(|id| !self.snapshot.browser.prepared_profile_active(id)) {
             return;
         }
-        match profile.and_then(|id| self.holders.get(id).cloned().flatten()) {
+        // A failed profile's template may never listen: a fork from here
+        // tells the connection why (its acquisition fails with the error).
+        let failed = profile.is_some_and(|id| self.snapshot.browser.prepared_profile_failure(id).is_some());
+        match profile.and_then(|id| self.holders.get(id).cloned().flatten()).filter(|_| !failed) {
             Some(path) => self.forwards.push_back((path, buffered, profile, fds, Instant::now())),
             None => self.waiting.push_back((buffered, fds, Instant::now())),
         }
@@ -872,6 +933,11 @@ impl TemplateProcess {
             let Some((path, buffered, profile, fds, since)) = self.forwards.pop_front() else { break };
             if profile.is_some_and(|id| !self.snapshot.browser.prepared_profile_active(id)) {
                 continue; // retired meanwhile: dropping it closes the connection
+            }
+            if profile.is_some_and(|id| self.snapshot.browser.prepared_profile_failure(id).is_some()) {
+                // Failed meanwhile: its template may never listen.
+                self.waiting.push_back((buffered, fds, since));
+                continue;
             }
             let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
             let sent = UnixStream::connect(conn_socket(&path))
@@ -895,17 +961,17 @@ impl TemplateProcess {
             if since.elapsed() < DERIVE_WAIT {
                 self.pending_derives.push_back((holder, derive, since));
             } else {
-                eprintln!(
-                    "pyro: template: profile {}: the template of its base {} did not start",
-                    derive.id, derive.base
-                );
+                let error = format!("the template of its base profile {} did not start", self.label(derive.base));
+                self.report_failure(derive.id, error);
             }
         }
     }
 
     /// Adds a profile, or finds the same one. With a name, `lease` holds it
     /// under that name, which every connection shares: registering the same
-    /// definition again (from any client) finds the profile booted.
+    /// definition again (from any client) finds the profile booted. One whose
+    /// setup failed is not found: the same definition boots again, and under
+    /// a name the name moves to that new attempt, its holders with it.
     fn register(
         &mut self,
         profile: PreparedProfile,
@@ -915,7 +981,7 @@ impl TemplateProcess {
         if !self.is_root {
             return Err("registrations go to the root template".into());
         }
-        let profile = one_page(&profile);
+        let profile = self.inherit_from_base(one_page(&profile))?;
         let Some(name) = name else {
             let id = self.boot(profile)?;
             self.pinned.insert(id);
@@ -923,34 +989,163 @@ impl TemplateProcess {
         };
         let lease = self.live_lease(lease)?;
         if let Some(named) = self.names.get_mut(&name) {
-            if self.snapshot.browser.prepared_profiles()[named.id] == profile {
+            let failed = self.snapshot.browser.prepared_profile_failure(named.id).is_some();
+            let same = self.snapshot.browser.prepared_profiles()[named.id] == profile;
+            if same && !failed {
                 named.holders.insert(lease);
                 return Ok(named.id);
             }
-            if !named.holders.is_empty() {
+            if !same && !named.holders.is_empty() {
                 return Err(format!("profile {name} is registered with a different definition (release it first)"));
             }
-            // Nobody holds the name (profiles derived from it keep the old
-            // profile): it moves to the new definition.
-            let old = named.id;
-            self.names.remove(&name);
-            self.retire_unused(old);
         }
         let id = self.boot(profile)?;
-        self.names.insert(name, Named { id, holders: HashSet::from([lease]) });
+        // Nobody holds the name (profiles derived from it keep the old
+        // profile), or its setup failed: it moves to the new profile.
+        let mut holders = HashSet::from([lease]);
+        if let Some(old) = self.names.remove(&name) {
+            holders.extend(old.holders);
+            if old.id != id {
+                self.retire_unused(old.id);
+            }
+        }
+        self.names.insert(name, Named { id, holders });
         Ok(id)
+    }
+
+    /// A derived profile's page is its base's, in its base's browser context:
+    /// it has its base's `userAgent` and proxy. Given again they must be the
+    /// same, and left out they are filled in (one definition either way).
+    fn inherit_from_base(&self, mut profile: PreparedProfile) -> Result<PreparedProfile, String> {
+        let browser = &self.snapshot.browser;
+        let Some(base) = profile.base.filter(|&b| browser.prepared_profile_active(b)) else {
+            return Ok(profile); // `boot` reports a missing base
+        };
+        let of_base = &browser.prepared_profiles()[base];
+        let differs = |own: &Option<String>, base: &Option<String>| own.is_some() && own != base;
+        if differs(&profile.user_agent, &of_base.user_agent)
+            || differs(&profile.proxy_server, &of_base.proxy_server)
+            || differs(&profile.proxy_bypass_list, &of_base.proxy_bypass_list)
+        {
+            return Err(format!(
+                "a profile with a base has its base's userAgent, proxyServer and proxyBypassList \
+                 (profile {}): leave them out",
+                self.label(base)
+            ));
+        }
+        profile.user_agent.clone_from(&of_base.user_agent);
+        profile.proxy_server.clone_from(&of_base.proxy_server);
+        profile.proxy_bypass_list.clone_from(&of_base.proxy_bypass_list);
+        Ok(profile)
+    }
+
+    /// How far profile `id` is.
+    fn status_of(&self, id: usize) -> ProfileStatus {
+        match self.snapshot.browser.prepared_profile_failure(id) {
+            Some(error) => ProfileStatus::Failed { error: error.to_owned() },
+            None => self.snapshot.profiles.get(id).map_or(ProfileStatus::Booting, |s| s.status.clone()),
+        }
+    }
+
+    /// A profile in messages: its name (the first, when several name it), else its id.
+    fn label(&self, id: usize) -> String {
+        let mut names: Vec<&String> = self.names.iter().filter(|(_, n)| n.id == id).map(|(name, _)| name).collect();
+        names.sort();
+        names.first().map_or_else(|| id.to_string(), |name| (*name).clone())
+    }
+
+    /// Passes on what became of the profiles once it is final: a derived
+    /// template tells the root about its own profile; the root fails what
+    /// was built on a profile that failed.
+    fn report_statuses(&mut self) {
+        for id in 0..self.snapshot.profiles.len() {
+            let state = &mut self.snapshot.profiles[id];
+            if state.reported || !state.status.is_final() {
+                continue;
+            }
+            state.reported = true;
+            let error = match &state.status {
+                ProfileStatus::Failed { error } => Some(error.clone()),
+                _ => None,
+            };
+            if self.is_root {
+                if let Some(error) = error {
+                    self.record_failure(id, error);
+                }
+            } else if self.own == Some(id) {
+                notify(&self.root, &Message::Outcome { profile_id: id, error });
+            }
+        }
+    }
+
+    /// A derived template's report on its own profile (root only).
+    fn outcome(&mut self, id: usize, error: Option<String>) {
+        if !self.is_root || !self.snapshot.browser.prepared_profile_active(id) {
+            return;
+        }
+        match error {
+            Some(error) => self.record_failure(id, error),
+            None => {
+                let state = &mut self.snapshot.profiles[id];
+                if !state.status.is_final() {
+                    state.status = ProfileStatus::Ready;
+                    state.reported = true;
+                }
+            }
+        }
+    }
+
+    /// Profile `id` failed (root only): no page of it is handed out from now
+    /// on, whatever is still to be built on it is not, and the profiles
+    /// derived from it fail with it. It stays registered until it is retired
+    /// as usual, so that its holders and adopters learn why.
+    fn record_failure(&mut self, id: usize, error: String) {
+        let browser = &mut self.snapshot.browser;
+        if !browser.prepared_profile_active(id) {
+            return;
+        }
+        browser.fail_prepared_profile(id, error);
+        let error = browser.prepared_profile_failure(id).unwrap_or_default().to_owned();
+        let state = &mut self.snapshot.profiles[id];
+        state.status = ProfileStatus::Failed { error: error.clone() };
+        state.reported = true;
+        self.derives.retain(|d| d.id != id);
+        self.pending_derives.retain(|(_, d, _)| d.id != id);
+        // Spares have it as it was; connections for it are served from here.
+        self.snapshot.generation += 1;
+        self.spares.clear();
+        let browser = &self.snapshot.browser;
+        let derived: Vec<usize> = (0..browser.prepared_profiles().len())
+            .filter(|&c| browser.prepared_profile_active(c) && browser.prepared_profiles()[c].base == Some(id))
+            .filter(|&c| browser.prepared_profile_failure(c).is_none())
+            .collect();
+        let label = self.label(id);
+        for child in derived {
+            let error = format!("base profile {label} failed: {error}");
+            eprintln!("pyro: template: profile {child}: {error}");
+            self.record_failure(child, error);
+        }
+    }
+
+    /// A failure found here: recorded (root) or reported to the root.
+    fn report_failure(&mut self, id: usize, error: String) {
+        eprintln!("pyro: template: profile {id}: {error}");
+        if self.is_root {
+            self.record_failure(id, error);
+        } else {
+            notify(&self.root, &Message::Outcome { profile_id: id, error: Some(error) });
+        }
     }
 
     /// The active profile with this definition, else a new one: a plain one
     /// boots here, a derived one is forked off the template holding its base.
+    /// Not one whose setup failed: that is tried again.
     fn boot(&mut self, profile: PreparedProfile) -> Result<usize, String> {
         let browser = &self.snapshot.browser;
-        if let Some(id) = browser
-            .prepared_profiles()
-            .iter()
-            .enumerate()
-            .find_map(|(id, p)| (browser.prepared_profile_active(id) && *p == profile).then_some(id))
-        {
+        if let Some(id) = browser.prepared_profiles().iter().enumerate().find_map(|(id, p)| {
+            let usable = browser.prepared_profile_active(id) && browser.prepared_profile_failure(id).is_none();
+            (usable && *p == profile).then_some(id)
+        }) {
             return Ok(id);
         }
         if let Some(base) = profile.base {
@@ -975,6 +1170,12 @@ impl TemplateProcess {
             }
             return Ok(id);
         };
+        if let Some(error) = self.snapshot.browser.prepared_profile_failure(base) {
+            // Built on a profile that failed: it fails with it.
+            let error = format!("base profile {} failed: {error}", self.label(base));
+            self.report_failure(id, error);
+            return Ok(id);
+        }
         let socket = PathBuf::from(format!("{}.{id}", self.root.display()));
         let _ = std::fs::remove_file(&socket);
         self.holders[id] = Some(socket.clone());
@@ -997,14 +1198,17 @@ impl TemplateProcess {
         lease.filter(|l| self.leases.contains_key(l)).ok_or_else(|| "the connection's lease has ended".to_owned())
     }
 
-    /// Holds the profile registered as `name`: its id and definition.
+    /// Holds the profile registered as `name`: its id and definition. One
+    /// whose setup failed is not held (its status says why).
     fn adopt(&mut self, name: &str, lease: u64) -> Result<(usize, PreparedProfile), String> {
         if !self.is_root {
             return Err("adoptions go to the root template".into());
         }
         let lease = self.live_lease(Some(lease))?;
         let named = self.names.get_mut(name).ok_or_else(|| format!("no profile {name}"))?;
-        named.holders.insert(lease);
+        if self.snapshot.browser.prepared_profile_failure(named.id).is_none() {
+            named.holders.insert(lease);
+        }
         Ok((named.id, self.snapshot.browser.prepared_profiles()[named.id].clone()))
     }
 
@@ -1078,6 +1282,7 @@ impl TemplateProcess {
                 holders: n.holders.len(),
                 url: profiles[n.id].url.clone(),
                 base: profiles[n.id].base,
+                status: self.status_of(n.id),
             })
             .collect();
         list.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1096,8 +1301,16 @@ impl TemplateProcess {
                 break;
             }
             crate::fork_stats::reaped(pid, &usage);
+            // A derived template exits only when it is retired (no longer
+            // in `derived_pids` then): its profile has no snapshot any more.
+            let lost = self.derived_pids.iter().find(|(_, child)| **child == pid).map(|(id, _)| *id);
             self.derived_pids.retain(|_, child| *child != pid);
             self.terminating.retain(|(child, _, _)| *child != pid);
+            if let Some(id) = lost {
+                use std::os::unix::process::ExitStatusExt;
+                let status = std::process::ExitStatus::from_raw(status);
+                self.report_failure(id, format!("its template process exited ({status})"));
+            }
         }
         let now = Instant::now();
         for (pid, deadline, killed) in &mut self.terminating {
@@ -1182,7 +1395,7 @@ impl TemplateProcess {
         {
             Ok(both) => both,
             Err(e) => {
-                eprintln!("pyro: template: {e}");
+                self.report_failure(derive.id, format!("its template could not listen: {e}"));
                 return false;
             }
         };
@@ -1191,12 +1404,16 @@ impl TemplateProcess {
                 self.derived_pids.insert(derive.id, pid);
                 false
             }
-            Forked::Failed => false,
+            Forked::Failed => {
+                self.report_failure(derive.id, "its template could not be forked".into());
+                false
+            }
             Forked::Child => {
                 self.listener = listener; // closes this child's copies of the parent's
                 self.conns = conns;
                 self.socket = derive.socket;
                 self.is_root = false;
+                self.own = Some(derive.id);
                 self.holders.clear();
                 self.derived_pids.clear();
                 self.terminating.clear();
@@ -1214,10 +1431,9 @@ impl TemplateProcess {
                     profiles.push(ProfileState { set_up: true, ..ProfileState::new(&derive.profile) });
                 }
                 profiles[derive.id] = ProfileState {
-                    started: Instant::now(),
-                    settled: false,
                     set_up: false,
                     derive_from: Some(derive.base),
+                    ..ProfileState::new(&derive.profile)
                 };
                 self.snapshot.browser.set_prepared_profile(derive.id, derive.profile);
                 true
@@ -1297,7 +1513,10 @@ impl TemplateProcess {
             // listens if need be.
             let stale = readable(to_template.as_raw_fd());
             let unknown = profile.is_some_and(|id| !self.snapshot.browser.prepared_profile_active(id));
-            if stale || unknown || profile.is_some_and(|id| self.holders.get(id).is_some_and(|h| h.is_some())) {
+            // A failed profile is served here: acquiring its page fails with why.
+            let failed = profile.is_some_and(|id| self.snapshot.browser.prepared_profile_failure(id).is_some());
+            let elsewhere = profile.is_some_and(|id| self.holders.get(id).is_some_and(|h| h.is_some()));
+            if stale || unknown || (elsewhere && !failed) {
                 let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
                 if let Ok(mut s) = UnixStream::connect(&self.socket) {
                     let _ = send(&mut s, &Message::Connect { buffered, profile }, &raw);
@@ -1498,6 +1717,26 @@ impl Snapshot {
         self.drain();
         run.map(|_| ())
     }
+
+    /// Profile `id` failed here (its setup, or its page did not load): its
+    /// page goes, half set up as it is, and acquiring one fails with `error`
+    /// in every connection forked from now on.
+    fn fail(&mut self, id: usize, error: String) {
+        eprintln!("pyro: template: profile {id}: {error}");
+        self.browser.fail_prepared_profile(id, error.clone());
+        self.profiles[id].status = ProfileStatus::Failed { error };
+        self.generation += 1;
+    }
+}
+
+/// A setup's error as clients see it: `setup step 2 (click …): timed out
+/// after 5000 ms: …` when a step failed (`Pyro.run`'s `step N (…): …`).
+fn setup_error(error: &str) -> String {
+    if error.starts_with("step ") {
+        format!("setup {error}")
+    } else {
+        format!("setup: {error}")
+    }
 }
 
 /// The JSON payload of an outgoing (unmasked) WebSocket text frame.
@@ -1530,6 +1769,8 @@ fn one_page(p: &PreparedProfile) -> PreparedProfile {
 
 /// Every page has loaded, run its setup and gone quiet (or waited long
 /// enough); pages are settled first, so forks start from their live size.
+/// A profile whose setup fails (or whose page does not load in time to run
+/// it) fails: see [`Snapshot::fail`].
 fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> bool {
     let waited_enough = waiting_since.is_some_and(|t| t.elapsed() > QUIET_WAIT);
     let mut ready = true;
@@ -1545,21 +1786,38 @@ fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> boo
         // A derived profile waiting for this page, else this profile's own setup.
         let derived = snapshot.profiles.iter().position(|s| s.derive_from == Some(id) && !s.set_up);
         let pending = derived.or((!snapshot.profiles[id].set_up).then_some(id));
-        if let (true, Some(target)) = (loaded, pending) {
+        if let Some(target) = pending {
             snapshot.profiles[target].set_up = true;
             snapshot.profiles[target].derive_from = None;
-            if let Err(e) = snapshot.set_up(target, id) {
-                eprintln!("pyro: template: setup of profile {target}: {e}");
+            let outcome = if loaded {
+                snapshot.set_up(target, id).map_err(|e| setup_error(&e))
+            } else {
+                let url = &snapshot.browser.prepared_profiles()[id].url;
+                let why = match snapshot.browser.host().page_needs_navigation(page) {
+                    true => "its navigation failed",
+                    false => "it was still loading",
+                };
+                Err(format!("setup: the page did not load within {} s ({url}: {why})", LOAD_WAIT.as_secs()))
+            };
+            match outcome {
+                Ok(()) => {
+                    // Whatever the steps started has to go quiet again.
+                    snapshot.profiles[target].settled = false;
+                    snapshot.profiles[target].started = Instant::now();
+                }
+                Err(error) => snapshot.fail(target, error),
             }
-            // Whatever the steps started has to go quiet again.
-            snapshot.profiles[target].settled = false;
-            snapshot.profiles[target].started = Instant::now();
             ready = false;
             continue;
         }
         if loaded && !snapshot.profiles[id].settled {
             snapshot.profiles[id].settled = true;
             snapshot.browser.host().thread.browser.engine.settle();
+        }
+        // Set up (or never loaded, and forked as it is): connections start from it.
+        let state = &mut snapshot.profiles[id];
+        if !state.status.is_final() {
+            state.status = ProfileStatus::Ready;
         }
     }
     ready
@@ -1654,22 +1912,30 @@ impl RootRegistry {
 }
 
 impl ForkProfiles for RootRegistry {
-    fn register(&self, profile: &PreparedProfile, name: Option<&str>) -> Result<usize, String> {
+    fn register(&self, profile: &PreparedProfile, name: Option<&str>) -> Result<(usize, ProfileStatus), String> {
         let lease = name.map(|_| self.lease()).transpose()?;
         let message = Message::Register { profile: profile.clone(), name: name.map(str::to_owned), lease };
         let reply: Registered = self.request(&message)?;
         match (reply.profile_id, reply.error) {
-            (Some(id), _) => Ok(id),
+            (Some(id), _) => Ok((id, reply.status.unwrap_or(ProfileStatus::Booting))),
             (None, e) => Err(e.unwrap_or_else(|| "registration failed".into())),
         }
     }
 
-    fn adopt(&self, name: &str) -> Result<(usize, PreparedProfile), String> {
+    fn adopt(&self, name: &str) -> Result<(usize, PreparedProfile, ProfileStatus), String> {
         let lease = self.lease()?;
         let reply: Adopted = self.request(&Message::Adopt { name: name.to_owned(), lease })?;
         match (reply.profile_id, reply.profile, reply.error) {
-            (Some(id), Some(profile), _) => Ok((id, profile)),
+            (Some(id), Some(profile), _) => Ok((id, profile, reply.status.unwrap_or(ProfileStatus::Booting))),
             (_, _, e) => Err(e.unwrap_or_else(|| "adoption failed".into())),
+        }
+    }
+
+    fn status(&self, id: usize) -> Result<ProfileStatus, String> {
+        let reply: StatusReply = self.request(&Message::Status { profile_id: id })?;
+        match (reply.status, reply.error) {
+            (Some(status), _) => Ok(status),
+            (None, e) => Err(e.unwrap_or_else(|| "no status".into())),
         }
     }
 

@@ -466,3 +466,121 @@ async fn terminate_execution_stops_a_running_script() {
     assert_eq!(next["result"]["result"]["value"], 2, "only that script stopped: {next}");
     let _ = s.shutdown().await;
 }
+
+/// `Pyro.cancelRun`: a run waiting on a missing element is answered at once
+/// with what it waited for, and the page serves what comes next.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_run_answers_a_waiting_run_and_the_page_goes_on() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    // Nothing in flight: nothing to cancel.
+    let none = call(&mut s, json!({"id":3,"method":"Pyro.cancelRun","sessionId":session})).await;
+    assert_eq!(none["result"], json!({"cancelled": 0}), "{none}");
+    let page = "document.body.innerHTML = '<h1>Hello</h1><button>Present</button>'";
+    call(&mut s, json!({"id":4,"method":"Runtime.evaluate","params":{"expression":page},"sessionId":session})).await;
+    let click = json!({"act":{"locator":{"role":"button","name":"Missing"},"action":"click","timeout":30_000}});
+    send(&mut s, json!({"id":5,"method":"Pyro.run","params":{"steps":[click]},"sessionId":session})).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let sent = Instant::now();
+    send(&mut s, json!({"id":6,"method":"Pyro.cancelRun","sessionId":session})).await;
+    let seen = read_until(&mut s, |m| m["id"] == 6).await;
+    let took = sent.elapsed();
+    let ids: Vec<u64> = seen.iter().filter_map(|m| m["id"].as_u64()).collect();
+    assert_eq!(ids, [5, 6], "the run is answered before the cancel: {seen:#?}");
+    let message = seen[0]["error"]["message"].as_str().unwrap_or_default();
+    let missing = r#"{"name":"Missing","role":"button"}"#;
+    assert_eq!(message, format!("step 0 (Click {missing}): cancelled: Click {missing}: {missing} matched no element"));
+    assert_eq!(seen[1]["result"], json!({"cancelled": 1}));
+    assert!(took < Duration::from_millis(100), "answered in {took:?}");
+    // The page is as it was and takes a screenshot, an evaluation and another run.
+    let shot = call(&mut s, json!({"id":7,"method":"Page.captureScreenshot","sessionId":session})).await;
+    assert!(shot["result"]["data"].as_str().is_some_and(|png| png.len() > 1000), "{shot}");
+    let read = json!({"expression":"document.querySelector('h1').textContent","returnByValue":true});
+    let v = call(&mut s, json!({"id":8,"method":"Runtime.evaluate","params":read,"sessionId":session})).await;
+    assert_eq!(v["result"]["result"]["value"], "Hello", "{v}");
+    let present = json!({"act":{"locator":{"role":"button","name":"Present"},"action":"click"}});
+    let run = call(&mut s, json!({"id":9,"method":"Pyro.run","params":{"steps":[present]},"sessionId":session})).await;
+    assert!(run["result"]["results"].is_array(), "{run}");
+    let none = call(&mut s, json!({"id":10,"method":"Pyro.cancelRun","sessionId":session})).await;
+    assert_eq!(none["result"], json!({"cancelled": 0}), "{none}");
+    let _ = s.shutdown().await;
+}
+
+/// A cancel answers its own session's runs and `awaitPromise` evaluations,
+/// not another session's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_run_answers_only_its_session() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let a = page_session(&mut s).await;
+    let b = page_session(&mut s).await;
+    let wait = json!({"act":{"locator":{"css":"#never"},"action":"click","timeout":30_000}});
+    send(&mut s, json!({"id":3,"method":"Pyro.run","params":{"steps":[wait]},"sessionId":a})).await;
+    let pending = json!({"expression":"new Promise(() => {})","awaitPromise":true});
+    send(&mut s, json!({"id":4,"method":"Runtime.evaluate","params":pending,"sessionId":a})).await;
+    send(&mut s, json!({"id":5,"method":"Pyro.run","params":{"steps":[wait]},"sessionId":b})).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    send(&mut s, json!({"id":6,"method":"Pyro.cancelRun","sessionId":a})).await;
+    let seen = read_until(&mut s, |m| m["id"] == 6).await;
+    let ids: Vec<u64> = seen.iter().filter_map(|m| m["id"].as_u64()).collect();
+    assert_eq!(ids, [3, 4, 6], "{seen:#?}");
+    assert!(seen[0]["error"]["message"].as_str().is_some_and(|m| m.contains("cancelled: Click")), "{seen:#?}");
+    assert_eq!(seen[1]["error"]["message"], "cancelled: waiting for the promise to settle");
+    assert_eq!(seen[2]["result"], json!({"cancelled": 2}));
+    // b's run still waits until its own cancel.
+    send(&mut s, json!({"id":7,"method":"Pyro.cancelRun","sessionId":b})).await;
+    let seen = read_until(&mut s, |m| m["id"] == 7).await;
+    let ids: Vec<u64> = seen.iter().filter_map(|m| m["id"].as_u64()).collect();
+    assert_eq!(ids, [5, 7], "{seen:#?}");
+    let _ = s.shutdown().await;
+}
+
+/// A run whose script never returns (`while (true) {}`) is stopped by the
+/// cancel (JavaScriptCore's termination, at the next watchdog poll), says it
+/// was cancelled, and the page goes on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_run_stops_a_script_that_never_returns() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    let spin = json!({"eval":{"expression":"while (true) {}"}});
+    send(&mut s, json!({"id":3,"method":"Pyro.run","params":{"steps":[spin]},"sessionId":session})).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let sent = Instant::now();
+    send(&mut s, json!({"id":4,"method":"Pyro.cancelRun","sessionId":session})).await;
+    let seen = read_until(&mut s, |m| m["id"] == 4).await;
+    let took = sent.elapsed();
+    let ids: Vec<u64> = seen.iter().filter_map(|m| m["id"].as_u64()).collect();
+    assert_eq!(ids, [3, 4], "{seen:#?}");
+    assert_eq!(
+        seen[0]["error"]["message"],
+        "step 0 (eval): cancelled: the script it ran was still running and was stopped"
+    );
+    assert_eq!(seen[1]["result"], json!({"cancelled": 1}));
+    assert!(took < Duration::from_millis(500), "stopped in {took:?}");
+    // A click handler that never returns: the action is stopped and cancelled too.
+    let page = "document.body.innerHTML = '<button onclick=\"while (true) {}\">Spin</button>'; 0";
+    call(&mut s, json!({"id":5,"method":"Runtime.evaluate","params":{"expression":page},"sessionId":session})).await;
+    let click = json!({"act":{"locator":{"css":"button"},"action":"click"}});
+    send(&mut s, json!({"id":6,"method":"Pyro.run","params":{"steps":[click]},"sessionId":session})).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    send(&mut s, json!({"id":7,"method":"Pyro.cancelRun","sessionId":session})).await;
+    let seen = read_until(&mut s, |m| m["id"] == 7).await;
+    let ids: Vec<u64> = seen.iter().filter_map(|m| m["id"].as_u64()).collect();
+    assert_eq!(ids, [6, 7], "{seen:#?}");
+    let button = r#"{"css":"button"}"#;
+    assert_eq!(
+        seen[0]["error"]["message"],
+        format!(
+            "step 0 (Click {button}): cancelled: Click {button}: the script it ran was still running and was stopped"
+        )
+    );
+    assert_eq!(seen[1]["result"], json!({"cancelled": 1}));
+    let v = call(&mut s, json!({"id":8,"method":"Runtime.evaluate","params":{"expression":"1 + 1","returnByValue":true},"sessionId":session})).await;
+    assert_eq!(v["result"]["result"]["value"], 2, "{v}");
+    let eval = json!({"eval":{"expression":"document.querySelector('button').textContent","as":"t"}});
+    let run = call(&mut s, json!({"id":9,"method":"Pyro.run","params":{"steps":[eval]},"sessionId":session})).await;
+    assert_eq!(run["result"]["reads"]["t"], "Spin", "{run}");
+    let _ = s.shutdown().await;
+}
