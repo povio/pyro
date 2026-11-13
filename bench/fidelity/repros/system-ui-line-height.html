@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  `line-height: normal` in system-ui (San Francisco) at the ToS text sizes.
+  Chromium rounds the font's ascent, descent and line gap to whole CSS
+  pixels (Blink's FontMetrics), so every normal line is a whole number of
+  pixels tall; pyro's differ by up to a pixel, rounded at the device scale.
+  The ToS screens mostly set line heights (Tailwind), but form controls and
+  plain tables fall back to normal. Heights in window.__measure.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="520x120">
+<style>
+  body { margin: 8px; font-family: system-ui; color: #292c33; }
+  div { display: inline-block; vertical-align: top; margin-right: 4px; background: #e8f0fe; }
+</style>
+</head>
+<body>
+<div style="font-size: 10px">Hg 10</div><div style="font-size: 12px">Hg 12</div><div style="font-size: 13px">Hg 13</div><div style="font-size: 14px">Hg 14</div><div style="font-size: 16px">Hg 16</div><div style="font-size: 18px">Hg 18</div><div style="font-size: 20px">Hg 20</div>
+<script>
+  window.__measure = () => [...document.querySelectorAll('div')].map((d) => ({ case: d.style.fontSize, height: +d.getBoundingClientRect().height.toFixed(3) }));
+</script>
+</body>
+</html>

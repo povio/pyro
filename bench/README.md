@@ -274,6 +274,26 @@ TARGET=chrome bunx playwright test                              # Playwright's h
 Results go to `results/$TARGET.json` (or `$OUT/$TARGET.json`). `baseline/visual.png` is the `toHaveScreenshot`
 reference, taken with `TARGET=chrome-launch bunx playwright test --update-snapshots` on macOS.
 
+## Screenshot fidelity against Chromium (`fidelity/`)
+
+`fidelity/shippy.ts` captures the ToS ("Shippy") screens the ToS feature videos use in Chromium and in pyro on the
+same data, at the videos' size (2056x1200 CSS px at deviceScaleFactor 3), and compares them: SSIM on luma at full
+resolution and 3x downscaled (what a capture shows at 100%), mean absolute difference, diff and side-by-side images,
+and the share of each screen's difference by where it falls (placeholders, ellipsis, icons, text, the rest). It needs
+a ToS checkout built for the port; it starts and stops ToS's FE E2E stack itself. Captures hold seed data: they go
+to `~/Library/Caches/lightningpanda/fidelity/<timestamp>`, not to git.
+
+```bash
+# once, in the ToS checkout: bun install --frozen-lockfile && FE_E2E_PORT=47300 bun scripts/fe-e2e/build.mts
+bun bench/fidelity/shippy.ts --tos <ToS checkout> --port 47300 [--bin target/release/pyro] [--screens positions,dialog]
+bun bench/fidelity/shippy.ts --compare <run dir>             # metrics and images again from a run's captures
+(cd bench && bun install) && bun bench/fidelity/repro.ts [--suffix -fixed] [name ...]
+```
+
+`fidelity/repros/` holds one synthetic page per gap found, captured in both browsers at deviceScaleFactor 2 by
+`repro.ts` (`shots/<name>.chromium.png`, `.pyro.png` before a fix, `.pyro-fixed.png` after it), which also prints
+the layout numbers a page publishes as `window.__measure()`.
+
 ## Page-break fixtures against Chrome (`pdf/fixtures/`)
 
 Reproducible sets for how paper-cut `Page.printToPDF` documents break, with Chrome 156's results. `generators/` holds
