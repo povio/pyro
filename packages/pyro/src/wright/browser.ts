@@ -49,9 +49,8 @@ type SavedState = { cookies: Cookie[]; origins: { origin: string; localStorage: 
 
 /**
  * `browser.newContext()` options: Playwright's, with Playwright's meaning
- * (see the README, "Context options"). `acceptDownloads`, `bypassCSP`,
- * `serviceWorkers`, `forcedColors`, `strictSelectors` and `recordVideo` are
- * accepted and have no effect.
+ * (see the README, "Context options"). `forcedColors`, `strictSelectors` and
+ * `recordVideo` are accepted and have no effect.
  */
 export type BrowserContextOptions = {
   baseURL?: string;
@@ -190,7 +189,7 @@ export class Browser {
       for (const context of contexts()) {
         const page = context.pages().find((page) => page._mainFrameIdValue === p.frameId) ?? (p.frameId ? undefined : context.pages()[0]);
         if (!page) continue;
-        const download = new Download(page, p.url, p.suggestedFilename);
+        const download = new Download(page, p.url, p.suggestedFilename, context._options.acceptDownloads === false);
         downloads.set(p.guid, download);
         page._emit('download', download);
         return;
@@ -397,10 +396,18 @@ export class BrowserContext {
   private contextId(): Promise<string> {
     return (this._idPromise ??= this.createContext());
   }
-  /** The browser context, with what belongs to it rather than to its pages: the proxy and the permissions. */
+  /**
+   * The browser context, with what belongs to it rather than to its pages:
+   * the proxy, the service worker block, the download behavior and the
+   * permissions.
+   */
   private async createContext(): Promise<string> {
-    const { browserContextId } = await this.cdp.send<{ browserContextId: string }>('Target.createBrowserContext', proxyParams(this._options.proxy));
+    const o = this._options;
+    const params = { ...proxyParams(o.proxy), ...(o.serviceWorkers === 'block' ? { serviceWorkers: 'block' } : {}) };
+    const { browserContextId } = await this.cdp.send<{ browserContextId: string }>('Target.createBrowserContext', params);
     this._id = browserContextId;
+    // As Playwright's Chromium contexts: denied downloads are still announced (the `download` event).
+    if (o.acceptDownloads === false) await this.cdp.send('Browser.setDownloadBehavior', { behavior: 'deny', browserContextId, eventsEnabled: true });
     for (const [origin, list] of this._permissions) await this.sendGrant(browserContextId, origin, list);
     return browserContextId;
   }
@@ -460,6 +467,7 @@ export class BrowserContext {
     if (fresh && viewport) setup.push(send('Emulation.setDeviceMetricsOverride', deviceMetrics(o, viewport)));
     if (o.hasTouch) setup.push(send('Emulation.setTouchEmulationEnabled', { enabled: true }));
     if (o.javaScriptEnabled === false) setup.push(send('Emulation.setScriptExecutionDisabled', { value: true }));
+    if (o.bypassCSP) setup.push(send('Page.setBypassCSP', { enabled: true }));
     if (o.userAgent) setup.push(send('Emulation.setUserAgentOverride', { userAgent: o.userAgent }));
     if (o.locale) setup.push(send('Emulation.setLocaleOverride', { locale: o.locale }));
     if (o.timezoneId) setup.push(send('Emulation.setTimezoneOverride', { timezoneId: o.timezoneId }));
@@ -724,11 +732,12 @@ export class BrowserContext {
   }
 }
 
-/** Options a booted-ahead page would not have loaded with. */
+/** Options a booted-ahead page would not have loaded with (or whose browser context it lacks). */
 function emulates(o: ContextOptions): boolean {
   return !!(
     o.proxy || o.locale || o.timezoneId || o.geolocation || o.httpCredentials || o.isMobile || o.hasTouch || o.offline ||
-    o.ignoreHTTPSErrors || o.screen || o.javaScriptEnabled === false || (o.deviceScaleFactor && o.deviceScaleFactor !== 1)
+    o.ignoreHTTPSErrors || o.screen || o.javaScriptEnabled === false || (o.deviceScaleFactor && o.deviceScaleFactor !== 1) ||
+    o.bypassCSP || o.serviceWorkers === 'block' || o.acceptDownloads === false
   );
 }
 

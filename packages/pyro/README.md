@@ -333,8 +333,8 @@ seeded anything, so use it for routes that fetch their data when they
 mount. Contexts with cookies, `extraHTTPHeaders`, `userAgent`, media
 emulation or any option of the next section that changes how a page loads
 (proxy, locale, time zone, geolocation, permissions, credentials, device,
-offline, JavaScript off, HTTPS errors), and any other first call, get a fresh
-page.
+offline, JavaScript off, HTTPS errors, CSP bypass, blocked service workers,
+refused downloads), and any other first call, get a fresh page.
 
 **Context options.** `browser.newContext()` and `use: {}` take Playwright's
 options with Playwright's meaning:
@@ -372,6 +372,23 @@ options with Playwright's meaning:
   shows; `page.evaluate` still runs), `ignoreHTTPSErrors`, `colorScheme`,
   `reducedMotion`, `userAgent`, `extraHTTPHeaders`, `storageState`, `baseURL`
   and `recordHar`
+- `bypassCSP`: the pages' Content-Security-Policy is ignored, as in Chromium.
+  pyro enforces no CSP directive to begin with: a policy from a header or a
+  `<meta http-equiv>` blocks no script, `eval`, inline handler,
+  `addScriptTag`, style, image or connection. The one effect a policy has is
+  the nonce hiding of a header-delivered one (the `nonce` attribute of an
+  element that script inserts reads back empty; `element.nonce` keeps the
+  value), and `bypassCSP: true` lifts that too
+- `serviceWorkers: 'block'`: `navigator.serviceWorker.register()` registers
+  nothing in the context and resolves with `undefined` after the console
+  warning "Service Worker registration blocked by Playwright", as Playwright's
+  script makes it in Chromium (unlike that script, the block also covers
+  `ServiceWorkerContainer.prototype.register`); with no worker, the pages'
+  requests go to the network. `'allow'`, the default, keeps registration
+- `acceptDownloads: false`: downloads are not saved, and `page.on('download')`
+  still fires; `download.failure()` returns Playwright's "Pass {
+  acceptDownloads: true } when you are creating your browser context.", which
+  `path()`, `saveAs()` and `createReadStream()` throw
 
 Also covered:
 
@@ -471,9 +488,8 @@ JavaScriptCore).
 
 Not supported, accepted so configs and `devices` descriptors keep working:
 
-- context options with no effect: `bypassCSP`, `serviceWorkers`,
-  `forcedColors`, `strictSelectors`, `recordVideo`, and `acceptDownloads`
-  (downloads are always accepted)
+- context options with no effect: `forcedColors`, `strictSelectors` and
+  `recordVideo`
 - `isMobile` does not apply `<meta name="viewport">`: pages lay out at the
   viewport's width, as with `width=device-width`
 - `toHaveScreenshot` renders at the context's `deviceScaleFactor` (Playwright's

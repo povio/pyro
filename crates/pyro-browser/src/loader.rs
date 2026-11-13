@@ -1119,7 +1119,8 @@ impl Browser {
         page_dom.set_document_referrer(opts.referrer.as_deref(), policy.unwrap_or_default(), resource.referrer_policy);
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
-        if resource.header_csp {
+        // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
+        if resource.header_csp && !self.page(page.page).is_some_and(|p| p.bypass_csp) {
             let _ = dom.borrow_mut().set_header_csp(doc, true);
         }
         if let Some(refresh) = resource.refresh.as_deref() {

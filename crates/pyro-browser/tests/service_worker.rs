@@ -668,6 +668,39 @@ fn navigate(thread: &mut BrowserThread, server: &Server, page: PageId, path: &st
     until(thread, page, &format!("location.pathname === '{path}' && document.readyState === 'complete'"));
 }
 
+/// Playwright's `serviceWorkers: 'block'`: Chromium with Playwright's init
+/// script resolves `register()` with undefined after a console warning and
+/// registers nothing; here the context's switch covers the prototype's method
+/// too, and with no worker the page's requests reach the network.
+#[test]
+fn a_context_that_blocks_service_workers_registers_none() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    let context = thread.browser.page(page).unwrap().context;
+    let services = thread.browser.context_services(context).unwrap();
+    services.set_service_workers_blocked(true);
+    eval(
+        &thread,
+        page,
+        "globalThis.warned = []; console.warn = (m) => warned.push(m);
+         const container = navigator.serviceWorker;
+         Promise.all([container.register('/sw.js'), ServiceWorkerContainer.prototype.register.call(container, '/sw.js'), container.register()])
+           .then(async (r) => globalThis.blocked = [...r.map(String), (await container.getRegistrations()).length,
+             String(container.controller), await fetch('/api/blocked').then((r) => r.status), ...warned].join('|')); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.blocked !== undefined");
+    let warning = "Service Worker registration blocked by Playwright";
+    assert_eq!(
+        eval(&thread, page, "blocked"),
+        format!("undefined|undefined|undefined|0|null|404|{warning}|{warning}|{warning}")
+    );
+    assert_eq!(server.hits("/sw.js"), 0);
+    // Lifted, registration works again.
+    services.set_service_workers_blocked(false);
+    register(&mut thread, page);
+    assert_eq!(server.hits("/sw.js"), 1);
+}
+
 #[test]
 fn sandboxed_frame_is_not_a_service_worker_client() {
     let (server, mut thread) = setup();

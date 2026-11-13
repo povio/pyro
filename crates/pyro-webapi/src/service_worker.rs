@@ -26,7 +26,9 @@
 //! makes the in-scope clients controlled (`controllerchange`). `update()`
 //! fetches the script again and starts a new version only if it changed.
 //! `unregister()` removes the registration at once; its versions go when no
-//! client is controlled by them any more.
+//! client is controlled by them any more. In a context that blocks service
+//! workers (Playwright's `serviceWorkers: 'block'`), `register()` registers
+//! nothing and resolves with undefined.
 //!
 //! Requests: [`route`] is what `fetch()` and asynchronous XHR call instead of
 //! the network, and [`subresource_route`] what the loader asks for a
@@ -164,6 +166,9 @@ pub struct Registry {
     /// client the navigation creates, its `resultingClientId`). Taken when
     /// the frame's next document is created.
     reserved: RefCell<Vec<(String, String)>>,
+    /// Registration is blocked in this context
+    /// ([`ContextServices::set_service_workers_blocked`]).
+    blocked: Cell<bool>,
 }
 
 impl Registry {
@@ -244,6 +249,17 @@ impl crate::navigator_extras::ContextServices {
     /// stayed for five seconds in an idle server.
     pub fn close(&self) {
         self.service_workers.close(true);
+    }
+
+    /// Playwright's `serviceWorkers: 'block'` for this context
+    /// (`Target.createBrowserContext` `serviceWorkers`): while set,
+    /// `navigator.serviceWorker.register()` (the prototype's method too)
+    /// registers nothing and resolves with undefined after the console
+    /// warning Playwright's init script gives in Chrome. With no registration
+    /// there is no worker, so nothing intercepts the context's requests.
+    /// Registrations made before stay.
+    pub fn set_service_workers_blocked(&self, blocked: bool) {
+        self.service_workers.blocked.set(blocked);
     }
 }
 
@@ -1449,6 +1465,11 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     native.set_atom("register", f.value())?;
+    let f = s.function("blocked", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.boolean(page.context_services().service_workers.blocked.get()))
+    })?;
+    native.set_atom("blocked", f.value())?;
     let f = s.function("getRegistration", |s, _, a| {
         let page = crate::target::page_of(s)?;
         let id = a.get(0).to_number()? as u64;
