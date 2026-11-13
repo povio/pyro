@@ -112,6 +112,29 @@ test.concurrent('closes a position', async () => {
   `expect.extend(screenshotMatchers)` adds `await expect(page).toMatchScreenshot(name)`.
   Baselines come from pyro's renderer: Chromium screenshots do not
   match them pixel for pixel.
+- **Raw frames**: `await page.captureFrame({ format: 'rgba' | 'rgb24' |
+  'yuv420p', path, clip })` renders what the page shows now (the viewport at
+  its device scale factor, or `clip`) into raw pixels for ffmpeg's `-f
+  rawvideo`, with no image encoding: `{ width, height, bytes, data, ms }`,
+  where `ms.cpu` is the browser process's CPU time for the frame. With
+  `path` (absolute) the browser appends the frame there itself (`data` is
+  empty): a file, or a FIFO ffmpeg reads. `new FrameFifo(path)` makes the
+  FIFO and, once ffmpeg reads it, `open()` holds it open between frames;
+  `close()` ends the stream:
+
+  ```ts
+  const fifo = new FrameFifo('/tmp/frames.fifo');
+  const ffmpeg = spawn('ffmpeg', ['-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-s', '3840x2160', '-r', '30', '-i', fifo.path, 'out.mp4']);
+  await fifo.open();
+  for (let f = 0; f < 300; f++) {
+    await page.run([evaluate(`frame(${f / 30})`)]);
+    await page.captureFrame({ format: 'yuv420p', path: fifo.path });
+  }
+  await fifo.close();
+  ```
+
+  Against `pyro serve --fork` each page is a process of its own, so pages
+  render frames in parallel.
 
 ## One process for the whole suite: `pyro e2e`
 
@@ -409,19 +432,35 @@ and navigates once it has them all; frames have their page's.
   `page.video()` gives `path()`, `saveAs()` and `delete()`. Pyro sends a
   frame (CDP `Page.startScreencast`) whenever what the page shows changes, at
   most 25 a second, rendered as screenshots are (so CSS animations show at
-  their end); a page that does not change costs nothing. The frames wait in a
-  temporary directory and are encoded when the page closes, and the page's
-  state at that moment gets a frame of its own: `page.close()` and
-  `context.close()` return once the file is written (a few tenths of a
-  second per 10 s of video). The encoder is ffmpeg: `$PYRO_FFMPEG`, else
-  `ffmpeg` on PATH, else Playwright's (`bunx playwright install ffmpeg`);
-  without one, `newContext({ recordVideo })` fails and says how to get one.
-  The runner's `video` option (`'on'`, `'retain-on-failure'`,
-  `'on-first-retry'`, or `{ mode, size }`) records the `context` fixture's
-  pages into the test's output directory (`video.webm`, `video-1.webm`, ...),
-  attached to the test and listed under a failure by `pyro run`; under
-  `retain-on-failure` the pages a passing test leaves open are not encoded
-  at all
+  their end); a page that does not change costs nothing. The page's state
+  when it closes gets a frame of its own, and `page.close()` and
+  `context.close()` return once the file is written. The encoder is ffmpeg:
+  `$PYRO_FFMPEG`, else `ffmpeg` on PATH, else Playwright's (`bunx playwright
+  install ffmpeg`); without one, `newContext({ recordVideo })` fails and says
+  how to get one. With an ffmpeg that reads raw video (Homebrew's, Linux
+  distributions'; not Playwright's), Pyro writes the frames raw to a Unix
+  socket and ffmpeg encodes them while the page runs: nothing is
+  JPEG-encoded or decoded, and the file is ready within a second or two of
+  the page closing. A 3840x2160 recording (`deviceScaleFactor: 2`, `size:
+  { width: 3840, height: 2160 }`) of a page that changes every 10 ms gets
+  about 25 distinct frames a second on an M1 Max that is not busy otherwise;
+  on a heavily loaded one ffmpeg's encoding paces the frames (7-10 a second
+  at a load average of 80), and the video's timing stays right. With
+  Playwright's ffmpeg, Pyro sends JPEG frames, which wait in a temporary
+  directory and are encoded when the page closes (4 s per 5 s of 4K video
+  on that loaded machine). The bitrate cap is Playwright's 1M
+  scaled with the frame's pixels (23M at 3840x2160, at most 32M). The
+  runner's `video` option (`'on'`, `'retain-on-failure'`, `'on-first-retry'`,
+  or `{ mode, size }`) records the `context` fixture's pages into the test's
+  output directory (`video.webm`, `video-1.webm`, ...), attached to the test
+  and listed under a failure by `pyro run`; under `retain-on-failure` frames
+  wait as JPEGs and the pages a passing test leaves open are not encoded at
+  all
+- `page.screenshot({ raw: { format, path } })`, pyro's own: raw pixels,
+  nothing encoded (`'rgba'`, `'rgb24'` or `'yuv420p'`, by ffmpeg's
+  `-pix_fmt` names), to step a page frame by frame into ffmpeg. With
+  `raw.path` (absolute) the browser appends each frame to that file, or to a
+  FIFO ffmpeg reads (see `FrameFifo` below), and the returned buffer is empty
 
 Also covered:
 
