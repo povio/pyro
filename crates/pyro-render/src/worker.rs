@@ -3,14 +3,15 @@
 //! browser thread only builds a snapshot and goes on with its event loop.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::{
-    compare, decode_png, diff_image, encode_jpeg, encode_png, Area, Backend, Fetcher, Renderer, RgbaImage, Snapshot,
-    Timings,
+    compare, decode_png, diff_image, encode_jpeg, encode_png, encode_rgb24, encode_yuv420p, Area, Backend, Fetcher,
+    Renderer, RgbaImage, Snapshot, Timings,
 };
 
 /// A baseline, cached per name on the connection. The PNG is decoded on the
@@ -89,10 +90,45 @@ impl MatchOptions {
 pub enum ImageFormat {
     Png,
     Jpeg(u8),
+    /// Raw pixels at the render's size, nothing encoded (pyro's own formats).
+    Raw(RawFormat),
+    /// A raw video frame of exactly this size ([`crate::encode_yuv420p`]):
+    /// the render at the top left, gray around it (screencasts).
+    Yuv420p {
+        width: u32,
+        height: u32,
+    },
+}
+
+/// [`ImageFormat::Raw`] pixel layouts, by ffmpeg's `-pix_fmt` names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RawFormat {
+    /// The render's straight RGBA as it is: no conversion at all.
+    Rgba,
+    /// RGB, 3 bytes a pixel.
+    Rgb24,
+    /// I420, BT.601 limited range ([`crate::encode_yuv420p`]).
+    Yuv420p,
+}
+
+impl ImageFormat {
+    fn encode(self, image: RgbaImage) -> Result<Vec<u8>, String> {
+        match self {
+            ImageFormat::Png => Ok(encode_png(&image)),
+            ImageFormat::Jpeg(q) => encode_jpeg(&image, q),
+            ImageFormat::Raw(RawFormat::Rgba) => Ok(image.data),
+            ImageFormat::Raw(RawFormat::Rgb24) => Ok(encode_rgb24(&image)),
+            ImageFormat::Raw(RawFormat::Yuv420p) => Ok(encode_yuv420p(&image, image.width, image.height)),
+            ImageFormat::Yuv420p { width, height } => Ok(encode_yuv420p(&image, width, height)),
+        }
+    }
 }
 
 pub struct Captured {
+    /// Empty when written to the capture's file.
     pub bytes: Vec<u8>,
+    /// How many bytes the image is (returned or written).
+    pub size: usize,
     pub width: u32,
     pub height: u32,
     pub scene_hash: u64,
@@ -124,6 +160,8 @@ pub enum Job {
         format: ImageFormat,
         backend: Backend,
         fetcher: Arc<dyn Fetcher>,
+        /// Appends the image to this file (or FIFO) instead of returning it.
+        out: Option<PathBuf>,
         done: Box<dyn FnOnce(Result<Captured, String>) + Send>,
     },
     Match {
@@ -230,8 +268,8 @@ impl RenderWorker {
 
 fn run(r: &mut Renderer, job: Job) {
     match job {
-        Job::Capture { snapshot, area, format, backend, fetcher, done } => {
-            let out = guarded(r, &snapshot, |r| capture(r, &snapshot, area, format, backend, &fetcher));
+        Job::Capture { snapshot, area, format, backend, fetcher, out, done } => {
+            let out = guarded(r, &snapshot, |r| capture(r, &snapshot, area, format, backend, &fetcher, out.as_deref()));
             done(out);
         }
         Job::Match { snapshot, area, baseline, opts, fetcher, done } => {
@@ -276,6 +314,8 @@ fn guarded<T>(
     })
 }
 
+/// A render, encoded as `format`; appended to the file `out` instead of
+/// returned when given. [`Timings::cpu`]: the process's CPU time meanwhile.
 pub fn capture(
     r: &mut Renderer,
     snap: &Snapshot,
@@ -283,15 +323,71 @@ pub fn capture(
     format: ImageFormat,
     backend: Backend,
     fetcher: &Arc<dyn Fetcher>,
+    out: Option<&Path>,
 ) -> Result<Captured, String> {
+    let cpu = process_cpu();
     let (image, scene_hash, mut timings) = r.render(snap, area, backend, fetcher).map_err(|e| e.to_string())?;
+    let (width, height) = (image.width, image.height);
     let t = Instant::now();
-    let bytes = match format {
-        ImageFormat::Png => encode_png(&image),
-        ImageFormat::Jpeg(q) => encode_jpeg(&image, q)?,
-    };
+    let mut bytes = format.encode(image)?;
     timings.encode = t.elapsed();
-    Ok(Captured { bytes, width: image.width, height: image.height, scene_hash, timings })
+    let size = bytes.len();
+    if let Some(path) = out {
+        let t = Instant::now();
+        append(path, &bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        timings.write = t.elapsed();
+        bytes = Vec::new();
+    }
+    timings.cpu = process_cpu().saturating_sub(cpu);
+    Ok(Captured { bytes, size, width, height, scene_hash, timings })
+}
+
+/// User and system CPU time of this process so far.
+pub fn process_cpu() -> Duration {
+    // SAFETY: getrusage fills the struct it is given.
+    let usage = unsafe {
+        let mut usage: libc::rusage = std::mem::zeroed();
+        libc::getrusage(libc::RUSAGE_SELF, &mut usage);
+        usage
+    };
+    let time = |t: libc::timeval| Duration::new(t.tv_sec as u64, t.tv_usec as u32 * 1000);
+    time(usage.ru_utime) + time(usage.ru_stime)
+}
+
+/// Longest a write to a capture's file may make no progress (a FIFO whose
+/// reader stopped reading) before the capture fails.
+const WRITE_STALL: Duration = Duration::from_secs(30);
+
+/// Appends `bytes` to `path`, created if missing. A FIFO must have a reader
+/// (else this fails at once, rather than wait for one); while it does not
+/// read, the write waits up to [`WRITE_STALL`].
+fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new().append(true).create(true).custom_flags(libc::O_NONBLOCK).open(path)?;
+    let fd = file.as_raw_fd();
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        match file.write(rest) {
+            Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(n) => rest = &rest[n..],
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                let mut poll = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+                // SAFETY: one valid pollfd.
+                let ready = unsafe { libc::poll(&mut poll, 1, WRITE_STALL.as_millis() as libc::c_int) };
+                if ready == 0 {
+                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the reader took nothing for 30 s"));
+                }
+                if ready < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 /// [`capture`] on the CPU, or `None` without raster or encoding when the
@@ -310,13 +406,11 @@ pub fn frame(
         return Ok(None);
     }
     let (image, mut timings) = r.raster(painted, Backend::Cpu);
+    let (width, height) = (image.width, image.height);
     let t = Instant::now();
-    let bytes = match format {
-        ImageFormat::Png => encode_png(&image),
-        ImageFormat::Jpeg(q) => encode_jpeg(&image, q)?,
-    };
+    let bytes = format.encode(image)?;
     timings.encode = t.elapsed();
-    Ok(Some(Captured { bytes, width: image.width, height: image.height, scene_hash, timings }))
+    Ok(Some(Captured { size: bytes.len(), bytes, width, height, scene_hash, timings }))
 }
 
 pub fn match_baseline(

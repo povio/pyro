@@ -2,10 +2,11 @@
 // `render` feature (PYRO_BIN, else target/{release,debug} of this
 // checkout), a page served by Bun, baselines in a temporary directory.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Pyro, ScreenshotMismatchError, css, evaluate, goto, label, matchScreenshot, screenshotMatchers } from '../src/index';
+import { FrameFifo, Pyro, ScreenshotMismatchError, css, evaluate, goto, label, matchScreenshot, screenshotMatchers } from '../src/index';
 
 const root = join(import.meta.dir, '../../..');
 const bin =
@@ -95,4 +96,53 @@ test.skipIf(!bin)('form state and elements; update mode rewrites the baseline', 
   const error = await typed.catch((e) => e);
   expect(error).toBeInstanceOf(ScreenshotMismatchError);
   expect(error.result.diffPixels).toBeGreaterThan(0);
+});
+
+/** An ffmpeg on PATH that reads raw video (Homebrew's, distributions'). */
+const ffmpeg = spawnSync('ffmpeg', ['-hide_banner', '-demuxers'], { encoding: 'utf8' }).stdout?.match(/^ *D\S* +rawvideo /m) ? 'ffmpeg' : undefined;
+
+test.skipIf(!bin)('captureFrame: raw pixels, appended to a file, the browser’s timings and CPU time', async () => {
+  await using page = await lp.page({ url: `http://127.0.0.1:${server.port}/` });
+  await page.send('Emulation.setDeviceMetricsOverride', { width: 400, height: 300, deviceScaleFactor: 2, mobile: false });
+  const rgba = await page.captureFrame();
+  expect([rgba.width, rgba.height, rgba.bytes, rgba.data.length]).toEqual([800, 600, 800 * 600 * 4, 800 * 600 * 4]);
+  // The card's purple at (100, 100) CSS px.
+  const i = (200 * 800 + 200) * 4;
+  expect([...rgba.data.subarray(i, i + 4)]).toEqual([0x6d, 0x28, 0xd9, 255]);
+  expect(rgba.ms.cpu).toBeGreaterThan(0);
+  expect(rgba.ms.total).toBeGreaterThanOrEqual(rgba.ms.raster);
+  const yuv = await page.captureFrame({ format: 'yuv420p' });
+  expect(yuv.bytes).toBe(800 * 600 * 3 / 2);
+  const file = join(dir, 'frames.rgb');
+  for (let n = 0; n < 2; n++) {
+    const f = await page.captureFrame({ format: 'rgb24', path: file, clip: { x: 0, y: 0, width: 100, height: 50 } });
+    expect([f.width, f.height, f.bytes, f.data.length]).toEqual([200, 100, 200 * 100 * 3, 0]);
+  }
+  expect(statSync(file).size).toBe(2 * 200 * 100 * 3);
+  await expect(page.captureFrame({ path: 'relative.rgba' })).rejects.toThrow('not absolute');
+});
+
+test.skipIf(!bin || !ffmpeg)('captureFrame into ffmpeg through a FrameFifo: one stream, each frame as captured', async () => {
+  await using page = await lp.page({ url: `http://127.0.0.1:${server.port}/` });
+  await page.send('Emulation.setDeviceMetricsOverride', { width: 160, height: 120, deviceScaleFactor: 2, mobile: false });
+  const fifo = new FrameFifo(join(dir, 'frames.fifo'));
+  const out = join(dir, 'frames.yuv');
+  // ffmpeg copies the stream to a file: what it read, frame by frame.
+  const ff = spawn('ffmpeg', ['-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '320x240', '-r', '30', '-i', fifo.path, '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-y', out]);
+  const exited = new Promise<number>((resolve) => ff.on('close', (code) => resolve(code ?? 1)));
+  await fifo.open();
+  const colors = ['#ff0000', '#00ff00', '#0000ff'];
+  for (const color of colors) {
+    await page.run([evaluate(`document.body.innerHTML = ''; document.body.style.background = '${color}'`)]);
+    // The browser closes the FIFO after each frame; the stream goes on.
+    await page.captureFrame({ format: 'rgb24', path: fifo.path });
+  }
+  await fifo.close();
+  expect(await exited).toBe(0);
+  const frame = 320 * 240 * 3 / 2;
+  const yuv = readFileSync(out);
+  expect(yuv.length).toBe(3 * frame);
+  // BT.601 luma of red, green and blue (82, 145, 41), give or take ffmpeg's rounding.
+  const luma = [0, 1, 2].map((k) => yuv[k * frame + 1000]);
+  [82, 145, 41].forEach((expected, k) => expect(Math.abs(luma[k] - expected), `${luma}`).toBeLessThanOrEqual(2));
 });

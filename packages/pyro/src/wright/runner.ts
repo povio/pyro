@@ -302,6 +302,8 @@ const builtins: Record<string, unknown> = {
     // `contextOptions.recordVideo` wins, as in Playwright.
     const own = (browser as Browser)._defaults.recordVideo;
     const context = await (browser as Browser).newContext(recording ? { recordVideo: { ...(size ? { size } : {}), ...own } } : {});
+    // Videos this mode may throw away wait as JPEG frames, encoded only when kept.
+    if (context._recorder && mode === 'retain-on-failure' && !own) context._recorder.live = false;
     await use(context);
     const failed = info.status !== info.expectedStatus || (info.status === 'passed' && info._softErrors.length > 0);
     const keep = recording && (mode !== 'retain-on-failure' || failed);

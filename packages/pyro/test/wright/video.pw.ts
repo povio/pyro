@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { findFfmpeg, playwrightFfmpeg } from '../../src/wright/video';
+import { findFfmpeg, playwrightFfmpeg, readsRawVideo } from '../../src/wright/video';
 import { expect, isStock, test } from './fixtures';
 
 // Stock Playwright encodes with its own ffmpeg; pyro with the first it finds.
@@ -35,6 +35,14 @@ function probe(file: string): { codec: string; width: number; height: number; du
     duration: d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : 0,
   };
 }
+
+/** Each frame's mean RGB (of its first `seconds`, else all), with an ffmpeg that writes raw video. */
+function averageColors(file: string, seconds?: number): number[][] {
+  const args = ['-v', 'error', '-i', file, ...(seconds ? ['-t', String(seconds)] : []), '-vf', 'scale=1:1:flags=area', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'];
+  const out = execFileSync(ffmpeg!, args, { maxBuffer: 1 << 26 });
+  return Array.from({ length: out.length / 3 }, (_, i) => [out[i * 3], out[i * 3 + 1], out[i * 3 + 2]]);
+}
+const dominant = (c: number[]) => (c[0] > 128 && c[1] < 100 && c[2] < 100 ? 'r' : c[1] > 128 && c[0] < 100 && c[2] < 100 ? 'g' : c[2] > 128 && c[0] < 100 && c[1] < 100 ? 'b' : '?');
 
 /** A counter that changes ten times over a second, on a background that changes with it. */
 const COUNTER = `data:text/html,${encodeURIComponent(`<!doctype html><body style="margin:0;font:40px sans-serif">
@@ -104,6 +112,59 @@ test.describe('recordVideo', () => {
     expect(paths[0]).not.toBe(paths[1]);
     await context.close();
     for (const p of paths) expect(isWebm(p)).toBe(true);
+  });
+
+  test('raw frames encoded as they come: the video shows each state at its time', async ({ browser }) => {
+    test.skip(isStock || !(await readsRawVideo(ffmpeg!)), 'pyro with an ffmpeg that reads raw video (not Playwright’s)');
+    const context = await browser.newContext({ viewport: { width: 320, height: 240 }, recordVideo: { dir } });
+    const page = await context.newPage();
+    // Red, then green at 600 ms, then blue at 1200 ms.
+    await page.setContent(`<body style="margin:0;background:#f00"><script>
+      setTimeout(() => document.body.style.background = '#0f0', 600);
+      setTimeout(() => document.body.style.background = '#00f', 1200);</script>`);
+    await page.waitForTimeout(1600);
+    const path = await page.video()!.path();
+    await context.close();
+    const info = probe(path);
+    expect(info).toMatchObject({ codec: 'vp8', width: 320, height: 240 });
+    // 1.6 s, the last frame held a second: as Playwright's recorder.
+    expect(info.duration).toBeGreaterThan(2.2);
+    expect(info.duration).toBeLessThan(3.6);
+    const colors = averageColors(path);
+    expect(colors.length).toBe(Math.round(info.duration * 25));
+    const at = (s: number) => dominant(colors[Math.floor(s * 25)]);
+    expect([at(0.2), at(0.9), at(1.5), at(info.duration - 0.1)]).toEqual(['r', 'g', 'b', 'b']);
+    // After the blank page the context opened with, red, green and blue each start once: nothing out of order.
+    const runs = colors.map(dominant).filter((c, i, all) => c !== all[i - 1]);
+    expect(runs[0] === '?' ? runs.slice(1) : runs).toEqual(['r', 'g', 'b']);
+  });
+
+  test('4K: deviceScaleFactor 2 records 3840x2160, a page changing every 100 ms in many frames', async ({ browser }) => {
+    test.skip(isStock, 'pyro’s frame rate');
+    test.setTimeout(120_000);
+    const context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+      deviceScaleFactor: 2,
+      recordVideo: { dir, size: { width: 3840, height: 2160 } },
+    });
+    const page = await context.newPage();
+    await page.setContent(`<body style="margin:0;font:240px system-ui;height:100vh;overflow:hidden"><div id=n>0</div>
+      <div id=b style="position:absolute;top:500px;width:500px;height:500px;background:linear-gradient(#f00,#00f)"></div><script>
+      let i = 0; setInterval(() => { n.textContent = ++i; b.style.left = (i * 97 % 1400) + 'px';
+        document.body.style.background = 'hsl(' + (i * 47 % 360) + ',70%,80%)'; }, 100)</script>`);
+    await page.waitForTimeout(3000);
+    const path = await page.video()!.path();
+    await context.close();
+    const info = probe(path);
+    expect([info.width, info.height]).toEqual([3840, 2160]);
+    // Distinct frames over the 3 s the page changed (it changes 10 times a second). Measured on an
+    // M1 Max: 9 a second (raw frames, 25 when the page changes every 10 ms); under a load average
+    // of 100-160 on 10 cores, 6 a second; the JPEG frames before: 1 a second in the field.
+    if (await readsRawVideo(ffmpeg!)) {
+      const colors = averageColors(path, 3);
+      const distinct = colors.filter((c, i) => i === 0 || c.some((v, k) => Math.abs(v - colors[i - 1][k]) > 1)).length;
+      expect(distinct / 3, `${distinct} distinct frames in 3 s`).toBeGreaterThan(3);
+    }
   });
 
   test('without recordVideo there is no video', async ({ page }) => {

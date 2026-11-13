@@ -70,6 +70,10 @@ jobs:
           path: .
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update
+      # libjpeg-turbo's x86-64 SIMD is assembled with NASM (without it the JPEG encoder builds as plain C).
+      - name: Install NASM
+        if: matrix.arch == 'x64'
+        run: brew install nasm
       - name: Build browser with rendering, and the comparison worker
         env:
           RUST_TARGET: ${{ matrix.target }}

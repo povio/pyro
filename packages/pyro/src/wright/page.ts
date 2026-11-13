@@ -2182,12 +2182,20 @@ export class Page extends Scope {
   async emulateMedia(o: { colorScheme?: 'light' | 'dark' | 'no-preference' | null; reducedMotion?: 'reduce' | 'no-preference' | null; media?: 'screen' | 'print' | null } = {}): Promise<void> {
     await this._run('page.emulateMedia', [{ media: clean({ colorScheme: o.colorScheme ?? undefined, reducedMotion: o.reducedMotion ?? undefined, media: o.media ?? undefined }) }]);
   }
-  async screenshot(o: Timeout & { path?: string; fullPage?: boolean; clip?: { x: number; y: number; width: number; height: number }; type?: 'png' | 'jpeg'; quality?: number } = {}): Promise<Buffer> {
+  /**
+   * As Playwright's. pyro's own `raw`: raw pixels, nothing encoded (`rgba`,
+   * `rgb24` or `yuv420p`, by ffmpeg's `-pix_fmt` names), for frames piped into
+   * ffmpeg; with `raw.path` (absolute) the browser appends them to that file
+   * or FIFO itself and the returned buffer is empty (see `FrameFifo` in
+   * `@povio/pyro`).
+   */
+  async screenshot(o: Timeout & { path?: string; fullPage?: boolean; clip?: { x: number; y: number; width: number; height: number }; type?: 'png' | 'jpeg'; quality?: number; raw?: { format: 'rgba' | 'rgb24' | 'yuv420p'; path?: string } } = {}): Promise<Buffer> {
     const r = await this._send('Page.captureScreenshot', {
-      format: o.type ?? (o.path?.endsWith('.jpg') || o.path?.endsWith('.jpeg') ? 'jpeg' : 'png'),
-      ...(o.quality !== undefined ? { quality: o.quality } : {}),
+      format: o.raw?.format ?? o.type ?? (o.path?.endsWith('.jpg') || o.path?.endsWith('.jpeg') ? 'jpeg' : 'png'),
+      ...(o.quality !== undefined && !o.raw ? { quality: o.quality } : {}),
       ...(o.clip ? { clip: { ...o.clip, scale: 1 } } : {}),
       ...(o.fullPage ? { captureBeyondViewport: true } : {}),
+      ...(o.raw?.path ? { path: o.raw.path } : {}),
     });
     const buffer = Buffer.from(r.data, 'base64');
     if (o.path) writeFileMakingDirs(o.path, buffer);

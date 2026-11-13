@@ -7183,6 +7183,175 @@ mod screenshot {
         let fifth = count(&mut h, json!({"everyNthFrame": 5}));
         assert!((2..=6).contains(&fifth), "{fifth} frames in a second, every 5th");
     }
+
+    /// pyro's raw capture formats (frames for ffmpeg, nothing encoded): `rgba` is the render
+    /// as it is, `rgb24` drops alpha, `yuv420p` is I420. With an absolute `path` the frame is
+    /// appended to that file and the reply's data is empty; the reply gives the frame's size,
+    /// the write's time and the process's CPU time. A FIFO nobody reads fails at once.
+    #[test]
+    fn capture_screenshot_raw_formats_and_path() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 40, "height": 20, "deviceScaleFactor": 2, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><body style='margin:0;background:#fff'><div style='width:20px;height:20px;background:#f00'></div>",
+        );
+        let capture = |h: &mut Harness, params: Value| {
+            let r = h.page("Page.captureScreenshot", params);
+            let lp = r["result"]["lp"].clone();
+            let data =
+                pyro_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
+                    .unwrap();
+            (lp, data)
+        };
+        let (lp, rgba) = capture(&mut h, json!({"format": "rgba"}));
+        assert_eq!(
+            (lp["width"].as_u64(), lp["height"].as_u64(), lp["bytes"].as_u64()),
+            (Some(80), Some(40), Some(12800))
+        );
+        assert_eq!(rgba.len(), 80 * 40 * 4);
+        let at = |x: usize, y: usize| &rgba[(y * 80 + x) * 4..(y * 80 + x) * 4 + 4];
+        assert_eq!((at(10, 10), at(70, 10)), (&[255, 0, 0, 255][..], &[255, 255, 255, 255][..]));
+        assert!(lp["ms"]["cpu"].as_f64().unwrap() > 0.0, "{lp}");
+        let (lp, rgb) = capture(&mut h, json!({"format": "rgb24"}));
+        assert_eq!((lp["bytes"].as_u64(), rgb.len(), &rgb[..3]), (Some(9600), 9600, &[255, 0, 0][..]));
+        let (lp, yuv) = capture(&mut h, json!({"format": "yuv420p"}));
+        assert_eq!((lp["bytes"].as_u64(), yuv.len()), (Some(4800), 4800));
+        assert_eq!((yuv[10 * 80 + 10], yuv[10 * 80 + 70]), (82, 235), "red and white luma");
+
+        let dir = std::env::temp_dir().join(format!("pyro-raw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("frames.rgb");
+        let path = file.to_str().unwrap();
+        for _ in 0..2 {
+            let (lp, data) = capture(&mut h, json!({"format": "rgb24", "path": path}));
+            assert!(data.is_empty(), "written, not returned");
+            assert_eq!(lp["bytes"].as_u64(), Some(9600));
+            assert!(lp["ms"]["write"].as_f64().is_some(), "{lp}");
+        }
+        let written = std::fs::read(&file).unwrap();
+        assert_eq!(written.len(), 2 * 9600, "appended");
+        assert_eq!(&written[9600..], &rgb[..], "the same frame twice");
+        let r = h.page("Page.captureScreenshot", json!({"format": "rgba", "path": "frames.rgba"}));
+        assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not absolute"), "{r}");
+        let fifo = dir.join("fifo");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let r = h.page("Page.captureScreenshot", json!({"format": "rgba", "path": fifo.to_str().unwrap()}));
+        assert!(r["error"]["message"].as_str().unwrap_or_default().contains("cannot write"), "no reader: {r}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Runs the loop until a whole raw frame came on `socket`: its header (width, height,
+    /// timestamp) and planes.
+    fn raw_frame(h: &mut Harness, socket: &mut std::os::unix::net::UnixStream) -> (u32, u32, f64, Vec<u8>) {
+        use std::io::Read;
+        socket.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut buf = Vec::new();
+        loop {
+            let mut chunk = [0u8; 65536];
+            match socket.read(&mut chunk) {
+                Ok(0) => panic!("the socket closed"),
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(h.run_for(5).iter().all(|m| m["method"] != "Page.screencastFrame"), "no events");
+                }
+                Err(e) => panic!("{e}"),
+            }
+            if buf.len() >= 20 {
+                assert_eq!(&buf[..4], b"PYF1");
+                let w = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+                let ht = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+                let t = f64::from_le_bytes(buf[12..20].try_into().unwrap());
+                let len = (w * ht + 2 * w.div_ceil(2) * ht.div_ceil(2)) as usize;
+                if buf.len() >= 20 + len {
+                    assert_eq!(buf.len(), 20 + len, "nothing past the frame before its ack");
+                    return (w, ht, t, buf[20..].to_vec());
+                }
+            }
+            assert!(Instant::now() < deadline, "no frame; {} bytes", buf.len());
+        }
+    }
+
+    /// pyro's `yuv420p` screencast (wright's `recordVideo`): frames of exactly maxWidth x
+    /// maxHeight go raw to the client's Unix socket, the page scaled down to fit at the top
+    /// left and gray around it; the next frame waits for the client's one-byte ack; no
+    /// events. Without a socket or a size, or with a socket nobody listens on, it fails.
+    #[test]
+    fn screencast_yuv420p_frames_go_raw_to_a_socket() {
+        use std::io::Write;
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 200, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><body style='margin:0;background:#fff'><div id=box style='width:100px;height:100px;background:#000'></div>",
+        );
+        let dir = std::env::temp_dir().join(format!("pyro-cast-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s");
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let socket_path = path.to_str().unwrap();
+        let started = json!({"format": "yuv420p", "socket": socket_path, "maxWidth": 100, "maxHeight": 80});
+        assert_eq!(h.page("Page.startScreencast", started.clone())["result"], json!({}));
+        let (mut socket, _) = listener.accept().unwrap();
+        let (w, ht, t, frame) = raw_frame(&mut h, &mut socket);
+        assert_eq!((w, ht), (100, 80), "maxWidth x maxHeight exactly");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+        assert!((now - t).abs() < 60.0, "seconds since the epoch: {t}");
+        let y = |x: usize, row: usize| frame[row * 100 + x];
+        // 200x100 scaled by 0.5 into 100x50: the black box on the left half, white on the right,
+        // gray (luma 126) under it; chroma neutral everywhere.
+        assert_eq!((y(10, 10), y(80, 10), y(10, 70)), (16, 235, 126), "black, white, gray padding");
+        assert!(frame[100 * 80..].iter().all(|c| *c == 128), "no chroma in black, white and gray");
+
+        // Unacked: a change waits. Acked: it comes.
+        let set = "document.getElementById('box').style.background = '#fff'";
+        assert!(frames_after(&mut h, "Runtime.evaluate", eval_params(set), 300).is_empty());
+        socket.set_nonblocking(true).unwrap();
+        let mut peek = [0u8; 1];
+        assert!(std::io::Read::read(&mut socket, &mut peek).is_err(), "nothing before the ack");
+        socket.set_nonblocking(false).unwrap();
+        socket.write_all(&[1]).unwrap();
+        let (_, _, t2, second) = raw_frame(&mut h, &mut socket);
+        assert!(t2 > t, "a later snapshot");
+        assert_eq!(second[100 * 10 + 10], 235, "the box turned white");
+
+        // Stopped: the socket ends (macOS refuses a read timeout on a socket its peer shut down).
+        socket.write_all(&[1]).unwrap();
+        h.page("Page.stopScreencast", json!({}));
+        socket.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match std::io::Read::read(&mut socket, &mut peek) {
+                Ok(0) => break,
+                Ok(_) => panic!("a frame after the stop"),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => {
+                    h.run_for(10);
+                }
+                Err(e) => panic!("not closed: {e}"),
+            }
+        }
+
+        // Mistakes.
+        let error = |h: &mut Harness, params: Value| {
+            h.page("Page.startScreencast", params)["error"]["message"].as_str().unwrap_or_default().to_owned()
+        };
+        assert!(error(&mut h, json!({"format": "yuv420p", "maxWidth": 100, "maxHeight": 80})).contains("socket"));
+        assert!(
+            error(&mut h, json!({"format": "yuv420p", "socket": socket_path, "maxWidth": 100})).contains("maxHeight")
+        );
+        drop(listener);
+        let _ = std::fs::remove_file(&path);
+        assert!(error(&mut h, started).contains("cannot write frames to socket"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[test]

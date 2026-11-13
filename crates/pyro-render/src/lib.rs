@@ -49,7 +49,9 @@ use parley::fontique::Blob;
 use parley::FontContext;
 use peniko::{Color, Fill};
 
-pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
+pub use compare::{
+    compare, decode_png, diff_image, encode_jpeg, encode_png, encode_rgb24, encode_yuv420p, CompareResult,
+};
 pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use hit::{HitProbe, HitVisit};
@@ -520,13 +522,19 @@ pub struct Timings {
     pub layout_passes: u32,
     /// How a [`Live`] snapshot used the page's document.
     pub mirror: Option<MirrorStats>,
-    /// PNG encoding of the returned images.
+    /// Encoding of the returned images (PNG, JPEG), or their conversion to
+    /// pyro's raw formats.
     pub encode: Duration,
+    /// Writing the image to the capture's file (`Job::Capture` `out`).
+    pub write: Duration,
+    /// CPU time of the process (all its threads) while the capture rendered,
+    /// encoded and wrote, measured in `worker::capture` (zero elsewhere).
+    pub cpu: Duration,
 }
 
 impl Timings {
     pub fn total(&self) -> Duration {
-        self.fetch + self.layout + self.scene + self.raster + self.decode + self.compare + self.encode
+        self.fetch + self.layout + self.scene + self.raster + self.decode + self.compare + self.encode + self.write
     }
 }
 
@@ -660,8 +668,12 @@ pub fn hyphen_digit_breaks() -> bool {
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
     font_ctx: FontContext,
-    font_hashes: HashMap<u64, u64>,
+    /// Content hashes of font and image blobs (`scene_hash`).
+    blob_hashes: HashMap<u64, u64>,
     cpu: Option<(VelloCpuImageRenderer, (u32, u32))>,
+    /// The CPU backend for frames of [`THREADED_RASTER_PIXELS`] or more, on
+    /// [`raster_threads`] threads of its own.
+    cpu_threaded: Option<(VelloCpuImageRenderer, (u32, u32))>,
     #[cfg(feature = "gpu")]
     gpu: Option<(anyrender_vello::VelloImageRenderer, (u32, u32))>,
     resources: net::ResourceCache,
@@ -700,8 +712,9 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             font_ctx: process_fonts(),
-            font_hashes: HashMap::new(),
+            blob_hashes: HashMap::new(),
             cpu: None,
+            cpu_threaded: None,
             #[cfg(feature = "gpu")]
             gpu: None,
             resources: net::ResourceCache::default(),
@@ -999,7 +1012,7 @@ impl Renderer {
         blitz_paint::paint_scene(&mut page, doc, dpr, extent_w, extent_h, 0, 0);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
         scene.append_scene(page, transform);
-        let hash = scene_hash(&scene, w, h, &mut self.font_hashes);
+        let hash = scene_hash(&scene, w, h, &mut self.blob_hashes);
         timings.scene = t.elapsed();
         Ok(Painted { scene, opaque: a == 255, hash, width: w, height: h, timings })
     }
@@ -1514,7 +1527,10 @@ impl Renderer {
                 );
             }
             _ => {
-                let r = ensure(&mut self.cpu, width, height);
+                let threads =
+                    if width as usize * height as usize >= THREADED_RASTER_PIXELS { raster_threads() } else { 0 };
+                let slot = if threads > 0 { &mut self.cpu_threaded } else { &mut self.cpu };
+                let r = ensure_cpu(slot, width, height, threads);
                 r.render(
                     |p| {
                         p.reset();
@@ -2652,6 +2668,44 @@ fn media_type(print: bool) -> style::media_queries::MediaType {
     }
 }
 
+/// Frames of at least this many device px (3840x2160 is 8.3 M) are rasterized
+/// on [`raster_threads`] threads. vello_cpu's threads cost CPU time for the
+/// hand-offs: a 3840x2160 page took 20-60 % more of it, in 0.35-0.45 of the
+/// time; at 1280x720 twice the CPU for little time saved (M1 Max).
+const THREADED_RASTER_PIXELS: usize = 4_000_000;
+
+/// Raster threads for large frames: `PYRO_RASTER_THREADS` (0: none, every
+/// frame on the render thread), else vello_cpu's default, one less than the
+/// cores, at most 8.
+pub fn raster_threads() -> u16 {
+    static THREADS: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    *THREADS.get_or_init(|| {
+        match std::env::var("PYRO_RASTER_THREADS").ok().and_then(|v| v.trim().parse::<u16>().ok()) {
+            Some(n) => n.min(64),
+            None => std::thread::available_parallelism().map_or(0, |n| (n.get() - 1).min(8) as u16),
+        }
+    })
+}
+
+/// The renderer in `slot`, made with `threads` raster threads, or resized (keeping them).
+fn ensure_cpu(
+    slot: &mut Option<(VelloCpuImageRenderer, (u32, u32))>,
+    w: u32,
+    h: u32,
+    threads: u16,
+) -> &mut VelloCpuImageRenderer {
+    match slot {
+        Some((_, size)) if *size == (w, h) => {}
+        Some((r, size)) => {
+            r.resize(w, h);
+            *size = (w, h);
+        }
+        None => *slot = Some((VelloCpuImageRenderer::with_threads(w, h, threads), (w, h))),
+    }
+    &mut slot.as_mut().expect("renderer").0
+}
+
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
 fn ensure<R: ImageRenderer>(slot: &mut Option<(R, (u32, u32))>, w: u32, h: u32) -> &mut R {
     match slot {
         Some((_, size)) if *size == (w, h) => {}

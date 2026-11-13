@@ -332,4 +332,11 @@ await page.matchScreenshot('dashboard', { maxDiffPixels: 20 });  // one-step for
   the caret, running animations. Pixels come from pyro's renderer
   (Blitz), never compare them with Chromium screenshots.
 
+Frames for a video (a page stepped frame by frame: set styles, capture), raw
+and unencoded: `await page.captureFrame({ format: 'yuv420p', path })` appends
+one frame to `path` (a file, or a `FrameFifo` an ffmpeg with `-f rawvideo
+-pix_fmt yuv420p -s <w>x<h>` reads); `ms.cpu` in its result is the browser's
+CPU time for it. Against `pyro serve --fork` each page renders in its own
+process, in parallel.
+
 `downloadCount(as)` reads the current page's native initiated-download count without consuming positive download waits. Compare snapshots before and after a settled preview action to assert no new downloads; the count persists across batches on the same page.
