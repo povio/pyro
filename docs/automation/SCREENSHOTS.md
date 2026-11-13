@@ -73,7 +73,7 @@ differ from a fresh one. `bun bench/screenshot/repeat.ts` measures repeat screen
 
 `format` `png` (default) or `jpeg` (`quality`). `clip` is `{x, y, width, height, scale}` in document CSS px.
 `captureBeyondViewport: true` captures the whole document. `webp` is refused; `fromSurface` and `optimizeForSpeed`
-are ignored. The reply also carries `lp: {width, height, bytes, sceneHash, ms}`; `ms` has the stages (`snapshot`,
+are ignored. The reply also carries `pyro: {width, height, bytes, sceneHash, ms}`; `ms` has the stages (`snapshot`,
 `fetch`, `layout`, `scene`, `raster`, `encode`, `write`, `total`, wall ms) and `cpu`, the browser process's CPU time
 while it rendered (all its threads: with `serve --fork`, one page per process, that is the frame's).
 

@@ -109,6 +109,9 @@ cflags="${PYRO_JSC_CFLAGS:-}"
 cxxflags="$cflags"
 if [[ "$os" == Darwin ]]; then
     platform_flags+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0)
+    # WebKit's CMake asks xcrun for the newest SDK by name, which ignores SDKROOT; pin the
+    # one the caller chose (a Mac whose newest SDK its linker cannot read).
+    if [[ -n "${SDKROOT:-}" ]]; then platform_flags+=(-DCMAKE_OSX_SYSROOT="$SDKROOT"); fi
     if [[ -n "${CC:-}${CXX:-}" ]]; then
         # Another clang (an LLVM release for scripts/pgo) would take its own libc++
         # headers, newer than the system's libc++ the binary links.

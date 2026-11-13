@@ -256,7 +256,7 @@ const lpReport = async (page, landscape) => {
     printBackground: true,
   });
   await session.detach().catch(() => {});
-  return r.lp;
+  return r.pyro;
 };
 
 // Warm-up: one untimed render per engine (process-wide font scans, JIT).
