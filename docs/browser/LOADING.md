@@ -27,7 +27,10 @@ The document loader parses a fetched body incrementally around script pauses. Cl
 `document.currentScript`, including deferred elements removed from the live tree. Module scripts see
 null. Parser-blocking, deferred and async scripts are supported; async module dependency evaluation
 finishes before load. `DOMContentLoaded` and load dispatch to the document/window bindings with
-interactive/complete ready states. Deferred modules currently wait for full evaluation, including
+interactive/complete ready states. As HTML says, a document's `load`, `pageshow`, `pagehide`, `unload`
+and `beforeunload` are fired at its Window with the legacy target override flag: the Window's
+listeners run at the target phase (it is the whole path) while `event.target` is the document, as in
+Chromium; `pageshow` and `pagehide` bubble and are cancelable. Deferred modules currently wait for full evaluation, including
 TLA, before DCL (a documented JSC integration deviation).
 
 Linked stylesheets now load through the context client; see [stylesheet behavior and limits](STYLESHEETS.md).

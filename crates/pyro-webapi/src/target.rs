@@ -766,12 +766,36 @@ pub fn fire(page: &PageDom, target: TargetKey, event: &EventData) -> bool {
     fire_with(page, target, event, &mut |_| {})
 }
 
+/// DOM "dispatch" of `event` at `target` with the legacy target override
+/// flag set: `target`'s listeners run at the target phase while the event's
+/// `target` (and `srcElement`) is `target_override`. HTML fires a document's
+/// `load`, `pageshow`, `pagehide`, `unload` and `beforeunload` at its Window
+/// this way, with the document as the override. Returns false if canceled.
+pub fn fire_with_target_override(
+    page: &PageDom,
+    target: TargetKey,
+    target_override: TargetKey,
+    event: &EventData,
+) -> bool {
+    dispatch_at(page, target, Some(target_override), event, &mut |_| {})
+}
+
 /// [`fire`], calling `before_listeners` with the event's path before any
 /// listener runs (see `pyro_dom::events::dispatch_with`): where the activation
 /// target is picked and its legacy-pre-activation behavior runs.
 pub(crate) fn fire_with(
     page: &PageDom,
     target: TargetKey,
+    event: &EventData,
+    before_listeners: &mut dyn FnMut(&[PathItem]),
+) -> bool {
+    dispatch_at(page, target, None, event, before_listeners)
+}
+
+fn dispatch_at(
+    page: &PageDom,
+    target: TargetKey,
+    target_override: Option<TargetKey>,
     event: &EventData,
     before_listeners: &mut dyn FnMut(&[PathItem]),
 ) -> bool {
@@ -785,7 +809,12 @@ pub(crate) fn fire_with(
     event.refresh_wrappers();
     // A callback can detach ancestors and run GC during dispatch. The path
     // is built once, here, and dispatched on below.
-    let path = page.dom.borrow().event_path(target, &event.state.borrow());
+    let path = match target_override {
+        Some(target_override) => {
+            page.dom.borrow().event_path_with_target_override(target, target_override, &event.state.borrow())
+        }
+        None => page.dom.borrow().event_path(target, &event.state.borrow()),
+    };
     // No listener for the type on any target: no callback runs, so the path
     // needs no holding and no invocation target is asked about its tree.
     let heard = page.dom.borrow().listens_for(&event.state.borrow().ty);
