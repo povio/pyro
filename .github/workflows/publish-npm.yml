@@ -183,6 +183,7 @@ jobs:
       jsc-dir: ${{ needs.jsc.outputs.dir }}
       release: true
       version: ${{ needs.release.outputs.version }}
+      pgo: true
 
   # The JavaScriptCore source asset and the notices the fork archive ships.
   jsc-source:
