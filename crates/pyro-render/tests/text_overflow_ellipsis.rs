@@ -33,8 +33,13 @@ fn snapshot(body: &str) -> Snapshot {
 }
 
 fn render(body: &str) -> RgbaImage {
+    render_at(body, 1.0)
+}
+
+fn render_at(body: &str, device_scale_factor: f64) -> RgbaImage {
     let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
-    Renderer::new().render(&snapshot(body), Area::Viewport, Backend::Cpu, &fetcher).unwrap().0
+    let snapshot = Snapshot { device_scale_factor, ..snapshot(body) };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0
 }
 
 /// The pixels in columns `x0..x1` and rows `y0..y1` that `keep` accepts: their
@@ -86,6 +91,25 @@ fn a_line_that_fits_or_a_box_that_does_not_clip_keeps_its_text() {
 }
 
 #[test]
+fn a_box_sized_to_its_text_keeps_it_at_a_fractional_position() {
+    // Shrink-to-fit boxes as wide as their text, at fractional x: the box's painted (rounded)
+    // edges must not make the text overflow it by a fraction of a pixel.
+    for scale in [1.0, 2.0, 3.0] {
+        for x in ["0.3px", "0.5px", "0.7px", "10.4px"] {
+            let boxes = |overflow: &str| {
+                format!(
+                    "<div style='margin-left:{x};font:14px system-ui'><span class=t style='display:inline-block;width:auto;text-overflow:{overflow}'>EUR</span> \
+                     <span class=t style='display:inline-block;width:auto;text-overflow:{overflow}'>Overview</span></div>"
+                )
+            };
+            let ellipsis = render_at(&boxes("ellipsis"), scale);
+            let clip = render_at(&boxes("clip"), scale);
+            assert!(ellipsis.data == clip.data, "no ellipsis at scale {scale}, x {x}");
+        }
+    }
+}
+
+#[test]
 fn a_right_to_left_line_ends_at_the_left() {
     let img = render(&format!("<div class=t dir=rtl>{LONG}</div>"));
     let (_, first_stem, _) = ink(&img, 0, 400, 8, 20, dark);
@@ -108,7 +132,8 @@ fn the_ellipsis_has_the_block_containers_colour() {
 fn a_printed_ellipsis_and_the_text_it_keeps_map_to_their_characters() {
     let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
     let html = format!("<div class=t>{LONG}</div>");
-    let out = Renderer::new().print_pdf(&snapshot(&html), &fetcher, &PdfOptions::new(".pz-page", (816.0, 1056.0))).unwrap();
+    let out =
+        Renderer::new().print_pdf(&snapshot(&html), &fetcher, &PdfOptions::new(".pz-page", (816.0, 1056.0))).unwrap();
     assert!(out.stats.runs_with_source >= 2, "the line's run and the ellipsis: {:?}", out.stats);
     assert_eq!(out.stats.glyphs_without_text, 0, "{:?}", out.stats);
 }

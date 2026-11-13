@@ -1011,17 +1011,19 @@ struct ElementCx<'dom, 'a> {
 
 /// Converts parley BoundingBox into peniko Rect
 /// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
-/// (without its hanging white space) overflows the content box `width` wide (device px) loses
-/// the atoms that do not fit beside the ellipsis at its end edge, and the ellipsis follows the
-/// last atom kept (at the line's start when none is). Returns the cut and the ellipsis's x
-/// (layout coordinates), `None` for a line that fits.
+/// (without its hanging white space) overflows the content box `width` wide (device px) by more
+/// than a layout unit (1/64 CSS px at `scale`) loses the atoms that do not fit beside the
+/// ellipsis at its end edge, and the ellipsis follows the last atom kept (at the line's start
+/// when none is). Returns the cut and the ellipsis's x (layout coordinates), `None` for a line
+/// that fits.
 fn truncate_line(
     line: &parley::Line<'_, blitz_dom::node::TextBrush>,
     ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
     width: f32,
+    scale: f32,
     rtl: bool,
 ) -> Option<(crate::text::TextCut, f32)> {
-    const EPSILON: f32 = 1.0 / 128.0;
+    let epsilon = scale / 64.0;
     let metrics = line.metrics();
     let ellipsis_width = ellipsis.full_width();
     let runs = || {
@@ -1031,14 +1033,14 @@ fn truncate_line(
         })
     };
     if !rtl {
-        if metrics.offset + metrics.advance - metrics.hanging_advance <= width + EPSILON {
+        if metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
             return None;
         }
         let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true };
         let end = runs().filter_map(|run| cut.kept(&run).1).map(|(_, x1)| x1).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.max(x))));
         Some((cut, end.unwrap_or(metrics.offset)))
     } else {
-        if metrics.offset + metrics.hanging_advance >= -EPSILON {
+        if metrics.offset + metrics.hanging_advance >= -epsilon {
             return None;
         }
         let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
@@ -1244,9 +1246,11 @@ impl ElementCx<'_, '_> {
                     None,
                 ),
                 Some(ellipsis) => {
-                    let width = self.node.final_layout().content_box_width() * self.scale as f32;
+                    // The lines were broken in the unrounded box: a line as wide as the box (a
+                    // box sized to its text) must not count as overflowing it by a rounding.
+                    let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
                     for line in text_layout.layout.lines() {
-                        let truncation = truncate_line(&line, ellipsis, width, text_layout.layout.is_rtl());
+                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, text_layout.layout.is_rtl());
                         draw_text_context.cut = truncation.map(|(cut, _)| cut);
                         crate::text::stroke_text(
                             scene,

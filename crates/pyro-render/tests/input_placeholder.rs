@@ -87,7 +87,8 @@ fn a_placeholder_follows_text_align_opacity_and_loses_its_line_breaks() {
 #[test]
 fn a_textarea_placeholder_wraps_at_its_width() {
     // Two words (about 80px) to a line of the 100px content box.
-    let img = render("<textarea placeholder='IIII IIII IIII IIII IIII IIII' style='width:120px;height:200px'></textarea>");
+    let img =
+        render("<textarea placeholder='IIII IIII IIII IIII IIII IIII' style='width:120px;height:200px'></textarea>");
     let (n, b) = ink(&img, 0, 200, |p| p == GREY);
     assert!(n > 100, "{n}");
     assert!(b[3] - b[1] > 64, "three lines of 32px text: {b:?}");
