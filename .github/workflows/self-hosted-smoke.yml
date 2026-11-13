@@ -1,0 +1,31 @@
+name: Self-hosted Mac smoke test
+
+# Checks that the self-hosted Apple Silicon runner (label lp-m1) picks up jobs and
+# what toolchain it has. Runs only when someone pushes to the ci/lp-m1-smoke branch
+# or starts it by hand.
+on:
+  push:
+    branches: [ci/lp-m1-smoke]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: lp-m1
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Host
+        run: |
+          uname -srm
+          sw_vers
+          xcode-select -p
+          echo "cpus: $(sysctl -n hw.ncpu), memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GiB"
+          df -h "$HOME" | tail -1
+      - name: Toolchain
+        run: |
+          for tool in git cargo rustc cmake ninja brew node python3; do
+            if path="$(command -v "$tool")"; then echo "$tool: $path"; else echo "$tool: MISSING"; fi
+          done
