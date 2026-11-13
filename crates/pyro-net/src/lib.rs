@@ -29,7 +29,7 @@ pub use client::websocket::{
 };
 pub use client::{
     AuthChallenge, AuthDecision, InterceptDecision, Interceptor, NetActivity, NetClient, NetConfig, NetEvent,
-    NetSettings, PausedRequest, PausedResponse, RequestInfo, ResponseDecision, ResponseSink,
+    NetSettings, PausedRequest, PausedResponse, RequestCanceller, RequestInfo, ResponseDecision, ResponseSink,
 };
 pub use cookies::CookieJar;
 /// HTTP types used by Request/ResponseHead for native consumers.

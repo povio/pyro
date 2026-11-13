@@ -429,7 +429,9 @@ impl ResourceLoader for NetLoader {
         let mut total: Option<u64> = None;
         let mut checked = pyro_webapi::BodyPart::FIRST_CHECK;
         let mut cut = false;
-        let net = self.client.clone();
+        // Not the client itself: pyro-net owns the sink until the request ends,
+        // and the client stops when its last handle goes.
+        let net = self.client.canceller();
         let sink: pyro_net::ResponseSink = Box::new(move |ev| match ev {
             // A cut body was delivered: the rest (and the cancellation's
             // failure) is dropped.
