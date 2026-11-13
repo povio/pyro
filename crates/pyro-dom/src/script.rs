@@ -258,6 +258,9 @@ impl Dom {
                 self.push_resource(node, k, ResourceReason::Connected);
             }
         }
+        if self.is_html_meta(node) {
+            self.process_viewport_meta(node);
+        }
     }
 
     /// HTML's script "children changed steps", for an insertion into
@@ -301,6 +304,9 @@ impl Dom {
         let script_src = local == "src" && added && self.script_steps_due(idx);
         if !self.resources.enabled {
             return;
+        }
+        if matches!(local, "name" | "content") && self.is_html_meta(idx) {
+            self.process_viewport_meta(idx);
         }
         let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled");
         if !relevant {
@@ -357,6 +363,7 @@ impl Dom {
         // Shadow trees first, then children from the last: the order this
         // walk had with a stack, kept without one.
         let mut i = node;
+        let mut metas = false;
         while i != NIL {
             if let Some(k) = self.resource_kind(i) {
                 // Parser-inserted scripts are driven by ParseStep::Script.
@@ -366,7 +373,11 @@ impl Dom {
                     self.push_resource(i, k, reason);
                 }
             }
+            metas |= self.is_html_meta(i);
             i = self.next_shadow_including_rev(i, node);
+        }
+        if metas && reason == ResourceReason::Connected {
+            self.process_viewport_metas(node);
         }
     }
 

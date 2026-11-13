@@ -262,6 +262,25 @@ The reply is `{"cancelled": n}`, 0 when nothing was in flight. `pyro run`
 sends it when a test times out, so that the test's after hooks find its page
 as it was at the timeout.
 
+### AI agents: `pyro mcp` and `@povio/pyro/agent`
+
+LLM agents can use Pyro as their browser. `pyro mcp` is a Model Context
+Protocol server (stdio, or Streamable HTTP with `--port`) for Claude Code,
+Claude Desktop, Cursor, Codex, VS Code and other MCP clients:
+
+```sh
+claude mcp add pyro -- npx -y @povio/pyro mcp
+```
+
+`@povio/pyro/agent` gives the same tools to your own agent loop
+(`createBrowserTools()`, with converters for the Claude API and OpenAI tool
+shapes). The agent reads accessibility snapshots with element refs, acts by
+ref, and gets each action's outcome as the page's new snapshot, since actions
+return once the page is quiet; stored identities keep it signed in across
+sessions. [The package README](packages/pyro/README.md#ai-agents-mcp-and-tool-calling)
+covers setup, flags and the security model; [AGENTS.md](packages/pyro/AGENTS.md)
+is the guide for the agent itself.
+
 ## License
 
 AGPL-3.0-only. This is a derivative of Lightpanda; see [NOTICE](NOTICE).

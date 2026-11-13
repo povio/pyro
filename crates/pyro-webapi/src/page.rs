@@ -309,6 +309,13 @@ pub struct PageDom {
     frame_resize_queued: Cell<bool>,
     frame_resize_next: Cell<Option<std::time::Instant>>,
     frame_resize_wake: Cell<bool>,
+    /// The emulated viewport is `mobile` (a top document): the layout
+    /// follows the document's viewport `<meta>` ([`PageDom::layout`]), the
+    /// Dom's viewport-`<meta>` version it last took, and the viewport metrics
+    /// before a change of it whose `resize` task is queued.
+    mobile: Cell<bool>,
+    viewport_meta_seen: Cell<Option<u64>>,
+    meta_resize_from: Cell<Option<pyro_dom::layout::ViewportMetrics>>,
     this: std::rc::Weak<PageDom>,
 }
 
@@ -635,6 +642,9 @@ impl PageDom {
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
+            mobile: Cell::new(false),
+            viewport_meta_seen: Cell::new(None),
+            meta_resize_from: Cell::new(None),
             dom,
             id: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             disposed: Cell::new(false),
@@ -1032,11 +1042,114 @@ impl PageDom {
     }
 
     /// Emulated viewport (CDP Emulation.setDeviceMetricsOverride etc.).
+    /// A `mobile` one lays the document out in the layout viewport its
+    /// viewport `<meta>` asks for (see [`PageDom::layout`]).
     pub fn set_viewport(&self, viewport: pyro_dom::media::Viewport) {
-        self.layout.borrow_mut().set_viewport(viewport);
+        self.mobile.set(viewport.mobile);
+        let mut layout = self.layout.borrow_mut();
+        layout.set_viewport(viewport);
+        if self.mobile.get() {
+            match self.dom.try_borrow() {
+                Ok(dom) => {
+                    self.viewport_meta_seen.set(Some(dom.viewport_meta_version()));
+                    layout.set_viewport_meta(dom.viewport_meta(self.document()).cloned());
+                }
+                // The next `layout()` takes it.
+                Err(_) => self.viewport_meta_seen.set(None),
+            }
+        }
     }
+    /// The layout viewport: what media queries and layout see.
     pub fn viewport(&self) -> pyro_dom::media::Viewport {
         self.layout().viewport().clone()
+    }
+    /// The viewport as emulated (`screen`, `outerWidth`): unlike
+    /// [`PageDom::viewport`], the device's size under mobile emulation.
+    pub fn device_viewport(&self) -> pyro_dom::media::Viewport {
+        self.layout().device_viewport().clone()
+    }
+
+    /// Under mobile emulation, lays the document out first: the window and
+    /// the page scale follow the document's width (Chrome lays out to answer
+    /// them too). Nothing otherwise.
+    pub fn sync_mobile_layout(&self) {
+        if !self.mobile.get() {
+            return;
+        }
+        let Some(layout) = self.try_layout() else { return };
+        if let Ok(dom) = self.dom.try_borrow() {
+            layout.synced_geometry_source(&dom);
+        }
+    }
+
+    /// Under mobile emulation: takes the document's viewport `<meta>` when it
+    /// changed since (Blink processes one when it is inserted or its `name`
+    /// or `content` changes), and queues `resize` (window, visual viewport,
+    /// media query lists) for what that changed, unless the document was not
+    /// laid out yet and is still loading (Chrome's resize events wait for its
+    /// first layout; the end of parsing takes the parser's tags).
+    fn sync_viewport_meta(&self) {
+        if !self.mobile.get() {
+            return;
+        }
+        let Ok(dom) = self.dom.try_borrow() else { return };
+        let version = dom.viewport_meta_version();
+        if self.viewport_meta_seen.get() == Some(version) {
+            return;
+        }
+        let meta = dom.viewport_meta(self.document()).cloned();
+        drop(dom);
+        // A query already holding the layout keeps the old viewport; the
+        // next one takes the new.
+        let Ok(mut layout) = self.layout.try_borrow_mut() else { return };
+        self.viewport_meta_seen.set(Some(version));
+        let before = layout.viewport_metrics();
+        let laid_out = layout.has_laid_out();
+        layout.set_viewport_meta(meta);
+        let changed = layout.viewport_metrics() != before;
+        drop(layout);
+        if !changed || (!laid_out && self.ready_state(self.document()) == "loading") || self.hooks().is_none() {
+            return;
+        }
+        if self.meta_resize_from.get().is_none() {
+            self.meta_resize_from.set(Some(before));
+            let page = self.this.clone();
+            self.post_task(Box::new(move || {
+                if let Some(page) = page.upgrade() {
+                    page.fire_viewport_meta_resize();
+                }
+            }));
+        }
+    }
+
+    /// The `resize` events of a viewport `<meta>` change: the window's if
+    /// the layout viewport or the window changed size, the visual
+    /// viewport's if its size or scale changed, then the media query lists
+    /// whose `matches` flipped.
+    fn fire_viewport_meta_resize(self: &Rc<Self>) {
+        let Some(before) = self.meta_resize_from.take() else { return };
+        if self.is_disposed() {
+            return;
+        }
+        self.sync_mobile_layout();
+        let Some(now) = self.try_layout().map(|l| l.viewport_metrics()) else { return };
+        if now.window_resized(&before) {
+            if let Some(window) = self.window_target() {
+                let event =
+                    crate::event::EventCore::trusted(self, crate::event::EventInterface::Event, "resize", false, false);
+                crate::target::fire(self, window, &event);
+            }
+        }
+        if now.visual_resized(&before) {
+            for target in self.viewport_targets(crate::window::ViewportTarget::VisualViewport) {
+                let event =
+                    crate::event::EventCore::trusted(self, crate::event::EventInterface::Event, "resize", false, false);
+                crate::target::fire(self, target, &event);
+            }
+        }
+        for (target, query, matches) in self.media_query_changes() {
+            self.fire_media_query_change(target, &query, matches);
+        }
     }
 
     /// Sizes this child frame's viewport from its iframe (see
@@ -1047,9 +1160,11 @@ impl PageDom {
 
     /// The document's layout, after a child frame's viewport is brought up
     /// to its iframe's content box (which lays the parent out when it
-    /// changed since). Top documents pay one empty check.
+    /// changed since), and a mobile top document's to its viewport `<meta>`.
+    /// Other top documents pay two empty checks.
     pub fn layout(&self) -> std::cell::Ref<'_, pyro_dom::layout::Layout> {
         self.sync_frame_viewport();
+        self.sync_viewport_meta();
         self.layout.borrow()
     }
 
@@ -1057,6 +1172,7 @@ impl PageDom {
     /// mutably.
     pub fn try_layout(&self) -> Option<std::cell::Ref<'_, pyro_dom::layout::Layout>> {
         self.sync_frame_viewport();
+        self.sync_viewport_meta();
         self.layout.try_borrow().ok()
     }
 
@@ -1618,6 +1734,10 @@ impl PageDom {
     /// `document.readyState` maintained by the loader ("loading",
     /// "interactive", "complete").
     pub fn set_ready_state(&self, doc: NodeId, state: &'static str) {
+        if doc == self.document() {
+            // A viewport `<meta>` the parser met is taken while still loading.
+            self.sync_viewport_meta();
+        }
         self.ready.borrow_mut().insert(doc, state);
         // Expect links only block rendering while the document is loading.
         self.render_blocking_changed();

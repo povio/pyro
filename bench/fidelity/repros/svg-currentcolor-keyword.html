@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  An inline <svg> icon coloured through `currentcolor`, as the ToS icons are
+  (lucide sprites: `stroke="currentColor"` attributes, and React writing
+  `style="fill: currentcolor"`, the keyword lower case as CSSOM serializes
+  it). CSS keywords are case-insensitive: Chromium fills the folder with the
+  text colour (rgb(64, 69, 79)) like its stroke. Pyro replaces only the exact
+  spelling `currentColor` when it hands the SVG to its renderer, so the
+  lower-case fill falls back to black.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="300x90">
+<style>
+  body { margin: 10px; font: 14px system-ui; color: rgb(64, 69, 79); }
+  svg { width: 48px; height: 48px; margin-right: 12px; }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="fill: currentcolor;"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="fill: currentColor;"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+<svg viewBox="0 0 24 24" fill="none" stroke="CURRENTCOLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>
+</body>
+</html>

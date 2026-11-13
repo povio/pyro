@@ -61,6 +61,7 @@ struct HitTestGeometry {
 use crate::media::Viewport;
 use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
 use crate::style::{CheckVisibilityOptions, ComputedStyle, Display, Position, ScrollAxes, StyleEngine, UserSelect};
+use crate::viewport_meta::{MetaViewport, MobileMetrics, MobileViewport};
 use style::values::specified::box_::PositionProperty;
 
 /// A DOMRect's values.
@@ -180,11 +181,46 @@ impl ScrollWrite {
     }
 }
 
+/// What `resize` events report a change of ([`Layout::viewport_metrics`]):
+/// the layout viewport, the window (`innerWidth`, `innerHeight`) and the
+/// visual viewport (width, height, scale). Without mobile emulation all
+/// three are the emulated viewport, at scale 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewportMetrics {
+    pub layout: (u32, u32),
+    pub window: (u32, u32),
+    pub visual: (f64, f64, f64),
+}
+
+impl ViewportMetrics {
+    /// The window's `resize`: the layout viewport or the window changed size.
+    pub fn window_resized(&self, before: &ViewportMetrics) -> bool {
+        self.layout != before.layout || self.window != before.window
+    }
+
+    /// The visual viewport's `resize`: its size or scale changed.
+    pub fn visual_resized(&self, before: &ViewportMetrics) -> bool {
+        self.visual != before.visual
+    }
+}
+
 /// Layout state of one document: its style engine (which owns the
 /// viewport), its geometry source, the window scroll offset and
 /// per-element scroll offsets.
 pub struct Layout {
     style: StyleEngine,
+    /// The viewport as emulated ([`Layout::set_viewport`]); `style` has the
+    /// layout viewport made of it, the same one unless it is `mobile`.
+    device: Viewport,
+    /// Under mobile emulation: the document's viewport `<meta>` on the
+    /// device.
+    mobile: Option<MobileViewport>,
+    /// The document's viewport `<meta>` ([`Layout::set_viewport_meta`]).
+    meta: Option<MetaViewport>,
+    /// Under mobile emulation: the document's width (CSS px, whole) as of
+    /// the last sync of the geometry source, which decides the minimum
+    /// page scale (`None` before one).
+    contents_width: std::cell::Cell<Option<f32>>,
     window_scroll: (u32, u32),
     scroll_generation: u64,
     element_scroll: FxHashMap<NodeId, (u32, u32)>,
@@ -478,7 +514,11 @@ impl Layout {
         let external = GEOMETRY_SOURCE.with(|f| f.borrow().as_ref().map(|make| make()));
         style.set_style_engine(external.clone());
         Layout {
+            device: style.viewport().clone(),
             style,
+            mobile: None,
+            meta: None,
+            contents_width: std::cell::Cell::new(None),
             window_scroll: (0, 0),
             scroll_generation: 0,
             element_scroll: FxHashMap::default(),
@@ -516,6 +556,10 @@ impl Layout {
             self.external_synced.set(Some(key));
             self.syncs.set(self.syncs.get() + 1);
             self.style.engine_synced(dom);
+            if self.mobile.is_some() {
+                // Blink's contents size is whole px (`LayoutView::DocumentRect`).
+                self.contents_width.set(source.document_size().map(|(w, _)| w.round() as f32));
+            }
         }
         Some(source)
     }
@@ -649,22 +693,98 @@ impl Layout {
         self.style.document()
     }
 
+    /// The layout viewport: what layout, media queries, viewport units and
+    /// the root's `clientWidth`/`clientHeight` see. The emulated viewport,
+    /// unless it is `mobile` ([`Layout::set_viewport_meta`]).
     pub fn viewport(&self) -> &Viewport {
         self.style.viewport()
     }
 
+    /// The viewport as emulated (`screen`, `outerWidth`/`outerHeight`).
+    pub fn device_viewport(&self) -> &Viewport {
+        &self.device
+    }
+
     pub fn set_viewport(&mut self, viewport: Viewport) {
-        self.style.set_viewport(viewport);
+        self.device = viewport;
+        self.apply_viewport();
+    }
+
+    /// The viewport `<meta>` the document processed last: under mobile
+    /// emulation it decides the layout viewport and the page scale.
+    pub fn set_viewport_meta(&mut self, meta: Option<MetaViewport>) {
+        if self.meta != meta {
+            self.meta = meta;
+            self.apply_viewport();
+        }
+    }
+
+    fn apply_viewport(&mut self) {
+        if !self.device.mobile {
+            self.mobile = None;
+            self.style.set_viewport(self.device.clone());
+            return;
+        }
+        let mobile = MobileViewport::new(self.meta.as_ref(), self.device.width, self.device.height);
+        let mut layout = self.device.clone();
+        (layout.width, layout.height) = mobile.layout_size();
+        if self.mobile.is_none() || (layout.width, layout.height) != (self.viewport().width, self.viewport().height) {
+            // Laid out again at another width: until then, as wide as the layout viewport.
+            self.contents_width.set(None);
+        }
+        self.mobile = Some(mobile);
+        self.style.set_viewport(layout);
+    }
+
+    /// The viewport metrics `resize` events report on.
+    pub fn viewport_metrics(&self) -> ViewportMetrics {
+        let v = self.viewport();
+        ViewportMetrics { layout: (v.width, v.height), window: self.window_size(), visual: self.visual_viewport() }
+    }
+
+    /// Whether the geometry source laid the document out at least once
+    /// (Blink's `DidFirstLayout`).
+    pub fn has_laid_out(&self) -> bool {
+        self.syncs.get() > 0
+    }
+
+    /// Under mobile emulation, the frame, visual viewport and page scale of
+    /// the document as last laid out (`None` without mobile emulation).
+    pub fn mobile_metrics(&self) -> Option<MobileMetrics> {
+        let mobile = self.mobile.as_ref()?;
+        let layout_width = self.viewport().width as f32;
+        Some(mobile.metrics(self.contents_width.get().map_or(layout_width, |w| w.max(layout_width))))
+    }
+
+    /// `window.innerWidth`/`innerHeight` and the viewport scrolling, hit
+    /// testing and the implicit intersection root use: the layout viewport,
+    /// or under mobile emulation the frame (the device at the minimum page
+    /// scale, wider than the layout viewport when the document is).
+    pub fn window_size(&self) -> (u32, u32) {
+        match self.mobile_metrics() {
+            Some(m) => m.frame,
+            None => (self.viewport().width, self.viewport().height),
+        }
+    }
+
+    /// `window.visualViewport`: width and height (CSS px) and scale. The
+    /// layout viewport at scale 1, or under mobile emulation the device at
+    /// the page scale.
+    pub fn visual_viewport(&self) -> (f64, f64, f64) {
+        match self.mobile_metrics() {
+            Some(m) => (m.visual.0, m.visual.1, m.scale),
+            None => (self.viewport().width as f64, self.viewport().height as f64, 1.0),
+        }
     }
 
     /// `window.innerWidth` (Window.zig:766-768).
     pub fn inner_width(&self) -> u32 {
-        self.viewport().width
+        self.window_size().0
     }
 
     /// `window.innerHeight` (Window.zig:772-774).
     pub fn inner_height(&self) -> u32 {
-        self.viewport().height
+        self.window_size().1
     }
 
     /// `window.devicePixelRatio` (Window.zig:776-778).
@@ -1496,8 +1616,8 @@ impl Layout {
     /// viewport-sized.
     pub fn document_scroll_size(&self, dom: &Dom) -> (f64, f64) {
         let (w, h) = self.document_extent(dom);
-        let v = self.viewport();
-        (w.max(v.width as f64), h.max(v.height as f64))
+        let (vw, vh) = self.window_size();
+        (w.max(vw as f64), h.max(vh as f64))
     }
 
     // ----- hit testing -------------------------------------------------------

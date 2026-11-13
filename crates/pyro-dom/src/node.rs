@@ -113,6 +113,9 @@ pub struct DocumentData {
     pub(crate) document_element: u32,
     pub(crate) head: u32,
     pub(crate) body: u32,
+    /// The viewport `<meta>` this document processed last
+    /// (`Dom::viewport_meta`).
+    pub(crate) viewport_meta: Option<crate::viewport_meta::MetaViewport>,
 }
 
 #[derive(Debug, Clone)]
