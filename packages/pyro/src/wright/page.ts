@@ -680,7 +680,7 @@ export class Locator extends Scope {
         : { locator: { ...this._spec, nth: undefined }, assert: 'count', expected: 0, not: state === 'attached', timeout };
     await this._page._run('locator.waitFor', [{ check: clean(check) }], this._desc);
   }
-  async screenshot(options: Timeout & { path?: string; type?: 'png' | 'jpeg'; quality?: number } = {}): Promise<Buffer> {
+  async screenshot(options: Timeout & { path?: string; type?: 'png' | 'jpeg'; quality?: number; omitBackground?: boolean } = {}): Promise<Buffer> {
     const box = await this.boundingBox(options);
     if (!box) throw new Error(`locator.screenshot: ${this._desc} is not visible`);
     return this._page.screenshot({ ...options, clip: box });

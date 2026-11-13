@@ -294,7 +294,9 @@ async function screenshot(page: Page, loc: Locator | undefined, isNot: boolean, 
   const info = currentTest();
   const opts = typeof nameOrOpts === 'object' && !Array.isArray(nameOrOpts) ? nameOrOpts : o;
   const named: string | string[] | undefined = typeof nameOrOpts === 'string' || Array.isArray(nameOrOpts) ? nameOrOpts : (opts as { name?: string | string[] }).name;
-  const { timeout: _t, name: _n, ...shotOpts } = opts as Opts;
+  // `omitBackground` is not a step option: as Playwright on Chromium, the page's default background is made
+  // transparent for this capture and reset afterwards.
+  const { timeout: _t, name: _n, omitBackground, ...shotOpts } = opts as Opts;
   const locator = loc ? { locator: loc._spec } : {};
   let step: ScreenshotStep;
   let file: string | undefined;
@@ -317,8 +319,11 @@ async function screenshot(page: Page, loc: Locator | undefined, isNot: boolean, 
   }
   const existed = file !== undefined && existsSync(file);
   prepare(step, page._baselines, mode);
+  if (omitBackground) await page._send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
   try {
-    const r = await page._runRaw([step.toStep() as any]);
+    const r = await page._runRaw([step.toStep() as any]).finally(() =>
+      omitBackground ? page._send('Emulation.setDefaultBackgroundColorOverride', {}).catch(() => {}) : undefined,
+    );
     const result = settle(step, r.results[0], mode);
     // As Playwright's "missing" mode: written, the test fails at its end and is not retried.
     if (info && file && result.recorded && !existed && mode === 'missing') missingWritten(info, `A snapshot doesn't exist at ${relative(process.cwd(), file)}, writing actual.`);
