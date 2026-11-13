@@ -113,6 +113,9 @@ pages 3-6 points faster without costing cdp-perf. Fat LTO on top of PGO was meas
 pyro version
 pyro eval -e 'setTimeout(() => console.log("hi"), 10)'
 pyro eval script.js --timeout-ms 5000
+# Load a page, run its scripts and print its DOM once it is quiet (its
+# requests answered, its timers run), at most 5 s after `load`:
+pyro fetch --wait-ms 5000 https://example.com
 pyro serve --port 9222
 # Test runs that need no front-end server and no per-context auth setup:
 # serve a build directory in place of its origin and preload localStorage.
