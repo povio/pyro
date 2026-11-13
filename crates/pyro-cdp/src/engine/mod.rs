@@ -1139,6 +1139,20 @@ impl EngineHost {
                 Ok(Some(serde_json::json!({})))
             }
             "setDeviceMetricsOverride" | "clearDeviceMetricsOverride" => self.device_metrics(action, cmd),
+            // From the page's next document on (Playwright sends it before
+            // the first navigation): see `Browser::set_script_execution_disabled`.
+            "setScriptExecutionDisabled" => {
+                #[derive(Deserialize)]
+                struct P {
+                    value: bool,
+                }
+                let p = cmd.command.params::<P>()?;
+                let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                if !self.thread.browser.set_script_execution_disabled(id, p.value) {
+                    return Err(CdpError::server("page is gone"));
+                }
+                Ok(Some(serde_json::json!({})))
+            }
             // Each call replaces the whole emulation (as Chrome): the media
             // type and the `prefers-*` features it lists; the rest reset.
             "setEmulatedMedia" => {

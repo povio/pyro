@@ -112,7 +112,7 @@ impl Browser {
 
     fn declarative_refresh(&mut self, page: FrameKey, input: &str, base: Option<String>) {
         let Some(mut doc) = self.doc_mut(page) else { return };
-        if doc.refresh.claimed || doc.main_frame.sandbox.scripts_disabled {
+        if doc.refresh.claimed || doc.main_frame.sandbox.automatic_features_blocked {
             return;
         }
         let Some((time, url)) = parse(input) else { return };

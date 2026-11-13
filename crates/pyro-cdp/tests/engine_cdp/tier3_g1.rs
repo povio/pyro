@@ -474,6 +474,27 @@ fn touch_emulation_sets_max_touch_points_and_coarse_pointer() {
 }
 
 #[test]
+fn script_execution_disabled_applies_to_the_next_document_and_its_frames() {
+    let mut h = Harness::new();
+    let page = r#"<!doctype html><body onload="window.loaded = 1"><script>window.ran = 1</script>
+<noscript><p id="n">no script</p></noscript>
+<iframe srcdoc="<script>parent.inner = 1</script><noscript><b>inner noscript</b></noscript>"></iframe>"#;
+    let probe = "[typeof ran, typeof loaded, !!document.getElementById('n'), typeof inner, \
+                 !!document.querySelector('iframe').contentDocument.querySelector('b')]";
+    let r = h.page("Emulation.setScriptExecutionDisabled", json!({"value": true}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    load_html(&mut h, page);
+    // Protocol evaluation still runs; the page's own script does not.
+    assert_eq!(eval_value(&mut h, probe), json!(["undefined", "undefined", true, "undefined", true]));
+    let r = h.page("Emulation.setScriptExecutionDisabled", json!({"value": false}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    load_html(&mut h, page);
+    assert_eq!(eval_value(&mut h, probe), json!(["number", "number", false, "number", false]));
+    let r = h.page("Emulation.setScriptExecutionDisabled", json!({}));
+    assert!(r["error"]["message"].as_str().is_some(), "value is required: {r}");
+}
+
+#[test]
 fn touch_tap_fires_chromium_pointer_touch_and_compat_mouse_sequence() {
     let mut h = Harness::new();
     h.page("Emulation.setTouchEmulationEnabled", json!({"enabled": true}));

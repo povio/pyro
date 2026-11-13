@@ -466,6 +466,9 @@ pub struct Page {
     user_agent_override: Option<pyro_webapi::UserAgentOverride>,
     /// `navigator.maxTouchPoints` of its documents (touch emulation).
     max_touch_points: u32,
+    /// `Emulation.setScriptExecutionDisabled`: documents committed from now
+    /// on, and their frames, run no script of their own.
+    script_execution_disabled: bool,
     extra_http_headers: pyro_net::http::HeaderMap,
     cache_disabled: bool,
     bypass_service_worker: bool,
@@ -1066,6 +1069,7 @@ impl Browser {
             opener_origin: None,
             user_agent_override: None,
             max_touch_points: 0,
+            script_execution_disabled: false,
             extra_http_headers: Default::default(),
             cache_disabled: false,
             bypass_service_worker: false,
@@ -1203,6 +1207,18 @@ impl Browser {
             bindings.set_max_touch_points(points);
         }
         self.refresh_frame_settings(page);
+        true
+    }
+
+    /// Whether this page's documents run script (`Emulation.setScriptExecutionDisabled`).
+    /// Applies from the next document the page or one of its frames commits:
+    /// its script elements, event handlers, timers and `javascript:` URLs do
+    /// not run, `<noscript>` is markup, and meta refresh still works, as in
+    /// Chrome with JavaScript off. Script evaluated over the protocol still
+    /// runs. Returns false if there is no such page.
+    pub fn set_script_execution_disabled(&mut self, page: PageId, disabled: bool) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        state.script_execution_disabled = disabled;
         true
     }
 
@@ -1468,11 +1484,15 @@ impl Browser {
             if let Some(parent) = &inherited {
                 flags.opaque |= parent.sandbox.opaque;
                 flags.scripts_disabled |= parent.sandbox.scripts_disabled;
+                flags.automatic_features_blocked |= parent.sandbox.automatic_features_blocked;
                 flags.popups_blocked |= parent.sandbox.popups_blocked;
             }
             flags
         } else {
-            frames::Sandbox::default()
+            // A top-level document: the page's script switch, which its
+            // frames inherit like a sandbox without `allow-scripts`.
+            let disabled = self.page(page.page).is_some_and(|p| p.script_execution_disabled);
+            frames::Sandbox { scripts_disabled: disabled, ..Default::default() }
         };
         self.doc_mut(page).ok_or(JsError::ContextDestroyed)?.main_frame.sandbox = sandbox;
         let inherit_url = matches!(opts.url.as_str(), "about:blank" | "about:srcdoc") && inherit_from.is_some();
