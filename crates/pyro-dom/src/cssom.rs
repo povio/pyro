@@ -150,6 +150,77 @@ fn parse_namespace(prelude: &str) -> Option<(String, String)> {
     Some((prefix.map_or_else(String::new, |n| n.to_string()), url.to_string()))
 }
 
+/// The URLs of the `@import` rules a style sheet starts with, as written
+/// (to resolve against the sheet's URL), in order: what a browser fetches
+/// for the sheet. As in CSS Cascade, an `@import` counts only before every
+/// other rule except `@charset` and `@layer` statements, and one whose
+/// `supports()` condition fails imports nothing; its media queries do not
+/// matter (the sheet is fetched whatever they say). Reads no further than
+/// the first other rule, so a sheet without imports costs a token or two.
+pub fn leading_imports(text: &str) -> Vec<String> {
+    let mut p = Parser::new(text);
+    let mut urls = Vec::new();
+    loop {
+        let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { return urls };
+        match token {
+            Token::WhiteSpace(_) | Token::Comment(_) | Token::CDO | Token::CDC => {}
+            Token::AtKeyword(name) if name.eq_ignore_ascii_case("import") => {
+                if let Some(url) = import_prelude(&mut p) {
+                    urls.push(url);
+                }
+            }
+            // Statements: `@layer a, b;` (a `@layer` block is a rule, after
+            // which imports are invalid).
+            Token::AtKeyword(name) if name.eq_ignore_ascii_case("charset") || name.eq_ignore_ascii_case("layer") => {
+                if !statement_ends(&mut p) {
+                    return urls;
+                }
+            }
+            _ => return urls,
+        }
+    }
+}
+
+/// The rest of an `@import` rule: its URL, unless the rule is invalid (no
+/// URL, or a block) or its `supports()` condition fails.
+fn import_prelude(p: &mut Parser<'_>) -> Option<String> {
+    let url = match p.next().cloned() {
+        // The rule's end (its block is skipped by the next read).
+        Err(_) | Ok(Token::Semicolon | Token::CurlyBracketBlock) => return None,
+        Ok(Token::UnquotedUrl(url) | Token::QuotedString(url)) => Some(url.to_string()),
+        Ok(Token::Function(name)) if name.eq_ignore_ascii_case("url") => {
+            let url: Result<String, ParseError<()>> = p.parse_nested_block(|n| Ok(n.expect_string()?.to_string()));
+            url.ok()
+        }
+        _ => None,
+    };
+    let mut supported = true;
+    loop {
+        match p.next().cloned() {
+            Err(_) | Ok(Token::Semicolon) => break,
+            Ok(Token::CurlyBracketBlock) => return None,
+            Ok(Token::Function(name)) if name.eq_ignore_ascii_case("supports") => {
+                let condition: Result<String, ParseError<()>> = p.parse_nested_block(|n| Ok(raw_block(n)));
+                supported &= condition.is_ok_and(|c| crate::stylo::supports_condition(&c));
+            }
+            Ok(_) => {}
+        }
+    }
+    url.filter(|_| supported)
+}
+
+/// Skips a statement at-rule's prelude: true at its `;` (or the end), false
+/// at a block (the parser is then past it).
+fn statement_ends(p: &mut Parser<'_>) -> bool {
+    loop {
+        match p.next() {
+            Err(_) | Ok(Token::Semicolon) => return true,
+            Ok(Token::CurlyBracketBlock) => return false,
+            Ok(_) => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +261,26 @@ mod tests {
         for input in ["", ":nth-child(n- 1 2)", ":nth-child(-n+n)", "[foo='bar' i i]", "[foo='bar' *]"] {
             assert_eq!(normalize_selector(input, &ns), None, "{input}");
         }
+    }
+
+    #[test]
+    fn leading_imports_are_the_ones_a_browser_fetches() {
+        assert_eq!(
+            leading_imports(
+                "<!-- @charset 'utf-8'; /* x */ @import url(a.css); @IMPORT 'b.css' print; @layer x, y;\n\
+                 @import url( \"c.css\" ) layer(x) supports(display: grid) screen and (min-width: 1px);\
+                 @import url(d.css) supports(nonsense: 1); @import; @import e.css; @import 'f.css' {}\
+                 @import \"g.css\"; p { color: red } @import 'h.css';"
+            ),
+            ["a.css", "b.css", "c.css", "g.css"]
+        );
+        // A rule, a `@layer` block or `@namespace` ends them; none at all.
+        assert_eq!(leading_imports("@layer x {} @import 'a.css';"), Vec::<String>::new());
+        assert_eq!(leading_imports("@namespace svg url(x); @import 'a.css';"), Vec::<String>::new());
+        assert_eq!(leading_imports("body { color: red }"), Vec::<String>::new());
+        assert_eq!(leading_imports(""), Vec::<String>::new());
+        // The last rule may end with the sheet.
+        assert_eq!(leading_imports("@import url(last.css)"), ["last.css"]);
     }
 
     #[test]

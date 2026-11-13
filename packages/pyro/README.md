@@ -360,7 +360,11 @@ offline, JavaScript off, HTTPS errors, CSP bypass, blocked service workers,
 refused downloads), and any other first call, get a fresh page.
 
 **Context options.** `browser.newContext()` and `use: {}` take Playwright's
-options with Playwright's meaning:
+options with Playwright's meaning. Every page of the context has them from
+its first document on, and so do its init scripts, `exposeFunction` /
+`exposeBinding`, `route`s and `setExtraHTTPHeaders`: as Playwright's popups
+on Chromium, a popup (`window.open`, a `target=_blank` link) starts paused
+and navigates once it has them all; frames have their page's.
 
 - `viewport` and `screen`; `deviceScaleFactor` (`devicePixelRatio`, and
   screenshots in device pixels, Playwright's default `scale: 'device'`);
@@ -470,7 +474,8 @@ Also covered:
   `:testid`, `:has`, `:has-not`, `:has-text`, `:has-not-text`, `:and`, `:or`,
   `:chain`, `:control=enter-frame`), and CSS with `:has-text()`, `:text()`,
   `:text-is()`, `:text-matches()`, `:visible`, `:nth-match()` and `:light()`
-- popups (`page.on('popup')`, `context.on('page')`), downloads
+- popups (`page.on('popup')`, `context.on('page')`, which come once the
+  popup's document committed, so `url()` is its own), downloads
   (`page.on('download')`, `saveAs`, `path`), file choosers
   (`page.on('filechooser')`, `setFiles`), workers (`page.on('worker')`,
   `worker.evaluate`)
