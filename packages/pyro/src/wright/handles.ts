@@ -283,6 +283,9 @@ export class ElementHandle<T = Node> extends JSHandle<T> {
   }
 }
 
+/** Playwright's answer about a download of a context made with `acceptDownloads: false`. */
+const NOT_ACCEPTED = 'Pass { acceptDownloads: true } when you are creating your browser context.';
+
 /** Playwright's Download: the file lands in the browser's download directory under a guid. */
 export class Download {
   private _done: Promise<{ path: string | null; failure: string | null }>;
@@ -291,6 +294,8 @@ export class Download {
     private _page: Page,
     private _url: string,
     private _suggested: string,
+    /** Its context does not accept downloads: nothing was saved, and the file's methods say so at once, as Playwright's. */
+    private _denied = false,
   ) {
     this._done = new Promise((r) => (this._finish = r));
   }
@@ -304,22 +309,27 @@ export class Download {
     return this._suggested;
   }
   async path(): Promise<string> {
+    if (this._denied) throw new Error(`download.path: ${NOT_ACCEPTED}`);
     const { path, failure } = await this._done;
     if (!path) throw new Error(`download.path: ${failure ?? 'download failed'}`);
     return path;
   }
   async saveAs(to: string): Promise<void> {
+    if (this._denied) throw new Error(`download.saveAs: ${NOT_ACCEPTED}`);
     const from = await this.path();
     mkdirSync(dirname(to), { recursive: true });
     copyFileSync(from, to);
   }
   async failure(): Promise<string | null> {
+    if (this._denied) return NOT_ACCEPTED;
     return (await this._done).failure;
   }
   async createReadStream() {
+    if (this._denied) throw new Error(`download.createReadStream: ${NOT_ACCEPTED}`);
     return createReadStream(await this.path());
   }
   async delete(): Promise<void> {
+    if (this._denied) return;
     const { path } = await this._done;
     if (path) rmSync(path, { force: true });
   }

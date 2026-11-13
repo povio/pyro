@@ -3542,6 +3542,8 @@ mod coverage;
 #[cfg(feature = "render")]
 #[path = "engine_cdp/context_identity.rs"]
 mod context_identity;
+#[path = "engine_cdp/context_options.rs"]
+mod context_options;
 
 #[test]
 fn links_and_window_open_targeting_blank_open_paused_popups() {

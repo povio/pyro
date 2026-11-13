@@ -502,6 +502,9 @@ pub struct Page {
     /// `Emulation.setScriptExecutionDisabled`: documents committed from now
     /// on, and their frames, run no script of their own.
     script_execution_disabled: bool,
+    /// `Page.setBypassCSP`: documents committed from now on, in all its
+    /// frames, take no Content-Security-Policy.
+    bypass_csp: bool,
     extra_http_headers: pyro_net::http::HeaderMap,
     cache_disabled: bool,
     bypass_service_worker: bool,
@@ -1172,6 +1175,7 @@ impl Browser {
             user_agent_override: None,
             max_touch_points: 0,
             script_execution_disabled: false,
+            bypass_csp: false,
             extra_http_headers: Default::default(),
             cache_disabled: false,
             bypass_service_worker: false,
@@ -1321,6 +1325,19 @@ impl Browser {
     pub fn set_script_execution_disabled(&mut self, page: PageId, disabled: bool) -> bool {
         let Some(state) = self.page_mut(page) else { return false };
         state.script_execution_disabled = disabled;
+        true
+    }
+
+    /// Whether this page's documents ignore their Content-Security-Policy
+    /// (`Page.setBypassCSP`). Applies from the next document the page or one
+    /// of its frames commits; the document already loaded keeps what it had,
+    /// as in Chrome. The engine enforces no directive, so what this lifts is
+    /// the one effect a policy has: nonce hiding, which a header-delivered
+    /// policy turns on (see `pyro_dom::Dom::set_header_csp`). Returns false
+    /// if there is no such page.
+    pub fn set_bypass_csp(&mut self, page: PageId, enabled: bool) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        state.bypass_csp = enabled;
         true
     }
 

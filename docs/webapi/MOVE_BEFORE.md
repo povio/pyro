@@ -66,6 +66,8 @@ and must not contain the parent; `child` must be a child of the parent
   empties the `nonce` content attribute of an element that becomes connected by
   an insertion from script; `element.nonce` still returns the value. The policy
   itself is not enforced, and elements the parser inserts keep the attribute.
+  A page that bypasses CSP (`Page.setBypassCSP`, Playwright's `bypassCSP`)
+  hides no nonce in the documents it commits from then on.
 - A default-selected option (selected because none was) that leaves its select
   stays selected.
 

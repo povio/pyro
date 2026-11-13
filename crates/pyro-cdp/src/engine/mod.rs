@@ -418,6 +418,9 @@ pub(crate) struct DownloadRecord {
 /// Bytes of download bodies kept per page; older ones lose their body.
 pub(crate) const DOWNLOAD_BUDGET: usize = 64 * 1024 * 1024;
 
+/// Download guids `Browser.cancelDownload` knows per browser context.
+pub(crate) const ANNOUNCED_DOWNLOADS: usize = 256;
+
 /// A popup that became a target, for `Pyro.run` `popup` steps.
 #[derive(Clone, Debug)]
 pub(crate) struct PopupRecord {
@@ -445,6 +448,10 @@ pub struct EngineHost {
     /// Browser.setDownloadBehavior per browser context (None: no
     /// `browserContextId`, the default context).
     pub(crate) download_behavior: HashMap<Option<ContextKey>, DownloadBehavior>,
+    /// Guids of the downloads announced to the client, per browser context,
+    /// newest last (at most `ANNOUNCED_DOWNLOADS`): `Browser.cancelDownload`
+    /// knows them.
+    pub(crate) announced_downloads: HashMap<ContextKey, std::collections::VecDeque<String>>,
     body_budget: BodyBudget,
     network_wake: network::NetworkWake,
     /// Screenshot renders of this connection (`screenshot.rs`).
@@ -684,6 +691,7 @@ impl EngineHost {
             collector,
             contexts: HashMap::new(),
             download_behavior: HashMap::new(),
+            announced_downloads: HashMap::new(),
             body_budget,
             network_wake: network::NetworkWake::default(),
             renders: screenshot::Renders::default(),
@@ -1429,11 +1437,23 @@ impl Host for EngineHost {
         Ok(key)
     }
 
+    fn block_service_workers(&mut self, context: ContextKey) -> CdpResult<()> {
+        let services = self
+            .contexts
+            .get(&context)
+            .and_then(|c| self.thread.browser.context_services(c.id))
+            .ok_or_else(|| CdpError::server("Browser context is gone"))?;
+        services.set_service_workers_blocked(true);
+        Ok(())
+    }
+
     fn dispose_context(&mut self, context: ContextKey) {
         let pages: Vec<PageKey> = self.pages.iter().filter(|(_, p)| p.context == context).map(|(k, _)| *k).collect();
         for page in pages {
             self.close_page(page);
         }
+        self.download_behavior.remove(&Some(context));
+        self.announced_downloads.remove(&context);
         if let Some(context) = self.contexts.remove(&context) {
             self.thread.browser.close_context(context.id);
         }
@@ -1743,6 +1763,27 @@ impl Host for EngineHost {
                         Ok(())
                     }
                     _ => Err(CdpError::invalid_params("Unrecognized download behavior")),
+                });
+                match result {
+                    Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, command.session_id())),
+                    Err(e) => out.send(msg::error_frame(Some(command.id), &e, command.session_id())),
+                }
+            }
+            // A download is announced once it completed or was canceled
+            // (`deliver_download`), so there is never one in progress to
+            // cancel: Chrome answers a finished one with success too.
+            "Browser.cancelDownload" => {
+                #[derive(Deserialize)]
+                struct P {
+                    guid: String,
+                }
+                let result = command.params::<P>().and_then(|p| {
+                    let announced = context.and_then(|c| self.announced_downloads.get(&c));
+                    if announced.is_some_and(|guids| guids.contains(&p.guid)) {
+                        Ok(())
+                    } else {
+                        Err(CdpError::invalid_params("No download item found for the given GUID"))
+                    }
                 });
                 match result {
                     Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, command.session_id())),
