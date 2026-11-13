@@ -1,0 +1,82 @@
+name: PGO build (macOS arm64)
+description: >-
+  The release browser built by scripts/pgo/build.sh with LP_PGO_LLVM and LP_PGO_LTO=1:
+  Rust and JavaScriptCore optimized by one training run (bench/scripts/cdp-perf.mjs, serve and
+  serve --fork), the JavaScriptCore archive as ThinLTO bitcode. Output:
+  target/aarch64-apple-darwin/release-pgo/lightningpanda.
+
+inputs:
+  cargo-args:
+    description: Extra cargo arguments for both builds (for example --locked)
+    required: false
+    default: --locked
+
+runs:
+  using: composite
+  steps:
+    - name: Rust with llvm-tools (llvm-profdata of rustc's LLVM)
+      shell: bash
+      run: |
+        rustup toolchain install stable --profile minimal --component llvm-tools --no-self-update
+        rustup default stable
+        v="$(rustc -vV | sed -n 's/^LLVM version: //p')"
+        echo "LLVM_VERSION=$v" >> "$GITHUB_ENV"
+        echo "LLVM_MAJOR=${v%%.*}" >> "$GITHUB_ENV"
+    - uses: oven-sh/setup-bun@v2
+    - name: Build tools for JavaScriptCore
+      shell: bash
+      run: brew install ninja
+    # Only what the scripts use of the release (clang, the archivers, libLTO, clang's own
+    # headers and runtimes): about 450 MB of the 7 GB the release unpacks to.
+    - uses: actions/cache@v4
+      id: llvm
+      with:
+        path: ~/llvm-pgo
+        key: llvm-pgo-macos-arm64-${{ env.LLVM_VERSION }}
+    - name: LLVM release of rustc's major version
+      if: steps.llvm.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # rustc's exact LLVM version, else the newest release of its major version (common.sh
+        # checks the major version only).
+        tag="llvmorg-$LLVM_VERSION"
+        if ! gh release view "$tag" --repo llvm/llvm-project >/dev/null 2>&1; then
+          tag="$(gh release list --repo llvm/llvm-project --limit 100 --json tagName -q '.[].tagName' \
+            | grep -E "^llvmorg-$LLVM_MAJOR\.[0-9]+\.[0-9]+$" | sort -V | tail -1)"
+        fi
+        v="${tag#llvmorg-}"
+        name="LLVM-$v-macOS-ARM64"
+        echo "LLVM release $v"
+        mkdir -p ~/llvm-pgo
+        curl -fsSL "https://github.com/llvm/llvm-project/releases/download/$tag/$name.tar.xz" \
+          | tar -xJ -C ~/llvm-pgo --strip-components 1 \
+            "$name/bin/clang" "$name/bin/clang++" "$name/bin/clang-$LLVM_MAJOR" \
+            "$name/bin/llvm-ar" "$name/bin/llvm-ranlib" "$name/bin/llvm-libtool-darwin" \
+            "$name/lib/libLTO.dylib" "$name/lib/clang"
+        ~/llvm-pgo/bin/clang --version
+    - name: Instrumented JavaScriptCore cache key
+      id: jsc
+      shell: bash
+      run: echo "key=$(scripts/jsc/cache-key.sh)" >> "$GITHUB_OUTPUT"
+    # The instrumented archive changes only with WebKit's revision, the patches and the compiler.
+    - uses: actions/cache@v4
+      with:
+        path: target/pgo/jsc-generate
+        key: pgo-jsc-generate-macos-arm64-${{ steps.jsc.outputs.key }}-llvm-${{ env.LLVM_VERSION }}
+    - name: Build (instrumented, training, optimized)
+      shell: bash
+      env:
+        CARGO_ARGS: ${{ inputs.cargo-args }}
+        # 3 CPUs and 7 GB of memory; about 3 GB per JavaScriptCore compile job.
+        JOBS: '2'
+        LP_PGO_LTO: '1'
+      run: |
+        export LP_PGO_LLVM="$HOME/llvm-pgo"
+        # shellcheck disable=SC2086
+        scripts/pgo/build.sh $CARGO_ARGS
+        df -h .
+    - name: Free the PGO build directories
+      shell: bash
+      run: rm -rf target/pgo/webkit-build-* target/pgo/profraw
