@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  Known gap check: inline boxes with padding, border, border-radius and a
+  background (badges, chips, pills set inline in text), including one that
+  wraps across lines, next to the ToS shapes, which are inline-flex (the
+  Financial Status pills, the currency chips) and match.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="420x170">
+<style>
+  body { margin: 10px; font: 14px system-ui; color: #292c33; }
+  p { margin: 0 0 10px; width: 400px; line-height: 1.6; }
+  .badge { padding: 2px 8px; border-radius: 9999px; background: #e8f0fe; border: 1px solid #9db5e8; color: #1d4ed8; }
+  .chip { padding: 1px 6px; border-radius: 4px; background: #fef3c7; }
+  .pill { display: inline-flex; width: 40px; height: 20px; border-radius: 9999px; overflow: hidden; border: 1px solid #6b7280; vertical-align: middle; }
+  .pill span { flex: 1; } .pill span + span { border-left: 1px solid #6b7280; }
+</style>
+</head>
+<body>
+<p>Status <span class="badge">Outstanding</span> and <span class="chip">EUR</span> after an <span class="badge">overdue invoice whose badge wraps onto the next line</span> here.</p>
+<p>Inline-flex pill <span class="pill"><span style="background:#fef9c3"></span><span style="background:#eceef0"></span></span> beside text.</p>
+</body>
+</html>

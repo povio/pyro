@@ -1,0 +1,30 @@
+<!doctype html>
+<!--
+  Empty inputs with a placeholder, as the ToS filters and forms have them
+  ("Select Customer", "Enter Cost Center Id", "Search", "Min"/"Max"):
+  a plain input, one whose ::placeholder has a colour (Tailwind
+  placeholder:text-*), and the combobox shape of the ToS filter fields (label
+  and input in a flex row, the input min-w-0 w-full flex-1). Chromium paints
+  each placeholder; the third is focused, which hides no placeholder.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="480x170">
+<style>
+  body { margin: 10px; font: 14px system-ui; color: #292c33; }
+  input { font: inherit; border: 1px solid #c8ccd2; border-radius: 4px; padding: 3px 6px; width: 300px; display: block; margin-bottom: 10px; background: #fff; }
+  .muted::placeholder { color: rgb(133, 141, 158); }
+  .frame { display: flex; align-items: center; gap: 8px; width: 360px; border: 1px solid #c8ccd2; border-radius: 4px; padding: 3px 8px; }
+  .frame label { font-size: 13px; font-weight: 500; white-space: nowrap; }
+  .frame .grow { display: flex; flex: 1; min-width: 0; }
+  .frame input { border: 0; padding: 0; margin: 0; width: 100%; flex: 1; min-width: 0; outline: none; background: transparent; }
+  .frame input::placeholder { color: rgb(133, 141, 158); }
+</style>
+</head>
+<body>
+<input placeholder="Enter Cost Center Id">
+<input class="muted" placeholder="Select Available Currencies">
+<div class="frame"><label for="c">Customer (ID)</label><div class="grow"><input id="c" role="combobox" placeholder="Select Customer" autofocus></div></div>
+</body>
+</html>

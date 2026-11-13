@@ -1,0 +1,30 @@
+<!doctype html>
+<!--
+  text-overflow: ellipsis on one-line overflowing text, as the ToS list cells
+  and the header's office name use it (Tailwind `truncate`: overflow hidden,
+  text-overflow ellipsis, white-space nowrap): in a block, in a table cell
+  with a fixed column width, and in a flex item. Chromium ends each with
+  "…"; without the feature the text is cut at the box edge mid-glyph.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="420x150">
+<style>
+  body { margin: 10px; font: 14px system-ui; color: #292c33; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .box { width: 160px; margin-bottom: 8px; background: #f3f4f6; }
+  table { table-layout: fixed; width: 320px; border-collapse: collapse; margin-bottom: 8px; }
+  td { border: 1px solid #ccc; padding: 2px 4px; }
+  .flex { display: flex; gap: 8px; width: 260px; background: #eef2ff; }
+  .flex > .truncate { flex: 1; min-width: 0; }
+</style>
+</head>
+<body>
+<div class="box truncate">Listing41ec617d-MÜNCHEN-0001</div>
+<table><colgroup><col style="width: 120px"><col style="width: 200px"></colgroup>
+  <tr><td class="truncate">E2E Finance Vendor Ltd.</td><td class="truncate">FIN-REF-OUT-24 E2E-CUSTOMER-REFERENCE</td></tr>
+</table>
+<div class="flex"><span>Test Office</span><span class="truncate">6e3664b2a1f0c9d8e7b6a5</span><span>v</span></div>
+</body>
+</html>
