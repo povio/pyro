@@ -25,7 +25,7 @@ runs:
     - uses: oven-sh/setup-bun@v2
     - name: Build tools for JavaScriptCore
       shell: bash
-      run: brew install ninja
+      run: command -v ninja >/dev/null || brew install ninja
     # Only what the scripts use of the release (clang, the archivers, libLTO, clang's own
     # headers and runtimes): about 450 MB of the 7 GB the release unpacks to.
     - uses: actions/cache@v4
