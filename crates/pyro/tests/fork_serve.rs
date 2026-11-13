@@ -406,3 +406,181 @@ fn forks_load_the_modules_the_template_compiled() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_file(&stats);
 }
+
+/// Requests a test server answered, as (request line, User-Agent), in order.
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+/// An HTTP server that records every request: a document for paths ending
+/// in `/page`, `ok <path>` for the rest.
+fn recording_site() -> (std::net::SocketAddr, Seen) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = Seen::default();
+    let record = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let record = record.clone();
+            std::thread::spawn(move || {
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&request).into_owned();
+                let line = head.lines().next().unwrap_or_default().to_owned();
+                let agent = head
+                    .lines()
+                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("user-agent")))
+                    .map(|(_, v)| v.trim().to_owned())
+                    .unwrap_or_default();
+                let path = line.split(' ').nth(1).unwrap_or("/").to_owned();
+                record.lock().unwrap().push((line, agent));
+                let (ty, body) = if path.ends_with("/page") {
+                    ("text/html", "<!doctype html><p id=ready>ready</p>".to_owned())
+                } else {
+                    ("text/plain", format!("ok {path}"))
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body.as_bytes());
+            });
+        }
+    });
+    (address, seen)
+}
+
+/// `Pyro.preparedProfileStatus` once it is no longer `booting`.
+fn settled_status(s: &mut TcpStream, id: &mut u64, profile: u64) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        *id += 1;
+        let status = call(s, *id, "Pyro.preparedProfileStatus", json!({ "profileId": profile }), None);
+        if status["state"] != json!("booting") {
+            return status;
+        }
+        assert!(Instant::now() < deadline, "profile {profile} is still booting");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A profile whose setup fails: its status says which step and why, its page
+/// is refused (not handed out half set up), another client's adoption and a
+/// profile derived from it fail with the same error. Registering it again
+/// tries again. A profile's userAgent reaches its document, its setup's
+/// requests and every fork's, and is part of its definition.
+#[test]
+fn setup_failures_reach_the_clients_and_profiles_send_their_user_agent() {
+    if !pyro_js::Capabilities::detect().fork {
+        eprintln!("skipped: this JavaScriptCore cannot fork (scripts/jsc/build.sh)");
+        return;
+    }
+    let (site, seen) = recording_site();
+    let port = free_port();
+    let _server = Server(
+        Command::new(env!("CARGO_BIN_EXE_pyro"))
+            .args(["serve", "--port", &port.to_string(), "--fork", "--log-level", "warn"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let mut main = connect(port);
+    let mut id = 0;
+    let mut next = || {
+        id += 1;
+        id
+    };
+
+    let failing = json!({ "name": "app", "url": format!("http://{site}/app/page"), "setup": [
+        { "eval": { "expression": "document.getElementById('ready').textContent" } },
+        { "act": { "locator": { "css": "#missing" }, "action": "click", "timeout": 300 } },
+    ] });
+    let registered = call(&mut main, next(), "Pyro.registerPreparedPage", failing.clone(), None);
+    assert_eq!(registered["state"], json!("booting"), "{registered}");
+    let app = registered["profileId"].as_u64().unwrap();
+    let mut status_id = 1000;
+    let status = settled_status(&mut main, &mut status_id, app);
+    assert_eq!(status["state"], json!("failed"), "{status}");
+    let error = status["error"].as_str().unwrap().to_owned();
+    assert!(error.starts_with(r##"setup step 1 (Click {"css":"#missing"}): timed out after 300 ms: "##), "{error}");
+
+    // A connection forked for it gets no page of it.
+    let mut forked = connect_to(port, &format!("/?profile={app}"));
+    let refused =
+        call_message(&mut forked, 1, "Pyro.acquirePreparedPage", json!({ "profileId": app, "attach": true }), None);
+    assert_eq!(refused["error"]["code"], json!(-32000), "{refused}");
+    assert_eq!(refused["error"]["message"], json!(format!("profile {app}: {error}")), "{refused}");
+    assert_eq!(refused["error"]["data"]["setupError"], json!(error), "{refused}");
+    drop(forked);
+
+    // Another client: its adoption fails with the error and holds nothing.
+    let mut other = connect(port);
+    let adopted = call_message(&mut other, 1, "Pyro.adoptPreparedPage", json!({ "name": "app" }), None);
+    assert_eq!(adopted["error"]["message"], json!(format!("profile app: {error}")), "{adopted}");
+    // A profile derived from it fails at once.
+    let derived = call(
+        &mut main,
+        next(),
+        "Pyro.registerPreparedPage",
+        json!({ "name": "derived", "url": format!("http://{site}/app/page"), "base": app,
+                "setup": [{ "eval": { "expression": "1" } }] }),
+        None,
+    );
+    assert_eq!(derived["state"], json!("failed"), "{derived}");
+    assert_eq!(derived["error"], json!(format!("base profile app failed: {error}")), "{derived}");
+    let listed = call(&mut main, next(), "Pyro.preparedProfiles", json!({}), None);
+    let summary: Vec<String> = listed["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| format!("{}:{}:{}", p["name"].as_str().unwrap(), p["holders"], p["state"].as_str().unwrap()))
+        .collect();
+    assert_eq!(summary, ["app:1:failed", "derived:1:failed"], "{listed}");
+
+    // Registered again (the other client, same definition): a new attempt, the name moves to it.
+    let again = call(&mut other, 2, "Pyro.registerPreparedPage", failing, None);
+    assert_ne!(again["profileId"], json!(app), "{again}");
+    assert_eq!(again["state"], json!("booting"), "{again}");
+
+    // A profile's agent: on its document, its setup's requests and a fork's.
+    let agent = "ForkAgent/2.0 (identity)";
+    let identity = json!({ "name": "ua", "url": format!("http://{site}/ua/page"), "userAgent": agent,
+                           "setup": [{ "eval": { "expression": "fetch('/ua/setup').then((r) => r.text())" } }] });
+    let registered = call(&mut main, next(), "Pyro.registerPreparedPage", identity.clone(), None);
+    let ua = registered["profileId"].as_u64().unwrap();
+    assert_eq!(settled_status(&mut main, &mut status_id, ua)["state"], json!("ready"));
+    let mut forked = connect_to(port, &format!("/?profile={ua}"));
+    let page = call(&mut forked, 1, "Pyro.acquirePreparedPage", json!({ "profileId": ua, "attach": true }), None);
+    let session = page["sessionId"].as_str().unwrap().to_owned();
+    let run = call(
+        &mut forked,
+        2,
+        "Pyro.run",
+        json!({ "steps": [
+            { "eval": { "expression": "navigator.userAgent", "as": "agent" } },
+            { "eval": { "expression": "fetch('/ua/fork').then((r) => r.text())", "as": "fetched" } },
+        ] }),
+        Some(&session),
+    );
+    assert_eq!(run["reads"], json!({ "agent": agent, "fetched": "ok /ua/fork" }), "{run}");
+    let ua_requests: Vec<(String, String)> =
+        seen.lock().unwrap().iter().filter(|(line, _)| line.contains(" /ua/")).cloned().collect();
+    let expected: Vec<(String, String)> = ["/ua/page", "/ua/setup", "/ua/fork"]
+        .iter()
+        .map(|path| (format!("GET {path} HTTP/1.1"), agent.to_owned()))
+        .collect();
+    assert_eq!(ua_requests, expected);
+    // Another agent is another definition: refused while the name is held.
+    let mut changed = identity;
+    changed["userAgent"] = json!("Other/1.0");
+    let refused = call_message(&mut other, 3, "Pyro.registerPreparedPage", changed, None);
+    let message = refused["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("different definition"), "{refused}");
+}

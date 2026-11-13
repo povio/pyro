@@ -7212,6 +7212,102 @@ fn prepared_profile_init_scripts_capture_popup_errors_and_survive_navigation() {
     assert_eq!(r["result"]["reads"]["isolated"], "undefined", "{r}");
 }
 
+/// Requests a test server answered, as (request line, User-Agent), in order.
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+/// An HTTP server that records every request and answers a document for
+/// paths ending in `/page`, `ok <path>` for the rest. It takes absolute-form
+/// requests too, as an HTTP proxy would (and answers them itself).
+fn recording_site() -> (std::net::SocketAddr, Seen) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = Seen::default();
+    let record = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let record = record.clone();
+            std::thread::spawn(move || {
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&request).into_owned();
+                let line = head.lines().next().unwrap_or_default().to_owned();
+                let agent = head
+                    .lines()
+                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("user-agent")))
+                    .map(|(_, v)| v.trim().to_owned())
+                    .unwrap_or_default();
+                let path = line.split(' ').nth(1).unwrap_or("/").to_owned();
+                record.lock().unwrap().push((line, agent));
+                let (ty, body) = if path.ends_with("/page") {
+                    ("text/html", "<!doctype html><p id=ready>ready</p>".to_owned())
+                } else {
+                    ("text/plain", format!("ok {path}"))
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body.as_bytes());
+            });
+        }
+    });
+    (address, seen)
+}
+
+/// A prepared profile's `userAgent` and proxy belong to its pages' browser
+/// context: the document request, fetches and `navigator.userAgent` of its
+/// pages have them; pages of other contexts keep the browser's.
+#[test]
+fn prepared_profiles_send_their_user_agent_and_go_through_their_proxy() {
+    let (site, seen) = recording_site();
+    let mut h = Harness::new();
+    let take = |h: &mut Harness, params: Value| {
+        let r = h.call(None, "Pyro.registerPreparedPage", params);
+        let profile = r["result"]["profileId"].as_u64().unwrap_or_else(|| panic!("{r}"));
+        let r = h.call(None, "Pyro.acquirePreparedPage", json!({"profileId": profile, "attach": true}));
+        let session = r["result"]["sessionId"].as_str().unwrap_or_else(|| panic!("{r}")).to_owned();
+        h.call(
+            Some(&session),
+            "Pyro.run",
+            json!({"steps": [
+                {"loaded": {}},
+                {"eval": {"expression": "navigator.userAgent", "as": "agent"}},
+                {"eval": {"expression": "fetch('/api').then((r) => r.text())", "as": "api"}},
+            ]}),
+        )
+    };
+
+    let agent = "ScraperBot/1.0 (identity one)";
+    let r = take(&mut h, json!({"url": format!("http://{site}/direct/page"), "pool": 1, "userAgent": agent}));
+    assert_eq!(r["result"]["reads"], json!({"agent": agent, "api": "ok /api"}), "{r}");
+    // Through the proxy: `proxied.test` resolves nowhere, only the proxy answers for it.
+    let r = take(
+        &mut h,
+        json!({"url": "http://proxied.test/page", "pool": 1, "userAgent": "Proxied/2.0", "proxyServer": format!("http://{site}")}),
+    );
+    assert_eq!(r["result"]["reads"], json!({"agent": "Proxied/2.0", "api": "ok http://proxied.test/api"}), "{r}");
+    let seen = seen.lock().unwrap().clone();
+    let request = |line: &str| seen.iter().find(|(l, _)| l == line).map(|(_, a)| a.clone());
+    assert_eq!(request("GET /direct/page HTTP/1.1").as_deref(), Some(agent), "{seen:?}");
+    assert_eq!(request("GET /api HTTP/1.1").as_deref(), Some(agent), "{seen:?}");
+    assert_eq!(request("GET http://proxied.test/page HTTP/1.1").as_deref(), Some("Proxied/2.0"), "{seen:?}");
+    assert_eq!(request("GET http://proxied.test/api HTTP/1.1").as_deref(), Some("Proxied/2.0"), "{seen:?}");
+
+    // The harness's own page (another context) keeps the browser's agent.
+    let r = h.page("Pyro.run", json!({"steps": [{"eval": {"expression": "navigator.userAgent", "as": "agent"}}]}));
+    let own = r["result"]["reads"]["agent"].as_str().unwrap_or_else(|| panic!("{r}"));
+    assert!(own.starts_with("Mozilla/5.0 (compatible; pyro/"), "{r}");
+}
+
 #[test]
 fn driver_clicks_through_display_contents_overflow_without_ignoring_real_clips() {
     let mut h = Harness::new();

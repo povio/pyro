@@ -49,6 +49,17 @@ pub struct ContextId(pub u32);
 
 pub const DEFAULT_CONTEXT: ContextId = ContextId(0);
 
+/// Network settings a browser context has of its own instead of the
+/// browser's ([`Browser::create_context_with`]).
+#[derive(Debug, Clone, Default)]
+pub struct ContextNet {
+    /// Its proxy (`Some(None)`: none), `Target.createBrowserContext proxyServer`.
+    pub proxy: Option<Option<pyro_net::ProxyConfig>>,
+    /// The `User-Agent` of its requests and its pages' `navigator.userAgent`
+    /// (a page's `Emulation.setUserAgentOverride` still takes its place).
+    pub user_agent: Option<String>,
+}
+
 struct ContextState {
     id: ContextId,
     loader: Option<Rc<dyn ResourceLoader>>,
@@ -892,16 +903,22 @@ impl Browser {
 
     /// Creates an isolated browser context with its own network state.
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
-        self.create_context_inner(None)
+        self.create_context_inner(ContextNet::default())
     }
 
     /// `create_context` with its own proxy setting (`None`: no proxy) instead
     /// of the browser's.
     pub fn create_context_with_proxy(&mut self, proxy: Option<pyro_net::ProxyConfig>) -> std::io::Result<ContextId> {
-        self.create_context_inner(Some(proxy))
+        self.create_context_inner(ContextNet { proxy: Some(proxy), user_agent: None })
     }
 
-    fn create_context_inner(&mut self, proxy: Option<Option<pyro_net::ProxyConfig>>) -> std::io::Result<ContextId> {
+    /// `create_context` with network settings of its own instead of the
+    /// browser's (see [`ContextNet`]).
+    pub fn create_context_with(&mut self, net: ContextNet) -> std::io::Result<ContextId> {
+        self.create_context_inner(net)
+    }
+
+    fn create_context_inner(&mut self, net: ContextNet) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
         let local_storage = pyro_webapi::StorageNamespace::seeded(&self.local_storage_seed);
         self.contexts.push(ContextState {
@@ -913,23 +930,22 @@ impl Browser {
             init_scripts: Vec::new(),
         });
         if self.net_config.is_some() {
-            self.attach_network_with(id, proxy)?;
+            self.attach_network_with(id, net)?;
         }
         Ok(id)
     }
 
     fn attach_network(&mut self, id: ContextId) -> std::io::Result<()> {
-        self.attach_network_with(id, None)
+        self.attach_network_with(id, ContextNet::default())
     }
 
-    fn attach_network_with(
-        &mut self,
-        id: ContextId,
-        proxy: Option<Option<pyro_net::ProxyConfig>>,
-    ) -> std::io::Result<()> {
+    fn attach_network_with(&mut self, id: ContextId, net: ContextNet) -> std::io::Result<()> {
         let mut config = self.net_config.clone().unwrap_or_default();
-        if let Some(proxy) = proxy {
+        if let Some(proxy) = net.proxy {
             config.proxy = proxy;
+        }
+        if let Some(user_agent) = net.user_agent {
+            config.user_agent = user_agent;
         }
         let client = pyro_net::NetClient::new(config)?;
         client.set_ignore_certificate_errors(self.ignore_certificate_errors);

@@ -549,8 +549,9 @@ impl EngineHost {
     pub fn preboot(thread: &mut BrowserThread, profiles: &[crate::target::PreparedProfile]) -> Vec<Prebooted> {
         let mut out = Vec::new();
         for (index, profile) in profiles.iter().enumerate() {
+            let Ok(net) = context_net(crate::target::ContextOptions::of(profile)) else { continue };
             for _ in 0..profile.pool.clamp(1, crate::target::MAX_POOL) {
-                let Ok(context) = thread.browser.create_context() else { break };
+                let Ok(context) = thread.browser.create_context_with(net.clone()) else { break };
                 let Ok(page) = thread.browser.create_page_in(context) else {
                     thread.browser.close_context(context);
                     break;
@@ -1294,6 +1295,12 @@ impl EngineHost {
     }
 }
 
+/// The network settings of a browser context with `options` of its own.
+fn context_net(options: crate::target::ContextOptions<'_>) -> Result<pyro_browser::ContextNet, String> {
+    let proxy = options.proxy.map(|p| pyro_net::ProxyConfig::parse(p.server, p.bypass_list)).transpose()?;
+    Ok(pyro_browser::ContextNet { proxy, user_agent: options.user_agent.map(str::to_owned) })
+}
+
 impl EngineHost {
     /// Makes `id` the VM's time zone unless it already is: a change flushes
     /// JavaScriptCore's date caches and walks the heap's Date objects.
@@ -1340,9 +1347,9 @@ impl Host for EngineHost {
         Ok(key)
     }
 
-    fn create_proxied_context(&mut self, proxy: crate::target::ContextProxy<'_>) -> CdpResult<ContextKey> {
-        let config = pyro_net::ProxyConfig::parse(proxy.server, proxy.bypass_list).map_err(CdpError::server)?;
-        let id = self.thread.browser.create_context_with_proxy(config).map_err(|e| CdpError::server(e.to_string()))?;
+    fn create_context_with(&mut self, options: crate::target::ContextOptions<'_>) -> CdpResult<ContextKey> {
+        let net = context_net(options).map_err(CdpError::server)?;
+        let id = self.thread.browser.create_context_with(net).map_err(|e| CdpError::server(e.to_string()))?;
         let key = u64::from(id.0);
         self.contexts.insert(key, network::NetworkContext::new(id));
         Ok(key)

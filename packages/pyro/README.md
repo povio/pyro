@@ -44,6 +44,21 @@ test.concurrent('closes a position', async () => {
   starts from their result. `base: 'otherProfile'` builds a snapshot on top of
   another one: only its own `setup` runs, on a fork of that snapshot (boot on
   the login page once, sign in once, then one snapshot per test file).
+  `profile()` resolves once the setup ran. When a step fails it rejects with a
+  `ProfileSetupError` naming the step and why (`profile app: setup step 2
+  (Click …): timed out after 5000 ms: …`, with `.step` and `.profile`); no
+  page of that profile is handed out (`page({ as })` and `warm()` throw the
+  same error), and profiles built on it fail with it. Declaring it again (the
+  same definition after fixing the app, or a changed one) tries again.
+- **Identities.** `userAgent` in a profile is the `User-Agent` of every
+  request its pages make (the document, subresources, fetch and XHR, the
+  `setup` steps' and, in fork mode, every page's since) and what
+  `navigator.userAgent` reports; `proxyServer` (`http://[user:pass@]host:port`)
+  and `proxyBypassList` send those requests through a proxy of its own
+  instead of the server's `--proxy`. One profile per signed-in identity, each
+  with its agent and proxy. Both are part of the definition (a different
+  agent under a shared name is refused while held); a profile with a `base`
+  has its base's.
 - **One server, many workers.** A fork-mode server keeps profiles by name
   for all its clients. Launch it once (`Pyro.launch({ args:
   ['--fork'] })` in the process that starts `bun test`), register the shared
@@ -55,8 +70,10 @@ test.concurrent('closes a position', async () => {
   another client holds is refused. A client holds the profiles it registered
   or adopted until `releaseProfile(name)` or until it disconnects, and the
   server retires a profile once no client holds it and no other profile
-  derives from it. A launched server exits with the process that launched
-  it, however that process ends.
+  derives from it. A worker adopting a profile whose setup failed (by
+  `adopt`, `page({ as })` or `base`) gets its `ProfileSetupError` and holds
+  nothing. A launched server exits with the process that launched it,
+  however that process ends.
 - **Locators** are data: `css`, `testId`, `text`, `label`, `placeholder`,
   `role` (and `button`, `dialog`, `link`, …), chained inside one another
   (`dialog().button('OK')`), filtered (`.visible()`, `.hasText()`,
