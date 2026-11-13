@@ -146,12 +146,6 @@ pub fn install_with(fetchers: FetcherFactory) {
     if profile::on() {
         pyro_render::profiling::enable();
     }
-    let sink = fetcher.clone();
-    pyro_dom::layout::set_resource_sink(Some(Rc::new(move |url: &str, body: &[u8]| {
-        if sink.provide(url, body) {
-            resources_changed();
-        }
-    })));
     pyro_dom::layout::set_geometry_source_factory(Some(Rc::new(move || {
         Rc::new(BlitzGeometry {
             page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
@@ -172,7 +166,6 @@ pub fn install_with(fetchers: FetcherFactory) {
 /// again). The fetcher, which reaches the old client's network, goes too.
 pub fn release_thread() {
     pyro_dom::layout::set_geometry_source_factory(None);
-    pyro_dom::layout::set_resource_sink(None);
     let renderer = RENDERER.with(|r| r.try_borrow_mut().ok().and_then(|mut r| r.take()));
     drop(renderer);
 }

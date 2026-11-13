@@ -19,13 +19,6 @@ use crate::Snapshot;
 /// thread, at most once; an error renders the resource as missing.
 pub trait Fetcher: Send + Sync + 'static {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>);
-    /// A body of `url` the page's own loader fetched (a `<style>`'s
-    /// `@import`ed sheet): a caching fetcher keeps it for its later
-    /// fetches. True when it replaces a body an earlier fetch failed to get
-    /// (or has not got yet), so documents laid out without it are stale.
-    fn provide(&self, _url: &str, _body: &[u8]) -> bool {
-        false
-    }
 }
 
 type Cache = Arc<Mutex<HashMap<String, Bytes>>>;

@@ -3,23 +3,19 @@
 //! the `@import`s it starts with are fetched. The expected orders are the
 //! ones Chromium gave for the same markup.
 use pyro_browser::{BrowserThread, InitScript, NavigateOpts, PageId, StaticLoader};
-use std::collections::HashMap;
+use pyro_dom::layout::{SubresourceBodies, SubresourceLoader};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// A layout fetcher with only what the page's loader provides (imported
-/// sheets), as the binary's caching fetcher keeps it.
-#[derive(Default)]
-struct Provided(Mutex<HashMap<String, Vec<u8>>>);
+/// A layout fetcher with only the bodies of its document's network identity,
+/// where the page's loader puts imported sheets (the binary's fetcher reads
+/// them there before going to the network).
+struct Provided(Option<Arc<SubresourceBodies>>);
 impl pyro_render::Fetcher for Provided {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        let body = self.0.lock().unwrap().get(&url).cloned();
+        let body = self.0.as_ref().and_then(|b| b.lock().get(&url).filter(|b| !b.is_empty()).map(|b| b.to_vec()));
         done(body.ok_or_else(|| format!("{url}: not provided")));
-    }
-    fn provide(&self, url: &str, body: &[u8]) -> bool {
-        self.0.lock().unwrap().insert(url.to_owned(), body.to_vec());
-        true
     }
 }
 
@@ -39,7 +35,9 @@ fn events(thread: &BrowserThread, page: PageId) -> String {
 }
 /// A page whose `events` records `<style>` loads and errors (by id), DOMContentLoaded and the window's load.
 fn setup(html: &str) -> (BrowserThread, PageId, Rc<StaticLoader>) {
-    pyro_layout::install(Arc::new(Provided::default()));
+    pyro_layout::install_with(Rc::new(|loader: Option<&Arc<dyn SubresourceLoader>>| {
+        Arc::new(Provided(loader.map(|l| l.bodies().clone()))) as Arc<dyn pyro_render::Fetcher>
+    }));
     let mut thread = BrowserThread::new().unwrap();
     let page = thread.browser.create_page().unwrap();
     thread.browser.add_init_script(page, InitScript {
