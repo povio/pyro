@@ -40,10 +40,10 @@ test('cases of different files interleave up to the concurrency', async () => {
   const r = await e2e(['test/e2e-fixture/interleave/*.e2e.ts', '-j', '4']);
   expect(r.code).toBe(0);
   expect(Math.max(...r.events.map((e) => e.active ?? 0))).toBe(4);
-  const starts = r.events.filter((e) => e.event.startsWith('start'));
-  const ends = r.events.filter((e) => e.event.startsWith('end'));
-  // Eight 100 ms tests four at a time: two rounds, not eight.
-  expect(Math.max(...ends.map((e) => e.t)) - Math.min(...starts.map((e) => e.t))).toBeLessThan(380);
+  // Eight 100 ms tests four at a time: four start before any ends (by the
+  // order of the events, not wall time, which a loaded runner stretches).
+  const firstEnd = r.names.findIndex((n) => n.startsWith('end'));
+  expect(r.names.slice(0, firstEnd).filter((n) => n.startsWith('start')).length).toBe(4);
   // A file's test starts before the other file's tests are done.
   expect(at(r.names, 'start two/t0')).toBeLessThan(Math.max(...['t0', 't1', 't2', 't3'].map((t) => at(r.names, `end one/${t}`))));
   expect(r.out).toContain('8 pass');
