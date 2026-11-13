@@ -331,7 +331,7 @@ impl BytecodeCache {
                     queue.running = true;
                     let cache = self.clone();
                     let spawned =
-                        std::thread::Builder::new().name("lp bytecode cache".into()).spawn(move || cache.run_writer());
+                        std::thread::Builder::new().name("pyro bytecode cache".into()).spawn(move || cache.run_writer());
                     if spawned.is_err() {
                         *queue = Queue::default();
                     }

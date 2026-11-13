@@ -654,9 +654,9 @@ impl EngineHost {
     }
 
     /// The `printToPDF` reply: the PDF (inline, or as an `IO` stream) and
-    /// pyro's report (`lp`: pages, overflow, mapping stats, timings).
+    /// pyro's report (`pyro`: pages, overflow, mapping stats, timings).
     fn pdf_body(&mut self, o: pyro_render::PdfOutput, stream: bool, token: u64, snapshot_ms: f64, total: f64) -> Value {
-        let lp = json!({
+        let report = json!({
             "pages": o.pages.iter().map(|p| json!({
                 "x": p.rect.x0, "y": p.rect.y0, "width": p.rect.width(), "height": p.rect.height(),
                 "overflowRight": p.overflow_right, "overflowBottom": p.overflow_bottom, "culprit": p.culprit,
@@ -672,9 +672,9 @@ impl EngineHost {
         if stream {
             let handle = format!("pyro-pdf-{token}");
             self.renders.streams.insert(handle.clone(), (o.bytes, 0));
-            json!({ "data": "", "stream": handle, "lp": lp })
+            json!({ "data": "", "stream": handle, "pyro": report })
         } else {
-            json!({ "data": base64_encode(&o.bytes), "lp": lp })
+            json!({ "data": base64_encode(&o.bytes), "pyro": report })
         }
     }
 
@@ -804,7 +804,7 @@ impl EngineHost {
                             // `bytes`: the image's size, also when it went to the capture's file.
                             let body = json!({
                                 "data": base64_encode(&c.bytes),
-                                "lp": { "width": c.width, "height": c.height, "bytes": c.size, "sceneHash": format!("{:016x}", c.scene_hash), "ms": timings_json(&c.timings, wait.snapshot_ms, total) },
+                                "pyro": { "width": c.width, "height": c.height, "bytes": c.size, "sceneHash": format!("{:016x}", c.scene_hash), "ms": timings_json(&c.timings, wait.snapshot_ms, total) },
                             });
                             msg::result_frame(wait.id, &body, Some(&wait.session))
                         }
