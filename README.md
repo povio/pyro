@@ -197,7 +197,8 @@ Network steps on the wire (engine side; the client builds them):
 `patch` implies `passthrough` (the real response is rewritten; `json` is a
 JSON merge patch onto a JSON object body); `hold` parks the request, or with
 `passthrough` its real response, until `release` (which waits for something
-to be held and returns `{"released": n}`). Explicit `{"advanceTime":{"ms":2000}}`
+to be held and returns `{"released": n}`; the next step starts once the page
+has the replies released to it). Explicit `{"advanceTime":{"ms":2000}}`
 steps advance page Date and timers, bounded to one day per step. A
 `request` step (default `state: "finished"`) and the run's `requests` carry
 `requestHeaders`, `postData` (`postDataBase64` / `postDataTruncated` past
@@ -205,10 +206,18 @@ steps advance page Date and timers, bounded to one day per step. A
 semantics (look-around, backreferences; flags `i`, `m`, `s`).
 
 After each action a step waits until the page is quiet: no queued task, no
-request the action started, no `setTimeout` due within 50 ms, no pending
-animation frame (animation loops excepted) and no navigation short of
-DOMContentLoaded. The same wait is an `idle` step, or `Pyro.idle {timeout}` on
-its own; when it gives up, the result says what was still `pending`.
+request the action started (one in flight before it, a long poll, does not
+count), no `setTimeout` due within 50 ms, no pending animation frame
+(animation loops excepted), no `scroll` event or ResizeObserver callback
+owed by the next rendering update (the wait runs that update instead of
+waiting for the frame clock) and no navigation short of DOMContentLoaded.
+The same wait is an `idle` step, or `Pyro.idle {timeout}` on its own; when it
+gives up, the result says what was still `pending`. A step that does not
+settle (`focus`, `blur`, `settle: false`) is followed by one turn of the
+event loop, in which the `scroll` events it caused are delivered; an `eval`
+that scheduled nothing (no task, timer, request, DOM change or observer
+work) is followed by the next step directly. `PYRO_RUN_STEP_TRACE=1` logs
+each step, its stages and what it waited on to stderr.
 
 Pointer actions follow Playwright: a locator `act` with `click`, `dblclick`,
 `hover` or `wheel` aims at the center of the element's visible part (clipped

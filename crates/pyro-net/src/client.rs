@@ -338,8 +338,29 @@ pub struct NetActivity {
 
 #[derive(Default)]
 struct ActivityMap {
-    loaders: HashMap<String, (u64, NetActivity)>,
+    loaders: HashMap<String, LoaderActivity>,
     generation: u64,
+    /// Requests tracked so far, over every loader. Each takes the count as
+    /// its `order`, so one reading splits the requests in flight into those
+    /// started before it and those started after ([`NetClient::request_mark`]).
+    started: u64,
+}
+
+struct LoaderActivity {
+    /// Tells this entry from an earlier one of the same loader that was
+    /// forgotten: that one's requests must not touch it.
+    generation: u64,
+    counts: NetActivity,
+    inflight: Vec<InFlight>,
+}
+
+/// A request in flight for a loader.
+struct InFlight {
+    id: RequestId,
+    /// Its place among the requests the client tracked ([`ActivityMap::started`]).
+    order: u64,
+    /// An established event stream.
+    stream: bool,
 }
 
 /// Decrements its loader's activity exactly once, when pyro-net drops the
@@ -350,13 +371,16 @@ struct ActivityGuard {
     map: Arc<Mutex<ActivityMap>>,
     loader: String,
     generation: u64,
+    order: u64,
 }
 
 impl Drop for ActivityGuard {
     fn drop(&mut self) {
         let mut map = self.map.lock().unwrap();
-        if let Some((generation, a)) = map.loaders.get_mut(&self.loader) {
-            if *generation == self.generation {
+        if let Some(l) = map.loaders.get_mut(&self.loader) {
+            if l.generation == self.generation {
+                l.inflight.retain(|r| r.order != self.order);
+                let a = &mut l.counts;
                 a.inflight = a.inflight.saturating_sub(1);
                 if self.event_stream {
                     a.event_streams = a.event_streams.saturating_sub(1);
@@ -765,6 +789,12 @@ impl NetClient {
         RequestId(self.inner.next_id.fetch_add(1, Ordering::Relaxed))
     }
 
+    /// Grows with every request this client starts (WebSocket handshakes
+    /// included): two equal readings mean none started between them.
+    pub fn requests_started(&self) -> u64 {
+        self.inner.next_id.load(Ordering::Relaxed)
+    }
+
     /// Starts a request. `data:` URLs are answered on the I/O thread
     /// without network access so event ordering stays uniform.
     pub fn fetch(&self, req: Request, sink: ResponseSink) -> RequestId {
@@ -775,7 +805,7 @@ impl NetClient {
 
     pub fn fetch_with_id(&self, id: RequestId, req: Request, sink: ResponseSink) {
         let sink = match req.loader_id.clone() {
-            Some(loader) => self.track(loader, sink),
+            Some(loader) => self.track(id, loader, sink),
             None => sink,
         };
         let start = Instant::now();
@@ -788,14 +818,20 @@ impl NetClient {
 
     /// Counts a started request for `loader` (synchronously, on the caller's
     /// thread) and ties the matching decrement to the sink's lifetime.
-    fn track(&self, loader: String, mut sink: ResponseSink) -> ResponseSink {
-        let generation = {
+    fn track(&self, id: RequestId, loader: String, mut sink: ResponseSink) -> ResponseSink {
+        let (generation, order) = {
             let mut map = self.inner.activity.lock().unwrap();
             let next = map.generation + 1;
-            let (generation, a) = map.loaders.entry(loader.clone()).or_insert_with(|| {
-                (next, NetActivity { inflight: 0, event_streams: 0, idle_since: None, almost_idle_since: None })
+            map.started += 1;
+            let order = map.started;
+            let l = map.loaders.entry(loader.clone()).or_insert_with(|| LoaderActivity {
+                generation: next,
+                counts: NetActivity { inflight: 0, event_streams: 0, idle_since: None, almost_idle_since: None },
+                inflight: Vec::new(),
             });
-            let generation = *generation;
+            let generation = l.generation;
+            l.inflight.push(InFlight { id, order, stream: false });
+            let a = &mut l.counts;
             a.inflight += 1;
             a.idle_since = None;
             if a.inflight > 2 {
@@ -804,17 +840,21 @@ impl NetClient {
             if generation == next {
                 map.generation = next;
             }
-            generation
+            (generation, order)
         };
-        let mut guard = ActivityGuard { event_stream: false, map: self.inner.activity.clone(), loader, generation };
+        let mut guard =
+            ActivityGuard { event_stream: false, map: self.inner.activity.clone(), loader, generation, order };
         Box::new(move |ev| {
             if !guard.event_stream
                 && matches!(&ev, ResponseEvent::Response(head) if head.status.is_success() && head.mime == "text/event-stream")
             {
                 let mut map = guard.map.lock().unwrap();
-                if let Some((generation, activity)) = map.loaders.get_mut(&guard.loader) {
-                    if *generation == guard.generation {
-                        activity.event_streams += 1;
+                if let Some(l) = map.loaders.get_mut(&guard.loader) {
+                    if l.generation == guard.generation {
+                        l.counts.event_streams += 1;
+                        if let Some(entry) = l.inflight.iter_mut().find(|r| r.order == guard.order) {
+                            entry.stream = true;
+                        }
                         guard.event_stream = true;
                     }
                 }
@@ -826,7 +866,31 @@ impl NetClient {
     /// Current activity of a loader, `None` if it never started a request on
     /// this client (or was forgotten since).
     pub fn activity(&self, loader_id: &str) -> Option<NetActivity> {
-        self.inner.activity.lock().unwrap().loaders.get(loader_id).map(|(_, a)| *a)
+        self.inner.activity.lock().unwrap().loaders.get(loader_id).map(|l| l.counts)
+    }
+
+    /// A point in this client's request history: the requests it starts for
+    /// a loader from now on are the ones [`Self::inflight_after`] counts for
+    /// this reading. 0 comes before every request.
+    pub fn request_mark(&self) -> u64 {
+        self.inner.activity.lock().unwrap().started
+    }
+
+    /// A loader's finite requests (established event streams left out, as in
+    /// [`NetActivity`]) that were started after `mark` and are still in flight.
+    pub fn inflight_after(&self, loader_id: &str, mark: u64) -> usize {
+        let map = self.inner.activity.lock().unwrap();
+        map.loaders.get(loader_id).map_or(0, |l| l.inflight.iter().filter(|r| r.order > mark && !r.stream).count())
+    }
+
+    /// Whether request `id` is still in flight. It stops being so right after
+    /// its terminal event (finished, failed, canceled) was handed to its
+    /// sink, so a consumer that reads `false` has been given every event of
+    /// the request. Also false for a request without a loader, which is not
+    /// tracked, and for one whose loader was forgotten.
+    pub fn in_flight(&self, id: RequestId) -> bool {
+        let map = self.inner.activity.lock().unwrap();
+        map.loaders.values().any(|l| l.inflight.iter().any(|r| r.id == id))
     }
 
     /// Drops a loader's activity entry (e.g. on navigation or page close).

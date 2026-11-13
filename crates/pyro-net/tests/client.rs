@@ -783,6 +783,9 @@ fn event_stream_activity_is_separate_and_cancellation_clears_both_counts() {
     let active = client.activity("sse").unwrap();
     assert_eq!((active.inflight, active.event_streams), (1, 1));
     assert!(active.idle_since.is_none());
+    // In flight, but not one of the finite requests a reading counts.
+    assert!(client.in_flight(id));
+    assert_eq!(client.inflight_after("sse", 0), 0);
     client.cancel(id);
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while client.activity("sse").unwrap().inflight != 0 {
@@ -792,6 +795,62 @@ fn event_stream_activity_is_separate_and_cancellation_clears_both_counts() {
     assert_eq!(client.activity("sse").unwrap().event_streams, 0);
     let _ = stop.send(());
     server.join().unwrap();
+}
+
+/// A mark splits a loader's requests in flight into those started before it
+/// and those started after, whichever end first, and `in_flight` follows one
+/// request until its terminal event was handed over.
+#[test]
+fn requests_in_flight_are_told_apart_by_when_they_started() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let start = |path: &str, loader: Option<&str>| {
+        let mut req = Request::get(url(&s, path), Destination::Fetch);
+        req.loader_id = loader.map(str::to_owned);
+        let (tx, rx) = mpsc::channel();
+        let id = c.fetch(
+            req,
+            Box::new(move |ev| {
+                let _ = tx.send(ev);
+            }),
+        );
+        (id, rx)
+    };
+    let ended = |id: RequestId| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while c.in_flight(id) {
+            assert!(std::time::Instant::now() < deadline, "{id:?} is still in flight");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    assert_eq!(c.request_mark(), 0);
+    let (earlier, _earlier_events) = start("/slow", Some("L"));
+    let mark = c.request_mark();
+    assert_eq!((c.inflight_after("L", 0), c.inflight_after("L", mark)), (1, 0));
+    let (later, later_events) = start("/gated", Some("L"));
+    let (other, _other_events) = start("/slow", Some("M"));
+    assert_eq!((c.inflight_after("L", 0), c.inflight_after("L", mark)), (2, 1));
+    assert_eq!(c.inflight_after("M", mark), 1, "a loader's requests are its own");
+    assert!(c.in_flight(earlier) && c.in_flight(later) && c.in_flight(other));
+    // The earlier request ends: as many in flight as at the mark, yet the
+    // one started after it still counts.
+    c.cancel(earlier);
+    ended(earlier);
+    assert_eq!((c.inflight_after("L", 0), c.inflight_after("L", mark)), (1, 1));
+    // Not in flight any more once its last event was delivered.
+    s.open_gate();
+    while !matches!(later_events.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Finished { .. }) {}
+    ended(later);
+    assert_eq!(c.inflight_after("L", mark), 0);
+    // Requests without a loader are not tracked, and a forgotten loader's
+    // are in flight for no one.
+    let (plain, _plain_events) = start("/slow", None);
+    assert!(!c.in_flight(plain));
+    c.forget_activity("M");
+    assert!(!c.in_flight(other));
+    assert_eq!(c.inflight_after("M", 0), 0);
+    c.cancel(other);
+    c.cancel(plain);
 }
 
 /// HTTPS server with a self-signed certificate for `127.0.0.1` (checked in

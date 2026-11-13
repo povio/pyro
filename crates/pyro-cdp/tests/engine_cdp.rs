@@ -6315,6 +6315,364 @@ fn driver_run_turns_the_event_loop_between_input_events_and_steps() {
     assert_eq!(r["result"]["reads"]["saves"], "a=1,b=2", "{r}");
 }
 
+const SETTLE_OBSERVER_PAGE: &str = r#"<!doctype html><body style="margin:0">
+<div id="box" style="width:100px;height:20px"></div>
+<button id="grow">Grow</button> <button id="loop">Loop</button>
+<script>
+  const box = document.getElementById('box');
+  window.seen = [];
+  let rounds = 0;
+  new ResizeObserver((entries) => {
+    const width = entries[0].contentRect.width;
+    seen.push(width);
+    if (rounds > 0) { rounds--; box.style.width = (width + 10) + 'px'; }
+  }).observe(box);
+  document.getElementById('grow').onclick = () => { rounds = 3; box.style.width = '150px'; };
+  document.getElementById('loop').onclick = () => { rounds = Infinity; box.style.width = '300px'; };
+</script>"#;
+
+/// A settle that only a ResizeObserver's pacing holds up has the observers
+/// gather at once: a click whose resize sets off three more rounds of
+/// callbacks (each resizing the box again) settles in the time the callbacks
+/// take, not in four pacing intervals of 16 ms, and every size was delivered.
+#[test]
+fn settle_brings_paced_resize_observer_gathers_forward() {
+    let mut h = Harness::new();
+    load_html(&mut h, SETTLE_OBSERVER_PAGE);
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 1000, "steps": [
+            {"idle": {}},
+            {"act": {"locator": {"css": "#grow"}, "action": "click"}},
+            {"eval": {"expression": "seen.join()", "as": "seen"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["seen"], "100,150,160,170,180", "{r}");
+    let click = &r["result"]["results"][1];
+    assert!(click.get("settled").is_none(), "{r}");
+    assert!(click["settleMs"].as_f64().unwrap() < 40.0, "{r}");
+}
+
+/// Observers that keep resizing what they observe do not turn the settle
+/// into a busy loop: it brings a few gathers forward, then the pacing
+/// applies again until it gives up and reports the observers as pending.
+#[test]
+fn settle_leaves_a_resize_observer_loop_to_its_pacing() {
+    let mut h = Harness::new();
+    load_html(&mut h, SETTLE_OBSERVER_PAGE);
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 1000, "steps": [
+            {"idle": {}},
+            {"act": {"locator": {"css": "#loop"}, "action": "click", "settle": false}},
+            {"idle": {"timeout": 200}},
+            {"eval": {"expression": "seen.length", "as": "rounds"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let idle = &r["result"]["results"][2];
+    assert_eq!(idle["settled"], false, "{r}");
+    assert_eq!(idle["pending"]["observers"], 1, "{r}");
+    // The first size, then at most a round per 16 ms of the 200 ms (and of
+    // the turn before them), and the few brought forward.
+    let rounds = r["result"]["reads"]["rounds"].as_f64().unwrap();
+    assert!((6.0..=24.0).contains(&rounds), "{r}");
+}
+
+/// A scrollable pane whose `scroll` listener scrolls it again (a pixel to
+/// and fro, so that what is in view stays there) while `rounds` are left.
+/// `#go` scrolls it from its click handler, `#far` has to be scrolled to.
+const SETTLE_SCROLL_PAGE: &str = r#"<!doctype html><body style="margin:0">
+<div id="pane" style="height:100px;overflow:auto">
+  <div style="height:400px"></div>
+  <button id="far">Far</button>
+  <div style="height:400px"></div>
+</div>
+<button id="go">Go</button> <button id="loop">Loop</button>
+<script>
+  const pane = document.getElementById('pane');
+  window.seen = [];
+  window.rounds = 0;
+  let by = 1;
+  pane.addEventListener('scroll', () => {
+    seen.push('scroll');
+    if (rounds > 0) { rounds--; pane.scrollTop += by; by = -by; }
+  });
+  document.getElementById('far').onclick = () => seen.push('far');
+  document.getElementById('go').onclick = () => { seen.push('go'); rounds = 3; pane.scrollTop += 10; };
+  document.getElementById('loop').onclick = () => { rounds = Infinity; pane.scrollTop += 10; };
+</script>"#;
+
+/// The `scroll` events an action leaves queued are part of what it settles
+/// on, and a settle that only they hold up runs them at once instead of a
+/// frame interval (16 ms) apart: the step after a click that scrolled (and
+/// whose `scroll` handlers scrolled three more times) finds all four events
+/// delivered. So does the step after a click the driver had to scroll to.
+#[test]
+fn settle_delivers_the_scroll_events_an_action_queued() {
+    let mut h = Harness::new();
+    load_html(&mut h, SETTLE_SCROLL_PAGE);
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 1000, "steps": [
+            {"idle": {}},
+            {"act": {"locator": {"css": "#go"}, "action": "click"}},
+            {"eval": {"expression": "seen.splice(0).join()", "as": "scrolled"}},
+            {"eval": {"expression": "rounds = 3; null"}},
+            {"act": {"locator": {"css": "#far"}, "action": "click"}},
+            {"eval": {"expression": "seen.join()", "as": "revealed"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["scrolled"], "go,scroll,scroll,scroll,scroll", "{r}");
+    let click = &r["result"]["results"][1];
+    assert!(click.get("settled").is_none(), "{r}");
+    assert!(click["settleMs"].as_f64().unwrap() < 40.0, "{r}");
+    // The scroll into view and what it set off: delivered around the click
+    // (a slow click's own turns can take a frame interval) or by its settle.
+    let revealed = r["result"]["reads"]["revealed"].as_str().unwrap_or_default();
+    assert_eq!(revealed.split(',').filter(|e| *e == "scroll").count(), 4, "{r}");
+    assert_eq!(revealed.split(',').filter(|e| *e == "far").count(), 1, "{r}");
+    assert!(r["result"]["results"][4].get("settled").is_none(), "{r}");
+}
+
+/// A `scroll` handler that keeps scrolling does not turn the settle into a
+/// busy loop: a few events are brought forward, then they come a frame
+/// interval apart until the wait gives up and reports them as pending.
+#[test]
+fn settle_leaves_a_scroll_loop_to_its_pacing() {
+    let mut h = Harness::new();
+    load_html(&mut h, SETTLE_SCROLL_PAGE);
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 1000, "steps": [
+            {"idle": {}},
+            {"act": {"locator": {"css": "#loop"}, "action": "click", "settle": false}},
+            {"idle": {"timeout": 200}},
+            {"eval": {"expression": "seen.length", "as": "rounds"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let idle = &r["result"]["results"][2];
+    assert_eq!(idle["settled"], false, "{r}");
+    assert_eq!(idle["pending"]["scrolls"], 1, "{r}");
+    // The few brought forward, then at most one per 16 ms of the 200 ms (and
+    // of the turn before them).
+    let rounds = r["result"]["reads"]["rounds"].as_f64().unwrap();
+    assert!((5.0..=24.0).contains(&rounds), "{r}");
+}
+
+/// An action that does not settle (`focus` never does) still has its own
+/// `scroll` event delivered in the turn that follows it: a focus that had to
+/// reveal its element does not leave the event for the frame interval, where
+/// it would land inside the next step, after that step's key opened a popover
+/// that closes when its trigger's container scrolls.
+#[test]
+fn the_turn_after_an_action_that_does_not_settle_delivers_its_scroll_event() {
+    let mut h = Harness::new();
+    load_html(&mut h, SETTLE_SCROLL_PAGE);
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 1000, "steps": [
+            {"idle": {}},
+            {"eval": {"expression": "document.getElementById('far').addEventListener('keydown', () => seen.push('open')); null"}},
+            {"act": {"locator": {"css": "#far"}, "action": "focus", "settle": false}},
+            {"eval": {"expression": "seen.join() + ':' + (pane.scrollTop > 0)", "as": "focused"}},
+            {"act": {"locator": {"css": "#far"}, "action": "press", "value": "ArrowDown"}},
+            {"eval": {"expression": "seen.join()", "as": "pressed"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["focused"], "scroll:true", "{r}");
+    assert_eq!(r["result"]["reads"]["pressed"], "scroll,open", "{r}");
+}
+
+/// A settle waits for the requests its own action started, not for as many
+/// requests as were in flight before it: a click made while an earlier
+/// request (100 ms) is half-way does not settle when that one ends but when
+/// the click's own response landed. The earlier request holds up no settle:
+/// the fill before the click does not wait for it.
+#[test]
+fn settle_waits_for_the_requests_its_action_started() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/form")}},
+            {"eval": {"expression": "fetch('/api?name=earlier'); 1"}},
+            {"act": {"locator": {"css": "#name"}, "action": "fill", "value": "mine"}},
+            {"eval": {"expression": "new Promise((done) => setTimeout(done, 50))"}},
+            {"act": {"locator": {"css": "#go"}, "action": "click"}},
+            {"read": {"locator": {"css": "#out"}, "read": "text", "as": "out"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["out"], "Hello, mine", "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert!(results[2]["settleMs"].as_f64().unwrap() < 80.0, "the fill waited for the earlier request: {r}");
+    assert!(results[4].get("settled").is_none(), "{r}");
+    // The click's request takes 100 ms; the earlier one ended 50 ms into it.
+    assert!(results[4]["settleMs"].as_f64().unwrap() >= 80.0, "{r}");
+}
+
+/// The step after a `release` finds the page with the released reply
+/// handled: the answer of a held mocked request and a held real response are
+/// delivered, and the page's handlers for them have run, before the step
+/// ends. A held request that goes on to the network is not waited for.
+#[test]
+fn driver_run_release_delivers_before_the_next_step() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let out = "document.getElementById('out').textContent";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/api", "json": {"total": 7}, "hold": "answer"}},
+            {"eval": {"expression": "call('/api?held'); 1"}},
+            {"release": {"hold": "answer"}},
+            {"eval": {"expression": out, "as": "answered"}},
+            {"unmock": {}},
+            {"mock": {"url": "/api", "passthrough": true, "hold": "real"}},
+            {"eval": {"expression": "call('/api?real'); 1"}},
+            {"release": {"hold": "real"}},
+            {"eval": {"expression": out, "as": "passed"}},
+            {"unmock": {}},
+            {"mock": {"url": "/api", "hold": "unsent"}},
+            {"eval": {"expression": "document.getElementById('out').textContent = ''; call('/api?slow'); 1"}},
+            {"release": {"hold": "unsent"}},
+            {"eval": {"expression": out, "as": "sent"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let (results, reads) = (&r["result"]["results"], &r["result"]["reads"]);
+    for release in [3, 8, 13] {
+        assert_eq!(results[release]["released"], 1, "{r}");
+    }
+    assert_eq!(reads["answered"], "{\"total\":7}", "{r}");
+    assert!(reads["passed"].as_str().unwrap_or_default().contains("\"total\":1"), "{r}");
+    // Sent on release: the backend's answer (300 ms) is not there yet.
+    assert_eq!(reads["sent"], "", "{r}");
+}
+
+/// A run's `requests` has the requests the net thread announced while it ran,
+/// whether or not the loop has read the announcement. The page task that
+/// sends the request here stays busy until the backend has answered: the
+/// `held` step, served right after that task, reads the parked response
+/// before the loop reads the request's announcement. A request announced
+/// between two runs (the loop runs without reading it) is not the next run's.
+#[test]
+fn driver_run_lists_the_requests_announced_while_it_ran() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let busy = |path: &str| {
+        format!(
+            "setTimeout(() => {{ fetch('{path}'); \
+             const end = Date.now() + 300; for (let i = 0; i < 2e9 && Date.now() < end; i++) {{}} }}, 40); null"
+        )
+    };
+    let listed = |r: &Value, path: &str| {
+        let requests = r["result"]["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+        requests.iter().filter(|q| q["url"].as_str().is_some_and(|u| u.ends_with(path))).count()
+    };
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/api", "passthrough": true, "hold": "poll"}},
+            {"eval": {"expression": busy("/api?first")}},
+            {"held": {"hold": "poll", "count": 1, "status": 200}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(listed(&r, "/api?first"), 1, "{r}");
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": busy("/api?second")}},
+            {"held": {"hold": "poll", "count": 2, "status": 200}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!((listed(&r, "/api?first"), listed(&r, "/api?second")), (0, 1), "{r}");
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [{"eval": {"expression": "setTimeout(() => fetch('/api?between'), 40); null"}}]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(listed(&r, "/api?between"), 0, "{r}");
+    h.browser.host_mut().run_until_work(Some(Instant::now() + Duration::from_millis(400)), || false);
+    let r = h.page("Pyro.run", json!({"steps": [{"held": {"hold": "poll", "count": 3, "status": 200}}]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(listed(&r, "/api?between"), 0, "{r}");
+}
+
+/// A chain of tasks that counts them (`n`): the count moves between two
+/// steps only when the event loop ran between them. `other` is a second
+/// channel with a listener, for a script that posts a message.
+const TASK_CHAIN: &str = "window.n = 0; window.tick = new MessageChannel(); \
+    tick.port1.onmessage = () => { n++; tick.port2.postMessage(0); }; tick.port2.postMessage(0); \
+    window.other = new MessageChannel(); other.port1.onmessage = () => {}; null";
+
+/// An `eval` whose script left the page nothing to run (it read, or changed
+/// only script state) goes straight on to the next step; one that queued
+/// work (a timer, a frame, a message, a request), changed the document or
+/// moved the focus gets its event-loop turn first.
+#[test]
+fn driver_run_eval_gets_a_turn_only_when_it_left_the_page_work() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let cases: &[(&str, bool)] = &[
+        ("document.title", false),
+        ("window.x = 1", false),
+        ("document.body.getBoundingClientRect().width", false),
+        ("getComputedStyle(document.body).color", false),
+        ("document.querySelectorAll('button').length", false),
+        ("document.dispatchEvent(new Event('nothing'))", false),
+        ("Promise.resolve().then(() => { window.micro = n })", false),
+        ("localStorage.setItem('k', 'v')", false),
+        ("history.pushState({}, '', '/form?pushed')", false),
+        ("setTimeout(() => {}, 0)", true),
+        ("setTimeout(() => {}, 60000)", true),
+        ("requestAnimationFrame(() => {})", true),
+        ("other.port2.postMessage(0)", true),
+        ("document.body.appendChild(document.createElement('i'))", true),
+        ("document.body.style.color = 'red'", true),
+        ("document.getElementById('name').focus()", true),
+        ("new ResizeObserver(() => {}).observe(document.body)", true),
+        ("fetch('/api?name=turn')", true),
+        ("document.getElementById('go').click()", true),
+    ];
+    let mut steps =
+        vec![json!({"goto": {"url": format!("http://{address}/form")}}), json!({"eval": {"expression": TASK_CHAIN}})];
+    for (i, (script, _)) in cases.iter().enumerate() {
+        steps.push(json!({"eval": {"expression": format!("{script}; n"), "as": format!("a{i}")}}));
+        steps.push(json!({"eval": {"expression": "n", "as": format!("b{i}")}}));
+    }
+    // The same for a called function (`evaluate(fn)`).
+    steps.push(json!({"eval": {"expression": "() => n", "call": true, "as": "readA"}}));
+    steps.push(json!({"eval": {"expression": "() => n", "call": true, "as": "readB"}}));
+    steps.push(
+        json!({"eval": {"expression": "() => { setTimeout(() => {}, 0); return n; }", "call": true, "as": "workA"}}),
+    );
+    steps.push(json!({"eval": {"expression": "() => [n, typeof micro]", "call": true, "as": "workB"}}));
+    let r = h.page("Pyro.run", json!({ "steps": steps }));
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    let count = |key: &str| reads[key].as_f64().unwrap_or_else(|| panic!("{key} in {r}"));
+    for (i, (script, turn)) in cases.iter().enumerate() {
+        let (a, b) = (count(&format!("a{i}")), count(&format!("b{i}")));
+        assert_eq!(b > a, *turn, "`{script}`: {a} tasks before the next step, {b} at it");
+    }
+    assert_eq!(reads["readA"], reads["readB"], "{r}");
+    assert!(reads["workB"][0].as_f64() > reads["workA"].as_f64(), "{r}");
+    // The microtask a script queued ran before the step ended, turn or not.
+    assert_eq!(reads["workB"][1], "number", "{r}");
+}
+
 const DRIVER_SHIFT_PAGE: &str = r#"<!doctype html><body style="margin:0">
 <div id="list"></div>
 <button id="archive" style="width:160px;height:30px"><span>Archive Department</span></button>
@@ -7958,6 +8316,65 @@ fn fill_replaces_value_after_focus_handler_replaces_the_control() {
     assert!(r.get("error").is_none(), "{r}");
 }
 
+/// The focus of `focus`, `fill`, `press` and `type`, and the `blur` action,
+/// run as a script's `focus()` and `blur()` do: the listeners of both events
+/// run before the microtasks they queued. A click's focus is the browser's:
+/// each listener has its own microtask checkpoint.
+#[test]
+fn driver_focus_and_blur_run_listeners_before_microtasks_like_script_calls() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><input id=field><button id=other>Other</button>");
+    // Each step is its own evaluation: the microtasks of one ran before the next.
+    let eval = |expression: &str| json!({"eval": {"expression": expression}});
+    let read = |name: &str| json!({"eval": {"expression": "log.join()", "as": name}});
+    let act = |action: &str, value: Option<&str>| {
+        let mut act = json!({"locator": {"css": "#field"}, "action": action});
+        if let Some(value) = value {
+            act["value"] = json!(value);
+        }
+        json!({ "act": act })
+    };
+    let (unfocus, clear) = (eval("document.activeElement.blur();null"), eval("log.length=0;null"));
+    let mut steps = vec![eval(
+        "window.log=[];const f=document.querySelector('#field');for(const t of ['focus','focusin','blur','focusout'])f.addEventListener(t,()=>{log.push(t);queueMicrotask(()=>log.push('after '+t))});null",
+    )];
+    for (action, value) in
+        [("focus", None), ("fill", Some("a")), ("press", Some("Shift")), ("type", Some("b")), ("click", None)]
+    {
+        steps.extend([unfocus.clone(), clear.clone(), act(action, value), read(action)]);
+    }
+    steps.extend([clear, act("blur", None), read("blur")]);
+    let r = h.page("Pyro.run", json!({"timeout": 1000, "steps": steps}));
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    for action in ["focus", "fill", "press", "type"] {
+        assert_eq!(reads[action], "focus,focusin,after focus,after focusin", "{action}: {r}");
+    }
+    assert_eq!(reads["blur"], "blur,focusout,after blur,after focusout", "{r}");
+    assert_eq!(reads["click"], "focus,after focus,focusin,after focusin", "{r}");
+}
+
+/// A page that renders in a microtask and replaces the control on focus
+/// (React): every `focusin` listener of the driver's focus sees the control
+/// connected, the replacement happens after them, and the fill lands in the
+/// replacement.
+#[test]
+fn fill_focus_listeners_see_the_control_before_a_microtask_replaces_it() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><input id=search>");
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 1000, "steps": [
+            {"eval": {"expression": "window.log=[];const first=document.querySelector('#search');document.body.addEventListener('focusin',e=>{if(e.target!==first)return;log.push('capture');queueMicrotask(()=>{log.push('render');const next=first.cloneNode(true);first.replaceWith(next);next.focus()})},true);document.addEventListener('focusin',e=>{if(e.target===first)log.push('bubble:'+e.target.isConnected)});null"}},
+            {"act": {"locator": {"css": "#search"}, "action": "fill", "value": "Text"}},
+            {"check": {"locator": {"css": "#search"}, "assert": "value", "expected": "Text"}},
+            {"eval": {"expression": "log.join()+':'+(document.activeElement!==first&&document.activeElement.id)", "as": "log"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["log"], "capture,bubble:true,render:search", "{r}");
+}
+
 #[test]
 fn native_click_waits_for_hover_triggered_render_updates_before_pressing() {
     let mut h = Harness::new();
@@ -8499,8 +8916,9 @@ fn driver_trace_scenario(mode: &str) {
         assert!(result.get("error").is_some(), "the error control must fail");
     } else if mode == "cancel" || mode == "turn-cancel" {
         let session = h.session.clone();
+        // The turn follows a script that left the page something to run.
         let expression = if mode == "turn-cancel" {
-            "'trace-private-readonly-value'"
+            "setTimeout(() => {}); 'trace-private-turn-value'"
         } else {
             "new Promise(() => { const value = 'trace-private-pending-script'; })"
         };
@@ -8522,6 +8940,7 @@ fn driver_trace_scenario(mode: &str) {
             {"check":{"locator":{"css":"#trace-private-selector"},"assert":"value","expected":"trace-private-fill-value"}},
             {"eval":{"expression":"new Promise(resolve => setTimeout(() => resolve('trace-private-promise-value'), 15))","as":"trace-private-read-key"}},
             {"read":{"locator":{"css":"#trace-private-selector"},"read":"value","as":"trace-private-result-key"}},
+            {"eval":{"expression":"document.querySelector('#trace-private-selector').value + 'trace-private-read-only'"}},
             {"request":{"path":"/trace-private-request-url","count":0}}
         ]}));
         assert!(result.get("error").is_none(), "the complete control must pass: {result}");
@@ -8617,17 +9036,18 @@ fn driver_stage_records(pid: u32, output: &std::process::Output) -> Vec<Value> {
                 "attemptMs",
                 "recordedAttempts",
                 "truncated",
+                "pending",
             ];
             assert!(value.as_object().unwrap().keys().all(|key| allowed.contains(&key.as_str())));
             assert_eq!(value["pid"], pid);
             assert_eq!(value["runId"], run_id);
-            assert!(["eval_api", "eval_checkpoint", "post_eval_turn", "check_attempt", "request_attempt"]
+            assert!(["eval_api", "eval_checkpoint", "post_eval_turn", "settle", "check_attempt", "request_attempt"]
                 .contains(&value["stage"].as_str().unwrap()));
-            assert!(["start", "end", "error", "summary", "truncated"].contains(&value["event"].as_str().unwrap()));
+            assert!(["start", "end", "skipped", "error", "summary", "truncated"]
+                .contains(&value["event"].as_str().unwrap()));
             if let Some(outcome) = value.get("outcome") {
-                assert!(
-                    ["done", "pending", "retry", "retrySoon", "continue", "error"].contains(&outcome.as_str().unwrap())
-                );
+                assert!(["done", "pending", "retry", "retrySoon", "continue", "error", "quiet", "gaveUp"]
+                    .contains(&outcome.as_str().unwrap()));
             }
             if let Some(duration) = value.get("durationMs") {
                 assert!(duration.as_f64().unwrap() >= 0.0);
@@ -8661,8 +9081,8 @@ fn driver_step_trace_completion_is_private_and_pairs_after_waits() {
         true,
     );
     let records = driver_trace_records(pid, &output);
-    assert_eq!(records.len(), 16, "one start/end per step, including delayed checks and promises");
-    let kinds = ["goto", "eval", "check", "act", "check", "eval", "read", "request"];
+    assert_eq!(records.len(), 18, "one start/end per step, including delayed checks and promises");
+    let kinds = ["goto", "eval", "check", "act", "check", "eval", "read", "eval", "request"];
     let mut previous = 0.0;
     for (step, pair) in records.chunks_exact(2).enumerate() {
         assert_eq!(pair[0]["step"], step);
@@ -8696,7 +9116,19 @@ fn driver_step_trace_completion_is_private_and_pairs_after_waits() {
             ]
         );
     }
-    for (step, stage) in [(2, "check_attempt"), (4, "check_attempt"), (7, "request_attempt")] {
+    // The script that only read left nothing for a turn to run.
+    let read_only: Vec<_> = stages
+        .iter()
+        .filter(|r| r["step"] == 7 && r["stage"] == "post_eval_turn")
+        .map(|r| r["event"].as_str().unwrap())
+        .collect();
+    assert_eq!(read_only, ["skipped"]);
+    // The fill settled: one record, with how long it took.
+    let settles: Vec<_> = stages.iter().filter(|r| r["stage"] == "settle").collect();
+    assert_eq!(settles.len(), 1);
+    assert_eq!((settles[0]["step"].as_u64(), settles[0]["event"].as_str()), (Some(3), Some("end")));
+    assert_eq!(settles[0]["outcome"], "quiet");
+    for (step, stage) in [(2, "check_attempt"), (4, "check_attempt"), (8, "request_attempt")] {
         let summary =
             stages.iter().find(|r| r["step"] == step && r["stage"] == stage && r["event"] == "summary").unwrap();
         assert!(summary["completedAttempts"].as_u64().unwrap() >= 1);

@@ -529,6 +529,13 @@ impl EngineHost {
         self.thread.browser.page_work(self.pages.get(&page)?.id)
     }
 
+    /// Whether a driver command (`Pyro.run`, `Pyro.act`, `Pyro.expect`) is parked
+    /// on its page: its client is waiting for the page, however long ago the
+    /// command arrived.
+    pub fn driver_parked(&self) -> bool {
+        !self.waiters.is_empty()
+    }
+
     /// Creates the engine for the current thread (at most one per thread).
     pub fn new(out: Outbox) -> CdpResult<EngineHost> {
         Self::with_body_budget(out, Self::body_budget())
