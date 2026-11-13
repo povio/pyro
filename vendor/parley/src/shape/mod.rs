@@ -103,6 +103,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
         })
         .collect();
 
+    // pyro: the layout's scale (set before shaping), to shape with the unscaled size as the point size.
+    let scale = layout.data.scale;
+
     // Split when shaping-relevant style properties change and at inline boxes.
     let items = {
         // TODO: we currently walk characters here, but we could instead just walk boundaries of
@@ -177,6 +180,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
                 options: ShapeOptions {
                     language: item_style.locale,
                     font_size: item_style.font_size,
+                    // pyro: tracking follows the unscaled size (styles hold sizes times the scale).
+                    point_size: if scale > 0.0 { item_style.font_size / scale } else { item_style.font_size },
                     features: &style_features[item_style_index as usize],
                     variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
                 },

@@ -90,8 +90,10 @@ test('an unready derived template is cancellable and a retired parent id cannot 
   const pid = (browser as unknown as { child: { pid: number } }).child.pid;
   try {
     await browser.profile('app', { url, setup: [check(css('#ready')).visible()] });
-    await browser.profile('pending', { base: 'app', url, setup: [check(css('#never')).visible()] });
+    // Released while its setup still runs: `profile()` stops waiting for it.
+    const pending = browser.profile('pending', { base: 'app', url, setup: [check(css('#never')).visible()] });
     await browser.releaseProfile('pending');
+    await pending;
     await waitForBound(pid, 5);
     await browser.releaseProfile('app');
     const retired = await browser.cdp.send('Pyro.unregisterPreparedPage', { profileId: 0 });
@@ -120,5 +122,20 @@ for (const fork of [false, true]) test(`equivalent profile aliases retain the sh
     await browser.releaseProfile('new');
     await using base = await browser.page({ as: 'app' });
     expect((await base.run([evaluate('window.aliasMarker === undefined && document.querySelector("#alias") === null', 'pristine')])).values.pristine).toBe(true);
+  } finally { browser.close(); }
+}, 20000);
+
+test('a released name stays listed while an unnamed registration of the same definition keeps its profile', async () => {
+  const browser = await Pyro.launch({ bin, args: ['--fork'] });
+  const names = async () => (await browser.cdp.send('Pyro.preparedProfiles')).profiles.map((p: { name: string; holders: number }) => `${p.name}:${p.holders}`);
+  try {
+    // One definition is one profile: the name and the unnamed registration share it.
+    const { profileId } = await browser.cdp.send('Pyro.registerPreparedPage', { url });
+    expect((await browser.cdp.send('Pyro.registerPreparedPage', { url, name: 'a' })).profileId).toBe(profileId);
+    // The unnamed registration keeps it (until unregistered by id), so the released name stays with it.
+    expect(await browser.cdp.send('Pyro.unregisterPreparedPage', { name: 'a' })).toEqual({ removed: true, retired: false });
+    expect(await names()).toEqual(['a:0']);
+    expect(await browser.cdp.send('Pyro.unregisterPreparedPage', { profileId })).toEqual({ removed: true });
+    expect(await names()).toEqual([]);
   } finally { browser.close(); }
 }, 20000);

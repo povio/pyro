@@ -58,20 +58,67 @@ type LogEntry = {
   postDataBase64?: boolean;
 };
 
-/** A CdpError from Pyro.run as Playwright words it (`TimeoutError` for a step that timed out). */
-function runError(api: string, e: unknown, describe?: string): unknown {
+/**
+ * A CdpError from Pyro.run as Playwright words it (`TimeoutError` for a step
+ * that timed out). A run `cancelCalls` cancelled fails with the reason it
+ * gave (`pyro run`: the test's timeout) and the call log.
+ */
+function runError(api: string, e: unknown, describe?: string, cancelled?: string): unknown {
   if (!(e instanceof CdpError)) return e;
   // `Pyro.run: step 0 (Click {…}): timed out after 200 ms: Click {…}: {…} matched no element`
   const head = /^Pyro\.run: step \d+(?: \((.*?)\))?: /.exec(e.message);
   const step = head?.[1];
   const message = head ? e.message.slice(head[0].length) : e.message;
+  const reasonOf = (text: string) => (step && text.startsWith(`${step}: `) ? text.slice(step.length + 2) : text);
+  const logOf = (reason?: string) => [describe && `waiting for ${describe}`, reason].filter(Boolean).map((l) => `  - ${l}`).join('\n');
   const timedOut = /^timed out after (\d+) ms: ([\s\S]*)$/.exec(message);
-  if (timedOut) {
-    const reason = step && timedOut[2].startsWith(`${step}: `) ? timedOut[2].slice(step.length + 2) : timedOut[2];
-    const log = [describe && `waiting for ${describe}`, reason].filter(Boolean).map((l) => `  - ${l}`);
-    return new TimeoutError(`${api}: Timeout ${timedOut[1]}ms exceeded.\nCall log:\n${log.join('\n')}`);
+  if (timedOut) return new TimeoutError(`${api}: Timeout ${timedOut[1]}ms exceeded.\nCall log:\n${logOf(reasonOf(timedOut[2]))}`);
+  // `Pyro.run: step 0 (Click {…}): cancelled: Click {…}: {…} matched no element`
+  const cancel = /^cancelled(?:: ([\s\S]*))?$/.exec(message);
+  if (cancel) {
+    const log = logOf(cancel[1] && reasonOf(cancel[1]));
+    return new Error(`${api}: ${cancelled ?? 'cancelled'}${log ? `\nCall log:\n${log}` : ''}`);
   }
   return new Error(`${api}: ${message}`);
+}
+
+/** A command a page sent and that is not answered yet (`cancelCalls`). */
+type Call = { page: Page; owner: unknown; cancelled?: string; settled: Promise<void> };
+const calls = new Set<Call>();
+let ownerOfCalls: () => unknown = () => undefined;
+/** Who the commands sent from now on belong to (`pyro run`: the running test). */
+export function setCallOwner(owner: () => unknown): void {
+  ownerOfCalls = owner;
+}
+/** Who commands sent now belong to (`setCallOwner`). */
+export const callOwner = (): unknown => ownerOfCalls();
+
+/**
+ * Cancels the commands `owner`'s pages still wait on (`pyro run`, when a test
+ * times out): each such page gets `Pyro.cancelRun`, which answers its runs
+ * and awaited evaluations at once, and the pages stay as they are. A run
+ * cancelled so fails with `reason` and its call log. True when every one of
+ * those commands was answered within `ms`; false when the browser did not
+ * get to the cancel by then (busy with a script that does not return, or
+ * too old for `Pyro.cancelRun`).
+ */
+export async function cancelCalls(owner: unknown, reason: string, ms: number): Promise<boolean> {
+  const mine = [...calls].filter((c) => c.owner === owner);
+  if (!mine.length) return true;
+  for (const c of mine) c.cancelled = reason;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), ms)));
+  const cancelled = (async () => {
+    const answered = await Promise.all([...new Set(mine.map((c) => c.page))].map((p) => p._cancelRuns()));
+    if (!answered.every(Boolean)) return false;
+    await Promise.all(mine.map((c) => c.settled));
+    return true;
+  })();
+  try {
+    return await Promise.race([cancelled, late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -673,7 +720,7 @@ export class Locator extends Scope {
         : { locator: { ...this._spec, nth: undefined }, assert: 'count', expected: 0, not: state === 'attached', timeout };
     await this._page._run('locator.waitFor', [{ check: clean(check) }], this._desc);
   }
-  async screenshot(options: Timeout & { path?: string; type?: 'png' | 'jpeg'; quality?: number } = {}): Promise<Buffer> {
+  async screenshot(options: Timeout & { path?: string; type?: 'png' | 'jpeg'; quality?: number; omitBackground?: boolean } = {}): Promise<Buffer> {
     const box = await this.boundingBox(options);
     if (!box) throw new Error(`locator.screenshot: ${this._desc} is not visible`);
     return this._page.screenshot({ ...options, clip: box });
@@ -1593,31 +1640,54 @@ export class Page extends Scope {
   // ---- plumbing ----
 
   async _send<T = any>(method: string, params: object = {}): Promise<T> {
+    if (this._closed) throw new Error(`${method}: Target page, context or browser has been closed`);
     await this._attach();
-    return this._cdp.send(method, params, this._sessionId);
+    return this._tracked(() => this._cdp.send(method, params, this._sessionId));
   }
   /** On the attached session only (setup while attaching, cleanup). */
   _sendNow<T = any>(method: string, params: object = {}): Promise<T> {
     return this._cdp.send(method, params, this._sessionId);
   }
+  /** A command on this page's session, in flight until answered (`cancelCalls`). */
+  private _tracked<T>(send: () => Promise<T>, call?: Call): Promise<T> {
+    const c = call ?? { page: this, owner: ownerOfCalls(), settled: Promise.resolve() };
+    const sent = send();
+    c.settled = sent.then(
+      () => void calls.delete(c),
+      () => void calls.delete(c),
+    );
+    calls.add(c);
+    return sent;
+  }
+  /** `Pyro.cancelRun` on this page's session; whether the browser answered it. */
+  async _cancelRuns(): Promise<boolean> {
+    if (!this._sessionId) return false;
+    try {
+      await this._cdp.send('Pyro.cancelRun', {}, this._sessionId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /** One Pyro.run command; failures as Playwright errors. */
   async _run(api: string, steps: Step[], describe?: string): Promise<RunReply> {
     if (this._closed) throw new Error(`${api}: Target page, context or browser has been closed`);
+    const call: Call = { page: this, owner: ownerOfCalls(), settled: Promise.resolve() };
     try {
       await this._attach();
       // A child frame's locators find its <iframe> by the marker `frames()` sets.
       if (this._marking.size && JSON.stringify(steps).includes('data-pyro-frame')) await Promise.all(this._marking.values());
-      return await this._cdp.send('Pyro.run', { steps }, this._sessionId);
+      return await this._tracked(() => this._cdp.send('Pyro.run', { steps }, this._sessionId), call);
     } catch (e) {
-      throw runError(api, e, describe);
+      throw runError(api, e, describe, call.cancelled);
     }
   }
 
   /** One Pyro.run command with the engine's error as it is (its `data` included). */
   async _runRaw(steps: Step[]): Promise<RunReply> {
     await this._attach();
-    return this._cdp.send('Pyro.run', { steps }, this._sessionId);
+    return this._tracked(() => this._cdp.send('Pyro.run', { steps }, this._sessionId));
   }
   /** Screenshot baselines this connection already holds (`toHaveScreenshot`). */
   get _baselines(): Map<string, string> {
@@ -2189,17 +2259,35 @@ export class Page extends Scope {
    * or FIFO itself and the returned buffer is empty (see `FrameFifo` in
    * `@povio/pyro`).
    */
-  async screenshot(o: Timeout & { path?: string; fullPage?: boolean; clip?: { x: number; y: number; width: number; height: number }; type?: 'png' | 'jpeg'; quality?: number; raw?: { format: 'rgba' | 'rgb24' | 'yuv420p'; path?: string } } = {}): Promise<Buffer> {
+  async screenshot(o: Timeout & { path?: string; fullPage?: boolean; clip?: { x: number; y: number; width: number; height: number }; type?: 'png' | 'jpeg'; quality?: number; omitBackground?: boolean; raw?: { format: 'rgba' | 'rgb24' | 'yuv420p'; path?: string } } = {}): Promise<Buffer> {
+    const format = o.raw?.format ?? o.type ?? (o.path?.endsWith('.jpg') || o.path?.endsWith('.jpeg') ? 'jpeg' : 'png');
+    // A transparent background under the document, for this capture only (PNG).
+    const transparent = !!o.omitBackground && format === 'png';
+    const zoomed = !o.clip && !o.fullPage && this._context._options.isMobile ? await this._visualViewportClip() : undefined;
+    const clip = o.clip ? { ...o.clip, scale: 1 } : zoomed;
+    if (transparent) await this._send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
     const r = await this._send('Page.captureScreenshot', {
-      format: o.raw?.format ?? o.type ?? (o.path?.endsWith('.jpg') || o.path?.endsWith('.jpeg') ? 'jpeg' : 'png'),
+      format,
       ...(o.quality !== undefined && !o.raw ? { quality: o.quality } : {}),
-      ...(o.clip ? { clip: { ...o.clip, scale: 1 } } : {}),
+      ...(clip ? { clip } : {}),
       ...(o.fullPage ? { captureBeyondViewport: true } : {}),
       ...(o.raw?.path ? { path: o.raw.path } : {}),
-    });
+    }).finally(() => (transparent ? this._send('Emulation.setDefaultBackgroundColorOverride', {}).catch(() => {}) : undefined));
     const buffer = Buffer.from(r.data, 'base64');
     if (o.path) writeFileMakingDirs(o.path, buffer);
     return buffer;
+  }
+  /**
+   * Playwright's viewport capture of a zoomed mobile page: the visual
+   * viewport at its page scale, whole CSS px (`enclosingIntSize`), so a page
+   * without `<meta name="viewport">` shows its 980 px layout in the device's
+   * width. `undefined` at scale 1 (the viewport capture is the same).
+   */
+  private async _visualViewportClip(): Promise<{ x: number; y: number; width: number; height: number; scale: number } | undefined> {
+    const { cssVisualViewport: v } = await this._send('Page.getLayoutMetrics');
+    if (v.scale === 1 || !this._viewport) return undefined;
+    const whole = (n: number) => Math.floor(n / v.scale + 1e-3);
+    return { x: v.pageX, y: v.pageY, width: whole(this._viewport.width), height: whole(this._viewport.height), scale: v.scale };
   }
   async pdf(o: { path?: string; [k: string]: unknown } = {}): Promise<Buffer> {
     const { path, ...rest } = o;

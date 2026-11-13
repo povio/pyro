@@ -15,8 +15,10 @@ impl Page {
 
 impl Browser {
     /// Updates this page's current and future document metrics. A changed CSS
-    /// width/height schedules a coalesced trusted window resize at a safe point.
-    /// Call outside DOM/layout borrows. Rejects invalid DPR without changing state.
+    /// width/height (under mobile emulation: layout viewport, window or
+    /// visual viewport) schedules a coalesced trusted window (and visual
+    /// viewport) resize at a safe point. Call outside DOM/layout borrows.
+    /// Rejects invalid DPR without changing state.
     pub fn set_viewport(&mut self, page: PageId, viewport: Viewport) -> Result<(), JsError> {
         let state = self.page_mut(page).ok_or_else(|| JsError::Type("no such page".into()))?;
         if !viewport.device_scale_factor.is_finite() || viewport.device_scale_factor <= 0.0 {
@@ -25,7 +27,13 @@ impl Browser {
         if state.viewport == viewport {
             return Ok(());
         }
-        let old_size = (state.viewport.width, state.viewport.height);
+        let old_metrics = match &state.main_frame.page_dom {
+            Some(bindings) => bindings.layout().viewport_metrics(),
+            None => {
+                let (w, h) = (state.viewport.width, state.viewport.height);
+                pyro_dom::layout::ViewportMetrics { layout: (w, h), window: (w, h), visual: (w as f64, h as f64, 1.0) }
+            }
+        };
         let old_orientation = state.main_frame.page_dom.as_ref().map(|b| pyro_webapi::window::screen_orientation(b));
         if let Some(bindings) = &state.main_frame.page_dom {
             bindings.set_viewport(viewport.clone());
@@ -47,13 +55,20 @@ impl Browser {
                 return;
             }
             let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+            // The layout viewport, the window and the visual viewport are the
+            // emulated viewport, unless it is mobile: then the window resizes
+            // with the layout viewport or the frame, the visual viewport with
+            // its size or page scale.
+            bindings.sync_mobile_layout();
+            let now = bindings.layout().viewport_metrics();
             // No browser/DOM/layout borrow crosses JavaScript listener invocation.
-            if (state.viewport.width, state.viewport.height) != old_size {
+            if now.window_resized(&old_metrics) {
                 if let Some(window) = bindings.window_target() {
                     let event = EventCore::trusted(&bindings, EventInterface::Event, "resize", false, false);
                     pyro_webapi::target::fire(&bindings, window, &event);
                 }
-                // The visual viewport is the layout viewport: it resizes with it.
+            }
+            if now.visual_resized(&old_metrics) {
                 for target in bindings.viewport_targets(pyro_webapi::window::ViewportTarget::VisualViewport) {
                     let event = EventCore::trusted(&bindings, EventInterface::Event, "resize", false, false);
                     pyro_webapi::target::fire(&bindings, target, &event);

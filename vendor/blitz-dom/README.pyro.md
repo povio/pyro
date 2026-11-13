@@ -37,6 +37,17 @@ the whole diff: every section below.
 `UPSTREAM.patch` carries these sections with the rest (it is regenerated from `src/` and `assets/`
 against the upstream commit above); they are covered by pyro-render's rendering tests.
 
+## Fidelity fixes from the ToS screens (bench/fidelity)
+
+- `layout/table.rs` (`collect_table_cells`): `max-width` no longer applies to a table cell. CSS 2.1 leaves it
+  undefined and Chromium ignores it: a cell spans its column however the column grew. ToS's finance table puts
+  `max-width: 60px` on a header cell over a 60px `<col>` that grows to 63.4px, so the header's border stood
+  3.4px left of the body's. Repro `bench/fidelity/repros/table-cell-max-width.html`.
+- `node/serialize.rs` (`replace_current_color`): the `currentcolor` keyword is resolved in any case when an inline
+  `<svg>` is serialized for usvg (which knows only `currentColor`). CSSOM, and so React, writes
+  `style="fill: currentcolor"`: those icons were filled black. Repro
+  `bench/fidelity/repros/svg-currentcolor-keyword.html`.
+
 ## `<br>` as inline text
 
 - `node/node.rs` (`is_line_break`), `layout/construct.rs`: a `<br>` is a piece of inline text in every container, as

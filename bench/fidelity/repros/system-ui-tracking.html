@@ -1,0 +1,35 @@
+<!doctype html>
+<!--
+  system-ui (SF Pro on macOS) at the sizes and weights the ToS app uses.
+  Chromium draws the system font through Core Text, which applies the font's
+  size-specific tracking ('trak' table): looser below 12px, tighter above.
+  Each row's advance width is measured and published in window.__measure
+  (repro.ts prints both browsers' numbers side by side).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 8px; font-family: system-ui; color: #292c33; background: #fff; }
+  .row { white-space: nowrap; line-height: 1.3; }
+  .row span.t { display: inline-block; }
+  .row span.l { display: inline-block; width: 64px; font: 10px/1.3 ui-monospace, monospace; color: #888; }
+</style>
+</head>
+<body>
+<div id="rows"></div>
+<script>
+  const text = 'Collaboration Requests 0123456789';
+  const rows = document.getElementById('rows');
+  const cases = [];
+  for (const [size, weight] of [[10, 500], [11, 400], [12, 400], [13, 400], [14, 400], [14, 500], [14, 600], [16, 400], [18, 600], [20, 600], [24, 600]]) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `<span class="l">${size}px ${weight}</span><span class="t" style="font-size:${size}px;font-weight:${weight}">${text}</span>`;
+    rows.append(row);
+    cases.push({ size, weight, el: row.querySelector('.t') });
+  }
+  window.__measure = () => cases.map(({ size, weight, el }) => ({ case: `${size}px/${weight}`, width: +el.getBoundingClientRect().width.toFixed(2) }));
+</script>
+</body>
+</html>

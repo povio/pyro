@@ -82,6 +82,10 @@ query (`Query::first_available_font`) would yield, so the metrics are unchanged.
 `unicode-range` comes from fontique (`vendor/fontique/README.pyro.md`), whose charmaps
 the selector's coverage check reads limited to it.
 
+`shape/mod.rs`, `shape_text`: each item is shaped with `ShapeOptions::point_size`, its font size
+divided by the layout's scale, so that size-specific tracking (the `trak` table) follows the CSS size
+and not the device size (see `vendor/parley_engine/README.pyro.md`, "Tracking at the unscaled size").
+
 `LayoutContext::set_line_break_override` (`context.rs`, `builder.rs`, `build_cache.rs`): a `'static`
 line-break override every builder of the context starts with (a builder's own
 `set_line_break_override` still replaces it). Layouts built with it stay in the build cache: its

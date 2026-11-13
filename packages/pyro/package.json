@@ -1,7 +1,7 @@
 {
   "name": "@povio/pyro",
   "version": "0.0.17",
-  "description": "Pyro headless browser and typed E2E testing API",
+  "description": "Pyro headless browser, typed E2E testing API, and browser tools for AI agents (MCP server and tool calling)",
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
@@ -38,6 +38,11 @@
       "types": "./dist/e2e/index.d.ts",
       "bun": "./src/e2e/index.ts",
       "default": "./dist/e2e/index.js"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "bun": "./src/agent/index.ts",
+      "default": "./dist/agent/index.js"
     }
   },
   "files": [
@@ -45,12 +50,13 @@
     "src",
     "README.md",
     "LLM.md",
+    "AGENTS.md",
     "native",
     "LICENSE",
     "NOTICE"
   ],
   "scripts": {
-    "build": "bun build src/index.ts src/cli.ts src/wright/test.ts src/wright/index.ts src/wright/cli.ts src/e2e/index.ts src/e2e/cli.ts --root src --outdir dist --target node --format esm --external bun:test --external @povio/pyro --splitting && tsc -p tsconfig.json",
+    "build": "bun build src/index.ts src/cli.ts src/wright/test.ts src/wright/index.ts src/wright/cli.ts src/e2e/index.ts src/e2e/cli.ts src/agent/index.ts --root src --outdir dist --target node --format esm --external bun:test --external @povio/pyro --splitting && tsc -p tsconfig.json",
     "prepack": "bun run build && node ../../scripts/npm/prepare-package.mjs",
     "test:package": "bun test test/binary.test.ts && node --test ../../scripts/npm/release.test.mjs",
     "test": "bun test ./test",
@@ -59,6 +65,7 @@
     "test:types": "tsc -p tsconfig.types.json"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@types/node": "^22.0.0",
     "playwright": "1.59.1",
     "typescript": "^5.6.0"

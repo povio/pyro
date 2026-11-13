@@ -3,6 +3,7 @@
 // browser thread owns the registrations; this realm keeps one object per
 // registration and per worker version, so identity holds across calls.
 //   native.register(id, scriptURL, scope, type, updateViaCache)
+//   native.blocked(): the context blocks registration (serviceWorkers: 'block')
 //   native.getRegistration(id, clientURL), getRegistrations(id)
 //   native.unregister(id, registrationId), update(id, registrationId)
 //     each settles request `id` later through settle(id, ok, json, name, message)
@@ -258,6 +259,13 @@
       return ready;
     }
     register(scriptURL, options) {
+      // What Playwright's `serviceWorkers: 'block'` init script makes
+      // `register` in Chrome: no checks, a warning, undefined.
+      if (native.blocked()) {
+        return (async () => {
+          console.warn('Service Worker registration blocked by Playwright');
+        })();
+      }
       if (arguments.length === 0) {
         return PromiseC.reject(new TypeErrorC("Failed to execute 'register' on 'ServiceWorkerContainer': 1 argument required, but only 0 present."));
       }

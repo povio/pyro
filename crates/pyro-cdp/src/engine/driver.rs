@@ -1305,7 +1305,108 @@ pub(super) struct Waiter {
 /// How often a `url` step looks again.
 const URL_POLL: Duration = Duration::from_millis(25);
 
+/// The command running on the browser thread now (a page command, or a
+/// `Pyro.run` driven between commands), shared with the connection's
+/// watchdog check (conn.rs `check_during_script`): a `Pyro.cancelRun` for
+/// its session that arrives while its script runs stops the script, which
+/// cannot finish on its own (`while (true) {}`), and the run then answers
+/// that it was cancelled.
+#[derive(Default)]
+pub(crate) struct RunningCommand {
+    /// Session and command id running now; `None` between commands.
+    now: RefCell<Option<(String, u64)>>,
+    /// The command whose script a `Pyro.cancelRun` stopped, until that
+    /// cancel is handled.
+    stopped: RefCell<Option<(String, u64)>>,
+}
+
+/// Restores the command that was running before ([`RunningCommand::enter`]).
+pub(super) struct RunningGuard {
+    running: Rc<RunningCommand>,
+    previous: Option<(String, u64)>,
+}
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        *self.running.now.borrow_mut() = self.previous.take();
+    }
+}
+
+impl RunningCommand {
+    /// `session`'s command `id` runs until the guard drops. Nests: a run
+    /// driven while a command flushes puts the command back when it is done.
+    pub(super) fn enter(self: &Rc<Self>, session: &str, id: u64) -> RunningGuard {
+        let previous = self.now.replace(Some((session.to_owned(), id)));
+        RunningGuard { running: self.clone(), previous }
+    }
+
+    /// Whether `text`, a message read while a script runs, is a
+    /// `Pyro.cancelRun` for the session whose command runs that script: the
+    /// script is then stopped, and the command remembered as stopped. Only
+    /// a message naming the method is parsed.
+    pub(crate) fn cancels(&self, text: &str) -> bool {
+        if !text.contains("\"Pyro.cancelRun\"") {
+            return false;
+        }
+        let Some(now) = self.now.borrow().clone() else { return false };
+        #[derive(Deserialize)]
+        struct Message {
+            method: String,
+            #[serde(rename = "sessionId")]
+            session_id: Option<String>,
+        }
+        let Ok(m) = serde_json::from_str::<Message>(text) else { return false };
+        if m.method != "Pyro.cancelRun" || m.session_id.as_deref() != Some(now.0.as_str()) {
+            return false;
+        }
+        *self.stopped.borrow_mut() = Some(now);
+        true
+    }
+
+    /// Whether a cancel stopped the script of the command running now.
+    fn stopped_now(&self) -> bool {
+        let now = self.now.borrow();
+        now.is_some() && *self.stopped.borrow() == *now
+    }
+
+    /// The id of `session`'s command whose script a cancel stopped, taken.
+    fn take_stopped(&self, session: &str) -> Option<u64> {
+        let mut stopped = self.stopped.borrow_mut();
+        match stopped.as_ref() {
+            Some((s, _)) if s == session => stopped.take().map(|(_, id)| id),
+            _ => None,
+        }
+    }
+}
+
 impl Waiter {
+    /// What a cancelled run answers (`Pyro.cancelRun`): that it was
+    /// cancelled, at which step, and what the step was still waiting for, as
+    /// a timeout would report it; or, `stopped`, that a script it ran was
+    /// still running (and was stopped).
+    fn cancelled(&self, browser: &Browser, stopped: bool) -> CdpError {
+        let step = self.job.steps.get(self.job.index).map(|(s, _)| s.describe()).unwrap_or_default();
+        let waiting = match &self.phase {
+            _ if stopped => format!("{step}: the script it ran was still running and was stopped"),
+            Phase::Try if self.reason.is_empty() => step,
+            Phase::Try => format!("{step}: {}", self.reason),
+            Phase::Load { dom_ready, .. } => {
+                format!("waiting for {}", if *dom_ready { "DOMContentLoaded" } else { "load" })
+            }
+            Phase::Settle { .. } => match browser.page_work(self.job.pid) {
+                Some(work) if !work.quiet(0) => {
+                    format!("waiting for the page to go quiet (pending {})", pending_json(&work))
+                }
+                _ => "waiting for the page to go quiet".into(),
+            },
+            Phase::Await(_) => "waiting for the promise to settle".into(),
+            Phase::Render(_) => "waiting for the screenshot".into(),
+            Phase::Act { seq: Some(_), .. } => format!("{step}: dispatching its input events"),
+            Phase::Act { seq: None, .. } => "waiting for the event-loop turn after the step".into(),
+        };
+        self.job.fail(CdpError::server(format!("cancelled: {waiting}")))
+    }
+
     fn deadline(&self) -> Instant {
         let step = match &self.phase {
             Phase::Settle { until, .. } => *until,
@@ -1898,12 +1999,13 @@ fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
                 }
             }
             "hidden" => return None,
-            "button" | "submit" | "reset" | "image" => "button",
+            // Playwright: "All browsers report it as a button" (named "Choose File").
+            "button" | "submit" | "reset" | "image" | "file" => "button",
             "checkbox" => "checkbox",
             "radio" => "radio",
             "range" => "slider",
             "number" => "spinbutton",
-            "file" | "color" | "date" | "datetime-local" | "month" | "time" | "week" => return None,
+            "color" | "date" | "datetime-local" | "month" | "time" | "week" => return None,
             _ => "textbox",
         },
         "ins" => "insertion",
@@ -2383,6 +2485,15 @@ impl Names<'_> {
                         return Some(
                             attr_text("alt").or_else(|| attr_text("title")).unwrap_or_else(|| "Submit".into()),
                         );
+                    }
+                    // Playwright's file input: its labels, else the button's text.
+                    "file" => {
+                        if opts.labelledby.is_none() {
+                            if let Some(name) = from_labels() {
+                                return Some(name);
+                            }
+                        }
+                        return Some("Choose File".into());
                     }
                     _ => {}
                 }
@@ -4527,6 +4638,7 @@ impl EngineHost {
                 (steps, false)
             }
             "query" => return self.driver_query(cmd).map(Some),
+            "cancelRun" => return Ok(Some(json!({ "cancelled": self.cancel_runs(cmd.session_id) }))),
             // `Pyro.dialogs {block}`: dialogs this page's driver steps open wait
             // for `Page.handleJavaScriptDialog` like other dialogs (dialog.rs)
             // instead of returning what a dismissed one gives.
@@ -4611,6 +4723,11 @@ impl EngineHost {
     /// Runs a job's steps until one has to wait or the last one is done.
     fn drive(&mut self, mut w: Waiter) -> CdpResult<Drive> {
         loop {
+            if self.running.stopped_now() {
+                // A `Pyro.cancelRun` stopped a script this run ran (an event
+                // handler of its action that never returned): it ends here.
+                return Err(w.cancelled(&self.thread.browser, true));
+            }
             w.job.trace_step_start();
             let now = Instant::now();
             let pid = w.job.pid;
@@ -5261,7 +5378,7 @@ impl EngineHost {
                     Evaluated::Pending(settled)
                 }
                 Ok(v) => Evaluated::Value(json_of(v)),
-                Err(e) => return Err(CdpError::server(format!("threw: {}", e.details(&scope).message))),
+                Err(e) => return Err(self.script_error(&scope, e)),
             }
         };
         if let Some(api) = api {
@@ -5291,9 +5408,7 @@ impl EngineHost {
             .ok_or_else(|| CdpError::server("the element's frame has no realm"))?;
         let value = {
             let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
-            let threw = |scope: &pyro_js::Scope<'_>, e: pyro_js::JsError| {
-                CdpError::server(format!("threw: {}", e.details(scope).message))
-            };
+            let threw = |scope: &pyro_js::Scope<'_>, e: pyro_js::JsError| self.script_error(scope, e);
             let f = scope.eval(&format!("({src}\n)"), Some("pyro-run"), 1).map_err(|e| threw(&scope, e))?;
             let Some(f) = f.as_object().filter(|f| f.is_function()) else {
                 return Err(CdpError::invalid_params("eval: the expression is not a function"));
@@ -5479,6 +5594,40 @@ impl EngineHost {
         Ok(json!({ "value": read_value(&page, el, read, p.property.as_deref()) }))
     }
 
+    /// `Pyro.cancelRun`: answers `session`'s runs (`Pyro.run`, `act`,
+    /// `expect`, `idle`) and its `awaitPromise` evaluations still waiting
+    /// with an error saying they were cancelled ([`Waiter::cancelled`]). The
+    /// pages stay as they are: a navigation, render or promise under way goes
+    /// on unobserved. A run whose script was running when this arrived was
+    /// stopped by the watchdog check already ([`RunningCommand::cancels`])
+    /// and answered, or waits here now. Replies are queued ahead of this
+    /// command's. How many commands it answered (or stopped); with nothing in
+    /// flight, none.
+    fn cancel_runs(&mut self, session: &str) -> usize {
+        let (cancelled, waiting): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.waiters.list).into_iter().partition(|w| w.job.session == session);
+        self.waiters.list = waiting;
+        let stopped = self.running.take_stopped(session);
+        let mut count = usize::from(stopped.is_some_and(|id| !cancelled.iter().any(|w| w.job.id == id)));
+        for w in cancelled {
+            let error = w.cancelled(&self.thread.browser, false);
+            self.collector.push(Queued::Frame(msg::error_frame(Some(w.job.id), &error, Some(&w.job.session))));
+            count += 1;
+        }
+        count += self.pending.fail_session(session, &CdpError::server("cancelled: waiting for the promise to settle"));
+        self.collector.dialogs.driver_busy.set(!self.waiters.list.is_empty());
+        count
+    }
+
+    /// A run's script failed: what its step fails with. A script a
+    /// `Pyro.cancelRun` stopped says the run was cancelled.
+    fn script_error(&self, scope: &pyro_js::Scope<'_>, error: pyro_js::JsError) -> CdpError {
+        if matches!(error, pyro_js::JsError::Terminated) && self.running.stopped_now() {
+            return CdpError::server("cancelled: the script it ran was still running and was stopped");
+        }
+        CdpError::server(format!("threw: {}", error.details(scope).message))
+    }
+
     /// Drives the waiters that can make progress and replies to those that
     /// finished or failed. Replies are queued behind the events the steps
     /// produced.
@@ -5498,6 +5647,7 @@ impl EngineHost {
         self.waiters.list = waiting;
         for w in ready {
             let (id, session) = (w.job.id, w.job.session.clone());
+            let _running = self.running.enter(&session, id);
             let frame = match self.drive(w) {
                 Ok(Drive::Park(w)) => {
                     self.waiters.list.push(*w);

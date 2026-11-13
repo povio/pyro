@@ -335,3 +335,131 @@ fn viewport_restyles_siblings_and_moved_children_of_unstyled_nodes() {
     }
     assert_eq!(eval(&t, page, "widths.join('|')"), expected.join("|"));
 }
+
+/// Playwright's `devices['iPhone 13']`: a 390x664 viewport at DPR 3 on a
+/// 390x844 screen, `isMobile`.
+fn iphone_13() -> Viewport {
+    Viewport { device_scale_factor: 3.0, screen_width: Some(390), screen_height: Some(844), mobile: true, ..Viewport::new(390, 664) }
+}
+
+const PHONE: &str = "[innerWidth, innerHeight, document.documentElement.clientWidth, document.documentElement.clientHeight, \
+    visualViewport.width, visualViewport.height, visualViewport.scale, matchMedia('(max-width: 600px)').matches, \
+    outerWidth, screen.width, document.body.getBoundingClientRect().width].join('|')";
+
+/// Pages at `http://m.test/<name>`: a paragraph, after the viewport `<meta>`
+/// of `content` (none for `None`), then `extra`.
+fn mobile_site(pages: &[(&str, Option<&str>, &str)]) -> Rc<StaticLoader> {
+    let loader = Rc::new(StaticLoader::default());
+    for (name, content, extra) in pages {
+        let meta = content.map(|c| format!("<meta name=viewport content='{c}'>")).unwrap_or_default();
+        let html = format!("<!doctype html><html><head>{meta}</head><body style='margin:0'><p style='margin:0'>x</p>{extra}</body></html>");
+        loader.insert(&format!("http://m.test/{name}"), "text/html", &html, Duration::ZERO);
+    }
+    loader
+}
+
+fn load(t: &mut BrowserThread, page: PageId, name: &str) {
+    t.browser.navigate(page, NavigateOpts::address_bar(&format!("http://m.test/{name}"))).unwrap();
+    settle(t);
+}
+
+#[test]
+fn mobile_viewport_follows_the_meta_viewport() {
+    // Expected: Chrome 147 (Playwright 1.59.1's Chromium) with
+    // devices['iPhone 13'], the same pages.
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    t.browser.set_loader(Some(mobile_site(&[
+        ("dw", Some("width=device-width, initial-scale=1"), ""),
+        ("none", None, ""),
+        ("w600", Some("width=600"), ""),
+        ("is2", Some("initial-scale=2"), ""),
+        ("dw-is2", Some("width=device-width, initial-scale=2"), ""),
+        ("wide", Some("width=device-width, initial-scale=1"), "<div style='width:1200px;height:10px'></div>"),
+        ("wide-none", None, "<div style='width:1500px;height:10px'></div>"),
+        (
+            "wide-fixed",
+            Some("width=device-width, initial-scale=1, user-scalable=no"),
+            "<div style='width:1200px;height:10px'></div>",
+        ),
+    ])));
+    t.browser.set_viewport(page, iphone_13()).unwrap();
+    for (name, expected) in [
+        ("dw", "390|664|390|664|390|664|1|true|390|390|390"),
+        // No tag: a 980 px layout viewport, zoomed out to the device's width.
+        ("none", "980|1669|980|1668|980|1668.5128173828125|0.3979591727256775|false|390|390|980"),
+        ("w600", "600|1022|600|1021|600|1021.5384521484375|0.6499999761581421|true|390|390|600"),
+        ("is2", "195|332|195|332|195|332|2|true|390|390|195"),
+        ("dw-is2", "390|664|390|664|195|332|2|true|390|390|390"),
+        // Content wider than the layout viewport widens the window, not the
+        // layout viewport; without an initial scale the page zooms out to it.
+        ("wide", "1200|2044|390|664|390|664|1|true|390|390|390"),
+        ("wide-none", "1500|2554|980|1668|1500|2553.84619140625|0.25999999046325684|false|390|390|980"),
+        // The tag's limits hold: `user-scalable=no` locks the scale at 1.
+        ("wide-fixed", "390|664|390|664|390|664|1|true|390|390|390"),
+    ] {
+        load(&mut t, page, name);
+        assert_eq!(eval(&t, page, PHONE), expected, "{name}");
+    }
+    assert_eq!(
+        eval(&t, page, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight].join()"),
+        "1200,664"
+    );
+    // Desktop (mobile: false) ignores the tag, as before.
+    t.browser.set_viewport(page, Viewport { mobile: false, ..iphone_13() }).unwrap();
+    load(&mut t, page, "w600");
+    assert_eq!(eval(&t, page, PHONE), "390|664|390|664|390|664|1|true|390|390|390");
+    load(&mut t, page, "none");
+    assert_eq!(eval(&t, page, PHONE), "390|664|390|664|390|664|1|true|390|390|390");
+}
+
+#[test]
+fn mobile_meta_viewport_changes_by_script_relayout_and_resize() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let listeners = "<script>globalThis.ev=[];addEventListener('resize',()=>ev.push('w:'+innerWidth+'x'+innerHeight));\
+        visualViewport.addEventListener('resize',()=>ev.push('vv:'+visualViewport.width+'@'+visualViewport.scale.toFixed(3)));\
+        matchMedia('(max-width: 600px)').addEventListener('change',e=>ev.push('mq:'+e.matches))</script>";
+    let loader = mobile_site(&[("none", None, listeners)]);
+    let head = format!("<!doctype html><html><head>{listeners}<meta name=viewport content='width=device-width'></head><body>x</body></html>");
+    loader.insert("http://m.test/head", "text/html", &head, Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    t.browser.set_viewport(page, iphone_13()).unwrap();
+    // A tag the parser meets before the first layout fires nothing (Chrome: []).
+    load(&mut t, page, "head");
+    assert_eq!(eval(&t, page, "[innerWidth, ev.join()].join('|')"), "390|");
+    load(&mut t, page, "none");
+    assert_eq!(eval(&t, page, "[innerWidth, ev.join()].join('|')"), "980|");
+    // Added by script: the next read lays out again (Chrome: the same values
+    // at once), and resize, visual viewport resize and the media query list
+    // change follow, in Chrome's order.
+    let snap = "[innerWidth, innerHeight, document.documentElement.clientWidth, visualViewport.width, visualViewport.scale, matchMedia('(max-width: 600px)').matches].join('|')";
+    let added = format!("const m=document.createElement('meta');m.name='viewport';m.id='m';m.content='width=device-width, initial-scale=1';document.head.append(m);{snap}");
+    assert_eq!(eval(&t, page, &added), "390|664|390|390|1|true");
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "ev.join()"), "w:390x664,vv:390@1.000,mq:true");
+    // A changed content (Chrome: 600|1022|600|600|0.65|true, then resize and
+    // visual viewport resize).
+    let changed = format!("m.setAttribute('content','width=600');{snap}");
+    assert_eq!(eval(&t, page, &changed), "600|1022|600|600|0.6499999761581421|true");
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "ev.join()"), "w:390x664,vv:390@1.000,mq:true,w:600x1022,vv:600@0.650");
+    // Removing the tag, renaming it, a tag without content or in a shadow
+    // tree change nothing (as in Chrome).
+    let ignored = "m.remove();const n=document.createElement('meta');n.name='viewport';document.head.append(n);\
+        const host=document.body.appendChild(document.createElement('div'));const s=document.createElement('meta');\
+        s.name='viewport';s.content='width=300';host.attachShadow({mode:'open'}).append(s);";
+    assert_eq!(eval(&t, page, &format!("{ignored}{snap}")), "600|1022|600|600|0.6499999761581421|true");
+    // The latest tag processed wins, wherever it is in the tree.
+    let prepended = format!("const p=document.createElement('meta');p.name='viewport';p.content='width=700';document.head.prepend(p);{snap}");
+    assert_eq!(eval(&t, page, &prepended), "700|1192|700|700|0.5571428537368774|false");
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "ev.slice(5).join()"), "w:700x1192,vv:700@0.557,mq:false");
+    // Leaving mobile emulation lays the page out at the device's width.
+    t.browser.set_viewport(page, Viewport { mobile: false, ..iphone_13() }).unwrap();
+    settle(&mut t);
+    assert_eq!(
+        eval(&t, page, &format!("{snap}+'|'+ev.slice(8).join()")),
+        "390|664|390|390|1|true|w:390x664,vv:390@1.000,mq:true"
+    );
+}

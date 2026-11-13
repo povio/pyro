@@ -217,10 +217,11 @@ where
     });
     def.method("getSelection", 0, |s, w, _a| crate::range::get_selection(s, w.page()));
     def.method("open", 0, |s, w, a| window_open(s, w.page(), &a));
-    def.getter("innerWidth", |s, w| Ok(s.number(w.page().layout().inner_width() as f64)));
-    def.getter("innerHeight", |s, w| Ok(s.number(w.page().layout().inner_height() as f64)));
-    def.getter("outerWidth", |s, w| Ok(s.number(w.page().layout().inner_width() as f64)));
-    def.getter("outerHeight", |s, w| Ok(s.number(w.page().layout().inner_height() as f64)));
+    def.getter("innerWidth", |s, w| Ok(s.number(window_size(w.page()).0 as f64)));
+    def.getter("innerHeight", |s, w| Ok(s.number(window_size(w.page()).1 as f64)));
+    // The device: the window itself under mobile emulation, as in Chrome.
+    def.getter("outerWidth", |s, w| Ok(s.number(w.page().layout().device_viewport().width as f64)));
+    def.getter("outerHeight", |s, w| Ok(s.number(w.page().layout().device_viewport().height as f64)));
     def.getter("devicePixelRatio", |s, w| Ok(s.number(w.page().layout().device_pixel_ratio())));
     def.getter("scrollX", |s, w| Ok(s.number(w.page().layout.borrow().scroll_x() as f64)));
     def.getter("scrollY", |s, w| Ok(s.number(w.page().layout.borrow().scroll_y() as f64)));
@@ -558,12 +559,15 @@ impl JsClass for ScreenOrientation {
 }
 
 /// `window.visualViewport`: there is no pinch zoom, so the visual viewport is
-/// the layout viewport (headless Chromium hides scrollbars). react-aria
-/// bounds popover max-height by `offsetTop + height`; without this object
-/// every popover got `max-height: 0`. An EventTarget: the embedder fires
-/// `resize` when the viewport size changes (react-aria tracks the virtual
-/// keyboard with it). With no pinch zoom the visual viewport never moves
-/// within the layout viewport, so `scroll`/`scrollend` never fire.
+/// the layout viewport (headless Chromium hides scrollbars), or under mobile
+/// emulation the device at the page scale (`width`, `height`, `scale`; a
+/// page without `<meta name="viewport">` is 980 px at 390/980 on a 390 px
+/// phone). react-aria bounds popover max-height by `offsetTop + height`;
+/// without this object every popover got `max-height: 0`. An EventTarget:
+/// the embedder fires `resize` when the viewport size or scale changes
+/// (react-aria tracks the virtual keyboard with it). With no pinch zoom the
+/// visual viewport never moves within the layout viewport, so
+/// `scroll`/`scrollend` never fire.
 pub struct VisualViewport;
 impl JsClass for VisualViewport {
     const NAME: &'static str = "VisualViewport";
@@ -571,13 +575,13 @@ impl JsClass for VisualViewport {
     type Parent = crate::target::EventTarget;
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|d: &ViewportTargetData| &d.target);
-        def.getter("width", |s, d| Ok(s.number(d.page().layout().inner_width() as f64)));
-        def.getter("height", |s, d| Ok(s.number(d.page().layout().inner_height() as f64)));
+        def.getter("width", |s, d| Ok(s.number(visual_viewport(d.page()).0)));
+        def.getter("height", |s, d| Ok(s.number(visual_viewport(d.page()).1)));
         def.getter("offsetLeft", |s, _d| Ok(s.number(0.0)));
         def.getter("offsetTop", |s, _d| Ok(s.number(0.0)));
         def.getter("pageLeft", |s, d| Ok(s.number(d.page().layout.borrow().scroll_x() as f64)));
         def.getter("pageTop", |s, d| Ok(s.number(d.page().layout.borrow().scroll_y() as f64)));
-        def.getter("scale", |s, _d| Ok(s.number(1.0)));
+        def.getter("scale", |s, d| Ok(s.number(visual_viewport(d.page()).2)));
         def.accessor(
             "onresize",
             |s, d| crate::target::event_handler(s, &d.target, "resize"),
@@ -597,8 +601,22 @@ impl JsClass for VisualViewport {
 }
 
 fn screen(p: &PageDom) -> (u32, u32) {
-    let v = p.viewport();
+    let v = p.device_viewport();
     (v.screen_width.unwrap_or(v.width), v.screen_height.unwrap_or(v.height))
+}
+
+/// `innerWidth`/`innerHeight`: the layout viewport, or under mobile
+/// emulation the frame, which the document's width can widen (laid out
+/// first, as Chrome does).
+fn window_size(p: &PageDom) -> (u32, u32) {
+    p.sync_mobile_layout();
+    p.layout().window_size()
+}
+
+/// `visualViewport`'s width, height and scale (see [`VisualViewport`]).
+fn visual_viewport(p: &PageDom) -> (f64, f64, f64) {
+    p.sync_mobile_layout();
+    p.layout().visual_viewport()
 }
 
 /// Replaces the lazy `CSS` accessor with the namespace's own data property

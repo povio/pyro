@@ -73,7 +73,9 @@ pub struct ScreenOrientation {
 /// `Emulation.setTouchEmulationEnabled` feed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Viewport {
-    /// CSS px. `window.innerWidth`, `(width)`.
+    /// CSS px. `window.innerWidth`, `(width)`. With [`Viewport::mobile`] the
+    /// emulated device's width: [`crate::layout::Layout::viewport`] then holds
+    /// the layout viewport made of it (`<meta name="viewport">`).
     pub width: u32,
     /// CSS px. `window.innerHeight`, `(height)`.
     pub height: u32,
@@ -96,6 +98,12 @@ pub struct Viewport {
     /// Emulated `print` media type (CDP `Emulation.setEmulatedMedia`
     /// `media: "print"`): `print` queries match and `screen` ones do not.
     pub print: bool,
+    /// Mobile emulation (CDP `Emulation.setDeviceMetricsOverride` `mobile`,
+    /// Playwright's `isMobile`): the main frame's document lays out in the
+    /// layout viewport its `<meta name="viewport">` asks for (980 px without
+    /// one) and is shown at a page scale ([`crate::viewport_meta`]). Child
+    /// frames ignore it.
+    pub mobile: bool,
 }
 
 impl Default for Viewport {
@@ -113,6 +121,7 @@ impl Default for Viewport {
             pointer: Pointer::Fine,
             orientation: None,
             print: false,
+            mobile: false,
         }
     }
 }

@@ -943,7 +943,10 @@ impl Renderer {
         }
         let root = {
             let root = doc.root_element();
-            let (size, overflow) = (root.final_layout().size, root.scrollable_overflow());
+            // The layout size is in CSS px, the scrollable overflow in device
+            // px (Blitz scales it): back to CSS px before they are compared.
+            let (size, overflow) =
+                (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
             let clipped = root.primary_styles().is_some_and(|s| {
                 matches!(
                     s.clone_overflow_y(),
@@ -3166,6 +3169,26 @@ mod deferred_html_scroll_tests {
     fn at(image: &RgbaImage, x: usize, y: usize) -> &[u8] {
         let start = (y * image.width as usize + x) * 4;
         &image.data[start..start + 4]
+    }
+    #[test]
+    fn full_page_is_the_document_height_at_any_device_scale_factor() {
+        // A document 200 CSS px tall in an 80x80 viewport: 80x200 device px at
+        // 1, 240x600 at 3 (the scrollable overflow is in device px).
+        for (dpr, w, h) in [(1.0, 80, 200), (3.0, 240, 600)] {
+            let snapshot = Snapshot {
+                html: "<!doctype html><style>body{margin:0;background:white}</style><div style=\"height:200px;background:red\"></div>".into(),
+                base_url: "http://test/".into(),
+                width: 80,
+                height: 80,
+                device_scale_factor: dpr,
+                ..Default::default()
+            };
+            let (image, ..) = Renderer::new()
+                .render(&snapshot, Area::FullPage, Backend::Cpu, &(Arc::new(NoFetch) as Arc<dyn Fetcher>))
+                .unwrap();
+            assert_eq!((image.width, image.height), (w, h), "device scale factor {dpr}");
+            assert_eq!(at(&image, 10, h as usize - 2), &[255, 0, 0, 255]);
+        }
     }
     #[test]
     fn deferred_html_nested_scroll_preserves_both_axes_and_clipping() {

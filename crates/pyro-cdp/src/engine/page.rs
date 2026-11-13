@@ -269,8 +269,6 @@ impl EngineHost {
             "startScreencast" => self.start_screencast(cmd),
             "screencastFrameAck" => self.screencast_frame_ack(cmd),
             "stopScreencast" => self.stop_screencast(cmd),
-            // Accepted because there is nothing to change: the engine enforces
-            // no CSP, opens no file chooser and has a single foreground page.
             // A blocking dialog is answered by its nested read loop
             // (dialog.rs). A reported one was already dismissed (it did not
             // block); this only answers the client that reacts to its
@@ -300,7 +298,22 @@ impl EngineHost {
                 self.session_mut(cmd.session_id)?.intercept_file_chooser = enabled;
                 Ok(Some(json!({})))
             }
-            "setBypassCSP" | "bringToFront" => Ok(Some(json!({}))),
+            // From the page's next document on, as in Chrome (Playwright sends
+            // it before the first navigation): see `Browser::set_bypass_csp`.
+            "setBypassCSP" => {
+                #[derive(Deserialize)]
+                struct P {
+                    enabled: bool,
+                }
+                let p = cmd.command.params::<P>()?;
+                let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                if !self.thread.browser.set_bypass_csp(id, p.enabled) {
+                    return Err(CdpError::server("page is gone"));
+                }
+                Ok(Some(json!({})))
+            }
+            // A single foreground page: nothing to change.
+            "bringToFront" => Ok(Some(json!({}))),
             // Like document.open(); document.write(html); document.close() in
             // the frame's main world (Chrome keeps the URL too).
             "setDocumentContent" => {
@@ -815,9 +828,11 @@ impl EngineHost {
     /// Delivers a page download as Chrome does under an allow behavior:
     /// Browser.downloadWillBegin, the file written to downloadPath (named by
     /// guid for allowAndName, else as suggested), then Browser.downloadProgress
-    /// inProgress and completed (with filePath), or canceled on failure. Events
-    /// go to the browser session and only when eventsEnabled. Deny and default
-    /// behaviors deliver nothing.
+    /// inProgress and completed (with filePath), or canceled on failure. Deny
+    /// and default behaviors write nothing (headless Chrome's default denies
+    /// too) and report the download canceled, which is where Playwright's
+    /// `acceptDownloads: false` gets its `download` event. Events go to the
+    /// browser session and only when eventsEnabled.
     fn deliver_download(
         &mut self,
         page: PageKey,
@@ -832,14 +847,14 @@ impl EngineHost {
         else {
             return;
         };
-        let Some(dir) =
-            behavior.download_path.filter(|_| matches!(behavior.behavior.as_str(), "allow" | "allowAndName"))
-        else {
-            return;
-        };
         let guid = new_guid();
-        let name = if behavior.behavior == "allowAndName" { guid.clone() } else { suggested_filename.to_owned() };
-        let path = std::path::Path::new(&dir).join(name);
+        if let (true, Some(context)) = (behavior.events_enabled, context) {
+            let announced = self.announced_downloads.entry(context).or_default();
+            if announced.len() >= super::ANNOUNCED_DOWNLOADS {
+                announced.pop_front();
+            }
+            announced.push_back(guid.clone());
+        }
         let emit = |host: &Self, method: &str, params: serde_json::Value| {
             if behavior.events_enabled {
                 host.out.push(crate::msg::event_frame(method, &params, None));
@@ -850,6 +865,20 @@ impl EngineHost {
             "Browser.downloadWillBegin",
             json!({"frameId": frame_id, "guid": guid, "url": url, "suggestedFilename": suggested_filename}),
         );
+        let allowed = matches!(behavior.behavior.as_str(), "allow" | "allowAndName");
+        let Some(dir) = behavior.download_path.clone().filter(|_| allowed) else {
+            // Measured on headless Chromium: nothing received, then canceled.
+            for state in ["inProgress", "canceled"] {
+                emit(
+                    self,
+                    "Browser.downloadProgress",
+                    json!({"guid": guid, "totalBytes": 0, "receivedBytes": 0, "state": state}),
+                );
+            }
+            return;
+        };
+        let name = if behavior.behavior == "allowAndName" { guid.clone() } else { suggested_filename.to_owned() };
+        let path = std::path::Path::new(&dir).join(name);
         let written = body.and_then(|bytes| {
             std::fs::create_dir_all(&dir)
                 .and_then(|_| std::fs::write(&path, &bytes))
