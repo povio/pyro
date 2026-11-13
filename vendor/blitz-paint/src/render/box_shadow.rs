@@ -80,6 +80,17 @@ impl ElementCx<'_, '_> {
                         let radius = self.frame.border_radii.average();
                         let rect = self.frame.border_box.inflate(spread, spread);
 
+                        // Without blur the shadow is a solid rounded rectangle: fill it as a
+                        // path (antialiased edges) rather than with vello's blurred-rectangle
+                        // function, which evaluates powf for every pixel it covers. A spread
+                        // ring (`box-shadow: 0 0 0 6000px`) covered a whole 3840x2160 frame:
+                        // 60 of the frame's 88 ms of CPU time.
+                        if blur == 0.0 {
+                            let shape = kurbo::RoundedRect::from_rect(rect, radius);
+                            scene.fill(Fill::NonZero, transform, shadow_color, None, &shape);
+                            continue;
+                        }
+
                         // Fill the color
                         scene.draw_box_shadow(transform, rect, shadow_color, radius, blur);
                     }

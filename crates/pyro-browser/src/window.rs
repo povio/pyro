@@ -177,6 +177,13 @@ impl WindowData {
             + animation.native_callbacks.len();
         (timers, frames)
     }
+
+    /// Grows with every timer this window's script sets and every animation
+    /// frame it requests (the handles given out): two equal readings mean it
+    /// asked for neither between them.
+    pub fn handles_issued(&self) -> u32 {
+        self.next_handle.get()
+    }
 }
 
 /// Identity keys of the per-window singletons (one wrapper per realm).

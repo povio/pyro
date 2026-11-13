@@ -10,10 +10,17 @@ use kurbo::{Affine, BezPath, PathEl};
 use peniko::Color;
 use xxhash_rust::xxh3::{xxh3_64, Xxh3};
 
-/// Hash of every command of `scene` and the image size. Glyph fonts are
-/// hashed by content (memoized per blob in `font_hashes`), so the hash is
-/// stable across processes and can be stored with a baseline.
-pub fn scene_hash(scene: &Scene, width: u32, height: u32, font_hashes: &mut HashMap<u64, u64>) -> u64 {
+/// Hash of every command of `scene` and the image size. Glyph fonts and
+/// images are hashed by content, memoized per blob in `blob_hashes` (a blob's
+/// id is unique and its bytes never change), so the hash is stable across
+/// processes and can be stored with a baseline. Before images were memoized,
+/// a page showing a 6168x3600 image spent 4 ms of every frame hashing its
+/// 89 MB of pixels (a tenth of a 3840x2160 frame's CPU time).
+pub fn scene_hash(scene: &Scene, width: u32, height: u32, blob_hashes: &mut HashMap<u64, u64>) -> u64 {
+    // Every new canvas bitmap or decoded image is a new blob: forget them now and then.
+    if blob_hashes.len() > BLOB_HASHES {
+        blob_hashes.clear();
+    }
     let mut h = Xxh3::new();
     h.update(&width.to_le_bytes());
     h.update(&height.to_le_bytes());
@@ -43,21 +50,21 @@ pub fn scene_hash(scene: &Scene, width: u32, height: u32, font_hashes: &mut Hash
                     h.update(&v.to_bits().to_le_bytes());
                 }
                 affine(&mut h, &c.transform);
-                paint(&mut h, &c.brush);
+                paint(&mut h, &c.brush, blob_hashes);
                 opt_affine(&mut h, &c.brush_transform);
                 path(&mut h, &c.shape);
             }
             RenderCommand::Fill(c) => {
                 h.update(&[5, c.fill as u8]);
                 affine(&mut h, &c.transform);
-                paint(&mut h, &c.brush);
+                paint(&mut h, &c.brush, blob_hashes);
                 opt_affine(&mut h, &c.brush_transform);
                 path(&mut h, &c.shape);
             }
             RenderCommand::GlyphRun(c) => {
                 h.update(&[6, c.hint as u8]);
                 let blob = &c.font_data.data;
-                let fh = *font_hashes.entry(blob.id()).or_insert_with(|| xxh3_64(blob.data()));
+                let fh = *blob_hashes.entry(blob.id()).or_insert_with(|| xxh3_64(blob.data()));
                 h.update(&fh.to_le_bytes());
                 h.update(&c.font_data.index.to_le_bytes());
                 h.update(&c.font_size.to_bits().to_le_bytes());
@@ -70,7 +77,7 @@ pub fn scene_hash(scene: &Scene, width: u32, height: u32, font_hashes: &mut Hash
                     peniko::Style::Fill(f) => h.update(&[0, *f as u8]),
                     s => h.update(format!("{s:?}").as_bytes()),
                 }
-                paint(&mut h, &c.brush);
+                paint(&mut h, &c.brush, blob_hashes);
                 h.update(&c.brush_alpha.to_bits().to_le_bytes());
                 affine(&mut h, &c.transform);
                 opt_affine(&mut h, &c.glyph_transform);
@@ -115,7 +122,10 @@ fn color(h: &mut Xxh3, c: &Color) {
     }
 }
 
-fn paint(h: &mut Xxh3, p: &Paint) {
+/// Blobs [`scene_hash`] remembers the hash of, at most.
+const BLOB_HASHES: usize = 4096;
+
+fn paint(h: &mut Xxh3, p: &Paint, blob_hashes: &mut HashMap<u64, u64>) {
     match p {
         Paint::Solid(c) => {
             h.update(&[0]);
@@ -127,7 +137,9 @@ fn paint(h: &mut Xxh3, p: &Paint) {
         }
         Paint::Image(i) => {
             h.update(&[2]);
-            h.update(&xxh3_64(i.image.data.data()).to_le_bytes());
+            let blob = &i.image.data;
+            let ih = *blob_hashes.entry(blob.id()).or_insert_with(|| xxh3_64(blob.data()));
+            h.update(&ih.to_le_bytes());
             h.update(format!("{:?}", i.sampler).as_bytes());
         }
         Paint::Resource(r) => {

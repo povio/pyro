@@ -340,9 +340,11 @@ fn entries<'s>(s: &Scope<'s>, page: &Rc<PageDom>, records: Vec<Pending>) -> JsRe
     Ok(s.array(&values.iter(s).collect::<Vec<_>>())?.value())
 }
 
-/// Input needs the current rendering update before pressing. Expedite a
-/// dirty gather, but leave already queued callback delivery to its own task.
-pub(crate) fn request_update_for_input(page: &PageDom) {
+/// Input needs the current rendering update before pressing, and a page
+/// that is otherwise quiet has no reason to wait out the pacing interval.
+/// Expedite a dirty gather, but leave already queued callback delivery to
+/// its own task.
+pub(crate) fn request_update(page: &PageDom) {
     if page.is_disposed() || !page.resizes.has_observers() {
         return;
     }
