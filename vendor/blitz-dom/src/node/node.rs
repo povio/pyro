@@ -60,7 +60,7 @@ bitflags! {
         const IS_IN_DOCUMENT = 0b00000100;
         /// Whether the node is an inline box whose in-flow content is block-level only
         const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
-        /// lightningpanda: the node had damage of its own (a mutation or a restyle), not only its
+        /// pyro: the node had damage of its own (a mutation or a restyle), not only its
         /// descendants', when this pass propagated damage. Set by `propagate_damage_flags`, cleared
         /// with the damage; the paint tree reads it (`PAINT_TREE_OWN_DAMAGE`), tables read
         /// `OWN_LAYOUT_DAMAGE`.
@@ -76,7 +76,7 @@ bitflags! {
         /// reads it where it used to read `OWN_DAMAGE`, which each resolve clears
         /// (`table_paint_children_kept`). Set and cleared with `PAINT_TREE_DIRTY`.
         const PAINT_TREE_OWN_DAMAGE = 0b01000000;
-        /// lightningpanda: `OWN_DAMAGE` whose damage reaches layout (`damage::reaches_layout`:
+        /// pyro: `OWN_DAMAGE` whose damage reaches layout (`damage::reaches_layout`:
         /// relayout, construction, reordering), not only paint. Tables read it to tell a cell or
         /// row that is to be collected again from one whose colour, background or opacity
         /// changed. Set and cleared with `OWN_DAMAGE`.
@@ -122,7 +122,7 @@ pub struct Node {
     pub layout_parent: Cell<Option<NodeId>>,
     /// A separate child list that includes anonymous collections of inline elements
     pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
-    /// lightningpanda: the node whose `layout_children` list holds this node,
+    /// pyro: the node whose `layout_children` list holds this node,
     /// kept where those lists are built (`resolve_layout_children`). The node
     /// is a box of the current layout when it equals `layout_parent` (which
     /// inline content of an inline root also has, without being listed).
@@ -284,7 +284,7 @@ impl Node {
     /// its ancestors: their rounding (`RoundTree::rounded_unchanged`) and cached scrollable overflow
     /// read those flags, and a relayout can move a box that no style change touched.
     ///
-    /// lightningpanda: a box that only moved keeps its own scrollable overflow and transform (both in
+    /// pyro: a box that only moved keeps its own scrollable overflow and transform (both in
     /// its own coordinates), and its rounding is keyed on its layout and offset: only its ancestors,
     /// whose overflow it is part of, are marked.
     pub fn update_unrounded_layout(&mut self, update: impl FnOnce(&mut Layout)) {
@@ -329,7 +329,7 @@ impl Node {
         &mut self.layout_data_mut().scrollable_overflow
     }
 
-    /// lightningpanda: see `LayoutData::hit_overflow`.
+    /// pyro: see `LayoutData::hit_overflow`.
     #[inline]
     pub fn hit_overflow(&self) -> &KurboRect {
         &self.layout_data().hit_overflow
@@ -470,7 +470,7 @@ impl Node {
         }
     }
 
-    /// lightningpanda: whether a `transform`, `translate`, `rotate` or `scale` style applies,
+    /// pyro: whether a `transform`, `translate`, `rotate` or `scale` style applies,
     /// which [`Self::set_transform`] resolves against the rounded size. A transform that
     /// resolves to the identity at one size (`translate: 50%` at width 0) is stored as
     /// `None`, so `transform().is_some()` alone does not tell whether a new size changes it.
@@ -702,7 +702,7 @@ impl Node {
             .is_some_and(|flag| flag.load(Ordering::Relaxed))
     }
 
-    /// lightningpanda: whether a pass that follows damage down the layout tree has nothing to do
+    /// pyro: whether a pass that follows damage down the layout tree has nothing to do
     /// in this node's subtree: an element (not an anonymous box, whose flag is not maintained)
     /// whose `damaged_descendants` flag is clear, still listed by `layout_parent`. By the invariant
     /// [`Self::mark_damaged`] keeps, such a node carries no damage, nor does anything below it.
@@ -729,7 +729,7 @@ impl Node {
         clean
     }
 
-    /// lightningpanda: whether the DOM walks that follow damage (`propagate_damage_flags`,
+    /// pyro: whether the DOM walks that follow damage (`propagate_damage_flags`,
     /// `clear_damage_and_dirty_flags`) have nothing to do in this node's subtree: it is not an
     /// anonymous box (whose flag is not maintained) and its `damaged_descendants` flag is clear
     /// (a text or comment node has none, nor damage). By the invariant [`Self::mark_damaged`]
@@ -793,7 +793,7 @@ impl Node {
     /// descendants (a layout change: `update_unrounded_layout`, a rounded size a transform
     /// resolves against).
     ///
-    /// lightningpanda: the walk stops at a node already flagged, as `mark_damaged` does. A flag is
+    /// pyro: the walk stops at a node already flagged, as `mark_damaged` does. A flag is
     /// only set together with those of every ancestor (here, in `mark_damaged`, and a node joining
     /// the tree flags its new parent: `add_children_to_parent`), and
     /// `clear_damage_and_dirty_flags` clears a node's flag after those below it, so a flagged
@@ -1379,7 +1379,7 @@ impl Node {
         }
     }
 
-    /// lightningpanda: rewrite the layout styles derived from the node's primary style
+    /// pyro: rewrite the layout styles derived from the node's primary style
     /// ([`LayoutStyles`]). Called wherever the primary style is replaced outside the style
     /// traversal, and when a cell's collapsed borders change.
     pub(crate) fn update_layout_styles(&mut self) {
@@ -1397,7 +1397,7 @@ impl Node {
     /// Set a table cell's half collapsed borders, and its layout style with them. The cell's
     /// table-part Taffy style does not depend on them and stays.
     ///
-    /// lightningpanda: the cell's own layout reads its layout style, so a change clears what its
+    /// pyro: the cell's own layout reads its layout style, so a change clears what its
     /// last layout measured (`clear_layout_cache`), whichever path changed it: a table built
     /// again (`build_table_context`) leaves its undamaged cells' layouts in place otherwise.
     pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {

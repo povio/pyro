@@ -12,11 +12,11 @@ HERE = Path(__file__).resolve().parent
 MANIFEST_SHA = '542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19'
 TOS = 'f9fde4aa0dce7d1d7a1ffebffe3306399973cd80'
 RUNS = {
-    'lp-w3-l19': (0, 32),
-    'lp-w3-l19u': (29, 3),
-    'lp-w3-l19h': (30, 2),
-    'lp-w3-l19hr': (30, 2),
-    'lp-w3-l19m': (30, 2),
+    'pyro-w3-l19': (0, 32),
+    'pyro-w3-l19u': (29, 3),
+    'pyro-w3-l19h': (30, 2),
+    'pyro-w3-l19hr': (30, 2),
+    'pyro-w3-l19m': (30, 2),
 }
 
 
@@ -81,7 +81,7 @@ def main():
         assert stats['skipped'] == stats['flaky'] == 0
         assert len(failed) == counts[1]
         cleanup = cleanup_path.read_text().splitlines()
-        assert cleanup in ([], ['fe_e2e_w3_f9fde4aa_lfix1_template|lp_w3_e2e|f|t'])
+        assert cleanup in ([], ['fe_e2e_w3_f9fde4aa_lfix1_template|pyro_w3_e2e|f|t'])
         results.append({
             'artifact_directory': run,
             **{field: meta[field] for field in ('run_slug', 'browser_commit', 'browser_sha256')},

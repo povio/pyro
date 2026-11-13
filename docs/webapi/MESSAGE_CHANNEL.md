@@ -1,6 +1,6 @@
 # MessageChannel and MessagePort
 
-`crates/lp-webapi/src/message_channel.rs` implements HTML §9.4 channel
+`crates/pyro-webapi/src/message_channel.rs` implements HTML §9.4 channel
 messaging between the realms of a browser thread's VM (frames, popups,
 isolated worlds) and, through `port_link.rs`, between threads (the page and
 its dedicated or service workers, or two workers). The behaviour follows upstream
@@ -117,7 +117,7 @@ their own), across all pages of the browser thread.
   the page.
 - Gap: workers have no BroadcastChannel.
 
-Tests: `crates/lp-browser/tests/popups.rs`
+Tests: `crates/pyro-browser/tests/popups.rs`
 (`broadcast_channel_reaches_same_origin_documents_of_the_browser_context`).
 
 Gaps of MessageChannel, all explicit:
@@ -138,7 +138,7 @@ Gaps of MessageChannel, all explicit:
 
 ## window.postMessage
 
-`crates/lp-webapi/src/window_message.rs` and `crates/lp-browser/src/frames.rs`
+`crates/pyro-webapi/src/window_message.rs` and `crates/pyro-browser/src/frames.rs`
 (`post_message`) implement HTML's window post message steps for frames and
 popups of a browser thread:
 
@@ -161,7 +161,7 @@ popups of a browser thread:
   root of the source window: `source` is resolved when read.
 - The source is the incumbent window: the realm of the innermost script,
   listener, timer or other native-to-JavaScript entry that is running
-  (`lp_js::entry_realm`). Calling a function of another realm directly from
+  (`pyro_js::entry_realm`). Calling a function of another realm directly from
   script does not change it, so a message posted from a function defined in
   another frame names the caller's window, where HTML would name the
   function's.
@@ -185,11 +185,11 @@ only messages where `event.source === window`, including JSZip's `setImmediate`
 fallback. Delivery uses the embedder's queued `PageHooks::post_task`; embedders
 without hooks retain the existing inline fallback.
 
-Tests: `crates/lp-webapi/tests/dom_js.rs` (`message_channel_*`,
-`message_port_*`), `crates/lp-webapi/tests/messaging_js.rs` (clone types,
+Tests: `crates/pyro-webapi/tests/dom_js.rs` (`message_channel_*`,
+`message_port_*`), `crates/pyro-webapi/tests/messaging_js.rs` (clone types,
 transfers, event ports, same-window postMessage, the cross-VM format, stream
-transfer), `crates/lp-webapi/src/port_link.rs` (the pipe),
-`crates/lp-browser/src/tests.rs` (`message_ports_cross_*`,
+transfer), `crates/pyro-webapi/src/port_link.rs` (the pipe),
+`crates/pyro-browser/src/tests.rs` (`message_ports_cross_*`,
 `a_port_from_a_worker_*`, `two_workers_talk_*`, `streams_transfer_*`,
-`crypto_keys_cross_*`) and `crates/lp-browser/tests/messaging.rs` (frames,
+`crypto_keys_cross_*`) and `crates/pyro-browser/tests/messaging.rs` (frames,
 cross-origin windows, popups, history state, streams to a frame).

@@ -6,6 +6,11 @@ name: Linux build
 # (scripts/release/bundle-icu-linux.sh), smoke-tests the bundle and runs the
 # client's test suite against it.
 #
+# With `pgo`, the browser is built by scripts/pgo/build.sh: Rust optimized by a
+# cdp-perf training run in serve and serve --fork (JavaScriptCore is linked as
+# built; its PGO and LTO are macOS-only so far). The comparison worker stays a
+# plain release build.
+#
 # Artifacts: native-linux-<arch> (the npm package's browser) and
 # archive-linux-<arch> (the GitHub release archive's binaries).
 
@@ -23,6 +28,10 @@ on:
       version:
         type: string
         default: ''
+      pgo:
+        description: Build the browser with profile-guided optimization (scripts/pgo/build.sh)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,7 +47,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       CC: clang
       CXX: clang++
@@ -57,13 +66,28 @@ jobs:
       - name: Install build dependencies
         run: scripts/linux/setup.sh
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --no-self-update
-      - name: Build browser and comparison worker against the patched JavaScriptCore
         run: |
-          export LP_JSC_DIR="$HOME/.cache/lightningpanda/jsc/$JSC_DIR"
-          mkdir -p "$(dirname "$LP_JSC_DIR")"
-          mv patched-jsc "$LP_JSC_DIR"
-          cargo +stable build --locked --release --package lightningpanda --package lp-render --features render
+          rustup toolchain install stable --profile minimal --component llvm-tools --no-self-update
+          rustup default stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - name: Build browser and comparison worker against the patched JavaScriptCore
+        env:
+          PGO: ${{ inputs.pgo }}
+        run: |
+          export PYRO_JSC_DIR="$HOME/.cache/pyro/jsc/$JSC_DIR"
+          mkdir -p "$(dirname "$PYRO_JSC_DIR")"
+          mv patched-jsc "$PYRO_JSC_DIR"
+          if [[ "$PGO" == true ]]; then
+            scripts/pgo/build.sh --locked
+            cargo +stable build --locked --release --package pyro-render
+            host="$(rustc -vV | sed -n 's/^host: //p')"
+            cp "target/$host/release-pgo/pyro" target/release/pyro
+            rm -rf target/pgo/profraw "target/$host/release-pgo/deps" "target/$host/release-pgo/build"
+          else
+            cargo +stable build --locked --release --package pyro --package pyro-render --features render
+          fi
       - name: Bundle ICU and check the bundle
         env:
           ARCH: ${{ matrix.arch }}
@@ -71,37 +95,42 @@ jobs:
         run: |
           stage="archive/linux-$ARCH"
           mkdir -p "$stage"
-          cp target/release/lightningpanda target/release/lp-snapshot-compare "$stage/"
+          cp target/release/pyro target/release/pyro-snapshot-compare "$stage/"
           # Release debug information makes the combined npm payload too large.
           # Strip only staged copies; retain symbols and untouched build outputs.
-          strip --strip-debug "$stage/lightningpanda" "$stage/lp-snapshot-compare"
+          strip --strip-debug "$stage/pyro" "$stage/pyro-snapshot-compare"
           scripts/release/bundle-icu-linux.sh "$stage"
-          ldd "$stage/lightningpanda"
+          ldd "$stage/pyro"
           # JavaScriptCore is inside the browser, and its ICU is the bundled one.
           # (`! pipeline` would not stop the step: errexit ignores a negated command.)
-          if ldd "$stage/lightningpanda" | grep -F libJavaScriptCore; then exit 1; fi
-          ldd "$stage/lightningpanda" | grep -F "$PWD/$stage/lib/libicuuc.so"
-          if ldd "$stage/lightningpanda" | grep -E 'not found|/usr/lib/.*libicu'; then exit 1; fi
-          "$stage/lightningpanda" version
-          "$stage/lightningpanda" version | grep -q 'fork: true'
+          if ldd "$stage/pyro" | grep -F libJavaScriptCore; then exit 1; fi
+          ldd "$stage/pyro" | grep -F "$PWD/$stage/lib/libicuuc.so"
+          if ldd "$stage/pyro" | grep -E 'not found|/usr/lib/.*libicu'; then exit 1; fi
+          "$stage/pyro" version
+          "$stage/pyro" version | grep -q 'fork: true'
           if [[ -n "$VERSION" ]]; then
-            "$stage/lightningpanda" version | grep -Fx "lightningpanda $VERSION"
+            "$stage/pyro" version | grep -Fx "pyro $VERSION"
           fi
-          "$stage/lightningpanda" eval -e 'console.log("linux-smoke-ok")' | grep -Fx linux-smoke-ok
+          "$stage/pyro" eval -e 'console.log("linux-smoke-ok")' | grep -Fx linux-smoke-ok
           mkdir -p "native/linux-$ARCH/lib"
-          cp "$stage/lightningpanda" "native/linux-$ARCH/"
+          cp "$stage/pyro" "native/linux-$ARCH/"
           cp "$stage"/lib/* "native/linux-$ARCH/lib/"
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.4.0'
       - name: Test the client against the bundled browser
         env:
           ARCH: ${{ matrix.arch }}
-        working-directory: packages/lightning-panda
+        working-directory: packages/pyro
         run: |
           bun install --frozen-lockfile
           bun run build
-          LIGHTNINGPANDA_BIN="$GITHUB_WORKSPACE/archive/linux-$ARCH/lightningpanda" bun test ./test
+          PYRO_BIN="$GITHUB_WORKSPACE/archive/linux-$ARCH/pyro" bun test ./test
+      - name: PGO training logs
+        if: always() && inputs.pgo
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgo-training-logs-linux-${{ matrix.arch }}
+          path: target/pgo/*.log
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: native-linux-${{ matrix.arch }}

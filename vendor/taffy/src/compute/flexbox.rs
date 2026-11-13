@@ -1640,7 +1640,7 @@ fn determine_container_main_size(
                             style_max.maybe_min(flex_basis_max).or(flex_basis_max).unwrap_or(f32::INFINITY);
 
                         let content_contribution = match (min_main_size, style_preferred, max_main_size) {
-                            // lightningpanda: a column container's automatic block size is the sum of its
+                            // pyro: a column container's automatic block size is the sum of its
                             // items' hypothetical main sizes, as in Chromium: the flex base size clamped by
                             // the resolved minimum and the max size. An item's `height` only counts through
                             // its flex basis, so a `0px` basis contributes its minimum and a percentage basis

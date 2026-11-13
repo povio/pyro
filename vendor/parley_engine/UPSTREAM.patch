@@ -9,7 +9,7 @@
  #[derive(PartialEq, Copy, Clone)]
  pub(crate) struct ShapeDataKey {
      /// The font collection's blob ID.
-@@ -176,3 +178,126 @@
+@@ -176,3 +178,132 @@
          }
      }
  }
@@ -25,6 +25,8 @@
 +    pub script: harfrust::Script,
 +    pub language: Option<&'a harfrust::Language>,
 +    pub font_size: f32,
++    /// The size tracking is looked up at (see `ShapeOptions::point_size`).
++    pub point_size: f32,
 +    pub text: &'a str,
 +    /// The text around the run that shaping looks at.
 +    pub pre_context: &'a str,
@@ -42,6 +44,7 @@
 +        self.script.hash(&mut h);
 +        self.language.hash(&mut h);
 +        self.font_size.to_bits().hash(&mut h);
++        self.point_size.to_bits().hash(&mut h);
 +        self.text.hash(&mut h);
 +        self.pre_context.hash(&mut h);
 +        self.post_context.hash(&mut h);
@@ -59,11 +62,12 @@
 +    script: harfrust::Script,
 +    language: Option<harfrust::Language>,
 +    font_size: u32,
++    point_size: u32,
 +    text: Box<str>,
 +    pre_context: Box<str>,
 +    post_context: Box<str>,
 +    glyphs: harfrust::GlyphBuffer,
-+    /// lightningpanda: the run's font metrics, computed when it was shaped (the key holds
++    /// pyro: the run's font metrics, computed when it was shaped (the key holds
 +    /// everything they depend on: font, synthesis, variations and size).
 +    metrics: RunMetrics,
 +}
@@ -79,6 +83,7 @@
 +            && self.script == key.script
 +            && self.language.as_ref() == key.language
 +            && self.font_size == key.font_size.to_bits()
++            && self.point_size == key.point_size.to_bits()
 +            && *self.text == *key.text
 +            && *self.pre_context == *key.pre_context
 +            && *self.post_context == *key.post_context
@@ -128,6 +133,7 @@
 +            script: key.script,
 +            language: key.language.cloned(),
 +            font_size: key.font_size.to_bits(),
++            point_size: key.point_size.to_bits(),
 +            text: key.text.into(),
 +            pre_context: key.pre_context.into(),
 +            post_context: key.post_context.into(),
@@ -168,15 +174,11 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -128,10 +133,93 @@
-             strikethrough_size,
-             x_height: metrics.x_height,
-             cap_height: metrics.cap_height,
-+        }
-+    }
-+}
-+
-+/// lightningpanda: WebKit's and Chromium's (macOS) extra ascent for Times,
+@@ -132,6 +137,89 @@
+     }
+ }
+ 
++/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
 +/// (16px Helvetica: 2px, a 18px normal line instead of 16px). These are the
@@ -211,7 +213,7 @@
 +        .any(|name| family.chars().eq(name.chars()))
 +}
 +
-+/// lightningpanda: the font metrics of a shaped run, which depend on the font instance, the font
++/// pyro: the font metrics of a shaped run, which depend on the font instance, the font
 +/// size and the variation location only. Computed once per such combination in a
 +/// [`ShapedText`] (see [`ShapedText::push_run`]) and kept with the run's glyphs in the shaper's
 +/// glyph cache, so a run shaped before costs no font parse.
@@ -243,10 +245,10 @@
 +        Self {
 +            units_per_em: metrics.units_per_em as f32,
 +            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size),
-         }
-     }
- }
- 
++        }
++    }
++}
++
 +/// The metrics of the runs of one font at one size and variation location in a [`ShapedText`].
 +#[derive(Clone, Debug, PartialEq)]
 +struct RunMetricsEntry {
@@ -266,7 +268,7 @@
      glyphs: Vec<Glyph>,
      fonts: Vec<FontInstance>,
      normalized_coords: Vec<NormalizedCoord>,
-+    /// lightningpanda: the metrics of the runs' fonts, one entry per font, size and variation
++    /// pyro: the metrics of the runs' fonts, one entry per font, size and variation
 +    /// location; a run of a combination seen before takes its entry.
 +    run_metrics: Vec<RunMetricsEntry>,
  }
@@ -294,10 +296,7 @@
                  index
              });
  
-+        // lightningpanda: the entry of this font, size and location in this text; the first run
-+        // of a combination enters the metrics the caller shaped it with before, or computes them.
-+        // The table is the same whatever the caller had cached.
-         let metrics = {
+-        let metrics = {
 -            let font = &self.fonts[font_index];
 -            let font_ref =
 -                skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
@@ -306,6 +305,10 @@
 -                skrifa::prelude::Size::new(options.font_size),
 -                normalized_coords,
 -            )
++        // pyro: the entry of this font, size and location in this text; the first run
++        // of a combination enters the metrics the caller shaped it with before, or computes them.
++        // The table is the same whatever the caller had cached.
++        let metrics = {
 +            let font_size = options.font_size.to_bits();
 +            let coords = &self.normalized_coords[normalized_coords_range.clone()];
 +            let entry = self.run_metrics.iter().find(|e| {
@@ -345,6 +348,30 @@
      }
  }
  
+@@ -647,6 +759,7 @@
+             char_end: text.chars().count().try_into().unwrap(),
+             options: ShapeOptions {
+                 font_size: 32.0,
++                point_size: 32.0,
+                 language: None,
+                 features: &[],
+                 variations: &[],
+@@ -805,6 +918,7 @@
+                 char_end: 1,
+                 options: ShapeOptions {
+                     font_size: 32.0,
++                    point_size: 32.0,
+                     language: None,
+                     features: &[],
+                     variations: &[],
+@@ -814,6 +928,7 @@
+                 char_end: text.chars().count().try_into().unwrap(),
+                 options: ShapeOptions {
+                     font_size: 32.0,
++                    point_size: 32.0,
+                     language: None,
+                     features: &[],
+                     variations: &[],
 --- a/src/shape/shaper.rs
 +++ b/src/shape/shaper.rs
 @@ -16,6 +16,29 @@
@@ -377,7 +404,19 @@
  /// Shaping options for one item.
  ///
  /// These are styling options relevant for shaping. They're styling, in that they're not derived
-@@ -85,6 +108,10 @@
+@@ -25,6 +48,11 @@
+ pub struct ShapeOptions<'a> {
+     /// The font size to shape the item with.
+     pub font_size: f32,
++    /// pyro: the font size in points, for size-specific tracking (the AAT `trak` table, which
++    /// harfrust applies; San Francisco has one). The same as `font_size` unless the layout is
++    /// scaled: parley shapes a scaled layout at `font_size` times its scale, while tracking
++    /// depends on the size the text is set in (CSS pixels), as in Core Text and Chromium.
++    pub point_size: f32,
+     /// The language to shape the item with.
+     pub language: Option<Language>,
+     /// The font features to shape the item with.
+@@ -85,6 +113,10 @@
  
  /// Reusable scratch to shape text using [`Self::shape_text`].
  pub struct Shaper {
@@ -388,7 +427,7 @@
      shape_data_cache: LruCache<cache::ShapeDataKey, harfrust::ShaperData>,
      shape_instance_cache: LruCache<cache::ShapeInstanceId, harfrust::ShaperInstance>,
      shape_plan_cache: LruCache<cache::ShapePlanId, harfrust::ShapePlan>,
-@@ -97,6 +124,8 @@
+@@ -97,6 +129,8 @@
      fn default() -> Self {
          const MAX_ENTRIES: usize = 16;
          Self {
@@ -397,11 +436,11 @@
              shape_data_cache: LruCache::new(MAX_ENTRIES),
              shape_instance_cache: LruCache::new(MAX_ENTRIES),
              shape_plan_cache: LruCache::new(MAX_ENTRIES),
-@@ -273,14 +302,17 @@
+@@ -273,14 +307,17 @@
  
      // Shape a run of the segment with a single font, appending it to `shaped_text`.
      let mut shape_run = |font: &FontInstance, range: TextRange| {
-+        // lightningpanda: the font is parsed only when something has to be built from it (shaper
++        // pyro: the font is parsed only when something has to be built from it (shaper
 +        // data, instance, or the shaper of a run the glyph cache does not hold); a cached run needs
 +        // none of them, and its variation coords are the instance's.
          // TODO: How do we want to handle errors like this?
@@ -417,7 +456,7 @@
          );
          let instance = scx.shape_instance_cache.entry(
              cache::ShapeInstanceKey::new(
-@@ -291,12 +323,50 @@
+@@ -291,12 +328,51 @@
              ),
              || {
                  harfrust::ShaperInstance::from_variations(
@@ -442,6 +481,7 @@
 +            script: hb_script,
 +            language: language.as_ref(),
 +            font_size: options.font_size,
++            point_size: options.point_size,
 +            text: run_text,
 +            pre_context,
 +            post_context,
@@ -469,7 +509,7 @@
          let harf_shaper = shaper_data
              .shaper(&font_ref)
              .instance(Some(instance))
-@@ -328,8 +398,6 @@
+@@ -328,8 +404,6 @@
          buffer.clear();
          buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
  
@@ -478,8 +518,12 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -360,7 +428,7 @@
-                 .point_size(Some(options.font_size)),
+@@ -357,10 +431,10 @@
+             HarfShapeOptions::new()
+                 .plan(Some(shaper_plan))
+                 .features(&scx.features)
+-                .point_size(Some(options.font_size)),
++                .point_size(Some(options.point_size)),
          );
  
 -        shaped_text.push_run(
@@ -487,7 +531,7 @@
              text,
              range,
              segment,
-@@ -370,10 +438,16 @@
+@@ -370,10 +444,16 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -506,7 +550,7 @@
      };
  
      // This is the run being accumulated, i.e., consecutive graphemes for which `select_font`
-@@ -429,6 +503,18 @@
+@@ -429,6 +509,18 @@
      Ok(())
  }
  
@@ -532,7 +576,7 @@
  }
  
 +/// Only Chromium's hyphen-before-digit rule, every other pair deferring to the default (ICU)
-+/// behavior (lightningpanda).
++/// behavior (pyro).
 +///
 +/// UAX #14 LB25 forbids a break between a hyphen and a digit (`HY × NU`). Chromium allows one
 +/// when the character before the hyphen is an ASCII letter or digit (`4b87-|916e`, `10-|20`), and
@@ -589,3 +633,23 @@
      }
  
      #[test]
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -52,6 +52,7 @@
+ //!         char_end: char_count.try_into().unwrap(),
+ //!         options: ShapeOptions {
+ //!             font_size: 16.0,
++//!             point_size: 16.0,
+ //!             language: None,
+ //!             features: &[],
+ //!             variations: &[],
+--- a/src/shape/atom.rs
++++ b/src/shape/atom.rs
+@@ -917,6 +917,7 @@
+             char_end: text.chars().count().try_into().unwrap(),
+             options: ShapeOptions {
+                 font_size: 32.0,
++                point_size: 32.0,
+                 language: None,
+                 features: &[],
+                 variations: &[],

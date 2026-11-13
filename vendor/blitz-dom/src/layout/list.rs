@@ -51,7 +51,7 @@ pub(super) fn collect_list_item_children(
     }
 }
 
-/// lightningpanda: a list item whose marker changed (its number, after an item was added, moved or
+/// pyro: a list item whose marker changed (its number, after an item was added, moved or
 /// removed before it) is built and laid out again: an `inside` marker is text of its inline layout,
 /// and an `outside` one sizes its line.
 fn marker_changed(node: &mut crate::Node) {

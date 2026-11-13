@@ -32,7 +32,7 @@ client hints. Geometry remains the native synthetic layout, not full CSS box lay
 
 ## Native workspace failure retained
 
-The first combined debug workspace run aborted in the two-test `lp-jsc-sys` binary with
+The first combined debug workspace run aborted in the two-test `pyro-jsc-sys` binary with
 SIGTRAP (signal 5), after the browser, protocol, DOM and JS suites had passed. The triggered
 stack starts with `pas_bitfit_directory_get_first_free_view`, then bmalloc allocation,
 `WTF::AtomStringImpl::addLiteral`, `JSC::CommonIdentifiers`, `JSC::VM::VM`, and the raw

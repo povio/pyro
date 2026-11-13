@@ -1,0 +1,73 @@
+diff --git a/src/image_renderer.rs b/src/image_renderer.rs
+index 619d5d4..96cd8c5 100644
+--- a/src/image_renderer.rs
++++ b/src/image_renderer.rs
+@@ -1,7 +1,7 @@
+ use crate::{ImageCacheConfig, VelloCpuScenePainter};
+ use anyrender::{ImageRenderer, RenderContext as AnyRenderContext};
+ use debug_timer::debug_timer;
+-use vello_cpu::{PixmapMut, RenderContext};
++use vello_cpu::{PixmapMut, RenderContext, RenderSettings};
+ 
+ pub struct VelloCpuImageRenderer {
+     scene: VelloCpuScenePainter,
+@@ -23,6 +23,25 @@ impl VelloCpuImageRenderer {
+     pub fn clear_image_cache(&mut self) {
+         self.scene.clear_image_cache();
+     }
++
++    /// Create a renderer that rasterizes on `threads` worker threads of its own
++    /// (vello_cpu's `RenderSettings::num_threads`; 0: on the calling thread,
++    /// which is all it does without the `multithreading` feature). Resizing
++    /// keeps the count.
++    pub fn with_threads(width: u32, height: u32, threads: u16) -> Self {
++        let settings = RenderSettings {
++            num_threads: threads,
++            ..RenderSettings::default()
++        };
++        Self {
++            scene: VelloCpuScenePainter::with_settings(
++                width as u16,
++                height as u16,
++                settings,
++                ImageCacheConfig::default(),
++            ),
++        }
++    }
+ }
+ 
+ impl AnyRenderContext for VelloCpuImageRenderer {}
+@@ -36,7 +55,8 @@ impl ImageRenderer for VelloCpuImageRenderer {
+     }
+ 
+     fn resize(&mut self, width: u32, height: u32) {
+-        self.scene.render_ctx = RenderContext::new(width as u16, height as u16);
++        let settings = *self.scene.render_ctx.render_settings();
++        self.scene.render_ctx = RenderContext::new_with(width as u16, height as u16, settings);
+     }
+ 
+     fn reset(&mut self) {
+diff --git a/src/scene.rs b/src/scene.rs
+index 1b09a33..b8f9f07 100644
+--- a/src/scene.rs
++++ b/src/scene.rs
+@@ -22,8 +22,18 @@ impl VelloCpuScenePainter {
+     }
+ 
+     pub fn with_image_cache_config(width: u16, height: u16, config: ImageCacheConfig) -> Self {
++        Self::with_settings(width, height, vello_cpu::RenderSettings::default(), config)
++    }
++
++    /// A painter whose context renders with `settings` (worker threads, SIMD level).
++    pub fn with_settings(
++        width: u16,
++        height: u16,
++        settings: vello_cpu::RenderSettings,
++        config: ImageCacheConfig,
++    ) -> Self {
+         Self {
+-            render_ctx: vello_cpu::RenderContext::new(width, height),
++            render_ctx: vello_cpu::RenderContext::new_with(width, height, settings),
+             resources: vello_cpu::Resources::new(),
+             image_cache: ImageCache::new(config),
+         }

@@ -11,16 +11,16 @@ pub(crate) const ACTION_MOD: Modifiers = Modifiers::CONTROL;
 
 pub type Color = AlphaColor<Srgb>;
 
-/// lightningpanda: stack left below which [`ensure_stack`] moves to a new stack segment. It covers
+/// pyro: stack left below which [`ensure_stack`] moves to a new stack segment. It covers
 /// everything one tree level runs between two checkpoints: a level of Taffy's and Blitz's layout
 /// dispatch (about 3 KB), plus a leaf's own work (inline layout and shaping, table and grid
 /// sizing, a paint of text), which is not recursive.
 pub const STACK_RED_ZONE: usize = 256 * 1024;
-/// lightningpanda: size of each stack segment [`ensure_stack`] maps (lazily committed): about
+/// pyro: size of each stack segment [`ensure_stack`] maps (lazily committed): about
 /// 1,500 more levels of nested blocks per segment.
 pub const STACK_GROW_BY: usize = 4 * 1024 * 1024;
 
-/// lightningpanda: run `f`, first moving to a new stack segment when less than
+/// pyro: run `f`, first moving to a new stack segment when less than
 /// [`STACK_RED_ZONE`] is left. Recursive tree walks (layout, paint, the paint tree, damage,
 /// rounding, box construction) run each level through this, so a deep tree never overflows the
 /// thread's stack and aborts the process, whatever stack the caller left (JS recursion near
@@ -176,7 +176,7 @@ pub fn walk_tree(indent: usize, node: &Node) {
 /// Parse an SVG image.
 #[cfg(feature = "svg")]
 pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
-    // lightningpanda: parsed images by their source. An inline <svg> is
+    // pyro: parsed images by their source. An inline <svg> is
     // parsed from a snapshot of its subtree each time its box is built, and
     // pages that clone content (a header logo on every printed page) build
     // the same one again and again; the parse depends on the source alone.
@@ -295,7 +295,7 @@ macro_rules! qual_name {
     };
 }
 
-/// lightningpanda: the font a downloaded (or `data:`) font file becomes,
+/// pyro: the font a downloaded (or `data:`) font file becomes,
 /// one per distinct file on this thread. Documents that load the same web
 /// font then register the same blob (same id), so shaping caches keyed by
 /// the font's blob id serve every document; each document still registers
@@ -332,7 +332,7 @@ thread_local! {
         Default::default();
 }
 
-/// lightningpanda: the Stylo lock every document of this thread uses, so
+/// pyro: the Stylo lock every document of this thread uses, so
 /// their sheets and rules can be shared (documents of a thread never style
 /// concurrently).
 pub(crate) fn thread_style_lock() -> style::shared_lock::SharedRwLock {
@@ -346,7 +346,7 @@ fn sheet_key(css: &str) -> u64 {
     h.finish()
 }
 
-/// lightningpanda: the sheet parsed earlier on this thread for `css` with
+/// pyro: the sheet parsed earlier on this thread for `css` with
 /// base URL `url`, if any.
 pub(crate) fn shared_sheet(css: &str, url: &str) -> Option<style::stylesheets::DocumentStyleSheet> {
     let key = sheet_key(css);
@@ -359,7 +359,7 @@ pub(crate) fn shared_sheet(css: &str, url: &str) -> Option<style::stylesheets::D
     })
 }
 
-/// lightningpanda: keeps `sheet` (parsed from `css` with base URL `url`) for
+/// pyro: keeps `sheet` (parsed from `css` with base URL `url`) for
 /// later documents; bounded at 64 sheets and 32 MB of text.
 pub(crate) fn share_sheet(css: &str, url: &str, sheet: &style::stylesheets::DocumentStyleSheet) {
     const MAX_SHEETS: usize = 64;

@@ -43,7 +43,7 @@
 a[href] {
     color: rgb(0, 0, 238);
     text-decoration: underline;
-    /* lightningpanda: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
+    /* pyro: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
     cursor: pointer;
 }
 
@@ -61,7 +61,7 @@ input[type="hidden" i] {
     display: none !important;
 }
 
-/* lightningpanda: Chromium's sizes: 13x13 border boxes, radios with a
+/* pyro: Chromium's sizes: 13x13 border boxes, radios with a
    0 bottom and 5px left margin. */
 input[type="checkbox"] {
     box-sizing: border-box;
@@ -107,7 +107,7 @@ button {
     font-family: system-ui, sans-serif;
 }
 
-/* lightningpanda: Chromium's menu list is an atomic inline box (its options
+/* pyro: Chromium's menu list is an atomic inline box (its options
    are not laid out: Blitz paints the control), 1px border, line-height normal. */
 select {
     display: inline-block;
@@ -126,7 +126,7 @@ textarea {
     font-family: monospace;
 }
 
-/* lightningpanda: Chromium's UA sheet wraps a textarea's text and breaks
+/* pyro: Chromium's UA sheet wraps a textarea's text and breaks
    words longer than a line. */
 textarea {
     white-space: pre-wrap;
@@ -164,6 +164,18 @@ textarea:focus {
     outline: 2px solid #4D90FE;
 }
 
+/* pyro: Chromium's UA sheet (light colour scheme). Its `line-height:
+   initial !important` is applied in layout: Stylo applies no `line-height`
+   to `::placeholder`. */
+::placeholder {
+    color: #757575;
+}
+
+input::placeholder {
+    white-space: pre;
+    overflow-wrap: normal;
+}
+
 button,
 input[type="submit"],
 input[type="reset"],
@@ -193,7 +205,7 @@ input[type="file"] {
     background-color: transparent;
 }
 
-/* lightningpanda: an image button is replaced content laid out like <img>
+/* pyro: an image button is replaced content laid out like <img>
    at its image's intrinsic size, without the text-input border, padding and
    background (Chromium's UA sheet: padding/border/background-color initial). */
 input[type="image" i] {
@@ -221,7 +233,7 @@ legend {
     padding-inline-end: 2px;
 }
 
-/* lightningpanda: Chromium's computed style for options and groups. A
+/* pyro: Chromium's computed style for options and groups. A
    drop-down select's children generate no boxes (layout/construct.rs); a
    list box's and loose ones do. */
 option {
@@ -239,7 +251,7 @@ optgroup {
     font-weight: bolder;
 }
 
-/* lightningpanda: an optgroup's label row (Chromium's
+/* pyro: an optgroup's label row (Chromium's
    -internal-optgroup-label in its shadow root), built in its ::before slot
    (layout/construct.rs). The text-control pseudo-element's name is reused:
    Blitz does not use it, and only the UA sheet can select it. */
@@ -1216,7 +1228,7 @@ slot {
 }
 
 /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
-/* lightningpanda: not behind Gecko's pref (Chrome's UA has these rules). */
+/* pyro: not behind Gecko's pref (Chrome's UA has these rules). */
 [popover]:not(:popover-open):not(dialog[open]) {
     display: none;
 }

@@ -12,10 +12,10 @@ def digest(p):
 info = {
     'declaredSourceCommit': commit,
     'expectedForkCapability': True,
-    'inputEngineSHA256': digest(os.path.join(src, platform, 'lightningpanda')),
+    'inputEngineSHA256': digest(os.path.join(src, platform, 'pyro')),
     'javascriptCore': 'static-patched',
-    'packagedComparatorSHA256': digest(os.path.join(d, 'lp-snapshot-compare')),
-    'packagedEngineSHA256': digest(os.path.join(d, 'lightningpanda')),
+    'packagedComparatorSHA256': digest(os.path.join(d, 'pyro-snapshot-compare')),
+    'packagedEngineSHA256': digest(os.path.join(d, 'pyro')),
     'platform': platform,
     'sdkSHA256': digest(client),
     'sourceAsset': source_asset,

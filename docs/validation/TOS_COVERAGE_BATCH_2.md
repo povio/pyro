@@ -25,7 +25,7 @@ Selection: all manifest `common` entries for these four files, written to
 - Browser: `916267f391ca7b8f2fa85528e58aa03d1e32994a`, release.
   - It has no `crates/`, `Cargo.toml` or `Cargo.lock` difference from main at
     `8e53da5`.
-  - Binary `/private/tmp/lp-tos-browser-fd-916267f/target/release/lightningpanda`,
+  - Binary `/private/tmp/pyro-tos-browser-fd-916267f/target/release/pyro`,
     SHA-256 `7bb33527f4a8fe9598c4b91aa0eac52f6ba80f477af01e791e55a81ba8f566a5`,
     verified before execution. This is the same binary as
     [the 9-case comparison](TOS_CANVAS_CASE_COMPARISON.md).
@@ -33,7 +33,7 @@ Selection: all manifest `common` entries for these four files, written to
 - Routing manifest SHA-256 `542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19`.
 - Host: MacBookAir.localdomain, Apple M1, 8 GiB.
 - Same documented direct-lane version bypass, backend-token localStorage auth, one
-  Playwright worker and native PostgreSQL 17 with the `lp_bench` test role. The
+  Playwright worker and native PostgreSQL 17 with the `pyro_bench` test role. The
   run used its own slug and template database.
 - After cleanup the test role owned zero databases. The command is
   `bun --no-orphans scripts/run-fe-e2e.mjs run --config playwright.routed.config.ts`
@@ -49,8 +49,8 @@ The fixture was a fresh `git worktree add --detach`, clean before execution
 was left in place.
 
 Sanitized artifacts (selection, metadata, command, scrubbed log and JSON report,
-DB pre/post/cleanup) are in `/private/tmp/lp-tos-batch2`. The fixture is
-`/private/tmp/lp-tos-f9f-batch2`.
+DB pre/post/cleanup) are in `/private/tmp/pyro-tos-batch2`. The fixture is
+`/private/tmp/pyro-tos-f9f-batch2`.
 
 Limits:
 - The batch 1 caveats apply: the router bootstrap via pushState/PopStateEvent is

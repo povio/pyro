@@ -1,5 +1,5 @@
 import {createRequire} from 'node:module';import{spawn}from'node:child_process';import http from'node:http';import net from'node:net';import fs from'node:fs';
-const require=createRequire('/private/tmp/lp-tos-calendar-6e7f7cf-fx/apps/fe/package.json');const{chromium}=require('playwright');const[binary,output]=process.argv.slice(2);if(fs.existsSync(output))throw Error('fresh output required');
+const require=createRequire('/private/tmp/pyro-tos-calendar-6e7f7cf-fx/apps/fe/package.json');const{chromium}=require('playwright');const[binary,output]=process.argv.slice(2);if(fs.existsSync(output))throw Error('fresh output required');
 const fillers=n=>Array.from({length:n},()=>'<div style="height:10px">row</div>').join('');
 const html=`<!doctype html><html><body>${fillers(150)}<div id="outer" style="height:120px;width:240px;overflow:auto">${fillers(30)}<button id="button" style="display:block;width:160px;padding:0;border:0">${Array.from({length:8},()=>'<span style="display:block;height:10px">row</span>').join('')}<span id="label" style="display:block;height:10px">Click me</span></button>${fillers(80)}</div>${fillers(150)}</body></html>`;
 const server=http.createServer((q,r)=>{r.setHeader('Content-Type','text/html');r.end(html)});await new Promise(r=>server.listen(0,'127.0.0.1',r));

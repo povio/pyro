@@ -184,7 +184,7 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
-        // lightningpanda: every algorithm lays out its children through here (Taffy's
+        // pyro: every algorithm lays out its children through here (Taffy's
         // `compute_child_layout` and Blitz's block contexts alike), once per tree level, so a tree
         // of any depth lays out on a stack grown on demand instead of overflowing the thread's.
         crate::util::ensure_stack(|| {
@@ -206,7 +206,7 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
-        // lightningpanda: this runs once per tree level of a recursive layout; what is not part
+        // pyro: this runs once per tree level of a recursive layout; what is not part
         // of the recursion stays out of its frame (see `dispatch_child_layout`).
         let inputs = self.adjusted_child_inputs(node_id, inputs);
         let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
@@ -239,7 +239,7 @@ impl LayoutPassState<'_> {
         {
             inputs.available_space.width = AvailableSpace::MaxContent;
         }
-        // lightningpanda: a list box (`<select multiple>` or `size` > 1) with
+        // pyro: a list box (`<select multiple>` or `size` > 1) with
         // an auto height is `size` rows tall (4 for `multiple`), however many
         // options it has, as in Chromium: its options scroll inside.
         if inputs.known_dimensions.height.is_none() {
@@ -347,7 +347,7 @@ impl LayoutPassState<'_> {
         }
     }
 
-    /// lightningpanda: the layout algorithms recurse through here once per tree level, so this
+    /// pyro: the layout algorithms recurse through here once per tree level, so this
     /// frame is kept small: the leaf boxes (form controls, replaced elements) and tables are
     /// laid out by non-inlined functions whose (large) frames are gone before a container's
     /// algorithm runs, so a deep tree costs only the algorithms' own frames per level.
@@ -368,7 +368,7 @@ impl LayoutPassState<'_> {
         }
     }
 
-    // lightningpanda: the algorithms other than block layout, not inlined into
+    // pyro: the algorithms other than block layout, not inlined into
     // `dispatch_child_layout` (whose frame every tree level pays).
     #[inline(never)]
     fn inline_layout(
@@ -396,7 +396,7 @@ impl LayoutPassState<'_> {
     fn leaf_layout_or_algorithm(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> ChildLayout {
         let orthogonal_percent_basis = self.orthogonal_percent_basis_of(dom_node_id(node_id));
         let scale = self.doc.viewport.scale();
-        // lightningpanda: the longest option label of a drop-down select (the
+        // pyro: the longest option label of a drop-down select (the
         // control's intrinsic width; its options are not laid out).
         let select_label_chars = {
             let n = &self.nodes[dom_node_id(node_id)];
@@ -556,12 +556,16 @@ impl LayoutPassState<'_> {
                                 &mut doc.font_ctx.lock().unwrap(),
                                 &mut doc.layout_ctx,
                             );
+                            // pyro: the placeholder wraps at the same width.
+                            if let Some(placeholder) = input.placeholder.as_deref_mut() {
+                                placeholder.break_lines(Some(content_width * scale));
+                            }
                         }
                     }
                     return ChildLayout::Done(output);
                 }
 
-                // lightningpanda: a drop-down select is an atomic box: its
+                // pyro: a drop-down select is an atomic box: its
                 // longest option's label (about half an em per character)
                 // plus the arrow, and, as Chromium's menu list, a line of
                 // the control's font (`line-height: normal`) plus 2px tall,
@@ -747,7 +751,7 @@ impl LayoutPassState<'_> {
                                     DEFAULT_OBJECT_SIZE,
                                 )
                             }
-                            // lightningpanda: a `<video>` whose poster did not load
+                            // pyro: a `<video>` whose poster did not load
                             // keeps the default object size.
                             ImageData::None
                                 if element_data.name.local == local_name!("video") =>
@@ -797,7 +801,7 @@ impl LayoutPassState<'_> {
                         _ => unreachable!(),
                     };
 
-                    // lightningpanda: an image (`<img>` or `<input type=image>`)
+                    // pyro: an image (`<img>` or `<input type=image>`)
                     // the embedder has loaded but Blitz has not (yet) reports
                     // its natural size through the render tree's state
                     // attribute (`natural=W,H`).
@@ -806,7 +810,7 @@ impl LayoutPassState<'_> {
                     // A `<video>` with known metadata is sized by its video
                     // track, whatever its poster's size.
                     let is_video = element_data.name.local == local_name!("video");
-                    let (intrinsic_sizes, default_object_size) = match lp_natural_size(element_data) {
+                    let (intrinsic_sizes, default_object_size) = match pyro_natural_size(element_data) {
                         Some((width, height)) if is_video || (!loaded && is_image) => (
                             IntrinsicSizes {
                                 width: Some(width),
@@ -962,7 +966,7 @@ impl LayoutPassState<'_> {
     }
 }
 
-/// lightningpanda: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
+/// pyro: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
 enum ChildLayout {
     /// A leaf box, laid out.
     Done(taffy::LayoutOutput),
@@ -1264,7 +1268,7 @@ impl RoundTree for LayoutPassState<'_> {
         let node = self.node_from_id_mut(node_id);
         let size_changed = node.final_layout().size != layout.size;
         *node.final_layout_mut() = *layout;
-        // lightningpanda: a transform resolves against the rounded size
+        // pyro: a transform resolves against the rounded size
         // (`Node::set_transform`), and rounding moves with the box's absolute
         // position: a box that only moved (or sits inside one) can change its
         // rounded size with no unrounded layout of its own changing. Mark it, so
@@ -1297,7 +1301,7 @@ impl RoundTree for LayoutPassState<'_> {
     // (damage marking walks the DOM parent chain, so their descendant flags are
     // not maintained), and so are nodes without style data, which have no damage.
     //
-    // lightningpanda: the offset is the fractional part of the parent's absolute
+    // pyro: the offset is the fractional part of the parent's absolute
     // position (`writing_mode::rounded_layout` rounds relative to the pixel grid),
     // so a subtree moved by whole pixels, the rows below a table cell that grew,
     // is skipped as well.
@@ -1418,11 +1422,11 @@ impl Iterator for RefCellChildIter<'_> {
     }
 }
 
-/// lightningpanda: the `natural=W,H` token of the element's
-/// `urn:x-lightningpanda:state` attribute.
-fn lp_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
+/// pyro: the `natural=W,H` token of the element's
+/// `urn:x-pyro:state` attribute.
+fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
     let attr =
-        element.attrs.iter().find(|a| &*a.name.ns == "urn:x-lightningpanda:state" && &*a.name.local == "state")?;
+        element.attrs.iter().find(|a| &*a.name.ns == "urn:x-pyro:state" && &*a.name.local == "state")?;
     let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;
     Some((w.parse().ok()?, h.parse().ok()?))

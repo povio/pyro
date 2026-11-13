@@ -11,6 +11,7 @@ name: WPT
 # The browser is the fork build (patched JavaScriptCore, as the npm package ships for arm64): with the system
 # framework, window named properties and import maps are missing and ~3,200 subtests on ~150 pages fail for that
 # reason alone. It is cached by its inputs, so a pull request that changes none of them skips both macOS builds.
+# The `client` job also tests the npm package's client (packages/pyro) against that browser.
 
 on:
   pull_request:
@@ -60,7 +61,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            crates/lp-jsc-sys/webkit
+            crates/pyro-jsc-sys/webkit
             scripts/jsc
       - name: Cache keys
         id: keys
@@ -97,10 +98,13 @@ jobs:
   build:
     needs: [prepare, jsc]
     if: ${{ !cancelled() && !failure() && needs.prepare.outputs.browser-cached != 'true' }}
-    runs-on: macos-15
+    # The self-hosted Apple Silicon runner (label lp-m1), as the jsc job.
+    runs-on: lp-m1
     timeout-minutes: 45
     env:
       JSC_DIR: ${{ needs.prepare.outputs.jsc-dir }}
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     steps:
       - uses: actions/checkout@v6
       # The patched JavaScriptCore: the jsc job's artifact when it ran, otherwise the Actions cache.
@@ -112,7 +116,7 @@ jobs:
       - uses: actions/cache/restore@v4
         if: needs.jsc.result != 'success'
         with:
-          path: ~/Library/Caches/lightningpanda/jsc/${{ needs.prepare.outputs.jsc-dir }}
+          path: ~/Library/Caches/pyro/jsc/${{ needs.prepare.outputs.jsc-dir }}
           key: patched-jsc-static-macos-arm64-${{ needs.prepare.outputs.jsc-dir }}
           fail-on-cache-miss: true
       - name: Install Rust
@@ -122,26 +126,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wpt-release-fast
+          # Its post step deletes binaries it does not know from ~/.cargo/bin, rustup among them, which
+          # broke the Rust install of the self-hosted runner (lp-m1).
+          cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # release-fast: the release profile with lp-cdp and lp-dom split into more codegen units (Cargo.toml), so the
+      # release-fast: the release profile with pyro-cdp and pyro-dom split into more codegen units (Cargo.toml), so the
       # end of the build is not one core's work.
       - name: Build the browser against the patched JavaScriptCore
         run: |
-          export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
+          export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
           if [ -d patched-jsc ]; then
-            mkdir -p "$(dirname "$LP_JSC_DIR")"
-            mv patched-jsc "$LP_JSC_DIR"
+            mkdir -p "$(dirname "$PYRO_JSC_DIR")"
+            mv patched-jsc "$PYRO_JSC_DIR"
           fi
-          cargo +stable build --locked --profile release-fast --package lightningpanda
+          cargo +stable build --locked --profile release-fast --package pyro
       - name: Stage and check the browser
         run: |
           mkdir browser
-          cp target/release-fast/lightningpanda browser/
+          cp target/release-fast/pyro browser/
           # The patched JavaScriptCore is inside the browser (a static archive): no library of that name is loaded.
-          if otool -L browser/lightningpanda | grep -F JavaScriptCore; then exit 1; fi
-          codesign --verify --strict browser/lightningpanda
-          browser/lightningpanda version | grep -q 'fork: true'
-          browser/lightningpanda eval -e 'console.log("ok")' | grep -Fx ok
+          if otool -L browser/pyro | grep -F JavaScriptCore; then exit 1; fi
+          codesign --verify --strict browser/pyro
+          browser/pyro version | grep -q 'fork: true'
+          browser/pyro eval -e 'console.log("ok")' | grep -Fx ok
           tar -czf browser.tgz browser
       # For later runs with the same inputs (pull requests restore their own entries and main's).
       - uses: actions/cache/save@v4
@@ -159,7 +166,7 @@ jobs:
   wpt:
     needs: [prepare, build]
     if: ${{ !cancelled() && !failure() }}
-    runs-on: macos-15
+    runs-on: lp-m1
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -210,7 +217,7 @@ jobs:
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
           # Earlier arguments win, so runner-args can override the defaults after them.
-          bun bench/wpt/gate.mjs run "${extra[@]}" --wpt wpt --bin browser/lightningpanda --jobs "$JOBS" \
+          bun bench/wpt/gate.mjs run "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$JOBS" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -220,6 +227,47 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           overwrite: true
+
+  # The client against this run's browser: its type check, its own tests and the Playwright-compatible suite
+  # (`pyro run`), which no other pull request job runs. ffmpeg (Playwright's build) lets the video tests run.
+  client:
+    needs: [prepare, build]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: lp-m1
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: packages/pyro
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - uses: actions/download-artifact@v4
+        if: needs.build.result == 'success'
+        with:
+          name: wpt-browser
+          path: ${{ github.workspace }}
+      - uses: actions/cache/restore@v4
+        if: needs.build.result != 'success'
+        with:
+          path: browser.tgz
+          key: ${{ needs.prepare.outputs.browser-key }}
+          fail-on-cache-miss: true
+      - name: Unpack the browser
+        working-directory: ${{ github.workspace }}
+        run: tar -xzf browser.tgz && browser/pyro version
+      - name: Install and build the client
+        run: bun install --frozen-lockfile && bun run build
+      - name: ffmpeg for the video tests
+        continue-on-error: true
+        run: bun x playwright install ffmpeg
+      - name: Type check
+        run: bun run test:types
+      - name: Client tests
+        run: PYRO_BIN="$GITHUB_WORKSPACE/browser/pyro" bun test ./test
+      - name: Playwright-compatible suite (pyro run)
+        run: PYRO_BIN="$GITHUB_WORKSPACE/browser/pyro" bun run test:playwright
 
   gate:
     needs: [prepare, jsc, build, wpt]

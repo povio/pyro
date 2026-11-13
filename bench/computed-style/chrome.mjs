@@ -1,5 +1,5 @@
-// getComputedStyle answers from headless Chrome for the lp-dom parity test
-// (crates/lp-layout/tests/computed_style.rs, `chrome_parity`).
+// getComputedStyle answers from headless Chrome for the pyro-dom parity test
+// (crates/pyro-layout/tests/computed_style.rs, `chrome_parity`).
 //
 //   node bench/computed-style/chrome.mjs cases.json > chrome.json
 //     PLAYWRIGHT_CORE=<path to playwright-core/index.mjs> CHROME=<headless shell>

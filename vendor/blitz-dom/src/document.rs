@@ -124,8 +124,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.view-transitions.enabled", true);
         style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
         style_config::set_pref!("layout.css.zoom.enabled", true);
-        // lightningpanda: the features lp-dom's cascade enables. Prefs are process-wide and read
-        // while parsing, so without these a sheet parsed here before lp-dom's first cascade dropped
+        // pyro: the features pyro-dom's cascade enables. Prefs are process-wide and read
+        // while parsing, so without these a sheet parsed here before pyro-dom's first cascade dropped
         // such rules. `:has()` comes with invalidation (`invalidate_has_anchors`).
         style_config::set_pref!("layout.css.has-selector.enabled", true);
         style_config::set_pref!("layout.css.container-queries.enabled", true);
@@ -289,7 +289,7 @@ pub enum DocumentEvent {
     },
 }
 
-/// lightningpanda: files a traversal's replaced styles into `changes`
+/// pyro: files a traversal's replaced styles into `changes`
 /// (`BaseDocument::style_changes`): an element already there keeps its
 /// first old style and takes the new one.
 pub(crate) fn note_style_changes(
@@ -308,7 +308,7 @@ pub(crate) fn note_style_changes(
     }
 }
 
-/// lightningpanda: an element whose primary style a style traversal replaced
+/// pyro: an element whose primary style a style traversal replaced
 /// ([`BaseDocument::take_style_changes`]).
 #[derive(Clone)]
 pub struct StyleChange {
@@ -338,7 +338,7 @@ pub struct BaseDocument {
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
     pub(crate) pending_device_changes: DeviceChanges,
-    /// lightningpanda: the root's available space in the last layout pass.
+    /// pyro: the root's available space in the last layout pass.
     pub(crate) last_layout_space: Option<taffy::Size<taffy::AvailableSpace>>,
     /// See [`BaseDocument::set_layout_size`].
     layout_size: Option<(f32, f32)>,
@@ -442,7 +442,7 @@ pub struct BaseDocument {
     pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
     /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
     pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
-    /// lightningpanda: the text of `<link>` sheets with `@page` rules, by node. Parsing drops what
+    /// pyro: the text of `<link>` sheets with `@page` rules, by node. Parsing drops what
     /// printing needs of them: the servo build of Stylo has no `size` and no `page`.
     pub(crate) linked_page_css: BTreeMap<NodeId, String>,
     /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
@@ -463,11 +463,11 @@ pub struct BaseDocument {
     /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
     /// set), so paint-tree passes visit them instead of every node.
     pub(crate) oof_hoisted: HashSet<NodeId>,
-    /// lightningpanda: nodes the style traversal gave a `position: sticky`
+    /// pyro: nodes the style traversal gave a `position: sticky`
     /// style (`BaseDocument::has_sticky`). Entries whose node is gone or no
     /// longer sticky are dropped after each traversal.
     pub(crate) sticky_nodes: HashSet<NodeId>,
-    /// lightningpanda: the elements whose primary style the style traversals
+    /// pyro: the elements whose primary style the style traversals
     /// replaced since [`BaseDocument::take_style_changes`], with the style
     /// before and after (a transition's before-change and after-change
     /// styles), kept while `track_style_changes` is on. `style_change_index`
@@ -476,7 +476,7 @@ pub struct BaseDocument {
     pub(crate) style_changes: Vec<StyleChange>,
     pub(crate) style_change_index: HashMap<NodeId, usize>,
     pub(crate) track_style_changes: bool,
-    /// lightningpanda: the boxes that left a container's list (`Node::layout_child_of`) during
+    /// pyro: the boxes that left a container's list (`Node::layout_child_of`) during
     /// `resolve_layout_children`; those no container collected again by its end leave the layout
     /// tree with their subtrees (`BaseDocument::leave_layout_tree`). Empty between passes.
     pub(crate) left_layout_lists: Vec<NodeId>,
@@ -484,7 +484,7 @@ pub struct BaseDocument {
     /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
     /// hit test.
     pub(crate) paint_tree_dirty: bool,
-    /// lightningpanda: a resolve ran since the hit bounds were last brought up
+    /// pyro: a resolve ran since the hit bounds were last brought up
     /// to date: `ensure_hit_overflow` computes the boxes flagged
     /// `LayoutData::hit_stale` again before the next hit test.
     pub(crate) hit_overflow_dirty: bool,
@@ -510,14 +510,14 @@ pub struct BaseDocument {
     /// the style traversal and by pseudo-element box construction).
     pub(crate) pending_style_image_nodes: Vec<NodeId>,
 
-    /// lightningpanda: a style traversal kept a generated `::before` /
+    /// pyro: a style traversal kept a generated `::before` /
     /// `::after` style for some element (sticky; see
     /// `BaseDocument::may_have_generated_before_after`).
     pub(crate) generated_before_after: bool,
 
-    /// lightningpanda: the top layer (modal dialogs, showing popovers) as
+    /// pyro: the top layer (modal dialogs, showing popovers) as
     /// the embedder marks it, by rank (bottom first): elements whose
-    /// `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N`
+    /// `urn:x-pyro:state` `state` attribute has a `top-layer=N`
     /// token. Maintained when that attribute is set or cleared; usually
     /// empty, and then painting costs one emptiness check per box.
     pub(crate) top_layer: crate::layout::paint_tree::TopLayer,
@@ -614,7 +614,7 @@ impl BaseDocument {
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
         let nodes = Box::new(NodeTree::new());
-        // lightningpanda: one lock for the thread's documents, so a parsed
+        // pyro: one lock for the thread's documents, so a parsed
         // sheet can serve them all (`make_stylesheet`).
         let guard = crate::util::thread_style_lock();
         let nodes_to_id = HashMap::new();
@@ -1115,7 +1115,7 @@ impl BaseDocument {
     /// it so that stale NodeIds are never dereferenced after the slot is freed.
     pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
         self.clear_interaction_state_for_removed_node(node_id);
-        // lightningpanda: a dropped element leaves the top layer.
+        // pyro: a dropped element leaves the top layer.
         if !self.top_layer.is_empty() {
             self.top_layer.remove(node_id);
         }
@@ -1270,7 +1270,7 @@ impl BaseDocument {
         self.remove_node_from_tree(anon_id);
     }
 
-    /// lightningpanda: `node_id` is out of the layout tree (no container lists it: it is
+    /// pyro: `node_id` is out of the layout tree (no container lists it: it is
     /// `display: none` or below one, a part a table ignores, or out of the document), and so is
     /// what its subtree built, as a fresh build has none there: its layout children that still
     /// point at it leave its list (`Node::layout_child_of`), and theirs in turn, and its anonymous
@@ -1457,10 +1457,10 @@ impl BaseDocument {
     }
 
     pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
-        // lightningpanda: an author sheet without `@import` (whose loads are
+        // pyro: an author sheet without `@import` (whose loads are
         // the document's) parses once per thread for its text and base URL:
         // every document of a test suite or a PDF template carries the same
-        // bundle. Sheets are immutable here (lightningpanda's CSSOM edits
+        // bundle. Sheets are immutable here (pyro's CSSOM edits
         // the text and syncs it, not Blitz's rules).
         let css = css.as_ref();
         let shared = origin == Origin::Author && !css.contains("@import");
@@ -1574,7 +1574,7 @@ impl BaseDocument {
         }
     }
 
-    /// lightningpanda: whether the style traversals record the elements whose
+    /// pyro: whether the style traversals record the elements whose
     /// primary style they replace ([`Self::take_style_changes`]); off until an
     /// embedder wants them (transition events). Turning it off drops what was
     /// recorded.
@@ -1586,7 +1586,7 @@ impl BaseDocument {
         }
     }
 
-    /// lightningpanda: the elements whose primary style a traversal replaced
+    /// pyro: the elements whose primary style a traversal replaced
     /// since the last call (while tracked), each once, with its style before
     /// the first replacement and after the last: a transition's before-change
     /// and after-change styles. An element styled for the first time, or whose
@@ -1596,14 +1596,14 @@ impl BaseDocument {
         std::mem::take(&mut self.style_changes)
     }
 
-    /// lightningpanda: whether any node of the document (attached or not) is
+    /// pyro: whether any node of the document (attached or not) is
     /// styled `position: sticky`, from the set the style traversal keeps
     /// (O(sticky nodes), not a scan of the document).
     pub fn has_sticky(&self) -> bool {
         self.sticky_node_ids().next().is_some()
     }
 
-    /// lightningpanda: the nodes styled `position: sticky` (see
+    /// pyro: the nodes styled `position: sticky` (see
     /// [`Self::has_sticky`]), in no particular order.
     pub fn sticky_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.sticky_nodes
@@ -1612,7 +1612,7 @@ impl BaseDocument {
             .filter(|id| self.nodes.get(*id).is_some_and(crate::stylo::is_sticky))
     }
 
-    /// lightningpanda: whether a `resolve` could change anything: a resource arrived (it is
+    /// pyro: whether a `resolve` could change anything: a resource arrived (it is
     /// taken in now), something awaits restyle or layout here or in a subdocument, or an
     /// animation runs. The last pass's `refresh_hover` can leave a restyle behind.
     pub fn needs_resolve(&mut self) -> bool {
@@ -1839,7 +1839,7 @@ impl BaseDocument {
         self.snapshot_node_impl(node_id, None)
     }
 
-    /// lightningpanda: `:has()` invalidation for DOM insertions and removals
+    /// pyro: `:has()` invalidation for DOM insertions and removals
     /// (state and attribute changes go through Stylo's relative selector
     /// invalidation instead, `has_invalidation`). Matching flags every element a
     /// `:has()` search visits (`RELATIVE_SELECTOR_SEARCH_DIRECTION_*`) and
@@ -2035,7 +2035,7 @@ impl BaseDocument {
         let state_of = |n: &Node| if n.is_element() { *n.element_state() } else { ElementState::empty() };
         let before = state_of(&self.nodes[node_id]);
         cb(&mut self.nodes[node_id]);
-        // lightningpanda: the `:has()` anchors that can see the element (a
+        // pyro: the `:has()` anchors that can see the element (a
         // flag test when no `:has()` depends on these states).
         let changed = before ^ state_of(&self.nodes[node_id]);
         self.invalidate_relative_state(node_id, changed);

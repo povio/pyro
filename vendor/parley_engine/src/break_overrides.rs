@@ -91,7 +91,7 @@ fn chromium_override(cx: LineBreakContext) -> Option<bool> {
 }
 
 /// Only Chromium's hyphen-before-digit rule, every other pair deferring to the default (ICU)
-/// behavior (lightningpanda).
+/// behavior (pyro).
 ///
 /// UAX #14 LB25 forbids a break between a hyphen and a digit (`HY × NU`). Chromium allows one
 /// when the character before the hyphen is an ASCII letter or digit (`4b87-|916e`, `10-|20`), and

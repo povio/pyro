@@ -1,4 +1,4 @@
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-dom)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-dom)
     Finished `release` profile [optimized] target(s) in 4.95s
      Running tests/layout.rs (target/release/deps/layout-7fddc7aed37eea63)
 

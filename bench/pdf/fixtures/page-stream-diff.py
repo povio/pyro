@@ -9,8 +9,8 @@ def streams(p):
     return out
 num=re.compile(r'-?\d*\.?\d+(?:e-?\d+)?')
 res={}
-for f in sorted(glob.glob('r-head/lp-fixed/*.pdf')):
-    c=os.path.basename(f)[:-4]; A=streams('r-base/lp-fixed/'+c+'.pdf'); B=streams(f)
+for f in sorted(glob.glob('r-head/pyro-fixed/*.pdf')):
+    c=os.path.basename(f)[:-4]; A=streams('r-base/pyro-fixed/'+c+'.pdf'); B=streams(f)
     other=0;cms=collections.Counter();bytes_same=True;nonmatch=0
     if len(A)!=len(B): res[c]={'streams':[len(A),len(B)]}; print(c,'stream count',len(A),len(B)); continue
     for a,b in zip(A,B):

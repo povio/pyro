@@ -34,6 +34,25 @@ impl SerializeOpts {
 
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 
+/// pyro: `value` with each `currentcolor` keyword, matched ASCII case-insensitively
+/// as CSS keywords are, replaced by `color`; `None` when it has none.
+fn replace_current_color(value: &str, color: &str) -> Option<String> {
+    const KEYWORD: &str = "currentcolor";
+    let lower = value.to_ascii_lowercase();
+    if !lower.contains(KEYWORD) {
+        return None;
+    }
+    let mut out = String::with_capacity(value.len() + color.len());
+    let mut rest = 0;
+    for (start, _) in lower.match_indices(KEYWORD) {
+        out.push_str(&value[rest..start]);
+        out.push_str(color);
+        rest = start + KEYWORD.len();
+    }
+    out.push_str(&value[rest..]);
+    Some(out)
+}
+
 /// Writes an attribute's serialized name, per the HTML fragment serialization algorithm
 fn write_attr_name(name: &QualName, writer: &mut String) {
     match name.ns {
@@ -184,15 +203,15 @@ impl Node {
                     writer.push(' ');
                     write_attr_name(&attr.name, writer);
                     writer.push_str("=\"");
-                    #[allow(clippy::unnecessary_unwrap)] // Convert to if-let chain once stabilised
-                    if current_color.is_some() && attr.value.contains("currentColor") {
-                        let value = attr
-                            .value
-                            .replace("currentColor", current_color.as_ref().unwrap());
-                        encode_quoted_attribute_to_string(&value, writer);
-                    } else {
-                        encode_quoted_attribute_to_string(&attr.value, writer);
-                    }
+                    // pyro: the keyword in any case (`currentcolor` is how CSSOM, and so
+                    // React's `style`, writes it); usvg knows only `currentColor`.
+                    match current_color
+                        .as_deref()
+                        .and_then(|color| replace_current_color(&attr.value, color))
+                    {
+                        Some(value) => encode_quoted_attribute_to_string(&value, writer),
+                        None => encode_quoted_attribute_to_string(&attr.value, writer),
+                    };
                     writer.push('"');
                 }
                 if !has_children {
@@ -222,5 +241,23 @@ impl Node {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_current_color;
+
+    #[test]
+    fn current_color_is_replaced_in_any_case() {
+        let gray = "rgb(64, 69, 79)";
+        assert_eq!(replace_current_color("fill: currentcolor;", gray).as_deref(), Some("fill: rgb(64, 69, 79);"));
+        assert_eq!(replace_current_color("currentColor", gray).as_deref(), Some(gray));
+        assert_eq!(
+            replace_current_color("stroke: CURRENTCOLOR; fill: currentColor", gray).as_deref(),
+            Some("stroke: rgb(64, 69, 79); fill: rgb(64, 69, 79)")
+        );
+        assert_eq!(replace_current_color("url(#ä) currentcolor", "red").as_deref(), Some("url(#ä) red"));
+        assert_eq!(replace_current_color("none", gray), None);
     }
 }

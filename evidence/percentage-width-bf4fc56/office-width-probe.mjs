@@ -1,5 +1,5 @@
 import {createRequire} from 'node:module';import{spawn}from'node:child_process';import http from'node:http';import net from'node:net';import fs from'node:fs';
-const require=createRequire('/private/tmp/lp-tos-calendar-6e7f7cf-fx/apps/fe/package.json');const{chromium}=require('playwright');const[binary,output]=process.argv.slice(2);if(fs.existsSync(output))throw Error('fresh output required');
+const require=createRequire('/private/tmp/pyro-tos-calendar-6e7f7cf-fx/apps/fe/package.json');const{chromium}=require('playwright');const[binary,output]=process.argv.slice(2);if(fs.existsSync(output))throw Error('fresh output required');
 const html=`<!doctype html><html><head><style>
 .cell{width:320px}.container{position:relative;display:flex;width:100%;min-width:0;align-items:center;gap:6px;overflow:hidden}.measurement{visibility:hidden;pointer-events:none;position:absolute;display:flex;width:max-content;gap:6px}.badge{flex-shrink:0;white-space:nowrap;border-radius:4px;padding:4px 6px;line-height:1;font:500 12px Arial}
 </style></head><body><div class="cell"><div class="container"><div class="measurement"><span class="badge">Business Partner</span><span class="badge">Office</span><span class="badge">+1</span><span class="badge">+2</span></div></div></div></body></html>`;

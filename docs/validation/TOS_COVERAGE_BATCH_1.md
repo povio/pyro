@@ -41,10 +41,10 @@ row contents. The office tests would assert persisted rendered values after
 navigation; the module switch would check the old link absent and table visible.
 Those downstream checks did not pass in this run.
 
-Sanitized artifacts: `/private/tmp/lp-tos-coverage1` (selection.json, metadata,
+Sanitized artifacts: `/private/tmp/pyro-tos-coverage1` (selection.json, metadata,
 command, toolchain, report/log, DB pre/post/cleanup). Fresh fixture:
-`/private/tmp/lp-tos-f9f-coverage1`. The prior readonly binary remains at
-`/private/tmp/lp-tos-browser-clone/target/release/lightningpanda`; its hash was
+`/private/tmp/pyro-tos-f9f-coverage1`. The prior readonly binary remains at
+`/private/tmp/pyro-tos-browser-clone/target/release/pyro`; its hash was
 verified before execution. Fixture was clean before execution; afterward only
 the harness-generated PDF model changed. The sole leftover template was removed
 after exact owner/prefix/preabsence checks; test role then owned zero databases.

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // Memory of a `serve` process tree, state by state (macOS).
 //
-//   bun scripts/mem-states.mjs --bin /abs/lightningpanda [--fork] [--spa /abs/dist] [--pages 5]
+//   bun scripts/mem-states.mjs --bin /abs/pyro [--fork] [--spa /abs/dist] [--pages 5]
 //                              [--flow speed|pages] [--out file.json] [--raw dir] [--heap prefix]
-//                              [--settle ms] [--watch ms] [-- extra serve args]
+//                              [--settle ms] [--watch ms] [--spa-port N] [-- extra serve args]
 //
 // Starts the binary, drives it with playwright-core and prints one row per state:
 //   rss    `ps` RSS summed over the tree. This is what bench harnesses usually report. It counts clean file
@@ -16,7 +16,7 @@
 //   speed  what bench-work/final/speed.mjs does between its idle and after readings (default)
 //   pages  idle, connected, one blank page, N pages of the SPA (or big.html) open, all closed, disconnected
 // --heap <prefix> (a `--features heap-profile` build only) dumps the sampled Rust heap of every process at
-// every state; read the dumps with heap-profile.mjs.
+// every state; read the dumps with heap-profile.mjs, and the allocator pages next to them with heap-areas.mjs.
 // --raw keeps the full `footprint` and `vmmap --summary` text of every process at every state.
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
@@ -60,9 +60,10 @@ function serveFrom(root, fallback) {
     fs.createReadStream(f).pipe(res);
   };
 }
-const listen = (h) => new Promise((r) => { const s = http.createServer(h); s.keepAliveTimeout = 600_000; s.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${s.address().port}`)); });
+const listen = (h, port = 0) => new Promise((r) => { const s = http.createServer(h); s.keepAliveTimeout = 600_000; s.listen(port, '127.0.0.1', () => r(`http://127.0.0.1:${s.address().port}`)); });
 const site = await listen(serveFrom(pagesDir, false));
-const spa = SPA ? await listen(serveFrom(path.resolve(SPA), true)) : null;
+// --spa-port: module URLs are part of what a bytecode cache keys on, so a warm cache needs the same port.
+const spa = SPA ? await listen(serveFrom(path.resolve(SPA), true), Number(opt('--spa-port', 0))) : null;
 const freePort = () => new Promise((r) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 
 function tree(root) {
@@ -133,7 +134,7 @@ async function snap(label) {
 
 if (RAW) fs.mkdirSync(RAW, { recursive: true });
 const port = await freePort();
-const child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...FLAGS, ...(FORK ? ['--fork'] : []), ...extra], { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', ...(HEAP ? { LIGHTNINGPANDA_HEAP_PROFILE: HEAP } : {}) } });
+const child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...FLAGS, ...(FORK ? ['--fork'] : []), ...extra], { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', ...(HEAP ? { PYRO_HEAP_PROFILE: HEAP } : {}) } });
 serverPid = child.pid;
 const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
 process.on('exit', kill);
@@ -144,7 +145,7 @@ try {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 15000 });
   await snap('connected');
   if (FLOW === 'speed') {
-    const upstream = /lightpanda$/.test(BIN) && !/lightningpanda$/.test(BIN);
+    const upstream = /lightpanda$/.test(BIN) && !/pyro$/.test(BIN);
     for (let i = 0; i < 10; i++) { const c = await browser.newContext(); await c.newPage(); await c.close(); }
     const ctx = await browser.newContext();
     const page = await ctx.newPage();

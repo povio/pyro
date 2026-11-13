@@ -211,7 +211,7 @@
    {
     "page": 10,
     "ratio": 1,
-    "missing": "lp-blitz"
+    "missing": "pyro-blitz"
    }
   ],
   "meanRatio": 0.16163721829932887,
@@ -408,7 +408,7 @@
    {
     "page": 10,
     "ratio": 1,
-    "missing": "lp-blitz"
+    "missing": "pyro-blitz"
    }
   ],
   "meanRatio": 0.1614756773194246,

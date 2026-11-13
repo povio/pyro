@@ -8,13 +8,14 @@
 # lib/libbmalloc.a, and the objects of the JavaScriptCoreJIT subtarget (jit, dfg,
 # ftl, bytecode, bytecompiler, llint: an object library that CMake hands to
 # whatever links JavaScriptCore instead of putting it in the archive). One
-# archive holds them all, so lp-jsc-sys names a single library and the order of
+# archive holds them all, so pyro-jsc-sys names a single library and the order of
 # the pieces on the link line cannot matter.
 #
 # build.sh calls this; run it by hand for a build directory of your own (a git
 # worktree of the WebKit checkout, which build.sh cannot target).
 #
-# Environment: JOBS (parallel jobs, default: number of CPUs), AR (Linux, default ar).
+# Environment: JOBS (parallel jobs, default: number of CPUs), AR (Linux, default ar),
+# LIBTOOL (macOS, default libtool; build.sh sets llvm-libtool-darwin for an LTO archive).
 set -euo pipefail
 
 build="$(cd "${1:?usage: $0 BUILD_DIR OUT.a}" && pwd)"
@@ -45,7 +46,7 @@ mkdir -p "$(dirname "$out")"
 out="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 rm -f "$out"
 if [[ "$(uname -s)" == Darwin ]]; then
-    (cd "$build" && libtool -static -no_warning_for_no_symbols -o "$out" \
+    (cd "$build" && "${LIBTOOL:-libtool}" -static -no_warning_for_no_symbols -o "$out" \
         lib/libJavaScriptCore.a "${jit_objects[@]}" lib/libWTF.a lib/libbmalloc.a)
 else
     # An MRI script: `ar` has no option that adds another archive's members. It

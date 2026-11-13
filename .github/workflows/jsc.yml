@@ -12,7 +12,7 @@ on:
   push:
     branches: [main]
     paths:
-      - crates/lp-jsc-sys/webkit/**
+      - crates/pyro-jsc-sys/webkit/**
       - scripts/jsc/archive.sh
       - scripts/jsc/build.sh
       - scripts/jsc/cache-key.sh
@@ -21,7 +21,7 @@ on:
   # A change to the patches shows on its pull request whether they still build.
   pull_request:
     paths:
-      - crates/lp-jsc-sys/webkit/**
+      - crates/pyro-jsc-sys/webkit/**
       - scripts/jsc/archive.sh
       - scripts/jsc/build.sh
       - scripts/jsc/cache-key.sh
@@ -31,7 +31,7 @@ on:
   workflow_call:
     outputs:
       dir:
-        description: Directory name of the build under ~/Library/Caches/lightningpanda/jsc (macOS) or ~/.cache/lightningpanda/jsc (Linux)
+        description: Directory name of the build under ~/Library/Caches/pyro/jsc (macOS) or ~/.cache/pyro/jsc (Linux)
         value: ${{ jobs.jsc.outputs.dir }}
 
 permissions:
@@ -39,9 +39,14 @@ permissions:
 
 jobs:
   jsc:
-    runs-on: macos-15
+    # The self-hosted Apple Silicon runner (label lp-m1).
+    runs-on: lp-m1
     # A cold build at -j2 took 7 minutes; cached builds take a minute.
     timeout-minutes: 360
+    env:
+      # That Mac has a stray macOS 27.0 SDK next to the 26.6 Command Line Tools,
+      # whose linker cannot read it (ld: tapi error: malformed file). Use the 26.5 SDK.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     outputs:
       dir: ${{ steps.key.outputs.dir }}
     steps:
@@ -55,7 +60,7 @@ jobs:
       - uses: actions/cache/restore@v4
         id: cache
         with:
-          path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          path: ~/Library/Caches/pyro/jsc/${{ steps.key.outputs.dir }}
           key: patched-jsc-static-macos-arm64-${{ steps.key.outputs.dir }}
       - name: Build patched JavaScriptCore
         if: steps.cache.outputs.cache-hit != 'true'
@@ -64,18 +69,18 @@ jobs:
           # about 3 GB per job.
           JOBS: '2'
         run: |
-          brew install ninja
+          command -v ninja >/dev/null || brew install ninja
           scripts/jsc/build.sh
       - uses: actions/cache/save@v4
         if: steps.cache.outputs.cache-hit != 'true'
         with:
-          path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          path: ~/Library/Caches/pyro/jsc/${{ steps.key.outputs.dir }}
           key: patched-jsc-static-macos-arm64-${{ steps.key.outputs.dir }}
       - name: Check the build
         env:
           DIR: ${{ steps.key.outputs.dir }}
         run: |
-          lib="$HOME/Library/Caches/lightningpanda/jsc/$DIR/lib/libJavaScriptCore.a"
+          lib="$HOME/Library/Caches/pyro/jsc/$DIR/lib/libJavaScriptCore.a"
           lipo -archs "$lib" | grep -qx arm64
           # A fork-support entry point (patch 0002): this is the patched library. The archive's
           # other pieces: the JIT subtarget's objects, WTF and bmalloc (scripts/jsc/archive.sh).
@@ -86,12 +91,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: patched-jsc
-          path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          path: ~/Library/Caches/pyro/jsc/${{ steps.key.outputs.dir }}
           if-no-files-found: error
           retention-days: 7
 
   # The same patched build for Linux: artifacts patched-jsc-linux-x64 and
-  # patched-jsc-linux-arm64, under ~/.cache/lightningpanda/jsc/<dir>.
+  # patched-jsc-linux-arm64, under ~/.cache/pyro/jsc/<dir>.
   linux:
     strategy:
       fail-fast: false
@@ -108,14 +113,14 @@ jobs:
       - name: Cache key
         id: key
         run: |
-          rev="$(tr -d '[:space:]' < crates/lp-jsc-sys/webkit/REVISION)"
-          patches="$(cat crates/lp-jsc-sys/webkit/patches/*.patch | sha256sum | cut -c1-12)"
+          rev="$(tr -d '[:space:]' < crates/pyro-jsc-sys/webkit/REVISION)"
+          patches="$(cat crates/pyro-jsc-sys/webkit/patches/*.patch | sha256sum | cut -c1-12)"
           echo "dir=${rev:0:12}-$patches" >> "$GITHUB_OUTPUT"
           echo "setup=$(sha256sum scripts/linux/setup.sh | cut -c1-8)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
         id: cache
         with:
-          path: ~/.cache/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          path: ~/.cache/pyro/jsc/${{ steps.key.outputs.dir }}
           key: patched-jsc-static-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
       - name: Build patched JavaScriptCore
         if: steps.cache.outputs.cache-hit != 'true'
@@ -130,13 +135,13 @@ jobs:
       - uses: actions/cache/save@v4
         if: steps.cache.outputs.cache-hit != 'true'
         with:
-          path: ~/.cache/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          path: ~/.cache/pyro/jsc/${{ steps.key.outputs.dir }}
           key: patched-jsc-static-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
       - name: Check the build
         env:
           DIR: ${{ steps.key.outputs.dir }}
         run: |
-          lib="$HOME/.cache/lightningpanda/jsc/$DIR/lib/libJavaScriptCore.a"
+          lib="$HOME/.cache/pyro/jsc/$DIR/lib/libJavaScriptCore.a"
           # A fork-support entry point (patch 0002), and the archive's other pieces: the JIT subtarget, WTF and bmalloc.
           nm --defined-only "$lib" 2>/dev/null > symbols.txt || true
           for symbol in JSPrepareForFork _ZN3JSC3DFG4Plan11notifyReadyEv _ZN3WTF10initializeEv _ZN8Gigacage14ensureGigacageEv; do
@@ -145,5 +150,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: patched-jsc-linux-${{ matrix.arch }}
-          path: ~/.cache/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          path: ~/.cache/pyro/jsc/${{ steps.key.outputs.dir }}
           if-no-files-found: error

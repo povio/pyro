@@ -1,6 +1,6 @@
 {
   "sourceSha": "41356ebf27909caf3039b8d6d2b2702122d629cd",
-  "binary": "/private/tmp/lp-w3-bench-41356eb-bin/lightningpanda",
+  "binary": "/private/tmp/pyro-w3-bench-41356eb-bin/pyro",
   "scope": "Separate diagnostic profiling only, never included in benchmark medians",
   "phases": [
     {
@@ -19,15 +19,15 @@
   "browserExit": null,
   "browserSignal": "SIGTERM",
   "artifacts": {
-    "/private/tmp/lp-w3-profile-41356eb.cjs": {
+    "/private/tmp/pyro-w3-profile-41356eb.cjs": {
       "bytes": 3834,
       "sha256": "67f0b6222cf276c122c07c3fb724c5dd8db4623a6c484cbc8a0c3c9edce6244a"
     },
-    "/private/tmp/lp-w3-profile-41356eb/navigations.sample.txt": {
+    "/private/tmp/pyro-w3-profile-41356eb/navigations.sample.txt": {
       "bytes": 1025599,
       "sha256": "e345a7281d6df56fca5e2388b79dc97a05bca85d02a5c1f67757b9dfd28c28d1"
     },
-    "/private/tmp/lp-w3-profile-41356eb/contexts.sample.txt": {
+    "/private/tmp/pyro-w3-profile-41356eb/contexts.sample.txt": {
       "bytes": 2481166,
       "sha256": "46365a8a70462c56334925cb685b2b43b757d691833187a4e3afd5595417adc0"
     }

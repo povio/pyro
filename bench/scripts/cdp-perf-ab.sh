@@ -13,7 +13,7 @@
 #                       reach the binary (docs, tests) skips the run and exits 0
 #   --force             run even though cargo builds are running (wall-clock numbers will suffer)
 #
-# Layout under $LP_PERF_WORK (default ${TMPDIR:-/tmp}/lp-cdp-perf):
+# Layout under $PYRO_PERF_WORK (default ${TMPDIR:-/tmp}/pyro-cdp-perf):
 #   slot-a/, slot-b/     perf profile: one reused checkout and target directory per side, so rebuilds are incremental
 #   src-SHA/, target-SHA/  shipping profile: a checkout and target directory per SHA, never shared
 #   bin-PROFILE-SHA/     the finished binary and its build-info.txt; present and matching = the build is skipped
@@ -30,7 +30,7 @@
 # ones incremental. Its binary is named by a hash of the uncommitted state, checked before and after cargo.
 #
 # Before running: refuses while any cargo build is running and lists them with their owners (unless --force), then
-# waits for /tmp/lp-bench.lock, which serializes benches on this machine and is held until exit. On macOS it also
+# waits for /tmp/pyro-bench.lock, which serializes benches on this machine and is held until exit. On macOS it also
 # builds bench/rss-sampler, for the CPU and instructions-retired columns; on a loaded machine trust the latter.
 #
 # Exit status: that of cdp-perf-compare.mjs (1 on a regression or failed scenario), 2 for usage errors, 3 when a
@@ -78,7 +78,7 @@ fi
 root=$(git rev-parse --show-toplevel)
 script_dir=$(cd "$(dirname "$0")" && pwd)
 profile_config=$script_dir/perf-profile.toml
-work=${LP_PERF_WORK:-${TMPDIR:-/tmp}/lp-cdp-perf}
+work=${PYRO_PERF_WORK:-${TMPDIR:-/tmp}/pyro-cdp-perf}
 mkdir -p "$work"
 
 # Everything the build reads. Integration tests, benches and Markdown are not compiled into the binary.
@@ -87,7 +87,7 @@ input_paths=(crates vendor Cargo.toml Cargo.lock .cargo scripts/macos rust-toolc
 
 # --- locks -------------------------------------------------------------------------------------------------------
 
-bench_lock=/tmp/lp-bench.lock
+bench_lock=/tmp/pyro-bench.lock
 bench_lock_held=0
 build_lock=
 
@@ -219,10 +219,10 @@ classify_paths() {
     case $path in
       *.md | docs/*) ;;                                      # documentation
       crates/*/tests/* | crates/*/benches/*) ;;              # not compiled into the binary
-      crates/lp-render/* | */screenshot.rs) groups+=" page lp pdf" ;;
-      crates/lp-webapi/* | crates/lp-js/* | crates/lp-jsc-sys/*) groups+=" runtime dom lp" ;;
-      crates/lp-net/*) groups+=" network throughput" ;;
-      *) groups+=" $full" ;;                                 # the lp-cdp engine, and anything not known to be narrower
+      crates/pyro-render/* | */screenshot.rs) groups+=" page lp pdf" ;;
+      crates/pyro-webapi/* | crates/pyro-js/* | crates/pyro-jsc-sys/*) groups+=" runtime dom lp" ;;
+      crates/pyro-net/*) groups+=" network throughput" ;;
+      *) groups+=" $full" ;;                                 # the pyro-cdp engine, and anything not known to be narrower
     esac
   done
   echo "$groups"
@@ -287,7 +287,7 @@ verify_rebuilt() {
 # run_cargo SRC TARGET JSON: builds in SRC, so that its .cargo/config.toml (JIT-entitled linker) applies.
 run_cargo() {
   local src=$1 target=$2 json=$3
-  local args=(build --locked -p lightningpanda --message-format=json-render-diagnostics)
+  local args=(build --locked -p pyro --message-format=json-render-diagnostics)
   if [[ $profile == perf ]]; then
     (cd "$src" && CARGO_TARGET_DIR="$target" cargo --config "$profile_config" "${args[@]}" --profile perf >"$json")
   else
@@ -302,11 +302,11 @@ build_stamp() {
   [[ $profile == perf ]] && shasum -a 256 <"$profile_config"
   rustc -Vv
   echo "RUSTFLAGS=${RUSTFLAGS:-}"
-  echo "LP_JSC_DIR=${LP_JSC_DIR:-}"
+  echo "PYRO_JSC_DIR=${PYRO_JSC_DIR:-}"
 }
 cached_binary_matches() {
   local bin_dir=$1 stamp=$2
-  [[ -x $bin_dir/lightningpanda && -f $bin_dir/build-info.txt && $(cat "$bin_dir/build-info.txt") == "$stamp" ]]
+  [[ -x $bin_dir/pyro && -f $bin_dir/build-info.txt && $(cat "$bin_dir/build-info.txt") == "$stamp" ]]
 }
 
 # ensure_binary SLOT SHA ID: leaves the checked binary in $work/bin-$profile-$ID and its path in $built_bin.
@@ -314,7 +314,7 @@ cached_binary_matches() {
 built_bin=
 ensure_binary() {
   local slot=$1 sha=$2 id=$3 bin_dir="$work/bin-$profile-$3" stamp exe json
-  built_bin=$bin_dir/lightningpanda
+  built_bin=$bin_dir/pyro
   stamp=$(build_stamp "$id")
   stage_begin "build-$slot"
   if cached_binary_matches "$bin_dir" "$stamp"; then
@@ -375,14 +375,14 @@ ensure_binary() {
   fi
   [[ -n $prev && $prev != "$sha" ]] && verify_rebuilt "$src" "$prev" "$sha" "$json"
 
-  exe=$(sed -n 's/.*"executable":"\([^"]*\/lightningpanda\)".*/\1/p' "$json" | tail -n 1)
-  [[ -n $exe && -x $exe ]] || die "cargo reported no lightningpanda executable (see $json)"
+  exe=$(sed -n 's/.*"executable":"\([^"]*\/pyro\)".*/\1/p' "$json" | tail -n 1)
+  [[ -n $exe && -x $exe ]] || die "cargo reported no pyro executable (see $json)"
   jit_entitled "$exe" || die "$exe lacks com.apple.security.cs.allow-jit; JavaScriptCore would run interpreter-only"
 
   mkdir -p "$bin_dir"
   rm -f "$bin_dir/build-info.txt"
-  cp "$exe" "$bin_dir/lightningpanda.tmp"
-  mv -f "$bin_dir/lightningpanda.tmp" "$bin_dir/lightningpanda"
+  cp "$exe" "$bin_dir/pyro.tmp"
+  mv -f "$bin_dir/pyro.tmp" "$bin_dir/pyro"
   echo "$stamp" >"$bin_dir/build-info.txt"
   [[ -n $last_built ]] && echo "$sha" >"$last_built"
   release_build_lock || true
@@ -413,7 +413,7 @@ head_bin=$built_bin
 # Hashes of code and constants. Build history does not reach them (measured: a cold build and an incremental one
 # of a SHA match, across slots), but __cstring holds the slot's path through stylo's generated code, so it is left out.
 section_hashes() {
-  (cd "$(dirname "$1")" && python3 "$script_dir/macho-section-hash.py" lightningpanda) | grep -v __cstring
+  (cd "$(dirname "$1")" && python3 "$script_dir/macho-section-hash.py" pyro) | grep -v __cstring
 }
 base_hash=$(shasum -a 256 <"$base_bin")
 head_hash=$(shasum -a 256 <"$head_bin")

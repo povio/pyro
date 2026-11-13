@@ -19,7 +19,7 @@ const run = async (eng) => {
   for (const [n,h] of Object.entries(FIX)) { await page.setContent(h);
    for (const [pn,w,hh] of [['Letter',8.5,11],['A4',8.27,11.69]]) for (const m of [.4,1/2.54,.5,0]) for (const s of [1,.8,1.5]) {
     const {data}=await cdp.send('Page.printToPDF',{paperWidth:w,paperHeight:hh,marginTop:m,marginBottom:m,marginLeft:m,marginRight:m,scale:s,printBackground:true});
-    const f=path.join(process.env.TMPDIR||'/tmp','lp-print-72.pdf'); writeFileSync(f,Buffer.from(data,'base64'));
+    const f=path.join(process.env.TMPDIR||'/tmp','pyro-print-72.pdf'); writeFileSync(f,Buffer.from(data,'base64'));
     const pages=JSON.parse(execFileSync('python3',[path.join(here,'pdfrects.py'),f],{maxBuffer:1<<28}));
     const txt=execFileSync('pdftotext',['-layout',f,'-'],{maxBuffer:1<<28}).toString().split('\f').slice(0,-1).map(p=>p.split('\n').map(x=>x.trim()).filter(Boolean));
     const bbox=execFileSync('pdftotext',['-bbox-layout',f,'-'],{maxBuffer:1<<28}).toString(); const ys=[...bbox.matchAll(/<line xMin="[\d.]+" yMin="([\d.]+)"/g)].map(m=>+m[1]); res[[n,pn,m.toFixed(3),s].join('|')]={ys:ys.slice(0,4),txt,pages:pages.length,rects:pages[0].rects,lines:txt.map(p=>p.length),first:txt.map(p=>(p[0]||'').slice(0,20))};

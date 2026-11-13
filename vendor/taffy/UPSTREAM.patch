@@ -29,7 +29,7 @@ index 3cd3e713..094d8c3e 100644
  }
  
 +/// [`compute_inner`] for a box that establishes a block formatting context.
-+// lightningpanda: not inlined, so the formatting context is not part of the frame of
++// pyro: not inlined, so the formatting context is not part of the frame of
 +// `compute_block_layout` for the boxes that join their parent's (that frame is on the stack once
 +// per tree level of a recursive layout).
 +#[inline(never)]
@@ -47,7 +47,7 @@ index 3cd3e713..094d8c3e 100644
  
  /// Create a `Vec` of `BlockItem` structs where each item in the `Vec` represents a child of the current node
 -#[inline]
-+// lightningpanda: not inlined, so its locals stay out of `compute_inner`'s frame, which is on the
++// pyro: not inlined, so its locals stay out of `compute_inner`'s frame, which is on the
 +// stack once per tree level of a recursive layout.
 +#[inline(never)]
  fn generate_item_list(
@@ -59,7 +59,7 @@ index 3cd3e713..094d8c3e 100644
              let is_table = child_style.is_table();
 -            let is_compressible_replaced = child_style.is_compressible_replaced();
 -            let min_content_width_cap = if is_compressible_replaced {
-+            // lightningpanda: a tree may keep a block-level child at its content width
++            // pyro: a tree may keep a block-level child at its content width
 +            // (`block_child_width_fits_content`), as for compressible replaced elements.
 +            let is_compressible_replaced =
 +                child_style.is_compressible_replaced() || tree.block_child_width_fits_content(child_node_id);
@@ -72,7 +72,7 @@ index 3cd3e713..094d8c3e 100644
  
  /// Compute the content-based width in the case that the width of the container is not known
 -#[inline]
-+// lightningpanda: not inlined (see `generate_item_list`).
++// pyro: not inlined (see `generate_item_list`).
 +#[inline(never)]
  fn determine_content_based_container_width(
      tree: &mut impl LayoutPartialTree,
@@ -140,7 +140,7 @@ index a8dbbcf2..59b394ea 100644
                              style_max.maybe_min(flex_basis_max).or(flex_basis_max).unwrap_or(f32::INFINITY);
  
                          let content_contribution = match (min_main_size, style_preferred, max_main_size) {
-+                            // lightningpanda: a column container's automatic block size is the sum of its
++                            // pyro: a column container's automatic block size is the sum of its
 +                            // items' hypothetical main sizes, as in Chromium: the flex base size clamped by
 +                            // the resolved minimum and the max size. An item's `height` only counts through
 +                            // its flex basis, so a `0px` basis contributes its minimum and a percentage basis
@@ -245,7 +245,7 @@ index b84e8751..adc2f827 100644
 +    positioned
 +}
 +
-+/// lightningpanda: an item as `align_and_position_item` positioned it, with what positioning it again in
++/// pyro: an item as `align_and_position_item` positioned it, with what positioning it again in
 +/// an area of the same size elsewhere takes (`TableGridState`): only its block position changes.
 +#[derive(Debug, Clone, Copy)]
 +pub(super) struct PositionedItem {
@@ -367,7 +367,7 @@ index f0109c6e..c6b3ca8b 100644
      let LayoutInput { known_dimensions, run_mode, .. } = inputs;
  
 +    let table_rows = tree.grid_rows_are_table_rows(node);
-+    // lightningpanda: a table's last layout, to lay out again only what changed since (`table_reuse`).
++    // pyro: a table's last layout, to lay out again only what changed since (`table_reuse`).
 +    let reuse = if table_rows && run_mode == RunMode::PerformLayout { tree.take_table_grid_state(node) } else { None };
      let style = tree.get_grid_container_style(node);
      let constants = compute_container_constants(tree, &style, inputs);
@@ -377,7 +377,7 @@ index f0109c6e..c6b3ca8b 100644
      // so they are excluded here. Each child's style is read and its named lines resolved exactly once; the
      // results drive both the grid size estimate and item placement below.
 +    //
-+    // lightningpanda: a tree that places the items itself (a table, which places its cells as it builds them)
++    // pyro: a tree that places the items itself (a table, which places its cells as it builds them)
 +    // answers each item's area instead. Named-line resolution, the size estimate and auto-placement are then
 +    // skipped (see `LayoutGridContainer::track_counts`).
 +    let tree_extent = tree.track_counts(node);
@@ -388,7 +388,7 @@ index f0109c6e..c6b3ca8b 100644
 -        let child_style = tree.get_grid_child_style(child_node);
 -        if child_style.box_generation_mode() == BoxGenerationMode::None || child_style.position().is_out_of_flow() {
 -            continue;
-+    // lightningpanda: nothing changed since the table's last layout and the inputs differ at most in
++    // pyro: nothing changed since the table's last layout and the inputs differ at most in
 +    // the available width (its container got wider or narrower, the table not): that layout stands.
 +    let reuse = match reuse {
 +        Some(reuse)
@@ -716,7 +716,7 @@ index f0109c6e..c6b3ca8b 100644
          // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
          intrinsic_column_contribution_changed =
              items.iter_mut().filter(|item| item.crosses_intrinsic_column).fold(false, |any_changed, item| {
-+                // lightningpanda: the first column pass read nothing of this item that depends on its content or
++                // pyro: the first column pass read nothing of this item that depends on its content or
 +                // grid area (an `fr` column it does not size, with `min-width: 0` say), so the columns cannot
 +                // change with it and measuring it here would only force a re-run on the empty cache. A definite
 +                // container width is required as well: with an indefinite one the re-run expands `fr` tracks
@@ -764,7 +764,7 @@ index f0109c6e..c6b3ca8b 100644
      };
  
      // Position in-flow children (stored in items vector)
-+    // lightningpanda: in a table laid out again, an item that did not change keeps its layout in the
++    // pyro: in a table laid out again, an item that did not change keeps its layout in the
 +    // same grid area and is moved to an area of the same size (`table_reuse`).
 +    let mut positioned: Vec<alignment::PositionedItem> = match replay.as_mut() {
 +        Some(replay) => core::mem::take(&mut replay.positioned),
@@ -862,7 +862,7 @@ index f0109c6e..c6b3ca8b 100644
          }
      }
  
-+    // lightningpanda: whether to keep this layout of a table for the next (`table_reuse`).
++    // pyro: whether to keep this layout of a table for the next (`table_reuse`).
 +    let rows_sized = rows_sized.filter(|sized| {
 +        run_mode == RunMode::PerformLayout
 +            && !sized_again
@@ -909,7 +909,7 @@ index f0109c6e..c6b3ca8b 100644
      output
  }
  
-+/// lightningpanda: checks the areas and track counts a tree answered through `LayoutGridContainer::track_counts`
++/// pyro: checks the areas and track counts a tree answered through `LayoutGridContainer::track_counts`
 +/// and `resolved_placement` against what this module's own placement gives for the same items: named-line
 +/// resolution, the grid size estimate and the auto-placement algorithm over an occupancy matrix.
 +#[cfg(debug_assertions)]
@@ -971,7 +971,7 @@ index f0109c6e..c6b3ca8b 100644
      }
  }
 +
-+/// lightningpanda: the re-check of the items' min-content widths after row sizing.
++/// pyro: the re-check of the items' min-content widths after row sizing.
 +#[cfg(all(test, feature = "taffy_tree"))]
 +mod rerun_tests {
 +    use crate::prelude::*;
@@ -1104,7 +1104,7 @@ index 00000000..9a97edf9
 --- /dev/null
 +++ b/src/compute/grid/table_reuse.rs
 @@ -0,0 +1,444 @@
-+//! lightningpanda: a table's grid laid out again from its last layout.
++//! pyro: a table's grid laid out again from its last layout.
 +//!
 +//! A table's rows are a grid's (`LayoutGridContainer::grid_rows_are_table_rows`). After a full layout
 +//! of such a grid, `compute_grid_layout` offers what it computed to the tree
@@ -1250,7 +1250,7 @@ index 00000000..9a97edf9
 +    }
 +}
 +
-+/// lightningpanda: whether `reuse.state` is the layout at `inputs` as it is: nothing changed since it
++/// pyro: whether `reuse.state` is the layout at `inputs` as it is: nothing changed since it
 +/// was laid out (no item, no row replaced or appended, the same tracks) and the inputs differ at most
 +/// in the available width (and the parent's width, where the grid's own style resolves nothing against
 +/// it). A shrink-to-fit table in a container that got wider or narrower, but not past the table's
@@ -1590,7 +1590,7 @@ index 18063621..dae69e35 100644
      get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
      has_baseline_aligned_item: bool,
 +    table_rows: bool,
-+    // lightningpanda: the tracks to size from their items (the others are as their items sized them
++    // pyro: the tracks to size from their items (the others are as their items sized them
 +    // last time: `table_reuse`), and where to keep the tracks as their items sized them.
 +    only_tracks: Option<&[bool]>,
 +    sized: Option<&mut GridTrackVec<GridTrack>>,
@@ -1641,7 +1641,7 @@ index 18063621..dae69e35 100644
 +    table_rows: bool,
 +    only_tracks: Option<&[bool]>,
  ) {
-+    // lightningpanda: the first tracks of the items spanning several table rows (rows where a
++    // pyro: the first tracks of the items spanning several table rows (rows where a
 +    // rowspan starts, for `distribute_rowspan_to_table_rows`).
 +    let rowspan_starts: Vec<usize> = if table_rows {
 +        items
@@ -1661,7 +1661,7 @@ index 18063621..dae69e35 100644
      // they only need to be moved to the end of the list. And the order in which items within a batch are processed
      // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
 -    let mut partitioned_items: FrontBackVecBuilder<&mut GridItem> = FrontBackVecBuilder::with_capacity(items.len());
-+    // lightningpanda: only the items of the tracks being sized again (all of them span one track).
++    // pyro: only the items of the tracks being sized again (all of them span one track).
 +    let only_item = |item: &GridItem| only_tracks.is_none_or(|only| only[item.placement_indexes(axis).start as usize + 1]);
 +    let count = if only_tracks.is_some() { items.iter().filter(|item| only_item(item)).count() } else { items.len() };
 +    let mut partitioned_items: FrontBackVecBuilder<&mut GridItem> = FrontBackVecBuilder::with_capacity(count);
@@ -1675,7 +1675,7 @@ index 18063621..dae69e35 100644
          // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
          // consider the items in it with a span of 1:
          let batch_span = batch[0].placement(axis).span();
-+        // lightningpanda: a cell spanning several table rows grows them as in Chromium.
++        // pyro: a cell spanning several table rows grows them as in Chromium.
 +        if table_rows && !is_flex && batch_span > 1 {
 +            for item in batch.iter_mut() {
 +                let space = item_sizer.min_content_contribution(item, axis_tracks);
@@ -1691,7 +1691,7 @@ index 18063621..dae69e35 100644
          .for_each(|track| track.growth_limit = track.base_size);
  }
  
-+/// lightningpanda: grows the table rows `tracks` (with the gutters between them; the first track is
++/// pyro: grows the table rows `tracks` (with the gutters between them; the first track is
 +/// `axis_tracks[first]`) to fit a cell of block size `space` spanning them, as Chromium's
 +/// `DistributeExcessBlockSizeToRows` does for a rowspan cell (percentage rows aside): the excess goes
 +/// to the rows where another rowspan starts, evenly; else to the unconstrained rows with a size, in
@@ -1749,7 +1749,7 @@ index 18063621..dae69e35 100644
      // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
      // than the track’s base size, set its base size to that product.
 +    //
-+    // lightningpanda: as Chromium does (`ExpandFlexibleTracks`), the product is truncated to 1/64 px (a layout
++    // pyro: as Chromium does (`ExpandFlexibleTracks`), the product is truncated to 1/64 px (a layout
 +    // unit) in f32 raw units, after an epsilon, and the fraction it loses carries into the next flexible track:
 +    // a third of 668px is 222.65625, 222.671875, 222.671875.
 +    let fr_raw = flex_fraction * 64.0;
@@ -1774,7 +1774,7 @@ index 6ad11edc..98ac3c99 100644
      pub minimum_contribution_cache: Size<Option<f32>>,
      /// Cache for the max-content size
      pub max_content_contribution_cache: Size<Option<f32>>,
-+    /// lightningpanda: whether a contribution of this item in the inline axis was computed that can depend on the
++    /// pyro: whether a contribution of this item in the inline axis was computed that can depend on the
 +    /// item's content or on the size of its grid area (a min-content or max-content contribution, or a minimum
 +    /// contribution that resolves a percentage or transfers a size through an aspect ratio). Set as the first
 +    /// column sizing pass reads the contributions. When it is false the column sizes from that pass do not depend
@@ -1811,7 +1811,7 @@ index 6ad11edc..98ac3c99 100644
              })
      }
  
-+    /// lightningpanda: whether the item's minimum contribution in `axis` can depend on the size of its grid area,
++    /// pyro: whether the item's minimum contribution in `axis` can depend on the size of its grid area,
 +    /// short of reading its min-content contribution: a percentage (or `calc()` with one) in its preferred, minimum
 +    /// or maximum size or in its padding or border, or an aspect ratio, which transfers a size from the other axis.
 +    #[inline(always)]
@@ -1852,7 +1852,7 @@ index bb954acf..e8ef5b58 100644
 +    compute_root_layout_in(tree, root, available_space, available_space)
 +}
 +
-+/// lightningpanda: [`compute_root_layout`] with an initial containing block of another size than the
++/// pyro: [`compute_root_layout`] with an initial containing block of another size than the
 +/// space the root is laid out in: Blink's print layout has one rounded down and one rounded up.
 +pub fn compute_root_layout_in(
 +    tree: &mut (impl crate::tree::LayoutContainingBlock + CacheTree),
@@ -1878,7 +1878,7 @@ index bb954acf..e8ef5b58 100644
 +            let claims = tree.get_core_container_style(root).is_containing_block();
 +            !claims.absolute && !claims.fixed
 +        } {
-+            // lightningpanda: a root which claims no out-of-flow box itself hoists exactly the boxes
++            // pyro: a root which claims no out-of-flow box itself hoists exactly the boxes
 +            // of this pass, which may differ from the last run's even when its own layout is cached:
 +            // a box relaid here (its ancestors' layout untouched) can surface other candidates.
 +            tree.clear_hoisted_children(root);
@@ -1952,14 +1952,14 @@ index 7d4adf22..c19abd0c 100644
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
  
-+    /// Whether `node_id`'s rows are a table's (lightningpanda): an item spanning several rows grows them
++    /// Whether `node_id`'s rows are a table's (pyro): an item spanning several rows grows them
 +    /// as Chromium grows the rows under a rowspan cell (`DistributeExcessBlockSizeToRows`) rather than
 +    /// as a grid distributes a spanning item. The default is false.
 +    fn grid_rows_are_table_rows(&self, _node_id: NodeId) -> bool {
 +        false
 +    }
 +
-+    /// lightningpanda: a table's grid as its last full layout left it (see `TableGridState`), and the
++    /// pyro: a table's grid as its last full layout left it (see `TableGridState`), and the
 +    /// items that changed since, for `compute_grid_layout` to lay out again only the rows those are in.
 +    /// Asked once per layout (`RunMode::PerformLayout`) of a grid whose rows are a table's. `None`
 +    /// (the default): lay out the whole grid. A layout that can be done again this way offers its state
@@ -1968,9 +1968,9 @@ index 7d4adf22..c19abd0c 100644
 +        None
 +    }
 +
-+    /// lightningpanda: keeps a table's grid layout for the next [`take_table_grid_state`](Self::take_table_grid_state).
++    /// pyro: keeps a table's grid layout for the next [`take_table_grid_state`](Self::take_table_grid_state).
 +    fn store_table_grid_state(&mut self, _node_id: NodeId, _state: crate::util::sys::Box<crate::compute::grid::TableGridState>) {}
-+    /// Whether the tree places `node_id`'s in-flow children itself (lightningpanda: a table places its cells
++    /// Whether the tree places `node_id`'s in-flow children itself (pyro: a table places its cells
 +    /// in rows and columns as it builds them). `Some(extent)`: the number of tracks the placed items reach from
 +    /// the grid's first explicit line, in each axis (`width`: columns, `height`: rows). The grid then reads each
 +    /// item's area from [`Self::resolved_placement`] instead of resolving named lines, estimating the grid's size

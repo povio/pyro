@@ -1,5 +1,5 @@
-Executable=/private/tmp/lp-profile-main-eabee486/target/release/lightningpanda
-Identifier=lightningpanda-e62a7ec9026cab12
+Executable=/private/tmp/pyro-profile-main-eabee486/target/release/pyro
+Identifier=pyro-e62a7ec9026cab12
 Format=Mach-O thin (arm64)
 CodeDirectory v=20400 size=119832 flags=0x20002(adhoc,linker-signed) hashes=3741+0 location=embedded
 Hash type=sha256 size=32

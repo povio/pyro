@@ -2,7 +2,7 @@
   "source": "3f11e0cf6327789dc2d34eca9e6de1934df2298e",
   "release_tests": 298,
   "existing_ignored": 1,
-  "strict_clippy": "lp-dom/lp-webapi --release --locked --all-targets -Dwarnings passed",
+  "strict_clippy": "pyro-dom/pyro-webapi --release --locked --all-targets -Dwarnings passed",
   "fmt": "passed",
   "no_v8": "passed",
   "logs": {

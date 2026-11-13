@@ -69,10 +69,10 @@ binaries, so their results must not be added together.
 
 - Fixture:
   - The batch run used a fresh, clean `git worktree add --detach`
-    (`/private/tmp/lp-tos-f9f-batch19`).
+    (`/private/tmp/pyro-tos-f9f-batch19`).
   - The upstream, repeat and trace runs reused it. Its e2e tree was verified
     unchanged; the only change was the harness-generated pdfgen model.
-- Setup: one Playwright worker and native PostgreSQL 17 with the `lp_bench` role
+- Setup: one Playwright worker and native PostgreSQL 17 with the `pyro_bench` role
   and a per-run slug and template database.
   - Backend test token into localStorage, not UI login.
   - The same direct-lane version-gate bypass as earlier batches.
@@ -88,10 +88,10 @@ binaries, so their results must not be added together.
 
 - No files were cleaned up for this batch.
 - Artifacts:
-  - `/private/tmp/lp-tos-batch19`
-  - `/private/tmp/lp-tos-batch19-up`
-  - `/private/tmp/lp-tos-batch19-repeat`
-  - `/private/tmp/lp-tos-batch19-trace`
+  - `/private/tmp/pyro-tos-batch19`
+  - `/private/tmp/pyro-tos-batch19-up`
+  - `/private/tmp/pyro-tos-batch19-repeat`
+  - `/private/tmp/pyro-tos-batch19-trace`
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and
 assertion depth apply. Single runs do not establish flake rates.

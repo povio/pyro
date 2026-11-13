@@ -43,10 +43,10 @@ binaries, so their results must not be added together.
   [batch 12 docubox rerun](TOS_COVERAGE_BATCH_12.md), SHA-256
   `3da6500e6f7f8f14589875998d2d8b0531206dc535fd62cab033be7550cd2406`. It was
   rehashed before the run and not rebuilt.
-- Fixture: a fresh, clean `git worktree add --detach` (`/private/tmp/lp-tos-f9f-batch13`).
+- Fixture: a fresh, clean `git worktree add --detach` (`/private/tmp/pyro-tos-f9f-batch13`).
   The manifest hash was verified after install.
 - Setup: frozen install, one Playwright worker, and native PostgreSQL 17 with the
-  `lp_bench` role and a per-run slug and template database.
+  `pyro_bench` role and a per-run slug and template database.
   - Backend test token into localStorage, not UI login.
   - The same direct-lane version-gate bypass as earlier batches.
   - After the exact-name run-owned cleanup, the test role owned zero databases.
@@ -60,8 +60,8 @@ binaries, so their results must not be added together.
   - Exactly 8 paths were removed, about 1.3 GiB.
   - The removal used fail-closed exact-executable process checks and symlink
     checks, and all 8 retained binary SHA-256s were unchanged.
-  - The audit is in `/private/tmp/lp-tos-cleanup-plan-1017e`.
-- Artifacts: `/private/tmp/lp-tos-batch13`.
+  - The audit is in `/private/tmp/pyro-tos-cleanup-plan-1017e`.
+- Artifacts: `/private/tmp/pyro-tos-batch13`.
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and
 assertion depth apply. Single runs do not establish flake rates.

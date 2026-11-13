@@ -31,7 +31,7 @@
     Checking http v1.5.0
     Checking want v0.3.2
     Checking dtoa-short v0.3.5
-   Compiling lp-jsc-sys v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-jsc-sys)
+   Compiling pyro-jsc-sys v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-jsc-sys)
     Checking tracing-core v0.1.36
     Checking httparse v1.10.1
     Checking tendril v0.5.1
@@ -94,14 +94,14 @@
     Checking http-body-util v0.1.5
     Checking url v2.5.8
     Checking base64 v0.23.1
-    Checking lp-js v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-js)
+    Checking pyro-js v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-js)
     Checking getrandom v0.3.4
     Checking sha1 v0.10.7
     Checking sha2 v0.10.9
     Checking cookie v0.18.2
-    Checking lp-dom v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-dom)
+    Checking pyro-dom v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-dom)
     Checking hyper v1.12.0
     Checking hyper-util v0.1.21
-    Checking lp-net v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-net)
-    Checking lp-webapi v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-webapi)
+    Checking pyro-net v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-net)
+    Checking pyro-webapi v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 7.17s

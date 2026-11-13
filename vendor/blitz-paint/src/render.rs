@@ -125,7 +125,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) initial_y: f64,
     /// The id of the document's root element (cached to avoid re-resolving it for every element)
     pub(crate) root_element_id: Option<NodeId>,
-    /// lightningpanda: the document's top layer, bottom first (usually
+    /// pyro: the document's top layer, bottom first (usually
     /// empty). Its elements are skipped where the tree puts them and painted
     /// above everything, each over its `::backdrop`.
     pub(crate) top_layer: Vec<NodeId>,
@@ -312,7 +312,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
     }
 
-    /// lightningpanda: paints the top layer above the document, bottom
+    /// pyro: paints the top layer above the document, bottom
     /// first: each element's `::backdrop` (a viewport-sized box: its
     /// background color, `opacity` and `backdrop-filter`), then the element
     /// in its own root stacking context, positioned as a box hoisted to the
@@ -471,7 +471,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 || element.and_then(|e| e.sub_doc_data()).is_some()
                 || element.and_then(|e| e.text_input_data()).is_some()
                 || contain_paint
-                // lightningpanda: `overflow` on `body` is the viewport's, not body's.
+                // pyro: `overflow` on `body` is the viewport's, not body's.
                 || ((!matches!(box_style.overflow_x, Overflow::Visible)
                     || !matches!(box_style.overflow_y, Overflow::Visible))
                     && !self.dom.as_ref().body_overflow_goes_to_viewport(node.id)))
@@ -577,7 +577,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
-        // lightningpanda: a top-layer element paints above the document
+        // pyro: a top-layer element paints above the document
         // (`paint_top_layer`), not here.
         if !self.top_layer.is_empty()
             && self.top_layer_root.get() != Some(node_id)
@@ -895,7 +895,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let node = &self.dom.as_ref().tree()[node_id];
 
         match &node.data {
-            // lightningpanda: once per tree level; a tree of any depth paints on a stack grown on
+            // pyro: once per tree level; a tree of any depth paints on a stack grown on
             // demand (blitz-dom `util::ensure_stack`).
             NodeData::Element(_) | NodeData::AnonymousBlock(_) => blitz_dom::util::ensure_stack(|| {
                 self.render_element(scene, node_id, parent_style_transform, clip_rect)
@@ -1010,6 +1010,45 @@ struct ElementCx<'dom, 'a> {
 }
 
 /// Converts parley BoundingBox into peniko Rect
+/// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
+/// (without its hanging white space) overflows the content box `width` wide (device px) by more
+/// than a layout unit (1/64 CSS px at `scale`) loses the atoms that do not fit beside the
+/// ellipsis at its end edge, and the ellipsis follows the last atom kept (at the line's start
+/// when none is). Returns the cut and the ellipsis's x (layout coordinates), `None` for a line
+/// that fits.
+fn truncate_line(
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
+    width: f32,
+    scale: f32,
+    rtl: bool,
+) -> Option<(crate::text::TextCut, f32)> {
+    let epsilon = scale / 64.0;
+    let metrics = line.metrics();
+    let ellipsis_width = ellipsis.full_width();
+    let runs = || {
+        line.items().filter_map(|item| match item {
+            parley::PositionedLayoutItem::GlyphRun(run) => Some(run),
+            parley::PositionedLayoutItem::InlineBox(_) => None,
+        })
+    };
+    if !rtl {
+        if metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
+            return None;
+        }
+        let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true };
+        let end = runs().filter_map(|run| cut.kept(&run).1).map(|(_, x1)| x1).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.max(x))));
+        Some((cut, end.unwrap_or(metrics.offset)))
+    } else {
+        if metrics.offset + metrics.hanging_advance >= -epsilon {
+            return None;
+        }
+        let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
+        let start = runs().filter_map(|run| cut.kept(&run).1).map(|(x0, _)| x0).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.min(x))));
+        Some((cut, start.unwrap_or(metrics.offset + metrics.advance) - ellipsis_width))
+    }
+}
+
 fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
     peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
 }
@@ -1190,20 +1229,60 @@ impl ElementCx<'_, '_> {
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             draw_text_context.text_shift = self.fractional_text_x_of_node();
-            crate::text::stroke_text(
-                scene,
-                text_layout.layout.lines(),
-                self.context.dom,
-                transform,
-                TextPaintOptions {
-                    scale: self.scale,
-                    brush_override: None,
-                },
-                self.node.id,
-                Some(&text_layout.text),
-                &mut draw_text_context,
-                None,
-            );
+            let options = TextPaintOptions {
+                scale: self.scale,
+                brush_override: None,
+            };
+            match text_layout.ellipsis.as_deref() {
+                None => crate::text::stroke_text(
+                    scene,
+                    text_layout.layout.lines(),
+                    self.context.dom,
+                    transform,
+                    options,
+                    self.node.id,
+                    Some(&text_layout.text),
+                    &mut draw_text_context,
+                    None,
+                ),
+                Some(ellipsis) => {
+                    // The lines were broken in the unrounded box: a line as wide as the box (a
+                    // box sized to its text) must not count as overflowing it by a rounding.
+                    let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
+                    for line in text_layout.layout.lines() {
+                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, text_layout.layout.is_rtl());
+                        draw_text_context.cut = truncation.map(|(cut, _)| cut);
+                        crate::text::stroke_text(
+                            scene,
+                            std::iter::once(line.clone()),
+                            self.context.dom,
+                            transform,
+                            options,
+                            self.node.id,
+                            Some(&text_layout.text),
+                            &mut draw_text_context,
+                            None,
+                        );
+                        draw_text_context.cut = None;
+                        // The ellipsis on the line's baseline, next to the last atom kept.
+                        if let Some((_, x)) = truncation {
+                            let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
+                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64);
+                            crate::text::stroke_text(
+                                scene,
+                                ellipsis.lines(),
+                                self.context.dom,
+                                transform * Affine::translate(offset),
+                                options,
+                                self.node.id,
+                                Some("\u{2026}"),
+                                &mut draw_text_context,
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
             draw_text_context.text_shift = 0.0;
         }
     }
@@ -1314,9 +1393,13 @@ impl ElementCx<'_, '_> {
             // within the content box of it's node.
             let y_offset = self.node.text_input_v_centering_offset(self.scale);
             let subpixel_offset = input_data.content_box_subpixel_offset;
-            let pos = Point {
+            let content_origin = Point {
                 x: pos.x + subpixel_offset.x as f64,
-                y: pos.y + subpixel_offset.y as f64 + y_offset,
+                y: pos.y + subpixel_offset.y as f64,
+            };
+            let pos = Point {
+                x: content_origin.x,
+                y: content_origin.y + y_offset,
             };
 
             // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
@@ -1331,6 +1414,48 @@ impl ElementCx<'_, '_> {
 
             let transform = self.transform
                 * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
+
+            // pyro: an empty input shows its placeholder, its lines placed as the
+            // value's (a single line centred in the content box), under the caret.
+            if let Some(placeholder) = input_data.shown_placeholder() {
+                let layout = self.node.final_layout();
+                let box_width = layout.content_box_width() * self.scale as f32;
+                let y = if input_data.is_multiline {
+                    0.0
+                } else {
+                    let height = placeholder.layout.height() / self.scale as f32;
+                    ((layout.content_box_height() - height) / 2.0).max(0.0) as f64
+                };
+                let origin = Point {
+                    x: content_origin.x,
+                    y: content_origin.y + y,
+                };
+                let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                for line in placeholder.layout.lines() {
+                    // A wrapped (textarea) placeholder is aligned by its layout.
+                    let x = if input_data.is_multiline {
+                        0.0
+                    } else {
+                        placeholder.line_start(line.metrics().advance, box_width) as f64
+                    };
+                    let transform = self.transform
+                        * Affine::translate((origin.x * self.scale + x, origin.y * self.scale));
+                    crate::text::stroke_text(
+                        scene,
+                        std::iter::once(line),
+                        self.context.dom,
+                        transform,
+                        TextPaintOptions {
+                            scale: self.scale,
+                            brush_override: Some(placeholder.color.as_srgb_color()),
+                        },
+                        self.node.id,
+                        Some(&placeholder.text),
+                        &mut draw_text_context,
+                        None,
+                    );
+                }
+            }
 
             if self.node.is_focussed() {
                 // Render selection/caret
@@ -1520,6 +1645,9 @@ impl ElementCx<'_, '_> {
 
         let width = self.frame.content_box.width() as f32;
         let height = self.frame.content_box.height() as f32;
+        // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box.
+        let sized = svg.sized(width / self.scale as f32, height / self.scale as f32);
+        let svg = sized.as_ref().unwrap_or(svg);
         let svg_size = svg.tree.size();
 
         let x = self.frame.content_box.origin().x;

@@ -192,7 +192,7 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
     }
 }
 
-/// lightningpanda: the text of a linked sheet with `@page` rules, kept for printing (the servo build
+/// pyro: the text of a linked sheet with `@page` rules, kept for printing (the servo build
 /// of Stylo parses neither `size` nor `page`).
 fn linked_page_css(bytes: &[u8]) -> Option<String> {
     let css = String::from_utf8_lossy(bytes);
@@ -630,7 +630,7 @@ impl NetHandler for ResourceHandler<ImageHandler> {
     }
 }
 
-/// lightningpanda: decoded raster images by encoded bytes, for every document
+/// pyro: decoded raster images by encoded bytes, for every document
 /// of the process (a template's logo decoded once, not once per document):
 /// (encoded bytes, width, height, RGBA8 pixels). Bounded at 64 images and
 /// 64 MB of pixels.

@@ -464,7 +464,7 @@ impl LineBoxMetrics {
         let shaped_run = &data.shaped_text.runs()[run_idx];
         let Some(run_box) = data.runs[run_idx]
             .run_box
-            .or_else(|| run_box_metrics(&data.styles[style], shaped_run, data.quantize))
+            .or_else(|| run_box_metrics(&data.styles[style], shaped_run, data.quantum()))
         else {
             return;
         };
@@ -1259,7 +1259,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             self.state.mark_line_break_opportunity();
                         }
                     } else if self.state.line.x == 0.0 {
-                        // lightningpanda: at the start of the line this box will never fit, so
+                        // pyro: at the start of the line this box will never fit, so
                         // consume it, accept the overflow and mark the soft wrap opportunity after
                         // it: content that follows breaks there, and a box ending the paragraph
                         // ends its last line (Chromium) rather than leaving an empty line behind.

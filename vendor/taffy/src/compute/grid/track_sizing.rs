@@ -274,7 +274,7 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
     get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
     has_baseline_aligned_item: bool,
     table_rows: bool,
-    // lightningpanda: the tracks to size from their items (the others are as their items sized them
+    // pyro: the tracks to size from their items (the others are as their items sized them
     // last time: `table_reuse`), and where to keep the tracks as their items sized them.
     only_tracks: Option<&[bool]>,
     sized: Option<&mut GridTrackVec<GridTrack>>,
@@ -577,7 +577,7 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
     table_rows: bool,
     only_tracks: Option<&[bool]>,
 ) {
-    // lightningpanda: the first tracks of the items spanning several table rows (rows where a
+    // pyro: the first tracks of the items spanning several table rows (rows where a
     // rowspan starts, for `distribute_rowspan_to_table_rows`).
     let rowspan_starts: Vec<usize> = if table_rows {
         items
@@ -602,7 +602,7 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
     // Items that cross a flexible track are all processed together in a single batch (regardless of their span), so
     // they only need to be moved to the end of the list. And the order in which items within a batch are processed
     // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
-    // lightningpanda: only the items of the tracks being sized again (all of them span one track).
+    // pyro: only the items of the tracks being sized again (all of them span one track).
     let only_item = |item: &GridItem| only_tracks.is_none_or(|only| only[item.placement_indexes(axis).start as usize + 1]);
     let count = if only_tracks.is_some() { items.iter().filter(|item| only_item(item)).count() } else { items.len() };
     let mut partitioned_items: FrontBackVecBuilder<&mut GridItem> = FrontBackVecBuilder::with_capacity(count);
@@ -641,7 +641,7 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
         // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
         // consider the items in it with a span of 1:
         let batch_span = batch[0].placement(axis).span();
-        // lightningpanda: a cell spanning several table rows grows them as in Chromium.
+        // pyro: a cell spanning several table rows grows them as in Chromium.
         if table_rows && !is_flex && batch_span > 1 {
             for item in batch.iter_mut() {
                 let space = item_sizer.min_content_contribution(item, axis_tracks);
@@ -1047,7 +1047,7 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
         .for_each(|track| track.growth_limit = track.base_size);
 }
 
-/// lightningpanda: grows the table rows `tracks` (with the gutters between them; the first track is
+/// pyro: grows the table rows `tracks` (with the gutters between them; the first track is
 /// `axis_tracks[first]`) to fit a cell of block size `space` spanning them, as Chromium's
 /// `DistributeExcessBlockSizeToRows` does for a rowspan cell (percentage rows aside): the excess goes
 /// to the rows where another rowspan starts, evenly; else to the unconstrained rows with a size, in
@@ -1434,7 +1434,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
     // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
     // than the track’s base size, set its base size to that product.
     //
-    // lightningpanda: as Chromium does (`ExpandFlexibleTracks`), the product is truncated to 1/64 px (a layout
+    // pyro: as Chromium does (`ExpandFlexibleTracks`), the product is truncated to 1/64 px (a layout
     // unit) in f32 raw units, after an epsilon, and the fraction it loses carries into the next flexible track:
     // a third of 668px is 222.65625, 222.671875, 222.671875.
     let fr_raw = flex_fraction * 64.0;

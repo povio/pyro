@@ -5,7 +5,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  a[href] {
      color: rgb(0, 0, 238);
      text-decoration: underline;
-+    /* lightningpanda: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
++    /* pyro: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
 +    cursor: pointer;
  }
  
@@ -14,7 +14,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      display: none !important;
  }
  
-+/* lightningpanda: Chromium's sizes: 13x13 border boxes, radios with a
++/* pyro: Chromium's sizes: 13x13 border boxes, radios with a
 +   0 bottom and 5px left margin. */
  input[type="checkbox"] {
 -    width: 14px;
@@ -67,7 +67,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      font-family: system-ui, sans-serif;
  }
  
-+/* lightningpanda: Chromium's menu list is an atomic inline box (its options
++/* pyro: Chromium's menu list is an atomic inline box (its options
 +   are not laid out: Blitz paints the control), 1px border, line-height normal. */
 +select {
 +    display: inline-block;
@@ -86,7 +86,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      font-family: monospace;
  }
  
-+/* lightningpanda: Chromium's UA sheet wraps a textarea's text and breaks
++/* pyro: Chromium's UA sheet wraps a textarea's text and breaks
 +   words longer than a line. */
 +textarea {
 +    white-space: pre-wrap;
@@ -96,11 +96,30 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -150,6 +193,15 @@
+@@ -121,6 +164,18 @@
+     outline: 2px solid #4D90FE;
+ }
+ 
++/* pyro: Chromium's UA sheet (light colour scheme). Its `line-height:
++   initial !important` is applied in layout: Stylo applies no `line-height`
++   to `::placeholder`. */
++::placeholder {
++    color: #757575;
++}
++
++input::placeholder {
++    white-space: pre;
++    overflow-wrap: normal;
++}
++
+ button,
+ input[type="submit"],
+ input[type="reset"],
+@@ -150,6 +205,15 @@
      background-color: transparent;
  }
  
-+/* lightningpanda: an image button is replaced content laid out like <img>
++/* pyro: an image button is replaced content laid out like <img>
 +   at its image's intrinsic size, without the text-input border, padding and
 +   background (Chromium's UA sheet: padding/border/background-color initial). */
 +input[type="image" i] {
@@ -112,11 +131,11 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +221,40 @@
+@@ -169,8 +233,40 @@
      padding-inline-end: 2px;
  }
  
-+/* lightningpanda: Chromium's computed style for options and groups. A
++/* pyro: Chromium's computed style for options and groups. A
 +   drop-down select's children generate no boxes (layout/construct.rs); a
 +   list box's and loose ones do. */
  option {
@@ -135,7 +154,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    font-weight: bolder;
 +}
 +
-+/* lightningpanda: an optgroup's label row (Chromium's
++/* pyro: an optgroup's label row (Chromium's
 +   -internal-optgroup-label in its shadow root), built in its ::before slot
 +   (layout/construct.rs). The text-control pseudo-element's name is reused:
 +   Blitz does not use it, and only the UA sheet can select it. */
@@ -154,7 +173,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -851,6 +935,10 @@
+@@ -851,6 +947,10 @@
      user-select: none;
  }
  
@@ -165,7 +184,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  iframe:focus-visible,
  body:focus-visible,
  html:focus-visible {
-@@ -1128,37 +1216,35 @@
+@@ -1128,37 +1228,35 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -174,7 +193,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 -    [popover]:not(:popover-open):not(dialog[open]) {
 -        display: none;
 -    }
-+/* lightningpanda: not behind Gecko's pref (Chrome's UA has these rules). */
++/* pyro: not behind Gecko's pref (Chrome's UA has these rules). */
 +[popover]:not(:popover-open):not(dialog[open]) {
 +    display: none;
 +}
@@ -274,8 +293,8 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          style_config::set_pref!("layout.css.view-transitions.enabled", true);
          style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
          style_config::set_pref!("layout.css.zoom.enabled", true);
-+        // lightningpanda: the features lp-dom's cascade enables. Prefs are process-wide and read
-+        // while parsing, so without these a sheet parsed here before lp-dom's first cascade dropped
++        // pyro: the features pyro-dom's cascade enables. Prefs are process-wide and read
++        // while parsing, so without these a sheet parsed here before pyro-dom's first cascade dropped
 +        // such rules. `:has()` comes with invalidation (`invalidate_has_anchors`).
 +        style_config::set_pref!("layout.css.has-selector.enabled", true);
 +        style_config::set_pref!("layout.css.container-queries.enabled", true);
@@ -293,7 +312,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      },
  }
  
-+/// lightningpanda: files a traversal's replaced styles into `changes`
++/// pyro: files a traversal's replaced styles into `changes`
 +/// (`BaseDocument::style_changes`): an element already there keeps its
 +/// first old style and takes the new one.
 +pub(crate) fn note_style_changes(
@@ -312,7 +331,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    }
 +}
 +
-+/// lightningpanda: an element whose primary style a style traversal replaced
++/// pyro: an element whose primary style a style traversal replaced
 +/// ([`BaseDocument::take_style_changes`]).
 +#[derive(Clone)]
 +pub struct StyleChange {
@@ -336,7 +355,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
      /// device rebuild) at the start of the next resolve.
      pub(crate) pending_device_changes: DeviceChanges,
-+    /// lightningpanda: the root's available space in the last layout pass.
++    /// pyro: the root's available space in the last layout pass.
 +    pub(crate) last_layout_space: Option<taffy::Size<taffy::AvailableSpace>>,
 +    /// See [`BaseDocument::set_layout_size`].
 +    layout_size: Option<(f32, f32)>,
@@ -359,7 +378,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
      /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
      pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
-+    /// lightningpanda: the text of `<link>` sheets with `@page` rules, by node. Parsing drops what
++    /// pyro: the text of `<link>` sheets with `@page` rules, by node. Parsing drops what
 +    /// printing needs of them: the servo build of Stylo has no `size` and no `page`.
 +    pub(crate) linked_page_css: BTreeMap<NodeId, String>,
      /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
@@ -372,11 +391,11 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
 +    /// set), so paint-tree passes visit them instead of every node.
 +    pub(crate) oof_hoisted: HashSet<NodeId>,
-+    /// lightningpanda: nodes the style traversal gave a `position: sticky`
++    /// pyro: nodes the style traversal gave a `position: sticky`
 +    /// style (`BaseDocument::has_sticky`). Entries whose node is gone or no
 +    /// longer sticky are dropped after each traversal.
 +    pub(crate) sticky_nodes: HashSet<NodeId>,
-+    /// lightningpanda: the elements whose primary style the style traversals
++    /// pyro: the elements whose primary style the style traversals
 +    /// replaced since [`BaseDocument::take_style_changes`], with the style
 +    /// before and after (a transition's before-change and after-change
 +    /// styles), kept while `track_style_changes` is on. `style_change_index`
@@ -385,7 +404,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    pub(crate) style_changes: Vec<StyleChange>,
 +    pub(crate) style_change_index: HashMap<NodeId, usize>,
 +    pub(crate) track_style_changes: bool,
-+    /// lightningpanda: the boxes that left a container's list (`Node::layout_child_of`) during
++    /// pyro: the boxes that left a container's list (`Node::layout_child_of`) during
 +    /// `resolve_layout_children`; those no container collected again by its end leave the layout
 +    /// tree with their subtrees (`BaseDocument::leave_layout_tree`). Empty between passes.
 +    pub(crate) left_layout_lists: Vec<NodeId>,
@@ -393,7 +412,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
 +    /// hit test.
 +    pub(crate) paint_tree_dirty: bool,
-+    /// lightningpanda: a resolve ran since the hit bounds were last brought up
++    /// pyro: a resolve ran since the hit bounds were last brought up
 +    /// to date: `ensure_hit_overflow` computes the boxes flagged
 +    /// `LayoutData::hit_stale` again before the next hit test.
 +    pub(crate) hit_overflow_dirty: bool,
@@ -404,14 +423,14 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// the style traversal and by pseudo-element box construction).
      pub(crate) pending_style_image_nodes: Vec<NodeId>,
  
-+    /// lightningpanda: a style traversal kept a generated `::before` /
++    /// pyro: a style traversal kept a generated `::before` /
 +    /// `::after` style for some element (sticky; see
 +    /// `BaseDocument::may_have_generated_before_after`).
 +    pub(crate) generated_before_after: bool,
 +
-+    /// lightningpanda: the top layer (modal dialogs, showing popovers) as
++    /// pyro: the top layer (modal dialogs, showing popovers) as
 +    /// the embedder marks it, by rank (bottom first): elements whose
-+    /// `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N`
++    /// `urn:x-pyro:state` `state` attribute has a `top-layer=N`
 +    /// token. Maintained when that attribute is set or cleared; usually
 +    /// empty, and then painting costs one emptiness check per box.
 +    pub(crate) top_layer: crate::layout::paint_tree::TopLayer,
@@ -429,7 +448,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let snapshots = SnapshotMap::new();
          let nodes = Box::new(NodeTree::new());
 -        let guard = SharedRwLock::new();
-+        // lightningpanda: one lock for the thread's documents, so a parsed
++        // pyro: one lock for the thread's documents, so a parsed
 +        // sheet can serve them all (`make_stylesheet`).
 +        let guard = crate::util::thread_style_lock();
          let nodes_to_id = HashMap::new();
@@ -510,7 +529,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// it so that stale NodeIds are never dereferenced after the slot is freed.
      pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
          self.clear_interaction_state_for_removed_node(node_id);
-+        // lightningpanda: a dropped element leaves the top layer.
++        // pyro: a dropped element leaves the top layer.
 +        if !self.top_layer.is_empty() {
 +            self.top_layer.remove(node_id);
 +        }
@@ -546,7 +565,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.remove_node_from_tree(anon_id);
      }
  
-+    /// lightningpanda: `node_id` is out of the layout tree (no container lists it: it is
++    /// pyro: `node_id` is out of the layout tree (no container lists it: it is
 +    /// `display: none` or below one, a part a table ignores, or out of the document), and so is
 +    /// what its subtree built, as a fresh build has none there: its layout children that still
 +    /// point at it leave its list (`Node::layout_child_of`), and theirs in turn, and its anonymous
@@ -586,10 +605,10 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
-+        // lightningpanda: an author sheet without `@import` (whose loads are
++        // pyro: an author sheet without `@import` (whose loads are
 +        // the document's) parses once per thread for its text and base URL:
 +        // every document of a test suite or a PDF template carries the same
-+        // bundle. Sheets are immutable here (lightningpanda's CSSOM edits
++        // bundle. Sheets are immutable here (pyro's CSSOM edits
 +        // the text and syncs it, not Blitz's rules).
 +        let css = css.as_ref();
 +        let shared = origin == Origin::Author && !css.contains("@import");
@@ -619,7 +638,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          }
      }
  
-+    /// lightningpanda: whether the style traversals record the elements whose
++    /// pyro: whether the style traversals record the elements whose
 +    /// primary style they replace ([`Self::take_style_changes`]); off until an
 +    /// embedder wants them (transition events). Turning it off drops what was
 +    /// recorded.
@@ -631,7 +650,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        }
 +    }
 +
-+    /// lightningpanda: the elements whose primary style a traversal replaced
++    /// pyro: the elements whose primary style a traversal replaced
 +    /// since the last call (while tracked), each once, with its style before
 +    /// the first replacement and after the last: a transition's before-change
 +    /// and after-change styles. An element styled for the first time, or whose
@@ -641,14 +660,14 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        std::mem::take(&mut self.style_changes)
 +    }
 +
-+    /// lightningpanda: whether any node of the document (attached or not) is
++    /// pyro: whether any node of the document (attached or not) is
 +    /// styled `position: sticky`, from the set the style traversal keeps
 +    /// (O(sticky nodes), not a scan of the document).
 +    pub fn has_sticky(&self) -> bool {
 +        self.sticky_node_ids().next().is_some()
 +    }
 +
-+    /// lightningpanda: the nodes styled `position: sticky` (see
++    /// pyro: the nodes styled `position: sticky` (see
 +    /// [`Self::has_sticky`]), in no particular order.
 +    pub fn sticky_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
 +        self.sticky_nodes
@@ -657,7 +676,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +            .filter(|id| self.nodes.get(*id).is_some_and(crate::stylo::is_sticky))
 +    }
 +
-+    /// lightningpanda: whether a `resolve` could change anything: a resource arrived (it is
++    /// pyro: whether a `resolve` could change anything: a resource arrived (it is
 +    /// taken in now), something awaits restyle or layout here or in a subdocument, or an
 +    /// animation runs. The last pass's `refresh_hover` can leave a restyle behind.
 +    pub fn needs_resolve(&mut self) -> bool {
@@ -738,7 +757,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.snapshot_node_impl(node_id, None)
      }
  
-+    /// lightningpanda: `:has()` invalidation for DOM insertions and removals
++    /// pyro: `:has()` invalidation for DOM insertions and removals
 +    /// (state and attribute changes go through Stylo's relative selector
 +    /// invalidation instead, `has_invalidation`). Matching flags every element a
 +    /// `:has()` search visits (`RELATIVE_SELECTOR_SEARCH_DIRECTION_*`) and
@@ -824,7 +843,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        let state_of = |n: &Node| if n.is_element() { *n.element_state() } else { ElementState::empty() };
 +        let before = state_of(&self.nodes[node_id]);
          cb(&mut self.nodes[node_id]);
-+        // lightningpanda: the `:has()` anchors that can see the element (a
++        // pyro: the `:has()` anchors that can see the element (a
 +        // flag test when no `:has()` depends on these states).
 +        let changed = before ^ state_of(&self.nodes[node_id]);
 +        self.invalidate_relative_state(node_id, changed);
@@ -1141,7 +1160,7 @@ new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/has_invalidation.rs
 @@ -0,0 +1,309 @@
-+//! lightningpanda: `:has()` invalidation through Stylo's relative selector
++//! pyro: `:has()` invalidation through Stylo's relative selector
 +//! invalidation, as Gecko runs it on every state and attribute change.
 +//!
 +//! Stylo leaves relative selectors to the embedder: the snapshot-driven
@@ -1151,7 +1170,7 @@ new file mode 100644
 +//! manager for each change; this does the same for Blitz:
 +//!
 +//! - an element state change (`:checked`, `:focus`, `:hover`, the form states
-+//!   lp-dom's render tree mirrors as [`LP_STATE_NS`] tokens, ...) looks up the
++//!   pyro-dom's render tree mirrors as [`PYRO_STATE_NS`] tokens, ...) looks up the
 +//!   relative selector map's state dependencies for the changed bits;
 +//! - an attribute change looks up its id, class, attribute name and custom
 +//!   state dependencies.
@@ -1181,12 +1200,12 @@ new file mode 100644
 +use crate::{BaseDocument, QualName, local_name, ns};
 +use blitz_traits::node_id::NodeId;
 +
-+/// Namespace of the attributes lp-dom's render tree adds for the
-+/// pseudo-classes Blitz cannot derive itself (lp-dom `snapshot::STATE_NS`).
-+pub const LP_STATE_NS: &str = "urn:x-lightningpanda:state";
++/// Namespace of the attributes pyro-dom's render tree adds for the
++/// pseudo-classes Blitz cannot derive itself (pyro-dom `snapshot::STATE_NS`).
++pub const PYRO_STATE_NS: &str = "urn:x-pyro:state";
 +
-+/// The element states the `state` attribute of [`LP_STATE_NS`] carries.
-+pub(crate) const LP_STATES: ElementState = ElementState::VALID
++/// The element states the `state` attribute of [`PYRO_STATE_NS`] carries.
++pub(crate) const PYRO_STATES: ElementState = ElementState::VALID
 +    .union(ElementState::INVALID)
 +    .union(ElementState::INDETERMINATE)
 +    .union(ElementState::REQUIRED)
@@ -1203,10 +1222,10 @@ new file mode 100644
 +    .union(ElementState::USER_VALID)
 +    .union(ElementState::USER_INVALID);
 +
-+/// The element states a [`LP_STATE_NS`] `state` attribute value (`None`: no
++/// The element states a [`PYRO_STATE_NS`] `state` attribute value (`None`: no
 +/// such attribute) stands for. An element is `:read-only` unless the value
 +/// says `read-write`.
-+pub(crate) fn lp_state_bits(value: Option<&str>) -> ElementState {
++pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
 +    let mut state = ElementState::empty();
 +    for token in value.unwrap_or("").split_ascii_whitespace() {
 +        state |= match token {
@@ -1234,9 +1253,9 @@ new file mode 100644
 +    state
 +}
 +
-+/// The custom states (`:state()`) a [`LP_STATE_NS`] `custom-states`
++/// The custom states (`:state()`) a [`PYRO_STATE_NS`] `custom-states`
 +/// attribute value lists.
-+pub(crate) fn lp_custom_states(value: Option<&str>) -> impl Iterator<Item = &str> {
++pub(crate) fn pyro_custom_states(value: Option<&str>) -> impl Iterator<Item = &str> {
 +    value
 +        .unwrap_or("")
 +        .split('\u{1f}')
@@ -1275,7 +1294,7 @@ new file mode 100644
 +fn custom_states_attr(node: &Node) -> Option<&str> {
 +    node.attrs()?
 +        .iter()
-+        .find(|a| &*a.name.ns == LP_STATE_NS && &*a.name.local == "custom-states")
++        .find(|a| &*a.name.ns == PYRO_STATE_NS && &*a.name.local == "custom-states")
 +        .map(|a| a.value.as_str())
 +}
 +
@@ -1286,7 +1305,7 @@ new file mode 100644
 +    match kind {
 +        AttrKind::Id => out.extend(el.id.clone()),
 +        AttrKind::Class => out.extend(el.classes.iter().cloned()),
-+        AttrKind::CustomStates => out.extend(lp_custom_states(custom_states_attr(node)).map(Atom::from)),
++        AttrKind::CustomStates => out.extend(pyro_custom_states(custom_states_attr(node)).map(Atom::from)),
 +        AttrKind::Other => {}
 +    }
 +    out
@@ -1305,7 +1324,7 @@ new file mode 100644
 +            AttrKind::Id
 +        } else if name.ns == ns!() && name.local == local_name!("class") {
 +            AttrKind::Class
-+        } else if &*name.ns == LP_STATE_NS && &*name.local == "custom-states" {
++        } else if &*name.ns == PYRO_STATE_NS && &*name.local == "custom-states" {
 +            AttrKind::CustomStates
 +        } else {
 +            AttrKind::Other
@@ -1519,7 +1538,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          *doc.nodes[container_node_id].display_constructed_as_mut() = display;
      }
  
-+    // lightningpanda: a table built as another box now: its row groups and rows were parts of the
++    // pyro: a table built as another box now: its row groups and rows were parts of the
 +    // table, never boxes of their own, and are built as boxes now.
 +    let was_table = doc.nodes[container_node_id].flags.is_table_root();
 +    if was_table
@@ -1546,7 +1565,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      flush_pseudo_elements(doc, container_node_id);
  
-+    // lightningpanda: a select that was a drop-down had its options'
++    // pyro: a select that was a drop-down had its options'
 +    // construct damage cleared (below); as a list box they must build their
 +    // boxes again.
 +    let listbox_select = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
@@ -1578,7 +1597,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              }
          }
  
-+        // lightningpanda: a drop-down select is an atomic box sized from its
++        // pyro: a drop-down select is an atomic box sized from its
 +        // options (layout/mod.rs); as in Chromium's menu list, its children
 +        // generate no boxes (their computed `display` stays `block`). A list
 +        // box (`multiple`, or `size` above 1) lays its options out.
@@ -1604,7 +1623,21 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              // Remove contruction damage from subtree
              doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
-@@ -530,7 +591,9 @@
+@@ -454,7 +515,12 @@
+             });
+ 
+             match crate::util::parse_svg_image(outer_html.as_bytes()) {
+-                Ok(svg) => {
++                Ok(mut svg) => {
++                    // pyro: without a `viewBox` its content is laid out in its CSS box
++                    // (`SvgImageData::sized`, at paint).
++                    if svg.intrinsic_dimensions.view_box.is_none() {
++                        svg.inline_source = Some(outer_html.as_str().into());
++                    }
+                     doc.get_node_mut(container_node_id)
+                         .unwrap()
+                         .element_data_mut()
+@@ -530,7 +596,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -1615,7 +1648,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -610,17 +673,32 @@
+@@ -610,17 +678,32 @@
  
              // TODO: fix display:contents
              if classification.all_inline {
@@ -1630,7 +1663,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 -                    node_id: container_node_id,
 -                    data: ConstructionTaskData::InlineLayout(layout),
 -                });
-+                // lightningpanda: an inline root built again for a change to its box alone (a
++                // pyro: an inline root built again for a change to its box alone (a
 +                // cell's padding or collapsed border, its parent's children) keeps the inline
 +                // layout its content built: its text, the styles the text is shaped with, its
 +                // children and the boxes among them are as they were (no `INLINE_CONTENT` on it
@@ -1659,11 +1692,11 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -689,8 +767,23 @@
+@@ -689,8 +772,23 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
-+        // lightningpanda: `content: normal | none` generates no box (an
++        // pyro: `content: normal | none` generates no box (an
 +        // unset `var()` in `content` computes to `normal`).
 +        let generates =
 +            |s: &style::servo_arc::Arc<style::properties::ComputedValues>| !matches!(s.get_counters().content, Content::Normal | Content::None);
@@ -1672,7 +1705,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +
          (before_style, after_style, before_node_id, after_node_id)
      };
-+    // lightningpanda: an optgroup's label row, as Chromium's
++    // pyro: an optgroup's label row, as Chromium's
 +    // `-internal-optgroup-label` box, in the `::before` slot when the
 +    // optgroup has no `::before` of its own.
 +    let label = before_style.is_none().then(|| optgroup_label(doc, node_id)).flatten();
@@ -1683,7 +1716,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,7 +812,8 @@
+@@ -719,7 +817,8 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -1693,18 +1726,18 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  let text_node_id = doc.create_text_node(&text);
                  doc.nodes[text_node_id].parent = Some(new_node_id);
                  doc.nodes[new_node_id].children.push(text_node_id);
-@@ -733,6 +827,10 @@
+@@ -733,6 +832,10 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
 +            doc.nodes[new_node_id].update_layout_styles();
-+            // lightningpanda: damage is set with its flag (`Node::mark_damaged`), which the walks
++            // pyro: damage is set with its flag (`Node::mark_damaged`), which the walks
 +            // that follow damage rely on to skip a subtree (`Node::has_no_damage_below`).
 +            doc.nodes[new_node_id].mark_damaged();
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,7 +848,7 @@
+@@ -750,7 +853,7 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -1713,7 +1746,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              let existing_text_node_id = doc.nodes[pe_node_id]
                  .children
                  .first()
-@@ -781,22 +879,67 @@
+@@ -781,22 +884,67 @@
              }
  
              doc.nodes[pe_node_id].record_out_of_flow(&pe_style);
@@ -1742,7 +1775,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +                }
 +                replaced
 +            };
-+            // lightningpanda: with its flag, as above.
++            // pyro: with its flag, as above.
 +            doc.nodes[pe_node_id].mark_damaged();
 +            if replaced {
 +                doc.nodes[pe_node_id].update_layout_styles();
@@ -1752,7 +1785,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      }
  }
  
-+/// lightningpanda: the style (UA `optgroup::-servo-text-control-inner-container`,
++/// pyro: the style (UA `optgroup::-servo-text-control-inner-container`,
 +/// a pseudo-element pages cannot select) and text (its `label`) of an
 +/// optgroup's label row.
 +fn optgroup_label(
@@ -1791,7 +1824,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -806,8 +949,12 @@
+@@ -806,8 +954,12 @@
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
      doc.iter_children_and_pseudos_mut(container_node_id, |child_id, doc| {
@@ -1806,7 +1839,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -827,9 +974,19 @@
+@@ -827,9 +979,19 @@
          // Taffy knows how to deal with `Display::None` children.
          //
          // Also hide all-whitespace flexbox children as these should be ignored
@@ -1827,7 +1860,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,6 +1001,15 @@
+@@ -844,6 +1006,15 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -1843,7 +1876,91 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Else push the child directly (and close any open "anonymous block container")
          else {
              out.push(child_id, doc);
-@@ -965,7 +1131,7 @@
+@@ -875,6 +1046,8 @@
+     } else {
+         node.attr(local_name!("value")).unwrap_or("").to_string()
+     };
++    let placeholder = input_placeholder(doc, input_element_id, is_multiline);
++    let node = &mut doc.nodes[input_element_id];
+     let is_focussed = node.is_focussed();
+     let element = &mut node.data.downcast_element_mut().unwrap();
+     if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
+@@ -894,6 +1067,8 @@
+         unreachable!();
+     };
+ 
++    // pyro: a textarea's placeholder is broken into lines at its width by layout.
++    text_input_data.placeholder = placeholder;
+     let editor = &mut text_input_data.editor;
+     editor.set_scale(doc.viewport.scale_f64() as f32);
+     editor.set_width(None);
+@@ -923,6 +1098,65 @@
+     editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
+ }
+ 
++/// pyro: the `placeholder` attribute of an `<input>` or `<textarea>` laid out
++/// in its `::placeholder` style, as Chromium paints it while the value is
++/// empty: a single-line input's text loses its line breaks (HTML), and the UA
++/// sheet's `line-height: initial !important` makes its line `normal` (Stylo
++/// applies no author `line-height` to `::placeholder` either). `None` when the
++/// element has no placeholder text.
++fn input_placeholder(
++    doc: &mut BaseDocument,
++    node_id: NodeId,
++    is_multiline: bool,
++) -> Option<Box<crate::node::InputPlaceholder>> {
++    use style::selector_parser::PseudoElement;
++    use style::stylist::RuleInclusion;
++    let node = &doc.nodes[node_id];
++    let attr = node.attr(local_name!("placeholder"))?;
++    let text: String = if is_multiline {
++        attr.replace("\r\n", "\n").replace('\r', "\n")
++    } else {
++        attr.chars().filter(|c| !matches!(c, '\n' | '\r')).collect()
++    };
++    if text.is_empty() {
++        return None;
++    }
++    let input_style = node.primary_styles()?;
++    let placeholder_style = {
++        let read_guard = doc.guard.read();
++        let guards = StylesheetGuards::same(&read_guard);
++        doc.stylist.lazily_compute_pseudo_element_style::<&Node>(
++            &guards,
++            node,
++            &PseudoElement::Placeholder,
++            RuleInclusion::All,
++            &input_style,
++            false,
++            None,
++        )
++    };
++    let style: &style::properties::ComputedValues = match &placeholder_style {
++        Some(style) => style,
++        None => &input_style,
++    };
++    let mut text_style = stylo_to_parley::style(node_id, style);
++    text_style.line_height = parley::LineHeight::NORMAL;
++    let mut color = style.clone_color();
++    color.alpha *= style.get_effects().opacity;
++    let mut placeholder = Box::new(crate::node::InputPlaceholder {
++        text,
++        style: text_style,
++        layout: parley::Layout::new(),
++        color,
++        alignment: stylo_to_parley::text_align(style.clone_text_align()),
++        base_direction: stylo_to_parley::base_direction(style.clone_direction(), style.clone_unicode_bidi()),
++    });
++    let scale = doc.viewport.scale();
++    let mut font_ctx = doc.font_ctx.lock().unwrap();
++    placeholder.relayout(&mut font_ctx, &mut doc.layout_ctx, scale, None);
++    Some(placeholder)
++}
++
+ fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
+     let node = &mut doc.nodes[input_element_id];
+ 
+@@ -965,7 +1199,7 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -1852,7 +1969,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              }
          });
      }
-@@ -992,6 +1158,11 @@
+@@ -992,6 +1226,11 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -1864,7 +1981,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  match (display.outside(), display.inside()) {
                      (DisplayOutside::None, DisplayInside::None) => {
                          node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -999,12 +1170,12 @@
+@@ -999,12 +1238,12 @@
                      (DisplayOutside::None, DisplayInside::Contents) => {
                          node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                          iter_children!(nodes[node_id], |child_id| {
@@ -1879,7 +1996,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                          });
                      }
                      (DisplayOutside::Inline, DisplayInside::Flow) => {
-@@ -1012,17 +1183,15 @@
+@@ -1012,17 +1251,15 @@
  
                          if is_inline_box_element(tag_name) {
                              layout_children.push(node_id);
@@ -1899,7 +2016,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                              });
                          }
                      }
-@@ -1039,3 +1208,28 @@
+@@ -1039,3 +1276,28 @@
          }
      }
  }
@@ -2053,7 +2170,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          let children = std::mem::take(&mut self.nodes[node_id].children);
          for child in children.iter() {
 -            damage_from_children |= self.propagate_damage_flags(*child);
-+            // lightningpanda: a child with no damage below it would return empty at the skip above
++            // pyro: a child with no damage below it would return empty at the skip above
 +            // (`Node::has_no_damage_below`); it is not entered.
 +            if self.nodes[*child].has_no_damage_below() {
 +                continue;
@@ -2175,7 +2292,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          // Store damage for current node
          node.set_damage(damage);
  
-+        // lightningpanda: a table cell whose subtree changed is measured and laid out again
++        // pyro: a table cell whose subtree changed is measured and laid out again
 +        // (`TableContext::changed_cells`); one whose paint alone changed is transformed and
 +        // visited in the paint tree again.
 +        if !damage.is_empty() {
@@ -2315,7 +2432,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          if !is_anonymous {
              for child in children.iter() {
 -                self.clear_damage_and_dirty_flags(*child);
-+                // lightningpanda: a child with no damage below it would return at the skip above
++                // pyro: a child with no damage below it would return at the skip above
 +                // (`Node::has_no_damage_below`); it is not entered.
 +                if self.nodes.get(*child).is_none_or(|child| child.has_no_damage_below()) {
 +                    continue;
@@ -2481,7 +2598,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  
 -    // Table layout bakes the sizes of the table and its internal boxes into the table
 -    // context when the table is constructed.
-+    // lightningpanda: a table keeps the layout styles of its parts in its `TableContext`, built
++    // pyro: a table keeps the layout styles of its parts in its `TableContext`, built
 +    // with its box: a part's (or the table's) layout change builds it again, as a mutation does
 +    // (with the text in it shaped as it was: `BOX_DAMAGE`).
      let table_needs_rebuild = || {
@@ -2521,6 +2638,18 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  
          let font_ctx = &self.font_ctx;
          let layout_ctx = &mut self.layout_ctx;
+@@ -527,6 +809,11 @@
+                 input.editor.set_scale(scale);
+                 let mut font_ctx = font_ctx.lock().unwrap();
+                 input.editor.refresh_layout(&mut font_ctx, layout_ctx);
++                // pyro: the placeholder is shaped again too (a textarea's is broken into
++                // lines again by the relayout).
++                if let Some(placeholder) = input.placeholder.as_deref_mut() {
++                    placeholder.relayout(&mut font_ctx, layout_ctx, scale, None);
++                }
+                 node.insert_damage(ONLY_RELAYOUT);
+             }
+         }
 diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/src/layout/inline/build.rs
 --- a/packages/blitz-dom/src/layout/inline/build.rs
 +++ b/packages/blitz-dom/src/layout/inline/build.rs
@@ -2612,7 +2741,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          );
      }
      if let Some(after_id) = root_node.after() {
-@@ -112,10 +147,28 @@
+@@ -112,18 +147,70 @@
              nodes,
              after_id,
              &text_transform,
@@ -2630,7 +2759,19 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        builder.build_into_keeping_lines(&mut text_layout.layout)
 +    };
 +    text_layout.text_nodes = std::mem::take(text_nodes);
-+    // lightningpanda: the shaped text's content widths, for every layout of it (`TextLayout::
++    // pyro: the "…" that `text-overflow: ellipsis` ends an overflowing line with, in the root's
++    // own style (its first available font, as in Chromium).
++    text_layout.ellipsis = root_node_style
++        .as_deref()
++        .filter(|style| ends_lines_with_ellipsis(style))
++        .map(|_| {
++            let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
++            builder.push_text("\u{2026}");
++            let mut layout = builder.build().0;
++            layout.break_all_lines(None);
++            Box::new(layout)
++        });
++    // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
 +    // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
 +    // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
 +    // own before it reads them.
@@ -2641,8 +2782,29 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    });
      return;
  
++    /// pyro: whether `text-overflow` puts an ellipsis at the end of the lines of a box with this
++    /// style: the box clips its inline overflow, and the end side's value is `ellipsis`. Stylo
++    /// keeps a single value as `second` (the end side); of two, `first` is the line-left side's,
++    /// where right-to-left lines end.
++    fn ends_lines_with_ellipsis(style: &style::properties::ComputedValues) -> bool {
++        use style::computed_values::direction::T as Direction;
++        use style::values::computed::Overflow;
++        use style::values::specified::text::TextOverflowSide;
++        if style.get_box().overflow_x == Overflow::Visible {
++            return false;
++        }
++        let overflow = &style.get_text().text_overflow;
++        let end = if !overflow.sides_are_logical && style.clone_direction() == Direction::Rtl {
++            &overflow.first
++        } else {
++            &overflow.second
++        };
++        matches!(end, TextOverflowSide::Ellipsis)
++    }
++
      fn build_inline_layout_recursive(
-@@ -124,6 +177,8 @@
+         builder: &mut TreeBuilder<TextBrush>,
+         text_transformer: &mut TextTransformer,
          nodes: &crate::NodeTree,
          node_id: NodeId,
          parent_text_transform: &CaseTransform,
@@ -2651,7 +2813,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +198,18 @@
+@@ -143,6 +230,18 @@
                      }
                  }
  
@@ -2670,7 +2832,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -180,13 +247,15 @@
+@@ -180,13 +279,15 @@
                          );
                          for child_id in node.children.iter().copied() {
                              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
@@ -2688,7 +2850,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.pop_style_span();
                      }
-@@ -196,6 +265,9 @@
+@@ -196,6 +297,9 @@
                          if is_inline_box_element(tag_name) {
                              if box_kind == InlineBoxKind::InFlow {
                                  text_transformer.word_break(builder);
@@ -2698,7 +2860,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -211,17 +283,6 @@
+@@ -211,17 +315,6 @@
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
                              });
@@ -2716,7 +2878,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          } else {
                              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                              let style = node
-@@ -235,32 +296,38 @@
+@@ -235,32 +328,38 @@
                              builder.push_style_span(style);
  
                              if let Some(before_id) = node.before() {
@@ -2761,7 +2923,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
  
                              builder.pop_style_span();
-@@ -270,6 +337,9 @@
+@@ -270,6 +369,9 @@
                      (_, _) => {
                          if box_kind == InlineBoxKind::InFlow {
                              text_transformer.word_break(builder);
@@ -2771,7 +2933,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -294,7 +364,9 @@
+@@ -294,7 +396,9 @@
  
                  let text =
                      text_transformer.transform(&data.content, parent_text_transform, builder);
@@ -2818,7 +2980,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  .downcast_element_mut()
                  .unwrap()
                  .inline_layout_data = Some(inline_layout);
-+            // lightningpanda: its own (or known) size still applies: a
++            // pyro: its own (or known) size still applies: a
 +            // `width: 200px` div holding only an empty `<i>` is 200px wide.
              return LayoutOutput::from_outer_size(
 -                Size::ZERO.maybe_max(container_pb.sum_axes().map(Some)),
@@ -2875,7 +3037,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                // and a min-content or max-content constraint. So if we want to compute both widths in one pass then
 -                // we need to store both a min-content and max-content size on each box.
 -                let content_sizes = inline_layout.layout.calculate_content_widths();
-+                // lightningpanda: the content widths of a layout without in-flow inline boxes are
++                // pyro: the content widths of a layout without in-flow inline boxes are
 +                // kept with its shaped text (`TextLayout::content_widths`); with inline boxes, whose
 +                // sizes depend on whether this measures under a min-content or max-content
 +                // constraint, they are measured here.
@@ -2958,7 +3120,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            has_active_floats = line_slot.segment_id.is_some();
 -                            breaker.revert_to(saved_state);
 -                            set_line_slot(breaker.state_mut(), &line_slot, scale, slack);
-+            // lightningpanda: breaking again with the inputs of the last break (no floats
++            // pyro: breaking again with the inputs of the last break (no floats
 +            // involved) gives the same lines.
 +            let break_key = {
 +                use std::hash::{Hash, Hasher};
@@ -3266,7 +3428,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              })
              .unwrap_or((parley::layout::Alignment::Start, None));
  
-+        // lightningpanda: aligning moves each line with its runs (the glyph
++        // pyro: aligning moves each line with its runs (the glyph
 +        // reach is measured per line, `TextLayout::hit_reach`), except that
 +        // justification spaces the runs out within it: justifying now or
 +        // before measures again.
@@ -3367,7 +3529,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
      }
  }
  
-+/// lightningpanda: a list item whose marker changed (its number, after an item was added, moved or
++/// pyro: a list item whose marker changed (its number, after an item was added, moved or
 +/// removed before it) is built and laid out again: an `inside` marker is text of its inline layout,
 +/// and an `outside` one sizes its line.
 +fn marker_changed(node: &mut crate::Node) {
@@ -3523,7 +3685,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 -        {
 -            self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
 -        }
-+        // lightningpanda: every algorithm lays out its children through here (Taffy's
++        // pyro: every algorithm lays out its children through here (Taffy's
 +        // `compute_child_layout` and Blitz's block contexts alike), once per tree level, so a tree
 +        // of any depth lays out on a stack grown on demand instead of overflowing the thread's.
 +        crate::util::ensure_stack(|| {
@@ -3543,7 +3705,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
-+        // lightningpanda: this runs once per tree level of a recursive layout; what is not part
++        // pyro: this runs once per tree level of a recursive layout; what is not part
 +        // of the recursion stays out of its frame (see `dispatch_child_layout`).
 +        let inputs = self.adjusted_child_inputs(node_id, inputs);
          let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
@@ -3577,7 +3739,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        {
 +            inputs.available_space.width = AvailableSpace::MaxContent;
 +        }
-+        // lightningpanda: a list box (`<select multiple>` or `size` > 1) with
++        // pyro: a list box (`<select multiple>` or `size` > 1) with
 +        // an auto height is `size` rows tall (4 for `multiple`), however many
 +        // options it has, as in Chromium: its options scroll inside.
 +        if inputs.known_dimensions.height.is_none() {
@@ -3673,7 +3835,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-+    /// lightningpanda: the layout algorithms recurse through here once per tree level, so this
++    /// pyro: the layout algorithms recurse through here once per tree level, so this
 +    /// frame is kept small: the leaf boxes (form controls, replaced elements) and tables are
 +    /// laid out by non-inlined functions whose (large) frames are gone before a container's
 +    /// algorithm runs, so a deep tree costs only the algorithms' own frames per level.
@@ -3694,7 +3856,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        }
 +    }
 +
-+    // lightningpanda: the algorithms other than block layout, not inlined into
++    // pyro: the algorithms other than block layout, not inlined into
 +    // `dispatch_child_layout` (whose frame every tree level pays).
 +    #[inline(never)]
 +    fn inline_layout(
@@ -3722,7 +3884,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    fn leaf_layout_or_algorithm(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> ChildLayout {
          let orthogonal_percent_basis = self.orthogonal_percent_basis_of(dom_node_id(node_id));
 +        let scale = self.doc.viewport.scale();
-+        // lightningpanda: the longest option label of a drop-down select (the
++        // pyro: the longest option label of a drop-down select (the
 +        // control's intrinsic width; its options are not laid out).
 +        let select_label_chars = {
 +            let n = &self.nodes[dom_node_id(node_id)];
@@ -3817,15 +3979,21 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              height: resolved_line_height.unwrap_or(16.0) * rows,
                          },
                      );
-@@ -324,17 +558,68 @@
+@@ -322,19 +556,74 @@
+                                 &mut doc.font_ctx.lock().unwrap(),
+                                 &mut doc.layout_ctx,
                              );
++                            // pyro: the placeholder wraps at the same width.
++                            if let Some(placeholder) = input.placeholder.as_deref_mut() {
++                                placeholder.break_lines(Some(content_width * scale));
++                            }
                          }
                      }
 -                    return output;
 +                    return ChildLayout::Done(output);
 +                }
 +
-+                // lightningpanda: a drop-down select is an atomic box: its
++                // pyro: a drop-down select is an atomic box: its
 +                // longest option's label (about half an em per character)
 +                // plus the arrow, and, as Chromium's menu list, a line of
 +                // the control's font (`line-height: normal`) plus 2px tall,
@@ -3889,7 +4057,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                                  inputs,
                                  &node.layout_style(),
                                  resolve_calc_value,
-@@ -354,28 +639,61 @@
+@@ -354,28 +643,61 @@
                                          height: min_size,
                                      }
                                  },
@@ -3961,11 +4129,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      // Width/height attributes are presentational hints mapped to the CSS
                      // width/height properties by
                      // `synthesize_presentational_hints_for_legacy_attributes`, so they
-@@ -429,17 +747,24 @@
+@@ -429,17 +751,24 @@
                                      DEFAULT_OBJECT_SIZE,
                                  )
                              }
-+                            // lightningpanda: a `<video>` whose poster did not load
++                            // pyro: a `<video>` whose poster did not load
 +                            // keeps the default object size.
 +                            ImageData::None
 +                                if element_data.name.local == local_name!("video") =>
@@ -3988,11 +4156,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +797,27 @@
+@@ -472,6 +801,27 @@
                          _ => unreachable!(),
                      };
  
-+                    // lightningpanda: an image (`<img>` or `<input type=image>`)
++                    // pyro: an image (`<img>` or `<input type=image>`)
 +                    // the embedder has loaded but Blitz has not (yet) reports
 +                    // its natural size through the render tree's state
 +                    // attribute (`natural=W,H`).
@@ -4001,7 +4169,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    // A `<video>` with known metadata is sized by its video
 +                    // track, whatever its poster's size.
 +                    let is_video = element_data.name.local == local_name!("video");
-+                    let (intrinsic_sizes, default_object_size) = match lp_natural_size(element_data) {
++                    let (intrinsic_sizes, default_object_size) = match pyro_natural_size(element_data) {
 +                        Some((width, height)) if is_video || (!loaded && is_image) => (
 +                            IntrinsicSizes {
 +                                width: Some(width),
@@ -4016,7 +4184,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -495,117 +841,138 @@
+@@ -495,119 +845,140 @@
  
                      let mut style = node.layout_style();
                      style.set_percent_basis(orthogonal_percent_basis);
@@ -4140,8 +4308,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  
 -            _ => taffy::LayoutOutput::HIDDEN,
 +            _ => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
-         }
-     }
++        }
++    }
 +
 +    /// A table root's layout (see [`Self::dispatch_child_layout`]).
 +    #[inline(never)]
@@ -4209,7 +4377,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    static_position,
 +                });
 +            }
-+        }
+         }
 +
 +        // HACK: Cap scrollable overflow at node size to prevent scrolling
 +        let overflow = output.scrollable_overflow_rect;
@@ -4224,10 +4392,10 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        );
 +
 +        output
-+    }
-+}
-+
-+/// lightningpanda: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
+     }
+ }
+ 
++/// pyro: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
 +enum ChildLayout {
 +    /// A leaf box, laid out.
 +    Done(taffy::LayoutOutput),
@@ -4238,10 +4406,12 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    Flex,
 +    Grid,
 +    Table,
- }
- 
++}
++
  impl TraversePartialTree for LayoutPassState<'_> {
-@@ -667,7 +1034,11 @@
+     type ChildIter<'a>
+         = RefCellChildIter<'a>
+@@ -667,7 +1038,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -4254,7 +4424,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -698,17 +1069,20 @@
+@@ -698,17 +1073,20 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -4277,7 +4447,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +1095,7 @@
+@@ -721,6 +1099,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -4285,7 +4455,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +1107,14 @@
+@@ -732,6 +1111,14 @@
      }
  }
  
@@ -4300,7 +4470,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -782,16 +1165,42 @@
+@@ -782,16 +1169,42 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -4347,7 +4517,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -852,7 +1261,19 @@
+@@ -852,7 +1265,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -4355,7 +4525,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        let node = self.node_from_id_mut(node_id);
 +        let size_changed = node.final_layout().size != layout.size;
 +        *node.final_layout_mut() = *layout;
-+        // lightningpanda: a transform resolves against the rounded size
++        // pyro: a transform resolves against the rounded size
 +        // (`Node::set_transform`), and rounding moves with the box's absolute
 +        // position: a box that only moved (or sits inside one) can change its
 +        // rounded size with no unrounded layout of its own changing. Mark it, so
@@ -4368,7 +4538,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +1289,30 @@
+@@ -868,6 +1293,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -4380,7 +4550,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    // (damage marking walks the DOM parent chain, so their descendant flags are
 +    // not maintained), and so are nodes without style data, which have no damage.
 +    //
-+    // lightningpanda: the offset is the fractional part of the parent's absolute
++    // pyro: the offset is the fractional part of the parent's absolute
 +    // position (`writing_mode::rounded_layout` rounds relative to the pixel grid),
 +    // so a subtree moved by whole pixels, the rows below a table cell that grew,
 +    // is skipped as well.
@@ -4399,16 +4569,16 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +1417,13 @@
+@@ -972,3 +1421,13 @@
          })
      }
  }
 +
-+/// lightningpanda: the `natural=W,H` token of the element's
-+/// `urn:x-lightningpanda:state` attribute.
-+fn lp_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
++/// pyro: the `natural=W,H` token of the element's
++/// `urn:x-pyro:state` attribute.
++fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
 +    let attr =
-+        element.attrs.iter().find(|a| &*a.name.ns == "urn:x-lightningpanda:state" && &*a.name.local == "state")?;
++        element.attrs.iter().find(|a| &*a.name.ns == "urn:x-pyro:state" && &*a.name.local == "state")?;
 +    let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
 +    let (w, h) = token.split_once(',')?;
 +    Some((w.parse().ok()?, h.parse().ok()?))
@@ -4640,7 +4810,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            .flags
 +            .remove(NodeFlags::PAINT_TREE_DIRTY | NodeFlags::PAINT_TREE_OWN_DAMAGE);
 +
-+        // lightningpanda: a table whose cells are all plain boxes in it visits again only the cells
++        // pyro: a table whose cells are all plain boxes in it visits again only the cells
 +        // that changed (`TableContext::placed`).
 +        if !own_damage && self.table_paint_children_kept(node_id) {
 +            return;
@@ -4681,7 +4851,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      }
  
 +    /// Whether `id` roots a stacking context for painting: by its style, or
-+    /// (lightningpanda) because it is in the top layer, which always forms
++    /// (pyro) because it is in the top layer, which always forms
 +    /// one (CSS Positioned Layout 4 §4), so its z-indexed and fixed
 +    /// descendants stay in its subtree and paint with it above the document.
 +    #[inline]
@@ -4824,7 +4994,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        .and_then(|n| n.parse().ok())
 +}
 +
-+/// lightningpanda: the top layer as the embedder marks it: elements by rank
++/// pyro: the top layer as the embedder marks it: elements by rank
 +/// (bottom first, ties in id order) and each element's rank. Membership
 +/// tests, entering, leaving and re-ranking are logarithmic or constant, so
 +/// a page with many showing popovers costs no quadratic work per snapshot,
@@ -4872,7 +5042,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +}
 +
 +impl BaseDocument {
-+    /// lightningpanda: element `id`'s state attribute is now `value` (`None`:
++    /// pyro: element `id`'s state attribute is now `value` (`None`:
 +    /// removed). Keeps [`Self::top_layer_nodes`] in step: an element with a
 +    /// `top-layer=N` token is in the top layer at rank `N`.
 +    pub(crate) fn note_lp_state(&mut self, id: NodeId, value: Option<&str>) {
@@ -4883,21 +5053,21 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        self.top_layer.set(id, rank);
 +    }
 +
-+    /// lightningpanda: whether any element is in the top layer (one length
++    /// pyro: whether any element is in the top layer (one length
 +    /// check).
 +    #[inline]
 +    pub fn has_top_layer(&self) -> bool {
 +        !self.top_layer.is_empty()
 +    }
 +
-+    /// lightningpanda: whether `id` is in the top layer: painted above the
++    /// pyro: whether `id` is in the top layer: painted above the
 +    /// whole document (see [`Self::top_layer_nodes`]), not in its place.
 +    #[inline]
 +    pub fn is_in_top_layer(&self, id: NodeId) -> bool {
 +        !self.top_layer.is_empty() && self.top_layer.contains(id)
 +    }
 +
-+    /// lightningpanda: the elements of the top layer that are in the
++    /// pyro: the elements of the top layer that are in the
 +    /// document, bottom first.
 +    pub fn top_layer_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
 +        self.top_layer.iter().filter(|&id| {
@@ -4907,7 +5077,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        })
 +    }
 +
-+    /// lightningpanda: the offset of top-layer element `id` from the root
++    /// pyro: the offset of top-layer element `id` from the root
 +    /// element's border box (with the root's scroll applied), excluding its
 +    /// own location: where it paints, hoisted to the root's stacking context.
 +    pub fn top_layer_position(&self, id: NodeId) -> Point<f32> {
@@ -5101,7 +5271,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            _ => 0.0,
 +        }).collect();
 +        let mut max = min.clone();
-+        // lightningpanda: the cells' widths are those last measured, but for the cells that changed
++        // pyro: the cells' widths are those last measured, but for the cells that changed
 +        // (`CellWidths`); a column's are summed again only when a cell that set them got narrower.
 +        // Another table content width (a shrink-to-fit table whose container got wider or
 +        // narrower) changes the intrinsic widths of the cells with percentage or `calc()` lengths
@@ -5472,11 +5642,11 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    /// half of the borders around them as their own, and the table half of its outer ones. A
 +    /// uniform table instead has them as gutters of the grid (`style.gap`) and this is `None`.
 +    pub collapsed_edges: Option<CollapsedEdges>,
-+    /// lightningpanda: the borders of a collapsed table's row groups its collapsed borders were
++    /// pyro: the borders of a collapsed table's row groups its collapsed borders were
 +    /// resolved with: a row group restyled with others is built again (`update_rows` collects only
 +    /// the rows of a group).
 +    group_borders: Vec<(NodeId, ServoArc<Border>)>,
-+    /// lightningpanda: the collapsed borders of a collapsed table that has them as gutters (when
++    /// pyro: the collapsed borders of a collapsed table that has them as gutters (when
 +    /// `collapsed_edges` is `None`), kept so that a change can be resolved locally, and the
 +    /// gutters the first cell's borders give.
 +    spare_edges: Option<CollapsedEdges>,
@@ -5484,7 +5654,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    /// Laid out with the fixed table layout algorithm: cell contents don't size
 +    /// the columns, so cells have no intrinsic width.
 +    pub is_fixed: bool,
-+    /// lightningpanda: what `update_table_context` checks a change against: whether it can update
++    /// pyro: what `update_table_context` checks a change against: whether it can update
 +    /// the table at all (no cell spans rows, no box is out of flow, each row's cells follow those of
 +    /// the rows before), the columns the cells reach, and the cells spanning one column, per column.
 +    incremental: bool,
@@ -5492,7 +5662,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    single_cell_columns: Vec<u32>,
 +    /// The cells with a percentage `width`.
 +    percent_cells: usize,
-+    /// lightningpanda: the cells that changed (their subtree, or their entry) since the grid was last
++    /// pyro: the cells that changed (their subtree, or their entry) since the grid was last
 +    /// laid out (indices into `cells`; damage propagation and `update_table_context` add to it), the
 +    /// grid's last layout (`taffy::TableGridState`), and each cell's min-content and max-content
 +    /// widths as the automatic table layout last measured them: the data a layout of the table starts
@@ -5502,7 +5672,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    /// The rows replaced by others since the grid's last layout, if any (`update_rows`).
 +    grid_splice: AtomicRefCell<Option<taffy::TableGridSplice>>,
 +    pub(crate) widths: AtomicRefCell<CellWidths>,
-+    /// lightningpanda: the cells the grid placed since rounding and `resolve_transforms` last
++    /// pyro: the cells the grid placed since rounding and `resolve_transforms` last
 +    /// visited the table, and where the table was then (`TableTreeWrapper::set_unrounded_layout`): a
 +    /// cell neither placed nor damaged since is rounded and transformed as it was.
 +    pub(crate) placed: AtomicRefCell<PlacedCells>,
@@ -5518,7 +5688,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
 +impl TableContext {
-+    /// lightningpanda: each row's hit-test extent (parallel to `rows`): the union of its cells'
++    /// pyro: each row's hit-test extent (parallel to `rows`): the union of its cells'
 +    /// hit contributions in the table's coordinates at `scale` (`BaseDocument::resolve_hit_overflow`,
 +    /// device px), as of the last hit pass; `f` gets an empty slice when the pass has not
 +    /// covered the current rows (the caller then computes from the cells).
@@ -5544,13 +5714,13 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    transform: Option<Vec<usize>>,
 +    pub(crate) overflow: Vec<kurbo::Rect>,
 +    pub(crate) overflow_scale: f64,
-+    /// lightningpanda: cells the transform passes visited since the last hit pass (all of them
++    /// pyro: cells the transform passes visited since the last hit pass (all of them
 +    /// when `None`: `BaseDocument::table_cells_hit`), each cell's hit contribution in the table as
 +    /// that pass computed it (parallel to `cells`; see `LayoutData::hit_overflow`), at its scale.
 +    hit_again: Option<Vec<usize>>,
 +    pub(crate) hit: Vec<kurbo::Rect>,
 +    pub(crate) hit_scale: f64,
-+    /// lightningpanda: the union of `hit` over the cells originating in each row (parallel to
++    /// pyro: the union of `hit` over the cells originating in each row (parallel to
 +    /// `TableContext::rows`, `Rect::ZERO` without cells), kept with `hit`; empty when the rows
 +    /// changed since (`splice`) until the next hit pass.
 +    pub(crate) row_overflow: Vec<kurbo::Rect>,
@@ -5634,7 +5804,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        })
 +    }
 +
-+    /// lightningpanda: a transform pass visited these cells (sorted; all of them: `None`), whose
++    /// pyro: a transform pass visited these cells (sorted; all of them: `None`), whose
 +    /// hit contributions the next hit pass computes again.
 +    pub(crate) fn transformed(&mut self, again: Option<&[usize]>, cells: usize) {
 +        match (again, &mut self.hit_again) {
@@ -5653,7 +5823,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        }
 +    }
 +
-+    /// lightningpanda: the cells whose hit contributions to compute again (all of them: `None`),
++    /// pyro: the cells whose hit contributions to compute again (all of them: `None`),
 +    /// and the next ones.
 +    pub(crate) fn take_hit(&mut self) -> Option<Vec<usize>> {
 +        std::mem::replace(&mut self.hit_again, Some(Vec::new())).map(|mut cells| {
@@ -6123,7 +6293,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    rowspan: u16,
 +    /// Whether its computed `width` is a percentage (`TableTreeWrapper::has_percent_cell`).
 +    percent_width: bool,
-+    /// lightningpanda: whether its intrinsic widths depend on the table's content width: a
++    /// pyro: whether its intrinsic widths depend on the table's content width: a
 +    /// percentage or `calc()` `width`, `min-width`, `max-width`, padding or margin (`CellWidths`).
 +    percent_lengths: bool,
 +    /// In the auto table layout algorithm, the larger of the cell's and its column's
@@ -6136,7 +6306,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    min_height: Option<f32>,
 +    /// `height` as a border box before collapsed borders, and whether they add to it (`content-box`).
 +    height_base: Option<(f32, bool)>,
-+    /// lightningpanda: the cell's own length `width` as a border box (auto tables), and `min_width`
++    /// pyro: the cell's own length `width` as a border box (auto tables), and `min_width`
 +    /// and `min_height` before the halves of collapsed borders are added: what a cell rebuilt on its
 +    /// own starts from (`update_table_context`).
 +    length_width: Option<f32>,
@@ -6149,7 +6319,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      /// specified length `height`. Such rows do not receive excess table height when there
      /// are unconstrained rows to receive it instead.
      pub is_constrained: bool,
-+    /// lightningpanda: the number of cells originating in the row (they follow those of the rows
++    /// pyro: the number of cells originating in the row (they follow those of the rows
 +    /// before it in `TableContext::cells`), and the column after its last cell.
 +    pub cell_count: u32,
 +    pub columns: u16,
@@ -6163,7 +6333,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 -fn table_taffy_style(style: &ComputedValues, table_wm: WritingMode) -> taffy::Style<Atom> {
 -    stylo_taffy::to_taffy_style_in(style, table_wm)
 +///
-+/// lightningpanda: the physical Taffy style is the one converted when the node's style was
++/// pyro: the physical Taffy style is the one converted when the node's style was
 +/// written (`Node::table_part_taffy_style`); only a node that is not a table part by its own style
 +/// is converted here.
 +fn table_taffy_style(node: &crate::Node, table_wm: WritingMode) -> taffy::Style<Atom> {
@@ -6243,7 +6413,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      let mut cursor = ColumnCursor::default();
  
      let wm = table_wm(doc, table_root_node_id);
-+    // lightningpanda: the cells of the table built last time, released below if they are no longer.
++    // pyro: the cells of the table built last time, released below if they are no longer.
 +    let former = former_table_context(doc, table_root_node_id);
      let root_node = &mut doc.nodes[table_root_node_id];
  
@@ -6277,7 +6447,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              );
          }
      }
-+    // lightningpanda: a rowspan stops at the end of its row group (the HTML table model;
++    // pyro: a rowspan stops at the end of its row group (the HTML table model;
 +    // Chromium's effective rowspan), rather than adding implicit rows past it.
 +    for cell in cells.iter_mut() {
 +        let start = cell.row as usize;
@@ -6448,7 +6618,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        };
 +    }
 +
-+    // lightningpanda: a table whose collapsed borders are not one uniform grid has each cell keep half
++    // pyro: a table whose collapsed borders are not one uniform grid has each cell keep half
 +    // of the borders around it, and the table half of its outer ones, as Chromium's boxes do.
 +    let collapse_gap = (style.gap.width.into_raw().value(), style.gap.height.into_raw().value());
 +    let ncols = style.grid_template_columns.len();
@@ -6562,7 +6732,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    edges: &CollapsedEdges,
 +) -> bool {
 +    if r0 >= r1 || c0 >= c1 {
-+        // lightningpanda: a cell outside the grid's columns has no collapsed borders, as in a
++        // pyro: a cell outside the grid's columns has no collapsed borders, as in a
 +        // fresh build (not those it had where it was before).
 +        doc.nodes[cell.node_id].set_collapsed_border(None);
 +        return false;
@@ -6613,7 +6783,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +
 +/// Whether the node or its subtree changed in this pass (a restyle damages a node without marking
 +/// it as having damaged descendants).
-+/// lightningpanda: whether a row group of a collapsed table has the border its collapsed borders
++/// pyro: whether a row group of a collapsed table has the border its collapsed borders
 +/// were resolved with (`TableContext::group_borders`).
 +fn group_border_kept(ctx: &TableContext, group: &crate::Node) -> bool {
 +    if ctx.border_collapse != BorderCollapse::Collapse {
@@ -6772,7 +6942,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    ctx.incremental && ctx.oof_children.is_empty()
 +}
 +
-+/// lightningpanda: the layout children `resolve_layout_children` visits in `table` when the table is
++/// pyro: the layout children `resolve_layout_children` visits in `table` when the table is
 +/// neither built again nor updated (a change inside its cells): the cells damage propagation noted
 +/// as changed in layout since the grid's last layout (`TableContext::changed_cells`), and the
 +/// pseudo-elements. `None`: `table` does not keep its cells, and all its layout children are visited.
@@ -6827,7 +6997,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        })
 +}
 +
-+/// lightningpanda: brings the table's `TableContext` up to date when only some of its rows changed
++/// pyro: brings the table's `TableContext` up to date when only some of its rows changed
 +/// (a cell's content or style, rows added to or removed from a row group): those rows are collected
 +/// again and the collapsed borders around them resolved again; the other rows and cells stay as they
 +/// are. `false`: the change is not one of those, and the table is to be built again.
@@ -7381,7 +7551,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-+/// lightningpanda: the `TableContext` `table` was last built with, if it was a table.
++/// pyro: the `TableContext` `table` was last built with, if it was a table.
 +fn former_table_context(doc: &BaseDocument, table: NodeId) -> Option<Arc<TableContext>> {
 +    match &doc.nodes[table].data.downcast_element()?.special_data {
 +        SpecialElementData::TableRoot(ctx) => Some(Arc::clone(ctx)),
@@ -7394,7 +7564,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +/// They are those of the table's last `TableContext`, whatever their `display` is now (a row group of
 +/// a table made a flex container is a block item now): table construction dropped the boxes they had
 +/// (`drop_part_box`). Its cells are released (`release_cell`), and the context dropped: the box is no
-+/// table (lp-render reads a table's collapsed borders from it).
++/// table (pyro-render reads a table's collapsed borders from it).
 +pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId) {
 +    let Some(element) = doc.nodes[node_id].data.downcast_element_mut() else { return };
 +    if !matches!(element.special_data, SpecialElementData::TableRoot(_)) {
@@ -7435,7 +7605,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    release_former_cells(doc, node_id, &ctx.cells, &[]);
 +}
 +
-+/// lightningpanda: a cell collected while no container lists it (`Node::layout_child_of`): new, or
++/// pyro: a cell collected while no container lists it (`Node::layout_child_of`): new, or
 +/// back from outside the layout tree (its row was `display: contents`, it was a block the table
 +/// ignored). Stylo styled it meanwhile and `clear_damage_and_dirty_flags` cleared the damage that no
 +/// pass consumed (no pass reached it), so what its subtree built before is stale: built again, as a
@@ -7450,7 +7620,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    });
 +}
 +
-+/// lightningpanda: a node that is no longer one of a table's cells (a box of its own, out of flow, or
++/// pyro: a node that is no longer one of a table's cells (a box of its own, out of flow, or
 +/// its table gone) has no half collapsed borders (its layout style and paint, which draws a node's
 +/// own borders only without them, follow) and no index into the table's cells.
 +fn release_cell(doc: &mut BaseDocument, node_id: NodeId) {
@@ -7459,7 +7629,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    node.layout_data_mut().table_cell_index = u32::MAX;
 +}
 +
-+/// lightningpanda: `table`'s former cells (`old`) that it lists no more (`cells`, whose nodes hold
++/// pyro: `table`'s former cells (`old`) that it lists no more (`cells`, whose nodes hold
 +/// their index) are released (`release_cell`), except one another container collected since.
 +fn release_former_cells(doc: &mut BaseDocument, table: NodeId, old: &[TableCell], cells: &[TableCell]) {
 +    for cell in old {
@@ -7475,7 +7645,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    }
 +}
 +
-+/// lightningpanda: `node_id`'s layout children that are still listed there (`Node::layout_child_of`)
++/// pyro: `node_id`'s layout children that are still listed there (`Node::layout_child_of`)
 +/// leave its list; one another container collected since points there and is left alone.
 +fn leave_layout_children(doc: &mut BaseDocument, node_id: NodeId) {
 +    let BaseDocument { nodes, left_layout_lists, .. } = doc;
@@ -7509,7 +7679,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      // block rather than as part of the table grid.
      let position = node.primary_styles().unwrap().clone_position();
      if position.is_absolutely_positioned() {
-+        // lightningpanda: a box of its own, laid out and painted with its own borders.
++        // pyro: a box of its own, laid out and painted with its own borders.
 +        release_cell(doc, node_id);
          oof_children.push((node_id, stylo_taffy::convert::position(position)));
          return;
@@ -7621,7 +7791,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                              // Resolved in `build_table_context` once the column count is known
                              percent_columns.push((col, style.size.width.value(), extra));
                              style_helpers::percent(style.size.width.value())
-@@ -726,11 +2870,74 @@
+@@ -726,11 +2870,77 @@
                  }
              }
  
@@ -7667,6 +7837,9 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +                style.size.height = style_helpers::auto();
 +            }
              style.size.width = style_helpers::auto();
++            // pyro: `max-width` does not apply to a table cell (CSS 2.1 leaves it undefined;
++            // Chromium ignores it): the cell spans its column, as wide as the column grew.
++            style.max_size.width = style_helpers::auto();
 +            crate::resolve::phase_profile::table_cell_collected();
 +            let length_width = if is_fixed { None } else { length_width };
 +            let percent_lengths = percent_width
@@ -7696,7 +7869,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  style,
              });
  
-@@ -801,7 +3008,7 @@
+@@ -801,7 +3011,7 @@
      type CustomIdent = Atom;
  
      fn get_core_container_style(&self, _node_id: taffy::NodeId) -> &taffy::Style<Atom> {
@@ -7705,7 +7878,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -809,7 +3016,9 @@
+@@ -809,7 +3019,9 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
@@ -7716,7 +7889,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          self.doc.set_unrounded_layout(node_id, layout)
      }
  
-@@ -820,7 +3029,48 @@
+@@ -820,7 +3032,48 @@
      ) -> taffy::LayoutOutput {
          let cell = &self.ctx.cells[usize::from(node_id)];
          let node_id = crate::taffy_node_id(cell.node_id);
@@ -7766,7 +7939,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -843,6 +3093,44 @@
+@@ -843,6 +3096,44 @@
          &self.ctx.cells[usize::from(child_node_id)].style
      }
  
@@ -7811,7 +7984,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      fn set_detailed_grid_info(
          &mut self,
          _node_id: taffy::NodeId,
-@@ -851,3 +3139,323 @@
+@@ -851,3 +3142,323 @@
          *self.ctx.computed_grid_info.borrow_mut() = Some(detailed_grid_info);
      }
  }
@@ -8167,7 +8340,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          output
      }
  
-+    /// lightningpanda: kept out of the frame of `compute_child_layout_in_own_wm`, which is on the
++    /// pyro: kept out of the frame of `compute_child_layout_in_own_wm`, which is on the
 +    /// stack once per tree level of a recursive layout.
 +    #[inline(never)]
 +    fn mirror_child_overflow(
@@ -8242,7 +8415,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 -        let overflow = node.layout_style().overflow();
 -        let is_scroll_container =
 -            overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
-+        // lightningpanda: only a vertical placer reads it (`physical_layout`).
++        // pyro: only a vertical placer reads it (`physical_layout`).
 +        let is_scroll_container = placer_wm.is_vertical() && {
 +            let overflow = self.doc.nodes[dom_node_id(node_id)].layout_style().overflow();
 +            overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
@@ -8335,11 +8508,11 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 -        if let Some(element) = node.element_data_mut() {
 -            if let Some(inline_layout) = element.inline_layout_data.as_mut() {
 -                inline_layout.content_box_subpixel_offset = content_box_subpixel_offset;
-+        // lightningpanda: `content_box_subpixel_offset` (upstream #1382) stays zero: screenshots keep
++        // pyro: `content_box_subpixel_offset` (upstream #1382) stays zero: screenshots keep
 +        // text at the whole-pixel content box, and print moves text to its layout-unit x itself
 +        // (`fractional_text_x` in blitz-paint).
 +        self.node_from_id_mut(node_id).layout_data_mut().writing_mode = wm;
-+        // lightningpanda: a table where it was rounds again only the cells its grid placed since:
++        // pyro: a table where it was rounds again only the cells its grid placed since:
 +        // the others' layouts and offsets, all their rounding reads, are the same.
 +        let table_cells = (self.nodes[dom_node_id(node_id)].flags.is_table_root() && !wm.is_vertical())
 +            .then(|| crate::layout::table::table_cells_to_round(self, dom_node_id(node_id), frac))
@@ -8430,7 +8603,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 +/// absolute coordinates and every inner edge is rounded relative to them, so adjacent boxes never
 +/// overlap or gap.
 +///
-+/// lightningpanda: the absolute coordinates are kept modulo whole pixels. `parent_frac` is the
++/// pyro: the absolute coordinates are kept modulo whole pixels. `parent_frac` is the
 +/// fractional part of the parent's absolute position; the box's position in the pixel grid is
 +/// `parent_frac + location`, rounded half up, and the parent's is `parent_frac` rounded. Moving the
 +/// parent by whole pixels changes nothing here (the arithmetic never sees the whole pixels), so
@@ -8503,7 +8676,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
  
  /// `logical`, written by a placing algorithm running in `placer_wm` within a box of physical size
  /// `placer_size`, in physical coordinates.
-+/// lightningpanda: whether `node` is a scroll container, for CSSOM geometry queries. These reach
++/// pyro: whether `node` is a scroll container, for CSSOM geometry queries. These reach
 +/// boxes outside the layout tree too (below a `display: none` element, which have no styles), and
 +/// an unstyled box is not one.
 +fn is_styled_scroll_container(node: &Node) -> bool {
@@ -8560,7 +8733,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
  
      /// Document-relative position, writing mode and physical size of the box that places `node`.
 +    ///
-+    /// lightningpanda: a loop over the containing-block chain, outermost first, instead of a
++    /// pyro: a loop over the containing-block chain, outermost first, instead of a
 +    /// recursion per level (which overflowed the stack on deep vertical trees).
      fn placer_geometry(
          &self,
@@ -8638,7 +8811,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  mod font_metrics;
  mod form;
 +mod has_invalidation;
-+pub use has_invalidation::LP_STATE_NS;
++pub use has_invalidation::PYRO_STATE_NS;
  mod html;
  /// Loading of `<iframe>` elements into sub-documents.
  mod iframe;
@@ -8684,8 +8857,8 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      }
  
      pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> NodeId {
-+        // lightningpanda: the top layer is marked in lp-dom's state attribute.
-+        let lp_state = attrs
++        // pyro: the top layer is marked in pyro-dom's state attribute.
++        let pyro_state = attrs
 +            .iter()
 +            .find(|a| is_lp_state(&a.name))
 +            .map(|a| a.value.clone());
@@ -8696,7 +8869,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              ..Default::default()
          };
  
-+        if let Some(state) = lp_state {
++        if let Some(state) = pyro_state {
 +            self.doc.note_lp_state(id, Some(&state));
 +        }
          id
@@ -8720,11 +8893,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  }
                  Ok(())
              }
-@@ -320,12 +329,42 @@
+@@ -320,12 +329,56 @@
          }
      }
  
-+    /// lightningpanda: `multiple` / `size` switch a select between a
++    /// pyro: `multiple` / `size` switch a select between a
 +    /// drop-down (no boxes for its options) and a list box (options laid
 +    /// out): its boxes are built again.
 +    fn rebuild_select_for_attribute(&mut self, node_id: NodeId, name: &QualName) {
@@ -8738,15 +8911,29 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +        }
 +    }
 +
++    /// pyro: a text input lays its `placeholder` out with its box: the box is
++    /// built again when the attribute changes.
++    fn rebuild_text_input_for_attribute(&mut self, node_id: NodeId, name: &QualName) {
++        if name.local != local_name!("placeholder") {
++            return;
++        }
++        let node = &mut self.doc.nodes[node_id];
++        if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
++            node.insert_damage(ALL_DAMAGE);
++            node.mark_ancestors_dirty();
++        }
++    }
++
      pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
 +        if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
 +            self.doc.note_lp_state(node_id, Some(value));
 +        }
-+        // lightningpanda: `:has()` anchors that can see the element follow
++        // pyro: `:has()` anchors that can see the element follow
 +        // the change (`has_invalidation`); `None` (one flag test) when no
 +        // `:has()` search visited it.
 +        let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
 +        self.rebuild_select_for_attribute(node_id, &name);
++        self.rebuild_text_input_for_attribute(node_id, &name);
 +        self.set_attribute_impl(node_id, name, value);
 +        if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
 +            self.doc.invalidate_relative_attribute(node_id, change);
@@ -8763,7 +8950,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -357,6 +396,9 @@
+@@ -357,6 +410,9 @@
          }
  
          element.attrs.set(name.clone(), value);
@@ -8773,13 +8960,13 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if node_is_in_document {
              devtools!(
                  self,
-@@ -440,7 +482,16 @@
+@@ -440,7 +496,16 @@
  
          if (tag, attr) == tag_and_attr!("input", "checked") {
              set_input_checked_state(element, value.to_string());
 -        } else if (tag, attr) == tag_and_attr!("img", "src") {
 +        } else if (tag, attr) == tag_and_attr!("img", "src")
-+            // lightningpanda: an image button fetches its `src` like `<img>`;
++            // pyro: an image button fetches its `src` like `<img>`;
 +            // `type` becoming "image" starts the load (HTML "image button
 +            // state": the type changing to Image Button updates the image data).
 +            || (*tag == local_name!("input")
@@ -8791,16 +8978,17 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -456,11 +507,25 @@
+@@ -456,11 +521,26 @@
      }
  
      pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
 +        if is_lp_state(&name) {
 +            self.doc.note_lp_state(node_id, None);
 +        }
-+        // lightningpanda: as in `set_attribute`.
++        // pyro: as in `set_attribute`.
 +        let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
 +        self.rebuild_select_for_attribute(node_id, &name);
++        self.rebuild_text_input_for_attribute(node_id, &name);
 +        self.clear_attribute_impl(node_id, name);
 +        if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
 +            self.doc.invalidate_relative_attribute(node_id, change);
@@ -8817,7 +9005,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -483,6 +548,9 @@
+@@ -483,6 +563,9 @@
          if !had_attr {
              return;
          }
@@ -8827,7 +9015,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.mutations_occurred |= node_is_in_document;
          if node_is_in_document {
              devtools!(
-@@ -602,6 +670,8 @@
+@@ -602,6 +685,8 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
@@ -8836,7 +9024,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          // Process the subtree *before* severing the parent link so that
          // interaction state referencing removed nodes can retarget to the
-@@ -614,11 +684,12 @@
+@@ -614,11 +699,12 @@
          if let Some(parent_id) = node.parent.take() {
              self.mutations_occurred |= node_is_in_document;
              let parent = &mut self.doc.nodes[parent_id];
@@ -8851,17 +9039,17 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -639,6 +710,9 @@
+@@ -639,6 +725,9 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
-+        // lightningpanda: a dropped element inside a `:has()` argument
++        // pyro: a dropped element inside a `:has()` argument
 +        // changes its anchors, as in `remove_node`.
 +        self.doc.invalidate_relative_selectors_for_removal(node_id);
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          self.process_removed_subtree(node_id);
  
-@@ -648,13 +722,14 @@
+@@ -648,13 +737,14 @@
          // Update child_idx values
          if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
              let parent = &mut self.doc.nodes[parent_id];
@@ -8878,11 +9066,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -668,13 +743,19 @@
+@@ -668,13 +758,19 @@
      }
  
      pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
-+        // lightningpanda: dropped elements inside a `:has()` argument change their anchors,
++        // pyro: dropped elements inside a `:has()` argument change their anchors,
 +        // as in `remove_node`; checked while they are still linked.
 +        for &child_id in &self.doc.nodes[node_id].children {
 +            self.doc.invalidate_relative_selectors_for_removal(child_id);
@@ -8899,15 +9087,15 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          for child_id in children {
-@@ -697,6 +778,52 @@
+@@ -697,6 +793,52 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
-+    /// lightningpanda: restyles the siblings of `node_id` (and their subtrees) for an attribute
++    /// pyro: restyles the siblings of `node_id` (and their subtrees) for an attribute
 +    /// change Stylo's snapshot invalidation cannot follow to them: a selector list of
 +    /// `:nth-child(... of S)` (the parent carries `HAS_SLOW_SELECTOR_NTH_OF`), which Stylo
 +    /// leaves to the embedder, as Gecko's `RestyleSiblingsForNthOf` does. The pseudo-classes
-+    /// lightningpanda's state attribute (`urn:x-lightningpanda:state`) carries are element
++    /// pyro's state attribute (`urn:x-pyro:state`) carries are element
 +    /// states ([`ElementData::sync_lp_attribute_state`]), so the snapshot sees them change and
 +    /// Stylo's state invalidation reaches the siblings and descendants (`.r:invalid + .l`)
 +    /// itself; only its `natural=W,H` token (an image's natural size), which layout reads, is
@@ -8952,7 +9140,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -748,27 +875,45 @@
+@@ -748,27 +890,45 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -8965,7 +9153,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +    /// the traversal regardless; the element and its other children only need restyling where
 +    /// its selector flags record a selector that depends on them.
 +    ///
-+    /// lightningpanda: a change of text (or other non-element) children alone moves no
++    /// pyro: a change of text (or other non-element) children alone moves no
 +    /// element's index or edge status, so the siblings are left alone (`:empty` still restyles
 +    /// the parent). Inserted children that already have a style were moved here from this same
 +    /// parent (`add_children_to_parent` skips their subtree restyle, their ancestors being
@@ -8986,7 +9174,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 -                | ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
 -                | ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
 -        ) {
-+        // lightningpanda: a `:has()` anchor among the ancestors is restyled by Stylo's relative
++        // pyro: a `:has()` anchor among the ancestors is restyled by Stylo's relative
 +        // selector invalidator when an element it can match comes or goes
 +        // (`invalidate_relative_selectors_for_insertion`), not here; an argument's `:empty`
 +        // matches by the child list alone, so the parent is looked up for one.
@@ -9011,11 +9199,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +921,43 @@
+@@ -776,18 +936,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
-+            // lightningpanda: every other child's position may have changed, and with it an
++            // pyro: every other child's position may have changed, and with it an
 +            // argument's `:nth-child()`, `:first-child` or `:last-child`
 +            // (`invalidate_relative_selectors_for_ts_state`); the inserted children are
 +            // covered by their own insertion.
@@ -9058,7 +9246,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +969,30 @@
+@@ -799,10 +984,30 @@
                          .find(is_element);
                  }
              }
@@ -9071,7 +9259,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  self.doc.nodes[*id].set_restyle_hint(RestyleHint::restyle_subtree());
              }
              self.doc.nodes[parent_id].children = children;
-+            // lightningpanda: the arguments that match by position
++            // pyro: the arguments that match by position
 +            // (`invalidate_relative_selectors_for_ts_state`), once the child list is back for
 +            // the sibling walk: `:nth-child()` on the later siblings, `:first-child`/
 +            // `:last-child` on the children whose edge status flipped. The moved-in children
@@ -9090,11 +9278,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,7 +1068,24 @@
+@@ -878,7 +1083,24 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
-+        // lightningpanda: children moved within this element parent keep their ancestors, so
++        // pyro: children moved within this element parent keep their ancestors, so
 +        // only their siblings changed, and `restyle_for_child_list_change` restyles them for
 +        // that; a move under a non-element parent keeps the subtree restyle.
 +        let parent_is_element = self.doc.nodes[parent_id].is_element();
@@ -9106,7 +9294,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +            {
 +                same_parent_moves.push(child_id);
 +            }
-+            // lightningpanda: a moved child leaves its old parent as
++            // pyro: a moved child leaves its old parent as
 +            // `remove_node` does (`:has()` anchors, `:empty`), checked while
 +            // it is still linked.
 +            if self.doc.nodes[child_id].parent.is_some() {
@@ -9115,7 +9303,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &self.doc.nodes[child_id];
              if child.contains_focus() {
                  focus_within_old_chain = Some(self.doc.maybe_node_element_ancestors(child.parent));
-@@ -892,12 +1099,13 @@
+@@ -892,12 +1114,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -9131,7 +9319,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1119,29 @@
+@@ -911,19 +1134,29 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -9144,9 +9332,9 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +            self.restyle_for_child_list_change(parent_id, index..index + child_ids.len(), false);
          }
  
-+        // lightningpanda: whether the children land under a `display: none` element (see below).
++        // pyro: whether the children land under a `display: none` element (see below).
 +        // Any child may hold styled elements: a new element (no style data) may hold a moved
-+        // one (lp-dom builds a new wrapper by moving children into it before inserting it).
++        // one (pyro-dom builds a new wrapper by moving children into it before inserting it).
 +        let under_display_none = self.is_under_display_none(parent_id);
          for child_id in child_ids.iter().copied() {
              let child = &mut self.doc.nodes[child_id];
@@ -9155,7 +9343,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +            let child = &mut self.doc.nodes[child_id];
              // A moved or re-attached subtree keeps its styles, but everything above it changed.
 -            if new_parent_is_in_document && child.primary_styles().is_some() {
-+            // lightningpanda: a move within the same parent changed no ancestor (see
++            // pyro: a move within the same parent changed no ancestor (see
 +            // `same_parent_moves`).
 +            if new_parent_is_in_document
 +                && child.primary_styles().is_some()
@@ -9164,11 +9352,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,12 +1156,45 @@
+@@ -938,12 +1171,45 @@
                  );
              }
  
-+            // lightningpanda: Stylo keeps no style data under a `display: none` element (it drops
++            // pyro: Stylo keeps no style data under a `display: none` element (it drops
 +            // it when an element becomes one, `clear_descendant_data`, and never visits the
 +            // children of one), but a moved element kept its own: styles, inline layout and the
 +            // flags built from them, which no pass would replace. Under a `display: none` element
@@ -9200,7 +9388,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  self.process_removed_subtree(child_id);
              }
          }
-+        // lightningpanda: the `:has()` anchors that can see the new positions,
++        // pyro: the `:has()` anchors that can see the new positions,
 +        // once every child is linked (a sibling inserted with it counts).
 +        if new_parent_is_in_document {
 +            for &child_id in child_ids {
@@ -9210,11 +9398,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          // Transfer :focus-within from the old ancestor chain to the new one (the
          // shared prefix stays). If the subtree left the document, the focus was
-@@ -975,6 +1226,23 @@
+@@ -975,6 +1241,23 @@
          self.maybe_record_node(parent_id);
      }
  
-+    /// lightningpanda: whether `node_id` is or is inside a `display: none` element: the nearest
++    /// pyro: whether `node_id` is or is inside a `display: none` element: the nearest
 +    /// styled element from it up says so (the elements below one have no styles; an element not
 +    /// styled yet below a shown one will be).
 +    fn is_under_display_none(&self, node_id: NodeId) -> bool {
@@ -9234,14 +9422,14 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1223,6 +1491,18 @@
+@@ -1223,6 +1506,18 @@
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                  "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
-+                // lightningpanda: a `<video>` paints its poster image (no
++                // pyro: a `<video>` paints its poster image (no
 +                // video frame is ever decoded).
 +                "video" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
-+                // lightningpanda: an image button is replaced content showing
++                // pyro: an image button is replaced content showing
 +                // its `src` image, so it loads like `<img>` (and is a form
 +                // control like any other input).
 +                "input" if crate::layout::replaced::is_image_input(element) => {
@@ -9253,7 +9441,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
                  "canvas" => self
                      .eager_op_queue
-@@ -1420,15 +1700,38 @@
+@@ -1420,15 +1715,38 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -9267,7 +9455,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 -            if !raw_src.is_empty()
 -                && let Some(src) = self.doc.resolve_url(raw_src)
 -            {
-+        // lightningpanda: a `<video>`'s image is its poster; without one it
++        // pyro: a `<video>`'s image is its poster; without one it
 +        // paints nothing.
 +        let is_video = node
 +            .element_data()
@@ -9296,37 +9484,37 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  let src_string = src.as_str();
  
                  // Check cache first
-@@ -1579,6 +1882,20 @@
+@@ -1579,6 +1897,20 @@
      }
  }
  
-+/// lightningpanda: attributes whose value is element state
-+/// ([`ElementData::sync_lp_attribute_state`]): lp-dom's `state` tokens and an
++/// pyro: attributes whose value is element state
++/// ([`ElementData::sync_lp_attribute_state`]): pyro-dom's `state` tokens and an
 +/// `<option>`'s `selected`.
 +fn is_state_attribute(element: &QualName, name: &QualName) -> bool {
-+    (&*name.ns == crate::LP_STATE_NS && &*name.local == "state")
++    (&*name.ns == crate::PYRO_STATE_NS && &*name.local == "state")
 +        || (element.local == local_name!("option") && name.local == local_name!("selected"))
 +}
 +
-+/// lightningpanda: lp-dom's `urn:x-lightningpanda:state` `state` attribute.
++/// pyro: pyro-dom's `urn:x-pyro:state` `state` attribute.
 +#[inline]
 +fn is_lp_state(name: &QualName) -> bool {
-+    &*name.local == "state" && &*name.ns == crate::LP_STATE_NS
++    &*name.local == "state" && &*name.ns == crate::PYRO_STATE_NS
 +}
 +
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2694,50 @@
+@@ -2377,6 +2709,50 @@
          }
      }
  
-+    /// lightningpanda: the top layer follows `top-layer=N` state tokens by
++    /// pyro: the top layer follows `top-layer=N` state tokens by
 +    /// rank (re-ranking, leaving, many entries) and forgets dropped elements.
 +    #[test]
 +    fn top_layer_follows_state_tokens_and_drops() {
 +        use markup5ever::{LocalName, Namespace, QualName};
-+        let state = || QualName::new(None, Namespace::from(crate::LP_STATE_NS), LocalName::from("state"));
++        let state = || QualName::new(None, Namespace::from(crate::PYRO_STATE_NS), LocalName::from("state"));
 +        let mut document = BaseDocument::new(DocumentConfig::default());
 +        let ids: Vec<_> = {
 +            let mut mutator = document.mutate();
@@ -9368,12 +9556,12 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3449,254 @@
+@@ -3088,3 +3464,254 @@
          );
      }
  }
 +
-+/// lightningpanda: child-list restyle hints are narrowed to what selector
++/// pyro: child-list restyle hints are narrowed to what selector
 +/// flags say can change (a move within one parent keeps its ancestors; only
 +/// the neighbour whose edge status flipped is restyled for
 +/// `:first-child`/`:last-child`; text children alone restyle nothing). The
@@ -9672,7 +9860,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      }
  }
  
-+/// lightningpanda: the text of a linked sheet with `@page` rules, kept for printing (the servo build
++/// pyro: the text of a linked sheet with `@page` rules, kept for printing (the servo build
 +/// of Stylo parses neither `size` nor `page`).
 +fn linked_page_css(bytes: &[u8]) -> Option<String> {
 +    let css = String::from_utf8_lossy(bytes);
@@ -9717,7 +9905,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      }
  }
  
-+/// lightningpanda: decoded raster images by encoded bytes, for every document
++/// pyro: decoded raster images by encoded bytes, for every document
 +/// of the process (a template's logo decoded once, not once per document):
 +/// (encoded bytes, width, height, RGBA8 pixels). Bounded at 64 images and
 +/// 64 MB of pixels.
@@ -9864,7 +10052,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
  }
  
 -#[derive(Clone, Debug)]
-+/// lightningpanda: the declaration blocks of an element's presentational
++/// pyro: the declaration blocks of an element's presentational
 +/// hints, which Stylo 0.24 borrows from the element for the length of a
 +/// cascade (`TElement::synthesize_presentational_hints_for_legacy_attributes`).
 +pub struct PresentationalHints {
@@ -9876,7 +10064,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 +
  pub struct Attributes {
      inner: ThinVec<Attribute>,
-+    /// lightningpanda: the hints these attributes map to, built at the
++    /// pyro: the hints these attributes map to, built at the
 +    /// first cascade that asks and dropped by every write (`set`, `remove`,
 +    /// `DerefMut`). They depend on the attributes and the element's name
 +    /// only.
@@ -9924,7 +10112,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
          idx.map(|idx| self.inner.remove(idx))
      }
 +
-+    /// lightningpanda: the cached presentational hints, built by `build`
++    /// pyro: the cached presentational hints, built by `build`
 +    /// when no cascade asked since the last write.
 +    pub fn presentational_hints(&self, build: impl FnOnce() -> PresentationalHints) -> &PresentationalHints {
 +        self.presentational_hints.get_or_init(|| Box::new(build()))
@@ -9947,7 +10135,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub final_layout: Layout,
      pub scroll_offset: crate::Point<f64>,
      pub scrollable_overflow: KurboRect,
-+    /// lightningpanda: a bound of what hit testing finds in this box's subtree
++    /// pyro: a bound of what hit testing finds in this box's subtree
 +    /// (device px, its own coordinates, like `scrollable_overflow`): the
 +    /// scrollable overflow with the boxes and lines of no area that it drops
 +    /// (a `line-height: 0` line, a box of no width), and the glyph runs' content
@@ -9955,16 +10143,16 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +    /// Brought up to date by the first hit test after a resolve
 +    /// (`BaseDocument::ensure_hit_overflow`).
 +    pub hit_overflow: KurboRect,
-+    /// lightningpanda: a transform pass computed this box again since its
++    /// pyro: a transform pass computed this box again since its
 +    /// `hit_overflow` was (`BaseDocument::resolve_transforms`).
 +    pub hit_stale: bool,
 +    /// The unrounded layout and the fractional part of the parent's absolute position the final
 +    /// layout was last rounded from (incremental rounding: `RoundTree::rounded_unchanged`).
 +    pub rounded_from: Option<(Layout, f32, f32)>,
-+    /// lightningpanda: the half collapsed borders of a cell in a table without uniform ones (top,
++    /// pyro: the half collapsed borders of a cell in a table without uniform ones (top,
 +    /// right, bottom, left; see `CollapsedEdges`).
 +    pub collapsed_border: Option<[f32; 4]>,
-+    /// lightningpanda: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
++    /// pyro: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
 +    pub table_cell_index: u32,
      /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
      /// recorded by the layout pass for CSSOM geometry lookups.
@@ -9985,9 +10173,9 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          {
              data.element_state.insert(ElementState::CHECKED);
          }
-+        // lightningpanda: a selected `<option>` is `:checked` (lp-dom's render
++        // pyro: a selected `<option>` is `:checked` (pyro-dom's render
 +        // tree writes `selected` for the current selectedness), and the form
-+        // states lp-dom mirrors as `urn:x-lightningpanda:state` tokens are
++        // states pyro-dom mirrors as `urn:x-pyro:state` tokens are
 +        // element states, so Stylo's state invalidation (and `:has()`'s)
 +        // follows them.
 +        data.sync_lp_attribute_state();
@@ -9998,17 +10186,17 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
-+    /// lightningpanda: brings the element states that mirror attributes
-+    /// lp-dom's render tree writes up to the attributes: `:checked` of a
-+    /// selected `<option>`, and the [`crate::LP_STATE_NS`] `state` tokens.
++    /// pyro: brings the element states that mirror attributes
++    /// pyro-dom's render tree writes up to the attributes: `:checked` of a
++    /// selected `<option>`, and the [`crate::PYRO_STATE_NS`] `state` tokens.
 +    pub(crate) fn sync_lp_attribute_state(&mut self) {
 +        let lp = self
 +            .attrs
 +            .iter()
-+            .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "state")
++            .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state")
 +            .map(|a| a.value.as_str());
-+        let bits = crate::has_invalidation::lp_state_bits(lp);
-+        self.element_state.remove(crate::has_invalidation::LP_STATES);
++        let bits = crate::has_invalidation::pyro_state_bits(lp);
++        self.element_state.remove(crate::has_invalidation::PYRO_STATES);
 +        self.element_state.insert(bits);
 +        if self.name.local == local_name!("option") {
 +            let selected = self.has_attr(local_name!("selected"));
@@ -10038,7 +10226,8 @@ diff --git a/packages/blitz-dom/src/node/mod.rs b/packages/blitz-dom/src/node/mo
 +pub(crate) use stylo_data::LayoutStyles;
  #[cfg(feature = "svg")]
  pub use svg::{SvgImageData, SvgIntrinsicDimensions};
- pub use text::{GeneratedTextInputEvent, TextBrush, TextInputData, TextLayout};
+-pub use text::{GeneratedTextInputEvent, TextBrush, TextInputData, TextLayout};
++pub use text::{GeneratedTextInputEvent, InputPlaceholder, TextBrush, TextInputData, TextLayout};
 diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/node.rs
 --- a/packages/blitz-dom/src/node/node.rs
 +++ b/packages/blitz-dom/src/node/node.rs
@@ -10055,7 +10244,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          const IS_IN_DOCUMENT = 0b00000100;
          /// Whether the node is an inline box whose in-flow content is block-level only
          const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
-+        /// lightningpanda: the node had damage of its own (a mutation or a restyle), not only its
++        /// pyro: the node had damage of its own (a mutation or a restyle), not only its
 +        /// descendants', when this pass propagated damage. Set by `propagate_damage_flags`, cleared
 +        /// with the damage; the paint tree reads it (`PAINT_TREE_OWN_DAMAGE`), tables read
 +        /// `OWN_LAYOUT_DAMAGE`.
@@ -10071,7 +10260,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        /// reads it where it used to read `OWN_DAMAGE`, which each resolve clears
 +        /// (`table_paint_children_kept`). Set and cleared with `PAINT_TREE_DIRTY`.
 +        const PAINT_TREE_OWN_DAMAGE = 0b01000000;
-+        /// lightningpanda: `OWN_DAMAGE` whose damage reaches layout (`damage::reaches_layout`:
++        /// pyro: `OWN_DAMAGE` whose damage reaches layout (`damage::reaches_layout`:
 +        /// relayout, construction, reordering), not only paint. Tables read it to tell a cell or
 +        /// row that is to be collected again from one whose colour, background or opacity
 +        /// changed. Set and cleared with `OWN_DAMAGE`.
@@ -10083,7 +10272,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub layout_parent: Cell<Option<NodeId>>,
      /// A separate child list that includes anonymous collections of inline elements
      pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
-+    /// lightningpanda: the node whose `layout_children` list holds this node,
++    /// pyro: the node whose `layout_children` list holds this node,
 +    /// kept where those lists are built (`resolve_layout_children`). The node
 +    /// is a box of the current layout when it equals `layout_parent` (which
 +    /// inline content of an inline root also has, without being listed).
@@ -10122,7 +10311,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    /// its ancestors: their rounding (`RoundTree::rounded_unchanged`) and cached scrollable overflow
 +    /// read those flags, and a relayout can move a box that no style change touched.
 +    ///
-+    /// lightningpanda: a box that only moved keeps its own scrollable overflow and transform (both in
++    /// pyro: a box that only moved keeps its own scrollable overflow and transform (both in
 +    /// its own coordinates), and its rounding is keyed on its layout and offset: only its ancestors,
 +    /// whose overflow it is part of, are marked.
 +    pub fn update_unrounded_layout(&mut self, update: impl FnOnce(&mut Layout)) {
@@ -10142,7 +10331,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          &mut self.layout_data_mut().scrollable_overflow
      }
  
-+    /// lightningpanda: see `LayoutData::hit_overflow`.
++    /// pyro: see `LayoutData::hit_overflow`.
 +    #[inline]
 +    pub fn hit_overflow(&self) -> &KurboRect {
 +        &self.layout_data().hit_overflow
@@ -10175,7 +10364,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
      }
  
-+    /// lightningpanda: whether a `transform`, `translate`, `rotate` or `scale` style applies,
++    /// pyro: whether a `transform`, `translate`, `rotate` or `scale` style applies,
 +    /// which [`Self::set_transform`] resolves against the rounded size. A transform that
 +    /// resolves to the identity at one size (`translate: 50%` at width 0) is stored as
 +    /// `None`, so `transform().is_some()` alone does not tell whether a new size changes it.
@@ -10229,7 +10418,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .is_some_and(|flag| flag.load(Ordering::Relaxed))
      }
  
-+    /// lightningpanda: whether a pass that follows damage down the layout tree has nothing to do
++    /// pyro: whether a pass that follows damage down the layout tree has nothing to do
 +    /// in this node's subtree: an element (not an anonymous box, whose flag is not maintained)
 +    /// whose `damaged_descendants` flag is clear, still listed by `layout_parent`. By the invariant
 +    /// [`Self::mark_damaged`] keeps, such a node carries no damage, nor does anything below it.
@@ -10256,7 +10445,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        clean
 +    }
 +
-+    /// lightningpanda: whether the DOM walks that follow damage (`propagate_damage_flags`,
++    /// pyro: whether the DOM walks that follow damage (`propagate_damage_flags`,
 +    /// `clear_damage_and_dirty_flags`) have nothing to do in this node's subtree: it is not an
 +    /// anonymous box (whose flag is not maintained) and its `damaged_descendants` flag is clear
 +    /// (a text or comment node has none, nor damage). By the invariant [`Self::mark_damaged`]
@@ -10308,7 +10497,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    /// descendants (a layout change: `update_unrounded_layout`, a rounded size a transform
 +    /// resolves against).
 +    ///
-+    /// lightningpanda: the walk stops at a node already flagged, as `mark_damaged` does. A flag is
++    /// pyro: the walk stops at a node already flagged, as `mark_damaged` does. A flag is
 +    /// only set together with those of every ancestor (here, in `mark_damaged`, and a node joining
 +    /// the tree flags its new parent: `add_children_to_parent`), and
 +    /// `clear_damage_and_dirty_flags` clears a node's flag after those below it, so a flagged
@@ -10408,7 +10597,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        }
 +    }
 +
-+    /// lightningpanda: rewrite the layout styles derived from the node's primary style
++    /// pyro: rewrite the layout styles derived from the node's primary style
 +    /// ([`LayoutStyles`]). Called wherever the primary style is replaced outside the style
 +    /// traversal, and when a cell's collapsed borders change.
 +    pub(crate) fn update_layout_styles(&mut self) {
@@ -10426,7 +10615,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    /// Set a table cell's half collapsed borders, and its layout style with them. The cell's
 +    /// table-part Taffy style does not depend on them and stays.
 +    ///
-+    /// lightningpanda: the cell's own layout reads its layout style, so a change clears what its
++    /// pyro: the cell's own layout reads its layout style, so a change clears what its
 +    /// last layout measured (`clear_layout_cache`), whichever path changed it: a table built
 +    /// again (`build_table_context`) leaves its undamaged cells' layouts in place otherwise.
 +    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
@@ -10594,6 +10783,82 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              })
          }))
      }
+diff --git a/packages/blitz-dom/src/node/serialize.rs b/packages/blitz-dom/src/node/serialize.rs
+--- a/packages/blitz-dom/src/node/serialize.rs
++++ b/packages/blitz-dom/src/node/serialize.rs
+@@ -34,6 +34,25 @@
+ 
+ const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+ 
++/// pyro: `value` with each `currentcolor` keyword, matched ASCII case-insensitively
++/// as CSS keywords are, replaced by `color`; `None` when it has none.
++fn replace_current_color(value: &str, color: &str) -> Option<String> {
++    const KEYWORD: &str = "currentcolor";
++    let lower = value.to_ascii_lowercase();
++    if !lower.contains(KEYWORD) {
++        return None;
++    }
++    let mut out = String::with_capacity(value.len() + color.len());
++    let mut rest = 0;
++    for (start, _) in lower.match_indices(KEYWORD) {
++        out.push_str(&value[rest..start]);
++        out.push_str(color);
++        rest = start + KEYWORD.len();
++    }
++    out.push_str(&value[rest..]);
++    Some(out)
++}
++
+ /// Writes an attribute's serialized name, per the HTML fragment serialization algorithm
+ fn write_attr_name(name: &QualName, writer: &mut String) {
+     match name.ns {
+@@ -184,15 +203,15 @@
+                     writer.push(' ');
+                     write_attr_name(&attr.name, writer);
+                     writer.push_str("=\"");
+-                    #[allow(clippy::unnecessary_unwrap)] // Convert to if-let chain once stabilised
+-                    if current_color.is_some() && attr.value.contains("currentColor") {
+-                        let value = attr
+-                            .value
+-                            .replace("currentColor", current_color.as_ref().unwrap());
+-                        encode_quoted_attribute_to_string(&value, writer);
+-                    } else {
+-                        encode_quoted_attribute_to_string(&attr.value, writer);
+-                    }
++                    // pyro: the keyword in any case (`currentcolor` is how CSSOM, and so
++                    // React's `style`, writes it); usvg knows only `currentColor`.
++                    match current_color
++                        .as_deref()
++                        .and_then(|color| replace_current_color(&attr.value, color))
++                    {
++                        Some(value) => encode_quoted_attribute_to_string(&value, writer),
++                        None => encode_quoted_attribute_to_string(&attr.value, writer),
++                    };
+                     writer.push('"');
+                 }
+                 if !has_children {
+@@ -224,3 +243,21 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::replace_current_color;
++
++    #[test]
++    fn current_color_is_replaced_in_any_case() {
++        let gray = "rgb(64, 69, 79)";
++        assert_eq!(replace_current_color("fill: currentcolor;", gray).as_deref(), Some("fill: rgb(64, 69, 79);"));
++        assert_eq!(replace_current_color("currentColor", gray).as_deref(), Some(gray));
++        assert_eq!(
++            replace_current_color("stroke: CURRENTCOLOR; fill: currentColor", gray).as_deref(),
++            Some("stroke: rgb(64, 69, 79); fill: rgb(64, 69, 79)")
++        );
++        assert_eq!(replace_current_color("url(#ä) currentcolor", "red").as_deref(), Some("url(#ä) red"));
++        assert_eq!(replace_current_color("none", gray), None);
++    }
++}
 diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/node/stylo_data.rs
 --- a/packages/blitz-dom/src/node/stylo_data.rs
 +++ b/packages/blitz-dom/src/node/stylo_data.rs
@@ -10607,7 +10872,7 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
  ///   - Stylo's thread-safe traversal model: `init`/`clear` only happen during exclusive-access phases
  pub struct StyloData {
      inner: UnsafeCell<Option<ElementDataWrapper>>,
-+    /// lightningpanda: the primary style in the forms layout reads it in, rewritten whenever the
++    /// pyro: the primary style in the forms layout reads it in, rewritten whenever the
 +    /// primary style is replaced (see [`LayoutStyles`]).
 +    layout: UnsafeCell<LayoutStyles>,
  }
@@ -10621,7 +10886,7 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
      }
  }
  
-+/// lightningpanda: what layout reads of a node's primary style, derived from it when it is
++/// pyro: what layout reads of a node's primary style, derived from it when it is
 +/// written instead of on every layout pass. The style traversal (`RecalcStyle::process_preorder`,
 +/// `sync_pseudo_element_styles`) rewrites it when a primary style is replaced with restyle damage
 +/// that reaches layout ([`LayoutStyles::affected_by`]); `Node::update_layout_styles` wherever a
@@ -10817,6 +11082,110 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
 +        self.layout.unwrap_or_else(|| self.primary.0.styles.get_primary().unwrap())
      }
  }
+diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/svg.rs
+--- a/packages/blitz-dom/src/node/svg.rs
++++ b/packages/blitz-dom/src/node/svg.rs
+@@ -80,6 +80,9 @@
+     pub tree: Arc<usvg::Tree>,
+     /// The dimensions declared on the root `<svg>` element.
+     pub intrinsic_dimensions: SvgIntrinsicDimensions,
++    /// pyro: the source of an inline `<svg>` without a `viewBox`, whose content
++    /// is laid out in its CSS box (see [`Self::sized`]).
++    pub inline_source: Option<Arc<str>>,
+ }
+ 
+ impl SvgImageData {
+@@ -110,9 +113,25 @@
+         Ok(Self {
+             tree: Arc::new(tree),
+             intrinsic_dimensions: SvgIntrinsicDimensions::from_xmltree(&doc),
++            inline_source: None,
+         })
+     }
+ 
++    /// pyro: an inline `<svg>` without a `viewBox`, parsed again for a CSS box
++    /// `width` x `height` (CSS px): its viewport is the box, so user units are
++    /// CSS px and percentages (a `<use>` of a `<symbol>` sized `100%` by default)
++    /// resolve against the box. Parsed alone, usvg resolves them against
++    /// 100x100 and then shrinks the tree to its content's bounds, which drew
++    /// sprite icons too large. `None` for other images, or an empty box.
++    pub fn sized(&self, width: f32, height: f32) -> Option<SvgImageData> {
++        let source = self.inline_source.as_deref()?;
++        if !(width > 0.0 && height > 0.0) {
++            return None;
++        }
++        let source = with_root_size(source, width, height)?;
++        crate::util::parse_svg_image(source.as_bytes()).ok()
++    }
++
+     /// The intrinsic width in CSS px, present only when the root `<svg>`
+     /// declared an absolute (non-percentage) `width`.
+     pub fn intrinsic_width(&self) -> Option<f32> {
+@@ -263,3 +282,64 @@
+     let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
+     usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
+ }
++
++/// pyro: `source` (an SVG document whose root is `<svg`) with the root's
++/// `width` and `height` attributes set to `width` x `height`.
++fn with_root_size(source: &str, width: f32, height: f32) -> Option<String> {
++    let start = source.find("<svg")?;
++    // The end of the root's start tag: the first `>` outside an attribute value.
++    let mut quote = None;
++    let end = source[start..].char_indices().find_map(|(i, c)| {
++        match (quote, c) {
++            (None, '"' | '\'') => quote = Some(c),
++            (Some(q), c) if c == q => quote = None,
++            (None, '>') => return Some(start + i),
++            _ => {}
++        }
++        None
++    })?;
++    let tag = &source[start + 4..end];
++    let mut attrs = String::with_capacity(tag.len() + 32);
++    let mut rest = tag;
++    // Drops ` width="..."` and ` height="..."`, keeps every other attribute.
++    while let Some(i) = rest.find(|c: char| c.is_ascii_whitespace()) {
++        attrs.push_str(&rest[..i]);
++        let after = rest[i..].trim_start();
++        let name_end = after.find(|c: char| c == '=' || c.is_ascii_whitespace() || c == '/').unwrap_or(after.len());
++        let name = &after[..name_end];
++        let value_end = after[name_end..]
++            .strip_prefix('=')
++            .and_then(|v| {
++                let q = v.chars().next().filter(|q| *q == '"' || *q == '\'')?;
++                v[1..].find(q).map(|e| name_end + 1 + 1 + e + 1)
++            })
++            .unwrap_or(name_end);
++        if name == "width" || name == "height" {
++            rest = &after[value_end..];
++        } else {
++            attrs.push(' ');
++            attrs.push_str(&after[..value_end]);
++            rest = &after[value_end..];
++        }
++    }
++    attrs.push_str(rest);
++    Some(format!(
++        "{}<svg width=\"{width}\" height=\"{height}\"{attrs}{}",
++        &source[..start],
++        &source[end..]
++    ))
++}
++
++#[cfg(test)]
++mod sized_tests {
++    use super::with_root_size;
++
++    #[test]
++    fn the_root_gets_the_box_size_and_keeps_its_other_attributes() {
++        let source = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100%" stroke-width="1.8" height='24' class="a>b"><rect width="50%"/></svg>"#;
++        assert_eq!(
++            with_root_size(source, 16.0, 20.5).unwrap(),
++            r#"<svg width="16" height="20.5" xmlns="http://www.w3.org/2000/svg" stroke-width="1.8" class="a>b"><rect width="50%"/></svg>"#
++        );
++    }
++}
 diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/text.rs
 --- a/packages/blitz-dom/src/node/text.rs
 +++ b/packages/blitz-dom/src/node/text.rs
@@ -10837,7 +11206,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
      pub layout: parley::layout::Layout<TextBrush>,
      /// Block-axis offset (in CSS px) of the line boxes from the top of the container's content
      /// box, as applied by `align-content`.
-@@ -33,10 +32,32 @@
+@@ -33,10 +32,36 @@
      /// containing block (as `SPAN_*_CB` flags). The inline root claims those boxes in its place.
      /// Set by each `RunMode::PerformLayout` run of inline layout.
      pub span_cb_flags: stylo_taffy::StyleFlags,
@@ -10854,23 +11223,27 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
      /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
      /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
      pub content_box_subpixel_offset: taffy::Point<f32>,
-+    /// lightningpanda: the min-content and max-content widths of the shaped text, part of the
++    /// pyro: the min-content and max-content widths of the shaped text, part of the
 +    /// build (`build_inline_layout_into`) when no in-flow inline box takes part in them (each
 +    /// layout sizes those). With no text indent they are the layout's content widths
 +    /// (`Layout::calculate_content_widths`, which walks every cluster): every width the text is
 +    /// measured or laid out at reads them instead.
 +    pub text_content_widths: Option<parley::layout::ContentWidths>,
-+    /// lightningpanda: how far (device px) the content areas of the glyph runs
++    /// pyro: how far (device px) the content areas of the glyph runs
 +    /// reach outside their line boxes (see `BaseDocument::resolve_transforms`),
 +    /// measured by the first transform pass after the lines were last broken
 +    /// (or justified); `None` until then (breaking resets it).
 +    pub hit_reach: Option<f64>,
-+    /// lightningpanda: the last alignment justified some lines.
++    /// pyro: the last alignment justified some lines.
 +    pub justified: bool,
++    /// pyro: "…" shaped in the inline root's style, when the root clips its overflow and has
++    /// `text-overflow: ellipsis` at the end of its lines: paint ends each line that overflows
++    /// the content box with it.
++    pub ellipsis: Option<Box<parley::layout::Layout<TextBrush>>>,
  }
  
  impl TextLayout {
-@@ -44,10 +65,24 @@
+@@ -44,10 +69,24 @@
          Default::default()
      }
  
@@ -10899,6 +11272,97 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
      }
  }
  
+@@ -80,6 +119,72 @@
+     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
+     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
+     pub content_box_subpixel_offset: taffy::Point<f32>,
++    /// pyro: the `placeholder` attribute laid out in the element's `::placeholder` style
++    /// (`None` without one); paint shows it while the value is empty.
++    pub placeholder: Option<Box<InputPlaceholder>>,
++}
++
++/// pyro: the placeholder text of an `<input>` or `<textarea>`, laid out in its
++/// `::placeholder` style.
++pub struct InputPlaceholder {
++    /// The text (a single-line input's without its line breaks).
++    pub text: String,
++    /// The style it was laid out in, kept to lay it out again at another scale.
++    pub style: parley::TextStyle<'static, 'static, TextBrush>,
++    pub layout: parley::Layout<TextBrush>,
++    /// Its colour (`opacity` folded into the alpha).
++    pub color: style::color::AbsoluteColor,
++    /// `text-align` and the base direction (`direction`, `unicode-bidi`) it resolves against.
++    pub alignment: parley::Alignment,
++    pub base_direction: parley::BaseDirection,
++}
++
++impl InputPlaceholder {
++    /// Shapes the text again (at a new `scale`) and breaks it into lines at
++    /// `width` (device px; `None`: at its line breaks only).
++    pub fn relayout(
++        &mut self,
++        font_ctx: &mut FontContext,
++        layout_ctx: &mut LayoutContext<TextBrush>,
++        scale: f32,
++        width: Option<f32>,
++    ) {
++        let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &self.style);
++        builder.set_base_direction(self.base_direction);
++        builder.push_text(&self.text);
++        self.layout = builder.build().0;
++        self.break_lines(width);
++    }
++
++    /// Breaks the shaped text into lines at `width` (device px), aligned in it.
++    pub fn break_lines(&mut self, width: Option<f32>) {
++        self.layout.break_all_lines(width);
++        if width.is_some() {
++            self.layout
++                .align(self.alignment, parley::AlignmentOptions::default());
++        }
++    }
++
++    /// Where a line `line_width` wide starts in a content box `box_width` wide
++    /// (both device px): `text-align`, and start-aligned when it overflows (CSS Text 3).
++    pub fn line_start(&self, line_width: f32, box_width: f32) -> f32 {
++        use parley::Alignment;
++        let rtl = self.base_direction == parley::BaseDirection::Rtl
++            || self.base_direction == parley::BaseDirection::Auto && self.layout.is_rtl();
++        let free = box_width - line_width;
++        if free < 0.0 {
++            // Start-aligned: it overflows its end edge.
++            return if rtl { free } else { 0.0 };
++        }
++        match self.alignment {
++            Alignment::Left => 0.0,
++            Alignment::Right => free,
++            Alignment::Center => free / 2.0,
++            Alignment::End if !rtl => free,
++            Alignment::Start | Alignment::Justify if rtl => free,
++            _ => 0.0,
++        }
++    }
+ }
+ 
+ // FIXME: Implement Clone for PlainEditor
+@@ -97,9 +202,17 @@
+             is_multiline,
+             scroll_offset: 0.0,
+             content_box_subpixel_offset: taffy::Point::ZERO,
++            placeholder: None,
+         }
+     }
+ 
++    /// pyro: the placeholder to paint now: the element has one and its value is empty.
++    pub fn shown_placeholder(&self) -> Option<&InputPlaceholder> {
++        self.placeholder
++            .as_deref()
++            .filter(|_| self.editor.raw_text().is_empty())
++    }
++
+     pub fn set_text(
+         &mut self,
+         font_ctx: &mut FontContext,
 diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.rs
 --- a/packages/blitz-dom/src/resolve.rs
 +++ b/packages/blitz-dom/src/resolve.rs
@@ -11124,7 +11588,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        // Forced layouts (`getBoundingClientRect` and the like) never read
 +        // them, so a run of them builds the tree once, not once per resolve.
 +        self.paint_tree_dirty = true;
-+        // lightningpanda: so are the hit bounds (`ensure_hit_overflow`).
++        // pyro: so are the hit bounds (`ensure_hit_overflow`).
 +        self.hit_overflow_dirty = true;
          timer.record_time("paint_tree");
 +        phase_profile::mark(6, &mut phase_t);
@@ -11236,7 +11700,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    /// The transforms and overflow of `node_id`'s subtree: what it adds to its
 +    /// parent's scrollable overflow, in the parent's coordinates.
 +    ///
-+    /// lightningpanda: each box this pass computes again is flagged
++    /// pyro: each box this pass computes again is flagged
 +    /// `LayoutData::hit_stale`; the next hit test brings their hit bounds up
 +    /// to date (`ensure_hit_overflow`), so a run of forced layouts with no
 +    /// hit test in between pays nothing for them.
@@ -11283,14 +11747,14 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 -        let w = self.nodes[node_id].final_layout().size.width as f64 * scale;
 -        let h = self.nodes[node_id].final_layout().size.height as f64 * scale;
 -        let mut overflow = Rect::new(0.0, 0.0, w, h);
-+        // lightningpanda: the scrollable overflow starts at the padding box
++        // pyro: the scrollable overflow starts at the padding box
 +        // (CSS Overflow 3 2.2), not the border box.
 +        let mut overflow = padding_box(&layout, scale);
  
          let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
  
 -        if let Some(ref children) = layout_children {
-+        // lightningpanda: a table's cells, transformed again only where its grid placed them or
++        // pyro: a table's cells, transformed again only where its grid placed them or
 +        // they changed since the last pass (`TableContext::placed`); the others' overflow stands.
 +        if let Some(cells_overflow) = self.table_cells_overflow(node_id, scale, resolve_all) {
 +            if let Some(cells_overflow) = cells_overflow {
@@ -11321,7 +11785,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 -            let child_rect_in_self = self.resolve_transforms(child_id, resolve_all);
 -            overflow = overflow.union(child_rect_in_self);
 +            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all));
-+            // lightningpanda: a box fixed to the viewport is not in the
++            // pyro: a box fixed to the viewport is not in the
 +            // document's scrollable overflow, whatever it reaches.
 +            if viewport_contains_fixed && self.is_fixed(child_id) {
 +                continue;
@@ -11340,7 +11804,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            overflow = unite_overflow(overflow, child_rect_in_self);
 +        }
 +
-+        // lightningpanda: the lines of an inline formatting context are
++        // pyro: the lines of an inline formatting context are
 +        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
 +        // a scroll container adds its end padding after them.
 +        if let Some((lines, true)) = self.line_bounds(node_id, &layout, scale) {
@@ -11361,14 +11825,14 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        placement((scaled_x, scaled_y), transform.as_ref())(contribution)
 +    }
 +
-+    /// lightningpanda: whether `node_id` is `position: fixed`.
++    /// pyro: whether `node_id` is `position: fixed`.
 +    fn is_fixed(&self, node_id: NodeId) -> bool {
 +        self.nodes[node_id]
 +            .primary_styles()
 +            .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed)
 +    }
 +
-+    /// lightningpanda: the box of the lines of `node_id`'s inline formatting
++    /// pyro: the box of the lines of `node_id`'s inline formatting
 +    /// context or text control (its own coordinates, device px; a scroll
 +    /// container's end padding added after them), and whether they reach
 +    /// anywhere (a width or a height). `None`: it lays out no lines.
@@ -11424,7 +11888,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        Some((lines, width > 0.0 || height > 0.0))
 +    }
 +
-+    /// lightningpanda: brings every box's hit bound (`LayoutData::hit_overflow`)
++    /// pyro: brings every box's hit bound (`LayoutData::hit_overflow`)
 +    /// up to date with the last resolve: the boxes the transform passes since
 +    /// the last call computed again (`LayoutData::hit_stale`) and their tables'
 +    /// per-row unions (`TableContext::row_hit_extents`). Hit testing calls
@@ -11447,13 +11911,13 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        }
 +    }
 +
-+    /// lightningpanda: whether a resolve ran since the hit bounds were last
++    /// pyro: whether a resolve ran since the hit bounds were last
 +    /// brought up to date (`ensure_hit_overflow`).
 +    pub fn hit_overflow_is_stale(&self) -> bool {
 +        self.hit_overflow_dirty
 +    }
 +
-+    /// lightningpanda: the hit bound of `node_id`'s subtree (see
++    /// pyro: the hit bound of `node_id`'s subtree (see
 +    /// `LayoutData::hit_overflow`), computed again for the boxes flagged
 +    /// `hit_stale`, and what it adds to its parent's, in the parent's
 +    /// coordinates. It walks the tree `resolve_transforms` walks: a box is
@@ -11510,7 +11974,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            hit = unite_hit(hit, child_hit);
 +        }
 +
-+        // lightningpanda: a glyph run's content area (whole-pixel ascent and
++        // pyro: a glyph run's content area (whole-pixel ascent and
 +        // descent around its baseline, its advance rounded up to a layout
 +        // unit) can reach outside the line boxes: a tight `line-height`,
 +        // hanging white space. Layout queries report an inline element's box
@@ -11537,7 +12001,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        placement((location.x, location.y), node.transform().as_deref())(hit)
 +    }
 +
-+    /// lightningpanda: what a box adds to its parent's scrollable overflow
++    /// pyro: what a box adds to its parent's scrollable overflow
 +    /// (its own coordinates): its border box, plus its own scrollable overflow
 +    /// on the axes it does not clip. A scroll container keeps its content's
 +    /// overflow to itself. (The same for its hit bound.)
@@ -11560,7 +12024,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    }
  
 -        full.transform_rect_bbox(overflow)
-+    /// lightningpanda: whether `node_id` is a `body` whose `overflow` applies
++    /// pyro: whether `node_id` is a `body` whose `overflow` applies
 +    /// to the viewport instead of to it (CSS Overflow 3 3.3): the root's is
 +    /// `visible`, and neither has containment.
 +    pub fn body_overflow_goes_to_viewport(&self, node_id: NodeId) -> bool {
@@ -11585,7 +12049,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
      /// Ensure that the layout_children field is populated for all nodes
      pub fn resolve_layout_children(&mut self) {
-+        // lightningpanda: the boxes that left a container's list this pass and that no container
++        // pyro: the boxes that left a container's list this pass and that no container
 +        // collected again are out of the layout tree, with what their subtrees built
 +        // (`BaseDocument::leave_layout_tree`).
          resolve_layout_children_recursive(self, self.root_node().id);
@@ -11601,7 +12065,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
              let _flags = doc.nodes[node_id].flags;
  
-+            // lightningpanda: a table whose rows or cells changed (their damage reaches it) updates
++            // pyro: a table whose rows or cells changed (their damage reaches it) updates
 +            // the rows that did and keeps its layout children; what it can't update is built again.
 +            let table_changed =
 +                damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) || damage.contains(style::selector_parser::RestyleDamage::RELAYOUT);
@@ -11649,7 +12113,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  collect_layout_children(doc, node_id, &mut collected);
                  let layout_children = collected.children;
 +
-+                // lightningpanda: the previous layout children leave the list
++                // pyro: the previous layout children leave the list
 +                // (`Node::layout_child_of`); the new ones are entered below. A
 +                // child already collected by another container this pass points
 +                // there and is left alone. (Left after collecting: while it runs,
@@ -11702,7 +12166,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take();
                  if let Some(layout_children) = layout_children {
 -                    for child_id in layout_children.iter().copied() {
-+                    // lightningpanda: a table whose cells it keeps visits the cells noted as changed
++                    // pyro: a table whose cells it keeps visits the cells noted as changed
 +                    // (`table::cells_to_visit`), not all of them.
 +                    let noted = crate::layout::table::cells_to_visit(doc, node_id);
 +                    for child_id in noted.as_deref().unwrap_or(&layout_children[..]).iter().copied() {
@@ -11710,7 +12174,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          // slab between render passes; skip stale IDs.
 -                        if !doc.nodes.contains_key(child_id) {
 +                        let Some(child) = doc.nodes.get(child_id) else { continue };
-+                        // lightningpanda: only the children on a damaged path are visited: a child
++                        // pyro: only the children on a damaged path are visited: a child
 +                        // whose subtree has no damage (and is still listed here) would return at
 +                        // the skip above without changing anything. A cell edit in a long table
 +                        // visits that cell, not its thousands of siblings.
@@ -11726,7 +12190,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
      }
  
-+    /// lightningpanda: `clear_damage_and_dirty_flags` reached every node with damage: the walks
++    /// pyro: `clear_damage_and_dirty_flags` reached every node with damage: the walks
 +    /// that follow damage skip a subtree whose root's `damaged_descendants` flag is clear
 +    /// (`Node::has_no_damage_below`), so damage set without its flag would outlive the pass.
 +    #[cfg(debug_assertions)]
@@ -11823,7 +12287,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            None => initial_containing_block,
 +        };
 +
-+        // lightningpanda: same viewport and nothing damaged, so the last pass's layout stands.
++        // pyro: same viewport and nothing damaged, so the last pass's layout stands.
 +        let root = self.root_element();
 +        if self.last_layout_space == Some(available_space)
 +            && !root.has_damaged_descendants()
@@ -11861,7 +12325,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      }
  }
 +
-+/// lightningpanda: `overflow` with what a child adds to it. An empty rect (a
++/// pyro: `overflow` with what a child adds to it. An empty rect (a
 +/// box of no width or no height, with nothing reaching out of it) adds nothing,
 +/// wherever it is: a 2000 x 0 px box does not make a page scroll.
 +impl BaseDocument {
@@ -11887,7 +12351,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let again = placed
 +            .take_transform()
 +            .filter(|_| !resolve_all && placed.overflow.len() == cells && placed.overflow_scale == scale);
-+        // lightningpanda: the next hit test brings these cells' hit contributions up to date
++        // pyro: the next hit test brings these cells' hit contributions up to date
 +        // (`table_cells_hit`).
 +        placed.transformed(again.as_deref(), cells);
 +        let mut overflow = std::mem::take(&mut placed.overflow);
@@ -11916,7 +12380,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        Some(united)
 +    }
 +
-+    /// lightningpanda: `table_cells_overflow` for the hit pass (`resolve_hit_overflow`): the union
++    /// pyro: `table_cells_overflow` for the hit pass (`resolve_hit_overflow`): the union
 +    /// of `table`'s cells' hit contributions (`unite_hit`), computed again for the cells the
 +    /// transform passes since the last hit pass visited, and the per-row unions
 +    /// (`TableContext::row_hit_extents`) of their rows.
@@ -11950,7 +12414,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            .filter(|cell| cell.width() > 0.0 || cell.height() > 0.0)
 +            .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))));
 +        let mut placed = ctx.placed.borrow_mut();
-+        // lightningpanda: the union of the hit contributions per row (the
++        // pyro: the union of the hit contributions per row (the
 +        // cells originating in it: a hit-test bound of the row,
 +        // `TableContext::row_hit_extents`), for the rows of the cells
 +        // computed again only.
@@ -11991,7 +12455,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    }
 +}
 +
-+/// lightningpanda: a box's padding box (its own coordinates, device px), where
++/// pyro: a box's padding box (its own coordinates, device px), where
 +/// its scrollable overflow and hit bound start (CSS Overflow 3 2.2).
 +fn padding_box(layout: &taffy::Layout, scale: f64) -> Rect {
 +    let w = layout.size.width as f64 * scale;
@@ -12005,7 +12469,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    )
 +}
 +
-+/// lightningpanda: a box's rect in its parent: moved to `location`, through
++/// pyro: a box's rect in its parent: moved to `location`, through
 +/// its `transform` (the bounding box), as `transform_rect_bbox` of the
 +/// composed affine computes it (a translation alone adds the same values).
 +fn placement(location: (f64, f64), transform: Option<&Affine>) -> impl Fn(Rect) -> Rect {
@@ -12016,7 +12480,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    }
 +}
 +
-+/// lightningpanda: `hit` with what a child adds to it: as `unite_overflow`, but
++/// pyro: `hit` with what a child adds to it: as `unite_overflow`, but
 +/// a rect of no area that has a width or a height counts (text overflowing
 +/// sideways on lines of `line-height: 0`, a box of no width: hit testing finds
 +/// what such a box holds, or the box itself).
@@ -12028,7 +12492,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    }
 +}
 +
-+/// lightningpanda: how far (device px) the content areas of `layout`'s glyph
++/// pyro: how far (device px) the content areas of `layout`'s glyph
 +/// runs (whole-pixel ascent and descent around the baseline) reach outside
 +/// their line's box, in any direction: before the line's start, past its end
 +/// less hanging white space, above and below its block extent. Aligning moves
@@ -12066,7 +12530,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    }
 +}
 +
-+/// lightningpanda: cumulative time per `resolve` phase (style, damage,
++/// pyro: cumulative time per `resolve` phase (style, damage,
 +/// construct, pconstruct, layout, transform, paint_tree, c_damage, subdocs),
 +/// for profiling incremental relayout. The phases are timed only while
 +/// [`set_timing`] has turned timing on; the counters below always count.
@@ -12489,12 +12953,12 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +}
 +
 +impl Node {
-+    /// `:state(name)`: lightningpanda's custom states attribute (names
++    /// `:state(name)`: pyro's custom states attribute (names
 +    /// separated by U+001F).
 +    fn has_lp_custom_state(&self, state: &str) -> bool {
 +        self.element_data().is_some_and(|e| {
 +            e.attrs.iter().any(|a| {
-+                &*a.name.ns == "urn:x-lightningpanda:state"
++                &*a.name.ns == "urn:x-pyro:state"
 +                    && &*a.name.local == "custom-states"
 +                    && a.value.split('\u{1f}').any(|s| s == state)
 +            })
@@ -12534,7 +12998,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                self.generated_before_after = true;
 +            }
 +        }
-+        // lightningpanda: restyled nodes that stopped being sticky, and
++        // pyro: restyled nodes that stopped being sticky, and
 +        // removed ones, leave the set (only nodes that were sticky are in it).
 +        if !self.sticky_nodes.is_empty() {
 +            let nodes = &self.nodes;
@@ -12565,7 +13029,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        Some(self.resolve_undisplayed_styles(node_id)?.primary().clone())
 +    }
 +
-+    /// lightningpanda: `false` while no style traversal has kept a
++    /// pyro: `false` while no style traversal has kept a
 +    /// `::before` / `::after` style for any element, so
 +    /// [`Self::pseudo_element_style`] with `generated_only` answers `None`
 +    /// for every element (it may stay `true` after they are gone).
@@ -12573,7 +13037,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        self.generated_before_after
 +    }
 +
-+    /// lightningpanda: the style `getComputedStyle(element, pseudo)` reads
++    /// pyro: the style `getComputedStyle(element, pseudo)` reads
 +    /// for the element `node_id`: an eagerly cascaded pseudo-element's
 +    /// (`::before`, `::after`, `::first-letter`, `::selection`) as the
 +    /// traversal kept it (resolved on demand inside `display: none`), a
@@ -12796,7 +13260,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
-+        // lightningpanda: this element is in the subtree (or among the
++        // pyro: this element is in the subtree (or among the
 +        // siblings) a `:has()` bloom filter covers, and a search the filter
 +        // fast-rejects visits nothing and so flags nothing. Flag it as
 +        // searched in both directions, as a full search would have, so a
@@ -12824,7 +13288,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        Self: 'h,
      {
 -        let Some(elem) = self.data.downcast_element() else {
-+        // lightningpanda: Stylo 0.24 borrows the declaration blocks for the
++        // pyro: Stylo 0.24 borrows the declaration blocks for the
 +        // cascade, so the element owns them (`Attributes::presentational_hints`).
 +        let node: &'h Node = self;
 +        let Some(elem) = node.data.downcast_element() else {
@@ -12874,14 +13338,14 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    where
 +        F: FnMut(&AtomIdent),
 +    {
-+        // lightningpanda: lp-dom's render tree lists them (`has_lp_custom_state`).
++        // pyro: pyro-dom's render tree lists them (`has_lp_custom_state`).
 +        let value = self.attrs().and_then(|attrs| {
 +            attrs
 +                .iter()
-+                .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "custom-states")
++                .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "custom-states")
 +        });
 +        if let Some(attr) = value {
-+            for state in crate::has_invalidation::lp_custom_states(Some(&attr.value)) {
++            for state in crate::has_invalidation::pyro_custom_states(Some(&attr.value)) {
 +                callback(AtomIdent::cast(&style::Atom::from(state)));
 +            }
 +        }
@@ -13180,13 +13644,13 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
-+    /// lightningpanda: an element styled in this traversal kept a
++    /// pyro: an element styled in this traversal kept a
 +    /// `::before` / `::after` style (one its rules generate).
 +    generated_before_after: std::sync::atomic::AtomicBool,
-+    /// lightningpanda: elements styled `position: sticky` in this traversal
++    /// pyro: elements styled `position: sticky` in this traversal
 +    /// (`BaseDocument::sticky_nodes`).
 +    sticky_nodes: Mutex<Vec<NodeId>>,
-+    /// lightningpanda: the elements whose primary style this traversal replaced, with the old
++    /// pyro: the elements whose primary style this traversal replaced, with the old
 +    /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
 +    style_changes: Mutex<Vec<crate::StyleChange>>,
 +    track_style_changes: bool,
@@ -13206,7 +13670,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  #[allow(unsafe_code)]
-+/// lightningpanda: what the style traversal must reach once Stylo's relative selector
++/// pyro: what the style traversal must reach once Stylo's relative selector
 +/// invalidator invalidated `element` (as Gecko's `relative_selector_invalidated_at`): the
 +/// hints are set, the dirty-descendants bits lead to them.
 +fn relative_selector_invalidated_at(element: BlitzNode<'_>, result: &InvalidationResult) {
@@ -13224,7 +13688,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +}
 +
 +impl crate::BaseDocument {
-+    /// lightningpanda: the `:has()` anchors whose answer the insertion of `node_id` can change
++    /// pyro: the `:has()` anchors whose answer the insertion of `node_id` can change
 +    /// restyle. Stylo's relative selector invalidator (as Gecko's
 +    /// `MaybeInvalidateRelativeSelectorForInsertion`) looks the element's, and its
 +    /// descendants', tags, ids, classes and attributes up in the stylist's relative selector
@@ -13252,7 +13716,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        self.invalidate_relative_selectors(node, inherited, operation);
 +    }
 +
-+    /// lightningpanda: as [`Self::invalidate_relative_selectors_for_insertion`] for an element
++    /// pyro: as [`Self::invalidate_relative_selectors_for_insertion`] for an element
 +    /// about to be removed (or moved away), called while it is still linked: the anchors are
 +    /// found through its parent and earlier siblings.
 +    pub(crate) fn invalidate_relative_selectors_for_removal(&self, node_id: NodeId) {
@@ -13312,7 +13776,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        }
 +    }
 +
-+    /// lightningpanda: the `:has()` anchors whose answer a change of `node_id`'s emptiness or
++    /// pyro: the `:has()` anchors whose answer a change of `node_id`'s emptiness or
 +    /// sibling position can flip restyle (as Gecko's
 +    /// `MaybeInvalidateRelativeSelectorForEmptyDependency`, `...ForNthEdgeDependency` and
 +    /// `...ForNthDependencyFromSibling`). `:empty`, `:nth-child()` and `:first-child`/
@@ -13381,14 +13845,14 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            // Held (not just its address) so that a replacement cannot reuse the allocation.
 +            let old_primary = data.styles.get_primary().cloned();
              recalc_style_at(self, context, el, &mut data, note_child);
-+            // lightningpanda: a replaced primary style rewrites what layout reads of it.
++            // pyro: a replaced primary style rewrites what layout reads of it.
 +            let new_primary = data.styles.get_primary();
 +            let replaced = match (&old_primary, new_primary) {
 +                (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
 +                (None, None) => false,
 +                _ => true,
 +            };
-+            // lightningpanda: the embedder's transitions want the style before and after a
++            // pyro: the embedder's transitions want the style before and after a
 +            // replacement; a first style, or styles dropped, is no change.
 +            if self.track_style_changes && replaced {
 +                if let (Some(old), Some(new)) = (&old_primary, new_primary) {
@@ -13482,7 +13946,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  }
  
-+/// lightningpanda: whether `node`'s primary style is `position: sticky`.
++/// pyro: whether `node`'s primary style is `position: sticky`.
 +pub(crate) fn is_sticky(node: &Node) -> bool {
 +    node.primary_styles()
 +        .is_some_and(|style| style.clone_position() == style::computed_values::position::T::Sticky)
@@ -13538,7 +14002,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      // let val = CSSInlineStyleDeclaration();
  }
 +
-+/// lightningpanda: `:has()` anchors follow insertions and removals through Stylo's relative
++/// pyro: `:has()` anchors follow insertions and removals through Stylo's relative
 +/// selector invalidator (`invalidate_relative_selectors_for_insertion`/`_removal`), and
 +/// emptiness and sibling-position changes inside an argument through its tree-structural
 +/// dependencies (`invalidate_relative_selectors_for_ts_state`).
@@ -13936,7 +14400,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    }
 +}
 +
-+/// lightningpanda: Stylo skips the eager `::before`/`::after` match and cascade when no rule
++/// pyro: Stylo skips the eager `::before`/`::after` match and cascade when no rule
 +/// that can generate a box matches (`Stylist::may_generate_box_for_pseudo`). What generates,
 +/// and the styles Stylo keeps, must not change.
 +#[cfg(test)]
@@ -14326,16 +14790,16 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  
  pub type Color = AlphaColor<Srgb>;
  
-+/// lightningpanda: stack left below which [`ensure_stack`] moves to a new stack segment. It covers
++/// pyro: stack left below which [`ensure_stack`] moves to a new stack segment. It covers
 +/// everything one tree level runs between two checkpoints: a level of Taffy's and Blitz's layout
 +/// dispatch (about 3 KB), plus a leaf's own work (inline layout and shaping, table and grid
 +/// sizing, a paint of text), which is not recursive.
 +pub const STACK_RED_ZONE: usize = 256 * 1024;
-+/// lightningpanda: size of each stack segment [`ensure_stack`] maps (lazily committed): about
++/// pyro: size of each stack segment [`ensure_stack`] maps (lazily committed): about
 +/// 1,500 more levels of nested blocks per segment.
 +pub const STACK_GROW_BY: usize = 4 * 1024 * 1024;
 +
-+/// lightningpanda: run `f`, first moving to a new stack segment when less than
++/// pyro: run `f`, first moving to a new stack segment when less than
 +/// [`STACK_RED_ZONE`] is left. Recursive tree walks (layout, paint, the paint tree, damage,
 +/// rounding, box construction) run each level through this, so a deep tree never overflows the
 +/// thread's stack and aborts the process, whatever stack the caller left (JS recursion near
@@ -14353,7 +14817,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
  pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
-+    // lightningpanda: parsed images by their source. An inline <svg> is
++    // pyro: parsed images by their source. An inline <svg> is
 +    // parsed from a snapshot of its subtree each time its box is built, and
 +    // pages that clone content (a header logo on every printed page) build
 +    // the same one again and again; the parse depends on the source alone.
@@ -14387,7 +14851,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
      };
  }
 +
-+/// lightningpanda: the font a downloaded (or `data:`) font file becomes,
++/// pyro: the font a downloaded (or `data:`) font file becomes,
 +/// one per distinct file on this thread. Documents that load the same web
 +/// font then register the same blob (same id), so shaping caches keyed by
 +/// the font's blob id serve every document; each document still registers
@@ -14424,7 +14888,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +        Default::default();
 +}
 +
-+/// lightningpanda: the Stylo lock every document of this thread uses, so
++/// pyro: the Stylo lock every document of this thread uses, so
 +/// their sheets and rules can be shared (documents of a thread never style
 +/// concurrently).
 +pub(crate) fn thread_style_lock() -> style::shared_lock::SharedRwLock {
@@ -14438,7 +14902,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +    h.finish()
 +}
 +
-+/// lightningpanda: the sheet parsed earlier on this thread for `css` with
++/// pyro: the sheet parsed earlier on this thread for `css` with
 +/// base URL `url`, if any.
 +pub(crate) fn shared_sheet(css: &str, url: &str) -> Option<style::stylesheets::DocumentStyleSheet> {
 +    let key = sheet_key(css);
@@ -14451,7 +14915,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +    })
 +}
 +
-+/// lightningpanda: keeps `sheet` (parsed from `css` with base URL `url`) for
++/// pyro: keeps `sheet` (parsed from `css` with base URL `url`) for
 +/// later documents; bounded at 64 sheets and 32 MB of text.
 +pub(crate) fn share_sheet(css: &str, url: &str, sheet: &style::stylesheets::DocumentStyleSheet) {
 +    const MAX_SHEETS: usize = 64;

@@ -451,7 +451,7 @@ pub(super) fn align_and_position_item(
     positioned
 }
 
-/// lightningpanda: an item as `align_and_position_item` positioned it, with what positioning it again in
+/// pyro: an item as `align_and_position_item` positioned it, with what positioning it again in
 /// an area of the same size elsewhere takes (`TableGridState`): only its block position changes.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PositionedItem {

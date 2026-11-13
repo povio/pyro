@@ -42,9 +42,9 @@ should not be interpreted as a durable advantage. Rewrite post-disposal CPU was 
   [upstream provenance](../upstream-2ad38773f/PROVENANCE.md). Existing binary was reused unmodified.
 - Rewrite source `d673567624446930b68e800bbf4c0b8fa6659ccd`, binary SHA-256
   `f73a686f451545b786b43054e5fe9eb75b2bada0e1e2865f9ae8e0f02623516c`.
-  `cargo build --locked --release -p lightningpanda`, rustc 1.99.1, thin LTO/one codegen unit,
+  `cargo build --locked --release -p pyro`, rustc 1.99.1, thin LTO/one codegen unit,
   SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk.
-  Dependencies include runtime cba2671/f90494e, Network 9b8476c, lp-net 5cac939 (observer 621711c,
+  Dependencies include runtime cba2671/f90494e, Network 9b8476c, pyro-net 5cac939 (observer 621711c,
   request-start 25d8567), and Fetch integration d673567; exact Cargo.lock in that commit.
 - Harness/sampler source `e125473b43f3df26006ca1bbd33e1fdeedf2c1ba`. Sampler built with
   `cargo build --locked --release --manifest-path bench/rss-sampler/Cargo.toml` and the same SDKROOT.
@@ -55,7 +55,7 @@ should not be interpreted as a durable advantage. Rewrite post-disposal CPU was 
 Raw phase snapshots and all individual samples are retained in resources.json, including browser versus
 Node harness CPU. The local server runs in that Node process; no TOS harness costs are included. Sampler
 CPU is separate. Native 20ms traces and stderr are retained locally at
-`/private/tmp/lp-w3-cpu-matched-3/`. A short pilot was used only to validate the harness, not in this table.
+`/private/tmp/pyro-w3-cpu-matched-3/`. A short pilot was used only to validate the harness, not in this table.
 OS/file caches were not flushed and were likely warm. The 20ms peak samples may miss short spikes; retained
 RSS is not a live-heap measurement. Snapshot helper overhead slightly extends CPU observation windows.
 

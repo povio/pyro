@@ -1,5 +1,5 @@
 {
- "workload": "synthetic JsString::new / classic-script realm cycles (crates/lp-js/examples/large_string_cycles.rs); not a browser, CDP or TOS benchmark; ES modules bypass JsString::new",
+ "workload": "synthetic JsString::new / classic-script realm cycles (crates/pyro-js/examples/large_string_cycles.rs); not a browser, CDP or TOS benchmark; ES modules bypass JsString::new",
  "host": {
   "hostname": "PovioServers-Mac-mini.local",
   "os": "26.7.1 (25G241)",
@@ -12,7 +12,7 @@
   "linker": "ld-1267 via scripts/macos/link-and-sign.sh (ad hoc re-sign with com.apple.security.cs.allow-jit; verified on all three binaries)",
   "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk (pinned: ld-1267 cannot read MacOSX27.0.sdk .tbd stubs, which xcrun selects by default)",
   "profile": "release (lto=thin, codegen-units=1, debuginfo)",
-  "command": "cargo build --release --offline -p lp-js --example large_string_cycles"
+  "command": "cargo build --release --offline -p pyro-js --example large_string_cycles"
  },
  "variants": {
   "base": {
@@ -32,7 +32,7 @@
   }
  },
  "example_sha256": "db29d6edb014d4f172a9b808c5de91a6a8ff624edf24b1d2c73c3ddfefff7b46",
- "only_difference": "the three binaries are built from the same tree and example; only crates/lp-js/src/string.rs differs",
+ "only_difference": "the three binaries are built from the same tree and example; only crates/pyro-js/src/string.rs differs",
  "ordering": "run.sh: per configuration, 6 rounds using all 6 permutations of (base,len,exact) once each; ORDER.tsv records configuration, round, position, variant and completion time (UTC, 1-second resolution, recorded after each run exits)",
  "metrics": "footprint/rss = increase of proc_pid_rusage ri_phys_footprint/ri_resident_size over the cycle loop (after engine and source creation), MiB; cpu = getrusage(RUSAGE_SELF) user+system seconds over the loop; wall = monotonic seconds over the loop. Single process per run, no other workload intentionally started. CPU utilization not sampled."
 }

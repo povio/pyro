@@ -59,13 +59,13 @@ pub(crate) struct RunData {
 pub(crate) fn run_box_metrics<B: Brush>(
     style: &Style<B>,
     shaped_run: &ShapedRun,
-    quantize: bool,
+    quantum: f32,
 ) -> Option<BoxMetrics> {
     match style.line_height {
         LineHeight::MetricsRelative(_) => {
             let (size, metrics) = (shaped_run.font_size, &shaped_run.font_metrics);
-            let line_height = style.line_height.resolve(size, metrics, quantize);
-            Some(BoxMetrics::from_font(metrics, line_height, quantize))
+            let line_height = style.line_height.resolve(size, metrics, quantum);
+            Some(BoxMetrics::from_font(metrics, line_height, quantum))
         }
         LineHeight::FontSizeRelative(_) | LineHeight::Absolute(_) => None,
     }
@@ -274,6 +274,12 @@ impl<B: Brush> Default for LayoutData<B> {
 }
 
 impl<B: Brush> LayoutData<B> {
+    /// pyro: the layout units of a CSS pixel when metrics are quantized (the scale), else 0:
+    /// what [`LineHeight::resolve`] and [`BoxMetrics::from_font`] round font metrics to.
+    pub(crate) fn quantum(&self) -> f32 {
+        if self.quantize { self.scale } else { 0. }
+    }
+
     pub(crate) fn clear(&mut self) {
         self.scale = 1.;
         self.quantize = true;
@@ -329,7 +335,7 @@ impl<B: Brush> LayoutData<B> {
         let line_height = self.styles[style_index as usize].line_height.resolve(
             shaped_run.font_size,
             &shaped_run.font_metrics,
-            self.quantize,
+            self.quantum(),
         );
 
         // The run's box metrics, if it's uniform across all the styles within the run. A run's box
@@ -347,7 +353,7 @@ impl<B: Brush> LayoutData<B> {
                 run_box_metrics(
                     &self.styles[usize::from(first_style)],
                     shaped_run,
-                    self.quantize,
+                    self.quantum(),
                 )
             } else {
                 None

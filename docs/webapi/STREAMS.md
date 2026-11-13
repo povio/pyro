@@ -1,6 +1,6 @@
 # Streams
 
-`crates/lp-webapi/src/streams.js` implements the WHATWG Streams classes;
+`crates/pyro-webapi/src/streams.js` implements the WHATWG Streams classes;
 `streams.rs` makes them on a realm's first use and connects them to fetch and
 Blob. A realm that never touches streams only has one global accessor pair per
 interface name; the first read of a name replaces its accessor with the usual

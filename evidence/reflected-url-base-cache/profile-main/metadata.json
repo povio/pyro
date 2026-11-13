@@ -4,12 +4,12 @@
   "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
   "run_slug": "lpurlmain-1018-180821",
   "template_database": "fe_e2e_w2tpl_f9fde4aa_batch16fx_template",
-  "binary": "/private/tmp/lp-url-cache-evidence/lightningpanda-main-4e89ab4",
-  "worktree": "/private/tmp/lp-tos-f9f-batch16-fx",
+  "binary": "/private/tmp/pyro-url-cache-evidence/pyro-main-4e89ab4",
+  "worktree": "/private/tmp/pyro-tos-f9f-batch16-fx",
   "auth": "backend test-token -> localStorage; no UI login",
   "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
   "measurement": "URL-cache paired observer-free three-navigation diagnostic, shared64/private64, explicit JIT/polling; external diagnostic not unchanged suite",
-  "lightningpanda_shared_asset_cache_mb": "64",
+  "pyro_shared_asset_cache_mb": "64",
   "expected_selected_cases": 1,
   "specs": [
     "e2e/configuration/profile-settings.e2e.ts"

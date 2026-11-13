@@ -1,7 +1,7 @@
 {
   "commit": "93b1b3a7c360cd892084a7e4d538024ead798fdc",
-  "cwd": "/private/tmp/lp-final-readiness-main-93b1b3a",
-  "command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p lightningpanda",
+  "cwd": "/private/tmp/pyro-final-readiness-main-93b1b3a",
+  "command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p pyro",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
   "sdk": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
   "sdk_version": "26.5",

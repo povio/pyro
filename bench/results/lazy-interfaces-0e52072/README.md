@@ -55,10 +55,10 @@ short spikes, and retained RSS is not a live-heap figure.
   before the run and 1.32/1.58/1.66 after. No other Worker 3 build, test or profiler ran during timing. DVFS and
   OS caches were not controlled.
 - **Candidate build:** the candidate was built from a clean detached worktree into a **fresh, empty per-SHA target
-  directory** (all 131 crates compiled), with `cargo build --locked --release -p lightningpanda`, rustc 1.99.1,
+  directory** (all 131 crates compiled), with `cargo build --locked --release -p pyro`, rustc 1.99.1,
   LLVM 23.1.1 and `SDKROOT=…/MacOSX26.5.sdk`.
   - Binary SHA-256: `773b253676e980bba9113d5ba8c1d49bba16ff0a0c61ff100344fdf8d0732083`.
-  - Before timing it ran `cargo test --locked --release -p lp-js --test lazy_interfaces` and passed 7/7.
+  - Before timing it ran `cargo test --locked --release -p pyro-js --test lazy_interfaces` and passed 7/7.
 - **Parent binary:** the same immutable binary as the `08ad9e2` comparison, also built in its own fresh target
   directory. Binary SHA-256: `47eac6a5a20f832b8beef9cc2a60e5e846e71ff8af2b2e840f4cff8b364a86ef`.
 - **Section hashes:** `provenance.json` records the per-section hashes of both binaries. The candidate's
@@ -69,5 +69,5 @@ short spikes, and retained RSS is not a live-heap figure.
 - **Run outcome:** the runner exited 0, all 6 assertion runs passed and every browser exited on cleanup SIGTERM.
   No crash markers appeared in stderr.
 - **Raw data:** `resources.json` is a byte-identical copy of the raw output. Per-run samples and stderr are at
-  `/private/tmp/lp-w3-cpu-lazy-0e52072-3/` on the measurement host. The immutable binaries and their logs are at
-  `/private/tmp/lp-w3-lazy-{baseline-4168ac9,candidate-0e52072}-bin/`.
+  `/private/tmp/pyro-w3-cpu-lazy-0e52072-3/` on the measurement host. The immutable binaries and their logs are at
+  `/private/tmp/pyro-w3-lazy-{baseline-4168ac9,candidate-0e52072}-bin/`.

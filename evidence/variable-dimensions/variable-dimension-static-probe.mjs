@@ -6,7 +6,7 @@ import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-const require=createRequire('/private/tmp/lp-tos-f9f-batch16-fx/node_modules/.bun/playwright@1.59.1/node_modules/playwright/package.json');
+const require=createRequire('/private/tmp/pyro-tos-f9f-batch16-fx/node_modules/.bun/playwright@1.59.1/node_modules/playwright/package.json');
 const {chromium}=require('playwright-core');
 const [binary,output]=process.argv.slice(2);
 if(!binary||!output)throw Error('binary and fresh output required');
@@ -16,7 +16,7 @@ const server=http.createServer((q,r)=>{requests++;r.setHeader('Content-Type',q.u
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const url=`http://127.0.0.1:${server.address().port}/configuration/profile`;
 const port=await new Promise(r=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>r(p));});});
-const child=binary==='chromium'?null:spawn(binary,['serve','--host','127.0.0.1','--port',String(port),'--log-level','error'],{cwd:'/private/tmp/lp-reflected-url-cache',env:{...process.env,JSC_usePollingTraps:'true'},stdio:'ignore'});
+const child=binary==='chromium'?null:spawn(binary,['serve','--host','127.0.0.1','--port',String(port),'--log-level','error'],{cwd:'/private/tmp/pyro-reflected-url-cache',env:{...process.env,JSC_usePollingTraps:'true'},stdio:'ignore'});
 let browser;
 const deadline=setTimeout(()=>{child?.kill('SIGKILL');process.exitCode=2;},45000);
 try{

@@ -160,7 +160,19 @@ fn build_inline_layout_with(
         builder.build_into_keeping_lines(&mut text_layout.layout)
     };
     text_layout.text_nodes = std::mem::take(text_nodes);
-    // lightningpanda: the shaped text's content widths, for every layout of it (`TextLayout::
+    // pyro: the "…" that `text-overflow: ellipsis` ends an overflowing line with, in the root's
+    // own style (its first available font, as in Chromium).
+    text_layout.ellipsis = root_node_style
+        .as_deref()
+        .filter(|style| ends_lines_with_ellipsis(style))
+        .map(|_| {
+            let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
+            builder.push_text("\u{2026}");
+            let mut layout = builder.build().0;
+            layout.break_all_lines(None);
+            Box::new(layout)
+        });
+    // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
     // own before it reads them.
@@ -170,6 +182,26 @@ fn build_inline_layout_with(
         text_layout.layout.calculate_content_widths()
     });
     return;
+
+    /// pyro: whether `text-overflow` puts an ellipsis at the end of the lines of a box with this
+    /// style: the box clips its inline overflow, and the end side's value is `ellipsis`. Stylo
+    /// keeps a single value as `second` (the end side); of two, `first` is the line-left side's,
+    /// where right-to-left lines end.
+    fn ends_lines_with_ellipsis(style: &style::properties::ComputedValues) -> bool {
+        use style::computed_values::direction::T as Direction;
+        use style::values::computed::Overflow;
+        use style::values::specified::text::TextOverflowSide;
+        if style.get_box().overflow_x == Overflow::Visible {
+            return false;
+        }
+        let overflow = &style.get_text().text_overflow;
+        let end = if !overflow.sides_are_logical && style.clone_direction() == Direction::Rtl {
+            &overflow.first
+        } else {
+            &overflow.second
+        };
+        matches!(end, TextOverflowSide::Ellipsis)
+    }
 
     fn build_inline_layout_recursive(
         builder: &mut TreeBuilder<TextBrush>,

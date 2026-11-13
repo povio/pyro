@@ -1,4 +1,4 @@
-lightningpanda
+Pyro
 Copyright (C) 2026 Povio and contributors
 
 This project is a Rust rewrite of Lightpanda Browser
@@ -7,7 +7,7 @@ Lightpanda (Selecy SAS), Francis Bouvier, Pierre Tachoire; licensed under the GN
 The design, module structure, behaviour and tests are derived from the
 upstream source at commit 2ad38773fd674d3c9cea26a263b814ee46f6ba84.
 
-lightningpanda is distributed under the same license, AGPL-3.0-only; see
+Pyro is distributed under the same license, AGPL-3.0-only; see
 LICENSE. Network users of a modified version must be offered its source
 (AGPL section 13).
 
@@ -15,15 +15,47 @@ It links JavaScriptCore (WebKit, LGPL-2.0+/BSD). Standard macOS archives load
 the operating-system framework. The macOS ARM64 fork archive and the Linux
 archives contain a separately built, patched JavaScriptCore, linked statically
 into the browser; relinking against a modified JavaScriptCore is a build of
-this project's source (scripts/jsc/build.sh, LP_JSC_DIR).
+this project's source (scripts/jsc/build.sh, PYRO_JSC_DIR).
 Those variants include upstream license files and identify the matching
 JavaScriptCore source archive supplied with the same release. The source
 archive retains upstream notices and includes the exact WebKit revision,
-Lightningpanda patches and build instructions.
+Pyro patches and build instructions.
 
-crates/lp-dom/src/stylo/ua.css is the HTML user-agent stylesheet of
+crates/pyro-dom/src/stylo/ua.css is the HTML user-agent stylesheet of
 blitz-dom (https://github.com/DioxusLabs/blitz), derived from Mozilla
 Firefox's html.css, under the Mozilla Public License 2.0 (header kept),
 with Chrome's defaults for links and form controls.
-crates/lp-dom/src/stylo/hints.rs adapts blitz-dom's presentational hints
+crates/pyro-dom/src/stylo/hints.rs adapts blitz-dom's presentational hints
 (MIT OR Apache-2.0). Style computation uses Stylo (MPL-2.0).
+
+JPEG encoding uses libjpeg-turbo (https://libjpeg-turbo.org), built from the
+source the turbojpeg-sys crate vendors and linked statically. This software is
+based in part on the work of the Independent JPEG Group. libjpeg-turbo's
+TurboJPEG API is under the following license:
+
+  Copyright (C)2009-2024 D. R. Commander.  All Rights Reserved.
+  Copyright (C)2015 Viktor Szathmáry.  All Rights Reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+  - Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the following disclaimer.
+  - Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+  - Neither the name of the libjpeg-turbo Project nor the names of its
+    contributors may be used to endorse or promote products derived from this
+    software without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS",
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  POSSIBILITY OF SUCH DAMAGE.

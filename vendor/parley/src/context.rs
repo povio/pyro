@@ -42,7 +42,7 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
     pub(crate) char_style_indices: Vec<u16>,
     pub(crate) scx: Shaper,
     /// Per style of the layout being built, the first available font the shaper's font selector
-    /// found (lightningpanda; see `shape::FontSelector`), for the style metrics.
+    /// found (pyro; see `shape::FontSelector`), for the style metrics.
     pub(crate) style_first_fonts: Vec<Option<parley_engine::FontInstance>>,
 
     // Unicode analysis data sources (provided by icu)
@@ -58,7 +58,7 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
     pub(crate) previous_layout: crate::layout::data::LayoutData<B>,
 
     /// The line-break override every builder of this context starts with
-    /// (lightningpanda; see [`Self::set_line_break_override`]).
+    /// (pyro; see [`Self::set_line_break_override`]).
     pub(crate) line_break_override: Option<&'static LineBreakOverrideFn>,
 }
 

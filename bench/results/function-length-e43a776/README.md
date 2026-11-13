@@ -66,7 +66,7 @@ differences do not establish an advantage. Sampled peaks may miss short spikes; 
   binary SHA-256 `73323263e912e4c1060d6466705e235d96c4135b02b3fd403fb561a773569a50`.
 - Candidate source `e43a7766cf81ab634bb8744bd490a2f04fd4fa02`, clean checkout, direct child of parent;
   binary SHA-256 `8b1a0c95e3dca3019be2fff9de564fad54155dd4f92eb947f9bb26c1e72c053e`.
-- Both built with `cargo build --locked --release -p lightningpanda`, rustc 1.99.1
+- Both built with `cargo build --locked --release -p pyro`, rustc 1.99.1
   (`58cf8f9c35b355199727627d07ae34a4e2846d67`), LLVM 23.1.1, thin LTO/one codegen unit;
   `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and the same Cargo target directory.
   Exact lockfile/build settings are unchanged. Each executable was copied to a separate immutable artifact
@@ -78,10 +78,10 @@ differences do not establish an advantage. Sampled peaks may miss short spikes; 
 - Six successful assertion runs, runner exit 0. Every browser exited on deliberate cleanup SIGTERM;
   no SIGSEGV or SIGTRAP occurred. This does not resolve the separately preserved raw-JSC SIGTRAP.
 
-The only source changes are in `lp-js` helpers/class installation plus its regression test. Zero-arity
+The only source changes are in `pyro-js` helpers/class installation plus its regression test. Zero-arity
 native methods/statics and constructor wrappers keep their existing length descriptor rather than
 redefining it. Definitions remain eager and the nonzero-arity path remains intact.
-Before timing, this host ran `cargo test --locked --release -p lp-js --test class_lengths`: **1/1 passed**,
+Before timing, this host ran `cargo test --locked --release -p pyro-js --test class_lengths`: **1/1 passed**,
 checking zero/nonzero descriptors/names, eager globals, inheritance/brands, subclassing, cross-realm mutation
 and GC. The runtime owner separately reported 406 workspace tests, 97 selected release tests, strict
 workspace clippy/fmt and 27/27 release Playwright checks; those are owner-reported, not reruns on this host.
@@ -91,9 +91,9 @@ No independent correctness-review approval is inferred from this validation.
 
 ```sh
 NODE_PATH=/path/to/bench/node_modules node bench/scripts/compare-resources.mjs \
-  --upstream /path/to/parent/lightningpanda \
+  --upstream /path/to/parent/pyro \
   --upstream-sha f537c86ee1c31b49e221cc13ee0d7a41ac96e713 \
-  --rewrite /path/to/candidate/lightningpanda \
+  --rewrite /path/to/candidate/pyro \
   --rewrite-sha e43a7766cf81ab634bb8744bd490a2f04fd4fa02 \
   --sampler /path/to/rss-sampler --out /path/to/new-causal-run \
   --samples 3 --navigations 50 --contexts 20 --idle-ms 10000 --retained-ms 2000
@@ -101,8 +101,8 @@ NODE_PATH=/path/to/bench/node_modules node bench/scripts/compare-resources.mjs \
 
 [resources.json](resources.json) is a byte-for-byte copy of all six raw results, including phase snapshots,
 harness costs and cleanup signals. Native traces/stderr remain on the measurement host at
-`/private/tmp/lp-w3-cpu-function-length-e43a776-3/`. Immutable binaries/build provenance remain at
-`/private/tmp/lp-w3-cpu-baseline-f537c86-bin/` and `/private/tmp/lp-w3-cpu-candidate-e43a776-bin/`;
+`/private/tmp/pyro-w3-cpu-function-length-e43a776-3/`. Immutable binaries/build provenance remain at
+`/private/tmp/pyro-w3-cpu-baseline-f537c86-bin/` and `/private/tmp/pyro-w3-cpu-candidate-e43a776-bin/`;
 the latter includes the focused test log. No source or assertions were changed by the measurement worker.
 
 The earlier unpromoted batching variants were not rerun here. This result is separate from the actual TOS

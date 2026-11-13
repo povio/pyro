@@ -1,0 +1,642 @@
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+new file mode 100644
+index 00000000..6e187736
+--- /dev/null
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -0,0 +1,72 @@
++/*
++ * Pyro: see JSForkPrivate.h.
++ */
++
++#include "config.h"
++#include "JSForkPrivate.h"
++
++#include "APICast.h"
++#include "Heap.h"
++#include "JITWorklist.h"
++#include "JSGlobalObject.h"
++#include "JSLock.h"
++#include "VM.h"
++#include "VMTraps.h"
++#include <wtf/CryptographicallyRandomNumber.h>
++#include <bmalloc/BPlatform.h>
++#include <wtf/AutomaticThread.h>
++#include <wtf/Threading.h>
++
++WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
++#if BUSE(LIBPAS)
++#include <bmalloc/bmalloc_prefault_supply.h>
++#include <bmalloc/pas_scavenger.h>
++#include <bmalloc/pas_thread_local_cache.h>
++#endif
++WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
++
++using namespace JSC;
++
++bool JSPrepareForFork(JSContextGroupRef group, double timeoutSeconds)
++{
++    VM& vm = *toJS(group);
++    {
++        JSLockHolder locker(vm);
++#if ENABLE(JIT)
++        if (auto* worklist = JITWorklist::existingGlobalWorklistOrNull())
++            worklist->completeAllPlansForVM(vm);
++#endif
++        // A collection under way has to end before its threads can stop. No
++        // new one is started: the embedder settles the heap when it wants to.
++        if (vm.heap.collectionScope())
++            vm.heap.collectNow(Sync, CollectionScope::Full);
++    }
++#if BUSE(LIBPAS)
++    bmalloc_prefault_supply_suspend();
++    pas_scavenger_suspend();
++#endif
++    return AutomaticThread::sleepAllForFork(Seconds(timeoutSeconds));
++}
++
++void JSDidFork(bool isChild)
++{
++    if (isChild) {
++#if BUSE(LIBPAS)
++        pas_thread_local_cache_did_fork_in_child();
++#endif
++        Thread::currentSingleton().didForkInChild();
++        cryptographicallyRandomNumberDidForkInChild();
++        VMTraps::recreateQueueAfterFork();
++    }
++#if BUSE(LIBPAS)
++    pas_scavenger_resume();
++    bmalloc_prefault_supply_resume();
++#endif
++}
++
++void JSGlobalContextReseedRandom(JSGlobalContextRef ctx)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    globalObject->weakRandom().setSeed(cryptographicallyRandomNumber<uint32_t>());
++}
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+new file mode 100644
+index 00000000..5e96f2a6
+--- /dev/null
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -0,0 +1,43 @@
++/*
++ * Pyro: fork() support. A process that has run JavaScript (for example
++ * booted a web app) can fork() and keep using the same VM in the child, which
++ * then starts from that state with its memory shared copy-on-write.
++ *
++ * fork() keeps only the calling thread, so JavaScriptCore's helper threads (GC
++ * collector and markers, JIT compilers, the libpas scavenger) must not exist at
++ * that moment: they would be missing in the child while their owners still
++ * expect them, and could hold locks the child needs.
++ */
++
++#ifndef JSForkPrivate_h
++#define JSForkPrivate_h
++
++#include <JavaScriptCore/JSBase.h>
++#include <stdbool.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Finishes a garbage collection under way and the JIT compilations of `group`
++   (it starts no collection: collect first for a compact parent), then parks every
++   JavaScriptCore helper thread in the process. Call on the thread that uses
++   `group`, with no other thread running JavaScript, right before fork().
++   Returns false (with threads possibly still running) when they did not stop
++   within `timeoutSeconds`; JSDidFork must still be called. */
++JS_EXPORT bool JSPrepareForFork(JSContextGroupRef group, double timeoutSeconds);
++
++/* Call right after fork(): JSDidFork(false) in the parent, JSDidFork(true) in the
++   child, before anything else uses JavaScriptCore. Helper threads restart on
++   demand. */
++JS_EXPORT void JSDidFork(bool isChild);
++
++/* Gives `ctx` a new Math.random() seed: a fork() child otherwise repeats the
++   parent's (and every sibling's) sequence. */
++JS_EXPORT void JSGlobalContextReseedRandom(JSGlobalContextRef ctx);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* JSForkPrivate_h */
+diff --git a/Source/JavaScriptCore/Sources.txt b/Source/JavaScriptCore/Sources.txt
+index 32274505..adc25aae 100644
+--- a/Source/JavaScriptCore/Sources.txt
++++ b/Source/JavaScriptCore/Sources.txt
+@@ -31,6 +31,7 @@ API/JSCallbackFunction.cpp
+ API/JSCallbackObject.cpp
+ API/JSClassRef.cpp
+ API/JSContextRef.cpp
++API/JSFork.cpp
+ API/JSHeapFinalizerPrivate.cpp
+ API/JSLockRef.cpp
+ API/JSMarkingConstraintPrivate.cpp
+diff --git a/Source/JavaScriptCore/runtime/VMTraps.cpp b/Source/JavaScriptCore/runtime/VMTraps.cpp
+index de2e6e9b..5cec5899 100644
+--- a/Source/JavaScriptCore/runtime/VMTraps.cpp
++++ b/Source/JavaScriptCore/runtime/VMTraps.cpp
+@@ -350,14 +350,22 @@ private:
+ 
+ #endif // ENABLE(SIGNAL_BASED_VM_TRAPS)
+ 
++static std::atomic<WorkQueue*> vmTrapsQueue;
++static std::once_flag vmTrapsQueueOnceKey;
++
+ WorkQueue& VMTraps::queue()
+ {
+-    static LazyNeverDestroyed<Ref<WorkQueue>> workQueue;
+-    static std::once_flag onceKey;
+-    std::call_once(onceKey, [&] {
+-        workQueue.construct(WorkQueue::create("JSC VMTraps Signal Sender"_s));
++    std::call_once(vmTrapsQueueOnceKey, [&] {
++        vmTrapsQueue.store(&WorkQueue::create("JSC VMTraps Signal Sender"_s).leakRef());
+     });
+-    return workQueue.get();
++    return *vmTrapsQueue.load();
++}
++
++void VMTraps::recreateQueueAfterFork()
++{
++    // The queue's thread did not survive fork(); leak the old queue and start a new one.
++    if (vmTrapsQueue.load())
++        vmTrapsQueue.store(&WorkQueue::create("JSC VMTraps Signal Sender"_s).leakRef());
+ }
+ 
+ void VMTraps::initializeSignals()
+diff --git a/Source/JavaScriptCore/runtime/VMTraps.h b/Source/JavaScriptCore/runtime/VMTraps.h
+index 1d7720b0..710aef5e 100644
+--- a/Source/JavaScriptCore/runtime/VMTraps.h
++++ b/Source/JavaScriptCore/runtime/VMTraps.h
+@@ -260,6 +260,8 @@ public:
+ #endif
+ 
+     static WorkQueue& queue();
++    // Pyro: call in a fork() child (JSDidFork).
++    JS_EXPORT_PRIVATE static void recreateQueueAfterFork();
+ 
+ #if ENABLE(C_LOOP)
+     ALWAYS_INLINE CLoopStack& cloopStack() { return m_stack.cloopStack(); }
+diff --git a/Source/WTF/wtf/AutomaticThread.cpp b/Source/WTF/wtf/AutomaticThread.cpp
+index 048180f2..02c034fe 100644
+--- a/Source/WTF/wtf/AutomaticThread.cpp
++++ b/Source/WTF/wtf/AutomaticThread.cpp
+@@ -27,6 +27,9 @@
+ #include <wtf/AutomaticThread.h>
+ 
+ #include <wtf/DataLog.h>
++#include <wtf/HashSet.h>
++#include <wtf/MonotonicTime.h>
++#include <wtf/NeverDestroyed.h>
+ #include <wtf/PageBlock.h>
+ #include <wtf/TZoneMallocInlines.h>
+ #include <wtf/Threading.h>
+@@ -37,6 +40,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AutomaticThread);
+ 
+ static constexpr bool verbose = false;
+ 
++static Lock allThreadsLock;
++static HashSet<AutomaticThread*>& allThreads() WTF_REQUIRES_LOCK(allThreadsLock)
++{
++    static NeverDestroyed<HashSet<AutomaticThread*>> threads;
++    return threads;
++}
++
+ Ref<AutomaticThreadCondition> AutomaticThreadCondition::create()
+ {
+     return adoptRef(*new AutomaticThreadCondition);
+@@ -124,17 +134,25 @@ AutomaticThread::AutomaticThread(const AbstractLocker& locker, Box<Lock> lock, R
+     if (verbose)
+         dataLog(RawPointer(this), ": Allocated AutomaticThread.\n");
+     m_condition->add(locker, this);
++    Locker allLocker { allThreadsLock };
++    allThreads().add(this);
+ }
+ 
+ AutomaticThread::~AutomaticThread()
+ {
+     if (verbose)
+         dataLog(RawPointer(this), ": Deleting AutomaticThread.\n");
++    {
++        Locker allLocker { allThreadsLock };
++        allThreads().remove(this);
++    }
+     Locker locker { *m_lock };
+     
+     // It's possible that we're in a waiting state with the thread shut down. This is a goofy way to
+     // die, but it could happen.
+     m_condition->remove(locker, this);
++    if (RefPtr last = std::exchange(m_lastThread, nullptr))
++        last->detach();
+ }
+ 
+ bool AutomaticThread::tryStop(const AbstractLocker&)
+@@ -166,6 +184,49 @@ void AutomaticThread::join()
+         m_isRunningCondition.wait(*m_lock);
+ }
+ 
++bool AutomaticThread::sleepAllForFork(Seconds timeout)
++{
++    auto deadline = MonotonicTime::now() + timeout;
++    Vector<Ref<Thread>> exited;
++    for (;;) {
++        bool pending = false;
++        {
++            Locker allLocker { allThreadsLock };
++            for (auto* thread : allThreads()) {
++                // A constructor holds its thread's lock while it takes allThreadsLock, so never block here.
++                if (!thread->m_lock->tryLock()) {
++                    pending = true;
++                    continue;
++                }
++                Locker locker { AdoptLock, *thread->m_lock };
++                if (!thread->m_hasUnderlyingThread) {
++                    if (RefPtr last = std::exchange(thread->m_lastThread, nullptr))
++                        exited.append(last.releaseNonNull());
++                    continue;
++                }
++                pending = true;
++                if (thread->m_isWaiting) {
++                    thread->m_sleepRequested = true;
++                    thread->m_waitCondition.notifyAll();
++                }
++            }
++        }
++        if (!pending) {
++            // They have announced their exit; wait until it is complete (thread-local destructors
++            // included), so that nothing of theirs is left half torn down in a forked child.
++            for (auto& thread : exited)
++                thread->waitForCompletion();
++            return true;
++        }
++        if (MonotonicTime::now() > deadline) {
++            for (auto& thread : exited)
++                thread->detach();
++            return false;
++        }
++        Thread::yield();
++    }
++}
++
+ void AutomaticThread::start(const AbstractLocker&)
+ {
+     RELEASE_ASSERT(m_isRunning);
+@@ -173,6 +234,7 @@ void AutomaticThread::start(const AbstractLocker&)
+     RefPtr<AutomaticThread> preserveThisForThread = this;
+     
+     m_hasUnderlyingThread = true;
++    m_sleepRequested = false;
+ 
+     auto stackSpec = stackSpecification();
+     switch (stackSpec.kind()) {
+@@ -186,7 +248,10 @@ void AutomaticThread::start(const AbstractLocker&)
+         break;
+     }
+ 
+-    Thread::create(
++    // The previous underlying thread has announced its exit; let it go.
++    if (RefPtr last = std::exchange(m_lastThread, nullptr))
++        last->detach();
++    m_lastThread = Thread::create(
+         name(),
+         [=, this] () {
+             if (verbose)
+@@ -230,6 +295,11 @@ void AutomaticThread::start(const AbstractLocker&)
+                         m_isWaiting = true;
+                         bool awokenByNotify =
+                             m_waitCondition.waitFor(*m_lock, m_timeout);
++                        // Only while still idle: a notify() clears m_isWaiting and must not be lost.
++                        if (m_sleepRequested && m_isWaiting) {
++                            m_isWaiting = false;
++                            return stopForTimeout(locker);
++                        }
+                         if (verbose && !awokenByNotify && !m_isWaiting)
+                             dataLog(RawPointer(this), ": waitFor timed out, but notified via m_isWaiting flag!\n");
+                         if (m_isWaiting && shouldSleep(locker)) {
+@@ -251,7 +321,7 @@ void AutomaticThread::start(const AbstractLocker&)
+                 }
+                 RELEASE_ASSERT(result == WorkResult::Continue);
+             }
+-        }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec)->detach();
++        }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec);
+ }
+ 
+ void AutomaticThread::threadDidStart()
+diff --git a/Source/WTF/wtf/AutomaticThread.h b/Source/WTF/wtf/AutomaticThread.h
+index 4174cd3f..dfd8fd34 100644
+--- a/Source/WTF/wtf/AutomaticThread.h
++++ b/Source/WTF/wtf/AutomaticThread.h
+@@ -132,6 +132,12 @@ public:
+ 
+     void join();
+ 
++    // Pyro: asks every idle automatic thread in the process to exit now (as on a timeout),
++    // and waits up to `timeout` for busy ones to finish their work and do the same. Returns true when
++    // no automatic thread has an underlying thread left, which makes fork() safe for them; they
++    // restart on the next notify. The caller must keep new work from arriving meanwhile.
++    static bool sleepAllForFork(Seconds timeout);
++
+     virtual ASCIILiteral name() const { return "WTF::AutomaticThread"_s; }
+ 
+ protected:
+@@ -204,6 +210,9 @@ protected:
+     bool m_isRunning { true };
+     bool m_isWaiting { false };
+     bool m_hasUnderlyingThread { false };
++    bool m_sleepRequested { false };
++    // The last underlying thread, kept joinable so that sleepAllForFork can wait until it has exited.
++    RefPtr<Thread> m_lastThread;
+     Condition m_waitCondition;
+     Condition m_isRunningCondition;
+ };
+diff --git a/Source/WTF/wtf/CryptographicallyRandomNumber.cpp b/Source/WTF/wtf/CryptographicallyRandomNumber.cpp
+index d582cf64..7b00dc39 100644
+--- a/Source/WTF/wtf/CryptographicallyRandomNumber.cpp
++++ b/Source/WTF/wtf/CryptographicallyRandomNumber.cpp
+@@ -60,6 +60,12 @@ public:
+     IntegerType randomNumber();
+     void randomValues(std::span<uint8_t>);
+ 
++    void didFork()
++    {
++        Locker locker { m_lock };
++        m_count = 0;
++    }
++
+ private:
+     inline void LEGACY_NODELETE addRandomData(std::span<const uint8_t, 128>) WTF_REQUIRES_LOCK(m_lock);
+     void stir() WTF_REQUIRES_LOCK(m_lock);
+@@ -154,6 +160,11 @@ ARC4RandomNumberGenerator& LEGACY_NODELETE sharedRandomNumberGenerator()
+ 
+ }
+ 
++void cryptographicallyRandomNumberDidForkInChild()
++{
++    sharedRandomNumberGenerator().didFork();
++}
++
+ template<> uint8_t cryptographicallyRandomNumber<uint8_t>()
+ {
+     return sharedRandomNumberGenerator().randomNumber<uint8_t>();
+diff --git a/Source/WTF/wtf/CryptographicallyRandomNumber.h b/Source/WTF/wtf/CryptographicallyRandomNumber.h
+index 84a9a820..ba9ce20d 100644
+--- a/Source/WTF/wtf/CryptographicallyRandomNumber.h
++++ b/Source/WTF/wtf/CryptographicallyRandomNumber.h
+@@ -34,6 +34,10 @@ namespace WTF {
+ 
+ template<typename IntegerType> IntegerType cryptographicallyRandomNumber() = delete;
+ 
++// Pyro: a fork() child shares the parent's generator state; this stirs in new OS
++// randomness before the next number.
++WTF_EXPORT_PRIVATE void cryptographicallyRandomNumberDidForkInChild();
++
+ template<> WTF_EXPORT_PRIVATE uint8_t cryptographicallyRandomNumber<uint8_t>();
+ 
+ // Returns a cryptographically secure pseudo-random number in the range [0, UINT_MAX].
+@@ -52,3 +56,4 @@ WTF_EXPORT_PRIVATE double cryptographicallyRandomUnitInterval();
+ using WTF::cryptographicallyRandomNumber;
+ using WTF::cryptographicallyRandomUnitInterval;
+ using WTF::cryptographicallyRandomValues;
++using WTF::cryptographicallyRandomNumberDidForkInChild;
+diff --git a/Source/WTF/wtf/Threading.h b/Source/WTF/wtf/Threading.h
+index fa783856..6357a997 100644
+--- a/Source/WTF/wtf/Threading.h
++++ b/Source/WTF/wtf/Threading.h
+@@ -291,6 +291,11 @@ public:
+     mach_port_t machThread() { return m_platformThread; }
+ #endif
+ 
++#if USE(PTHREADS)
++    // Pyro: call on the surviving thread of a fork() child; its mach port name changed.
++    WTF_EXPORT_PRIVATE void didForkInChild();
++#endif
++
+     bool isCompilationThread() const { return m_isCompilationThread; }
+     bool isJSThread() const { return m_isJSThread; }
+     GCThreadType gcThreadType() const { return static_cast<GCThreadType>(m_gcThreadType); }
+diff --git a/Source/WTF/wtf/posix/ThreadingPOSIX.cpp b/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
+index 459f36a6..c6e41168 100644
+--- a/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
++++ b/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
+@@ -731,6 +731,11 @@ void Thread::establishPlatformSpecificHandle(pthread_t handle)
+ #endif
+ }
+ 
++void Thread::didForkInChild()
++{
++    establishPlatformSpecificHandle(pthread_self());
++}
++
+ #if !HAVE(FAST_TLS)
+ void Thread::initializeTLSKey()
+ {
+diff --git a/Source/bmalloc/libpas/src/libpas/bmalloc_prefault_supply.c b/Source/bmalloc/libpas/src/libpas/bmalloc_prefault_supply.c
+index 59e3ba95..8a0f53d8 100644
+--- a/Source/bmalloc/libpas/src/libpas/bmalloc_prefault_supply.c
++++ b/Source/bmalloc/libpas/src/libpas/bmalloc_prefault_supply.c
+@@ -81,9 +81,16 @@ static PAS_ALIGNED(64) struct {
+ /* A floor, so that a client asking for no wait at all cannot turn the filling thread into a spin. */
+ #define MIN_IDLE_TIMEOUT_IN_MILLISECONDS 1.
+ 
++/* Pyro (fork() support): while nonzero the supply is disabled, so that its thread exits.
++   The last filling thread is kept joinable so that suspending can wait until it has really exited.
++   Both handle fields are guarded by supply_lock. */
++static unsigned suspend_count;
++static pthread_t last_filling_thread;
++static bool has_last_filling_thread;
++
+ static unsigned supply_target(void)
+ {
+-    if (!supply_block_size)
++    if (!supply_block_size || __atomic_load_n(&suspend_count, __ATOMIC_RELAXED))
+         return 0;
+     return PAS_MIN(bmalloc_prefault_supply_target, (unsigned)BMALLOC_PREFAULT_SUPPLY_MAX_BLOCKS);
+ }
+@@ -255,8 +262,10 @@ static void* supply_thread_main(void* arg)
+            cannot install a block this one is about to free. Demand that arrived in the meantime
+            therefore started nobody, and has to be picked up here. */
+         should_exit = __atomic_load_n(&supply_state.demand_count, __ATOMIC_RELAXED) == demand_at_start;
+-        if (should_exit)
++        if (should_exit) {
+             supply_state.thread_is_running = false;
++            pthread_cond_broadcast(&supply_cond);
++        }
+         pthread_mutex_unlock(&supply_lock);
+ 
+         if (should_exit)
+@@ -291,7 +300,40 @@ static void create_filling_thread(void)
+         pthread_mutex_unlock(&supply_lock);
+         return;
+     }
+-    pthread_detach(thread);
++    pthread_mutex_lock(&supply_lock);
++    /* The previous thread has already cleared thread_is_running; let it go. */
++    if (has_last_filling_thread)
++        pthread_detach(last_filling_thread);
++    last_filling_thread = thread;
++    has_last_filling_thread = true;
++    pthread_mutex_unlock(&supply_lock);
++}
++
++void bmalloc_prefault_supply_suspend(void)
++{
++    pthread_t thread;
++    bool should_join;
++
++    pthread_mutex_lock(&supply_lock);
++    __atomic_fetch_add(&suspend_count, 1, __ATOMIC_RELAXED);
++    pthread_cond_broadcast(&supply_cond);
++    while (supply_state.thread_is_running)
++        pthread_cond_wait(&supply_cond, &supply_lock);
++    thread = last_filling_thread;
++    should_join = has_last_filling_thread;
++    has_last_filling_thread = false;
++    pthread_mutex_unlock(&supply_lock);
++
++    if (should_join)
++        pthread_join(thread, NULL);
++}
++
++void bmalloc_prefault_supply_resume(void)
++{
++    pthread_mutex_lock(&supply_lock);
++    PAS_ASSERT(suspend_count);
++    __atomic_fetch_sub(&suspend_count, 1, __ATOMIC_RELAXED);
++    pthread_mutex_unlock(&supply_lock);
+ }
+ 
+ void* bmalloc_prefault_supply_try_allocate(void)
+diff --git a/Source/bmalloc/libpas/src/libpas/bmalloc_prefault_supply.h b/Source/bmalloc/libpas/src/libpas/bmalloc_prefault_supply.h
+index 959a94da..f9b9d46c 100644
+--- a/Source/bmalloc/libpas/src/libpas/bmalloc_prefault_supply.h
++++ b/Source/bmalloc/libpas/src/libpas/bmalloc_prefault_supply.h
+@@ -67,6 +67,11 @@ PAS_API void* bmalloc_prefault_supply_try_allocate(void);
+ /* Frees everything being held. */
+ PAS_API void bmalloc_prefault_supply_scavenge(void);
+ 
++/* Pyro (fork() support): disables the supply and waits until its thread has exited, or
++   undoes one suspend. Suspends nest. */
++PAS_API void bmalloc_prefault_supply_suspend(void);
++PAS_API void bmalloc_prefault_supply_resume(void);
++
+ /* How many blocks are ready right now. For tests. */
+ PAS_API unsigned bmalloc_prefault_supply_block_count(void);
+ 
+diff --git a/Source/bmalloc/libpas/src/libpas/pas_scavenger.c b/Source/bmalloc/libpas/src/libpas/pas_scavenger.c
+index 82e65dd1..4a9effec 100644
+--- a/Source/bmalloc/libpas/src/libpas/pas_scavenger.c
++++ b/Source/bmalloc/libpas/src/libpas/pas_scavenger.c
+@@ -56,6 +56,11 @@ static bool is_shut_down_enabled = true;
+ bool pas_scavenger_is_enabled = true;
+ bool pas_scavenger_eligibility_notification_has_been_deferred = false;
+ pas_scavenger_state pas_scavenger_current_state = pas_scavenger_state_no_thread;
++
++/* Pyro: the last scavenger thread, kept joinable so that pas_scavenger_suspend can wait
++   until it has really exited (fork() support). Guarded by the scavenger data lock. */
++static pthread_t last_scavenger_thread;
++static bool has_last_scavenger_thread;
+ unsigned pas_scavenger_should_suspend_count = 0;
+ pas_scavenger_data* pas_scavenger_data_instance = NULL;
+ 
+@@ -521,7 +526,11 @@ void pas_scavenger_notify_eligibility_if_needed(void)
+         pas_scavenger_current_state = pas_scavenger_state_polling;
+         result = pthread_create(&thread, NULL, scavenger_thread_main, NULL);
+         PAS_ASSERT(!result);
+-        pthread_detach(thread);
++        /* The previous thread has announced that it is exiting; let it go. */
++        if (has_last_scavenger_thread)
++            pthread_detach(last_scavenger_thread);
++        last_scavenger_thread = thread;
++        has_last_scavenger_thread = true;
+     }
+ 
+     if (pas_scavenger_current_state == pas_scavenger_state_deep_sleep) {
+@@ -544,10 +553,20 @@ void pas_scavenger_suspend(void)
+     pas_scavenger_should_suspend_count++;
+     PAS_ASSERT(pas_scavenger_should_suspend_count);
+ 
++    /* Pyro: wake it now rather than at the end of its sleep period. */
++    pthread_cond_broadcast(&data->cond);
++
+     while (pas_scavenger_current_state != pas_scavenger_state_no_thread)
+         pthread_cond_wait(&data->cond, &data->lock);
+ 
+-    pthread_mutex_unlock(&data->lock);
++    {
++        pthread_t thread = last_scavenger_thread;
++        bool should_join = has_last_scavenger_thread;
++        has_last_scavenger_thread = false;
++        pthread_mutex_unlock(&data->lock);
++        if (should_join)
++            pthread_join(thread, NULL);
++    }
+ }
+ 
+ void pas_scavenger_resume(void)
+diff --git a/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.c b/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.c
+index bc7e6dc8..f7718ef8 100644
+--- a/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.c
++++ b/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.c
+@@ -892,7 +892,8 @@ static void suspend(pas_thread_local_cache* cache, scavenger_thread_suspend_data
+     thread = cache->thread;
+     PAS_ASSERT(thread);
+     
+-    thread_suspend_data->is_scavenger_itself = thread == pthread_self();
++    /* An orphan has no thread to stop; treating it like our own cache skips suspend and resume. */
++    thread_suspend_data->is_scavenger_itself = thread == pthread_self() || cache->is_orphaned;
+     if (thread_suspend_data->is_scavenger_itself)
+         return;
+ 
+@@ -911,6 +912,22 @@ static void suspend(pas_thread_local_cache* cache, scavenger_thread_suspend_data
+     }
+ }
+ 
++#endif /* PAS_OS(DARWIN) */
++
++/* Defined everywhere; only Darwin's scavenger suspends threads and reads is_orphaned. */
++void pas_thread_local_cache_did_fork_in_child(void)
++{
++    pas_thread_local_cache_node* node;
++
++    pas_heap_lock_lock();
++    for (node = pas_thread_local_cache_node_first; node; node = node->next) {
++        if (node->cache && node->cache->thread != pthread_self())
++            node->cache->is_orphaned = true;
++    }
++    pas_heap_lock_unlock();
++}
++
++#if PAS_OS(DARWIN)
+ static void resume(pas_thread_local_cache* cache, scavenger_thread_suspend_data* thread_suspend_data)
+ {
+     static const bool verbose = false;
+diff --git a/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.h b/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.h
+index 39bf90e5..6479cd8f 100644
+--- a/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.h
++++ b/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.h
+@@ -74,6 +74,10 @@ struct pas_thread_local_cache {
+     pthread_t thread;
+     
+     bool should_stop_some;
++
++    /* Pyro: the owner was a thread of the process this one fork()ed from, so it does not
++       exist here. Nothing uses the cache any more; the scavenger must not try to suspend it. */
++    bool is_orphaned;
+     
+     unsigned allocator_index_upper_bound;
+     unsigned allocator_index_capacity;
+@@ -134,6 +138,9 @@ PAS_API size_t pas_thread_local_cache_size_for_allocator_index_capacity(unsigned
+ 
+ PAS_API pas_thread_local_cache* pas_thread_local_cache_create(void);
+ 
++/* Pyro: call in a fork() child, on its only thread, before anything else allocates. */
++PAS_API void pas_thread_local_cache_did_fork_in_child(void);
++
+ PAS_API void pas_thread_local_cache_destroy(pas_lock_hold_mode heap_lock_hold_mode);
+ 
+ PAS_API pas_thread_local_cache* pas_thread_local_cache_get_slow(

@@ -16,7 +16,7 @@ SFNS.ttf has an optical axis whose minimum is17 and default is28. Chrome also ma
 
 `vendor/blitz-dom/src/stylo_to_parley.rs` now supplies an optical variation equal to the used CSS font size when `font-optical-sizing:auto` applies and no explicit optical variation exists. `none` retains the font default; explicit `opsz` wins over either setting. Fonts without an optical axis ignore that variation normally.
 
-The isolated macOS renderer regression `crates/lp-render/tests/font_optical_sizing.rs` failed before the change (1passed/1failed) and passes afterward (2passed/0failed). It compares exact pixels for auto versus explicit size, distinguishes auto from none, and checks explicit override behavior. The new test is formatted; the changed vendor hunk follows rustfmt output, while unrelated pre-existing vendor formatting differences were preserved. Diff whitespace checks pass.
+The isolated macOS renderer regression `crates/pyro-render/tests/font_optical_sizing.rs` failed before the change (1passed/1failed) and passes afterward (2passed/0failed). It compares exact pixels for auto versus explicit size, distinguishes auto from none, and checks explicit override behavior. The new test is formatted; the changed vendor hunk follows rustfmt output, while unrelated pre-existing vendor formatting differences were preserved. Diff whitespace checks pass.
 
 Evidence:
 

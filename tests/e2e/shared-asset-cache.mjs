@@ -1,5 +1,5 @@
-// Real Playwright 1.59.1 against `lightningpanda serve` with the opt-in shared public-asset cache
-// (LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB). Checks the CDP view: a public asset fetched in one fresh
+// Real Playwright 1.59.1 against `pyro serve` with the opt-in shared public-asset cache
+// (PYRO_SHARED_ASSET_CACHE_MB). Checks the CDP view: a public asset fetched in one fresh
 // context is a shared hit (fromDiskCache, no server request) in another, a private one is not, and
 // Network.clearBrowserCache clears the shared store. Usage: node shared-asset-cache.mjs <binary>
 import { spawn } from 'node:child_process';
@@ -14,7 +14,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(here, '..', '..', 'bench', 'package.json'));
 const { chromium } = require('playwright-core');
 const bin = process.argv[2];
-if (!bin) { console.error('usage: node shared-asset-cache.mjs <lightningpanda binary>'); process.exit(2); }
+if (!bin) { console.error('usage: node shared-asset-cache.mjs <pyro binary>'); process.exit(2); }
 
 const hits = [];
 const server = http.createServer((req, res) => {
@@ -28,7 +28,7 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const port = await new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 const child = spawn(bin, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error'],
-  { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB: '4', LIGHTPANDA_DISABLE_TELEMETRY: 'true' } });
+  { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, PYRO_SHARED_ASSET_CACHE_MB: '4', LIGHTPANDA_DISABLE_TELEMETRY: 'true' } });
 let ok = false;
 try {
   for (let i = 0; i < 200; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/json/version`)).ok) break; } catch {} await new Promise(r => setTimeout(r, 25)); }

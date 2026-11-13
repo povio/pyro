@@ -1,0 +1,79 @@
+name: PGO build
+
+# The release browsers are built with profile-guided optimization: macOS arm64
+# by .github/actions/pgo-build (publish-npm.yml's `fork` job), Linux x64 and
+# arm64 by linux-build.yml with `pgo`. This workflow runs the same builds when
+# their inputs change, so a broken PGO build
+# shows on the pull request and not at release time. Runs on `main` also save
+# the instrumented JavaScriptCore to the cache release tags restore.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/linux-build.yml
+      - .github/actions/pgo-build/**
+      - .github/workflows/pgo.yml
+      - crates/pyro-cdp/src/pgo_training.rs
+      - crates/pyro-jsc-sys/webkit/**
+      - scripts/jsc/**
+      - scripts/macos/linker/**
+      - scripts/pgo/**
+  pull_request:
+    paths:
+      - .github/workflows/linux-build.yml
+      - .github/actions/pgo-build/**
+      - .github/workflows/pgo.yml
+      - crates/pyro-cdp/src/pgo_training.rs
+      - crates/pyro-jsc-sys/webkit/**
+      - scripts/jsc/**
+      - scripts/macos/linker/**
+      - scripts/pgo/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pgo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pgo:
+    # The self-hosted Apple Silicon runner (label lp-m1), as the jsc job.
+    runs-on: lp-m1
+    timeout-minutes: 150
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pgo-build
+      - name: Check the binary
+        run: |
+          binary=target/aarch64-apple-darwin/release-pgo/pyro
+          codesign --verify --strict "$binary"
+          if otool -L "$binary" | grep -F JavaScriptCore; then exit 1; fi
+          codesign -d --entitlements - "$binary" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
+          "$binary" version
+          "$binary" version | grep -q 'fork: true'
+          "$binary" eval -e 'console.log("pgo-smoke-ok")' | grep -Fx pgo-smoke-ok
+      - name: Training logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgo-training-logs
+          path: target/pgo/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  jsc:
+    uses: ./.github/workflows/jsc.yml
+
+  linux:
+    needs: jsc
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      jsc-dir: ${{ needs.jsc.outputs.dir }}
+      pgo: true

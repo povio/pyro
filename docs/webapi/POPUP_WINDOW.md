@@ -3,6 +3,8 @@
 `window.open(url, target, features)` opens a new page in the opener's browser
 context. CDP clients see a target with `openerId`, paused under auto-attach
 until `Runtime.runIfWaitingForDebugger`, so Playwright's `popup` event fires.
+Playwright and pyro/wright use the pause to give the popup its context's
+settings (emulation, headers, routes, init scripts) before its first document.
 
 | Call | Returns |
 | --- | --- |
@@ -15,7 +17,7 @@ A URL that does not parse throws `SyntaxError` in every case.
 
 ## What the popup gets
 
-A popup opened without `noopener` (`lp_browser::Browser::adopt_popup`, called by
+A popup opened without `noopener` (`pyro_browser::Browser::adopt_popup`, called by
 the CDP layer when the target exists):
 
 - **`window.opener`**: the opener's top-level window — the real global when
@@ -35,6 +37,22 @@ the CDP layer when the target exists):
 - **`window.close()`** asks the embedder to close the page
   (`PageEvent::CloseRequested`; the CDP layer closes the target). Only popups
   are script-closable; other pages ignore the call, as Chrome does.
+- **A navigation that fails** (offline, connection refused, DNS): the popup
+  commits Chrome's error document, chrome-error://chromewebdata/ (CDP
+  `unreachableUrl` the URL that failed, an opaque origin, empty as in
+  chromium-headless-shell), so Playwright's `popup` event, which waits for
+  the popup's first commit, fires and `popup.url()` reads that URL, as on
+  Chromium. Any new window does the same (`Target.createTarget` with a URL,
+  a new page's first `goto`); a reload fetches the URL again.
+- **A download instead of a document**: when the popup's navigation is
+  answered with an attachment before it committed any document of its own
+  (a `target=_blank` link or `window.open` to a file), the download is the
+  opener's and the popup closes, as Chrome closes the tab it opened for it.
+  `Browser.downloadWillBegin` names the popup's frame (Chrome's `frameId`);
+  Playwright and pyro/wright report the download on the opener, and
+  `Pyro.run` `download` steps of the opener get it. The object `window.open`
+  returned reads `closed`. (chromium-headless-shell, Playwright's default
+  headless browser, leaves that tab open.)
 
 ## The popup object
 

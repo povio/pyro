@@ -16,7 +16,7 @@ assimilation follows the existing helper path.
 
 ## Bounded regression
 
-`crates/lp-browser/tests/microtask_species.rs` tests four observable contracts:
+`crates/pyro-browser/tests/microtask_species.rs` tests four observable contracts:
 
 - `queueMicrotask` does not read an author `Promise[Symbol.species]` getter.
 - It does not enter a Promise species constructor which schedules another microtask. The regression
@@ -53,8 +53,8 @@ an XLSX file or exercise React, iframe rendering or the original application ass
 a dependency-startup failure removed by this repair; an unchanged XLSX preview rerun is still required.
 
 The reusable harness is [probes/promise_bundle_probe.rs](probes/promise_bundle_probe.rs). In an isolated
-checkout, copy it to `crates/lp-browser/examples/promise_bundle_probe.rs`, then run
-`cargo run --locked -p lp-browser --example promise_bundle_probe -- PATH_TO_VERIFIED_BUNDLE`.
+checkout, copy it to `crates/pyro-browser/examples/promise_bundle_probe.rs`, then run
+`cargo run --locked -p pyro-browser --example promise_bundle_probe -- PATH_TO_VERIFIED_BUNDLE`.
 It requires the existing engine watchdog capability and requests termination after two seconds.
 The retained invocations also used an external ten-second subprocess timeout. No third-party bundle,
 application payload, credential or modified application fixture is committed here.

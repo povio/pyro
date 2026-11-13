@@ -89,21 +89,31 @@ impl LineHeight {
 
     /// The line height in layout units for text set in a font with `metrics` at `font_size`.
     ///
-    /// With `quantize`, the font's ascent, descent and leading are each rounded to whole pixels
-    /// before being summed for [`MetricsRelative`](Self::MetricsRelative), as browsers do for
-    /// `line-height: normal`, so that such lines are a whole number of pixels tall.
-    pub(crate) fn resolve(self, font_size: f32, metrics: &FontMetrics, quantize: bool) -> f32 {
+    /// With a `quantum` (pyro: the layout units of a CSS pixel, the layout's scale; 0 for
+    /// none), the font's ascent, descent and leading are each rounded to whole CSS pixels before
+    /// being summed for [`MetricsRelative`](Self::MetricsRelative), as browsers do for
+    /// `line-height: normal`, so that such lines are a whole number of CSS pixels tall at any
+    /// device scale (Blink's `FontMetrics`).
+    pub(crate) fn resolve(self, font_size: f32, metrics: &FontMetrics, quantum: f32) -> f32 {
         match self {
             Self::Absolute(value) => value,
             Self::FontSizeRelative(value) => value * font_size,
-            Self::MetricsRelative(value) if quantize => {
-                (metrics.ascent.round() + metrics.descent.round() + metrics.leading.round()) * value
+            Self::MetricsRelative(value) if quantum > 0. => {
+                (round_to(metrics.ascent, quantum)
+                    + round_to(metrics.descent, quantum)
+                    + round_to(metrics.leading, quantum))
+                    * value
             }
             Self::MetricsRelative(value) => {
                 (metrics.ascent + metrics.descent + metrics.leading) * value
             }
         }
     }
+}
+
+/// pyro: `value` rounded to a whole number of `quantum`s (a CSS pixel in layout units).
+pub(crate) fn round_to(value: f32, quantum: f32) -> f32 {
+    (value / quantum).round() * quantum
 }
 
 /// Which reference of a span (or [`InlineBox`]) is aligned with the same reference of its

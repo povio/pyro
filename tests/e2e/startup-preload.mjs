@@ -1,10 +1,10 @@
-// Playwright (connectOverCDP) against `lightningpanda serve --local-storage FILE --static ORIGIN=DIR`.
+// Playwright (connectOverCDP) against `pyro serve --local-storage FILE --static ORIGIN=DIR`.
 //
 // Checks that every browser context starts with the preloaded localStorage
 // entries (and that contexts stay isolated), and that a front-end build served
 // from a directory loads without any HTTP server listening on its origin.
 //
-// Usage: node tests/e2e/startup-preload.mjs /abs/path/to/lightningpanda [--skip-static]
+// Usage: node tests/e2e/startup-preload.mjs /abs/path/to/pyro [--skip-static]
 // Requires `bun install` (or npm install) in bench/ for the pinned playwright-core.
 // Exit status: 0 when every check passed, 1 on any failure, 2 for usage errors.
 import { spawn } from 'node:child_process';
@@ -23,7 +23,7 @@ const { chromium } = require('playwright-core');
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: node tests/e2e/startup-preload.mjs /abs/path/to/lightningpanda [--skip-static]');
+  console.error('usage: node tests/e2e/startup-preload.mjs /abs/path/to/pyro [--skip-static]');
   process.exit(2);
 }
 const skipStatic = process.argv.includes('--skip-static');
@@ -61,7 +61,7 @@ const fixtureOrigin = `http://127.0.0.1:${fixture.address().port}`;
 const staticPort = await freePort();
 const staticOrigin = `http://127.0.0.1:${staticPort}`;
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-preload-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pyro-preload-'));
 const dist = path.join(tmp, 'dist');
 fs.mkdirSync(path.join(dist, 'assets'), { recursive: true });
 fs.writeFileSync(
@@ -117,7 +117,7 @@ for (;;) {
     if (r.ok) break;
   } catch {}
   if (child.exitCode !== null) {
-    console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`);
+    console.error(`pyro exited early (${child.exitCode}): ${stderr}`);
     process.exit(1);
   }
   if (performance.now() - started > 10_000) {

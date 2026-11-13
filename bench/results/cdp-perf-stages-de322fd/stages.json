@@ -1,5 +1,5 @@
 {
- "schema": "lightningpanda-cdp-perf/1",
+ "schema": "pyro-cdp-perf/1",
  "meta": {
   "startedAt": "2026-10-27T10:42:39.330Z",
   "host": {
@@ -19,7 +19,7 @@
   "filter": null,
   "perfTrace": true,
   "harnessSha256": "20d787650b8047c21a0ca8d5282f27a796aa6d9bebb07acfa8d6e1ea08e559a3",
-  "cpuSource": "/Users/xban1x/Povio/lp-cdp-perf-wt/bench/rss-sampler/target/release/rss-sampler",
+  "cpuSource": "/Users/xban1x/Povio/pyro-cdp-perf-wt/bench/rss-sampler/target/release/rss-sampler",
   "loadavg": {
    "start": [
     7.97412109375,
@@ -53,7 +53,7 @@
  "bins": [
   {
    "label": "traced",
-   "path": "/Users/xban1x/Povio/lp-cdp-perf-wt/target-perf/release/lightningpanda",
+   "path": "/Users/xban1x/Povio/pyro-cdp-perf-wt/target-perf/release/pyro",
    "sha256": "2a62c32ca3f66da048c299c66748a650d32a7c09376df327c2369c15b21e30d6",
    "startup": {
     "n": 93,
@@ -272,7 +272,7 @@
         "p99Ns": 2048
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 320.9,
         "callsPerOp": 0.05,
         "meanNs": 6417,
@@ -477,7 +477,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 7,
         "callsPerOp": 0,
         "meanNs": 3500,
@@ -2146,7 +2146,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 11,
         "callsPerOp": 0,
         "meanNs": 5500,
@@ -3815,7 +3815,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 1.8,
         "callsPerOp": 0,
         "meanNs": 9125,
@@ -4036,7 +4036,7 @@
         "p99Ns": 7168
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 48.8,
         "callsPerOp": 0.01,
         "meanNs": 4875,
@@ -4513,7 +4513,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 14.6,
         "callsPerOp": 0,
         "meanNs": 4375,
@@ -5582,7 +5582,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 32.1,
         "callsPerOp": 0.01,
         "meanNs": 6417,
@@ -6359,7 +6359,7 @@
         "p99Ns": 112
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 17.2,
         "callsPerOp": 0,
         "meanNs": 5167,
@@ -7428,7 +7428,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 20.4,
         "callsPerOp": 0.01,
         "meanNs": 4084,
@@ -8189,7 +8189,7 @@
         "p99Ns": 512
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 55.8,
         "callsPerOp": 0.01,
         "meanNs": 5583,
@@ -8658,7 +8658,7 @@
         "p99Ns": 1792
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 188.3,
         "callsPerOp": 0.02,
         "meanNs": 9417,
@@ -9009,7 +9009,7 @@
         "p99Ns": 192
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 32.3,
         "callsPerOp": 0.01,
         "meanNs": 6458,
@@ -9791,7 +9791,7 @@
         "p99Ns": 768
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 56.3,
         "callsPerOp": 0.01,
         "meanNs": 5625,
@@ -10281,7 +10281,7 @@
         "p99Ns": 1024
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 113.3,
         "callsPerOp": 0.02,
         "meanNs": 5667,
@@ -10653,7 +10653,7 @@
         "p99Ns": 1024
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 166.7,
         "callsPerOp": 0.03,
         "meanNs": 5000,
@@ -10933,7 +10933,7 @@
         "p99Ns": 896
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 282,
         "callsPerOp": 0.03,
         "meanNs": 8459,
@@ -11299,7 +11299,7 @@
         "p99Ns": 256
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 230.6,
         "callsPerOp": 0.03,
         "meanNs": 6917,
@@ -11558,7 +11558,7 @@
         "p99Ns": 10240
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 158.3,
         "callsPerOp": 0.03,
         "meanNs": 4750,
@@ -11825,7 +11825,7 @@
         "p99Ns": 448
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 93.3,
         "callsPerOp": 0.02,
         "meanNs": 4667,
@@ -12120,7 +12120,7 @@
         "p99Ns": 224
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 23.5,
         "callsPerOp": 0.01,
         "meanNs": 4709,
@@ -12865,7 +12865,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 27.9,
         "callsPerOp": 0.01,
         "meanNs": 5584,
@@ -13682,7 +13682,7 @@
         "p99Ns": 112
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 341.7,
         "callsPerOp": 0.05,
         "meanNs": 6834,
@@ -13911,7 +13911,7 @@
         "p99Ns": 896
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 147.5,
         "callsPerOp": 0.02,
         "meanNs": 7375,
@@ -14238,7 +14238,7 @@
         "p99Ns": 8192
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 145.8,
         "callsPerOp": 0.03,
         "meanNs": 4375,
@@ -14505,7 +14505,7 @@
         "p99Ns": 5120
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 163.9,
         "callsPerOp": 0.03,
         "meanNs": 4917,
@@ -14772,7 +14772,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 16,
         "callsPerOp": 0,
         "meanNs": 4791,
@@ -15841,7 +15841,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 21.5,
         "callsPerOp": 0.01,
         "meanNs": 4292,
@@ -16610,7 +16610,7 @@
         "p99Ns": 80
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 18.3,
         "callsPerOp": 0,
         "meanNs": 5500,
@@ -17687,7 +17687,7 @@
         "p99Ns": 384
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 81.7,
         "callsPerOp": 0.01,
         "meanNs": 8167,
@@ -18124,7 +18124,7 @@
         "p99Ns": 320
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 59.2,
         "callsPerOp": 0.01,
         "meanNs": 5917,
@@ -18710,7 +18710,7 @@
         "p99Ns": 320
        },
        {
-        "name": "cdp.dispatch LP.perfReset",
+        "name": "cdp.dispatch Pyro.perfReset",
         "nsPerOp": 497.3,
         "callsPerOp": 0.07,
         "meanNs": 7459,
