@@ -2072,7 +2072,12 @@ impl Breaks {
                     let b = (origin + max as f64 / scale) * dpr;
                     if b > a {
                         let at = (out.contexts.len() as u32, (out.lines.len() - first) as u32);
-                        let painted = (painted_origin + m.block_min_coord as f64 / scale) * dpr;
+                        // The painter puts a line's top at a whole CSS pixel, as Chromium does.
+                        let painted = if physical && !node.layout_data().writing_mode.is_vertical() {
+                            blitz_paint::snapped_line_top(origin, m.unquantized_block_min_coord, scale) * dpr
+                        } else {
+                            (painted_origin + m.block_min_coord as f64 / scale) * dpr
+                        };
                         out.unbroken.push(Unbroken { top: a, bottom: b, painted, line: Some(at), avoid_only: false });
                         out.lines.push((a, b));
                     }

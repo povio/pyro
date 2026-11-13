@@ -46,6 +46,15 @@ under an explicit `line-height` sat up to a CSS pixel off Chromium's baseline. A
 `a_normal_line_is_whole_css_pixels_at_every_scale` in `crates/pyro-render/tests/line_height_normal.rs`; repro
 `bench/fidelity/repros/system-ui-line-height.html`.
 
+`style/mod.rs` (`LineHeight::resolve`): in a quantized layout a line height that is a length or a number is in
+Blink's layout units (1/64 CSS px), as `ComputedStyle::ComputedLineHeightAsFixed` has it: a length rounded to a
+unit, a number the font size (rounded to a unit) times the number as a percentage, cut to a unit, in single
+precision. Lines of `19px/1.43` text were 27.17px apart where Chromium's are 27.15625px, so the fourth line's top
+fell on the other side of a half pixel and its text, painted from a whole CSS pixel (blitz-paint), a pixel off.
+Not matched: Stylo keeps font sizes in 1/60 px, so an `em` or `%` line height of a size that is not a multiple of
+1/60 px (`11.11px`) can be a unit off. Covered by `a_number_line_height_is_cut_to_a_layout_unit` in
+`crates/pyro-render/tests/text_line_tops.rs`; repro `bench/fidelity/repros/text-line-tops.html`.
+
 Pagination scripts clone rows and paragraphs into pages, so the same text is built again and again
 under new elements. On the `cmr-overflow` PDF case Blitz's inline construction went from 222 to 107
 ms and pagination from about 597 to 485 ms per run; the PDF is byte-identical. pyro-render's

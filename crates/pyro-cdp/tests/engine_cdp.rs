@@ -1434,6 +1434,46 @@ fn input_mouse_hit_tests_and_runs_trusted_checkbox_activation() {
 }
 
 #[test]
+fn a_scroller_whose_content_ends_a_layout_unit_short_of_a_pixel_scrolls_to_that_pixel() {
+    let mut h = Harness::new();
+    // Measured in Chrome 156: content of 217.984375px (a layout unit short of
+    // 218) in a 100px scroller has a scrollHeight of 218 and scrolls to 118,
+    // the pixel-snapped sizes' difference; so does 217.5px, and 217.4px
+    // scrolls to 117. The offset was 117.98 (117.5) cut to 117. The window
+    // clamps alike, also where the document's size is its overflow (html and
+    // body as tall as the viewport, as on ToS's settings pages).
+    let value = eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML = ['217.984375px', '217.5px', '217.4px']
+        .map((height) => `<div class="box" style="height:100px;overflow:auto"><div style="height:${height}"></div></div>`)
+        .join('');
+      [...document.querySelectorAll('.box')].map((box) => {
+        box.scrollTop = box.scrollHeight;
+        return [box.scrollHeight, box.clientHeight, box.scrollTop];
+      })
+    "#,
+    );
+    assert_eq!(value, json!([[218, 100, 118], [218, 100, 118], [217, 100, 117]]));
+    let value = eval_value(
+        &mut h,
+        r#"
+      document.documentElement.style.height = '100%';
+      document.body.style.cssText = 'margin:0;height:100%';
+      document.body.innerHTML = '<div style="height:100%"></div><div id="rest"></div>';
+      const root = document.scrollingElement;
+      ['617.984375px', '617.5px', '617.4px'].flatMap((height) => {
+        scrollTo(0, 0);
+        document.getElementById('rest').style.height = height;
+        root.scrollTop = root.scrollHeight;
+        return [root.scrollHeight - innerHeight, scrollY];
+      })
+    "#,
+    );
+    assert_eq!(value, json!([618, 618, 618, 618, 617, 617]));
+}
+
+#[test]
 fn input_mouse_wheel_scrolls_container_then_viewport_unless_canceled() {
     let mut h = Harness::new();
     eval_value(

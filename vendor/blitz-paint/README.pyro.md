@@ -118,6 +118,27 @@ from the root of an upstream checkout at that commit) is the whole diff.
     after the box's content, with the element's opacity. Not matched: one outline around the fragments of a
     wrapped inline box (each fragment has its own), `outline-style: auto`, and a positioned descendant
     painting over its ancestor's outline. Covered by `crates/pyro-render/tests/dotted_dashed_lines.rs`.
+  - `src/lib.rs` (`snapped_line_top`), `src/text.rs` (`LineTops`, `DrawTextContext::line_tops`, `stroke_text`),
+    `src/render.rs` (`text_placement`, `draw_inline_layout`, `draw_inline_boxes`, `draw_text_input_text`,
+    `draw_marker`): a line of text is painted from a whole CSS pixel, as Chromium paints it at any device scale:
+    its top in the document, in layout units, rounded half up. parley rounds a line's top to a device pixel inside
+    its layout, and the layout's fractional offset in its box (a vertically centred cell's, an input's) was added
+    as it was, so lines of a fractional pitch (`21.5px`, `1.43` times 13px) and the text of centred cells and
+    inputs of an odd height sat a device pixel off at a scale of 2 or 3. Each line moves by its own amount, with
+    its selection, its ellipsis and its inline boxes; an outside list marker follows the first line, a
+    single-line input's value and placeholder their line, a textarea's lines each their own. Where text is placed
+    at its layout-unit x (`fractional_text_x`). Not moved: a textarea's caret and selection. Covered by
+    `crates/pyro-render/tests/text_line_tops.rs`; repro `bench/fidelity/repros/text-line-tops.html`.
+  - `src/render.rs` (`draw_marker_symbol`, `text_placement_of`), `src/text.rs` (`text_fill_color`): an outside
+    `disc`, `circle` or `square` marker is a shape sized from the item's font, as Blink paints it
+    (`ListMarker::RelativeSymbolMarkerRect`; blitz-dom lays the marker out as a line of that font): with the
+    font's ascent `a` in whole pixels and `o = a * 2 / 3`, a
+    square of `(o + 1) / 2` px, `o + 7` px before the item's border box and `a - 3 * (a - o) / 2` px above the
+    baseline of the item's first line (its own or the first box's in it), at whole CSS pixels; a circle is a
+    1px line on the square's edge. It was a glyph of a bullet font, up to 2px right of Chromium's for 13-20px
+    text and 4px for 24px, and of another size. Other marker types and inside markers stay text. Covered by
+    `a_list_markers_symbol_is_a_shape_sized_from_the_font_at_whole_css_pixels` in
+    `crates/pyro-render/tests/text_line_tops.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

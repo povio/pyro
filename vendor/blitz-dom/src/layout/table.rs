@@ -1345,12 +1345,16 @@ fn percent_plus_length(
 /// cells. Excess table height is distributed to unconstrained rows (via the stretching of `auto`
 /// tracks) if there are any, and to all rows otherwise. So constrained rows use a `max-content`
 /// (rather than `auto`) maximum when there are unconstrained rows.
-fn row_tracks(rows: &[TableRow]) -> Vec<taffy::GridTemplateComponent<Atom>> {
+///
+/// pyro: `gutter` is the height of the collapsed border between two rows where the table lays
+/// its collapsed borders out as gaps. A row's `height` covers half of the border above it and
+/// half of the one below, as a cell's does, so its track is that much less.
+fn row_tracks(rows: &[TableRow], gutter: f32) -> Vec<taffy::GridTemplateComponent<Atom>> {
     let has_unconstrained_rows = rows.iter().any(|row| !row.is_constrained);
     rows.iter()
         .map(|row| {
             let min = match row.height {
-                Some(height) => style_helpers::length(height),
+                Some(height) => style_helpers::length((height - gutter).max(0.0)),
                 // Table rows retain their cells' intrinsic minimum even when
                 // a cell clips overflow. Grid's `auto` minimum would use zero
                 // for that cell, allowing a column-flex ancestor to compress
@@ -1578,7 +1582,6 @@ pub(crate) fn build_table_context(
     }
 
     style.grid_template_columns = column_sizes.into_iter().map(|dim| dim.into()).collect();
-    style.grid_template_rows = row_tracks(&rows);
 
     style.gap = match border_collapse {
         BorderCollapse::Separate => {
@@ -1636,6 +1639,11 @@ pub(crate) fn build_table_context(
         Some(edges) if edges_in_use(&edges, collapse_gap) => (Some(edges), None),
         edges => (None, edges),
     };
+    let gutter = match (border_collapse, &collapsed_edges) {
+        (BorderCollapse::Collapse, None) => collapse_gap.1,
+        _ => 0.0,
+    };
+    style.grid_template_rows = row_tracks(&rows, gutter);
     if let Some(edges) = &collapsed_edges {
         let zero = style_helpers::length(0.0);
         style.gap = taffy::Size { width: zero, height: zero };
@@ -2410,7 +2418,11 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
         }
     }
 
-    ctx.style.grid_template_rows = row_tracks(&ctx.rows);
+    let gutter = match (ctx.border_collapse, &ctx.collapsed_edges) {
+        (BorderCollapse::Collapse, None) => ctx.collapse_gap.1,
+        _ => 0.0,
+    };
+    ctx.style.grid_template_rows = row_tracks(&ctx.rows, gutter);
     if boxes_changed {
         let (before, after) = (doc.nodes[table].before(), doc.nodes[table].after());
         let layout_children = before

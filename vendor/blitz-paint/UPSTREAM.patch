@@ -63,11 +63,21 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  /// The default color for text selection highlights
  const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
  
-@@ -50,6 +55,59 @@
+@@ -50,6 +55,69 @@
      x_offset: u32,
      y_offset: u32,
  ) {
 +    paint_scene_with(scene, doc, scale, width, height, x_offset, y_offset, true)
++}
++
++/// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded
++/// top (`origin`, the unrounded top of its layout in the document in CSS px, plus the line's
++/// `unquantized_top` in layout units, `scale` to a CSS px) in Blink's layout units of 1/64 px,
++/// rounded half up to a whole pixel.
++pub fn snapped_line_top(origin: f64, unquantized_top: f32, scale: f64) -> f64 {
++    // The small term keeps a sum of floats that is a 64th short of one by noise on it.
++    let top = ((origin + unquantized_top as f64 / scale) * 64.0 + 1e-3).floor() / 64.0;
++    (top + 0.5).floor()
 +}
 +
 +/// [`paint_scene`], with background colors and images left out when
@@ -123,7 +133,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
      // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
      //
-@@ -59,7 +117,7 @@
+@@ -59,7 +127,7 @@
      #[cfg(feature = "custom-widget")]
      build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
  
@@ -132,7 +142,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
          doc,
          scale,
          width,
-@@ -68,6 +126,8 @@
+@@ -68,6 +136,8 @@
          y_offset as f64,
          &custom_widget_scenes,
      );
@@ -141,7 +151,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      generator.paint_scene(scene);
  
      // println!(
-@@ -78,6 +138,134 @@
+@@ -78,6 +148,134 @@
      // );
  }
  
@@ -354,14 +364,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -284,10 +308,140 @@
-                     self.initial_x,
-                     self.initial_y,
-                 );
-+            }
-+        }
-+    }
-+
+@@ -288,6 +312,136 @@
+         }
+     }
+ 
 +    /// pyro: paints the top layer above the document, bottom
 +    /// first: each element's `::backdrop` (a viewport-sized box: its
 +    /// background color, `opacity` and `backdrop-filter`), then the element
@@ -400,7 +406,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                || !self.rendered(id)
 +            {
 +                continue;
-             }
++            }
 +            self.paint_backdrop(scene, id);
 +            // The root element paints where the document pass would have
 +            // put it (`render_element` applies its own location, transform
@@ -417,9 +423,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            self.top_layer_root.set(Some(id));
 +            self.render_element(scene, id, transform, clip_rect);
 +            self.top_layer_root.set(None);
-         }
-     }
- 
++        }
++    }
++
 +    /// Whether `id` and its ancestors are styled and not `display: none`
 +    /// (the style traversal keeps stale styles under a `display: none`
 +    /// ancestor).
@@ -559,10 +565,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                          cx.draw_table_borders(scene);
                          if paints_own_box {
                              cx.draw_border(scene);
-@@ -708,6 +878,25 @@
+@@ -707,6 +877,25 @@
+                 cx.maybe_pop_css_mask_layer(scene, mask_layer_pushed);
              },
          );
- 
++
 +        // The outline goes over the box and its contents (Chromium paints it
 +        // in a phase of its own after the foreground): one with a negative
 +        // `outline-offset` lies inside the box, over its background. It has the
@@ -581,10 +588,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                |scene| cx.draw_outline(scene),
 +            );
 +        }
-+
+ 
          self.layer_manager
              .maybe_pop_layer(scene, blend_layer_pushed);
-         self.layer_manager
 @@ -724,9 +913,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
@@ -645,10 +651,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -966,7 +1196,255 @@
-             }
-         }
-     }
+@@ -963,7 +1193,258 @@
+                     None,
+                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
+                 );
++            }
++        }
++    }
 +
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
@@ -658,12 +667,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// side and its last the end side; the sides in between are open (`box-decoration-break:
 +    /// slice`): no border, no padding, square corners. A fragment's edges are snapped to CSS
 +    /// pixels and it paints as a box does: outer shadow, background, inner shadow, border,
-+    /// outline. On a line, a box paints before the boxes inside it. `transform` is the lines'.
++    /// outline. On a line, a box paints before the boxes inside it. `transform` is the lines', and
++    /// `tops` where each line's text goes: its boxes go with it.
 +    fn draw_inline_boxes(
 +        &self,
 +        scene: &mut impl PaintScene,
 +        layout: &parley::Layout<blitz_dom::node::TextBrush>,
 +        transform: Affine,
++        tops: Option<crate::text::LineTops>,
 +    ) {
 +        use parley::{InlineBoxKind, PositionedLayoutItem};
 +        use style::computed_values::direction::T as Direction;
@@ -681,7 +692,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            top: f32,
 +            bottom: f32,
 +        }
- 
++
 +        let styles = layout.styles();
 +        if styles.len() < 2 {
 +            return;
@@ -792,14 +803,15 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        }
 +                        None => {
 +                            let (top, bottom) = line.span_content_area(style_index);
++                            let shift = tops.map_or(0.0, |tops| tops.shift(metrics)) as f32;
 +                            fragments.push(Fragment {
 +                                node,
 +                                depth: depth - level,
 +                                line: line_index,
 +                                x0,
 +                                x1,
-+                                top,
-+                                bottom,
++                                top: top + shift,
++                                bottom: bottom + shift,
 +                            });
 +                        }
 +                    }
@@ -882,7 +894,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            if !left {
 +                cx.frame.border_radii.top_left = Vec2::ZERO;
 +                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-+            }
+             }
 +            if !right {
 +                cx.frame.border_radii.top_right = Vec2::ZERO;
 +                cx.frame.border_radii.bottom_right = Vec2::ZERO;
@@ -895,13 +907,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            cx.draw_border(scene);
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
-+        }
-+    }
-+
-     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
-         if self.node.flags.is_inline_root() {
-             let text_layout = self.element
-@@ -976,6 +1454,11 @@
+         }
+     }
+ 
+@@ -976,6 +1457,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -913,9 +922,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -985,22 +1468,16 @@
+@@ -984,23 +1470,22 @@
+             };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
++            // pyro: each line's top at the whole CSS pixel Chromium paints it at.
++            let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
  
 -            // Render inline element backgrounds (e.g. `<span style="background: ...">`)
 +            // Render the boxes of inline elements (e.g. `<span style="background: ...">`)
@@ -927,7 +939,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                transform,
 -                self.node.id,
 -            );
-+            self.draw_inline_boxes(scene, &text_layout.layout, transform);
++            self.draw_inline_boxes(scene, &text_layout.layout, transform, tops);
  
              // Render text selection highlight (if any) using cached selection ranges
              if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
@@ -935,15 +947,19 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      scene,
                      &text_layout.layout,
 -                    transform,
-+                    |_| transform,
++                    |line| match (tops, text_layout.layout.get(line)) {
++                        (Some(tops), Some(line)) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
++                        _ => transform,
++                    },
                      sel_start,
                      sel_end,
                  );
-@@ -1008,17 +1485,160 @@
+@@ -1008,17 +1493,183 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-+            draw_text_context.text_shift = self.fractional_text_x_of_node();
++            draw_text_context.text_shift = text_shift;
++            draw_text_context.line_tops = tops;
 +            let options = TextPaintOptions {
 +                scale: self.scale,
 +                brush_override: None,
@@ -982,7 +998,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        // The ellipsis on the line's baseline, next to the last atom kept.
 +                        if let Some((_, x)) = truncation {
 +                            let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
-+                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64);
++                            let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
++                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
++                            draw_text_context.line_tops = None;
 +                            crate::text::stroke_text(
 +                                scene,
 +                                ellipsis.lines(),
@@ -994,24 +1012,44 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                                &mut draw_text_context,
 +                                None,
 +                            );
++                            draw_text_context.line_tops = tops;
 +                        }
 +                    }
 +                }
 +            }
 +            draw_text_context.text_shift = 0.0;
++            draw_text_context.line_tops = None;
 +        }
 +    }
 +
 +    /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
 +    fn fractional_text_x_of_node(&self) -> f64 {
++        self.text_placement(0.0).0
++    }
++
++    /// pyro: where this node's text goes, as Chromium places it: what moves it from its content
++    /// box's whole-pixel x to its layout-unit x (device px), and the tops of the lines of a layout
++    /// `block_offset` CSS px down the content box (see [`crate::text::LineTops`]).
++    fn text_placement(&self, block_offset: f64) -> (f64, Option<crate::text::LineTops>) {
++        self.text_placement_of(self.node, block_offset)
++    }
++
++    /// pyro: [`Self::text_placement`] of the text of another node (a list item's first line may
++    /// be a descendant's).
++    fn text_placement_of(&self, node: &Node, block_offset: f64) -> (f64, Option<crate::text::LineTops>) {
 +        if !self.context.fractional_text_x {
-+            return 0.0;
++            return (0.0, None);
 +        }
-+        let (position, layout) = self.context.dom.physical_unrounded_geometry(self.node.id);
++        let (position, layout) = self.context.dom.physical_unrounded_geometry(node.id);
++        let painted = node.final_layout();
 +        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
-+        let painted = self.node.final_layout();
-+        let painted = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
-+        ((start * 64.0).floor() / 64.0 - painted) * self.scale
++        let painted_x = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
++        let tops = crate::text::LineTops {
++            origin: position.y as f64 + (layout.border.top + layout.padding.top) as f64 + block_offset,
++            painted: (position.y as f64).round() + (painted.border.top + painted.padding.top) as f64 + block_offset,
++            scale: self.scale,
++        };
++        (((start * 64.0).floor() / 64.0 - painted_x) * self.scale, Some(tops))
 +    }
 +
 +    /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the
@@ -1102,7 +1140,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,9 +1650,15 @@
+@@ -1030,9 +1681,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -1120,11 +1158,22 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,6 +1673,48 @@
+@@ -1047,7 +1704,63 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
-+
++            // pyro: each line's top at the whole CSS pixel Chromium paints it at. A single line
++            // takes its selection and caret along; in a textarea they stay where the layout has them.
++            let tops = self.text_placement(y_offset - scroll_y / self.scale).1;
++            let single_line_shift = tops
++                .filter(|_| !input_data.is_multiline)
++                .zip(input_data.editor.try_layout().and_then(|layout| layout.lines().next()))
++                .map(|(tops, line)| tops.shift(line.metrics()));
++            let (transform, tops) = match single_line_shift {
++                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
++                None => (transform, tops),
++            };
+ 
 +            // pyro: an empty input shows its placeholder, its lines placed as the
 +            // value's (a single line centred in the content box), under the caret.
 +            if let Some(placeholder) = input_data.shown_placeholder() {
@@ -1141,6 +1190,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    y: content_origin.y + y,
 +                };
 +                let mut draw_text_context = self.context.draw_text_context.borrow_mut();
++                // pyro: its lines at whole CSS pixels, as the value's.
++                draw_text_context.line_tops = self.text_placement(y).1;
 +                for line in placeholder.layout.lines() {
 +                    // A wrapped (textarea) placeholder is aligned by its layout.
 +                    let x = if input_data.is_multiline {
@@ -1165,11 +1216,62 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        None,
 +                    );
 +                }
++                draw_text_context.line_tops = None;
 +            }
- 
++
              if self.node.is_focussed() {
                  // Render selection/caret
-@@ -1088,7 +1756,9 @@
+                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
+@@ -1078,6 +1791,7 @@
+ 
+             // Render text
+             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
++            draw_text_context.line_tops = tops;
+             crate::text::stroke_text(
+                 scene,
+                 input_data.editor.try_layout().unwrap().lines(),
+@@ -1088,8 +1802,11 @@
+                     brush_override: None,
+                 },
+                 self.node.id,
++                None,
+                 &mut draw_text_context,
++                None,
+             );
++            draw_text_context.line_tops = None;
+         }
+     }
+ 
+@@ -1114,14 +1831,25 @@
+                 + item_layout.border.left);
+ 
+             // Align the marker with the baseline of the first line of text in the list item
+-            let y_offset = if let Some((text_layout, first_text_line)) = &self
++            if let Marker::Char(symbol @ ('•' | '◦' | '▪')) = marker {
++                self.draw_marker_symbol(scene, pos, *symbol, layout);
++                return;
++            }
++            let first_line = self
+                 .element
+                 .inline_layout_data
+                 .as_ref()
+-                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
++                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
++            let y_offset = if let Some((text_layout, first_text_line)) = &first_line
+             {
++                // pyro: with the line, where it is painted (`LineTops`).
++                let shift = self
++                    .text_placement(text_layout.block_offset as f64)
++                    .1
++                    .map_or(0.0, |tops| tops.shift(first_text_line.metrics()));
+                 (first_text_line.metrics().baseline
+-                    - layout.lines().next().unwrap().metrics().baseline)
++                    - layout.lines().next().unwrap().metrics().baseline
++                    + shift as f32)
+                     / layout.scale()
+                     + text_layout.block_offset
+             } else {
+@@ -1147,11 +1875,90 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -1179,17 +1281,88 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1147,7 +1817,9 @@
-                     brush_override: None,
-                 },
-                 self.node.id,
-+                None,
-                 &mut draw_text_context,
-+                None,
-             );
-         }
-     }
-@@ -1232,6 +1904,9 @@
+ 
++    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
++    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
++    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
++    /// whole numbers, the shape is `(o + 1) / 2` px wide and high, starts `o + 7` px before
++    /// the item's border box and `a - 3 * (a - o) / 2` px above the baseline of the item's
++    /// first line, and is at whole CSS pixels. A circle is a 1px line centred on the shape's
++    /// edge. The first line is the item's own or that of the first box in it that has one; the
++    /// font is the item's, which the marker's layout is a line of (blitz-dom).
++    fn draw_marker_symbol(
++        &self,
++        scene: &mut impl PaintScene,
++        pos: Point,
++        symbol: char,
++        marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
++    ) {
++        let font_ascent = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
++            line.items().find_map(|item| match item {
++                parley::PositionedLayoutItem::GlyphRun(run) => Some(run.run().font_metrics().ascent),
++                _ => None,
++            })
++        };
++        let Some(marker_line) = marker_layout.lines().next() else { return };
++        let layout_scale = marker_layout.scale();
++        let item_layout = self.node.final_layout();
++        // The first line, and its box's border box top from the item's.
++        let (mut node, mut top) = (self.node, 0.0);
++        let mut first_line = None;
++        for _ in 0..8 {
++            let text = node.data.downcast_element().and_then(|element| element.inline_layout_data.as_ref());
++            if let Some((text, line)) = text.and_then(|text| Some((text, text.layout.lines().next()?))) {
++                first_line = Some((node, text, line));
++                break;
++            }
++            let children = node.layout_children.borrow();
++            let child = children.as_ref().and_then(|children| {
++                children.iter().filter_map(|id| self.context.dom.get_node(*id)).find(|child| {
++                    child.final_layout().size.height > 0.0
++                        && !child.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned())
++                })
++            });
++            let Some(child) = child else { break };
++            top += child.final_layout().location.y;
++            node = child;
++        }
++        // The baseline from the item's content box top, in CSS px.
++        let baseline = match &first_line {
++            Some((node, text, line)) => {
++                let shift = self
++                    .text_placement_of(node, text.block_offset as f64)
++                    .1
++                    .map_or(0.0, |tops| tops.shift(line.metrics()));
++                let layout = node.final_layout();
++                let content_top = top + layout.border.top + layout.padding.top
++                    - item_layout.border.top
++                    - item_layout.padding.top;
++                content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset
++            }
++            None => marker_line.metrics().baseline / layout_scale,
++        };
++        let ascent = (font_ascent(&marker_line).unwrap_or(0.0) / layout_scale).round() as i32;
++        let offset = ascent * 2 / 3;
++        let size = ((offset + 1) / 2) as f64;
++        let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
++        let x = pos.x + (subpixel.x - item_layout.padding.left - item_layout.border.left) as f64 - (offset + 7) as f64;
++        let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
++        let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
++        let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
++        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, self.node.id));
++        match symbol {
++            '•' => scene.fill(Fill::NonZero, self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect)),
++            '◦' => {
++                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
++            }
++            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
++        }
++    }
++
+     fn draw_children(
+         &self,
+         scene: &mut impl PaintScene,
+@@ -1232,6 +2039,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -2425,7 +2598,19 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          }
      }
  }
-@@ -254,6 +375,53 @@
+@@ -153,6 +274,11 @@
+     decoration: Option<ResolvedDecoration>,
+ }
+ 
++/// pyro: the colour a node's text is filled with.
++pub(crate) fn text_fill_color(doc: &BaseDocument, node_id: NodeId) -> Color {
++    resolve_decoration_entry(doc, node_id).fill_color
++}
++
+ /// Resolve the cached style values for a single node into a [`DecorationStackEntry`].
+ fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationStackEntry {
+     let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
+@@ -254,8 +380,79 @@
      path_scratch: Vec<NodeId>,
      deco_boxes: Vec<LineDecoration>,
      win_ascent_ratios: WinAscentCache,
@@ -2436,8 +2621,32 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    pub(crate) text_shift: f64,
 +    /// pyro: the atoms the next `stroke_text` leaves out (`text-overflow: ellipsis`).
 +    pub(crate) cut: Option<TextCut>,
++    /// pyro: where the next `stroke_text` puts the top of each line (none: where the layout has it).
++    pub(crate) line_tops: Option<LineTops>,
 +}
 +
++/// pyro: where Chromium paints the lines of a block's text: each line's top at the whole CSS pixel
++/// nearest its unrounded place in the document (Blink's `TextFragmentPainter` rounds a text
++/// fragment's top "to ensure consistent line heights"; its place within the line is in whole pixels
++/// already), at any device scale. The layout has its lines at whole device pixels of its own origin.
++#[derive(Clone, Copy, Debug)]
++pub(crate) struct LineTops {
++    /// The unrounded top of the layout in the document (CSS px).
++    pub origin: f64,
++    /// Where that top is painted: the origin of `stroke_text`'s transform (CSS px of the document).
++    pub painted: f64,
++    /// Device pixels in a CSS pixel.
++    pub scale: f64,
++}
++
++impl LineTops {
++    /// How far down from its place in the layout the line is painted (device px).
++    pub(crate) fn shift(&self, metrics: &parley::LineMetrics) -> f64 {
++        let top = crate::snapped_line_top(self.origin, metrics.unquantized_block_min_coord, self.scale);
++        (top - self.painted) * self.scale - metrics.block_min_coord as f64
++    }
+ }
+ 
 +/// pyro: where `text-overflow: ellipsis` cuts a line: the atoms (clusters, ligatures) of its
 +/// glyph runs that end past `edge` (layout x; `keep_left`) or start before it (right-to-left
 +/// lines) are not drawn.
@@ -2476,26 +2685,28 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +        (range.unwrap_or(0..0), extent)
 +    }
- }
- 
++}
++
  /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
-@@ -577,6 +745,15 @@
-     }
- }
- 
+ ///
+ /// - Percentages are resolved against the font size,
+@@ -574,6 +771,15 @@
+                 inset_end,
+             );
+         }
++    }
++}
++
 +/// `transform` with its content moved `shift` along the x axis of the text.
 +fn shifted(transform: Affine, shift: f64) -> Affine {
 +    if shift == 0.0 {
 +        transform
 +    } else {
 +        transform * Affine::translate((shift, 0.0))
-+    }
-+}
-+
- pub(crate) fn stroke_text<'a>(
-     scene: &mut impl PaintScene,
-     lines: impl Iterator<Item = Line<'a, TextBrush>>,
-@@ -584,7 +761,9 @@
+     }
+ }
+ 
+@@ -584,7 +790,9 @@
      transform: Affine,
      options: TextPaintOptions,
      inline_root_id: NodeId,
@@ -2505,20 +2716,34 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  ) {
      let TextPaintOptions {
          scale,
-@@ -595,7 +774,12 @@
+@@ -595,7 +803,14 @@
          path_scratch,
          deco_boxes,
          win_ascent_ratios,
 +        runs,
 +        text_shift,
 +        cut,
++        line_tops,
      } = context;
 +    let shift = *text_shift;
 +    let cut = *cut;
++    let line_tops = line_tops.filter(|_| vertical.is_none());
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -625,6 +809,18 @@
+@@ -608,6 +823,11 @@
+     // for each run, only resolve styles for the nodes newly descended into (popping
+     // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
+     for line in lines {
++        // pyro: the line at Chromium's whole CSS pixel, with its decorations.
++        let transform = match line_tops {
++            Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
++            None => transform,
++        };
+         // Decorations accumulated for this line, keyed by decorating box, so each box is
+         // painted once (spanning all its runs) using its own font — matching Firefox, which
+         // draws one decoration per box rather than one stepped segment per differently-sized
+@@ -625,6 +845,18 @@
                  let glyph_xform = synthesis
                      .skew()
                      .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
@@ -2537,7 +2762,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  
                  let css_font_size = font_size as f64 / scale;
  
-@@ -659,16 +855,41 @@
+@@ -659,16 +891,41 @@
                      font_embolden(font_size as f64, fill_color, transform)
                  } else {
                      kurbo::Vec2::default()
@@ -2581,7 +2806,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                          normalized_coords,
                          embolden,
                          Fill::NonZero,
-@@ -676,11 +897,19 @@
+@@ -676,11 +933,19 @@
                          1.0, // alpha
                          transform,
                          glyph_xform,
@@ -2606,7 +2831,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                      );
                  }
  
-@@ -700,8 +929,9 @@
+@@ -700,8 +965,9 @@
                      css_font_size,
                  };
                  let run_node_id = style.brush.id;
@@ -2618,7 +2843,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  
                  for entry in stack.iter() {
                      if entry.decoration.is_none() {
-@@ -738,7 +968,7 @@
+@@ -738,7 +1004,7 @@
  
          flush_line_decorations(
              scene,
@@ -2627,7 +2852,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
              options,
              deco_boxes,
              win_ascent_ratios,
-@@ -753,7 +983,7 @@
+@@ -753,7 +1019,7 @@
  pub(crate) fn draw_text_selection(
      scene: &mut impl PaintScene,
      layout: &Layout<TextBrush>,
@@ -2636,7 +2861,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +991,54 @@
+@@ -761,12 +1027,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  

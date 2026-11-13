@@ -274,6 +274,11 @@ struct DecorationStackEntry {
     decoration: Option<ResolvedDecoration>,
 }
 
+/// pyro: the colour a node's text is filled with.
+pub(crate) fn text_fill_color(doc: &BaseDocument, node_id: NodeId) -> Color {
+    resolve_decoration_entry(doc, node_id).fill_color
+}
+
 /// Resolve the cached style values for a single node into a [`DecorationStackEntry`].
 fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationStackEntry {
     let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
@@ -382,6 +387,30 @@ pub(crate) struct DrawTextContext {
     pub(crate) text_shift: f64,
     /// pyro: the atoms the next `stroke_text` leaves out (`text-overflow: ellipsis`).
     pub(crate) cut: Option<TextCut>,
+    /// pyro: where the next `stroke_text` puts the top of each line (none: where the layout has it).
+    pub(crate) line_tops: Option<LineTops>,
+}
+
+/// pyro: where Chromium paints the lines of a block's text: each line's top at the whole CSS pixel
+/// nearest its unrounded place in the document (Blink's `TextFragmentPainter` rounds a text
+/// fragment's top "to ensure consistent line heights"; its place within the line is in whole pixels
+/// already), at any device scale. The layout has its lines at whole device pixels of its own origin.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LineTops {
+    /// The unrounded top of the layout in the document (CSS px).
+    pub origin: f64,
+    /// Where that top is painted: the origin of `stroke_text`'s transform (CSS px of the document).
+    pub painted: f64,
+    /// Device pixels in a CSS pixel.
+    pub scale: f64,
+}
+
+impl LineTops {
+    /// How far down from its place in the layout the line is painted (device px).
+    pub(crate) fn shift(&self, metrics: &parley::LineMetrics) -> f64 {
+        let top = crate::snapped_line_top(self.origin, metrics.unquantized_block_min_coord, self.scale);
+        (top - self.painted) * self.scale - metrics.block_min_coord as f64
+    }
 }
 
 /// pyro: where `text-overflow: ellipsis` cuts a line: the atoms (clusters, ligatures) of its
@@ -777,9 +806,11 @@ pub(crate) fn stroke_text<'a>(
         runs,
         text_shift,
         cut,
+        line_tops,
     } = context;
     let shift = *text_shift;
     let cut = *cut;
+    let line_tops = line_tops.filter(|_| vertical.is_none());
     stack.clear();
     path_scratch.clear();
     deco_boxes.clear();
@@ -792,6 +823,11 @@ pub(crate) fn stroke_text<'a>(
     // for each run, only resolve styles for the nodes newly descended into (popping
     // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
     for line in lines {
+        // pyro: the line at Chromium's whole CSS pixel, with its decorations.
+        let transform = match line_tops {
+            Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
+            None => transform,
+        };
         // Decorations accumulated for this line, keyed by decorating box, so each box is
         // painted once (spanning all its runs) using its own font — matching Firefox, which
         // draws one decoration per box rather than one stepped segment per differently-sized

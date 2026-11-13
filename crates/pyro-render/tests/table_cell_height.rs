@@ -93,6 +93,20 @@ fn table_cell_height_is_a_content_minimum_in_fixed_and_auto_tables() {
 }
 
 #[test]
+fn a_rows_height_in_a_collapsed_table_covers_half_of_the_borders_around_it() {
+    // Measured in Chrome 156: rows of 33px and 41px with collapsed 1px borders
+    // are 33px and 41px high and follow one another, as cells of those heights
+    // are. The rows' tracks left the border between two rows out: 34px and 42px.
+    let html = r#"<!doctype html><style>body{margin:0}table{border-collapse:collapse}td{padding:0 8px;border:1px solid gray;font:13px/16px Arial}</style><table><tbody><tr id=a style="height:33px"><td id=cell>x</td></tr><tr id=b style="height:41px"><td>x</td></tr><tr id=c><td>x</td></tr></tbody></table>"#;
+    let b = boxes(html, &["a", "b", "c", "cell"]);
+    assert_eq!(
+        (b[0].height, b[1].height, b[1].y - b[0].y, b[2].y - b[1].y, b[3].height),
+        (33.0, 41.0, 33.0, 41.0, 33.0),
+        "{b:?}"
+    );
+}
+
+#[test]
 fn table_rowspan_content_minimum_fits_the_combined_rows() {
     for layout in ["fixed", "auto"] {
         let html = format!(

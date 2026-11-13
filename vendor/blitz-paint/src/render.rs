@@ -1205,12 +1205,14 @@ impl ElementCx<'_, '_> {
     /// side and its last the end side; the sides in between are open (`box-decoration-break:
     /// slice`): no border, no padding, square corners. A fragment's edges are snapped to CSS
     /// pixels and it paints as a box does: outer shadow, background, inner shadow, border,
-    /// outline. On a line, a box paints before the boxes inside it. `transform` is the lines'.
+    /// outline. On a line, a box paints before the boxes inside it. `transform` is the lines', and
+    /// `tops` where each line's text goes: its boxes go with it.
     fn draw_inline_boxes(
         &self,
         scene: &mut impl PaintScene,
         layout: &parley::Layout<blitz_dom::node::TextBrush>,
         transform: Affine,
+        tops: Option<crate::text::LineTops>,
     ) {
         use parley::{InlineBoxKind, PositionedLayoutItem};
         use style::computed_values::direction::T as Direction;
@@ -1339,14 +1341,15 @@ impl ElementCx<'_, '_> {
                         }
                         None => {
                             let (top, bottom) = line.span_content_area(style_index);
+                            let shift = tops.map_or(0.0, |tops| tops.shift(metrics)) as f32;
                             fragments.push(Fragment {
                                 node,
                                 depth: depth - level,
                                 line: line_index,
                                 x0,
                                 x1,
-                                top,
-                                bottom,
+                                top: top + shift,
+                                bottom: bottom + shift,
                             });
                         }
                     }
@@ -1467,17 +1470,22 @@ impl ElementCx<'_, '_> {
             };
             let transform =
                 self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
+            // pyro: each line's top at the whole CSS pixel Chromium paints it at.
+            let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
 
             // Render the boxes of inline elements (e.g. `<span style="background: ...">`)
             // behind the text and selection highlight.
-            self.draw_inline_boxes(scene, &text_layout.layout, transform);
+            self.draw_inline_boxes(scene, &text_layout.layout, transform, tops);
 
             // Render text selection highlight (if any) using cached selection ranges
             if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
                 crate::text::draw_text_selection(
                     scene,
                     &text_layout.layout,
-                    |_| transform,
+                    |line| match (tops, text_layout.layout.get(line)) {
+                        (Some(tops), Some(line)) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
+                        _ => transform,
+                    },
                     sel_start,
                     sel_end,
                 );
@@ -1485,7 +1493,8 @@ impl ElementCx<'_, '_> {
 
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-            draw_text_context.text_shift = self.fractional_text_x_of_node();
+            draw_text_context.text_shift = text_shift;
+            draw_text_context.line_tops = tops;
             let options = TextPaintOptions {
                 scale: self.scale,
                 brush_override: None,
@@ -1524,7 +1533,9 @@ impl ElementCx<'_, '_> {
                         // The ellipsis on the line's baseline, next to the last atom kept.
                         if let Some((_, x)) = truncation {
                             let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
-                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64);
+                            let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
+                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
+                            draw_text_context.line_tops = None;
                             crate::text::stroke_text(
                                 scene,
                                 ellipsis.lines(),
@@ -1536,24 +1547,44 @@ impl ElementCx<'_, '_> {
                                 &mut draw_text_context,
                                 None,
                             );
+                            draw_text_context.line_tops = tops;
                         }
                     }
                 }
             }
             draw_text_context.text_shift = 0.0;
+            draw_text_context.line_tops = None;
         }
     }
 
     /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
     fn fractional_text_x_of_node(&self) -> f64 {
+        self.text_placement(0.0).0
+    }
+
+    /// pyro: where this node's text goes, as Chromium places it: what moves it from its content
+    /// box's whole-pixel x to its layout-unit x (device px), and the tops of the lines of a layout
+    /// `block_offset` CSS px down the content box (see [`crate::text::LineTops`]).
+    fn text_placement(&self, block_offset: f64) -> (f64, Option<crate::text::LineTops>) {
+        self.text_placement_of(self.node, block_offset)
+    }
+
+    /// pyro: [`Self::text_placement`] of the text of another node (a list item's first line may
+    /// be a descendant's).
+    fn text_placement_of(&self, node: &Node, block_offset: f64) -> (f64, Option<crate::text::LineTops>) {
         if !self.context.fractional_text_x {
-            return 0.0;
+            return (0.0, None);
         }
-        let (position, layout) = self.context.dom.physical_unrounded_geometry(self.node.id);
+        let (position, layout) = self.context.dom.physical_unrounded_geometry(node.id);
+        let painted = node.final_layout();
         let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
-        let painted = self.node.final_layout();
-        let painted = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
-        ((start * 64.0).floor() / 64.0 - painted) * self.scale
+        let painted_x = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
+        let tops = crate::text::LineTops {
+            origin: position.y as f64 + (layout.border.top + layout.padding.top) as f64 + block_offset,
+            painted: (position.y as f64).round() + (painted.border.top + painted.padding.top) as f64 + block_offset,
+            scale: self.scale,
+        };
+        (((start * 64.0).floor() / 64.0 - painted_x) * self.scale, Some(tops))
     }
 
     /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the
@@ -1673,6 +1704,17 @@ impl ElementCx<'_, '_> {
 
             let transform = self.transform
                 * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
+            // pyro: each line's top at the whole CSS pixel Chromium paints it at. A single line
+            // takes its selection and caret along; in a textarea they stay where the layout has them.
+            let tops = self.text_placement(y_offset - scroll_y / self.scale).1;
+            let single_line_shift = tops
+                .filter(|_| !input_data.is_multiline)
+                .zip(input_data.editor.try_layout().and_then(|layout| layout.lines().next()))
+                .map(|(tops, line)| tops.shift(line.metrics()));
+            let (transform, tops) = match single_line_shift {
+                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
+                None => (transform, tops),
+            };
 
             // pyro: an empty input shows its placeholder, its lines placed as the
             // value's (a single line centred in the content box), under the caret.
@@ -1690,6 +1732,8 @@ impl ElementCx<'_, '_> {
                     y: content_origin.y + y,
                 };
                 let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                // pyro: its lines at whole CSS pixels, as the value's.
+                draw_text_context.line_tops = self.text_placement(y).1;
                 for line in placeholder.layout.lines() {
                     // A wrapped (textarea) placeholder is aligned by its layout.
                     let x = if input_data.is_multiline {
@@ -1714,6 +1758,7 @@ impl ElementCx<'_, '_> {
                         None,
                     );
                 }
+                draw_text_context.line_tops = None;
             }
 
             if self.node.is_focussed() {
@@ -1746,6 +1791,7 @@ impl ElementCx<'_, '_> {
 
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            draw_text_context.line_tops = tops;
             crate::text::stroke_text(
                 scene,
                 input_data.editor.try_layout().unwrap().lines(),
@@ -1760,6 +1806,7 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 None,
             );
+            draw_text_context.line_tops = None;
         }
     }
 
@@ -1784,14 +1831,25 @@ impl ElementCx<'_, '_> {
                 + item_layout.border.left);
 
             // Align the marker with the baseline of the first line of text in the list item
-            let y_offset = if let Some((text_layout, first_text_line)) = &self
+            if let Marker::Char(symbol @ ('•' | '◦' | '▪')) = marker {
+                self.draw_marker_symbol(scene, pos, *symbol, layout);
+                return;
+            }
+            let first_line = self
                 .element
                 .inline_layout_data
                 .as_ref()
-                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
+                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
+            let y_offset = if let Some((text_layout, first_text_line)) = &first_line
             {
+                // pyro: with the line, where it is painted (`LineTops`).
+                let shift = self
+                    .text_placement(text_layout.block_offset as f64)
+                    .1
+                    .map_or(0.0, |tops| tops.shift(first_text_line.metrics()));
                 (first_text_line.metrics().baseline
-                    - layout.lines().next().unwrap().metrics().baseline)
+                    - layout.lines().next().unwrap().metrics().baseline
+                    + shift as f32)
                     / layout.scale()
                     + text_layout.block_offset
             } else {
@@ -1821,6 +1879,83 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 None,
             );
+        }
+    }
+
+    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
+    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
+    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
+    /// whole numbers, the shape is `(o + 1) / 2` px wide and high, starts `o + 7` px before
+    /// the item's border box and `a - 3 * (a - o) / 2` px above the baseline of the item's
+    /// first line, and is at whole CSS pixels. A circle is a 1px line centred on the shape's
+    /// edge. The first line is the item's own or that of the first box in it that has one; the
+    /// font is the item's, which the marker's layout is a line of (blitz-dom).
+    fn draw_marker_symbol(
+        &self,
+        scene: &mut impl PaintScene,
+        pos: Point,
+        symbol: char,
+        marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
+    ) {
+        let font_ascent = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
+            line.items().find_map(|item| match item {
+                parley::PositionedLayoutItem::GlyphRun(run) => Some(run.run().font_metrics().ascent),
+                _ => None,
+            })
+        };
+        let Some(marker_line) = marker_layout.lines().next() else { return };
+        let layout_scale = marker_layout.scale();
+        let item_layout = self.node.final_layout();
+        // The first line, and its box's border box top from the item's.
+        let (mut node, mut top) = (self.node, 0.0);
+        let mut first_line = None;
+        for _ in 0..8 {
+            let text = node.data.downcast_element().and_then(|element| element.inline_layout_data.as_ref());
+            if let Some((text, line)) = text.and_then(|text| Some((text, text.layout.lines().next()?))) {
+                first_line = Some((node, text, line));
+                break;
+            }
+            let children = node.layout_children.borrow();
+            let child = children.as_ref().and_then(|children| {
+                children.iter().filter_map(|id| self.context.dom.get_node(*id)).find(|child| {
+                    child.final_layout().size.height > 0.0
+                        && !child.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned())
+                })
+            });
+            let Some(child) = child else { break };
+            top += child.final_layout().location.y;
+            node = child;
+        }
+        // The baseline from the item's content box top, in CSS px.
+        let baseline = match &first_line {
+            Some((node, text, line)) => {
+                let shift = self
+                    .text_placement_of(node, text.block_offset as f64)
+                    .1
+                    .map_or(0.0, |tops| tops.shift(line.metrics()));
+                let layout = node.final_layout();
+                let content_top = top + layout.border.top + layout.padding.top
+                    - item_layout.border.top
+                    - item_layout.padding.top;
+                content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset
+            }
+            None => marker_line.metrics().baseline / layout_scale,
+        };
+        let ascent = (font_ascent(&marker_line).unwrap_or(0.0) / layout_scale).round() as i32;
+        let offset = ascent * 2 / 3;
+        let size = ((offset + 1) / 2) as f64;
+        let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
+        let x = pos.x + (subpixel.x - item_layout.padding.left - item_layout.border.left) as f64 - (offset + 7) as f64;
+        let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
+        let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
+        let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
+        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, self.node.id));
+        match symbol {
+            '•' => scene.fill(Fill::NonZero, self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect)),
+            '◦' => {
+                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
+            }
+            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
         }
     }
 

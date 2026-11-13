@@ -669,13 +669,24 @@ impl LayoutPassState<'_> {
                                 .map(|line| *line.metrics());
                             let style = node.layout_style();
                             let contribution_width = if compressible_min_content { 0.0 } else { width };
+                            // pyro: as tall as its text's line, which is `normal`
+                            // for a line height of no more than the font size.
+                            let line_height = line
+                                .filter(|_| {
+                                    node.primary_styles().is_some_and(|s| {
+                                        !matches!(s.clone_line_height(), style::values::computed::font::LineHeight::Normal)
+                                            && construct::input_line_is_normal(&s)
+                                    })
+                                })
+                                .map(|line| line.line_height / scale)
+                                .or(resolved_line_height);
                             let mut output = compute_leaf_layout(
                                 inputs,
                                 &style,
                                 resolve_calc_value,
                                 |_known_size, _available_space| taffy::Size {
                                     width: contribution_width,
-                                    height: resolved_line_height.unwrap_or(16.0),
+                                    height: line_height.unwrap_or(16.0),
                                 },
                             );
                             // Its baseline is its text's, the line centred in the content

@@ -1025,13 +1025,44 @@ fn collect_complex_layout_children(
     out.maybe_push_anon_block(doc);
 }
 
+/// pyro: whether a single-line input's text is laid out at `line-height:
+/// normal` whatever the input's line height is, as the inner editor of
+/// Chromium's input is (Blink's `CreateInnerEditorStyle`): when the line height
+/// is no more than the font size, when the input has a fixed height above the
+/// line height, and when its height is a percentage or a `calc()`. The line
+/// height counts in whole pixels, cut. The placeholder's line is `normal` always.
+pub(crate) fn input_line_is_normal(style: &style::properties::ComputedValues) -> bool {
+    use style::values::computed::font::LineHeight;
+    use style::values::generics::length::GenericSize;
+    let font_size = style.slow_clone_font_size().used_size().px();
+    let line_height = match style.clone_line_height() {
+        LineHeight::Normal => return true,
+        LineHeight::Number(number) => (font_size * number.0).trunc(),
+        LineHeight::Length(length) => length.0.px().trunc(),
+    };
+    if font_size >= line_height {
+        return true;
+    }
+    let height = if style.writing_mode.is_vertical() { style.slow_clone_width() } else { style.slow_clone_height() };
+    match height {
+        GenericSize::LengthPercentage(height) => match height.0.to_length() {
+            Some(height) => height.px() > line_height,
+            None => true,
+        },
+        _ => false,
+    }
+}
+
 fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multiline: bool) {
     let node = &mut doc.nodes[input_element_id];
-    let parley_style = node
+    let mut parley_style = node
         .primary_styles()
         .as_ref()
         .map(|s| stylo_to_parley::style(node.id, s))
         .unwrap_or_default();
+    if !is_multiline && node.primary_styles().is_some_and(|s| input_line_is_normal(&s)) {
+        parley_style.line_height = parley::LineHeight::NORMAL;
+    }
     let alignment = node
         .primary_styles()
         .map(|s| stylo_to_parley::text_align(s.clone_text_align()))

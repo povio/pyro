@@ -75,6 +75,30 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   Percentages resolve to 0. Block-axis padding and border do not move lines (CSS 2.1 10.8.1); blitz-paint
   paints them. Repro `bench/fidelity/repros/inline-box-badges.html`, tests
   `crates/pyro-render/tests/inline_box_decorations.rs`.
+- `layout/construct.rs` (`input_line_is_normal`, `create_text_editor`), `layout/mod.rs`: a single-line input's
+  text is laid out at `line-height: normal` where Chromium's inner editor is
+  (`TextControlInnerEditorElement::CreateInnerEditorStyle`): when the line height (whole pixels, cut) is no more
+  than the font size, when the input has a fixed height above the line height, and when its height is a
+  percentage or a `calc()`. An input of `height: auto` keeps its line height, and is as tall as a `normal` line
+  when the line height is no more than the font size. In a 33px input of `13px/1.43` system-ui Chromium centres
+  a 16px line, not an 18.59px one: the value stood a CSS pixel high. The placeholder's line is `normal` already.
+  `node/node.rs` (`text_input_v_centering_offset`): the line is centred in the unrounded content box, as Chromium
+  centres in layout units; in the box rounded to whole pixels a 33.5px input's line was 8.5px down (painted from
+  9px) where Chromium's is 8.25px (8px). Repro `bench/fidelity/repros/text-line-tops.html`, tests
+  `an_inputs_line_is_normal_below_a_fixed_height` and `an_inputs_value_starts_at_a_whole_css_pixel` in
+  `crates/pyro-render/tests/text_line_tops.rs`.
+- `layout/list.rs` (`node_list_item_child`): an outside `disc`, `circle` or `square` marker is laid out as a
+  line of the item's font (an "x"), not as a glyph of the bullet font: blitz-paint paints these markers as
+  shapes sized from that font's ascent, as Chromium does. Test
+  `a_list_markers_symbol_is_a_shape_sized_from_the_font_at_whole_css_pixels` in
+  `crates/pyro-render/tests/text_line_tops.rs`.
+- `layout/table.rs` (`row_tracks`): in a collapsed table whose borders are laid out as gaps (uniform borders), a
+  row's `height` covers half of the border above it and half of the one below, as a cell's does, so its track
+  is the height less the gap. Rows of 33, 41 and 37px with 1px borders were 34, 42 and 38px apart where
+  Chromium's are 33, 41 and 37px. A table whose cells keep half borders (see "Collapsed tables without uniform
+  borders") was right. Repro `bench/fidelity/repros/text-line-tops.html`, test
+  `a_rows_height_in_a_collapsed_table_covers_half_of_the_borders_around_it` in
+  `crates/pyro-render/tests/table_cell_height.rs`.
 
 ## `<br>` as inline text
 
