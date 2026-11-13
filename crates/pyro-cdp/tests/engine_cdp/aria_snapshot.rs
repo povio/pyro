@@ -252,6 +252,34 @@ fn aria_ai_mode_gives_refs_and_aria_ref_finds_them() {
     assert!(bad.get("error").is_some(), "{bad}");
 }
 
+/// A file input is a button named by its labels, else "Choose File", as
+/// Playwright's roleUtils has it: agents need its ref to open the chooser.
+#[test]
+fn file_inputs_are_buttons_with_refs() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body><input type="file" id="a"><label>Avatar <input type="file" id="b"></label></body>"#,
+    );
+    let tree = run_read(&mut h, json!({"locator": {"css": "body"}, "read": "aria", "mode": "ai", "as": "v"}));
+    let text = serde_json::to_string(&tree).unwrap();
+    fn walk(v: &Value, out: &mut Vec<(String, String)>) {
+        if v["role"] == "button" {
+            out.push((v["name"].as_str().unwrap_or("").to_owned(), v["ref"].as_str().unwrap_or("").to_owned()));
+        }
+        for c in v["children"].as_array().into_iter().flatten() {
+            walk(c, out);
+        }
+    }
+    let mut found = Vec::new();
+    walk(&tree, &mut found);
+    let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["Choose File", "Avatar"], "{text}");
+    assert!(found.iter().all(|(_, r)| r.starts_with('e')), "every file input has a ref: {text}");
+    let r = h.page("Pyro.query", json!({"locator": {"role": "button", "name": "Avatar"}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 1, "{r}");
+}
+
 #[test]
 fn aria_ai_mode_names_frame_refs_by_seq() {
     let mut h = Harness::new();
