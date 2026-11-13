@@ -265,9 +265,16 @@ options with Playwright's meaning:
 
 - `viewport` and `screen`; `deviceScaleFactor` (`devicePixelRatio`, and
   screenshots in device pixels, Playwright's default `scale: 'device'`);
-  `isMobile` (the device's `mobile` flag and portrait or landscape screen
-  orientation); `hasTouch` (`navigator.maxTouchPoints`, a coarse pointer
-  without hover)
+  `isMobile`, as Chromium's mobile emulation: `<meta name="viewport">`
+  decides the layout viewport (`width=device-width`, a width in px,
+  `initial-scale`, `minimum-scale`, `maximum-scale`, `user-scalable`, also
+  when a script adds or changes the tag), a page without one lays out 980 px
+  wide, zoomed out to the device's width, and `innerWidth`,
+  `visualViewport`, media queries, `resize` and screenshots follow, with
+  Chrome's numbers (portrait or landscape screen orientation too; no pinch
+  zoom, so the visual viewport stays at the window's top left); `hasTouch`
+  (`navigator.maxTouchPoints`, a coarse pointer without hover). `devices` is
+  Playwright's table of descriptors
 - `locale`: `navigator.language(s)`, `Accept-Language` and the default locale
   of `Intl` and the `toLocale*String` methods (JavaScriptCore's own default is
   the process's: a script that runs first in every document makes `locale`
@@ -398,8 +405,6 @@ Not supported, accepted so configs and `devices` descriptors keep working:
 - context options with no effect: `bypassCSP`, `serviceWorkers`,
   `forcedColors`, `strictSelectors`, `recordVideo`, and `acceptDownloads`
   (downloads are always accepted)
-- `isMobile` does not apply `<meta name="viewport">`: pages lay out at the
-  viewport's width, as with `width=device-width`
 - `toHaveScreenshot` renders at the context's `deviceScaleFactor` (Playwright's
   default there is `scale: 'css'`), and `screenshot()` has no `scale` option
 - `context.request` and the `request` fixture do not go through `proxy`

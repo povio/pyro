@@ -46,15 +46,8 @@ export function defineConfig<T extends KeyValue = {}, W extends KeyValue = {}>(c
   return [config, ...overrides].reduce<Typed<T, W>>((a, b) => ({ ...a, ...b, use: { ...(a.use ?? {}), ...(b.use ?? {}) } as Typed<T, W>['use'], expect: { ...(a.expect ?? {}), ...(b.expect ?? {}) } }), {} as Typed<T, W>);
 }
 
-const chromeUA = (v: string) => `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Safari/537.36`;
-/** A few of Playwright's device descriptors (viewport, user agent, scale, touch). */
-export const devices: Record<string, Record<string, unknown>> = {
-  'Desktop Chrome': { userAgent: chromeUA('147.0.0.0'), viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false, defaultBrowserType: 'chromium' },
-  'Desktop Chrome HiDPI': { userAgent: chromeUA('147.0.0.0'), viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2, isMobile: false, hasTouch: false, defaultBrowserType: 'chromium' },
-  'Desktop Edge': { userAgent: `${chromeUA('147.0.0.0')} Edg/147.0.0.0`, viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false, defaultBrowserType: 'chromium' },
-  'Pixel 7': { userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36', viewport: { width: 412, height: 839 }, deviceScaleFactor: 2.625, isMobile: true, hasTouch: true, defaultBrowserType: 'chromium' },
-  'iPhone 15': { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1', viewport: { width: 393, height: 659 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, defaultBrowserType: 'webkit' },
-};
+/** Playwright's device descriptors, as in Playwright. */
+export { devices } from './devices.js';
 
 export type ResolvedProject = {
   name: string;
