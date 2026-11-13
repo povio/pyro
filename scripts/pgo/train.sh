@@ -14,7 +14,8 @@
 # gone, its files are merged into a part, skipping any whose process was killed while it wrote
 # (cdp-perf SIGKILLs a server that outlives its SIGTERM by 3 s, fork mode a retired template
 # after 500 ms); the count is printed. One file shared by all processes (`%m`) would not survive
-# that: a single truncated write loses the whole profile.
+# that: a single truncated write loses the whole profile. Each file is read alone before the merge:
+# a damaged one can take llvm-profdata down (`part`).
 #
 # PYRO_PGO_EXTRA=<script>: one more workload, for an application's own (E2E suite, PDF templates):
 # it runs with PYRO_WS=ws://127.0.0.1:<PYRO_PGO_PORT, default 9333> (a plain `serve` of the
@@ -46,16 +47,33 @@ running() {
 
 # Merges the profiles written so far into part-NAME.profdata.
 part() {
-    local name="$1" files
+    local name="$1" files good=() unreadable=0 f
     for _ in $(seq 1 240); do
         [[ "$(running)" == 0 ]] && break
         sleep 0.5
     done
     files=("$PROFRAW_DIR"/*.profraw)
     [[ -e "${files[0]}" ]] || { echo "$name: no profile written" >&2; exit 1; }
-    "$PROFDATA" merge --failure-mode=warn -o "$PGO_DIR/part-$name.profdata" "${files[@]}" \
+    # A file whose process was killed while it wrote can hold garbage where its header gives sizes.
+    # llvm-profdata does not skip such a file (--failure-mode covers the errors it detects): it
+    # allocates what the garbage asks for. Seen on the Linux x64 runner (7.7 GB): "LLVM ERROR: out of
+    # memory" in InstrProfSymtab::create, and before that the runner lost at this point of the job.
+    # So each file is read alone first, under a memory limit, and only the readable ones are merged.
+    for f in "${files[@]}"; do
+        if (
+            ulimit -c 0
+            ulimit -v 4194304 2>/dev/null || true # not settable on macOS
+            exec "$PROFDATA" show "$f"
+        ) >/dev/null 2>&1; then
+            good+=("$f")
+        else
+            unreadable=$((unreadable + 1))
+        fi
+    done
+    [[ ${#good[@]} -gt 0 ]] || { echo "$name: none of ${#files[@]} profiles is readable" >&2; exit 1; }
+    "$PROFDATA" merge --failure-mode=warn -o "$PGO_DIR/part-$name.profdata" "${good[@]}" \
         2> "$PGO_DIR/merge-$name.log"
-    echo "$name: ${#files[@]} profiles merged, $(grep -c 'warning:' "$PGO_DIR/merge-$name.log" || true) skipped (truncated)"
+    echo "$name: ${#good[@]} profiles merged, $unreadable unreadable and $(grep -c 'warning:' "$PGO_DIR/merge-$name.log" || true) truncated skipped"
     rm -f "${files[@]}"
 }
 
