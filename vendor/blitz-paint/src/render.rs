@@ -1393,8 +1393,10 @@ impl ElementCx<'_, '_> {
             // within the content box of it's node.
             let y_offset = self.node.text_input_v_centering_offset(self.scale);
             let subpixel_offset = input_data.content_box_subpixel_offset;
+            // pyro: the value, placeholder and caret at the content box's layout-unit x, as
+            // inline text (`fractional_text_x_of_node`).
             let content_origin = Point {
-                x: pos.x + subpixel_offset.x as f64,
+                x: pos.x + subpixel_offset.x as f64 + self.fractional_text_x_of_node() / self.scale,
                 y: pos.y + subpixel_offset.y as f64,
             };
             let pos = Point {

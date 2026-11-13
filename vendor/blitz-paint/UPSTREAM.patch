@@ -13,7 +13,19 @@ diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/sr
 diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 --- a/packages/blitz-paint/src/lib.rs
 +++ b/packages/blitz-paint/src/lib.rs
-@@ -50,6 +50,56 @@
+@@ -26,6 +26,11 @@
+     all(feature = "apple-font-embolden", target_os = "ios"),
+ ));
+ 
++/// pyro: glyphs drawn as Chromium draws them on macOS, where Core Text renders text and Skia
++/// positions it: outlines unhinted, and each glyph at a quarter of a device pixel along the
++/// baseline (Skia's subpixel positions). Elsewhere glyphs keep the hinting and the exact x.
++const CORE_TEXT_GLYPHS: bool = cfg!(target_os = "macos");
++
+ /// The default color for text selection highlights
+ const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
+ 
+@@ -50,6 +55,59 @@
      x_offset: u32,
      y_offset: u32,
  ) {
@@ -22,6 +34,9 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +
 +/// [`paint_scene`], with background colors and images left out when
 +/// `backgrounds` is false (printing without `printBackground`).
++///
++/// pyro: text is drawn at its layout-unit x, as Chromium positions it, not at the whole
++/// pixel its box is painted at (`fractional_text_x`).
 +#[allow(clippy::too_many_arguments)]
 +pub fn paint_scene_with(
 +    scene: &mut impl PaintScene,
@@ -33,7 +48,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +    y_offset: u32,
 +    backgrounds: bool,
 +) {
-+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, false)
++    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true)
 +}
 +
 +/// [`paint_scene_with`] for print: text at its layout-unit x.
@@ -70,7 +85,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
      // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
      //
-@@ -59,7 +109,7 @@
+@@ -59,7 +117,7 @@
      #[cfg(feature = "custom-widget")]
      build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
  
@@ -79,7 +94,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
          doc,
          scale,
          width,
-@@ -68,6 +118,8 @@
+@@ -68,6 +126,8 @@
          y_offset as f64,
          &custom_widget_scenes,
      );
@@ -88,7 +103,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      generator.paint_scene(scene);
  
      // println!(
-@@ -78,6 +130,134 @@
+@@ -78,6 +138,134 @@
      // );
  }
  
@@ -301,7 +316,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -284,8 +308,138 @@
+@@ -284,10 +308,140 @@
                      self.initial_x,
                      self.initial_y,
                  );
@@ -364,9 +379,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            self.top_layer_root.set(Some(id));
 +            self.render_element(scene, id, transform, clip_rect);
 +            self.top_layer_root.set(None);
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// Whether `id` and its ancestors are styled and not `display: none`
 +    /// (the style traversal keeps stale styles under a `display: none`
 +    /// ancestor).
@@ -399,7 +414,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            || style.get_inherited_box().visibility != StyloVisibility::Visible
 +        {
 +            return;
-         }
++        }
 +        let effects = style.get_effects();
 +        let opacity = effects.opacity;
 +        let color = style
@@ -437,9 +452,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            },
 +        );
-     }
- 
++    }
++
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
+         let location = node.final_layout().location;
+         parent
 @@ -317,8 +471,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
@@ -763,24 +780,25 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,10 +1393,14 @@
+@@ -1030,9 +1393,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
--            let pos = Point {
++            // pyro: the value, placeholder and caret at the content box's layout-unit x, as
++            // inline text (`fractional_text_x_of_node`).
 +            let content_origin = Point {
-                 x: pos.x + subpixel_offset.x as f64,
--                y: pos.y + subpixel_offset.y as f64 + y_offset,
++                x: pos.x + subpixel_offset.x as f64 + self.fractional_text_x_of_node() / self.scale,
 +                y: pos.y + subpixel_offset.y as f64,
-             };
-+            let pos = Point {
++            };
+             let pos = Point {
+-                x: pos.x + subpixel_offset.x as f64,
+-                y: pos.y + subpixel_offset.y as f64 + y_offset,
 +                x: content_origin.x,
 +                y: content_origin.y + y_offset,
-+            };
+             };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-             // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
-@@ -1048,6 +1415,48 @@
+@@ -1048,6 +1417,48 @@
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
  
@@ -829,7 +847,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1088,7 +1497,9 @@
+@@ -1088,7 +1499,9 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -839,7 +857,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1147,7 +1558,9 @@
+@@ -1147,7 +1560,9 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -849,7 +867,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1232,6 +1645,9 @@
+@@ -1232,6 +1647,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -1015,9 +1033,12 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 --- a/packages/blitz-paint/src/text.rs
 +++ b/packages/blitz-paint/src/text.rs
-@@ -14,6 +14,96 @@
+@@ -12,8 +12,98 @@
+ use style::values::generics::text::{GenericTextDecorationInset, GenericTextDecorationLength};
+ 
  use crate::color::{Color, ToColorColor as _};
- use crate::{FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
+-use crate::{FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
++use crate::{CORE_TEXT_GLYPHS, FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
  
 +/// How the runs of one line of a vertical writing mode sit in it. The line is drawn turned a quarter
 +/// clockwise (see `ElementCx::draw_vertical_inline_layout`), so a run's block offset moves it across the line.
@@ -1193,18 +1214,19 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          }
      }
  }
-@@ -254,8 +375,54 @@
+@@ -254,6 +375,53 @@
      path_scratch: Vec<NodeId>,
      deco_boxes: Vec<LineDecoration>,
      win_ascent_ratios: WinAscentCache,
 +    /// The glyph runs drawn, when recording ([`crate::paint_scene_recording_text`]).
 +    pub(crate) runs: Option<Vec<crate::TextRun>>,
-+    /// How far the next `stroke_text` moves its text along x (device px; 0 unless printing).
++    /// How far the next `stroke_text` moves its text along x (device px): from its box's whole-pixel
++    /// x to its layout-unit x (`fractional_text_x`).
 +    pub(crate) text_shift: f64,
 +    /// pyro: the atoms the next `stroke_text` leaves out (`text-overflow: ellipsis`).
 +    pub(crate) cut: Option<TextCut>,
- }
- 
++}
++
 +/// pyro: where `text-overflow: ellipsis` cuts a line: the atoms (clusters, ligatures) of its
 +/// glyph runs that end past `edge` (layout x; `keep_left`) or start before it (right-to-left
 +/// lines) are not drawn.
@@ -1243,28 +1265,26 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +        (range.unwrap_or(0..0), extent)
 +    }
-+}
-+
- /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
- ///
- /// - Percentages are resolved against the font size,
-@@ -577,6 +744,15 @@
-     }
  }
  
+ /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
+@@ -574,6 +742,15 @@
+                 inset_end,
+             );
+         }
++    }
++}
++
 +/// `transform` with its content moved `shift` along the x axis of the text.
 +fn shifted(transform: Affine, shift: f64) -> Affine {
 +    if shift == 0.0 {
 +        transform
 +    } else {
 +        transform * Affine::translate((shift, 0.0))
-+    }
-+}
-+
- pub(crate) fn stroke_text<'a>(
-     scene: &mut impl PaintScene,
-     lines: impl Iterator<Item = Line<'a, TextBrush>>,
-@@ -584,7 +760,9 @@
+     }
+ }
+ 
+@@ -584,7 +761,9 @@
      transform: Affine,
      options: TextPaintOptions,
      inline_root_id: NodeId,
@@ -1274,7 +1294,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  ) {
      let TextPaintOptions {
          scale,
-@@ -595,7 +773,12 @@
+@@ -595,7 +774,12 @@
          path_scratch,
          deco_boxes,
          win_ascent_ratios,
@@ -1287,7 +1307,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -625,6 +808,18 @@
+@@ -625,6 +809,18 @@
                  let glyph_xform = synthesis
                      .skew()
                      .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
@@ -1306,12 +1326,27 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  
                  let css_font_size = font_size as f64 / scale;
  
-@@ -662,9 +857,22 @@
+@@ -659,16 +855,41 @@
+                     font_embolden(font_size as f64, fill_color, transform)
+                 } else {
+                     kurbo::Vec2::default()
++                } + if synthesis.embolden() {
++                    synthetic_bold(font_size as f64, scale)
++                } else {
++                    kurbo::Vec2::default()
                  };
  
                  let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
 +                let unshifted = transform;
 +                let transform = shifted(transform, shift);
++                // pyro: on macOS glyph origins snap to quarters of a device pixel along the
++                // baseline, as Skia's subpixel positioning does, where the run is drawn untransformed
++                // (only translated) into a raster: a recording paint (the PDF's) keeps the exact x.
++                let quarter_x = CORE_TEXT_GLYPHS && runs.is_none() && vertical.is_none() && {
++                    let [a, b, c, d, _, _] = transform.as_coeffs();
++                    a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
++                };
++                let tx = transform.as_coeffs()[4];
 +                // pyro: the glyphs `text-overflow` keeps of the run (all without a cut).
 +                let (kept, kept_extent) = match cut {
 +                    Some(cut) => cut.kept(&glyph_run),
@@ -1330,7 +1365,12 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                      scene.draw_glyphs(
                          font,
                          font_size,
-@@ -676,11 +884,15 @@
+-                        !FONT_EMBOLDEN_ENABLED, // hint
++                        !FONT_EMBOLDEN_ENABLED && !CORE_TEXT_GLYPHS, // hint
+                         normalized_coords,
+                         embolden,
+                         Fill::NonZero,
+@@ -676,11 +897,19 @@
                          1.0, // alpha
                          transform,
                          glyph_xform,
@@ -1345,13 +1385,17 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                            .take(kept.len())
 +                            .map(|glyph| anyrender::Glyph {
 +                                id: glyph.id as _,
-+                                x: glyph.x,
++                                x: if quarter_x {
++                                    (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
++                                } else {
++                                    glyph.x
++                                },
 +                                y: glyph.y,
 +                            }),
                      );
                  }
  
-@@ -700,8 +912,9 @@
+@@ -700,8 +929,9 @@
                      css_font_size,
                  };
                  let run_node_id = style.brush.id;
@@ -1363,7 +1407,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  
                  for entry in stack.iter() {
                      if entry.decoration.is_none() {
-@@ -738,7 +951,7 @@
+@@ -738,7 +968,7 @@
  
          flush_line_decorations(
              scene,
@@ -1372,7 +1416,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
              options,
              deco_boxes,
              win_ascent_ratios,
-@@ -753,7 +966,7 @@
+@@ -753,7 +983,7 @@
  pub(crate) fn draw_text_selection(
      scene: &mut impl PaintScene,
      layout: &Layout<TextBrush>,
@@ -1381,7 +1425,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,9 +974,9 @@
+@@ -761,12 +991,25 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -1393,3 +1437,19 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      });
  }
  
++/// pyro: how far each side of a glyph's outline grows when bold is synthesized (a font without
++/// a face of the weight asked for): Skia's fake bold, which Chromium draws, strokes the outline
++/// with a width of the text size times 1/24 at 9px and below, 1/32 at 36px and above, linear
++/// between. `font_size` is the run's (device) size, `scale` device pixels per CSS pixel; the
++/// result is in the glyphs' units.
++fn synthetic_bold(font_size: f64, scale: f64) -> kurbo::Vec2 {
++    let css_size = if scale > 0.0 { font_size / scale } else { font_size };
++    let t = ((css_size - 9.0) / (36.0 - 9.0)).clamp(0.0, 1.0);
++    let ratio = 1.0 / 24.0 + t * (1.0 / 32.0 - 1.0 / 24.0);
++    let side = font_size * ratio / 2.0;
++    kurbo::Vec2::new(side, side)
++}
++
+ /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
+ /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
+ /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies

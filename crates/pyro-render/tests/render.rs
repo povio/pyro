@@ -566,16 +566,73 @@ fn overflow_on_body_is_the_viewports() {
     assert_eq!(pixel(&img, 500, 20), WHITE);
 }
 
-/// Text in screenshots stays at its box's whole-pixel x; only PDF output moves it.
+/// Text in screenshots keeps the fraction of its box's x, as in Chromium (and in PDF output):
+/// the box is painted at a whole pixel, its text at its layout-unit x.
 #[test]
-fn screenshot_text_keeps_the_box_x() {
+fn screenshot_text_keeps_its_layout_unit_x() {
     let page = |padding: &str| {
         format!("<!doctype html><body style='margin:0;font:16px sans-serif'><div style='padding-left:{padding}'>Whole pixels</div>")
     };
     let mut r = Renderer::new();
     let (a, _, _) = r.render(&snap(&page("37.7953px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
     let (b, _, _) = r.render(&snap(&page("38px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
-    assert!(compare(&a, &b, 0, None).equal);
+    assert!(!compare(&a, &b, 0, None).equal, "0.2 px of padding moves the text");
+    // The ink moves left by about the fraction, not by a whole pixel.
+    let ink_x = |img: &RgbaImage| {
+        let (mut sum, mut weight) = (0.0, 0.0);
+        for (i, p) in img.data.chunks_exact(4).enumerate() {
+            let w = 255.0 - p[0] as f64;
+            sum += w * (i % img.width as usize) as f64;
+            weight += w;
+        }
+        sum / weight
+    };
+    let moved = ink_x(&b) - ink_x(&a);
+    assert!((0.1..0.35).contains(&moved), "moved {moved} px");
+}
+
+/// On macOS glyphs sit at quarters of a device pixel along the baseline, as Skia's subpixel
+/// positioning places Core Text's glyphs in Chromium: a tenth of a pixel moves a lone glyph
+/// nowhere, a quarter moves it.
+#[cfg(target_os = "macos")]
+#[test]
+fn glyphs_sit_at_quarter_pixels_on_macos() {
+    let page = |padding: &str| {
+        format!("<!doctype html><body style='margin:0;font:16px sans-serif'><div style='padding-left:{padding}'>l</div>")
+    };
+    let mut r = Renderer::new();
+    let mut render = |padding: &str| r.render(&snap(&page(padding)), Area::Viewport, Backend::Cpu, &fetcher()).unwrap().0;
+    let (whole, tenth, quarter) = (render("10px"), render("10.1px"), render("10.25px"));
+    assert!(compare(&whole, &tenth, 0, None).equal, "a tenth of a pixel rounds to the same quarter");
+    assert!(!compare(&whole, &quarter, 0, None).equal, "a quarter of a pixel moves the glyphs");
+}
+
+/// Serves pdf_fidelity's Inter subset as `inter.ttf`.
+struct InterFetch;
+impl Fetcher for InterFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(if url.ends_with("/inter.ttf") { Ok(include_bytes!("fonts/Inter-subset.ttf").to_vec()) } else { Err("offline".into()) });
+    }
+}
+
+/// A font with no face of the weight asked for is drawn emboldened, as Chromium draws it (Skia's
+/// fake bold): more ink, the same advances.
+#[test]
+fn a_missing_bold_face_is_synthesized() {
+    let page = |weight: u32| {
+        format!(
+            "<!doctype html><style>@font-face {{ font-family: RegularOnly; src: url(inter.ttf); font-weight: 400 }}
+             body {{ margin: 0; background: white; font: {weight} 40px RegularOnly }}</style><div data-pyro-render-clip style='display:inline-block'>office</div>"
+        )
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(InterFetch);
+    let mut r = Renderer::new();
+    let ink = |img: &RgbaImage| img.data.chunks_exact(4).map(|p| 255.0 - p[0] as f64).sum::<f64>();
+    let (regular, _, _) = r.render(&snap(&page(400)), Area::Element, Backend::Cpu, &fetcher).unwrap();
+    let (bold, _, _) = r.render(&snap(&page(700)), Area::Element, Backend::Cpu, &fetcher).unwrap();
+    assert_eq!(bold.width, regular.width, "the same advances");
+    let ratio = ink(&bold) / ink(&regular);
+    assert!(ratio > 1.1, "emboldened: {ratio} times the ink");
 }
 
 /// Mixed fonts, sizes, scripts and a missing first family: every shaping path

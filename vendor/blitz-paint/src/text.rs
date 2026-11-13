@@ -12,7 +12,7 @@ use style::values::computed::{
 use style::values::generics::text::{GenericTextDecorationInset, GenericTextDecorationLength};
 
 use crate::color::{Color, ToColorColor as _};
-use crate::{FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
+use crate::{CORE_TEXT_GLYPHS, FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
 
 /// How the runs of one line of a vertical writing mode sit in it. The line is drawn turned a quarter
 /// clockwise (see `ElementCx::draw_vertical_inline_layout`), so a run's block offset moves it across the line.
@@ -377,7 +377,8 @@ pub(crate) struct DrawTextContext {
     win_ascent_ratios: WinAscentCache,
     /// The glyph runs drawn, when recording ([`crate::paint_scene_recording_text`]).
     pub(crate) runs: Option<Vec<crate::TextRun>>,
-    /// How far the next `stroke_text` moves its text along x (device px; 0 unless printing).
+    /// How far the next `stroke_text` moves its text along x (device px): from its box's whole-pixel
+    /// x to its layout-unit x (`fractional_text_x`).
     pub(crate) text_shift: f64,
     /// pyro: the atoms the next `stroke_text` leaves out (`text-overflow: ellipsis`).
     pub(crate) cut: Option<TextCut>,
@@ -854,11 +855,23 @@ pub(crate) fn stroke_text<'a>(
                     font_embolden(font_size as f64, fill_color, transform)
                 } else {
                     kurbo::Vec2::default()
+                } + if synthesis.embolden() {
+                    synthetic_bold(font_size as f64, scale)
+                } else {
+                    kurbo::Vec2::default()
                 };
 
                 let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
                 let unshifted = transform;
                 let transform = shifted(transform, shift);
+                // pyro: on macOS glyph origins snap to quarters of a device pixel along the
+                // baseline, as Skia's subpixel positioning does, where the run is drawn untransformed
+                // (only translated) into a raster: a recording paint (the PDF's) keeps the exact x.
+                let quarter_x = CORE_TEXT_GLYPHS && runs.is_none() && vertical.is_none() && {
+                    let [a, b, c, d, _, _] = transform.as_coeffs();
+                    a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
+                };
+                let tx = transform.as_coeffs()[4];
                 // pyro: the glyphs `text-overflow` keeps of the run (all without a cut).
                 let (kept, kept_extent) = match cut {
                     Some(cut) => cut.kept(&glyph_run),
@@ -876,7 +889,7 @@ pub(crate) fn stroke_text<'a>(
                     scene.draw_glyphs(
                         font,
                         font_size,
-                        !FONT_EMBOLDEN_ENABLED, // hint
+                        !FONT_EMBOLDEN_ENABLED && !CORE_TEXT_GLYPHS, // hint
                         normalized_coords,
                         embolden,
                         Fill::NonZero,
@@ -890,7 +903,11 @@ pub(crate) fn stroke_text<'a>(
                             .take(kept.len())
                             .map(|glyph| anyrender::Glyph {
                                 id: glyph.id as _,
-                                x: glyph.x,
+                                x: if quarter_x {
+                                    (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
+                                } else {
+                                    glyph.x
+                                },
                                 y: glyph.y,
                             }),
                     );
@@ -978,6 +995,19 @@ pub(crate) fn draw_text_selection(
         let rect = kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1);
         scene.fill(Fill::NonZero, line_transform(line_idx), SELECTION_COLOR, None, &rect);
     });
+}
+
+/// pyro: how far each side of a glyph's outline grows when bold is synthesized (a font without
+/// a face of the weight asked for): Skia's fake bold, which Chromium draws, strokes the outline
+/// with a width of the text size times 1/24 at 9px and below, 1/32 at 36px and above, linear
+/// between. `font_size` is the run's (device) size, `scale` device pixels per CSS pixel; the
+/// result is in the glyphs' units.
+fn synthetic_bold(font_size: f64, scale: f64) -> kurbo::Vec2 {
+    let css_size = if scale > 0.0 { font_size / scale } else { font_size };
+    let t = ((css_size - 9.0) / (36.0 - 9.0)).clamp(0.0, 1.0);
+    let ratio = 1.0 / 24.0 + t * (1.0 / 32.0 - 1.0 / 24.0);
+    let side = font_size * ratio / 2.0;
+    kurbo::Vec2::new(side, side)
 }
 
 /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount

@@ -26,6 +26,11 @@ const FONT_EMBOLDEN_ENABLED: bool = cfg!(any(
     all(feature = "apple-font-embolden", target_os = "ios"),
 ));
 
+/// pyro: glyphs drawn as Chromium draws them on macOS, where Core Text renders text and Skia
+/// positions it: outlines unhinted, and each glyph at a quarter of a device pixel along the
+/// baseline (Skia's subpixel positions). Elsewhere glyphs keep the hinting and the exact x.
+const CORE_TEXT_GLYPHS: bool = cfg!(target_os = "macos");
+
 /// The default color for text selection highlights
 const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
 
@@ -55,6 +60,9 @@ pub fn paint_scene(
 
 /// [`paint_scene`], with background colors and images left out when
 /// `backgrounds` is false (printing without `printBackground`).
+///
+/// pyro: text is drawn at its layout-unit x, as Chromium positions it, not at the whole
+/// pixel its box is painted at (`fractional_text_x`).
 #[allow(clippy::too_many_arguments)]
 pub fn paint_scene_with(
     scene: &mut impl PaintScene,
@@ -66,7 +74,7 @@ pub fn paint_scene_with(
     y_offset: u32,
     backgrounds: bool,
 ) {
-    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, false)
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true)
 }
 
 /// [`paint_scene_with`] for print: text at its layout-unit x.
