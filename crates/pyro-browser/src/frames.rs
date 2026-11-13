@@ -449,6 +449,7 @@ impl FrameHost {
         };
         sandbox.opaque |= ancestor.sandbox.opaque;
         sandbox.scripts_disabled |= ancestor.sandbox.scripts_disabled;
+        sandbox.automatic_features_blocked |= ancestor.sandbox.automatic_features_blocked;
         sandbox.popups_blocked |= ancestor.sandbox.popups_blocked;
         if self.children.borrow().len() >= 128 {
             return Err(JsError::Range("child frame limit reached".into()));
@@ -620,16 +621,24 @@ impl FrameHost {
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Sandbox {
     pub opaque: bool,
+    /// No script runs: the `sandbox` attribute without `allow-scripts`, or
+    /// the page's `Emulation.setScriptExecutionDisabled`.
     pub scripts_disabled: bool,
+    /// The sandboxed automatic features flag (meta refresh): the attribute
+    /// without `allow-scripts` only. A page with script execution disabled
+    /// still follows a refresh, as Chrome does.
+    pub automatic_features_blocked: bool,
     pub popups_blocked: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
         let Some(value) = value else { return Self::default() };
         let tokens: Vec<_> = value.split_ascii_whitespace().collect();
+        let scripts_disabled = !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-scripts"));
         Self {
             opaque: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-same-origin")),
-            scripts_disabled: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-scripts")),
+            scripts_disabled,
+            automatic_features_blocked: scripts_disabled,
             popups_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups")),
         }
     }

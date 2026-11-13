@@ -1,8 +1,24 @@
 // Playwright's APIRequestContext and APIResponse on `fetch`: the `request`
 // fixture, `request.newContext()`, `context.request` and `page.request`.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { writeFileMakingDirs } from './files.js';
 import { resolveUrl } from './match.js';
+
+/** Playwright's `httpCredentials`. */
+export type HttpCredentials = { username: string; password: string; origin?: string; send?: 'unauthorized' | 'always' };
+
+/** Whether credentials restricted to `origin` (none: every origin) are for `url`. */
+export function credentialsApply(origin: string | undefined, url: string): boolean {
+  if (!origin) return true;
+  try {
+    return new URL(url).origin.toLowerCase() === new URL(origin).origin.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+const basicAuthorization = (c: HttpCredentials) => `Basic ${Buffer.from(`${c.username}:${c.password}`).toString('base64')}`;
 
 type Cookie = { name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: 'Strict' | 'Lax' | 'None' };
 type FilePayload = { name: string; mimeType: string; buffer: Buffer };
@@ -27,7 +43,11 @@ export type NewContextOptions = {
   failOnStatusCode?: boolean;
   ignoreHTTPSErrors?: boolean;
   userAgent?: string;
-  httpCredentials?: { username: string; password: string };
+  /**
+   * As Playwright's: sent after a 401 with a Basic challenge (`send:
+   * 'always'`: with every request), only to `origin` when it is given.
+   */
+  httpCredentials?: HttpCredentials;
 };
 
 export class APIResponse {
@@ -130,9 +150,8 @@ export class APIRequestContext {
     }
     for (const [k, v] of Object.entries({ ...this.o.extraHTTPHeaders, ...o.headers })) headers[k.toLowerCase()] = v;
     if (this.o.userAgent && !headers['user-agent']) headers['user-agent'] = this.o.userAgent;
-    if (this.o.httpCredentials && !headers['authorization']) {
-      headers['authorization'] = `Basic ${Buffer.from(`${this.o.httpCredentials.username}:${this.o.httpCredentials.password}`).toString('base64')}`;
-    }
+    const creds = this.o.httpCredentials && credentialsApply(this.o.httpCredentials.origin, u.href) ? this.o.httpCredentials : undefined;
+    if (creds?.send === 'always' && !headers['authorization']) headers['authorization'] = basicAuthorization(creds);
     if (o.data !== undefined) {
       if (typeof o.data === 'string' || Buffer.isBuffer(o.data) || o.data instanceof Uint8Array) {
         body = o.data as BodyInit;
@@ -161,14 +180,22 @@ export class APIRequestContext {
     if (cookie && !headers['cookie']) headers['cookie'] = cookie;
     const timeout = o.timeout ?? this.o.timeout ?? 30_000;
     const signal = timeout > 0 ? AbortSignal.timeout(timeout) : undefined;
-    const r = await fetch(u, {
-      method,
-      headers,
-      body: method === 'GET' || method === 'HEAD' ? undefined : body,
-      redirect: o.maxRedirects === 0 ? 'manual' : 'follow',
-      signal,
-      ...(o.ignoreHTTPSErrors || this.o.ignoreHTTPSErrors ? ({ tls: { rejectUnauthorized: false } } as object) : {}),
-    });
+    const send = (headers: Record<string, string>) =>
+      fetch(u, {
+        method,
+        headers,
+        body: method === 'GET' || method === 'HEAD' ? undefined : body,
+        redirect: o.maxRedirects === 0 ? 'manual' : 'follow',
+        signal,
+        ...(o.ignoreHTTPSErrors || this.o.ignoreHTTPSErrors ? ({ tls: { rejectUnauthorized: false } } as object) : {}),
+      });
+    let r = await send(headers);
+    // A Basic challenge from the credentials' origin: once more with them,
+    // as Playwright (a 401 after a redirect elsewhere is returned as it is).
+    if (r.status === 401 && creds && !headers['authorization'] && /^\s*basic\b/i.test(r.headers.get('www-authenticate') ?? '') && new URL(r.url || u.href).origin === u.origin) {
+      await r.body?.cancel().catch(() => {});
+      r = await send({ ...headers, authorization: basicAuthorization(creds) });
+    }
     const pairs: [string, string][] = [];
     r.headers.forEach((v, k) => pairs.push([k, v]));
     for (const c of (r.headers as any).getSetCookie?.() ?? []) this.storeCookie(new URL(r.url || u), c);
@@ -208,7 +235,7 @@ export class APIRequestContext {
 
   async storageState(o: { path?: string } = {}): Promise<{ cookies: Cookie[]; origins: never[] }> {
     const state = { cookies: [...this.cookies], origins: [] as never[] };
-    if (o.path) writeFileSync(o.path, JSON.stringify(state, null, 2));
+    if (o.path) writeFileMakingDirs(o.path, JSON.stringify(state, null, 2));
     return state;
   }
   async dispose(): Promise<void> {

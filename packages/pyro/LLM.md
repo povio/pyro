@@ -12,8 +12,12 @@ setup and teardown (they get Playwright's `FullConfig`; import its type from
 `@povio/pyro/wright`), hooks and worker fixtures work as in Playwright (a
 timed-out test keeps its page for `afterEach` hooks and fixture teardown, and
 `use: { screenshot: 'only-on-failure' }` captures it), and
-`pyro run --shard i/n` splits a run over CI jobs. Rewrite a test into one
-`page.run([...])` only where its last milliseconds matter.
+`pyro run --shard i/n` splits a run over CI jobs. Context options (`locale`,
+`timezoneId`, `proxy`, `geolocation` and `permissions`, `httpCredentials`,
+`offline`, device emulation, `javaScriptEnabled`, `ignoreHTTPSErrors`) mean
+what they mean in Playwright; the README's "Context options" and "Not
+supported" list the differences. Rewrite a test into one `page.run([...])`
+only where its last milliseconds matter.
 
 ## The model
 

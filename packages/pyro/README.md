@@ -330,8 +330,48 @@ the context's init scripts, `storageState` local storage and viewport, and
 the `goto` becomes a same-document route change (`pushState` + `popstate`,
 settled), returning `null`. The app's shell was booted before the test
 seeded anything, so use it for routes that fetch their data when they
-mount. Contexts with cookies, `extraHTTPHeaders`, `userAgent` or media
-emulation, and any other first call, get a fresh page.
+mount. Contexts with cookies, `extraHTTPHeaders`, `userAgent`, media
+emulation or any option of the next section that changes how a page loads
+(proxy, locale, time zone, geolocation, permissions, credentials, device,
+offline, JavaScript off, HTTPS errors), and any other first call, get a fresh
+page.
+
+**Context options.** `browser.newContext()` and `use: {}` take Playwright's
+options with Playwright's meaning:
+
+- `viewport` and `screen`; `deviceScaleFactor` (`devicePixelRatio`, and
+  screenshots in device pixels, Playwright's default `scale: 'device'`);
+  `isMobile` (the device's `mobile` flag and portrait or landscape screen
+  orientation); `hasTouch` (`navigator.maxTouchPoints`, a coarse pointer
+  without hover)
+- `locale`: `navigator.language(s)`, `Accept-Language` and the default locale
+  of `Intl` and the `toLocale*String` methods (JavaScriptCore's own default is
+  the process's: a script that runs first in every document makes `locale`
+  the default; the constructors stay the built-in ones to `instanceof` and
+  subclasses)
+- `timezoneId`: `Date`, `Intl` and `Temporal`. A time zone belongs to a
+  connection's JavaScript VM, so the contexts of each zone get a connection
+  of their own (opened in a few milliseconds, closed with its last context)
+  and contexts in different zones run side by side; contexts without one
+  keep the host's zone
+- `geolocation` (`context.setGeolocation()`) and `permissions`
+  (`context.grantPermissions(permissions, { origin })`, `clearPermissions()`),
+  with Playwright's permission names; without the `geolocation` permission
+  `navigator.geolocation` reports permission denied
+- `proxy`: an HTTP proxy per context (`server` as `host:port` or
+  `http://host:port`, `bypass`), loopback addresses included as with
+  Playwright; `username` and `password` go to the proxy, and only to it, from
+  the first request
+- `httpCredentials`: a page's 401 challenge from `origin` (from any origin
+  without one) gets the Basic credentials once; wrong ones end in the 401
+  response; other origins and proxies get nothing. `context.request` and the
+  `request` fixture send them after a 401 too, or with every request with
+  `send: 'always'` (as in Playwright, `send` applies to API requests only)
+- `offline` (`context.setOffline()`), `javaScriptEnabled: false` (no script of
+  the page's own runs, event handlers and timers included, and `<noscript>`
+  shows; `page.evaluate` still runs), `ignoreHTTPSErrors`, `colorScheme`,
+  `reducedMotion`, `userAgent`, `extraHTTPHeaders`, `storageState`, `baseURL`
+  and `recordHar`
 
 Also covered:
 
@@ -368,6 +408,15 @@ Also covered:
 - `context.newCDPSession(page)`, `page.request`/`context.request`, context
   events (`request`, `response`, `console`, `page`, `close`) and
   `recordHar` in the context options
+- `page.goto()` and `page.reload()` return the document's response: status,
+  status text, headers, the request's headers, the redirects on the way
+  (`request().redirectedFrom()`) and `body()`/`text()`/`json()`. Without a
+  `request`/`response` listener on the page the headers come from the
+  navigation's own record, which leaves out the cookie and credential
+  headers (`set-cookie`, `authorization`, ...); with one they are all there
+- files written where a `path` option says (`screenshot`, `pdf`,
+  `storageState`, HAR recordings, `download.saveAs`) get missing directories
+  made, as in Playwright
 
 Types are Playwright's own shapes, checked by `bun run test:types`:
 `expect()` offers Locator, Page or APIResponse matchers by what it is given
@@ -416,7 +465,21 @@ infer argument and return types. Deprecated APIs (`locator.type`,
 
 Not supported (a clear error): the deprecated layout pseudo-classes
 (`:left-of()`, `:right-of()`, `:above()`, `:below()`, `:near()`); a `+` or `~`
-combinator right after a Playwright pseudo-class.
+combinator right after a Playwright pseudo-class; SOCKS and HTTPS proxies
+(`proxy.server`); `timezoneId` on the Intel macOS browser (system
+JavaScriptCore).
+
+Not supported, accepted so configs and `devices` descriptors keep working:
+
+- context options with no effect: `bypassCSP`, `serviceWorkers`,
+  `forcedColors`, `strictSelectors`, `recordVideo`, and `acceptDownloads`
+  (downloads are always accepted)
+- `isMobile` does not apply `<meta name="viewport">`: pages lay out at the
+  viewport's width, as with `width=device-width`
+- `toHaveScreenshot` renders at the context's `deviceScaleFactor` (Playwright's
+  default there is `scale: 'css'`), and `screenshot()` has no `scale` option
+- `context.request` and the `request` fixture do not go through `proxy`
+- `locale` reaches `Intl` in documents only, not in workers
 
 ## Install
 

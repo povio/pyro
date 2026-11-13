@@ -139,6 +139,20 @@ test('JS coverage: anonymous scripts and resetOnNavigation', async ({ page }) =>
   expect(after.some((u) => u.endsWith('/cov/app.js')), JSON.stringify(after)).toBe(false);
 });
 
+test('JS coverage: stopped right after goto, every script has its source', async ({ page }) => {
+  await serve(page);
+  // The browser reports a page's scripts when it next flushes, so their source
+  // requests go out only while stopping: they must not lose to the stop.
+  for (let i = 0; i < 3; i++) {
+    await page.coverage.startJSCoverage();
+    await page.goto('/cov/names.html');
+    const entries = await page.coverage.stopJSCoverage();
+    const names = entries.find((e) => e.url.endsWith('/cov/names.js'));
+    expect(names?.source, JSON.stringify(entries.map((e) => e.url))).toBe(NAMES_JS);
+    expect(entries.filter((e) => e.source === undefined).map((e) => e.url)).toEqual([]);
+  }
+});
+
 test('CSS coverage: used rules of linked and inline sheets', async ({ page }) => {
   await serve(page);
   await page.coverage.startCSSCoverage();

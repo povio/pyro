@@ -52,6 +52,13 @@ test('types', async ({ page, request }) => {
   const cov = await page.coverage.stopJSCoverage();
   const firstUrl: string | undefined = cov[0]?.url;
   void [yaml, ai, firstUrl];
+  const context = page.context();
+  await context.grantPermissions(['geolocation'] as const, { origin: 'https://example.com' });
+  await context.setGeolocation({ latitude: 46.05, longitude: 14.51 });
+  await context.setGeolocation(null);
+  await context.setOffline(true);
+  // @ts-expect-error setOffline takes a boolean
+  await context.setOffline();
   const el = await page.$('div');
   const tag: string | undefined = await el?.evaluate((e) => e.tagName);
   void [n, s, bad, tag, (p: Page) => p];
