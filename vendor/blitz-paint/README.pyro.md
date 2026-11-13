@@ -50,6 +50,19 @@ from the root of an upstream checkout at that commit) is the whole diff.
   which grows the stack on demand, so a tree of any depth paints instead of overflowing the thread's stack and
   aborting the process (see blitz-dom's "Deep trees grow the stack on demand").
 
+- Fidelity fixes from the ToS screens (`bench/fidelity`; see blitz-dom's section of that name):
+  - `src/render.rs` (`draw_text_input_text`): an empty `<input>`/`<textarea>` paints blitz-dom's placeholder
+    layout in its `::placeholder` colour, a single line centred in the content box like the value and placed by
+    `text-align` (`InputPlaceholder::line_start`), under the caret.
+  - `src/render.rs` (`draw_inline_layout`, `truncate_line`), `src/text.rs` (`TextCut`), `src/lib.rs`
+    (`TextRun::new`): `text-overflow: ellipsis`. Each line that overflows the content box is cut at an atom
+    boundary where blitz-dom's shaped "…" still fits at the end edge (the left one for right-to-left lines),
+    and the ellipsis is drawn next to the last atom kept, on the line's baseline, with the inline root as its
+    brush. `stroke_text` leaves out the cut glyphs, decorations span what is kept, and a recording paint
+    records the kept glyphs with their source text. Covered by `crates/pyro-render/tests/text_overflow_ellipsis.rs`.
+  - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
+    `SvgImageData::sized` tree for its content box.
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/pyro-render/tests/mirror.rs`.
