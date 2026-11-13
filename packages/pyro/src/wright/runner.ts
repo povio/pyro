@@ -332,7 +332,7 @@ async function sharedBrowser(o: { wsEndpoint?: string; bin?: string; args?: stri
 const CONTEXT_OPTIONS = [
   'acceptDownloads', 'bypassCSP', 'colorScheme', 'deviceScaleFactor', 'extraHTTPHeaders', 'geolocation', 'hasTouch', 'httpCredentials',
   'ignoreHTTPSErrors', 'isMobile', 'javaScriptEnabled', 'locale', 'offline', 'permissions', 'proxy', 'storageState', 'timezoneId',
-  'userAgent', 'viewport', 'baseURL', 'serviceWorkers', 'reducedMotion',
+  'userAgent', 'viewport', 'screen', 'baseURL', 'serviceWorkers', 'reducedMotion',
 ] as const;
 
 /**
