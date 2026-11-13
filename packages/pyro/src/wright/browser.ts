@@ -1,11 +1,13 @@
-// Playwright's Browser and BrowserContext on one pyro connection.
+// Playwright's Browser and BrowserContext on pyro: one connection, and one
+// more per time zone that contexts ask for (`timezoneId`).
 import { Clock } from './clock.js';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Pyro, type ConnectOptions } from '../index.js';
-import { CdpError } from '../cdp.js';
+import { Cdp, CdpError } from '../cdp.js';
+import { writeFileMakingDirs } from './files.js';
 import { urlMatches, resolveUrl, type UrlMatch } from './match.js';
 import { Download, type PageFunction } from './handles.js';
 import { APIRequestContext } from './request.js';
@@ -45,8 +47,10 @@ type StorageState = { cookies?: Cookie[]; origins?: { origin: string; localStora
 type SavedState = { cookies: Cookie[]; origins: { origin: string; localStorage: { name: string; value: string }[] }[] };
 
 /**
- * `browser.newContext()` options: Playwright's. The ones pyro does not
- * emulate (geolocation, permissions, locale, ...) are accepted and have no effect.
+ * `browser.newContext()` options: Playwright's, with Playwright's meaning
+ * (see the README, "Context options"). `acceptDownloads`, `bypassCSP`,
+ * `serviceWorkers`, `forcedColors`, `strictSelectors` and `recordVideo` are
+ * accepted and have no effect.
  */
 export type BrowserContextOptions = {
   baseURL?: string;
@@ -137,42 +141,79 @@ export class Browser {
 
   /** Where downloads land (named by guid) until `saveAs` copies them; removed on close. */
   private _downloadDir = mkdtempSync(join(tmpdir(), 'pyro-downloads-'));
-  private _downloads = new Map<string, Download>();
+  /**
+   * A connection of its own per time zone contexts ask for: the zone is the
+   * JavaScript VM's, and each connection has its own (on its own browser
+   * thread). Contexts without `timezoneId` stay on the first connection, which
+   * never gets one, so they keep the host's zone. A zone's connection closes
+   * with its last context (opening one takes a few milliseconds).
+   */
+  private _zones = new Map<string, { conn: Promise<Cdp>; contexts: number }>();
 
   constructor(
     readonly _lp: Pyro,
     private _owned = true,
     readonly _boot: BootSpec[] = [],
   ) {
-    const cdp = _lp.cdp;
-    cdp.onClose(() => this._events.emit('disconnected', this));
+    _lp.cdp.onClose(() => this._events.emit('disconnected', this));
+    this._wire(_lp.cdp);
+  }
+
+  /** Popups and downloads of the contexts on `cdp`; target and download events on. */
+  private _wire(cdp: Cdp): void {
+    const contexts = () => [...this._contexts].filter((c) => c._cdp === cdp);
     // Popups: targets announced with an opener become pages of the opener's context.
     cdp.on('Target.targetCreated', (p) => {
       const info = p.targetInfo;
       if (info?.type !== 'page' || !info.openerId) return;
-      for (const context of this._contexts) {
+      for (const context of contexts()) {
         const opener = context.pages().find((page) => page._targetId === info.openerId);
         if (opener) return void context._adoptPopup(info.targetId, opener);
       }
     });
+    const downloads = new Map<string, Download>();
     cdp.on('Browser.downloadWillBegin', (p) => {
-      for (const context of this._contexts) {
+      for (const context of contexts()) {
         const page = context.pages().find((page) => page._mainFrameIdValue === p.frameId) ?? (p.frameId ? undefined : context.pages()[0]);
         if (!page) continue;
         const download = new Download(page, p.url, p.suggestedFilename);
-        this._downloads.set(p.guid, download);
+        downloads.set(p.guid, download);
         page._emit('download', download);
         return;
       }
     });
     cdp.on('Browser.downloadProgress', (p) => {
-      const download = this._downloads.get(p.guid);
+      const download = downloads.get(p.guid);
       if (!download || p.state === 'inProgress') return;
-      this._downloads.delete(p.guid);
+      downloads.delete(p.guid);
       download._finish(p.state === 'completed' ? { path: p.filePath ?? join(this._downloadDir, p.guid), failure: null } : { path: null, failure: 'canceled' });
     });
     cdp.post('Target.setDiscoverTargets', { discover: true });
     cdp.post('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: this._downloadDir, eventsEnabled: true });
+  }
+
+  /** The connection for a new context: the first one, or its time zone's (`_release` it on close). */
+  _connection(timezoneId?: string): Promise<Cdp> {
+    if (!timezoneId) return Promise.resolve(this._lp.cdp);
+    let zone = this._zones.get(timezoneId);
+    if (!zone) {
+      const conn = Cdp.open(this._lp.wsEndpoint).then((cdp) => {
+        this._wire(cdp);
+        return cdp;
+      });
+      zone = { conn, contexts: 0 };
+      this._zones.set(timezoneId, zone);
+      conn.catch(() => this._zones.get(timezoneId) === zone && this._zones.delete(timezoneId));
+    }
+    zone.contexts++;
+    return zone.conn;
+  }
+  /** A context of `timezoneId` closed: its zone's connection closes with the last one. */
+  _release(timezoneId?: string): void {
+    const zone = timezoneId === undefined ? undefined : this._zones.get(timezoneId);
+    if (!zone || --zone.contexts > 0) return;
+    this._zones.delete(timezoneId!);
+    zone.conn.then((cdp) => cdp.close(), () => {});
   }
 
   /** The boot spec covering a first navigation to `target`, and its boot URL. */
@@ -245,6 +286,8 @@ export class Browser {
   }
   async close(): Promise<void> {
     for (const c of [...this._contexts]) await c.close();
+    for (const zone of this._zones.values()) zone.conn.then((cdp) => cdp.close(), () => {});
+    this._zones.clear();
     if (this._owned) this._lp.close();
     rmSync(this._downloadDir, { recursive: true, force: true });
   }
@@ -266,6 +309,10 @@ export class BrowserContext {
   private _cookies: Cookie[] = [];
   private _closed = false;
   private _events = new EventEmitter();
+  /** The connection its pages are on: the browser's first, or its time zone's (`Browser._connection`). */
+  _cdp!: Cdp;
+  /** Granted permissions by origin (`*`: every origin). As in Playwright, a grant adds to its origin's list. */
+  private _permissions = new Map<string, string[]>();
   _defaultTimeout?: number;
   _defaultNavigationTimeout?: number;
   _testIdAttribute: string;
@@ -283,28 +330,40 @@ export class BrowserContext {
   }
 
   async _init(): Promise<void> {
-    const har = this._options.recordHar;
+    const o = this._options;
+    // Playwright's checks, with its messages.
+    if (o.viewport === null && o.deviceScaleFactor !== undefined) throw new Error(`"deviceScaleFactor" option is not supported with null "viewport"`);
+    if (o.viewport === null && o.isMobile) throw new Error(`"isMobile" option is not supported with null "viewport"`);
+    if (o.geolocation) o.geolocation = verifyGeolocation(o.geolocation);
+    if (o.proxy) proxyParams(o.proxy);
+    if (o.permissions?.length) this.addPermissions(o.permissions, '*');
+    // First, so it is the first script of every document (see `localeScript`).
+    if (o.locale) this._initScripts.push(localeScript(o.locale));
+    const har = o.recordHar;
     if (har) {
       const content = har.omitContent ? 'omit' : (har.content ?? (har.path.endsWith('.zip') ? 'attach' : 'embed'));
       await this._recordHar(har.path, { update: true, updateContent: content, updateMode: har.mode, ...(har.urlFilter ? { url: har.urlFilter } : {}) });
     }
-    const state = this._options.storageState;
-    if (!state) return;
-    const s: StorageState = typeof state === 'string' ? JSON.parse(readFileSync(state, 'utf8')) : state;
-    if (s.cookies?.length) this._cookies.push(...s.cookies);
-    const origins = (s.origins ?? []).filter((o) => o.localStorage?.length);
-    if (origins.length) {
-      // Once per context, as Playwright seeds storage: a marker keeps later
-      // documents from writing the entries again over the app's changes.
-      const entries = Object.fromEntries(origins.map((o) => [o.origin, o.localStorage.map((e) => [e.name, e.value])]));
-      this._initScripts.push(
-        `(() => { try { const e = ${JSON.stringify(entries)}[location.origin]; if (!e || localStorage.getItem('__pyroStorageState')) return; for (const [k, v] of e) localStorage.setItem(k, v); localStorage.setItem('__pyroStorageState', '1'); } catch {} })();`,
-      );
+    const state = o.storageState;
+    if (state) {
+      const s: StorageState = typeof state === 'string' ? JSON.parse(readFileSync(state, 'utf8')) : state;
+      if (s.cookies?.length) this._cookies.push(...s.cookies);
+      const origins = (s.origins ?? []).filter((o) => o.localStorage?.length);
+      if (origins.length) {
+        // Once per context, as Playwright seeds storage: a marker keeps later
+        // documents from writing the entries again over the app's changes.
+        const entries = Object.fromEntries(origins.map((o) => [o.origin, o.localStorage.map((e) => [e.name, e.value])]));
+        this._initScripts.push(
+          `(() => { try { const e = ${JSON.stringify(entries)}[location.origin]; if (!e || localStorage.getItem('__pyroStorageState')) return; for (const [k, v] of e) localStorage.setItem(k, v); localStorage.setItem('__pyroStorageState', '1'); } catch {} })();`,
+        );
+      }
     }
+    // Last: nothing above may fail once the context holds a connection.
+    this._cdp = await this._browser._connection(o.timezoneId);
   }
 
-  private get cdp() {
-    return this._browser._lp.cdp;
+  private get cdp(): Cdp {
+    return this._cdp;
   }
 
   async newPage(): Promise<Page> {
@@ -319,10 +378,18 @@ export class BrowserContext {
   }
 
   private contextId(): Promise<string> {
-    return (this._idPromise ??= this.cdp.send('Target.createBrowserContext').then((r: { browserContextId: string }) => {
-      this._id = r.browserContextId;
-      return r.browserContextId;
-    }));
+    return (this._idPromise ??= this.createContext());
+  }
+  /** The browser context, with what belongs to it rather than to its pages: the proxy and the permissions. */
+  private async createContext(): Promise<string> {
+    const { browserContextId } = await this.cdp.send<{ browserContextId: string }>('Target.createBrowserContext', proxyParams(this._options.proxy));
+    this._id = browserContextId;
+    for (const [origin, list] of this._permissions) await this.sendGrant(browserContextId, origin, list);
+    return browserContextId;
+  }
+  /** The context's id once it has one (`undefined`: no page needed one yet). */
+  private async existingId(): Promise<string | undefined> {
+    return this._id ?? (this._idPromise ? await this._idPromise : undefined);
   }
 
   /** A target for `page`: a booted-ahead one for a covered first `goto`, else a new one. */
@@ -330,8 +397,9 @@ export class BrowserContext {
     const o = this._options;
     const viewport = page.viewportSize();
     const scripts = [...this._initScripts, ...page._pendingScripts];
-    // A booted page brings its own browser context: only the context's first page can take one.
-    const plain = !this._idPromise && !this._cookies.length && !o.extraHTTPHeaders && !o.userAgent && !media(o);
+    // A booted page brings its own browser context: only the context's first page can take one,
+    // and only when nothing would have changed how it loaded.
+    const plain = !this._idPromise && !this._cookies.length && !o.extraHTTPHeaders && !o.userAgent && !media(o) && !emulates(o) && !this._permissions.size;
     const boot = plain && gotoUrl ? await this._browser._bootFor(gotoUrl, o.baseURL) : undefined;
     if (boot && !this._idPromise) {
       let acquired: { sessionId: string; targetId: string; browserContextId: string; ready: boolean } | undefined;
@@ -345,7 +413,7 @@ export class BrowserContext {
           return null;
         }
       })();
-      this._idPromise = taking.then((id) => id ?? this.cdp.send('Target.createBrowserContext').then((r: any) => r.browserContextId));
+      this._idPromise = taking.then((id) => id ?? this.createContext());
       this._id = await this._idPromise;
       if (acquired) {
         this._browser._stats.pooled++;
@@ -371,15 +439,26 @@ export class BrowserContext {
     const send = (method: string, params: object = {}) => page._sendNow(method, params);
     const setup: Promise<unknown>[] = [send('Page.enable')];
     const viewport = page.viewportSize();
-    if (fresh && viewport) setup.push(send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: false }));
+    // As Playwright's Chromium pages: the device, then the locale and zone, before the first navigation.
+    if (fresh && viewport) setup.push(send('Emulation.setDeviceMetricsOverride', deviceMetrics(o, viewport)));
+    if (o.hasTouch) setup.push(send('Emulation.setTouchEmulationEnabled', { enabled: true }));
+    if (o.javaScriptEnabled === false) setup.push(send('Emulation.setScriptExecutionDisabled', { value: true }));
     if (o.userAgent) setup.push(send('Emulation.setUserAgentOverride', { userAgent: o.userAgent }));
+    if (o.locale) setup.push(send('Emulation.setLocaleOverride', { locale: o.locale }));
+    if (o.timezoneId) setup.push(send('Emulation.setTimezoneOverride', { timezoneId: o.timezoneId }));
+    // Held by the browser context in pyro: any of its pages sets them for all.
+    if (o.geolocation) setup.push(send('Emulation.setGeolocationOverride', o.geolocation));
+    if (o.offline) setup.push(send('Network.emulateNetworkConditions', networkConditions(true)));
+    if (o.ignoreHTTPSErrors) setup.push(send('Security.setIgnoreCertificateErrors', { ignore: true }));
     if (this._har.some((r) => r.covers(page)) || this._wants.network) page._wants.network = true;
     if (this._wants.runtime) page._wants.runtime = true;
     if (page._wants.network || o.extraHTTPHeaders) setup.push((page._network = send('Network.enable').then(() => undefined)));
     if (o.extraHTTPHeaders) setup.push(send('Network.setExtraHTTPHeaders', { headers: o.extraHTTPHeaders }));
     if (page._wants.runtime) setup.push((page._runtime = send('Runtime.enable').then(() => undefined)));
     if (page._wants.fetch || page._routes.length || this._routes.length) {
-      setup.push((page._fetch = send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }).then(() => undefined)));
+      setup.push((page._fetch = send('Fetch.enable', page._fetchParams(true)).then(() => undefined)));
+    } else if (o.httpCredentials) {
+      setup.push(send('Fetch.enable', page._fetchParams(false)));
     }
     if (fresh && this._cookies.length) setup.push(send('Network.setCookies', { cookies: this._cookies.map(cdpCookie) }));
     for (const source of scripts) setup.push(send('Page.addScriptToEvaluateOnNewDocument', { source }));
@@ -472,7 +551,7 @@ export class BrowserContext {
       origins.push({ origin, localStorage });
     }
     const state = { cookies, origins };
-    if (o.path) writeFileSync(o.path, JSON.stringify(state, null, 2));
+    if (o.path) writeFileMakingDirs(o.path, JSON.stringify(state, null, 2));
     return state;
   }
   async setExtraHTTPHeaders(headers: Record<string, string>): Promise<void> {
@@ -488,10 +567,39 @@ export class BrowserContext {
   setDefaultNavigationTimeout(timeout: number): void {
     this._defaultNavigationTimeout = timeout;
   }
-  async grantPermissions(): Promise<void> {}
-  async clearPermissions(): Promise<void> {}
-  async setGeolocation(): Promise<void> {}
-  async setOffline(): Promise<void> {}
+  /** Grants `permissions` (Playwright's names) to `origin`, else to every origin, on top of the ones it has. */
+  async grantPermissions(permissions: readonly string[], options: { origin?: string } = {}): Promise<void> {
+    const origin = options.origin ? new URL(options.origin).origin : '*';
+    const list = this.addPermissions(permissions, origin);
+    const id = await this.existingId();
+    if (id) await this.sendGrant(id, origin, list);
+  }
+  async clearPermissions(): Promise<void> {
+    this._permissions.clear();
+    const id = await this.existingId();
+    if (id) await this.cdp.send('Browser.resetPermissions', { browserContextId: id });
+  }
+  private addPermissions(permissions: readonly string[], origin: string): string[] {
+    for (const p of permissions) if (!PERMISSIONS[p]) throw new Error(`Unknown permission: ${p}`);
+    const list = [...new Set([...(this._permissions.get(origin) ?? []), ...permissions])];
+    this._permissions.set(origin, list);
+    return list;
+  }
+  /** One origin's whole list: the browser denies there what it does not list, as Chrome does. */
+  private async sendGrant(browserContextId: string, origin: string, list: string[]): Promise<void> {
+    const permissions = [...new Set(list.flatMap((p) => PERMISSIONS[p]))];
+    await this.cdp.send('Browser.grantPermissions', { browserContextId, permissions, ...(origin === '*' ? {} : { origin }) });
+  }
+  /** `null`: the position becomes unavailable. */
+  async setGeolocation(geolocation: { latitude: number; longitude: number; accuracy?: number } | null): Promise<void> {
+    const g = geolocation ? verifyGeolocation(geolocation) : undefined;
+    this._options.geolocation = g;
+    await Promise.all(this.attached().map((p) => p._send('Emulation.setGeolocationOverride', g ?? {})));
+  }
+  async setOffline(offline: boolean): Promise<void> {
+    this._options.offline = offline;
+    await Promise.all(this.attached().map((p) => p._send('Network.emulateNetworkConditions', networkConditions(offline))));
+  }
   async route(url: UrlMatch, handler: RouteHandler, options: { times?: number } = {}): Promise<void> {
     this._routes.unshift({ url, handler, times: options.times });
     await Promise.all(this.pages().map((p) => p._enableFetch()));
@@ -592,8 +700,132 @@ export class BrowserContext {
     const id = this._id ?? (this._idPromise ? await this._idPromise.catch(() => undefined) : undefined);
     if (id) this.cdp.post('Target.disposeBrowserContext', { browserContextId: id });
     this._browser._contextClosed(this);
+    this._browser._release(this._options.timezoneId);
     this._events.emit('close', this);
   }
+}
+
+/** Options a booted-ahead page would not have loaded with. */
+function emulates(o: ContextOptions): boolean {
+  return !!(
+    o.proxy || o.locale || o.timezoneId || o.geolocation || o.httpCredentials || o.isMobile || o.hasTouch || o.offline ||
+    o.ignoreHTTPSErrors || o.screen || o.javaScriptEnabled === false || (o.deviceScaleFactor && o.deviceScaleFactor !== 1)
+  );
+}
+
+/** Playwright's permission names as Chromium's `Browser.grantPermissions` types (Playwright's own table). */
+const PERMISSIONS: Record<string, string[]> = {
+  geolocation: ['geolocation'],
+  midi: ['midi'],
+  notifications: ['notifications'],
+  camera: ['videoCapture'],
+  microphone: ['audioCapture'],
+  'background-sync': ['backgroundSync'],
+  'ambient-light-sensor': ['sensors'],
+  accelerometer: ['sensors'],
+  gyroscope: ['sensors'],
+  magnetometer: ['sensors'],
+  'clipboard-read': ['clipboardReadWrite'],
+  'clipboard-write': ['clipboardSanitizedWrite'],
+  'payment-handler': ['paymentHandler'],
+  'midi-sysex': ['midiSysex'],
+  'storage-access': ['storageAccess'],
+  'local-fonts': ['localFonts'],
+  'local-network-access': ['localNetworkAccess'],
+  'screen-wake-lock': ['wakeLockScreen'],
+};
+
+type Geolocation = { latitude: number; longitude: number; accuracy?: number };
+/** Playwright's checks and messages; the accuracy defaults to 0. */
+function verifyGeolocation(g: Geolocation): Required<Geolocation> {
+  const out = { latitude: g.latitude, longitude: g.longitude, accuracy: g.accuracy || 0 };
+  if (out.longitude < -180 || out.longitude > 180) throw new Error(`geolocation.longitude: precondition -180 <= LONGITUDE <= 180 failed.`);
+  if (out.latitude < -90 || out.latitude > 90) throw new Error(`geolocation.latitude: precondition -90 <= LATITUDE <= 90 failed.`);
+  if (out.accuracy < 0) throw new Error(`geolocation.accuracy: precondition 0 <= ACCURACY failed.`);
+  return out;
+}
+
+/**
+ * `Target.createBrowserContext` parameters for `proxy`, normalized as
+ * Playwright does (`host:port` means `http://host:port`). Loopback goes
+ * through the proxy too (`<-loopback>`), as with Playwright. The credentials
+ * ride in the proxy URL: pyro sends them to the proxy, and only to it, from
+ * the first request (Chrome would wait for a 407).
+ */
+function proxyParams(proxy: ContextOptions['proxy']): { proxyServer?: string; proxyBypassList?: string } {
+  if (!proxy) return {};
+  let url: URL;
+  try {
+    url = new URL(proxy.server);
+    if (!url.host || !url.protocol) url = new URL(`http://${proxy.server}`);
+  } catch {
+    url = new URL(`http://${proxy.server}`);
+  }
+  if (url.protocol === 'socks4:' && (proxy.username || proxy.password)) throw new Error('Socks4 proxy protocol does not support authentication');
+  if (url.protocol === 'socks5:' && (proxy.username || proxy.password)) throw new Error('Browser does not support socks5 proxy authentication');
+  const credentials = proxy.username ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password ?? '')}@` : '';
+  const bypass = proxy.bypass ? proxy.bypass.split(',').map((t) => t.trim()).join(',') : '';
+  return { proxyServer: `${url.protocol}//${credentials}${url.host}`, proxyBypassList: bypass ? `<-loopback>,${bypass}` : '<-loopback>' };
+}
+
+/** Playwright's `Emulation.setDeviceMetricsOverride` for a viewport: the screen is the viewport unless `screen` says otherwise. */
+function deviceMetrics(o: ContextOptions, viewport: { width: number; height: number }) {
+  const screen = o.screen ?? viewport;
+  const landscape = screen.width > screen.height;
+  return {
+    width: viewport.width,
+    height: viewport.height,
+    deviceScaleFactor: o.deviceScaleFactor || 1,
+    mobile: !!o.isMobile,
+    screenWidth: screen.width,
+    screenHeight: screen.height,
+    screenOrientation: o.isMobile ? (landscape ? { angle: 90, type: 'landscapePrimary' } : { angle: 0, type: 'portraitPrimary' }) : { angle: 0, type: 'landscapePrimary' },
+  };
+}
+
+const networkConditions = (offline: boolean) => ({ offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+
+/**
+ * `locale` for `Intl` and the `toLocale*String` methods: the engine's locale
+ * override covers `navigator.language(s)` and `Accept-Language`, while
+ * JavaScriptCore's default locale is the process's. This makes `locale` the
+ * default wherever a page leaves the locales argument out. Constructors keep
+ * their prototypes, names and statics (`instanceof` and subclasses work).
+ */
+function localeScript(locale: string): string {
+  return `(() => {
+  'use strict';
+  const locale = ${JSON.stringify(locale)};
+  const define = (o, k, value) => Object.defineProperty(o, k, { value, writable: true, configurable: true, enumerable: false });
+  const like = (f, orig) => {
+    Object.defineProperty(f, 'name', { value: orig.name, configurable: true });
+    Object.defineProperty(f, 'length', { value: orig.length, configurable: true });
+    return f;
+  };
+  for (const name of ['Collator', 'DateTimeFormat', 'DisplayNames', 'DurationFormat', 'ListFormat', 'NumberFormat', 'PluralRules', 'RelativeTimeFormat', 'Segmenter']) {
+    const Orig = Intl[name];
+    if (typeof Orig !== 'function') continue;
+    const Ctor = function (locales, options) {
+      const args = [locales === undefined ? locale : locales, options];
+      return new.target ? Reflect.construct(Orig, args, new.target === Ctor ? Orig : new.target) : Reflect.apply(Orig, this, args);
+    };
+    for (const key of Reflect.ownKeys(Orig)) if (key !== 'prototype' && key !== 'name' && key !== 'length') Object.defineProperty(Ctor, key, Object.getOwnPropertyDescriptor(Orig, key));
+    Object.defineProperty(Ctor, 'prototype', { value: Orig.prototype, writable: false });
+    define(Orig.prototype, 'constructor', like(Ctor, Orig));
+    define(Intl, name, Ctor);
+  }
+  const method = (proto, key, index) => {
+    const orig = proto && proto[key];
+    if (typeof orig !== 'function') return;
+    define(proto, key, like({ [key](...args) { if (args[index] === undefined) args[index] = locale; return Reflect.apply(orig, this, args); } }[key], orig));
+  };
+  for (const key of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString']) method(Date.prototype, key, 0);
+  method(Number.prototype, 'toLocaleString', 0);
+  if (typeof BigInt === 'function') method(BigInt.prototype, 'toLocaleString', 0);
+  method(String.prototype, 'localeCompare', 1);
+  method(String.prototype, 'toLocaleLowerCase', 0);
+  method(String.prototype, 'toLocaleUpperCase', 0);
+})();`;
 }
 
 /** Media emulation the options ask for beyond the defaults (Playwright's `colorScheme: 'light'` is one). */

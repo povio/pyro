@@ -100,13 +100,13 @@ class JSCoverage {
     this._enabled = false;
     let profile: { result: JSCoverageEntry[] };
     try {
-      [profile] = await Promise.all([
-        this._page._send<{ result: JSCoverageEntry[] }>('Profiler.takePreciseCoverage'),
-        this._page._send('Profiler.stopPreciseCoverage'),
-        this._page._send('Profiler.disable'),
-      ]);
-      // Sources of the scripts reported up to the take, then the debugger off.
+      // The engine reports a script (`Debugger.scriptParsed`) when it next
+      // flushes, at the latest just before the take's reply: right after a
+      // `goto` the source requests go out only then. Stopping the profiler
+      // drops the script table, so the sources are read first.
+      profile = await this._page._send<{ result: JSCoverageEntry[] }>('Profiler.takePreciseCoverage');
       await Promise.all(this._sourceRequests);
+      await Promise.all([this._page._send('Profiler.stopPreciseCoverage'), this._page._send('Profiler.disable')]);
       await this._page._send('Debugger.disable').catch(() => {});
     } finally {
       this._off?.();

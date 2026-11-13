@@ -6,8 +6,12 @@ source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 Porting an existing Playwright suite? Do not rewrite it: replace the imports
 of `playwright` and `@playwright/test` with `@povio/pyro/wright`,
 keep the Playwright code and run it with `pyro run` (README, "Playwright
-tests, unchanged"). Rewrite a test into one `page.run([...])` only where its
-last milliseconds matter.
+tests, unchanged"). Context options (`locale`, `timezoneId`, `proxy`,
+`geolocation` and `permissions`, `httpCredentials`, `offline`, device
+emulation, `javaScriptEnabled`, `ignoreHTTPSErrors`) mean what they mean in
+Playwright; the README's "Context options" and "Not supported" list the
+differences. Rewrite a test into one `page.run([...])` only where its last
+milliseconds matter.
 
 ## The model
 

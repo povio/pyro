@@ -7,9 +7,11 @@
 // `page.mainFrame()._expect(...)`), which these classes answer, so
 // `expect(locator).toBeVisible()` works whichever `expect` the test imports.
 import { EventEmitter } from 'node:events';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { STATUS_CODES } from 'node:http';
 import { basename } from 'node:path';
 import { Cdp, CdpError } from '../cdp.js';
+import { writeFileMakingDirs } from './files.js';
 import type { LocatorSpec, Step } from '../steps.js';
 import {
   type ExpectedText,
@@ -29,7 +31,7 @@ import { Coverage } from './coverage.js';
 import type { Clock } from './clock.js';
 import { renderAria, type AriaNode } from './aria.js';
 import { callDeclaration, Download, ElementHandle, hasHandles, JSHandle, serializeArg, valueOf, type PageElement, type PageFunction, type PageFunctionOn, type Sender, type SmartHandle } from './handles.js';
-import { APIRequestContext } from './request.js';
+import { APIRequestContext, credentialsApply } from './request.js';
 
 const SENT = new WeakMap<Cdp, Map<string, string>>();
 
@@ -42,7 +44,18 @@ const notSupported = (what: string) => new Error(`pyro: ${what} is not supported
 type TextMatch = string | RegExp;
 type Timeout = { timeout?: number };
 type RunReply = { reads: Record<string, any>; results: any[]; requests: LogEntry[]; ms: number };
-type LogEntry = { method: string; url: string; status: number | null; error: string | null; ms: number | null };
+/** A request of the run's log; header values the log redacts (cookies, credentials) read `[REDACTED]`. */
+type LogEntry = {
+  method: string;
+  url: string;
+  status: number | null;
+  error: string | null;
+  ms: number | null;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string> | null;
+  postData?: string;
+  postDataBase64?: boolean;
+};
 
 /** A CdpError from Pyro.run as Playwright words it (`TimeoutError` for a step that timed out). */
 function runError(api: string, e: unknown, describe?: string): unknown {
@@ -176,11 +189,24 @@ export class Response {
     await this._request._finished;
     return null;
   }
+  /**
+   * The body as the page got it. The browser keeps a page's recent bodies
+   * (also without Network events: a navigation's document, for one): read
+   * it soon after the response.
+   */
   async body(): Promise<Buffer> {
-    if (!this._request._id) throw notSupported('reading this response body (enable it with page.on("response") before navigating)');
+    const gone = (why: string) => new Error(`response.body: the body of ${this.url()} is not available: ${why}`);
+    // A redirect's response, or a request a route answered.
+    if (!this._request._id) throw gone('pyro keeps no body for this response');
     await this._request._finished;
-    const r = await this._page._send('Network.getResponseBody', { requestId: this._request._id });
-    return Buffer.from(r.body, r.base64Encoded ? 'base64' : 'utf8');
+    try {
+      await this._page._enableNetwork();
+      const r = await this._page._send('Network.getResponseBody', { requestId: this._request._id });
+      return Buffer.from(r.body, r.base64Encoded ? 'base64' : 'utf8');
+    } catch (e) {
+      if (!(e instanceof CdpError)) throw e;
+      throw gone(`the browser no longer has it (read it soon after the response): ${e.message}`);
+    }
   }
   async text(): Promise<string> {
     return (await this.body()).toString('utf8');
@@ -191,6 +217,19 @@ export class Response {
 }
 
 const lowerKeys = (h: Record<string, string>) => Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), v]));
+/** A run log's headers without the values it redacted. */
+const unredacted = (h?: Record<string, string> | null): Record<string, string> =>
+  Object.fromEntries(Object.entries(h ?? {}).filter(([, v]) => v !== '[REDACTED]'));
+/** `url` normalized, without its fragment (what a request is for). */
+function withoutHash(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    return u.href;
+  } catch {
+    return url;
+  }
+}
 
 export class Dialog {
   private handled = false;
@@ -1268,6 +1307,11 @@ export class Page extends Scope {
   _targetId = '';
   private _attaching?: Promise<Attachment>;
   private _requests = new Map<string, Request>();
+  /** `Fetch.authRequired` requests `httpCredentials` answered (a second challenge is cancelled). */
+  private _authAnswered = new Set<string>();
+  /** The main frame's document: its loader id (a document's request id), and its request when Network was on. */
+  private _loaderId?: string;
+  private _document?: Request;
   /** Open sockets by CDP requestId, from `Network.webSocket*` events. */
   private _sockets = new Map<string, WebSocket>();
   private _off: (() => void)[] = [];
@@ -1294,6 +1338,7 @@ export class Page extends Scope {
         return;
       }
       this._mainFrameId = p.frame.id;
+      this._loaderId = p.frame.loaderId;
       this.setUrl(p.frame.url + (p.frame.urlFragment ?? ''));
     });
     on('Page.frameAttached', (p) => {
@@ -1385,6 +1430,7 @@ export class Page extends Scope {
       this._events.emit('pageerror', err);
     });
     on('Fetch.requestPaused', (p) => void this.onPaused(p));
+    on('Fetch.authRequired', (p) => void this.onAuth(p));
     this._off.push(
       _cdp.on('Target.detachedFromTarget', (p) => {
         if (p.sessionId && p.sessionId === this._sessionId) this.markClosed();
@@ -1526,6 +1572,8 @@ export class Page extends Scope {
       prev._redirectedTo = req;
     }
     this._requests.set(p.requestId, req);
+    // A document's request id is its loader id (as in Chrome).
+    if (p.type === 'Document' && p.requestId === p.loaderId && p.frameId === (this._mainFrameId ?? this._targetId)) this._document = req;
     this._fire('request', req);
   }
 
@@ -1704,7 +1752,33 @@ export class Page extends Scope {
       this._wants.fetch = true;
       return Promise.resolve();
     }
-    return (this._fetch ??= this._send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }).then(() => undefined));
+    return (this._fetch ??= this._send('Fetch.enable', this._fetchParams(true)).then(() => undefined));
+  }
+  /**
+   * `Fetch.enable` for routes (`all`: every request pauses) and the
+   * context's `httpCredentials` (401 challenges come as `Fetch.authRequired`).
+   * Without routes the one pattern matches no URL: only challenges pause.
+   */
+  _fetchParams(all: boolean): object {
+    const auth = !!this._context._options.httpCredentials;
+    return { patterns: [{ urlPattern: all ? '*' : '' }], ...(auth ? { handleAuthRequests: true } : {}) };
+  }
+  /**
+   * `httpCredentials`, as Playwright answers a challenge: a server's 401 from
+   * the credentials' origin (from any, without one) gets them once; a second
+   * challenge for the same request is cancelled, so wrong credentials end in
+   * the 401 response. Other origins and proxies get none.
+   */
+  private async onAuth(p: { requestId: string; request: { url: string }; authChallenge: { source?: string } }): Promise<void> {
+    const creds = this._context._options.httpCredentials;
+    let response = 'Default';
+    if (this._authAnswered.has(p.requestId)) response = 'CancelAuth';
+    else if (creds && p.authChallenge?.source !== 'Proxy' && credentialsApply(creds.origin, p.request.url)) {
+      response = 'ProvideCredentials';
+      this._authAnswered.add(p.requestId);
+    }
+    const answer = response === 'ProvideCredentials' ? { response, username: creds!.username, password: creds!.password } : { response };
+    await this._sendNow('Fetch.continueWithAuth', { requestId: p.requestId, authChallengeResponse: answer }).catch(() => {});
   }
 
   async waitForEvent<K extends keyof PageEvents>(
@@ -1815,15 +1889,46 @@ export class Page extends Scope {
     const r = await this._run(`page.goto`, steps, `navigating to "${target}"`);
     return this.documentResponse(r, target);
   }
-  /** The main document's response from the run's request log. */
+  /**
+   * The response of the document a navigation to `target` loaded (null for a
+   * navigation within the document). With Network events on it is the one
+   * they reported, all headers included; else it is made from the run's
+   * request log: status, headers (less the cookie and credential headers the
+   * log redacts) and the redirects on the way. `body()` reads the document by
+   * its loader id either way.
+   */
   private documentResponse(r: RunReply, target: string): Response | null {
-    const entry = r.requests.find((q) => q.url === target || q.url === this._url) ?? r.requests[0];
-    if (!entry || entry.status === null) return null;
-    const req = new Request(this, '', { url: entry.url, method: entry.method, headers: {} }, 'Document');
-    req._finish();
-    const res = new Response(this, req, { url: entry.url, status: entry.status });
-    req._response = res;
-    return res;
+    const first = r.requests.findIndex((q) => withoutHash(q.url) === withoutHash(target));
+    if (first < 0) return null;
+    const doc = this._document;
+    if (doc && doc._id === this._loaderId && doc._response) return doc._response;
+    // The document now shown, after the redirects from `target` (the hops between).
+    const shown = withoutHash(this._url);
+    let last = first;
+    if (withoutHash(r.requests[first].url) !== shown) {
+      const i = r.requests.findIndex((q, j) => j > first && withoutHash(q.url) === shown);
+      if (i > first) last = i;
+    }
+    const hops = r.requests.slice(first, last + 1).filter((q, k) => k === 0 || k === last - first || (q.status !== null && q.status >= 300 && q.status < 400));
+    let response: Response | null = null;
+    let previous: Request | null = null;
+    for (const [k, entry] of hops.entries()) {
+      if (entry.status === null) return null;
+      const postData = entry.postData !== undefined && !entry.postDataBase64 ? { postData: entry.postData } : {};
+      // Only the document now shown has its body under the current loader id
+      // (a navigation that committed none, a 204 or a download, keeps the old one).
+      const shownNow = k === hops.length - 1 && withoutHash(entry.url) === shown;
+      const req = new Request(this, shownNow ? (this._loaderId ?? '') : '', { url: entry.url, method: entry.method, headers: unredacted(entry.requestHeaders), ...postData }, 'Document');
+      req._finish();
+      response = new Response(this, req, { url: entry.url, status: entry.status, statusText: STATUS_CODES[entry.status] ?? '', headers: unredacted(entry.responseHeaders) });
+      req._response = response;
+      if (previous) {
+        req._redirectedFrom = previous;
+        previous._redirectedTo = req;
+      }
+      previous = req;
+    }
+    return response;
   }
   async reload(options: GotoOptions = {}): Promise<Response | null> {
     const timeout = this.navTimeout(options.timeout);
@@ -2081,14 +2186,14 @@ export class Page extends Scope {
       ...(o.fullPage ? { captureBeyondViewport: true } : {}),
     });
     const buffer = Buffer.from(r.data, 'base64');
-    if (o.path) writeFileSync(o.path, buffer);
+    if (o.path) writeFileMakingDirs(o.path, buffer);
     return buffer;
   }
   async pdf(o: { path?: string; [k: string]: unknown } = {}): Promise<Buffer> {
     const { path, ...rest } = o;
     const r = await this._send('Page.printToPDF', rest);
     const buffer = Buffer.from(r.data, 'base64');
-    if (path) writeFileSync(path, buffer);
+    if (path) writeFileMakingDirs(path, buffer);
     return buffer;
   }
 
