@@ -1214,7 +1214,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          }
      }
  }
-@@ -254,8 +375,55 @@
+@@ -254,6 +375,53 @@
      path_scratch: Vec<NodeId>,
      deco_boxes: Vec<LineDecoration>,
      win_ascent_ratios: WinAscentCache,
@@ -1225,8 +1225,8 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    pub(crate) text_shift: f64,
 +    /// pyro: the atoms the next `stroke_text` leaves out (`text-overflow: ellipsis`).
 +    pub(crate) cut: Option<TextCut>,
- }
- 
++}
++
 +/// pyro: where `text-overflow: ellipsis` cuts a line: the atoms (clusters, ligatures) of its
 +/// glyph runs that end past `edge` (layout x; `keep_left`) or start before it (right-to-left
 +/// lines) are not drawn.
@@ -1265,11 +1265,9 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +        (range.unwrap_or(0..0), extent)
 +    }
-+}
-+
+ }
+ 
  /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
- ///
- /// - Percentages are resolved against the font size,
 @@ -574,6 +742,15 @@
                  inset_end,
              );
@@ -1328,7 +1326,14 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  
                  let css_font_size = font_size as f64 / scale;
  
-@@ -662,13 +858,34 @@
+@@ -659,16 +855,41 @@
+                     font_embolden(font_size as f64, fill_color, transform)
+                 } else {
+                     kurbo::Vec2::default()
++                } + if synthesis.embolden() {
++                    synthetic_bold(font_size as f64, scale)
++                } else {
++                    kurbo::Vec2::default()
                  };
  
                  let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
@@ -1365,7 +1370,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                          normalized_coords,
                          embolden,
                          Fill::NonZero,
-@@ -676,11 +893,19 @@
+@@ -676,11 +897,19 @@
                          1.0, // alpha
                          transform,
                          glyph_xform,
@@ -1390,7 +1395,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                      );
                  }
  
-@@ -700,8 +925,9 @@
+@@ -700,8 +929,9 @@
                      css_font_size,
                  };
                  let run_node_id = style.brush.id;
@@ -1402,7 +1407,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  
                  for entry in stack.iter() {
                      if entry.decoration.is_none() {
-@@ -738,7 +964,7 @@
+@@ -738,7 +968,7 @@
  
          flush_line_decorations(
              scene,
@@ -1411,7 +1416,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
              options,
              deco_boxes,
              win_ascent_ratios,
-@@ -753,7 +979,7 @@
+@@ -753,7 +983,7 @@
  pub(crate) fn draw_text_selection(
      scene: &mut impl PaintScene,
      layout: &Layout<TextBrush>,
@@ -1420,7 +1425,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,9 +987,9 @@
+@@ -761,12 +991,25 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -1432,3 +1437,19 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      });
  }
  
++/// pyro: how far each side of a glyph's outline grows when bold is synthesized (a font without
++/// a face of the weight asked for): Skia's fake bold, which Chromium draws, strokes the outline
++/// with a width of the text size times 1/24 at 9px and below, 1/32 at 36px and above, linear
++/// between. `font_size` is the run's (device) size, `scale` device pixels per CSS pixel; the
++/// result is in the glyphs' units.
++fn synthetic_bold(font_size: f64, scale: f64) -> kurbo::Vec2 {
++    let css_size = if scale > 0.0 { font_size / scale } else { font_size };
++    let t = ((css_size - 9.0) / (36.0 - 9.0)).clamp(0.0, 1.0);
++    let ratio = 1.0 / 24.0 + t * (1.0 / 32.0 - 1.0 / 24.0);
++    let side = font_size * ratio / 2.0;
++    kurbo::Vec2::new(side, side)
++}
++
+ /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
+ /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
+ /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies

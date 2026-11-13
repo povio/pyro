@@ -77,6 +77,10 @@ from the root of an upstream checkout at that commit) is the whole diff.
     where a run is drawn only translated into a raster; a recording paint (the PDF's) keeps the exact x. Covered
     by `screenshot_text_keeps_its_layout_unit_x` and `glyphs_sit_at_quarter_pixels_on_macos` in
     `crates/pyro-render/tests/render.rs`.
+  - `src/text.rs` (`synthetic_bold`): a run whose font synthesis asks for bold (no face of the weight
+    asked for) is drawn emboldened by Skia's fake bold amount, as in Chromium (a stroke of the text size times
+    1/24 at 9px and below, 1/32 at 36px and above); the advances stay. Covered by
+    `a_missing_bold_face_is_synthesized`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

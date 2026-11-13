@@ -607,6 +607,34 @@ fn glyphs_sit_at_quarter_pixels_on_macos() {
     assert!(!compare(&whole, &quarter, 0, None).equal, "a quarter of a pixel moves the glyphs");
 }
 
+/// Serves pdf_fidelity's Inter subset as `inter.ttf`.
+struct InterFetch;
+impl Fetcher for InterFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(if url.ends_with("/inter.ttf") { Ok(include_bytes!("fonts/Inter-subset.ttf").to_vec()) } else { Err("offline".into()) });
+    }
+}
+
+/// A font with no face of the weight asked for is drawn emboldened, as Chromium draws it (Skia's
+/// fake bold): more ink, the same advances.
+#[test]
+fn a_missing_bold_face_is_synthesized() {
+    let page = |weight: u32| {
+        format!(
+            "<!doctype html><style>@font-face {{ font-family: RegularOnly; src: url(inter.ttf); font-weight: 400 }}
+             body {{ margin: 0; background: white; font: {weight} 40px RegularOnly }}</style><div data-pyro-render-clip style='display:inline-block'>office</div>"
+        )
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(InterFetch);
+    let mut r = Renderer::new();
+    let ink = |img: &RgbaImage| img.data.chunks_exact(4).map(|p| 255.0 - p[0] as f64).sum::<f64>();
+    let (regular, _, _) = r.render(&snap(&page(400)), Area::Element, Backend::Cpu, &fetcher).unwrap();
+    let (bold, _, _) = r.render(&snap(&page(700)), Area::Element, Backend::Cpu, &fetcher).unwrap();
+    assert_eq!(bold.width, regular.width, "the same advances");
+    let ratio = ink(&bold) / ink(&regular);
+    assert!(ratio > 1.1, "emboldened: {ratio} times the ink");
+}
+
 /// Mixed fonts, sizes, scripts and a missing first family: every shaping path
 /// (font fallback, bold/italic synthesis, run metrics, style metrics).
 const TEXT_PAGE: &str = r#"<!doctype html><html><head><style>

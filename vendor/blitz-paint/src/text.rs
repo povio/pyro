@@ -855,6 +855,10 @@ pub(crate) fn stroke_text<'a>(
                     font_embolden(font_size as f64, fill_color, transform)
                 } else {
                     kurbo::Vec2::default()
+                } + if synthesis.embolden() {
+                    synthetic_bold(font_size as f64, scale)
+                } else {
+                    kurbo::Vec2::default()
                 };
 
                 let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
@@ -991,6 +995,19 @@ pub(crate) fn draw_text_selection(
         let rect = kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1);
         scene.fill(Fill::NonZero, line_transform(line_idx), SELECTION_COLOR, None, &rect);
     });
+}
+
+/// pyro: how far each side of a glyph's outline grows when bold is synthesized (a font without
+/// a face of the weight asked for): Skia's fake bold, which Chromium draws, strokes the outline
+/// with a width of the text size times 1/24 at 9px and below, 1/32 at 36px and above, linear
+/// between. `font_size` is the run's (device) size, `scale` device pixels per CSS pixel; the
+/// result is in the glyphs' units.
+fn synthetic_bold(font_size: f64, scale: f64) -> kurbo::Vec2 {
+    let css_size = if scale > 0.0 { font_size / scale } else { font_size };
+    let t = ((css_size - 9.0) / (36.0 - 9.0)).clamp(0.0, 1.0);
+    let ratio = 1.0 / 24.0 + t * (1.0 / 32.0 - 1.0 / 24.0);
+    let side = font_size * ratio / 2.0;
+    kurbo::Vec2::new(side, side)
 }
 
 /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
