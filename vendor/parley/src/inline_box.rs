@@ -59,4 +59,28 @@ pub enum InlineBoxKind {
     ///
     /// They can be used to implement advanced layout modes such as CSS's `float`
     CustomOutOfFlow,
+    /// pyro: the start edge of a span box (a CSS inline box that is not atomic): the margin,
+    /// border and padding of its inline-start side, as the box's `width`. It takes that space in
+    /// the line and adds nothing to the line's height. It is no content of its own: it stays on
+    /// the line of the content after it (a wrap opportunity before that content is one before the
+    /// edge), and white space collapses through it. Pushed inside the span (after its style).
+    SpanStart,
+    /// pyro: the end edge of a span box, as [`Self::SpanStart`] for the inline-end side. It
+    /// stays on the line of the content before it. Pushed inside the span (before its style is
+    /// popped).
+    SpanEnd,
+}
+
+impl InlineBoxKind {
+    /// pyro: whether this is the start or end edge of a span box ([`Self::SpanStart`],
+    /// [`Self::SpanEnd`]) rather than a box.
+    pub fn is_span_edge(self) -> bool {
+        matches!(self, Self::SpanStart | Self::SpanEnd)
+    }
+
+    /// pyro: whether a box of this kind takes its width in the line: an in-flow box or a span
+    /// edge.
+    pub(crate) fn takes_inline_space(self) -> bool {
+        matches!(self, Self::InFlow | Self::SpanStart | Self::SpanEnd)
+    }
 }

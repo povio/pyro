@@ -289,10 +289,21 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
         self.lcx.tree_style_builder.has_pending_whitespace()
     }
 
+    /// pyro: the scale the tree is built at (layout units per CSS pixel).
+    pub fn scale(&self) -> f32 {
+        self.options.scale
+    }
+
     pub fn push_inline_box(&mut self, mut inline_box: InlineBox) {
-        if inline_box.kind == InlineBoxKind::InFlow {
-            self.lcx.tree_style_builder.flush_pending_whitespace();
-            self.lcx.tree_style_builder.set_last_item_is_inline_box();
+        let kind = inline_box.kind;
+        match kind {
+            InlineBoxKind::InFlow => {
+                self.lcx.tree_style_builder.flush_pending_whitespace();
+                self.lcx.tree_style_builder.set_last_item_is_inline_box();
+            }
+            // pyro: white space before a span's start edge is outside the span.
+            InlineBoxKind::SpanStart => self.lcx.tree_style_builder.begin_span_start_edge(),
+            _ => {}
         }
 
         // TODO: arrange type better here to factor out the index
@@ -303,6 +314,24 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
             parent_style_index,
             baseline_offset: 0.,
         });
+        if kind == InlineBoxKind::SpanEnd {
+            // pyro: white space pending before a span's end edge is inside the span.
+            let box_index = self.lcx.inline_boxes.len() - 1;
+            self.lcx.tree_style_builder.pushed_span_end_edge(box_index);
+        }
+    }
+
+    /// pyro: finishes the tree's text and styles, and puts the span end edges that white space
+    /// was kept before behind that white space.
+    fn finish_tree(&mut self) -> String {
+        let text = self
+            .lcx
+            .tree_style_builder
+            .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
+        for (box_index, index) in self.lcx.tree_style_builder.take_edge_moves() {
+            self.lcx.inline_boxes[box_index].inline_box.index = index;
+        }
+        text
     }
 
     /// Sets the paragraph's base direction.
@@ -320,12 +349,9 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
     }
 
     #[inline]
-    pub fn build_into(self, layout: &mut Layout<B>) -> String {
+    pub fn build_into(mut self, layout: &mut Layout<B>) -> String {
         // Apply TreeStyleBuilder styles to LayoutContext.
-        let text = self
-            .lcx
-            .tree_style_builder
-            .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
+        let text = self.finish_tree();
 
         // Call generic layout builder method
         build_into_layout(layout, &text, self.lcx, self.fcx, self.options);
@@ -344,11 +370,8 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
     /// break that the same break of the new content would produce again: those over the
     /// beginning the old and new content share (see [`crate::layout::resume`]).
     /// [`BreakLines::resume`](crate::layout::BreakLines::resume) continues breaking after them.
-    pub fn build_into_keeping_lines(self, layout: &mut Layout<B>) -> String {
-        let text = self
-            .lcx
-            .tree_style_builder
-            .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
+    pub fn build_into_keeping_lines(mut self, layout: &mut Layout<B>) -> String {
+        let text = self.finish_tree();
 
         // Build into the scratch's buffers, keeping the old data to compare with.
         core::mem::swap(&mut layout.data, &mut self.lcx.previous_layout);

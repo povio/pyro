@@ -64,6 +64,17 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   `<use>` of a `<symbol>`, 100% by default) resolve against it. Parsed alone, usvg resolved them against its
   100x100 fallback and shrank the tree to its content's bounds, which drew sprite icons too large. Repro
   `bench/fidelity/repros/svg-use-symbol-size.html`, tests `crates/pyro-render/tests/inline_svg_viewport.rs`.
+- `layout/inline/build.rs` (`span_edge_widths`, the `(Inline, Flow)` branch), `layout/inline/layout.rs`,
+  `layout/damage.rs`: the inline-axis margin, border and padding of an inline box that is not atomic take
+  room in its line, as in Chromium: a badge (`<span>` with padding and a border) was as wide as its text, so
+  its background ended at the glyphs and the text after it stood too far left. Each side with a width is
+  pushed as one of parley's span edges (`InlineBoxKind::SpanStart`/`SpanEnd`, see parley's README) with the
+  element's node id; the border counts only where the side has a border style (the used width, as
+  `stylo_taffy` takes it for boxes). Sizing, float placement and box positioning pass over the edges, and a
+  style change that changes a side's width builds the inline root again (a paint-only restyle otherwise).
+  Percentages resolve to 0. Block-axis padding and border do not move lines (CSS 2.1 10.8.1); blitz-paint
+  paints them. Repro `bench/fidelity/repros/inline-box-badges.html`, tests
+  `crates/pyro-render/tests/inline_box_decorations.rs`.
 
 ## `<br>` as inline text
 

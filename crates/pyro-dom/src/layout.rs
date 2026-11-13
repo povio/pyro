@@ -1316,10 +1316,24 @@ impl Layout {
         Some(q)
     }
 
-    /// `getClientRects` (Element.zig:1744-1751): one rect, or none when not
-    /// rendered.
+    /// `getClientRects`: none when not rendered; an inline box over several
+    /// lines has one border box per line (the engine's fragments), any other
+    /// element one rect.
     pub fn client_rects(&self, dom: &Dom, el: NodeId) -> Vec<Rect> {
-        self.client_rect(dom, el).into_iter().collect()
+        let Some(rect) = self.client_rect(dom, el) else { return Vec::new() };
+        match self.box_quads(dom, el) {
+            Some(q) if q.fragments.len() > 1 => q
+                .fragments
+                .iter()
+                .map(|f| {
+                    let (xs, ys) = ([f[0], f[2], f[4], f[6]], [f[1], f[3], f[5], f[7]]);
+                    let (x0, y0) = (xs.into_iter().fold(f64::MAX, f64::min), ys.into_iter().fold(f64::MAX, f64::min));
+                    let (x1, y1) = (xs.into_iter().fold(f64::MIN, f64::max), ys.into_iter().fold(f64::MIN, f64::max));
+                    Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+                })
+                .collect(),
+            _ => vec![rect],
+        }
     }
 
     /// Sum of the scroll offsets of `el`'s ancestor elements (x, y).

@@ -98,6 +98,11 @@ struct LineState {
     /// These are the line's justification opportunities, before subtracting those that end up in
     /// the line's hanging whitespace.
     num_word_separators: u32,
+
+    /// pyro: the last thing appended to the line is a span's start edge
+    /// ([`InlineBoxKind::SpanStart`]). The content that follows stays on the edge's line: its
+    /// wrap opportunity was marked before the edge.
+    after_span_start: bool,
 }
 
 impl LineState {
@@ -106,6 +111,7 @@ impl LineState {
         self.x = 0.0;
         self.box_metrics.reset();
         self.num_word_separators = 0;
+        self.after_span_start = false;
     }
 }
 
@@ -1007,6 +1013,31 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         state.update_max_height_exceeded();
     }
 
+    /// pyro: whether the line may wrap before the content that starts at item `item_idx`: text
+    /// with a soft wrap opportunity before its first cluster, or an in-flow box. Span start
+    /// edges and out-of-flow boxes before that content are passed over.
+    fn wraps_before_item(&self, item_idx: usize) -> bool {
+        let data = &self.layout.data;
+        for item in data.items.get(item_idx..).unwrap_or_default() {
+            match item.kind {
+                LayoutItemKind::TextRun => {
+                    return data
+                        .shaped_text
+                        .run_slice(item.index as u32)
+                        .shaped_clusters()
+                        .first()
+                        .is_some_and(|cluster| cluster.is_soft_wrap_opportunity_before());
+                }
+                LayoutItemKind::InlineBox => match data.inline_boxes[item.index].inline_box.kind {
+                    InlineBoxKind::InFlow => return true,
+                    InlineBoxKind::SpanEnd => return false,
+                    _ => {}
+                },
+            }
+        }
+        false
+    }
+
     /// Add the layout's inline box `index` to the current line. Out-of-flow boxes contribute
     /// nothing to the line's metrics.
     fn append_layout_inline_box(&mut self, index: usize, next_x: f32) {
@@ -1237,7 +1268,44 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 advance: self.state.line.x,
                             }));
                         }
+                        // pyro: a span's start edge takes its width and stays with the content
+                        // after it: where the line may wrap before that content, it wraps before
+                        // the edge.
+                        InlineBoxKind::SpanStart => {
+                            let (index, width) = (item.index, inline_box.width);
+                            if self.state.line.x != 0.0
+                                && !self.state.line.after_span_start
+                                && self.state.line.text_wrap_mode == TextWrapMode::Wrap
+                                && self.wraps_before_item(self.state.item_idx + 1)
+                            {
+                                self.state.mark_line_break_opportunity();
+                            }
+                            self.append_layout_inline_box(index, self.state.line.x + width);
+                            self.state.line.after_span_start = true;
+                            continue;
+                        }
+                        // pyro: a span's end edge stays with the content before it: if it does
+                        // not fit, the line wraps at its last opportunity.
+                        InlineBoxKind::SpanEnd => {
+                            let (index, width) = (item.index, inline_box.width);
+                            let next_x = self.state.line.x + width;
+                            if next_x > max_advance + FIT_TOLERANCE
+                                && let Some(prev) = self.state.prev_boundary.take()
+                            {
+                                self.state.reset_to(prev);
+                                return self.start_new_line(
+                                    BreakReason::Regular,
+                                    max_advance,
+                                    line_indent,
+                                );
+                            }
+                            self.append_layout_inline_box(index, next_x);
+                            self.state.line.after_span_start = false;
+                            continue;
+                        }
                     };
+                    // pyro: a box after a span's start edge stays on the edge's line.
+                    let after_span_start = core::mem::take(&mut self.state.line.after_span_start);
 
                     // Compute the x position of the content being currently processed
                     let next_x = self.state.line.x + width_contribution;
@@ -1263,6 +1331,19 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // consume it, accept the overflow and mark the soft wrap opportunity after
                         // it: content that follows breaks there, and a box ending the paragraph
                         // ends its last line (Chromium) rather than leaving an empty line behind.
+                        self.append_layout_inline_box(item.index, next_x);
+                        self.state.mark_line_break_opportunity();
+                    } else if after_span_start {
+                        // pyro: the line wraps before the start edges the box follows, or not
+                        // at all when the line starts with them.
+                        if let Some(prev) = self.state.prev_boundary.take() {
+                            self.state.reset_to(prev);
+                            return self.start_new_line(
+                                BreakReason::Regular,
+                                max_advance,
+                                line_indent,
+                            );
+                        }
                         self.append_layout_inline_box(item.index, next_x);
                         self.state.mark_line_break_opportunity();
                     } else {
@@ -1322,7 +1403,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         } else if is_soft_wrap_opportunity && text_wrap_mode == TextWrapMode::Wrap {
                             // We don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
                             // line breaks. We should accept the overflowing fragment in that scenario.
-                            if self.state.line.x != 0.0 {
+                            // pyro: nor after a span's start edge, which the opportunity was
+                            // marked before.
+                            if self.state.line.x != 0.0 && !self.state.line.after_span_start {
                                 self.state.mark_line_break_opportunity();
                                 // break_opportunity = true;
                             }
@@ -1332,9 +1415,11 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         && text_wrap_mode == TextWrapMode::Wrap
                         // If we're at the start of the line, this particular atom will never fit, so it's not a valid emergency break opportunity.
                         && self.state.line.x != 0.0
+                        && !self.state.line.after_span_start
                         {
                             self.state.mark_emergency_break_opportunity();
                         }
+                        self.state.line.after_span_start = false;
 
                         // Breaking an atom requires reshaping, which we don't do here, so it is
                         // consumed as a whole (this includes all clusters of a ligature).
@@ -1480,7 +1565,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
 
                     if inline_box.kind != InlineBoxKind::InFlow {
-                        self.append_layout_inline_box(item.index, self.state.line.x);
+                        // pyro: a span's edge takes its width.
+                        let width = if inline_box.kind.is_span_edge() {
+                            inline_box.width
+                        } else {
+                            0.0
+                        };
+                        self.append_layout_inline_box(item.index, self.state.line.x + width);
                         continue;
                     }
 
@@ -2057,8 +2148,8 @@ fn hanging_whitespace<B: Brush>(
             LayoutItemKind::InlineBox => {
                 let item = &layout.data.inline_boxes[line_item.index].inline_box;
 
-                // Inline boxes don't hang.
-                if item.kind == InlineBoxKind::InFlow {
+                // Inline boxes don't hang. pyro: nor does white space before a span's edge.
+                if item.kind.takes_inline_space() {
                     break;
                 }
             }

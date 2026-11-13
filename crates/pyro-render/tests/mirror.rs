@@ -4385,7 +4385,8 @@ const PAINT_ONLY_PAGE: &str = r#"<!doctype html><html><head><style>
 /// Paint-only restyles (colour, background, outline, visibility, opacity, text decoration, box
 /// shadow, border colour) of cells, inline roots, flex and grid items, floats and absolutely
 /// positioned boxes run no layout and shape no text; changes to a box that leave its text as it is
-/// (padding, border width, a transform, a collapsed border's colour) shape no text either. Each
+/// (padding, border width, a transform, a collapsed border's colour) shape no text either, but for
+/// a span's padding and border width, which are in its line. Each
 /// step is synced as a delta and compared with a fresh build (boxes, document size, paint), and
 /// the paint changes when it should.
 #[test]
@@ -4442,8 +4443,11 @@ fn paint_only_restyles_run_no_layout_and_match_fresh_builds() {
     let mut hash = paint(&mut r, &page.snapshot(1, page.tree())).hash;
     let mut failures = Vec::new();
     for (what, mutate, kind) in steps {
-        let inline_unpainted = what.starts_with("#ps")
-            && ["opacity", "border", "transform", "padding", "visibility", "{  }"].iter().any(|prop| what.contains(prop));
+        let inline_unpainted =
+            what.starts_with("#ps") && ["opacity", "transform", "visibility"].iter().any(|prop| what.contains(prop));
+        // A span's inline-axis padding and border are in its line: its text is laid out again.
+        let inline_edges =
+            what.starts_with("#ps") && ["padding", "border: 3px", "{  }"].iter().any(|prop| what.contains(prop));
         let since = page.dom.borrow().version();
         mutate(&page);
         let (layouts, rebuilds, tables) = (blitz_performed_layouts().0, blitz_rebuilds().0, blitz_tables().0);
@@ -4465,7 +4469,7 @@ fn paint_only_restyles_run_no_layout_and_match_fresh_builds() {
         if painted.hash != fresh_painted.hash {
             failures.push(format!("{what}: paint differs from a fresh build"));
         }
-        // (Blitz paints no border, padding, opacity, transform or visibility of a non-atomic inline box.)
+        // (Blitz paints no opacity, transform or visibility of a non-atomic inline box.)
         if painted.hash == hash && !inline_unpainted {
             failures.push(format!("{what}: paint did not change"));
         }
@@ -4479,7 +4483,7 @@ fn paint_only_restyles_run_no_layout_and_match_fresh_builds() {
         if r.document_size(1) != fresh.document_size(1) {
             failures.push(format!("{what}: size {:?} vs fresh {:?}", r.document_size(1), fresh.document_size(1)));
         }
-        if rebuilds != 0 {
+        if rebuilds != usize::from(inline_edges) as _ {
             failures.push(format!("{what}: shaped {rebuilds} inline layouts"));
         }
         if kind == Kind::Paint && (layouts != 0 || tables != 0) {

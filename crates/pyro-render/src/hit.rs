@@ -95,6 +95,9 @@ struct Descent<'a> {
     /// Inline elements' fragment unions (document CSS px), from the inline
     /// formatting contexts entered so far.
     unions: FxHashMap<NodeId, Rect>,
+    /// Inline elements' block-axis border and padding (CSS px, before and
+    /// after), as the unions grow by them.
+    inline_growth: FxHashMap<NodeId, (f64, f64)>,
     /// Table rows' and row groups' bounds (document CSS px), from the
     /// tables entered so far.
     rows: FxHashMap<NodeId, Rect>,
@@ -127,6 +130,7 @@ pub(crate) fn candidates(
         transforms: FxHashMap::default(),
         no_cull: FxHashSet::default(),
         unions: FxHashMap::default(),
+        inline_growth: FxHashMap::default(),
         rows: FxHashMap::default(),
         path: Vec::new(),
         out: Vec::new(),
@@ -382,12 +386,24 @@ impl Descent<'_> {
         for line in text.layout.lines() {
             let origin = origin * geometry::line_slot(doc, root_id, &line.metrics(), scale);
             for item in line.items() {
-                let (start, r) = geometry::inline_item_rect(&item, scale);
-                let r = origin.transform_rect_bbox(Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
+                let (start, r) = geometry::inline_item_rect(&line, &item, scale);
+                // An element's fragment grows to its border box in the block axis.
+                let to_doc = |r: Rect, (top, bottom): (f64, f64)| {
+                    origin.transform_rect_bbox(Rect::new(
+                        r.x0 / scale,
+                        r.y0 / scale - top,
+                        r.x1 / scale,
+                        r.y1 / scale + bottom,
+                    ))
+                };
+                // A span's own edge is in its box without the margin.
+                let own = geometry::span_edge_box(doc, &item, r, scale);
                 let mut cur = start;
                 while let Some(n) = cur.filter(|&n| n != root_id && n != stop) {
                     let Some(node) = doc.get_node(n) else { break };
                     if node.is_element() {
+                        let growth = *self.inline_growth.entry(n).or_insert_with(|| geometry::inline_block_growth(doc, n));
+                        let r = to_doc(if cur == start { own } else { r }, growth);
                         self.unions.entry(n).and_modify(|u| *u = u.union(r)).or_insert(r);
                     }
                     cur = node.parent;

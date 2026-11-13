@@ -21,6 +21,35 @@ use crate::{
     stylo_to_parley,
 };
 
+/// pyro: the inline-axis space the start and the end side of an inline (non-atomic) box take:
+/// margin, border and padding, in CSS pixels. Percentages resolve against zero and `auto` margins
+/// are zero. A vertical writing mode keeps the box edgeless.
+pub(crate) fn span_edge_widths(style: &style::properties::ComputedValues) -> (f32, f32) {
+    use style::values::computed::{Length, LengthPercentage, Margin};
+    use style::values::generics::length::GenericMargin;
+    if style.writing_mode.is_vertical() {
+        return (0.0, 0.0);
+    }
+    let length = |v: &LengthPercentage| v.resolve(Length::new(0.0)).px();
+    let margin = |v: &Margin| match v {
+        GenericMargin::LengthPercentage(v) => length(v),
+        _ => 0.0,
+    };
+    let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
+    // The used width: none where the side has no border style.
+    let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
+        if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() }
+    };
+    let left = margin(&m.margin_left) + border(&b.border_left_width, b.border_left_style) + length(&p.padding_left.0);
+    let right =
+        margin(&m.margin_right) + border(&b.border_right_width, b.border_right_style) + length(&p.padding_right.0);
+    if style.clone_direction() == style::computed_values::direction::T::Rtl {
+        (right, left)
+    } else {
+        (left, right)
+    }
+}
+
 pub(crate) fn build_inline_layout_into(
     nodes: &crate::NodeTree,
     layout_ctx: &mut LayoutContext<TextBrush>,
@@ -327,6 +356,29 @@ fn build_inline_layout_with(
 
                             builder.push_style_span(style);
 
+                            // pyro: the span's inline-axis margin, border and padding take space
+                            // at its start and its end (CSS 2.1 9.4.2): an edge box at each, inside
+                            // the span's style, when there is any.
+                            let (start_edge, end_edge) =
+                                node.primary_styles().map(|s| span_edge_widths(&s)).unwrap_or_default();
+                            let scale = builder.scale();
+                            let edge = |kind, width: f32| InlineBox {
+                                id: node_id.as_u64(),
+                                kind,
+                                index: 0,
+                                width: width * scale,
+                                height: 0.0,
+                                baseline: None,
+                                vertical_align: Default::default(),
+                            };
+                            if start_edge != 0.0 {
+                                builder.push_inline_box(edge(InlineBoxKind::SpanStart, start_edge));
+                            }
+                            // A span with such an edge is not empty: its line has the strut.
+                            if (start_edge != 0.0 || end_edge != 0.0) && std::mem::take(strut) {
+                                builder.push_text("\u{2060}");
+                            }
+
                             if let Some(before_id) = node.before() {
                                 crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
@@ -362,6 +414,9 @@ fn build_inline_layout_with(
                                 ));
                             }
 
+                            if end_edge != 0.0 {
+                                builder.push_inline_box(edge(InlineBoxKind::SpanEnd, end_edge));
+                            }
                             builder.pop_style_span();
                         }
                     }

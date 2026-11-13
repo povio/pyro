@@ -86,6 +86,15 @@ from the root of an upstream checkout at that commit) is the whole diff.
     the level being Skia's canonical 3-bit luminance of the colour). anyrender_vello_cpu's patch brings the amount
     to glifo's outline units; without it an unhinted run got none. Covered by
     `a_missing_bold_face_is_synthesized`.
+  - `src/render.rs` (`draw_inline_boxes`): an inline box that is not atomic paints as a box does (outline,
+    outer shadow, background, inner shadow, border with its radii), where only its background was painted,
+    as wide as its glyphs. It has one fragment per line it has content on, from the start of its first
+    content there to the end of its last, its own edges (blitz-dom's span edges, without their margins) among
+    them, as tall as its content area plus its block-axis padding and border. The first fragment has the
+    start side and the last the end side; the sides between are open (`box-decoration-break: slice`). A side
+    without a border style has no border. A fragment's edges are snapped to whole CSS pixels at any device
+    scale, as Chromium snaps a box's decorations under an emulated device scale factor (and as block boxes
+    are laid out). Covered by `crates/pyro-render/tests/inline_box_decorations.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

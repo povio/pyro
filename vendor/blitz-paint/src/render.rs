@@ -1179,6 +1179,253 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
+    /// Chromium does. An element has one fragment per line it has content on: from the start of
+    /// its first content there to the end of its last (its own start and end edges without their
+    /// margins among them), as tall as its content area (the ascent and descent of its first
+    /// font) plus its block-axis padding and border. The element's first fragment has its start
+    /// side and its last the end side; the sides in between are open (`box-decoration-break:
+    /// slice`): no border, no padding, square corners. A fragment's edges are snapped to CSS
+    /// pixels and it paints as a box does: outline, outer shadow, background, inner shadow,
+    /// border. On a line, a box paints before the boxes inside it. `transform` is the lines'.
+    fn draw_inline_boxes(
+        &self,
+        scene: &mut impl PaintScene,
+        layout: &parley::Layout<blitz_dom::node::TextBrush>,
+        transform: Affine,
+    ) {
+        use parley::{InlineBoxKind, PositionedLayoutItem};
+        use style::computed_values::direction::T as Direction;
+        use style::values::computed::{Length, LengthPercentage, Margin};
+        use style::values::generics::image::GenericImage;
+        use style::values::generics::length::GenericMargin;
+
+        struct Fragment {
+            node: NodeId,
+            /// How many inline elements of the root the fragment's is in, itself included.
+            depth: usize,
+            line: usize,
+            x0: f32,
+            x1: f32,
+            top: f32,
+            bottom: f32,
+        }
+
+        let styles = layout.styles();
+        if styles.len() < 2 {
+            return;
+        }
+        let dom = self.context.dom;
+        let root = self.node.id;
+        let length = |v: &LengthPercentage| v.resolve(Length::new(0.0)).px();
+
+        // Whether an element has a box to paint.
+        let mut painted: HashMap<NodeId, bool> = HashMap::new();
+        let mut paints = |id: NodeId| {
+            *painted.entry(id).or_insert_with(|| {
+                let Some(node) = dom.get_node(id).filter(|node| node.element_data().is_some()) else {
+                    return false;
+                };
+                let Some(style) = node.primary_styles() else {
+                    return false;
+                };
+                let background = style.get_background();
+                let border = style.get_border();
+                background.background_color.resolve_to_absolute(&style.clone_color()).as_srgb_color()
+                    != Color::TRANSPARENT
+                    || background.background_image.0.iter().any(|image| !matches!(image, GenericImage::None))
+                    || !border.border_top_style.none_or_hidden()
+                    || !border.border_right_style.none_or_hidden()
+                    || !border.border_bottom_style.none_or_hidden()
+                    || !border.border_left_style.none_or_hidden()
+                    || !style.get_effects().box_shadow.0.is_empty()
+                    || style.get_outline().outline_width.0.to_f64_px() != 0.0
+            })
+        };
+
+        // The inline elements a style's content is in, innermost first, each with the style it
+        // made (a `display: contents` element or a `<br>` inside it shares its brush).
+        let mut chain: Vec<(NodeId, u16)> = Vec::new();
+        let chain_of = |chain: &mut Vec<(NodeId, u16)>, mut style_index: u16| {
+            chain.clear();
+            loop {
+                let Some(style) = styles.get(usize::from(style_index)) else {
+                    break;
+                };
+                let id = style.brush.id;
+                if id == root {
+                    break;
+                }
+                match chain.last_mut() {
+                    Some(last) if last.0 == id => last.1 = style_index,
+                    _ => chain.push((id, style_index)),
+                }
+                if style_index == 0 {
+                    break;
+                }
+                style_index = layout.style_parent(style_index);
+            }
+        };
+
+        let mut fragments: Vec<Fragment> = Vec::new();
+        let rtl_layout = layout.is_rtl();
+        for (line_index, line) in layout.lines().enumerate() {
+            let first = fragments.len();
+            let metrics = line.metrics();
+            // White space hanging at the line's end is in no box.
+            let content_end = metrics.offset + metrics.advance - metrics.hanging_advance;
+            for item in line.items() {
+                let (style_index, x0, x1, edge) = match &item {
+                    PositionedLayoutItem::GlyphRun(run) => {
+                        let x0 = run.offset();
+                        let mut x1 = x0 + run.advance();
+                        if !rtl_layout {
+                            x1 = x1.min(content_end).max(x0);
+                        }
+                        (run.style_index(), x0, x1, None)
+                    }
+                    PositionedLayoutItem::InlineBox(ibox) => match ibox.kind {
+                        InlineBoxKind::InFlow => (ibox.style_index, ibox.x, ibox.x + ibox.width, None),
+                        InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd => {
+                            (ibox.style_index, ibox.x, ibox.x + ibox.width, Some((NodeId::from_u64(ibox.id), ibox.kind)))
+                        }
+                        _ => continue,
+                    },
+                };
+                chain_of(&mut chain, style_index);
+                let depth = chain.len();
+                for (level, &(node, style_index)) in chain.iter().enumerate() {
+                    if !paints(node) {
+                        continue;
+                    }
+                    // The element's own edge is in its box without the margin.
+                    let (mut x0, mut x1) = (x0, x1);
+                    if let Some((_, kind)) = edge.filter(|&(id, _)| id == node)
+                        && let Some(style) = dom.get_node(node).and_then(|node| node.primary_styles())
+                    {
+                        let margin = |v: &Margin| match v {
+                            GenericMargin::LengthPercentage(v) => length(v) * self.scale as f32,
+                            _ => 0.0,
+                        };
+                        let rtl = style.clone_direction() == Direction::Rtl;
+                        if (kind == InlineBoxKind::SpanStart) != rtl {
+                            x0 += margin(&style.get_margin().margin_left);
+                        } else {
+                            x1 -= margin(&style.get_margin().margin_right);
+                        }
+                    }
+                    match fragments[first..].iter_mut().find(|fragment| fragment.node == node) {
+                        Some(fragment) => {
+                            fragment.x0 = fragment.x0.min(x0);
+                            fragment.x1 = fragment.x1.max(x1);
+                        }
+                        None => {
+                            let (top, bottom) = line.span_content_area(style_index);
+                            fragments.push(Fragment {
+                                node,
+                                depth: depth - level,
+                                line: line_index,
+                                x0,
+                                x1,
+                                top,
+                                bottom,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        if fragments.is_empty() {
+            return;
+        }
+
+        // An element's first and last fragment.
+        let mut ends: HashMap<NodeId, (usize, usize)> = HashMap::new();
+        for (index, fragment) in fragments.iter().enumerate() {
+            ends.entry(fragment.node).and_modify(|ends| ends.1 = index).or_insert((index, index));
+        }
+        let mut order: Vec<usize> = (0..fragments.len()).collect();
+        order.sort_by_key(|&index| (fragments[index].line, fragments[index].depth));
+
+        // The boxes are where the text is.
+        let transform = transform * Affine::translate((self.fractional_text_x_of_node(), 0.0));
+        let [a, b, c, d, tx, ty] = transform.as_coeffs();
+        let translation_only = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0;
+        let scale = self.scale as f32;
+        for index in order {
+            let fragment = &fragments[index];
+            let Some(node) = dom.get_node(fragment.node) else {
+                continue;
+            };
+            let Some(style) = node.primary_styles() else {
+                continue;
+            };
+            let (starts, ends) = (ends[&fragment.node].0 == index, ends[&fragment.node].1 == index);
+            let (left, right) =
+                if style.clone_direction() == Direction::Rtl { (ends, starts) } else { (starts, ends) };
+            let (border, padding) = (style.get_border(), style.get_padding());
+            let side = |open: bool, width: f32| if open { 0.0 } else { width };
+            // The used width: none where the side has no border style.
+            let used = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
+                if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() }
+            };
+            let border = taffy::Rect {
+                left: side(!left, used(&border.border_left_width, border.border_left_style)),
+                right: side(!right, used(&border.border_right_width, border.border_right_style)),
+                top: used(&border.border_top_width, border.border_top_style),
+                bottom: used(&border.border_bottom_width, border.border_bottom_style),
+            };
+            let padding = taffy::Rect {
+                left: side(!left, length(&padding.padding_left.0)),
+                right: side(!right, length(&padding.padding_right.0)),
+                top: length(&padding.padding_top.0),
+                bottom: length(&padding.padding_bottom.0),
+            };
+            drop(style);
+            let rect = Rect::new(
+                fragment.x0 as f64,
+                (fragment.top - (border.top + padding.top) * scale) as f64,
+                fragment.x1 as f64,
+                (fragment.bottom + (border.bottom + padding.bottom) * scale) as f64,
+            );
+            let (transform, size) = if translation_only {
+                // To whole CSS pixels, as Chromium snaps a box's decorations
+                // (and as block boxes are laid out), whatever the device scale.
+                let snap = |v: f64| (v / self.scale).round() * self.scale;
+                let (x0, y0) = (snap(tx + rect.x0), snap(ty + rect.y0));
+                let (x1, y1) = (snap(tx + rect.x1), snap(ty + rect.y1));
+                (Affine::translate((x0, y0)), Size::new(x1 - x0, y1 - y0))
+            } else {
+                (transform * Affine::translate((rect.x0, rect.y0)), rect.size())
+            };
+            let layout = Layout {
+                size: taffy::Size {
+                    width: (size.width / self.scale) as f32,
+                    height: (size.height / self.scale) as f32,
+                },
+                border,
+                padding,
+                ..Layout::new()
+            };
+            let mut cx = self.context.element_cx(node, layout, transform, None);
+            if !left {
+                cx.frame.border_radii.top_left = Vec2::ZERO;
+                cx.frame.border_radii.bottom_left = Vec2::ZERO;
+            }
+            if !right {
+                cx.frame.border_radii.top_right = Vec2::ZERO;
+                cx.frame.border_radii.bottom_right = Vec2::ZERO;
+            }
+            cx.draw_outline(scene);
+            cx.draw_outset_box_shadow(scene);
+            if self.context.backgrounds {
+                cx.draw_background(scene);
+            }
+            cx.draw_inset_box_shadow(scene);
+            cx.draw_border(scene);
+        }
+    }
+
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
         if self.node.flags.is_inline_root() {
             let text_layout = self.element
@@ -1202,18 +1449,9 @@ impl ElementCx<'_, '_> {
             let transform =
                 self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
 
-            // Render inline element backgrounds (e.g. `<span style="background: ...">`)
+            // Render the boxes of inline elements (e.g. `<span style="background: ...">`)
             // behind the text and selection highlight.
-            if self.context.backgrounds {
-                crate::text::draw_inline_backgrounds(
-                    scene,
-                    text_layout.layout.lines(),
-                    self.context.dom,
-                    transform,
-                    self.node.id,
-                    None,
-                );
-            }
+            self.draw_inline_boxes(scene, &text_layout.layout, transform);
 
             // Render text selection highlight (if any) using cached selection ranges
             if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {

@@ -727,6 +727,17 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
             return true;
         }
 
+        // pyro: an inline box's inline-axis margin, border and padding are edge boxes in the
+        // inline layout it is part of.
+        let display = new_box.display;
+        if display.outside() == DisplayOutside::Inline
+            && display.inside() == DisplayInside::Flow
+            && crate::layout::inline::span_edge_widths(old)
+                != crate::layout::inline::span_edge_widths(new)
+        {
+            return true;
+        }
+
         false
     };
 

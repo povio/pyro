@@ -522,6 +522,10 @@ impl LayoutPassState<'_> {
 
         // Update inline boxes
         for ibox in inline_layout.layout.inline_boxes_mut() {
+            // pyro: a span's edge has its width from the build.
+            if ibox.kind.is_span_edge() {
+                continue;
+            }
             let style = self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
             let margin = style
                 .margin()
@@ -647,6 +651,9 @@ impl LayoutPassState<'_> {
                     AvailableSpace::MinContent => {
                         let mut width: f32 = 0.0;
                         for ibox in inline_layout.layout.inline_boxes_mut() {
+                            if ibox.kind.is_span_edge() {
+                                continue;
+                            }
                             let (is_floated, margin) = {
                                 let style =
                                     self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
@@ -684,6 +691,9 @@ impl LayoutPassState<'_> {
                         let mut right_band: f32 = 0.0;
                         let mut width: f32 = 0.0;
                         for ibox in inline_layout.layout.inline_boxes_mut() {
+                            if ibox.kind.is_span_edge() {
+                                continue;
+                            }
                             let (float, clear, margin) = {
                                 let style =
                                     self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
@@ -1197,6 +1207,10 @@ impl LayoutPassState<'_> {
                     line_has_in_flow_content |= run.advance() > 0.0;
                 }
                 if let parley::layout::PositionedLayoutItem::InlineBox(ibox) = item {
+                    // pyro: a span's edge is part of the span, which has no box of its own.
+                    if ibox.kind.is_span_edge() {
+                        continue;
+                    }
                     let order = ibox_order;
                     ibox_order += 1;
                     if inputs.run_mode == RunMode::PerformLayout {
