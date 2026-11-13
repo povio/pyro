@@ -515,7 +515,12 @@ fn collect_layout_children_with_wrap(
             });
 
             match crate::util::parse_svg_image(outer_html.as_bytes()) {
-                Ok(svg) => {
+                Ok(mut svg) => {
+                    // pyro: without a `viewBox` its content is laid out in its CSS box
+                    // (`SvgImageData::sized`, at paint).
+                    if svg.intrinsic_dimensions.view_box.is_none() {
+                        svg.inline_source = Some(outer_html.as_str().into());
+                    }
                     doc.get_node_mut(container_node_id)
                         .unwrap()
                         .element_data_mut()

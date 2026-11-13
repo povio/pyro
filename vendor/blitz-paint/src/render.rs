@@ -1641,6 +1641,9 @@ impl ElementCx<'_, '_> {
 
         let width = self.frame.content_box.width() as f32;
         let height = self.frame.content_box.height() as f32;
+        // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box.
+        let sized = svg.sized(width / self.scale as f32, height / self.scale as f32);
+        let svg = sized.as_ref().unwrap_or(svg);
         let svg_size = svg.tree.size();
 
         let x = self.frame.content_box.origin().x;

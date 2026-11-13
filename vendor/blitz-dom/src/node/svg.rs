@@ -80,6 +80,9 @@ pub struct SvgImageData {
     pub tree: Arc<usvg::Tree>,
     /// The dimensions declared on the root `<svg>` element.
     pub intrinsic_dimensions: SvgIntrinsicDimensions,
+    /// pyro: the source of an inline `<svg>` without a `viewBox`, whose content
+    /// is laid out in its CSS box (see [`Self::sized`]).
+    pub inline_source: Option<Arc<str>>,
 }
 
 impl SvgImageData {
@@ -110,7 +113,23 @@ impl SvgImageData {
         Ok(Self {
             tree: Arc::new(tree),
             intrinsic_dimensions: SvgIntrinsicDimensions::from_xmltree(&doc),
+            inline_source: None,
         })
+    }
+
+    /// pyro: an inline `<svg>` without a `viewBox`, parsed again for a CSS box
+    /// `width` x `height` (CSS px): its viewport is the box, so user units are
+    /// CSS px and percentages (a `<use>` of a `<symbol>` sized `100%` by default)
+    /// resolve against the box. Parsed alone, usvg resolves them against
+    /// 100x100 and then shrinks the tree to its content's bounds, which drew
+    /// sprite icons too large. `None` for other images, or an empty box.
+    pub fn sized(&self, width: f32, height: f32) -> Option<SvgImageData> {
+        let source = self.inline_source.as_deref()?;
+        if !(width > 0.0 && height > 0.0) {
+            return None;
+        }
+        let source = with_root_size(source, width, height)?;
+        crate::util::parse_svg_image(source.as_bytes()).ok()
     }
 
     /// The intrinsic width in CSS px, present only when the root `<svg>`
@@ -262,4 +281,65 @@ fn view_box_transform(
     let tx = (width - view_box.width() * sx) * align_x - view_box.x() * sx;
     let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
     usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
+}
+
+/// pyro: `source` (an SVG document whose root is `<svg`) with the root's
+/// `width` and `height` attributes set to `width` x `height`.
+fn with_root_size(source: &str, width: f32, height: f32) -> Option<String> {
+    let start = source.find("<svg")?;
+    // The end of the root's start tag: the first `>` outside an attribute value.
+    let mut quote = None;
+    let end = source[start..].char_indices().find_map(|(i, c)| {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, '>') => return Some(start + i),
+            _ => {}
+        }
+        None
+    })?;
+    let tag = &source[start + 4..end];
+    let mut attrs = String::with_capacity(tag.len() + 32);
+    let mut rest = tag;
+    // Drops ` width="..."` and ` height="..."`, keeps every other attribute.
+    while let Some(i) = rest.find(|c: char| c.is_ascii_whitespace()) {
+        attrs.push_str(&rest[..i]);
+        let after = rest[i..].trim_start();
+        let name_end = after.find(|c: char| c == '=' || c.is_ascii_whitespace() || c == '/').unwrap_or(after.len());
+        let name = &after[..name_end];
+        let value_end = after[name_end..]
+            .strip_prefix('=')
+            .and_then(|v| {
+                let q = v.chars().next().filter(|q| *q == '"' || *q == '\'')?;
+                v[1..].find(q).map(|e| name_end + 1 + 1 + e + 1)
+            })
+            .unwrap_or(name_end);
+        if name == "width" || name == "height" {
+            rest = &after[value_end..];
+        } else {
+            attrs.push(' ');
+            attrs.push_str(&after[..value_end]);
+            rest = &after[value_end..];
+        }
+    }
+    attrs.push_str(rest);
+    Some(format!(
+        "{}<svg width=\"{width}\" height=\"{height}\"{attrs}{}",
+        &source[..start],
+        &source[end..]
+    ))
+}
+
+#[cfg(test)]
+mod sized_tests {
+    use super::with_root_size;
+
+    #[test]
+    fn the_root_gets_the_box_size_and_keeps_its_other_attributes() {
+        let source = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100%" stroke-width="1.8" height='24' class="a>b"><rect width="50%"/></svg>"#;
+        assert_eq!(
+            with_root_size(source, 16.0, 20.5).unwrap(),
+            r#"<svg width="16" height="20.5" xmlns="http://www.w3.org/2000/svg" stroke-width="1.8" class="a>b"><rect width="50%"/></svg>"#
+        );
+    }
 }

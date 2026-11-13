@@ -12,6 +12,7 @@ mod hyphen_digit_breaks;
 mod image_input_replaced;
 mod incremental_construction;
 mod incremental_flex_overflow;
+mod inline_svg_viewport;
 mod input_percentage_min_content;
 mod input_placeholder;
 mod line_break_resume;
