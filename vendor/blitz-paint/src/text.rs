@@ -12,7 +12,7 @@ use style::values::computed::{
 use style::values::generics::text::{GenericTextDecorationInset, GenericTextDecorationLength};
 
 use crate::color::{Color, ToColorColor as _};
-use crate::{FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
+use crate::{CORE_TEXT_GLYPHS, FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
 
 /// How the runs of one line of a vertical writing mode sit in it. The line is drawn turned a quarter
 /// clockwise (see `ElementCx::draw_vertical_inline_layout`), so a run's block offset moves it across the line.
@@ -377,7 +377,8 @@ pub(crate) struct DrawTextContext {
     win_ascent_ratios: WinAscentCache,
     /// The glyph runs drawn, when recording ([`crate::paint_scene_recording_text`]).
     pub(crate) runs: Option<Vec<crate::TextRun>>,
-    /// How far the next `stroke_text` moves its text along x (device px; 0 unless printing).
+    /// How far the next `stroke_text` moves its text along x (device px): from its box's whole-pixel
+    /// x to its layout-unit x (`fractional_text_x`).
     pub(crate) text_shift: f64,
     /// pyro: the atoms the next `stroke_text` leaves out (`text-overflow: ellipsis`).
     pub(crate) cut: Option<TextCut>,
@@ -859,6 +860,14 @@ pub(crate) fn stroke_text<'a>(
                 let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
                 let unshifted = transform;
                 let transform = shifted(transform, shift);
+                // pyro: on macOS glyph origins snap to quarters of a device pixel along the
+                // baseline, as Skia's subpixel positioning does, where the run is drawn untransformed
+                // (only translated) into a raster: a recording paint (the PDF's) keeps the exact x.
+                let quarter_x = CORE_TEXT_GLYPHS && runs.is_none() && vertical.is_none() && {
+                    let [a, b, c, d, _, _] = transform.as_coeffs();
+                    a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
+                };
+                let tx = transform.as_coeffs()[4];
                 // pyro: the glyphs `text-overflow` keeps of the run (all without a cut).
                 let (kept, kept_extent) = match cut {
                     Some(cut) => cut.kept(&glyph_run),
@@ -876,7 +885,7 @@ pub(crate) fn stroke_text<'a>(
                     scene.draw_glyphs(
                         font,
                         font_size,
-                        !FONT_EMBOLDEN_ENABLED, // hint
+                        !FONT_EMBOLDEN_ENABLED && !CORE_TEXT_GLYPHS, // hint
                         normalized_coords,
                         embolden,
                         Fill::NonZero,
@@ -890,7 +899,11 @@ pub(crate) fn stroke_text<'a>(
                             .take(kept.len())
                             .map(|glyph| anyrender::Glyph {
                                 id: glyph.id as _,
-                                x: glyph.x,
+                                x: if quarter_x {
+                                    (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
+                                } else {
+                                    glyph.x
+                                },
                                 y: glyph.y,
                             }),
                     );

@@ -566,16 +566,45 @@ fn overflow_on_body_is_the_viewports() {
     assert_eq!(pixel(&img, 500, 20), WHITE);
 }
 
-/// Text in screenshots stays at its box's whole-pixel x; only PDF output moves it.
+/// Text in screenshots keeps the fraction of its box's x, as in Chromium (and in PDF output):
+/// the box is painted at a whole pixel, its text at its layout-unit x.
 #[test]
-fn screenshot_text_keeps_the_box_x() {
+fn screenshot_text_keeps_its_layout_unit_x() {
     let page = |padding: &str| {
         format!("<!doctype html><body style='margin:0;font:16px sans-serif'><div style='padding-left:{padding}'>Whole pixels</div>")
     };
     let mut r = Renderer::new();
     let (a, _, _) = r.render(&snap(&page("37.7953px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
     let (b, _, _) = r.render(&snap(&page("38px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
-    assert!(compare(&a, &b, 0, None).equal);
+    assert!(!compare(&a, &b, 0, None).equal, "0.2 px of padding moves the text");
+    // The ink moves left by about the fraction, not by a whole pixel.
+    let ink_x = |img: &RgbaImage| {
+        let (mut sum, mut weight) = (0.0, 0.0);
+        for (i, p) in img.data.chunks_exact(4).enumerate() {
+            let w = 255.0 - p[0] as f64;
+            sum += w * (i % img.width as usize) as f64;
+            weight += w;
+        }
+        sum / weight
+    };
+    let moved = ink_x(&b) - ink_x(&a);
+    assert!((0.1..0.35).contains(&moved), "moved {moved} px");
+}
+
+/// On macOS glyphs sit at quarters of a device pixel along the baseline, as Skia's subpixel
+/// positioning places Core Text's glyphs in Chromium: a tenth of a pixel moves a lone glyph
+/// nowhere, a quarter moves it.
+#[cfg(target_os = "macos")]
+#[test]
+fn glyphs_sit_at_quarter_pixels_on_macos() {
+    let page = |padding: &str| {
+        format!("<!doctype html><body style='margin:0;font:16px sans-serif'><div style='padding-left:{padding}'>l</div>")
+    };
+    let mut r = Renderer::new();
+    let mut render = |padding: &str| r.render(&snap(&page(padding)), Area::Viewport, Backend::Cpu, &fetcher()).unwrap().0;
+    let (whole, tenth, quarter) = (render("10px"), render("10.1px"), render("10.25px"));
+    assert!(compare(&whole, &tenth, 0, None).equal, "a tenth of a pixel rounds to the same quarter");
+    assert!(!compare(&whole, &quarter, 0, None).equal, "a quarter of a pixel moves the glyphs");
 }
 
 /// Mixed fonts, sizes, scripts and a missing first family: every shaping path
