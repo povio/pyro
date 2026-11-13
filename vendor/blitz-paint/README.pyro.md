@@ -70,8 +70,9 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
     `SvgImageData::sized` tree for its content box.
   - `src/lib.rs` (`paint_scene_with`, `CORE_TEXT_GLYPHS`), `src/text.rs` (`stroke_text`): text is placed as
-    Chromium places it. Screenshots draw an inline root's text at its layout-unit x (`fractional_text_x`, which
-    print already used) instead of its box's whole pixel, and on macOS glyphs are unhinted (Core Text does not
+    Chromium places it. Screenshots draw an inline root's text, and a text input's value, placeholder and caret
+    (`draw_text_input_text`), at its layout-unit x (`fractional_text_x`, which print already used) instead of its
+    box's whole pixel, and on macOS glyphs are unhinted (Core Text does not
     hint) and their origins snap to quarters of a device pixel along the baseline (Skia's subpixel positions)
     where a run is drawn only translated into a raster; a recording paint (the PDF's) keeps the exact x. Covered
     by `screenshot_text_keeps_its_layout_unit_x` and `glyphs_sit_at_quarter_pixels_on_macos` in

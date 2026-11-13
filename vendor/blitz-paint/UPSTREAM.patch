@@ -316,7 +316,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -284,8 +308,138 @@
+@@ -284,10 +308,140 @@
                      self.initial_x,
                      self.initial_y,
                  );
@@ -379,9 +379,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            self.top_layer_root.set(Some(id));
 +            self.render_element(scene, id, transform, clip_rect);
 +            self.top_layer_root.set(None);
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// Whether `id` and its ancestors are styled and not `display: none`
 +    /// (the style traversal keeps stale styles under a `display: none`
 +    /// ancestor).
@@ -414,7 +414,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            || style.get_inherited_box().visibility != StyloVisibility::Visible
 +        {
 +            return;
-         }
++        }
 +        let effects = style.get_effects();
 +        let opacity = effects.opacity;
 +        let color = style
@@ -452,9 +452,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            },
 +        );
-     }
- 
++    }
++
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
+         let location = node.final_layout().location;
+         parent
 @@ -317,8 +471,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
@@ -778,24 +780,25 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,10 +1393,14 @@
+@@ -1030,9 +1393,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
--            let pos = Point {
++            // pyro: the value, placeholder and caret at the content box's layout-unit x, as
++            // inline text (`fractional_text_x_of_node`).
 +            let content_origin = Point {
-                 x: pos.x + subpixel_offset.x as f64,
--                y: pos.y + subpixel_offset.y as f64 + y_offset,
++                x: pos.x + subpixel_offset.x as f64 + self.fractional_text_x_of_node() / self.scale,
 +                y: pos.y + subpixel_offset.y as f64,
-             };
-+            let pos = Point {
++            };
+             let pos = Point {
+-                x: pos.x + subpixel_offset.x as f64,
+-                y: pos.y + subpixel_offset.y as f64 + y_offset,
 +                x: content_origin.x,
 +                y: content_origin.y + y_offset,
-+            };
+             };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-             // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
-@@ -1048,6 +1415,48 @@
+@@ -1048,6 +1417,48 @@
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
  
@@ -844,7 +847,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1088,7 +1497,9 @@
+@@ -1088,7 +1499,9 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -854,7 +857,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1147,7 +1558,9 @@
+@@ -1147,7 +1560,9 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -864,7 +867,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1232,6 +1645,9 @@
+@@ -1232,6 +1647,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
