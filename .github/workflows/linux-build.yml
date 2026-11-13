@@ -72,6 +72,38 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
+      # The x64 runner has died in this job's PGO build repeatedly since #310 ("The hosted runner lost communication
+      # with the server", no log kept): the machine ran out of memory or disk, or the runner process got no CPU.
+      # Thin LTO with one codegen unit per crate runs several multi-GB LLVM jobs at once, twice over for PGO, and
+      # each release target directory is about 4 GB. So: build on the filesystem with the most room, add swap,
+      # and (in the build step) leave a core free, lower the build's priority and log memory and disk each minute.
+      - name: Scratch disk and swap
+        run: |
+          avail() { df --output=avail -BG "$1" | tail -1 | tr -dc 0-9; }
+          room="$(avail .)"
+          swap=/pyro.swap
+          # Hosted runners with a temporary disk mount it at /mnt, larger than what the image leaves on /.
+          if mountpoint -q /mnt && (( $(avail /mnt) > room )); then
+            room="$(avail /mnt)"
+            swap=/mnt/pyro.swap
+            sudo mkdir -p /mnt/pyro-target
+            sudo chown "$(id -u):$(id -g)" /mnt/pyro-target
+            # The scripts and the steps below name `target/`: keep the name, move the directory.
+            ln -s /mnt/pyro-target target
+          fi
+          if (( room < 40 )); then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+            room="$(avail "$(dirname "$swap")")"
+          fi
+          size=16
+          if (( room < 48 )); then size=8; fi
+          sudo fallocate -l "${size}G" "$swap"
+          sudo chmod 600 "$swap"
+          sudo mkswap "$swap" >/dev/null
+          sudo swapon "$swap"
+          nproc
+          free -h
+          df -h . /mnt 2>/dev/null || df -h .
       - name: Build browser and comparison worker against the patched JavaScriptCore
         env:
           PGO: ${{ inputs.pgo }}
@@ -79,14 +111,29 @@ jobs:
           export PYRO_JSC_DIR="$HOME/.cache/pyro/jsc/$JSC_DIR"
           mkdir -p "$(dirname "$PYRO_JSC_DIR")"
           mv patched-jsc "$PYRO_JSC_DIR"
+          # One core stays free for the runner process on machines with four or more.
+          cores="$(nproc)"
+          if (( cores >= 4 )); then cores=$((cores - 1)); fi
+          export CARGO_BUILD_JOBS="$cores"
+          # What a lost runner leaves behind is the live log: say each minute how much memory and disk is left.
+          mkdir -p target
+          (
+            while sleep 60; do
+              echo "[resources $(date -u +%H:%M:%S)] $(free -m | awk '/^Mem:/{printf "memory available %d MiB", $7} /^Swap:/{printf ", swap used %d MiB", $3}'), disk free $(df --output=avail -BG target/ | tail -1 | tr -d " ")"
+            done
+          ) &
+          monitor=$!
+          trap 'pkill -P "$monitor" 2>/dev/null; kill "$monitor" 2>/dev/null || true' EXIT
           if [[ "$PGO" == true ]]; then
-            scripts/pgo/build.sh --locked
-            cargo +stable build --locked --release --package pyro-render
+            # The builds and the training run below the runner process's priority (the profile counts calls, not time).
+            nice -n 10 scripts/pgo/build.sh --locked
             host="$(rustc -vV | sed -n 's/^host: //p')"
-            cp "target/$host/release-pgo/pyro" target/release/pyro
+            # Free the PGO builds' intermediates (not the binary) before the third release build.
             rm -rf target/pgo/profraw "target/$host/release-pgo/deps" "target/$host/release-pgo/build"
+            nice -n 10 cargo +stable build --locked --release --package pyro-render
+            cp "target/$host/release-pgo/pyro" target/release/pyro
           else
-            cargo +stable build --locked --release --package pyro --package pyro-render --features render
+            nice -n 10 cargo +stable build --locked --release --package pyro --package pyro-render --features render
           fi
       - name: Bundle ICU and check the bundle
         env:
