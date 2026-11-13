@@ -55,6 +55,20 @@ harfrust shaper (and parses the font) only for a run the glyph cache does not ho
 variation coords are the shaper instance's, which are what the shaper would report. Metric values
 are unchanged: the same `skrifa` computation runs, once per combination instead of once per run.
 
+## Tracking at the unscaled size
+
+`shape/shaper.rs` (`ShapeOptions::point_size`), `shape/cache.rs` (`GlyphKey::point_size`): harfrust
+applies a font's AAT `trak` table (size-specific tracking; San Francisco, macOS's `system-ui`, has
+one) at the shaper's point size, which was the item's font size. parley shapes a scaled layout at
+the font size times its scale, so at a device scale factor of 3 a 14px label was tracked as 42pt
+text: +17 font units per glyph instead of -22, 2.6% wider than in Chromium (Core Text tracks at
+the CSS size), and every label, button and tab grew with it. The caller now passes the unscaled
+size as `point_size` (`vendor/parley`, `shape/mod.rs`); the glyph cache keys runs by it too, since
+two layouts can shape the same scaled size at different point sizes. Measured with
+`bench/fidelity/repros/system-ui-tracking.html`: 10-24px widths equal Chromium's to 0.02px at scale 2
+(before: -6% to +7%). The tests in `atom.rs` and `shaped_text.rs` and the crate doc example set the
+new field (they need assets the vendored copy does not have, as before).
+
 ## Chromium's hyphen-before-digit break on its own
 
 `break_overrides.rs`, `HYPHEN_DIGIT_LINE_BREAK_OVERRIDE`: the hyphen-digit rule of

@@ -2256,16 +2256,30 @@ export class Page extends Scope {
     const format = o.type ?? (o.path?.endsWith('.jpg') || o.path?.endsWith('.jpeg') ? 'jpeg' : 'png');
     // A transparent background under the document, for this capture only (PNG).
     const transparent = !!o.omitBackground && format === 'png';
+    const zoomed = !o.clip && !o.fullPage && this._context._options.isMobile ? await this._visualViewportClip() : undefined;
+    const clip = o.clip ? { ...o.clip, scale: 1 } : zoomed;
     if (transparent) await this._send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
     const r = await this._send('Page.captureScreenshot', {
       format,
       ...(o.quality !== undefined ? { quality: o.quality } : {}),
-      ...(o.clip ? { clip: { ...o.clip, scale: 1 } } : {}),
+      ...(clip ? { clip } : {}),
       ...(o.fullPage ? { captureBeyondViewport: true } : {}),
     }).finally(() => (transparent ? this._send('Emulation.setDefaultBackgroundColorOverride', {}).catch(() => {}) : undefined));
     const buffer = Buffer.from(r.data, 'base64');
     if (o.path) writeFileMakingDirs(o.path, buffer);
     return buffer;
+  }
+  /**
+   * Playwright's viewport capture of a zoomed mobile page: the visual
+   * viewport at its page scale, whole CSS px (`enclosingIntSize`), so a page
+   * without `<meta name="viewport">` shows its 980 px layout in the device's
+   * width. `undefined` at scale 1 (the viewport capture is the same).
+   */
+  private async _visualViewportClip(): Promise<{ x: number; y: number; width: number; height: number; scale: number } | undefined> {
+    const { cssVisualViewport: v } = await this._send('Page.getLayoutMetrics');
+    if (v.scale === 1 || !this._viewport) return undefined;
+    const whole = (n: number) => Math.floor(n / v.scale + 1e-3);
+    return { x: v.pageX, y: v.pageY, width: whole(this._viewport.width), height: whole(this._viewport.height), scale: v.scale };
   }
   async pdf(o: { path?: string; [k: string]: unknown } = {}): Promise<Buffer> {
     const { path, ...rest } = o;

@@ -684,7 +684,10 @@ pub(crate) fn create(
         bodies: host.layout_bodies.clone(),
     }));
     bindings.set_storage_namespaces(settings.local, settings.session);
-    bindings.set_viewport(settings.viewport);
+    let mut viewport = settings.viewport;
+    // Only the main frame lays out as a phone; frames take their iframe's box.
+    viewport.mobile &= page.child.is_none();
+    bindings.set_viewport(viewport);
     if page.child.is_some() {
         bindings.set_frame_viewport_source(frame_viewport_source(host, &frame));
     }
@@ -748,6 +751,7 @@ fn frame_viewport_source(
         let mut viewport = layout.viewport().clone();
         viewport.width = width.round() as u32;
         viewport.height = height.round() as u32;
+        viewport.mobile = false;
         *last.borrow_mut() = Some((stamp, viewport.clone()));
         Some(viewport)
     }))

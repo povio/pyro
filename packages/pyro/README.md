@@ -341,9 +341,16 @@ options with Playwright's meaning:
 
 - `viewport` and `screen`; `deviceScaleFactor` (`devicePixelRatio`, and
   screenshots in device pixels, Playwright's default `scale: 'device'`);
-  `isMobile` (the device's `mobile` flag and portrait or landscape screen
-  orientation); `hasTouch` (`navigator.maxTouchPoints`, a coarse pointer
-  without hover)
+  `isMobile`, as Chromium's mobile emulation: `<meta name="viewport">`
+  decides the layout viewport (`width=device-width`, a width in px,
+  `initial-scale`, `minimum-scale`, `maximum-scale`, `user-scalable`, also
+  when a script adds or changes the tag), a page without one lays out 980 px
+  wide, zoomed out to the device's width, and `innerWidth`,
+  `visualViewport`, media queries, `resize` and screenshots follow, with
+  Chrome's numbers (portrait or landscape screen orientation too; no pinch
+  zoom, so the visual viewport stays at the window's top left); `hasTouch`
+  (`navigator.maxTouchPoints`, a coarse pointer without hover). `devices` is
+  Playwright's table of descriptors
 - `locale`: `navigator.language(s)`, `Accept-Language` and the default locale
   of `Intl` and the `toLocale*String` methods (JavaScriptCore's own default is
   the process's: a script that runs first in every document makes `locale`
@@ -509,8 +516,6 @@ Not supported, accepted so configs and `devices` descriptors keep working:
 
 - context options with no effect: `forcedColors` and `strictSelectors`
 - `recordVideo.showActions` and the runner's `video.show` draw no annotations
-- `isMobile` does not apply `<meta name="viewport">`: pages lay out at the
-  viewport's width, as with `width=device-width`
 - `toHaveScreenshot` renders at the context's `deviceScaleFactor` (Playwright's
   default there is `scale: 'css'`), and `screenshot()` has no `scale` option
 - `context.request` and the `request` fixture do not go through `proxy`
@@ -523,7 +528,7 @@ accessibility snapshot in which every element it can act on has a ref
 (`button "Sign in" [ref=e11]`), acts by ref, and gets the page's new snapshot
 back from the action: Pyro waits until the page is quiet before an action
 returns, so that snapshot is the action's outcome. Two ways in, with the same
-23 tools: the MCP server for agent apps, and a tool-calling module for your
+24 tools: the MCP server for agent apps, and a tool-calling module for your
 own agent loop. [AGENTS.md](AGENTS.md) explains how a model should use the
 tools; the MCP server sends its essentials as the server `instructions`.
 
@@ -551,8 +556,9 @@ The browser starts with the first tool call and exits with the server.
 | `--ws <url>` | Use a running `pyro serve` (default `$PYRO_WS`, else one is launched) |
 | `--fork` | Launch `pyro serve --fork` |
 | `--viewport <w>x<h>`, `--user-agent <ua>`, `--proxy <url>` | Settings of new contexts (`http://user:pass@host:port`) |
+| `--device-scale-factor <n>` | Device pixels per CSS pixel of new tabs, 0.5 to 8 (screenshots are taken at device pixels: 2056x1200 at 3 is 6168x3600) |
 | `--profile-dir <dir>` | Stored identities (default `~/.pyro/profiles`) |
-| `--profile <name>` | Start in that stored identity |
+| `--profile <name>` | Start in that stored identity (signed in by a person with `pyro profile login`, below) |
 | `--isolated` | Write nothing to the profile directory (no `browser_profiles`) |
 | `--allowed-origins <list>`, `--blocked-origins <list>` | Origins the browser may (not) request: `https://app.example.com`, `example.com`, `*.example.com` |
 | `--output-dir <dir>` | Screenshots, PDFs and downloads (default `<tmp>/pyro-mcp-output-<uid>`, owner-only) |
@@ -581,7 +587,11 @@ Playwright MCP's names and parameters, so models know them:
 `browser_evaluate`, `browser_take_screenshot`, `browser_pdf_save`,
 `browser_console_messages`, `browser_network_requests`, `browser_resize`,
 `browser_close`; and Pyro's `browser_get_text` (the page's visible text, the
-cheap way to read) and `browser_profiles` (stored identities, below). Each
+cheap way to read), `browser_get_bounding_box` (element boxes in CSS and
+device pixels, to crop by) and `browser_profiles` (stored identities, below).
+`browser_take_screenshot` and `browser_resize` take more than Playwright
+MCP's: a device scale factor, captures at device pixels saved as files, clips
+(below). Each
 action's result has a one-line result, modal states (an open dialog or file
 chooser), events (new tabs, downloads, blocked requests), the tabs, the URL
 (and the one before when it changed), the title, new console errors and the
@@ -640,17 +650,72 @@ await browser.close();
   prompt caching, explicit effort, server-side refusal fallback and
   `stop_reason` checks.
 
+### Screen capture
+
+For captures a pipeline uses, an agent saves files instead of reading images:
+
+```text
+browser_resize          { width: 2056, height: 1200, deviceScaleFactor: 3 }
+browser_take_screenshot { filename: "home.png", includeImage: false }
+  → home.png: 6168x3600 PNG at device pixels, <bytes>, sha256 <hex>
+browser_get_bounding_box { elements: [{ element: "Pricing card", ref: "e12" }] }
+  → css.viewport / css.document (CSS px), device.viewport / device.document (x3)
+browser_take_screenshot { clip: <css.viewport>, filename: "pricing.png" }
+  → a crop at device resolution
+```
+
+The saved file is the browser's PNG as it encoded it (lossless, never
+scaled for the model), at device pixels by default (`scale: "css"` for CSS
+pixels). `clip` is in CSS px (relative to the viewport, or to the document
+with `fullPage`), and `element` + `ref` crops one element, both at the
+capture's resolution. Unless `includeImage` is false the result also carries
+an image to look at: the capture when it fits the model's image limits (2576
+px a side, 4784 image tokens), else a preview of it, and says which. A full
+page beyond Pyro's 16384 px a side is refused with the clips that capture it
+in parts. Every result states the viewport and device scale factor;
+`--viewport` with `--device-scale-factor`, or an identity file's `viewport`
+and `deviceScaleFactor`, set them from the start.
+
 ### Stored identities
 
-`browser_profiles` saves the current tab's signed-in state (cookies and
-localStorage, Playwright's `storageState` JSON) to `<profile-dir>/<name>.json`
-with mode 600, and `load` opens it in a new context, with the settings of an
-optional `<name>.identity.json` beside it: `userAgent`, `viewport`, `locale`,
+`browser_profiles` keeps signed-in sessions on disk: `<profile-dir>/<name>.json`
+(cookies and localStorage, Playwright's `storageState` JSON) with mode 600 in
+a mode 700 directory, and the settings of an optional `<name>.identity.json`
+beside it: `userAgent`, `viewport`, `deviceScaleFactor`, `locale`,
 `timezoneId`, `geolocation`, `extraHTTPHeaders`, `proxy`
 (`http://user:pass@host:port`) and `proxyBypass`. It is the scraping guide's
 stored-profile layout: files written by `context.storageState({ path })` or
-by Playwright load as they are. An agent signs in once (or you do), saves,
-and later sessions start signed in: `pyro mcp --profile alice`.
+by Playwright load as they are.
+
+A person signs an identity in, never the agent. For an app that signs in with
+a link sent by email:
+
+```sh
+pyro profile login sandbox --url https://sandbox.example.com/app
+# Paste the sign-in link from the email (it is not shown), then press Enter:
+```
+
+The command reads the link without echo (scripts pipe it on stdin), opens it
+in a fresh headless browser with the identity file's settings (user agent,
+proxy, locale, viewport, ...), follows the redirects and waits until the
+sign-in completes: `--wait-for-url <glob or /regex/>` or `--wait-for-selector
+<css>` when given, else network idle on a page that is no longer the link.
+It then opens `--url` in a second fresh context made from what it would save
+and saves only when that is signed in, printing the origins, cookie count and
+session cookie expiry, never a value. A link that expired or was used
+already exits 1 and saves nothing. `--identity <file>` signs in with those
+settings and keeps them as `<name>.identity.json`; `--profile-dir` as for
+`pyro mcp`.
+
+The agent then loads it: `browser_profiles { "action": "load", "name":
+"sandbox" }`, or `pyro mcp --profile sandbox` starts in it. A load of a
+person's sign-in opens the start URL and reports whether the session holds;
+when it has expired (a sign-in page, HTTP 401 or 403, cookies past their
+expiry) the result says so and gives the agent the `pyro profile login`
+command to ask the person to run. [AGENTS.md](AGENTS.md#stored-identities)
+tells the agent never to sign in itself. `pyro profile list`, `pyro profile
+show <name>` (files, modes, origins, counts, expiries) and `pyro profile
+delete <name> [--all]` manage them; `pyro profile --help` has the rest.
 
 ### Security
 
@@ -666,7 +731,11 @@ and later sessions start signed in: `pyro mcp --profile alice`.
 - **Tool groups.** `--caps -evaluate` removes JavaScript execution, `-files`
   uploads, PDFs and screenshot files, `-profiles` stored identities.
 - **Profiles** are credentials: written owner-only in an owner-only
-  directory, never shown to the model (it sees sites and cookie counts).
+  directory, never shown to the model (it sees sites, cookie counts and
+  expiries). `pyro profile login` reads the sign-in link without echo or from
+  stdin (never from arguments, which other users can see), never prints or
+  stores it, keeps the browser's own output off the terminal, and prints no
+  cookie or storage value; the agent is told never to sign in itself.
 - **HTTP transport** binds 127.0.0.1 and checks `Origin` and `Host` against
   DNS rebinding.
 

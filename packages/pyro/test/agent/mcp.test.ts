@@ -1,65 +1,15 @@
 // `pyro mcp` over stdio, as an MCP client speaks to it: the source CLI under
 // Bun and the built CLI under Node, each a child process with a real browser.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Client, pkg, start, text } from './mcp-client';
 import { bin, refOf, startSite, type Site } from './site';
 
-const pkg = join(import.meta.dir, '../..');
 const nodeBin = spawnSync('node', ['--version']).status === 0 ? 'node' : undefined;
 const distCli = join(pkg, 'dist/cli.js');
-
-type Reply = { id?: number | string; result?: any; error?: { code: number; message: string }; method?: string; params?: any };
-
-/** A line-delimited JSON-RPC client over a child's stdio. */
-class Client {
-  private next = 1;
-  private waiting = new Map<number | string, (r: Reply) => void>();
-  readonly replies: Reply[] = [];
-  readonly exited: Promise<number | null>;
-  constructor(readonly child: ChildProcess) {
-    let buffer = '';
-    child.stdout!.setEncoding('utf8');
-    child.stdout!.on('data', (chunk: string) => {
-      buffer += chunk;
-      for (let i = buffer.indexOf('\n'); i >= 0; i = buffer.indexOf('\n')) {
-        const line = buffer.slice(0, i);
-        buffer = buffer.slice(i + 1);
-        if (!line.trim()) continue;
-        const msg = JSON.parse(line) as Reply;
-        this.replies.push(msg);
-        if (msg.id !== undefined) this.waiting.get(msg.id)?.(msg);
-      }
-    });
-    this.exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
-  }
-  send(msg: object): void {
-    this.child.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
-  }
-  request(method: string, params: object = {}, id: number | string = this.next++): Promise<Reply> {
-    return new Promise((resolve) => {
-      this.waiting.set(id, resolve);
-      this.send({ id, method, params });
-    });
-  }
-  call(name: string, args: object = {}): Promise<Reply> {
-    return this.request('tools/call', { name, arguments: args });
-  }
-}
-
-function start(command: string[], extraArgs: string[] = []): Client {
-  const child = spawn(command[0], [...command.slice(1), 'mcp', ...extraArgs], {
-    cwd: pkg,
-    env: { ...process.env, PYRO_BIN: bin },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  child.stderr!.on('data', () => {});
-  return new Client(child);
-}
-
-const text = (r: Reply) => (r.result?.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
 
 /** Pids of `pid`'s child processes (`pgrep -P` prints pids only). */
 function children(pid: number): number[] {
@@ -109,7 +59,7 @@ describe.skipIf(!bin)('pyro mcp (bun src/cli.ts)', () => {
   test('tools/list: strict-compatible schemas, titles and annotations', async () => {
     const r = await c.request('tools/list');
     const tools = r.result.tools as any[];
-    expect(tools.length).toBe(23);
+    expect(tools.length).toBe(24);
     for (const t of tools) {
       expect(t.inputSchema.type).toBe('object');
       expect(t.inputSchema.additionalProperties).toBe(false);
@@ -229,7 +179,7 @@ describe.skipIf(!bin)('pyro mcp --port (Streamable HTTP)', () => {
       const h = { 'mcp-session-id': sid, 'mcp-protocol-version': '2025-11-25' };
       expect((await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, h)).status).toBe(202);
       const list = await (await post({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, h)).json();
-      expect(list.result.tools.length).toBe(23);
+      expect(list.result.tools.length).toBe(24);
       const nav = await (await post({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_navigate', arguments: { url: `${site.url}/` } } }, h)).json();
       expect(nav.result.content[0].text).toContain('heading "Welcome"');
       expect((await post({ jsonrpc: '2.0', id: 4, method: 'ping' })).status).toBe(400);

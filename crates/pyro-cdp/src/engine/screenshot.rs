@@ -347,6 +347,30 @@ impl EngineHost {
         })
     }
 
+    /// What a viewport capture shows: the viewport, or under mobile
+    /// emulation the visual viewport at its page scale, in the device's size
+    /// (a page without `<meta name="viewport">` shows its whole 980 px
+    /// layout shrunk to the phone's width), as Chrome's `captureScreenshot`
+    /// without a clip.
+    fn viewport_area(&self, pid: PageId) -> Area {
+        let Some(dom) = self.thread.browser.page(pid).and_then(|p| p.main_frame.page_dom.clone()) else {
+            return Area::Viewport;
+        };
+        dom.sync_mobile_layout();
+        let layout = dom.layout();
+        match layout.mobile_metrics() {
+            Some(m) => Area::Clip {
+                x: layout.scroll_x() as f64,
+                y: layout.scroll_y() as f64,
+                width: m.visual.0,
+                height: m.visual.1,
+                scale: m.scale,
+                beyond_viewport: false,
+            },
+            None => Area::Viewport,
+        }
+    }
+
     fn fetcher(&self, pid: PageId) -> Arc<dyn Fetcher> {
         Arc::new(PageFetcher { handle: self.thread.handle(), page: pid })
     }
@@ -361,12 +385,12 @@ impl EngineHost {
                 return Err(CdpError::invalid_params(format!("format '{other}' is not supported (png, jpeg)")))
             }
         };
+        let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let area = match (p.clip, p.capture_beyond_viewport) {
             (Some(clip), beyond_viewport) => clip.area(beyond_viewport)?,
             (None, true) => Area::FullPage,
-            (None, false) => Area::Viewport,
+            (None, false) => self.viewport_area(pid),
         };
-        let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let started = Instant::now();
         let snapshot = self.snapshot(pid, None)?;
         let snapshot_ms = ms(started.elapsed());
@@ -694,7 +718,7 @@ impl EngineHost {
             }
             (None, true, _) => Area::FullPage,
             (None, false, Some(_)) => Area::Element,
-            (None, false, None) => Area::Viewport,
+            (None, false, None) => self.viewport_area(pid),
         };
         let opts = MatchOptions {
             tolerance: (spec.threshold * 255.0).round() as u8,

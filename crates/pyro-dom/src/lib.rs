@@ -46,6 +46,7 @@ pub mod stylo;
 pub mod svg_geometry;
 pub mod text_metrics;
 pub mod upgrade;
+pub mod viewport_meta;
 pub mod timing;
 mod tree_scope;
 pub mod xml;

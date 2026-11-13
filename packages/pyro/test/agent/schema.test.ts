@@ -30,8 +30,8 @@ const PLAYWRIGHT_MCP = [
 ];
 
 describe('tool definitions', () => {
-  test('the Playwright MCP tools plus browser_get_text and browser_profiles, each fully described', () => {
-    expect(all.map((t) => t.name).sort()).toEqual([...PLAYWRIGHT_MCP, 'browser_get_text', 'browser_profiles'].sort());
+  test('the Playwright MCP tools plus browser_get_text, browser_get_bounding_box and browser_profiles, each fully described', () => {
+    expect(all.map((t) => t.name).sort()).toEqual([...PLAYWRIGHT_MCP, 'browser_get_text', 'browser_get_bounding_box', 'browser_profiles'].sort());
     for (const t of all) {
       expect(t.name).toMatch(/^browser_[a-z_]+$/);
       expect(t.title.length).toBeGreaterThan(3);

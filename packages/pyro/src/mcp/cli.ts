@@ -3,6 +3,7 @@
 // HTTP instead. Runs under Node (>= 22) and Bun.
 import { resolveCaps } from '../agent/index.js';
 import { originList } from '../agent/origins.js';
+import { sessionStatus, when } from '../agent/profiles.js';
 import { BrowserAgentSession, type BrowserAgentOptions } from '../agent/session.js';
 import { packageVersion, type McpServerOptions } from './server.js';
 
@@ -15,7 +16,10 @@ browser:
   --ws <url>                  use a running pyro serve (ws://… or http://host:port;
                               default $PYRO_WS, else one is launched)
   --fork                      launch pyro serve --fork
-  --viewport <w>x<h>          viewport of new tabs (default 1280x720)
+  --viewport <w>x<h>          viewport of new tabs, CSS px (default 1280x720)
+  --device-scale-factor <n>   device pixels per CSS pixel of new tabs, 0.5 to 8 (default 1);
+                              screenshots are taken at device pixels: 2056x1200 at 3
+                              gives 6168x3600 images
   --user-agent <string>       user agent of new contexts
   --proxy <url>               proxy of new contexts: http://[user:pass@]host:port
   --timeout-action <ms>       how long an action waits for its element (default 5000)
@@ -26,6 +30,8 @@ stored identities (browser_profiles):
   --profile <name>            start in this stored identity
   --isolated                  write nothing to the profile directory (no browser_profiles
                               tool; --profile still loads)
+                              A person signs an identity in, never the agent:
+                              pyro profile login <name> --url <app URL> (pyro profile --help)
 
 safety:
   --allowed-origins <list>    origins the browser may request; others are blocked
@@ -57,7 +63,7 @@ Any client:   { "command": "npx", "args": ["-y", "@povio/pyro", "mcp"] }`;
 type Parsed = { options: McpServerOptions; port?: number; host?: string; allowedHttpOrigins?: string[] };
 
 const VALUE_FLAGS = new Set([
-  'ws', 'viewport', 'user-agent', 'proxy', 'timeout-action', 'timeout-navigation', 'profile-dir', 'profile',
+  'ws', 'viewport', 'device-scale-factor', 'user-agent', 'proxy', 'timeout-action', 'timeout-navigation', 'profile-dir', 'profile',
   'allowed-origins', 'blocked-origins', 'output-dir', 'file-roots', 'caps', 'port', 'host', 'allowed-http-origins',
 ]);
 const BOOL_FLAGS = new Set(['fork', 'isolated', 'no-snapshot-after-action', 'help', 'version']);
@@ -99,6 +105,12 @@ export function parseArgs(argv: string[]): Parsed & { help?: boolean; version?: 
     const vm = /^(\d+)[x×,](\d+)$/i.exec(viewport);
     if (!vm) throw new Error(`--viewport takes <width>x<height>, e.g. 1280x720, got ${JSON.stringify(viewport)}`);
     browser.viewport = { width: Number(vm[1]), height: Number(vm[2]) };
+  }
+  const dsf = values.get('device-scale-factor');
+  if (dsf !== undefined) {
+    const n = Number(dsf);
+    if (!(n >= 0.5 && n <= 8)) throw new Error(`--device-scale-factor takes a number from 0.5 to 8, got ${JSON.stringify(dsf)}`);
+    browser.deviceScaleFactor = n;
   }
   if (values.has('user-agent')) browser.userAgent = values.get('user-agent');
   if (values.has('proxy')) browser.proxy = values.get('proxy');
@@ -142,8 +154,12 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (parsed.options.profile) {
     // A missing startup identity fails here, where the user sees it, not at the agent's first tool call.
+    const name = parsed.options.profile;
     try {
-      new BrowserAgentSession(parsed.options).profiles.read(parsed.options.profile);
+      const session = new BrowserAgentSession(parsed.options);
+      const { state, login } = session.profiles.read(name);
+      const status = state ? sessionStatus(state) : undefined;
+      if (status?.expired) console.error(`pyro mcp: --profile ${name}: its session cookies expired ${when(status.expiresAt!)}; sign it in again with: ${session.loginCommand(name, login)}`);
     } catch (e) {
       console.error(`pyro mcp: --profile: ${e instanceof Error ? e.message : e}`);
       return 2;
