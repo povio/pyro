@@ -1,5 +1,6 @@
 //! Screenshots: CDP `Page.captureScreenshot` and the `Pyro.run` step
-//! `matchScreenshot`, rendered with pyro-render (Blitz) off the browser thread.
+//! `matchScreenshot`, rendered with pyro-render (Blitz) off the browser thread;
+//! screencast frames (`screencast.rs`) are rendered the same way.
 //!
 //! The browser thread builds a snapshot of the page (HTML with form state,
 //! live sheet text, viewport, scroll; `PageDom::render_snapshot`) and hands
@@ -46,6 +47,16 @@ enum Finished {
     Capture(u64, Result<Captured, String>),
     Pdf(u64, Result<pyro_render::PdfOutput, String>),
     Match(u64, Result<MatchOutcome, String>),
+    /// A screencast frame (`screencast.rs`); `None`: the last frame's pixels.
+    Frame(u64, Result<Option<Captured>, String>),
+}
+
+/// The page as a screencast frame shows it: its viewport (CSS px) and scroll.
+pub(super) struct FrameView {
+    pub width: u32,
+    pub height: u32,
+    pub scroll_x: f64,
+    pub scroll_y: f64,
 }
 
 struct CaptureWait {
@@ -375,6 +386,45 @@ impl EngineHost {
             CaptureWait { id: cmd.command.id, session: cmd.session_id.to_owned(), started, snapshot_ms, stream: false };
         self.renders.captures.insert(token, wait);
         Ok(None)
+    }
+
+    /// Starts a screencast frame of `pid` (`screencast.rs`): the viewport,
+    /// scaled down in the display list to fit `max` (device px), and not
+    /// rasterized when its display list hashes as `unless`. The result goes
+    /// to `screencast_rendered`, by the returned token.
+    pub(super) fn render_frame(
+        &mut self,
+        pid: PageId,
+        max: (Option<u32>, Option<u32>),
+        format: ImageFormat,
+        unless: Option<u64>,
+    ) -> CdpResult<(u64, FrameView)> {
+        let snapshot = self.snapshot(pid, None)?;
+        let view = FrameView {
+            width: snapshot.width,
+            height: snapshot.height,
+            scroll_x: snapshot.scroll_x,
+            scroll_y: snapshot.scroll_y,
+        };
+        // As `Renderer::paint` sizes the viewport.
+        let (width, height) = (f64::from(snapshot.width.max(1)), f64::from(snapshot.height.max(1)));
+        let dpr = snapshot.device_scale_factor.clamp(0.1, 16.0);
+        let scale = [max.0.map(|m| f64::from(m) / (width * dpr)), max.1.map(|m| f64::from(m) / (height * dpr))]
+            .into_iter()
+            .flatten()
+            .fold(1.0, f64::min);
+        let area = if scale < 1.0 {
+            Area::Clip { x: snapshot.scroll_x, y: snapshot.scroll_y, width, height, scale, beyond_viewport: false }
+        } else {
+            Area::Viewport
+        };
+        let fetcher = self.fetcher(pid);
+        let token = self.renders.token();
+        let deliver = self.renders.deliver(self.thread.handle());
+        let done = Box::new(move |r| deliver(Finished::Frame(token, r)));
+        let job = Job::Frame { snapshot, area, format, unless, fetcher, done };
+        self.renders.worker()?.submit(job).map_err(|_| CdpError::server("the render thread is gone"))?;
+        Ok((token, view))
     }
 
     /// `Page.printToPDF`: one PDF page per Paprize page box (`.pz-page`),
@@ -736,6 +786,7 @@ impl EngineHost {
                         result.map_err(CdpError::server).and_then(|o| match_result(&wait.name, o, &wait, total));
                     *wait.settled.borrow_mut() = Some(outcome);
                 }
+                Finished::Frame(token, result) => self.screencast_rendered(token, result),
             }
         }
         if fetched && !self.renders.pdf_waits.is_empty() {

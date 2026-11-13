@@ -7055,6 +7055,134 @@ mod screenshot {
         );
         assert!(r["error"]["message"].as_str().unwrap().contains("matches no element"), "{r}");
     }
+
+    fn frames_in(messages: &[Value]) -> Vec<Value> {
+        messages.iter().filter(|m| m["method"] == "Page.screencastFrame").cloned().collect()
+    }
+
+    /// Sends a page command, then runs the loop until a screencast frame
+    /// comes (it may come with the reply).
+    fn frame_after(h: &mut Harness, method: &str, params: Value) -> Value {
+        let seen = h.page_with_events(method, params);
+        match frames_in(&seen).into_iter().next() {
+            Some(frame) => frame,
+            None => h.until_event(|m| m["method"] == "Page.screencastFrame"),
+        }
+    }
+
+    /// Sends a page command and runs the loop for `ms`: the frames sent.
+    fn frames_after(h: &mut Harness, method: &str, params: Value, ms: u64) -> Vec<Value> {
+        let mut seen = h.page_with_events(method, params);
+        seen.extend(h.run_for(ms));
+        frames_in(&seen)
+    }
+
+    fn eval_params(expression: &str) -> Value {
+        json!({"expression": expression, "returnByValue": true})
+    }
+
+    /// `Page.startScreencast` as Chromium sends it (Playwright's video, and
+    /// Puppeteer's `page.screencast()` waits for the first frame): a frame at
+    /// once, then one per change that shows, none while nothing changes or the
+    /// last frame is unacked, none after `stopScreencast`.
+    #[test]
+    fn screencast_sends_a_frame_per_change_after_each_ack() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 800, "height": 600, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><body style='margin:0;background:#fff'><div id=box style='width:100px;height:100px;background:#00f'></div>",
+        );
+        let first =
+            frame_after(&mut h, "Page.startScreencast", json!({"format": "png", "maxWidth": 400, "maxHeight": 400}));
+        let p = &first["params"];
+        let img = png_of(&p["data"]);
+        assert_eq!((img.width, img.height), (400, 300), "scaled down to fit maxWidth x maxHeight");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255]);
+        assert_eq!(pixel(&img, 200, 200), [255, 255, 255, 255]);
+        let m = &p["metadata"];
+        assert_eq!((m["deviceWidth"].as_u64(), m["deviceHeight"].as_u64()), (Some(800), Some(600)), "{m}");
+        assert_eq!((m["offsetTop"].as_f64(), m["pageScaleFactor"].as_f64()), (Some(0.0), Some(1.0)), "{m}");
+        assert_eq!((m["scrollOffsetX"].as_f64(), m["scrollOffsetY"].as_f64()), (Some(0.0), Some(0.0)), "{m}");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+        assert!((now - m["timestamp"].as_f64().unwrap()).abs() < 60.0, "seconds since the epoch: {m}");
+        let id = p["sessionId"].as_u64().expect("sessionId");
+
+        // Unacked: the change waits for the ack, then comes.
+        let set = "document.getElementById('box').style.background = '#f00'";
+        assert!(frames_after(&mut h, "Runtime.evaluate", eval_params(set), 300).is_empty(), "unacked");
+        let second = frame_after(&mut h, "Page.screencastFrameAck", json!({"sessionId": id}));
+        assert_eq!(second["params"]["sessionId"], id, "one session id per screencast");
+        assert_eq!(pixel(&png_of(&second["params"]["data"]), 10, 10), [255, 0, 0, 255], "the change made meanwhile");
+        let t1 = second["params"]["metadata"]["timestamp"].as_f64().unwrap();
+        assert!(t1 >= m["timestamp"].as_f64().unwrap() + 0.25, "taken when sent for");
+
+        // Acked, nothing changes: no frame. A change nothing shows: rendered, not sent.
+        assert!(frames_after(&mut h, "Page.screencastFrameAck", json!({"sessionId": id}), 300).is_empty());
+        let hidden = "document.body.dataset.x = '1'";
+        assert!(frames_after(&mut h, "Runtime.evaluate", eval_params(hidden), 300).is_empty(), "same pixels");
+        let wider = "document.getElementById('box').style.width = '200px'";
+        let third = frame_after(&mut h, "Runtime.evaluate", eval_params(wider));
+        assert_eq!(pixel(&png_of(&third["params"]["data"]), 75, 10), [255, 0, 0, 255]);
+
+        // Scrolling is a change, reported in the metadata.
+        assert!(frames_after(&mut h, "Page.screencastFrameAck", json!({"sessionId": id}), 100).is_empty());
+        let scroll = "document.body.style.height = '3000px'; scrollTo(0, 500)";
+        let scrolled = frame_after(&mut h, "Runtime.evaluate", eval_params(scroll));
+        assert_eq!(scrolled["params"]["metadata"]["scrollOffsetY"], 500.0, "{}", scrolled["params"]["metadata"]);
+        assert_eq!(pixel(&png_of(&scrolled["params"]["data"]), 10, 10), [255, 255, 255, 255], "the box scrolled away");
+
+        // Stopped: no more frames. Started again: a frame at once, a new session id, JPEG.
+        assert!(frames_after(&mut h, "Page.screencastFrameAck", json!({"sessionId": id}), 100).is_empty());
+        h.page("Page.stopScreencast", json!({}));
+        let gone = "document.getElementById('box').style.width = '300px'";
+        assert!(frames_after(&mut h, "Runtime.evaluate", eval_params(gone), 300).is_empty(), "stopped");
+        let jpeg = frame_after(&mut h, "Page.startScreencast", json!({"format": "jpeg", "quality": 60}));
+        assert_ne!(jpeg["params"]["sessionId"], id);
+        let bytes = pyro_cdp::fetch_protocol::base64_decode(jpeg["params"]["data"].as_str().unwrap()).unwrap();
+        assert_eq!(&bytes[..3], &[0xff, 0xd8, 0xff], "JPEG");
+        let r = h.page("Page.startScreencast", json!({"format": "webp"}));
+        assert!(r["error"]["message"].as_str().unwrap_or_default().contains("webp"), "{r}");
+    }
+
+    /// Frames are capped: a page that changes every few milliseconds gets at
+    /// most one frame per 40 ms (`everyNthFrame` n: per n × 40 ms) however
+    /// fast the client acks.
+    #[test]
+    fn screencast_frames_are_capped_at_25_per_second() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 200, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><body style=margin:0><div id=n>0</div><script>let i = 0; setInterval(() => n.textContent = ++i, 4)</script>",
+        );
+        let count = |h: &mut Harness, params: Value| {
+            let mut unacked = vec![frame_after(h, "Page.startScreencast", params)];
+            let started = Instant::now();
+            let mut frames = 0;
+            while started.elapsed() < Duration::from_millis(1000) {
+                for f in std::mem::take(&mut unacked) {
+                    frames += 1;
+                    let ack = json!({"sessionId": f["params"]["sessionId"]});
+                    unacked.extend(frames_in(&h.page_with_events("Page.screencastFrameAck", ack)));
+                }
+                unacked.extend(frames_in(&h.run_for(5)));
+            }
+            h.page("Page.stopScreencast", json!({}));
+            h.run_for(50);
+            frames
+        };
+        let all = count(&mut h, json!({}));
+        assert!((5..=27).contains(&all), "{all} frames in a second");
+        let fifth = count(&mut h, json!({"everyNthFrame": 5}));
+        assert!((2..=6).contains(&fifth), "{fifth} frames in a second, every 5th");
+    }
 }
 
 #[test]

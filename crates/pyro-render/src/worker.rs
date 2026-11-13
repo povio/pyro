@@ -134,6 +134,17 @@ pub enum Job {
         fetcher: Arc<dyn Fetcher>,
         done: Box<dyn FnOnce(Result<MatchOutcome, String>) + Send>,
     },
+    /// A screencast frame: a [`Job::Capture`] on the CPU, unless the display
+    /// list hashes as `unless` (the previous frame's), when nothing is
+    /// rasterized and `done` gets `None`.
+    Frame {
+        snapshot: Snapshot,
+        area: Area,
+        format: ImageFormat,
+        unless: Option<u64>,
+        fetcher: Arc<dyn Fetcher>,
+        done: Box<dyn FnOnce(Result<Option<Captured>, String>) + Send>,
+    },
     /// `Page.printToPDF`.
     Pdf {
         snapshot: Snapshot,
@@ -228,6 +239,10 @@ fn run(r: &mut Renderer, job: Job) {
                 guarded(r, &snapshot, |r| match_baseline(r, &snapshot, area, baseline.as_deref(), opts, &fetcher));
             done(out);
         }
+        Job::Frame { snapshot, area, format, unless, fetcher, done } => {
+            let out = guarded(r, &snapshot, |r| frame(r, &snapshot, area, format, unless, &fetcher));
+            done(out);
+        }
         Job::Pdf { snapshot, opts, fetcher, done } => {
             let out = guarded(r, &snapshot, |r| r.print_pdf(&snapshot, &fetcher, &opts).map_err(|e| e.to_string()));
             done(out);
@@ -277,6 +292,31 @@ pub fn capture(
     };
     timings.encode = t.elapsed();
     Ok(Captured { bytes, width: image.width, height: image.height, scene_hash, timings })
+}
+
+/// [`capture`] on the CPU, or `None` without raster or encoding when the
+/// display list hashes as `unless` (the same pixels: see `hash.rs`).
+pub fn frame(
+    r: &mut Renderer,
+    snap: &Snapshot,
+    area: Area,
+    format: ImageFormat,
+    unless: Option<u64>,
+    fetcher: &Arc<dyn Fetcher>,
+) -> Result<Option<Captured>, String> {
+    let painted = r.paint(snap, area, fetcher).map_err(|e| e.to_string())?;
+    let scene_hash = painted.hash;
+    if unless == Some(scene_hash) {
+        return Ok(None);
+    }
+    let (image, mut timings) = r.raster(painted, Backend::Cpu);
+    let t = Instant::now();
+    let bytes = match format {
+        ImageFormat::Png => encode_png(&image),
+        ImageFormat::Jpeg(q) => encode_jpeg(&image, q)?,
+    };
+    timings.encode = t.elapsed();
+    Ok(Some(Captured { bytes, width: image.width, height: image.height, scene_hash, timings }))
 }
 
 pub fn match_baseline(

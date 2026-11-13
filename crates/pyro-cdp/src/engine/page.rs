@@ -265,6 +265,10 @@ impl EngineHost {
             "printToPDF" => {
                 Err(CdpError::server("Page.printToPDF: pyro was built without the render feature"))
             }
+            // screencast.rs
+            "startScreencast" => self.start_screencast(cmd),
+            "screencastFrameAck" => self.screencast_frame_ack(cmd),
+            "stopScreencast" => self.stop_screencast(cmd),
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
             // A blocking dialog is answered by its nested read loop
