@@ -6,10 +6,11 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, statSync 
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type BrowserContextOptions } from '../wright/browser.js';
+import type { CDPSession } from '../wright/cdp-session.js';
 import type { Dialog, FileChooser, Page, Request, Response } from '../wright/page.js';
 import type { Download } from '../wright/handles.js';
 import { OriginPolicy } from './origins.js';
-import { identityKeys, identityOptions, proxyOption, ProfileStore, type Identity, type SavedState } from './profiles.js';
+import { identityKeys, identityOptions, proxyOption, ProfileStore, sessionStatus, when, type Identity, type LoginInfo, type SavedState, type SessionStatus } from './profiles.js';
 
 export type BrowserAgentOptions = {
   /** A running `pyro serve` to use (`ws://…` or `http://host:port`); default `$PYRO_WS`, else one is launched. */
@@ -24,6 +25,8 @@ export type BrowserAgentOptions = {
   browser?: Browser;
   /** Viewport of the session's pages (default 1280x720). */
   viewport?: { width: number; height: number };
+  /** Device pixels per CSS pixel of the session's pages (default 1): 3 makes a 2056x1200 viewport's screenshots 6168x3600. */
+  deviceScaleFactor?: number;
   userAgent?: string;
   /** Proxy of the session's contexts: `http://user:pass@host:port` or Playwright's object. */
   proxy?: Identity['proxy'];
@@ -56,11 +59,16 @@ export type BrowserAgentOptions = {
 type ConsoleEntry = { type: string; text: string; where?: string };
 type RequestEntry = { method: string; url: string; type: string; status?: number; statusText?: string; failure?: string };
 
+/** Where stored identities live unless `profileDir` says otherwise. */
+export const DEFAULT_PROFILE_DIR = join(homedir(), '.pyro', 'profiles');
+
 const CONSOLE_LIMIT = 1000;
 const REQUEST_LIMIT = 500;
 
 /** A browser context of the session: the default one, or a stored identity's. */
 export class ContextEntry {
+  /** Where a person signed the stored identity in (`pyro profile login`). */
+  login?: LoginInfo;
   constructor(
     readonly context: BrowserContext,
     /** The stored identity it was loaded from. */
@@ -85,13 +93,19 @@ export class Tab {
   title = '';
   /** A page the agent did not open (a popup): the next result announces it. */
   announce = false;
+  /** The sign-in page URL last pointed out (a stored identity's tab that landed on one). */
+  signInNoted?: string;
+  /** Device pixels per CSS pixel: the context's, or the last `browser_resize`'s. */
+  deviceScaleFactor: number;
   private modalWaiters: (() => void)[] = [];
+  private cdpSession?: Promise<CDPSession>;
 
   constructor(
     readonly page: Page,
     readonly entry: ContextEntry,
     session: BrowserAgentSession,
   ) {
+    this.deviceScaleFactor = entry.context._options.deviceScaleFactor || 1;
     page.on('console', (m) => {
       const loc = m.location();
       this.log({ type: m.type(), text: m.text(), where: loc.url ? `${loc.url}:${loc.lineNumber + 1}` : undefined });
@@ -114,6 +128,20 @@ export class Tab {
     // A new document: a chooser of the old one is gone with it.
     page.on('load', () => (this.chooser = undefined));
     page.on('download', (d) => session._download(this, d));
+  }
+
+  /** A raw CDP session on the page (screenshots with a clip scale, device metrics). */
+  cdp(): Promise<CDPSession> {
+    this.cdpSession ??= this.entry.context.newCDPSession(this.page).catch((e) => {
+      this.cdpSession = undefined;
+      throw e;
+    });
+    return this.cdpSession;
+  }
+
+  /** The viewport in CSS px, as the page was given it. */
+  viewport(): { width: number; height: number } {
+    return this.page.viewportSize() ?? { width: 1280, height: 720 };
   }
 
   /** `opened` resolves when a dialog or file chooser opens on this page; `dispose` stops waiting. */
@@ -196,7 +224,7 @@ export class BrowserAgentSession {
 
   constructor(readonly options: BrowserAgentOptions = {}) {
     this.policy = new OriginPolicy(options.allowedOrigins, options.blockedOrigins);
-    this.profiles = new ProfileStore(options.profileDir ?? join(homedir(), '.pyro', 'profiles'), options.isolated ?? false);
+    this.profiles = new ProfileStore(options.profileDir ?? DEFAULT_PROFILE_DIR, options.isolated ?? false);
     this.ownOutputDir = options.outputDir === undefined;
     this.outputDir = resolve(options.outputDir ?? join(tmpdir(), `pyro-mcp-output${process.getuid ? `-${process.getuid()}` : ''}`));
     // The working directory, unless it is / or the home directory (where MCP clients often start servers).
@@ -253,6 +281,7 @@ export class BrowserAgentSession {
     return {
       ...o.contextOptions,
       ...(o.viewport ? { viewport: o.viewport } : {}),
+      ...(o.deviceScaleFactor ? { deviceScaleFactor: o.deviceScaleFactor } : {}),
       ...(o.userAgent ? { userAgent: o.userAgent } : {}),
       ...(o.proxy ? { proxy: proxyOption(o.proxy) } : {}),
     };
@@ -311,7 +340,10 @@ export class BrowserAgentSession {
     if (this.entries.length) return this.entries[0];
     if (this.options.profile && !this.startedProfile) {
       this.startedProfile = true;
-      return (await this.profileEntry(this.options.profile)).entry;
+      const name = this.options.profile;
+      const loaded = await this.profileEntry(name);
+      if (loaded.session?.expired) this.note(expiredHint(name, `its session cookies expired ${when(loaded.session.expiresAt!)}`, this.loginCommand(name, loaded.login)));
+      return loaded.entry;
     }
     return this.newContext();
   }
@@ -397,20 +429,52 @@ export class BrowserAgentSession {
       .catch((e) => this.note(`Download of ${JSON.stringify(name)} failed: ${e instanceof Error ? e.message : e}`));
   }
 
-  /** A new context from stored identity `name`: its saved session and identity file. */
-  private async profileEntry(name: string): Promise<{ entry: ContextEntry; state?: SavedState; identity?: Identity; applied: string[] }> {
-    const { state, identity } = this.profiles.read(name);
+  /** A new context from stored identity `name`: its saved session, identity file and sign-in record. */
+  private async profileEntry(name: string): Promise<LoadedProfile> {
+    const { state, identity, login } = this.profiles.read(name);
     const options: BrowserContextOptions = { ...(identity ? identityOptions(identity) : {}), ...(state ? { storageState: state } : {}) };
     const entry = await this.newContext(options, name);
-    return { entry, state, identity, applied: identity ? identityKeys(identity) : [] };
+    entry.login = login;
+    return { entry, state, identity, login, session: state ? sessionStatus(state) : undefined, applied: identity ? identityKeys(identity) : [] };
   }
 
   /** A new context from stored identity `name`, with a tab, made current. */
-  async profileContext(name: string): Promise<{ entry: ContextEntry; tab: Tab; state?: SavedState; identity?: Identity; applied: string[] }> {
+  async profileContext(name: string): Promise<LoadedProfile & { tab: Tab }> {
     const loaded = await this.profileEntry(name);
     const tab = await this.newTab(loaded.entry);
     this.currentTab = tab;
     return { ...loaded, tab };
+  }
+
+  /** The command a person runs to sign `name` in again (`--url` from the last sign-in, `--profile-dir` unless the default). */
+  loginCommand(name: string, login?: LoginInfo): string {
+    const words = ['pyro', 'profile', 'login', name, '--url', login?.url ?? '<the app URL>'];
+    if (resolve(this.profiles.dir) !== resolve(DEFAULT_PROFILE_DIR)) words.push('--profile-dir', this.profiles.dir);
+    return words.map((w) => (w.startsWith('<') ? w : shellWord(w))).join(' ');
+  }
+
+  /**
+   * Sets `tab`'s viewport (CSS px) and, when given, its device scale factor
+   * (`Emulation.setDeviceMetricsOverride`, as Playwright sets a context's).
+   */
+  async resize(tab: Tab, size: { width: number; height: number }, deviceScaleFactor?: number): Promise<void> {
+    if (deviceScaleFactor !== undefined) {
+      const o = tab.entry.context._options;
+      const screen = o.screen ?? size;
+      const landscape = screen.width > screen.height;
+      await (await tab.cdp()).send('Emulation.setDeviceMetricsOverride', {
+        width: size.width,
+        height: size.height,
+        deviceScaleFactor,
+        mobile: !!o.isMobile,
+        screenWidth: screen.width,
+        screenHeight: screen.height,
+        screenOrientation: o.isMobile ? (landscape ? { angle: 90, type: 'landscapePrimary' } : { angle: 0, type: 'portraitPrimary' }) : { angle: 0, type: 'landscapePrimary' },
+      });
+      tab.deviceScaleFactor = deviceScaleFactor;
+    }
+    // The size again through the driver, which keeps the scale and tracks the viewport.
+    await tab.page.setViewportSize(size);
   }
 
   /**
@@ -477,6 +541,27 @@ export class BrowserAgentSession {
     this.closed = true;
   }
 }
+
+/** A stored identity loaded into a context of its own. */
+export type LoadedProfile = {
+  entry: ContextEntry;
+  state?: SavedState;
+  identity?: Identity;
+  /** Where the person signed in (`pyro profile login`), to check the session. */
+  login?: LoginInfo;
+  /** The saved session cookies' expiry. */
+  session?: SessionStatus;
+  /** Identity settings applied (names only). */
+  applied: string[];
+};
+
+/** What the agent is told when a stored identity's session is gone: a person signs in again, never the agent. */
+export function expiredHint(name: string, why: string, command: string): string {
+  return `The saved session of stored identity ${JSON.stringify(name)} has expired: ${why}. Do not sign in yourself (no sign-in forms, links or codes): ask the person to run \`${command}\` in a terminal and to tell you when it is done, then load the identity again (browser_profiles load).`;
+}
+
+/** A shell word: quoted when it holds anything but plain characters. */
+const shellWord = (w: string) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, `'\\''`)}'`);
 
 /** True when `path` is `dir` or below it. */
 function inside(path: string, dir: string): boolean {
