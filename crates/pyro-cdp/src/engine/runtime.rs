@@ -212,6 +212,19 @@ impl PendingReplies {
         self.prune();
     }
 
+    /// Answers every pending reply of a session with `error` (`Pyro.cancelRun`); how many.
+    pub(crate) fn fail_session(&self, session_id: &str, error: &CdpError) -> usize {
+        let mut failed = 0;
+        for reply in self.live() {
+            if reply.session_id == session_id {
+                reply.error(error);
+                failed += 1;
+            }
+        }
+        self.prune();
+        failed
+    }
+
     /// Fails every pending reply whose execution context was destroyed.
     pub(crate) fn fail_context(&self, context: ExecutionContextId) {
         for reply in self.live() {

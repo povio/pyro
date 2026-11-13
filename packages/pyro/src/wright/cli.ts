@@ -171,6 +171,7 @@ type Outcome = {
   duration: number;
   retries: number;
   errors?: { message: string; stack?: string }[];
+  attachments?: { name: string; path: string; contentType: string }[];
   skipReason?: string;
   parallel?: number;
   worker: number;
@@ -588,16 +589,22 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const showErrors = (errors: Outcome['errors']) => {
-    for (const e of errors ?? [{ message: '' }]) {
+    (errors ?? [{ message: '' }]).forEach((e, i) => {
       const text = e.stack && e.stack.includes(e.message) ? e.stack : `${e.message}\n${e.stack ?? ''}`;
-      console.log(text.split('\n').map((line) => `    ${line}`).join('\n'));
-    }
+      // A blank line between a test's errors (a timeout, then the call it waited on), as Playwright's.
+      console.log(`${i ? '\n' : ''}${text.split('\n').map((line) => `    ${line}`).join('\n')}`);
+    });
   };
   const failed = results.filter((r) => isFailure(r) && r.kind !== 'error');
   failed.forEach((r, i) => {
     const title = projectTitle(r);
     console.log(`\n  ${i + 1}) ${title} ${'─'.repeat(Math.max(0, 60 - title.length))}\n`);
     showErrors(r.errors);
+    // As Playwright's list reporter: the files the test attached (the `screenshot` option's).
+    (r.attachments ?? []).forEach((a, n) => {
+      const head = `attachment #${n + 1}: ${a.name} (${a.contentType})`;
+      console.log(`\n    ${head} ${'─'.repeat(Math.max(0, 76 - head.length))}\n    ${relative(process.cwd(), a.path)}\n    ${'─'.repeat(78)}`);
+    });
   });
   const errors = results.filter((r) => r.kind === 'error');
   for (const r of errors) {

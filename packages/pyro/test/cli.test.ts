@@ -2,11 +2,13 @@
 // project, each file with its project's `use`, parallel tests spread over worker
 // processes (own module state), skips reported as skips, the exit code. Then
 // Playwright's project dependencies, global setup's FullConfig, sharding,
-// hooks, worker fixtures and testInfo, each on its own config under cli-fixture/.
+// hooks, worker fixtures and testInfo, timeouts and the screenshot option,
+// each on its own config under cli-fixture/.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { decodePng } from '../src/wright/snapshot';
 
 const dir = join(import.meta.dir, 'cli-fixture');
 const cli = join(import.meta.dir, '../src/cli.ts');
@@ -217,5 +219,75 @@ describe('hooks, worker fixtures and testInfo', () => {
     expect(out).toContain('AFTEREACH fails as expected: failed, expected failed, 1 error(s), expect(received).toBe(expected)');
     expect(out).toContain('AFTEREACH passes: passed, expected passed, 0 error(s)');
     expect(out).toMatch(/✘ +\d+ status\.e2e\.ts › times out \(\d+ms\) \(timed out\)/);
+  }, 60_000);
+});
+
+describe('a timed-out test keeps its page; the screenshot option', () => {
+  const outs: string[] = [];
+  afterAll(() => {
+    for (const out of outs) rmSync(out, { recursive: true, force: true });
+  });
+  /** A run of the timeout fixture's `file` with screenshots as `shot`; its output directory's files, by test. */
+  const timeoutRun = async (file: string, shot?: string) => {
+    const out = mkdtempSync(join(tmpdir(), 'pyro-timeout-'));
+    outs.push(out);
+    const r = await runIn('timeout', { TIMEOUT_OUT: out, ...(shot ? { TIMEOUT_SHOT: shot } : {}) }, file);
+    const files = (test: string) => {
+      const dir = join(out, `${file}.e2e.ts-${test.replace(/[^\w.-]+/g, '-')}`);
+      return existsSync(dir) ? readdirSync(dir).sort() : [];
+    };
+    return { ...r, files, dir: (test: string) => join(out, `${file}.e2e.ts-${test.replace(/[^\w.-]+/g, '-')}`) };
+  };
+  /** Whether the PNG shows something other than a blank page (the heading's text). */
+  const inked = (path: string) => {
+    const image = decodePng(readFileSync(path));
+    if (!image) return false;
+    for (let i = 0; i < image.data.length; i += 4) if (image.data[i] < 100 && image.data[i + 3] > 0) return true;
+    return false;
+  };
+
+  test("afterEach screenshots and evaluates the timed-out test's page; the timeout names the click and what it waited for", async () => {
+    const r = await timeoutRun('page', 'only-on-failure');
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('AFTEREACH times out while a click waits: timedOut, heading Waiting, screenshot true, attached [screenshot:test-failed-1.png], errors 1');
+    expect(inked(join(r.dir('times out while a click waits'), 'after-each.png'))).toBe(true);
+    expect(r.out).toMatch(/✘ +\d+ page\.e2e\.ts › times out while a click waits \(\d+ms\) \(timed out\)/);
+    // Playwright's report: the timeout, then the action it cancelled with its call log.
+    expect(r.out).toContain(
+      [
+        '    Test timeout of 1000ms exceeded.',
+        '',
+        '    Error: locator.click: Test timeout of 1000ms exceeded.',
+        '    Call log:',
+        "      - waiting for getByRole('button', { name: 'Missing' })",
+        '      - {"name":"Missing","role":"button"} matched no element',
+      ].join('\n'),
+    );
+    // only-on-failure: a failed and a timed-out test get one, taken before afterEach; a passing one none.
+    expect(r.files('fails')).toEqual(['after-each.png', 'test-failed-1.png']);
+    expect(r.files('times out while a click waits')).toEqual(['after-each.png', 'test-failed-1.png']);
+    expect(r.files('passes')).toEqual(['after-each.png']);
+    expect(r.out).toContain('AFTEREACH passes: passed, heading Passing, screenshot true, attached [], errors 0');
+    expect(r.out).toMatch(/attachment #1: screenshot \(image\/png\) ─+\n +\S*page\.e2e\.ts-times-out-while-a-click-waits\/test-failed-1\.png/);
+    expect(inked(join(r.dir('times out while a click waits'), 'test-failed-1.png'))).toBe(true);
+  }, 60_000);
+
+  test("'on' attaches a screenshot of every test", async () => {
+    const r = await timeoutRun('page', 'on');
+    expect(r.files('passes')).toEqual(['after-each.png', 'test-finished-1.png']);
+    expect(r.files('fails')).toEqual(['after-each.png', 'test-failed-1.png']);
+    expect(r.files('times out while a click waits')).toEqual(['after-each.png', 'test-failed-1.png']);
+    expect(r.out).toContain('AFTEREACH passes: passed, heading Passing, screenshot true, attached [screenshot:test-finished-1.png], errors 0');
+    expect(r.code).toBe(1);
+  }, 60_000);
+
+  test('a browser that cannot take the cancel: the page is closed instead and the run still ends', async () => {
+    const started = Date.now();
+    const r = await timeoutRun('stuck');
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/✘ +\d+ stuck\.e2e\.ts › times out on a stuck browser \(\d+ms\) \(timed out\)/);
+    expect(r.out).toContain('AFTEREACH times out on a stuck browser: timedOut, page closed true, screenshot: Page.captureScreenshot: Target page, context or browser has been closed (at once)');
+    expect(r.out).toContain('Test timeout of 1000ms exceeded.');
+    expect(Date.now() - started).toBeLessThan(30_000);
   }, 60_000);
 });

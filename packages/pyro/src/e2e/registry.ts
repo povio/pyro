@@ -72,8 +72,8 @@ export type TestRun = {
   start: number;
   ms: number;
   defers: Fn[];
-  /** Pages the test opened through the run's browser, closed when it ends. */
-  pages: Set<{ close(): void }>;
+  /** Pages the test opened through the run's browser, closed when it ends (`send`: a CDP command on the page). */
+  pages: Set<{ close(): void; send?(method: string): Promise<unknown> }>;
 };
 
 /** What runs now: a test (with its scope) or a scope's own hooks. */

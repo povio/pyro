@@ -71,6 +71,7 @@ use crate::target::{ContextKey, Host, PageCommand, PageKey, Sink};
 use crate::ws::OutFrame;
 
 pub use dialog::{DialogPump, PumpStep};
+pub(crate) use driver::RunningCommand;
 
 /// The longest jump virtual time makes at once. A run waiting on a page whose
 /// next timer is further off sleeps as usual (or times out).
@@ -436,6 +437,8 @@ pub struct EngineHost {
     pub(crate) popups: Vec<PopupRecord>,
     /// `Pyro.act` / `Pyro.expect` commands waiting for their page to change.
     waiters: driver::Waiters,
+    /// The command running now, for `Pyro.cancelRun` while its script runs.
+    running: Rc<driver::RunningCommand>,
     /// Emulation.setVirtualTimePolicy (none until a page sets one).
     virtual_time: Option<virtual_time::VirtualTime>,
     virtual_ticks_base: f64,
@@ -660,6 +663,7 @@ impl EngineHost {
             prebooted: Vec::new(),
             popups: Vec::new(),
             waiters: driver::Waiters::default(),
+            running: Rc::default(),
             virtual_time: None,
             virtual_ticks_base: 0.0,
             coverage: coverage::Coverage::default(),
@@ -668,6 +672,12 @@ impl EngineHost {
 
     pub fn thread_mut(&mut self) -> &mut BrowserThread {
         &mut self.thread
+    }
+
+    /// The command running now, for the connection's watchdog check
+    /// (`Pyro.cancelRun` while a script runs, conn.rs `check_during_script`).
+    pub(crate) fn running_command(&self) -> Rc<RunningCommand> {
+        self.running.clone()
     }
 
     /// Runs engine tasks and timers until `wake()` is true or engine
@@ -1595,6 +1605,9 @@ impl Host for EngineHost {
     }
 
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, _out: &mut dyn Sink) {
+        // A `Pyro.cancelRun` for this session stops a script it runs (or
+        // the microtasks after it) that does not return.
+        let _running = self.running.enter(cmd.session_id, cmd.command.id);
         let result = self.page_command_result(&cmd);
         // Synchronous inspector JS runs outside loop tasks. Release command
         // borrows before starting DOM resources and dispatching native events.

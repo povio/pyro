@@ -250,6 +250,18 @@ reply's `requests` stay the starting page's. A popup paused by
 `Target.setAutoAttach {waitForDebuggerOnStart: true}` navigates only after
 the client's `Runtime.runIfWaitingForDebugger`.
 
+`Pyro.cancelRun` on a page session cancels what the session still waits on:
+its runs (`Pyro.run`, `Pyro.act`, `Pyro.expect`, `Pyro.idle`) and
+`awaitPromise` evaluations each reply at once with an error that says it was
+cancelled, at which step and what the step was still waiting for, as a
+timeout would (`step 0 (Click {...}): cancelled: Click {...}: {...} matched
+no element`), and the page stays as it is. A run's script that does not
+return (`while (true) {}` in an `eval` step or an action's event handler) is
+stopped first, at the engine watchdog's next poll, and the page stays usable.
+The reply is `{"cancelled": n}`, 0 when nothing was in flight. `pyro run`
+sends it when a test times out, so that the test's after hooks find its page
+as it was at the timeout.
+
 ## License
 
 AGPL-3.0-only. This is a derivative of Lightpanda; see [NOTICE](NOTICE).

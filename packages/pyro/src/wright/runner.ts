@@ -15,12 +15,13 @@
 import { appendFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { Pyro } from '../index.js';
-import { Browser, chromium, setTestDefaults, type BootSpec } from './browser.js';
+import { beforeContextClose, Browser, chromium, openContexts, setTestDefaults, type BootSpec } from './browser.js';
 import { als, currentTest, SkipError, TestInfo } from './context.js';
 import { devices, globalSetup, loadConfig, projectFor, runFiles, runPlan, startWebServers, stopWebServers, stopWithThisProcess, type FilePlan, type Loaded, type ResolvedProject } from './config.js';
 import { expect, ready, setExpectDefaults } from './expect.js';
-import { TimeoutError } from './page.js';
+import { cancelCalls, setCallOwner, TimeoutError, type Page } from './page.js';
 import { APIRequestContext, request } from './request.js';
+import { ScreenshotRecorder, type ScreenshotOption } from './screenshot-recorder.js';
 import type { PlaywrightTestArgs, PlaywrightTestOptions, PlaywrightWorkerArgs, PlaywrightWorkerOptions, TestDetails, TestType, WorkerInfo } from './types.js';
 
 /** The implementation's view of `test` (the public one is `TestType`). */
@@ -90,6 +91,8 @@ type Outcome = {
   duration: number;
   retries: number;
   errors?: { message: string; stack?: string }[];
+  /** Files attached to the test's last attempt (`testInfo.attachments` with a path: screenshots). */
+  attachments?: { name: string; path: string; contentType: string }[];
   skipReason?: string;
   /** `--list`: the test's index among its file's parallel tests (the others run as one group). */
   parallel?: number;
@@ -189,7 +192,7 @@ const workerInfo = (info: TestInfo): WorkerInfo => ({ workerIndex: WORKER_ID, pa
 
 class Run {
   private values = new Map<string, Promise<unknown>>();
-  private teardowns: (() => Promise<void>)[] = [];
+  private teardowns: { name: string; fn: () => Promise<void> }[] = [];
   constructor(
     private defs: Defs,
     private use: Record<string, unknown>,
@@ -214,7 +217,7 @@ class Run {
     if (def.scope === 'worker') return this.worker(name, def, l);
     const key = `${name}@${l}`;
     let v = this.values.get(key);
-    if (!v) this.values.set(key, (v = this.setUp(name, def, l, (t) => this.teardowns.push(t))));
+    if (!v) this.values.set(key, (v = this.setUp(name, def, l, (fn) => this.teardowns.push({ name, fn }))));
     return v;
   }
 
@@ -279,11 +282,12 @@ class Run {
     return fn(args, this.info);
   }
 
-  async teardown(): Promise<void> {
+  /** The test fixtures' teardowns, last set up first, each through `run` (a time limit); the first error is thrown. */
+  async teardown(run: (name: string, fn: () => Promise<void>) => Promise<void> = (_, fn) => fn()): Promise<void> {
     const errors: unknown[] = [];
     for (const t of this.teardowns.splice(0).reverse()) {
       try {
-        await t();
+        await run(t.name, t.fn);
       } catch (e) {
         errors.push(e);
       }
@@ -538,29 +542,111 @@ type Entry = { title: string; fn: Function; scope: Scope; defs: Defs; details?: 
 const timeouts = new WeakSet<object>();
 const isTimeout = (e: unknown) => typeof e === 'object' && e !== null && timeouts.has(e);
 
-async function withTimeout<T>(info: TestInfo, run: () => Promise<T>, onTimeout: () => void): Promise<T> {
+/**
+ * Runs `run` within the test's (or hook's) timeout. When it runs out, the
+ * test is timed out at once (hooks and fixture teardown see the status),
+ * `onTimeout` gets the error's message, and the rejection comes once it is
+ * done. What `run` does after that is no longer the result: its errors go to
+ * `late` (the call it waited on, cancelled).
+ */
+async function withTimeout<T>(info: TestInfo, run: () => Promise<T>, onTimeout: (message: string) => unknown, late?: (e: unknown) => void): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let fired = false;
   let fail!: (e: Error) => void;
   const timedOut = new Promise<never>((_, reject) => (fail = reject));
   const arm = (ms: number) => {
     if (timer) clearTimeout(timer);
-    if (ms > 0) {
+    // Once timed out, a `setTimeout()` from what is left running changes nothing.
+    if (ms > 0 && !fired) {
       timer = setTimeout(() => {
-        const e = new TimeoutError(info._hook ? `"${info._hook}" hook timeout of ${ms}ms exceeded.` : `Test timeout of ${ms}ms exceeded.`);
+        fired = true;
+        const message = info._hook ? `"${info._hook}" hook timeout of ${ms}ms exceeded.` : `Test timeout of ${ms}ms exceeded.`;
+        const e = new TimeoutError(message);
+        // As Playwright prints it: the message, no stack of the runner's timer.
+        e.stack = message;
         timeouts.add(e);
-        // Fixture teardown (started at once, to unblock the test) sees the status.
         info._failWithError(e, true);
-        onTimeout();
-        fail(e);
+        void Promise.resolve()
+          .then(() => onTimeout(message))
+          .catch(() => {})
+          .then(() => fail(e));
       }, Math.max(0, ms - info.elapsed));
     }
   };
   info._onTimeout = arm;
   arm(info.timeout);
+  const never = new Promise<never>(() => {});
+  const guarded = run().then(
+    (value) => (fired ? never : value),
+    (e) => {
+      if (!fired) throw e;
+      late?.(e);
+      return never;
+    },
+  );
   try {
-    return await Promise.race([run(), timedOut]);
+    return await Promise.race([guarded, timedOut]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (info._onTimeout === arm) info._onTimeout = undefined;
+  }
+}
+
+/** How long a timed-out test's in-flight calls get to answer `Pyro.cancelRun` before its pages close instead. */
+const CANCEL_WAIT = 2_000;
+
+/** Tests running now (several with `PYRO_CONCURRENT=1`): a context one of them made is not another's. */
+const runningTests = new Set<TestInfo>();
+// Commands belong to the test whose code sends them (its async context): a timeout cancels that test's.
+setCallOwner(() => currentTest());
+
+/** The open pages of `info`'s test: of its contexts, and of those no other running test made (beforeAll's, a worker fixture's). */
+const pagesOf = (info: TestInfo): Page[] =>
+  openContexts()
+    .filter((c) => c._owner === info || !runningTests.has(c._owner as TestInfo))
+    .flatMap((c) => c.pages())
+    .filter((p) => !p.isClosed());
+
+/**
+ * A test timed out: its pages stay open for its after hooks, as in
+ * Playwright. The calls its test function still waits on are cancelled
+ * (`Pyro.cancelRun`) and fail with the timeout and their call logs. When the
+ * browser does not answer that within `CANCEL_WAIT` (a page script that never
+ * returns, a pyro without the command), its fixtures are torn down at once
+ * instead, closing its pages, so that a stuck browser cannot hold the run.
+ */
+async function cancelOrClose(info: TestInfo, run: Run, message: string): Promise<void> {
+  if (await cancelCalls(info, message, CANCEL_WAIT)) return;
+  // Closed before the after hooks start, so that they fail at once instead of waiting on the browser.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const closed = Promise.all(pagesOf(info).map((p) => p.close().catch(() => {})));
+  await Promise.race([closed, new Promise((r) => (timer = setTimeout(r, 1_000)))]).finally(() => clearTimeout(timer));
+  void run.teardown().catch(() => {});
+}
+
+/** The time a test's after hooks share (Playwright's after-hooks slot); 0: no limit. */
+type Slot = { timeout: number; elapsed: number };
+const exhausted = (slot: Slot) => slot.timeout > 0 && slot.elapsed >= slot.timeout - 1;
+
+/** Runs `fn` in what is left of `slot`; past it, rejects with a timeout error worded by `message` (`fn` is left running). */
+async function inSlot<T>(slot: Slot, message: () => string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (!slot.timeout) return await fn();
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const text = message();
+        const e = new TimeoutError(text);
+        e.stack = text;
+        timeouts.add(e);
+        reject(e);
+      }, Math.max(0, slot.timeout - slot.elapsed));
+    });
+    return await Promise.race([fn(), timedOut]);
+  } finally {
+    clearTimeout(timer);
+    slot.elapsed += Date.now() - start;
   }
 }
 
@@ -680,10 +766,16 @@ async function closeScope(s: Scope): Promise<unknown[]> {
   return errors;
 }
 
-/** Runs one attempt: fixtures, modifiers, beforeEach, the body; then afterEach and fixture teardown, which see the test's status. */
+/**
+ * Runs one attempt: fixtures, modifiers, beforeEach, the body; then, as in
+ * Playwright, the `screenshot` option's captures, the afterEach hooks and
+ * fixture teardown, which see the test's status and share a time slot of
+ * their own. A timed-out test's pages are still open then (`cancelOrClose`).
+ */
 async function runOnce(entry: Entry, info: TestInfo): Promise<void> {
   const run = new Run(entry.defs, useOf(entry.scope), info);
   const scopes = chain(entry.scope);
+  const project = projectOf(entry.scope.file);
   let failure: unknown;
   const fail = (e: unknown) => {
     failure ??= e;
@@ -691,31 +783,58 @@ async function runOnce(entry: Entry, info: TestInfo): Promise<void> {
       if (info.status === 'passed') info.status = 'skipped';
     } else info._failWithError(asError(e), isTimeout(e));
   };
+  const option = await Promise.resolve()
+    .then(() => run.get('screenshot'))
+    .catch(() => 'off');
+  const shots = new ScreenshotRecorder(info, option as ScreenshotOption);
+  // Errors of the test function after its timeout (the call it waited on, cancelled): reported after the hooks, as in Playwright.
+  const late: unknown[] = [];
+  runningTests.add(info);
+  const unhook = beforeContextClose((c) => (c._owner === info || !runningTests.has(c._owner as TestInfo) ? shots.closing(c) : Promise.resolve()));
   try {
-    await withTimeout(info, async () => {
-      await run.autos();
-      await conditions(entry, run, info);
-      for (const s of scopes) for (const h of s.hooks) if (h.kind === 'beforeEach') await run.call(h.fn);
-      await run.call(entry.fn);
-    }, () => void run.teardown().catch(() => {}));
-  } catch (e) {
-    fail(e);
-  }
-  info.duration = info.elapsed;
-  for (const s of [...scopes].reverse()) {
-    for (const h of s.hooks) {
-      if (h.kind !== 'afterEach') continue;
-      try {
-        await run.call(h.fn);
-      } catch (e) {
-        fail(e);
+    try {
+      await withTimeout(info, async () => {
+        await run.autos();
+        await conditions(entry, run, info);
+        for (const s of scopes) for (const h of s.hooks) if (h.kind === 'beforeEach') await run.call(h.fn);
+        await run.call(entry.fn);
+      }, (message) => cancelOrClose(info, run, message), (e) => late.push(e));
+    } catch (e) {
+      fail(e);
+    }
+    info.duration = info.elapsed;
+    // The larger of the project's and the test's timeout; none when either is 0.
+    const slot: Slot = { timeout: project.timeout && info.timeout ? Math.max(project.timeout, info.timeout) : 0, elapsed: 0 };
+    try {
+      await inSlot(slot, () => `Test timeout of ${slot.timeout}ms exceeded.`, () => shots.finish(pagesOf(info)));
+    } catch (e) {
+      fail(e);
+    }
+    for (const s of [...scopes].reverse()) {
+      for (const h of s.hooks) {
+        if (h.kind !== 'afterEach' || exhausted(slot)) continue;
+        try {
+          await inSlot(slot, () => `Test timeout of ${slot.timeout}ms exceeded while running "afterEach" hook.`, () => run.call(h.fn));
+        } catch (e) {
+          fail(e);
+        }
       }
     }
-  }
-  try {
-    await run.teardown();
-  } catch (e) {
-    fail(e);
+    // Hooks that used up the slot leave the teardown a slot of the project's timeout (Playwright's worker cleanup).
+    const cleanup: Slot = { timeout: project.timeout, elapsed: 0 };
+    try {
+      await run.teardown((name, fn) => {
+        const s = exhausted(slot) ? cleanup : slot;
+        return inSlot(s, () => `Tearing down "${name}" exceeded the test timeout of ${s.timeout}ms.`, fn);
+      });
+    } catch (e) {
+      fail(e);
+    }
+    shots.persist();
+    for (const e of late) if (!(e instanceof SkipError)) info._failWithError(asError(e));
+  } finally {
+    unhook();
+    runningTests.delete(info);
   }
   if (failure === undefined && info._softErrors.length) {
     const [first, ...rest] = info._softErrors;
@@ -727,7 +846,12 @@ async function runOnce(entry: Entry, info: TestInfo): Promise<void> {
 const titlePathOf = (s: Scope, title: string) => [relative(process.cwd(), s.file), ...chain(s).map((c) => c.title).filter(Boolean), title];
 
 /** A test's result before it is recorded; `thrown` is what plain `bun test` reports. */
-type Result = { status: Outcome['status']; retries: number; errors: unknown[]; thrown?: unknown; flaky?: boolean; expectedFailure?: boolean; didNotRun?: boolean; skipReason?: string };
+type Result = { status: Outcome['status']; retries: number; errors: unknown[]; thrown?: unknown; flaky?: boolean; expectedFailure?: boolean; didNotRun?: boolean; skipReason?: string; attachments?: Outcome['attachments'] };
+/** The attachments of `info` that are files, for the report. */
+const fileAttachments = (info: TestInfo): Outcome['attachments'] => {
+  const files = info.attachments.flatMap((a) => (a.path ? [{ name: a.name, path: a.path, contentType: a.contentType }] : []));
+  return files.length ? files : undefined;
+};
 const RETRY = Symbol('retry');
 
 async function attempts(entry: Entry, project: ResolvedProject, scopes: Scope[], titlePath: string[]): Promise<Result> {
@@ -784,14 +908,14 @@ async function attempts(entry: Entry, project: ResolvedProject, scopes: Scope[],
         continue;
       }
       failSerial();
-      return { status: info.status === 'timedOut' ? 'timedOut' : 'failed', retries: attempt, errors: info.errors.length ? info.errors : [e], thrown: e instanceof SkipError ? info.errors[0] : e };
+      return { status: info.status === 'timedOut' ? 'timedOut' : 'failed', retries: attempt, errors: info.errors.length ? info.errors : [e], thrown: e instanceof SkipError ? info.errors[0] : e, attachments: fileAttachments(info) };
     }
     if (info.expectedStatus === 'failed') {
       const e = new Error('Expected to fail, but passed.');
       failSerial();
-      return { status: 'failed', retries: attempt, errors: [e], thrown: e };
+      return { status: 'failed', retries: attempt, errors: [e], thrown: e, attachments: fileAttachments(info) };
     }
-    return { status: 'passed', flaky: attempt > 0, retries: attempt, errors: [] };
+    return { status: 'passed', flaky: attempt > 0, retries: attempt, errors: [], attachments: fileAttachments(info) };
   }
 }
 
@@ -808,10 +932,10 @@ async function runTest(entry: Entry): Promise<void> {
     const errors = await closeScope(s);
     if (!errors.length) continue;
     const failing = r.status === 'failed' || r.status === 'timedOut';
-    r = { status: r.status === 'timedOut' ? 'timedOut' : 'failed', retries: r.retries, errors: [...(failing ? r.errors : []), ...errors], thrown: failing ? r.thrown : errors[0] };
+    r = { status: r.status === 'timedOut' ? 'timedOut' : 'failed', retries: r.retries, errors: [...(failing ? r.errors : []), ...errors], thrown: failing ? r.thrown : errors[0], attachments: r.attachments };
   }
-  const { status, retries, flaky, expectedFailure, didNotRun, skipReason } = r;
-  record({ file: entry.scope.file, project: project.index, titlePath, status, flaky, expectedFailure, didNotRun, skipReason, duration: Date.now() - started, retries, errors: r.errors.length ? r.errors.map(serialize) : undefined });
+  const { status, retries, flaky, expectedFailure, didNotRun, skipReason, attachments } = r;
+  record({ file: entry.scope.file, project: project.index, titlePath, status, flaky, expectedFailure, didNotRun, skipReason, duration: Date.now() - started, retries, errors: r.errors.length ? r.errors.map(serialize) : undefined, attachments });
   if (status === 'skipped' && !process.env.PYRO_RESULTS) console.log(`  ↳ ${didNotRun ? 'did not run' : 'skipped'}: ${entry.title}${skipReason ? ` (${skipReason})` : ''}`);
   if (status === 'failed' || status === 'timedOut') throw r.thrown ?? r.errors[0];
 }
