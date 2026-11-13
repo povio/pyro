@@ -156,7 +156,7 @@ index 0000000..0930692
 +    }
 +}
 diff --git a/src/builder.rs b/src/builder.rs
-index 4d5dcf2..4b63e36 100644
+index 4d5dcf2..2ab0df9 100644
 --- a/src/builder.rs
 +++ b/src/builder.rs
 @@ -35,6 +35,11 @@ impl BuilderOptions<'_> {
@@ -171,7 +171,72 @@ index 4d5dcf2..4b63e36 100644
  }
  
  /// Builder for constructing a text layout with ranged attributes.
-@@ -334,6 +339,25 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -284,10 +289,21 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+         self.lcx.tree_style_builder.has_pending_whitespace()
+     }
+ 
++    /// pyro: the scale the tree is built at (layout units per CSS pixel).
++    pub fn scale(&self) -> f32 {
++        self.options.scale
++    }
++
+     pub fn push_inline_box(&mut self, mut inline_box: InlineBox) {
+-        if inline_box.kind == InlineBoxKind::InFlow {
+-            self.lcx.tree_style_builder.flush_pending_whitespace();
+-            self.lcx.tree_style_builder.set_last_item_is_inline_box();
++        let kind = inline_box.kind;
++        match kind {
++            InlineBoxKind::InFlow => {
++                self.lcx.tree_style_builder.flush_pending_whitespace();
++                self.lcx.tree_style_builder.set_last_item_is_inline_box();
++            }
++            // pyro: white space before a span's start edge is outside the span.
++            InlineBoxKind::SpanStart => self.lcx.tree_style_builder.begin_span_start_edge(),
++            _ => {}
+         }
+ 
+         // TODO: arrange type better here to factor out the index
+@@ -298,6 +314,24 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+             parent_style_index,
+             baseline_offset: 0.,
+         });
++        if kind == InlineBoxKind::SpanEnd {
++            // pyro: white space pending before a span's end edge is inside the span.
++            let box_index = self.lcx.inline_boxes.len() - 1;
++            self.lcx.tree_style_builder.pushed_span_end_edge(box_index);
++        }
++    }
++
++    /// pyro: finishes the tree's text and styles, and puts the span end edges that white space
++    /// was kept before behind that white space.
++    fn finish_tree(&mut self) -> String {
++        let text = self
++            .lcx
++            .tree_style_builder
++            .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
++        for (box_index, index) in self.lcx.tree_style_builder.take_edge_moves() {
++            self.lcx.inline_boxes[box_index].inline_box.index = index;
++        }
++        text
+     }
+ 
+     /// Sets the paragraph's base direction.
+@@ -315,12 +349,9 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+     }
+ 
+     #[inline]
+-    pub fn build_into(self, layout: &mut Layout<B>) -> String {
++    pub fn build_into(mut self, layout: &mut Layout<B>) -> String {
+         // Apply TreeStyleBuilder styles to LayoutContext.
+-        let text = self
+-            .lcx
+-            .tree_style_builder
+-            .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
++        let text = self.finish_tree();
+ 
+         // Call generic layout builder method
+         build_into_layout(layout, &text, self.lcx, self.fcx, self.options);
+@@ -334,6 +365,22 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
          let text = self.build_into(&mut layout);
          (layout, text)
      }
@@ -180,11 +245,8 @@ index 4d5dcf2..4b63e36 100644
 +    /// break that the same break of the new content would produce again: those over the
 +    /// beginning the old and new content share (see [`crate::layout::resume`]).
 +    /// [`BreakLines::resume`](crate::layout::BreakLines::resume) continues breaking after them.
-+    pub fn build_into_keeping_lines(self, layout: &mut Layout<B>) -> String {
-+        let text = self
-+            .lcx
-+            .tree_style_builder
-+            .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
++    pub fn build_into_keeping_lines(mut self, layout: &mut Layout<B>) -> String {
++        let text = self.finish_tree();
 +
 +        // Build into the scratch's buffers, keeping the old data to compare with.
 +        core::mem::swap(&mut layout.data, &mut self.lcx.previous_layout);
@@ -197,7 +259,7 @@ index 4d5dcf2..4b63e36 100644
  }
  
  fn build_into_layout<B: Brush>(
-@@ -355,6 +379,35 @@ fn build_into_layout<B: Brush>(
+@@ -355,6 +402,35 @@ fn build_into_layout<B: Brush>(
          "at least one style run is required"
      );
  
@@ -233,7 +295,7 @@ index 4d5dcf2..4b63e36 100644
      crate::analysis::analyze_text(
          lcx,
          text,
-@@ -406,6 +459,7 @@ fn build_into_layout<B: Brush>(
+@@ -406,6 +482,7 @@ fn build_into_layout<B: Brush>(
              text,
              layout,
              &lcx.analysis_data_sources,
@@ -241,7 +303,7 @@ index 4d5dcf2..4b63e36 100644
          );
      }
  
-@@ -415,13 +469,18 @@ fn build_into_layout<B: Brush>(
+@@ -415,13 +492,18 @@ fn build_into_layout<B: Brush>(
          fcx,
          &lcx.style_table,
          &layout.data.shaped_text,
@@ -262,7 +324,7 @@ index 4d5dcf2..4b63e36 100644
  
  fn resolve_range(range: impl RangeBounds<usize>, len: usize) -> Range<usize> {
 diff --git a/src/context.rs b/src/context.rs
-index 9aa2c89..bc1f9d8 100644
+index 9aa2c89..3b4bcf3 100644
 --- a/src/context.rs
 +++ b/src/context.rs
 @@ -7,6 +7,7 @@ use core::ops::Range;
@@ -359,8 +421,41 @@ index 9aa2c89..bc1f9d8 100644
              lcx: self,
              fcx,
          }
+diff --git a/src/inline_box.rs b/src/inline_box.rs
+index fdb826c..d1c1e3c 100644
+--- a/src/inline_box.rs
++++ b/src/inline_box.rs
+@@ -59,4 +59,28 @@ pub enum InlineBoxKind {
+     ///
+     /// They can be used to implement advanced layout modes such as CSS's `float`
+     CustomOutOfFlow,
++    /// pyro: the start edge of a span box (a CSS inline box that is not atomic): the margin,
++    /// border and padding of its inline-start side, as the box's `width`. It takes that space in
++    /// the line and adds nothing to the line's height. It is no content of its own: it stays on
++    /// the line of the content after it (a wrap opportunity before that content is one before the
++    /// edge), and white space collapses through it. Pushed inside the span (after its style).
++    SpanStart,
++    /// pyro: the end edge of a span box, as [`Self::SpanStart`] for the inline-end side. It
++    /// stays on the line of the content before it. Pushed inside the span (before its style is
++    /// popped).
++    SpanEnd,
++}
++
++impl InlineBoxKind {
++    /// pyro: whether this is the start or end edge of a span box ([`Self::SpanStart`],
++    /// [`Self::SpanEnd`]) rather than a box.
++    pub fn is_span_edge(self) -> bool {
++        matches!(self, Self::SpanStart | Self::SpanEnd)
++    }
++
++    /// pyro: whether a box of this kind takes its width in the line: an in-flow box or a span
++    /// edge.
++    pub(crate) fn takes_inline_space(self) -> bool {
++        matches!(self, Self::InFlow | Self::SpanStart | Self::SpanEnd)
++    }
+ }
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..2535f24 100644
+index e6ab383..6037095 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -449,11 +544,145 @@ index e6ab383..2535f24 100644
                  )
              } else {
                  None
+@@ -429,6 +445,36 @@ struct ContentWidthsMeasurer {
+     /// Indents for lines following a soft/hard wrap.
+     soft_indent: f32,
+     hard_indent: f32,
++
++    /// pyro: the last item measured is a span's start edge ([`InlineBoxKind::SpanStart`]): the
++    /// soft wrap opportunity before the content that follows was taken before the edge.
++    after_span_start: bool,
++}
++
++/// pyro: whether a line may wrap before the content that `items` starts with: text with a soft
++/// wrap opportunity before its first cluster, or an in-flow box. Span start edges and out-of-flow
++/// boxes before that content are passed over.
++fn wraps_before<B: Brush>(layout_data: &LayoutData<B>, items: &[LayoutItem]) -> bool {
++    for item in items {
++        match item.kind {
++            LayoutItemKind::TextRun => {
++                return layout_data
++                    .shaped_text
++                    .run_slice(item.index as u32)
++                    .shaped_clusters()
++                    .first()
++                    .is_some_and(|cluster| cluster.is_soft_wrap_opportunity_before());
++            }
++            LayoutItemKind::InlineBox => {
++                match layout_data.inline_boxes[item.index].inline_box.kind {
++                    InlineBoxKind::InFlow => return true,
++                    InlineBoxKind::SpanEnd => return false,
++                    _ => {}
++                }
++            }
++        }
++    }
++    false
+ }
+ 
+ impl ContentWidthsMeasurer {
+@@ -446,6 +492,7 @@ impl ContentWidthsMeasurer {
+             soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
+             hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
+             line_has_content: false,
++            after_span_start: false,
+         }
+     }
+ 
+@@ -522,6 +569,27 @@ impl ContentWidthsMeasurer {
+                 }
+                 LayoutItemKind::InlineBox => {
+                     let inline_box = &layout_data.inline_boxes[item.index].inline_box;
++                    // pyro: a span's edge takes its width; white space before it does not hang.
++                    // The edges take wrap opportunities as the line breaker does.
++                    if inline_box.kind.is_span_edge() {
++                        if inline_box.kind == InlineBoxKind::SpanStart {
++                            if !self.after_span_start
++                                && self.text_wrap_mode == TextWrapMode::Wrap
++                                && wraps_before(layout_data, items.as_slice())
++                                && self.line_has_content
++                                && self.running_min_width >= 0.0
++                            {
++                                self.soft_break(true);
++                                self.line_has_content = false;
++                            }
++                            self.after_span_start = true;
++                        } else {
++                            self.after_span_start = false;
++                        }
++                        self.running_hanging_whitespace = 0.0;
++                        self.running_min_width += inline_box.width;
++                        self.running_max_width += inline_box.width;
++                    }
+                     if inline_box.kind == InlineBoxKind::InFlow {
+                         let next = items.as_slice().iter().find(|next| {
+                             next.kind == LayoutItemKind::TextRun
+@@ -596,7 +664,11 @@ impl ContentWidthsMeasurer {
+                 skip_atom = false;
+                 let prev_text_wrap_mode = self.text_wrap_mode;
+                 self.text_wrap_mode = style.text_wrap_mode;
++                // pyro: the opportunity before text after a span's start edge was taken before
++                // the edge.
++                let after_span_start = core::mem::take(&mut self.after_span_start);
+                 if prev_text_wrap_mode == TextWrapMode::Wrap
++                    && !after_span_start
+                     && (cluster.is_soft_wrap_opportunity_before()
+                         || style.overflow_wrap == OverflowWrap::Anywhere)
+                 {
+@@ -663,7 +735,9 @@ impl ContentWidthsMeasurer {
+     fn measure_inline_box(&mut self, inline_box: &InlineBox, followed_by_inline_content: bool) {
+         // Inline boxes have soft wrap opportunities on both sides.
+         let wraps = self.text_wrap_mode == TextWrapMode::Wrap;
+-        if wraps {
++        // pyro: the one before a box after a span's start edge was taken before the edge.
++        let after_span_start = core::mem::take(&mut self.after_span_start);
++        if wraps && !after_span_start {
+             self.soft_break(self.line_has_content);
+         }
+         // Inline boxes don't hang.
+diff --git a/src/layout/layout.rs b/src/layout/layout.rs
+index 4b0cf9a..c61eeea 100644
+--- a/src/layout/layout.rs
++++ b/src/layout/layout.rs
+@@ -66,6 +66,15 @@ impl<B: Brush> Layout<B> {
+         &self.data.styles
+     }
+ 
++    /// pyro: the index in [`Self::styles`] of the style of the span enclosing the span of style
++    /// `style_index`. The root style (index 0) is its own parent.
++    pub fn style_parent(&self, style_index: u16) -> u16 {
++        self.data
++            .styles
++            .get(usize::from(style_index))
++            .map_or(0, |style| style.parent)
++    }
++
+     /// The inherent metrics of the root span (in CSS terms, that is the metrics of the
+     /// [root inline box](https://www.w3.org/TR/css-inline-3/#root-inline-box)).
+     ///
 diff --git a/src/layout/line.rs b/src/layout/line.rs
-index 1569071..c3b1e35 100644
+index 1569071..753c0e5 100644
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
-@@ -213,6 +213,12 @@ pub struct LineMetrics {
+@@ -82,6 +82,17 @@ impl<'a, B: Brush> Line<'a, B> {
+         }
+     }
+ 
++    /// pyro: the content area of the span box that style `style_index` generates on this line:
++    /// the block-axis coordinates of its top and bottom, the ascent and descent of the style's
++    /// first available font around the span's baseline (rounded as the layout rounds them).
++    pub fn span_content_area(&self, style_index: u16) -> (f32, f32) {
++        let baseline = self.style_baseline(style_index);
++        match self.layout.data.style_metrics.get(usize::from(style_index)) {
++            Some(metrics) => (baseline - metrics.ascent, baseline + metrics.descent),
++            None => (baseline, baseline),
++        }
++    }
++
+     /// Block-axis coordinate of the top edge of the layout's inline box `index`.
+     pub(crate) fn inline_box_top(&self, index: usize) -> f32 {
+         let layout_box = &self.layout.data.inline_boxes[index];
+@@ -213,6 +224,12 @@ pub struct LineMetrics {
      /// For horizontal text, this is the bottom of the line box.
      pub block_max_coord: f32,
  
@@ -466,7 +695,16 @@ index 1569071..c3b1e35 100644
      /// The minimum block-axis coordinate of the line's content.
      ///
      /// This covers, roughly, the line's glyphs and inline boxes. This does not take into account
-@@ -299,6 +305,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -277,6 +294,8 @@ pub struct PositionedInlineBox {
+     pub baseline: Option<f32>,
+     pub id: u64,
+     pub kind: InlineBoxKind,
++    /// pyro: the index in [`Layout::styles`] of the style of the span the box is in.
++    pub style_index: u16,
+ }
+ 
+ /// Sequence of fully positioned glyphs with the same style.
+@@ -299,6 +318,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          &self.run
      }
  
@@ -495,8 +733,41 @@ index 1569071..c3b1e35 100644
      /// Returns the associated style.
      ///
      /// See also [`Self::style_index`].
+@@ -436,20 +477,29 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+                     let box_index = self.line.layout.data.line_items
+                         [self.line.data.item_range.start + self.item_index]
+                         .index;
+-                    let y = self.line.inline_box_top(box_index);
++                    // pyro: a span's edge is as tall as the span's content area on this line.
++                    let style_index =
++                        self.line.layout.data.inline_boxes[box_index].parent_style_index;
++                    let (y, height) = if inline_box.kind.is_span_edge() {
++                        let (top, bottom) = self.line.span_content_area(style_index);
++                        (top, bottom - top)
++                    } else {
++                        (self.line.inline_box_top(box_index), inline_box.height)
++                    };
+ 
+                     self.item_index += 1;
+-                    if inline_box.kind == InlineBoxKind::InFlow {
++                    if inline_box.kind.takes_inline_space() {
+                         self.offset += inline_box.width;
+                     }
+                     return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {
+                         x,
+                         y,
+                         width: inline_box.width,
+-                        height: inline_box.height,
++                        height,
+                         baseline: inline_box.baseline,
+                         id: inline_box.id,
+                         kind: inline_box.kind,
++                        style_index,
+                     }));
+                 }
+                 LineItem::Run(run) => {
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..3795b7a 100644
+index 3c3798c..c3d2fbd 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -11,6 +11,7 @@ use core_maths::CoreFloat;
@@ -540,7 +811,27 @@ index 3c3798c..3795b7a 100644
      }
  
      /// Drops the lines from `len` onwards, along with their aligned subtree offsets.
-@@ -449,7 +464,7 @@ impl LineBoxMetrics {
+@@ -83,6 +98,11 @@ struct LineState {
+     /// These are the line's justification opportunities, before subtracting those that end up in
+     /// the line's hanging whitespace.
+     num_word_separators: u32,
++
++    /// pyro: the last thing appended to the line is a span's start edge
++    /// ([`InlineBoxKind::SpanStart`]). The content that follows stays on the edge's line: its
++    /// wrap opportunity was marked before the edge.
++    after_span_start: bool,
+ }
+ 
+ impl LineState {
+@@ -91,6 +111,7 @@ impl LineState {
+         self.x = 0.0;
+         self.box_metrics.reset();
+         self.num_word_separators = 0;
++        self.after_span_start = false;
+     }
+ }
+ 
+@@ -449,7 +470,7 @@ impl LineBoxMetrics {
          let shaped_run = &data.shaped_text.runs()[run_idx];
          let Some(run_box) = data.runs[run_idx]
              .run_box
@@ -549,7 +840,7 @@ index 3c3798c..3795b7a 100644
          else {
              return;
          };
-@@ -768,6 +783,33 @@ impl BreakerState {
+@@ -768,6 +789,33 @@ impl BreakerState {
          self.subtrees.restore(prev_state.subtrees_len);
      }
  
@@ -583,7 +874,7 @@ index 3c3798c..3795b7a 100644
      #[inline(always)]
      fn update_max_height_exceeded(&mut self) {
          self.line.max_height_exceeded = self.line_max_height != f32::MAX
-@@ -838,6 +880,17 @@ pub struct BreakLines<'a, B: Brush> {
+@@ -838,6 +886,17 @@ pub struct BreakLines<'a, B: Brush> {
      state: BreakerState,
      prev_state: Option<BreakerState>,
      done: bool,
@@ -601,7 +892,7 @@ index 3c3798c..3795b7a 100644
  }
  
  impl<'a, B: Brush> BreakLines<'a, B> {
-@@ -846,20 +899,97 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -846,20 +905,97 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          layout.data.height = 0.;
          let mut lines = LineLayout::default();
          lines.swap(&mut layout.data);
@@ -702,7 +993,39 @@ index 3c3798c..3795b7a 100644
      /// Reset the per-line running state in preparation for building a new line.
      ///
      /// The line starts out containing the root span box (the "strut", CSS 2 §10.8).
-@@ -929,6 +1059,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -877,6 +1013,31 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+         state.update_max_height_exceeded();
+     }
+ 
++    /// pyro: whether the line may wrap before the content that starts at item `item_idx`: text
++    /// with a soft wrap opportunity before its first cluster, or an in-flow box. Span start
++    /// edges and out-of-flow boxes before that content are passed over.
++    fn wraps_before_item(&self, item_idx: usize) -> bool {
++        let data = &self.layout.data;
++        for item in data.items.get(item_idx..).unwrap_or_default() {
++            match item.kind {
++                LayoutItemKind::TextRun => {
++                    return data
++                        .shaped_text
++                        .run_slice(item.index as u32)
++                        .shaped_clusters()
++                        .first()
++                        .is_some_and(|cluster| cluster.is_soft_wrap_opportunity_before());
++                }
++                LayoutItemKind::InlineBox => match data.inline_boxes[item.index].inline_box.kind {
++                    InlineBoxKind::InFlow => return true,
++                    InlineBoxKind::SpanEnd => return false,
++                    _ => {}
++                },
++            }
++        }
++        false
++    }
++
+     /// Add the layout's inline box `index` to the current line. Out-of-flow boxes contribute
+     /// nothing to the line's metrics.
+     fn append_layout_inline_box(&mut self, index: usize, next_x: f32) {
+@@ -929,6 +1090,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
          self.state.items = self.lines.line_items.len();
          self.state.lines = self.lines.lines.len();
@@ -710,7 +1033,7 @@ index 3c3798c..3795b7a 100644
          self.state.prev_boundary = None;
          self.state.emergency_boundary = None;
  
-@@ -987,6 +1118,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -987,6 +1149,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      // than blink, for reasons which haven't been fully understood.
      #[doc(hidden)]
      pub fn set_prior_line_width(&mut self, advance: f32) {
@@ -718,7 +1041,7 @@ index 3c3798c..3795b7a 100644
          if let Some(line) = self.lines.lines.last_mut() {
              line.metrics.inline_max_coord = line.metrics.inline_min_coord + advance;
          }
-@@ -994,6 +1126,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -994,6 +1157,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
      /// Reverts the to an externally saved state.
      pub fn revert_to(&mut self, state: BreakerState) {
@@ -726,7 +1049,7 @@ index 3c3798c..3795b7a 100644
          self.state = state;
          self.lines.truncate(self.state.lines);
          self.lines.line_items.truncate(self.state.items);
-@@ -1026,6 +1159,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1026,6 +1190,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// Computes the next line in the paragraph. Returns the advance and size
      /// (width and height for horizontal layouts) of the line.
      pub fn break_next(&mut self) -> Option<YieldData> {
@@ -745,7 +1068,7 @@ index 3c3798c..3795b7a 100644
          assert!(
              self.state.layout_max_advance == f32::INFINITY
                  || self.state.line_max_advance - self.state.layout_max_advance < 1.0
-@@ -1035,6 +1180,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1035,6 +1211,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.done {
              return None;
          }
@@ -760,7 +1083,7 @@ index 3c3798c..3795b7a 100644
          match &mut self.prev_state {
              Some(prev_state) => prev_state.clone_from(&self.state),
              None => self.prev_state = Some(self.state.clone()),
-@@ -1060,6 +1213,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1060,6 +1244,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
              match item.kind {
                  LayoutItemKind::InlineBox => {
@@ -769,7 +1092,52 @@ index 3c3798c..3795b7a 100644
                      let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
  
                      // In-flow boxes are aligned relative to their containing style's span box
-@@ -1103,15 +1258,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1082,7 +1268,44 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                                 advance: self.state.line.x,
+                             }));
+                         }
++                        // pyro: a span's start edge takes its width and stays with the content
++                        // after it: where the line may wrap before that content, it wraps before
++                        // the edge.
++                        InlineBoxKind::SpanStart => {
++                            let (index, width) = (item.index, inline_box.width);
++                            if self.state.line.x != 0.0
++                                && !self.state.line.after_span_start
++                                && self.state.line.text_wrap_mode == TextWrapMode::Wrap
++                                && self.wraps_before_item(self.state.item_idx + 1)
++                            {
++                                self.state.mark_line_break_opportunity();
++                            }
++                            self.append_layout_inline_box(index, self.state.line.x + width);
++                            self.state.line.after_span_start = true;
++                            continue;
++                        }
++                        // pyro: a span's end edge stays with the content before it: if it does
++                        // not fit, the line wraps at its last opportunity.
++                        InlineBoxKind::SpanEnd => {
++                            let (index, width) = (item.index, inline_box.width);
++                            let next_x = self.state.line.x + width;
++                            if next_x > max_advance + FIT_TOLERANCE
++                                && let Some(prev) = self.state.prev_boundary.take()
++                            {
++                                self.state.reset_to(prev);
++                                return self.start_new_line(
++                                    BreakReason::Regular,
++                                    max_advance,
++                                    line_indent,
++                                );
++                            }
++                            self.append_layout_inline_box(index, next_x);
++                            self.state.line.after_span_start = false;
++                            continue;
++                        }
+                     };
++                    // pyro: a box after a span's start edge stays on the edge's line.
++                    let after_span_start = core::mem::take(&mut self.state.line.after_span_start);
+ 
+                     // Compute the x position of the content being currently processed
+                     let next_x = self.state.line.x + width_contribution;
+@@ -1103,15 +1326,28 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
                              self.state.mark_line_break_opportunity();
                          }
@@ -778,6 +1146,19 @@ index 3c3798c..3795b7a 100644
 +                        // consume it, accept the overflow and mark the soft wrap opportunity after
 +                        // it: content that follows breaks there, and a box ending the paragraph
 +                        // ends its last line (Chromium) rather than leaving an empty line behind.
++                        self.append_layout_inline_box(item.index, next_x);
++                        self.state.mark_line_break_opportunity();
++                    } else if after_span_start {
++                        // pyro: the line wraps before the start edges the box follows, or not
++                        // at all when the line starts with them.
++                        if let Some(prev) = self.state.prev_boundary.take() {
++                            self.state.reset_to(prev);
++                            return self.start_new_line(
++                                BreakReason::Regular,
++                                max_advance,
++                                line_indent,
++                            );
++                        }
 +                        self.append_layout_inline_box(item.index, next_x);
 +                        self.state.mark_line_break_opportunity();
                      } else {
@@ -793,7 +1174,7 @@ index 3c3798c..3795b7a 100644
                      }
                  }
                  LayoutItemKind::TextRun => {
-@@ -1126,6 +1281,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1126,6 +1362,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
                      // Iterate over the remaining atoms in the Run
                      for atom in slice.atoms_from(self.state.cluster_idx) {
@@ -803,7 +1184,30 @@ index 3c3798c..3795b7a 100644
                          // Retrieve metadata about the atom
                          let first_character = &atom.characters()[0];
                          let whitespace = first_character.whitespace;
-@@ -1188,7 +1346,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1164,7 +1403,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                         } else if is_soft_wrap_opportunity && text_wrap_mode == TextWrapMode::Wrap {
+                             // We don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
+                             // line breaks. We should accept the overflowing fragment in that scenario.
+-                            if self.state.line.x != 0.0 {
++                            // pyro: nor after a span's start edge, which the opportunity was
++                            // marked before.
++                            if self.state.line.x != 0.0 && !self.state.line.after_span_start {
+                                 self.state.mark_line_break_opportunity();
+                                 // break_opportunity = true;
+                             }
+@@ -1174,9 +1415,11 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                         && text_wrap_mode == TextWrapMode::Wrap
+                         // If we're at the start of the line, this particular atom will never fit, so it's not a valid emergency break opportunity.
+                         && self.state.line.x != 0.0
++                        && !self.state.line.after_span_start
+                         {
+                             self.state.mark_emergency_break_opportunity();
+                         }
++                        self.state.line.after_span_start = false;
+ 
+                         // Breaking an atom requires reshaping, which we don't do here, so it is
+                         // consumed as a whole (this includes all clusters of a ligature).
+@@ -1188,7 +1431,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          // If the content fits (the x position does NOT exceed max_advance)
                          //
                          // We simply append the atom to the current line
@@ -812,7 +1216,7 @@ index 3c3798c..3795b7a 100644
                              if max_height_exceeded {
                                  return self.max_height_break_data(line_height);
                              }
-@@ -1216,7 +1374,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1216,7 +1459,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  spacing,
                                  item.bidi_level.is_rtl(),
                              );
@@ -821,7 +1225,7 @@ index 3c3798c..3795b7a 100644
                                  if max_height_exceeded {
                                      return self.max_height_break_data(line_height);
                                  }
-@@ -1283,6 +1441,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1283,6 +1526,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.state.line.items.end == 0 {
              self.state.line.items.end = 1;
          }
@@ -830,7 +1234,7 @@ index 3c3798c..3795b7a 100644
          self.done = true;
          self.start_new_line(BreakReason::None, max_advance, line_indent)
      }
-@@ -1300,6 +1460,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1300,6 +1545,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// ligature or a multi-character grapheme), the whole atom is placed on the line before
      /// breaking.
      pub fn break_next_with_length(&mut self, max_chars: u32) -> Option<()> {
@@ -839,7 +1243,22 @@ index 3c3798c..3795b7a 100644
          if self.done {
              return None;
          }
-@@ -1617,6 +1779,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1318,7 +1565,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                     let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
+ 
+                     if inline_box.kind != InlineBoxKind::InFlow {
+-                        self.append_layout_inline_box(item.index, self.state.line.x);
++                        // pyro: a span's edge takes its width.
++                        let width = if inline_box.kind.is_span_edge() {
++                            inline_box.width
++                        } else {
++                            0.0
++                        };
++                        self.append_layout_inline_box(item.index, self.state.line.x + width);
+                         continue;
+                     }
+ 
+@@ -1617,6 +1870,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          } else {
              line.metrics.baseline + line_box_extents.under
          };
@@ -849,7 +1268,7 @@ index 3c3798c..3795b7a 100644
          line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
          line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
  
-@@ -1628,6 +1793,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1628,6 +1884,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
  impl<B: Brush> Drop for BreakLines<'_, B> {
      fn drop(&mut self) {
@@ -860,6 +1279,17 @@ index 3c3798c..3795b7a 100644
          // Compute the overall width and height of the entire layout
          // The "width" excludes hanging whitespace. The "full_width" includes it.
          let mut layout_width = 0_f32;
+@@ -1888,8 +2148,8 @@ fn hanging_whitespace<B: Brush>(
+             LayoutItemKind::InlineBox => {
+                 let item = &layout.data.inline_boxes[line_item.index].inline_box;
+ 
+-                // Inline boxes don't hang.
+-                if item.kind == InlineBoxKind::InFlow {
++                // Inline boxes don't hang. pyro: nor does white space before a span's edge.
++                if item.kind.takes_inline_space() {
+                     break;
+                 }
+             }
 diff --git a/src/layout/mod.rs b/src/layout/mod.rs
 index 6e2baba..56e8bd1 100644
 --- a/src/layout/mod.rs
@@ -1232,6 +1662,134 @@ index e967f50..c985a90 100644
  };
  
  pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
+diff --git a/src/resolve/tree.rs b/src/resolve/tree.rs
+index c102610..e598281 100644
+--- a/src/resolve/tree.rs
++++ b/src/resolve/tree.rs
+@@ -50,6 +50,15 @@ pub(crate) struct TreeStyleBuilder<B: Brush> {
+     /// Whether the most recently pushed item is an inline box, in which case pending collapsible
+     /// whitespace is not at the start of the inline formatting context.
+     last_item_is_inline_box: bool,
++    /// pyro: set after a span's start edge that follows a committed collapsed space: collapsible
++    /// white space is removed until content follows (the space before the edge is the one it
++    /// collapses into).
++    collapse_after_edge: bool,
++    /// pyro: span end edges (indices into the context's inline boxes) pushed while white space
++    /// was pending. That white space is inside their spans: when it is kept, they move behind it.
++    deferred_edges: Vec<usize>,
++    /// pyro: the moves of [`Self::deferred_edges`]: inline box index and its new text index.
++    edge_moves: Vec<(usize, usize)>,
+ }
+ 
+ impl<B: Brush> Default for TreeStyleBuilder<B> {
+@@ -62,6 +71,9 @@ impl<B: Brush> Default for TreeStyleBuilder<B> {
+             current_span: usize::MAX,
+             pending_whitespace: None,
+             last_item_is_inline_box: false,
++            collapse_after_edge: false,
++            deferred_edges: Vec::new(),
++            edge_moves: Vec::new(),
+         }
+     }
+ }
+@@ -82,6 +94,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
+         self.text.clear();
+         self.pending_whitespace = None;
+         self.last_item_is_inline_box = false;
++        self.collapse_after_edge = false;
++        self.deferred_edges.clear();
++        self.edge_moves.clear();
+ 
+         // The root style is always materialised at index 0 so that it can act as the parent of
+         // every other style (and as the strut for otherwise empty lines).
+@@ -101,6 +116,32 @@ impl<B: Brush> TreeStyleBuilder<B> {
+     /// treated as whitespace at the start of the inline formatting context.
+     pub(crate) fn set_last_item_is_inline_box(&mut self) {
+         self.last_item_is_inline_box = true;
++        self.collapse_after_edge = false;
++    }
++
++    /// pyro: a span's start edge is about to be pushed. White space pending before it is outside
++    /// the span: it is resolved now, and collapsible white space after the edge collapses into it.
++    pub(crate) fn begin_span_start_edge(&mut self) {
++        let len = self.text.len();
++        self.flush_pending_whitespace();
++        if self.text.len() > len {
++            self.collapse_after_edge = true;
++        }
++    }
++
++    /// pyro: a span's end edge was pushed as inline box `box_index` at the end of the text so
++    /// far. White space pending before it is inside the span: if it is kept, the edge moves
++    /// behind it (see [`Self::take_edge_moves`]).
++    pub(crate) fn pushed_span_end_edge(&mut self, box_index: usize) {
++        if self.pending_whitespace.is_some() {
++            self.deferred_edges.push(box_index);
++        }
++    }
++
++    /// pyro: the span end edges that white space was kept before: inline box index and the text
++    /// index behind that white space.
++    pub(crate) fn take_edge_moves(&mut self) -> Vec<(usize, usize)> {
++        core::mem::take(&mut self.edge_moves)
+     }
+ 
+     /// Applies white space processing to `text` in the current span and commits the result, leaving
+@@ -118,6 +159,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+                     // `WhiteSpaceCollapse::PreserveBreaks` span, and following CSS Text 4 § 4.3.1 Rule 1
+                     // must be removed if it immediately precedes a preserved segment break.
+                     self.pending_whitespace = None;
++                    self.deferred_edges.clear();
+                 }
+                 self.flush_pending_whitespace();
+                 self.commit_text(span, text);
+@@ -127,6 +169,11 @@ impl<B: Brush> TreeStyleBuilder<B> {
+                 while !rest.is_empty() {
+                     let whitespace_len =
+                         rest.find(|c| !mode.is_collapsible(c)).unwrap_or(rest.len());
++                    if whitespace_len > 0 && self.collapse_after_edge {
++                        // pyro: it collapses into the space before the span's start edge.
++                        rest = &rest[whitespace_len..];
++                        continue;
++                    }
+                     if whitespace_len > 0 {
+                         // The collapsed space is attributed to the span the whitespace sequence
+                         // started in, but is a wrap opportunity if any of the spans it collapses
+@@ -147,6 +194,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+                         // `PreserveBreaks` mode `CR` and `LF` are not collapsible and are also
+                         // preserved as forced breaks.
+                         self.pending_whitespace = None;
++                        self.deferred_edges.clear();
+                         let break_len = rest.chars().next().unwrap().len_utf8();
+                         self.commit_text(span, &rest[..break_len]);
+                         rest = &rest[break_len..];
+@@ -175,6 +223,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+         // or tab is retained, as only collapsible whitespace collapses.
+         let is_at_start = self.text.is_empty() && !self.last_item_is_inline_box;
+         if is_at_start || self.text.ends_with(is_segment_break) {
++            self.deferred_edges.clear();
+             return;
+         }
+ 
+@@ -184,6 +233,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
+             self.resolve_style_id(pending.span)
+         };
+         self.commit_styled_text(style_index, " ");
++        // pyro: the kept space is inside the spans whose end edges followed it.
++        let end = self.text.len();
++        self.edge_moves
++            .extend(self.deferred_edges.drain(..).map(|index| (index, end)));
+     }
+ 
+     /// The style table index of the span that text is currently being pushed into.
+@@ -211,6 +264,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+             }),
+         }
+         self.last_item_is_inline_box = false;
++        self.collapse_after_edge = false;
+     }
+ 
+     /// The index of `span`'s style in the style table, adding it (and any ancestors that have not
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
 index 060a32d..d938f1e 100644
 --- a/src/shape/mod.rs

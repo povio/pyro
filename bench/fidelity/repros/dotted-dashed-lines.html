@@ -1,0 +1,60 @@
+<!doctype html>
+<!--
+  Dotted and dashed borders and outlines, 1px to 8px wide, on boxes with
+  square and with rounded corners, and outlines with an offset.
+
+  pyro drew every outline solid and at the border box, whatever its
+  `outline-offset`, and under the box's own background, so that an outline
+  with a negative offset (the last row: an input's hairline, a focus ring
+  inside the box) did not show. Its dashed and dotted borders had other
+  dash counts than Chromium's, mitred corners where Chromium lets the
+  sides overlap, and round dots at every width (Chromium's are square up
+  to 3px).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="860x620">
+<style>
+  html, body { margin: 0; background: #fff; }
+  .b { position: absolute; box-sizing: border-box; width: 120px; height: 40px; border-color: #000; outline-color: #000; }
+</style>
+</head>
+<body>
+<script>
+  let html = '';
+  const add = (x, y, css, inner = '') => { html += `<div class="b" style="left:${x}px;top:${y}px;${css}">${inner}</div>`; };
+  [1, 2, 3, 4, 5, 8].forEach((w, i) => {
+    const x = 10 + i * 140;
+    add(x, 10, `border:${w}px dashed #000`);
+    add(x, 70, `border:${w}px dotted #000`);
+    add(x, 130, `outline:${w}px dashed #000`);
+    add(x, 190, `outline:${w}px dotted #000`);
+    add(x, 250, `border:${w}px dashed #000;border-radius:10px`);
+    add(x, 310, `border:${w}px dotted #000;border-radius:10px`);
+    add(x, 370, `outline:${w}px dashed #000;border-radius:10px;outline-offset:2px`);
+    add(x, 430, `outline:${w}px dotted #000;border-radius:10px;outline-offset:2px`);
+  });
+  // Odd lengths, a fractional size, sides of several styles and colours.
+  add(10, 490, 'outline:1px dotted #000;width:37px;height:21px');
+  add(70, 490, 'outline:2px dotted #000;width:53px;height:23px;outline-offset:3px');
+  add(150, 490, 'outline:1px dashed #000;width:37px;height:21px;outline-offset:-2px');
+  add(210, 490, 'border:1px dotted #000;width:37.5px;height:21.3px');
+  add(270, 490, 'border-top:3px dotted #000;border-left:1px dashed #000;border-bottom:2px dashed red;border-right:5px dotted blue;width:61px;height:33px');
+  add(350, 490, 'outline:3px dotted #000;width:57px;height:26px');
+  add(430, 490, 'border:2px dashed #999;border-radius:8px;width:80px;height:36px');
+  add(530, 490, 'border-style:dashed;border-width:1px 4px 2px 8px;border-radius:12px;width:80px;height:36px');
+  add(630, 490, 'border:4px dotted #000;border-top-color:red;border-radius:10px;width:80px;height:36px');
+  add(730, 490, 'border:6px dotted rgba(0,0,0,.4);width:80px;height:36px');
+  // Solid outlines with an offset: a focus ring, an input's hairline inside the
+  // box, one over a child's background, one on a translucent box.
+  add(10, 560, 'outline:2px solid #2563eb;outline-offset:2px;border-radius:6px;background:#eee;width:100px;height:36px');
+  add(150, 560, 'outline:1px solid #d1d5db;outline-offset:-1px;border-radius:6px;background:#fff;width:100px;height:36px');
+  add(290, 560, 'outline:2px solid #4f46e5;outline-offset:-2px;border-radius:6px;background:#fff;width:100px;height:36px');
+  add(430, 560, 'outline:3px solid #000;outline-offset:-3px;width:100px;height:36px', '<div style="height:100%;background:#fde68a"></div>');
+  add(570, 560, 'outline:2px solid #000;outline-offset:-6px;border-radius:12px;background:#eee;border:1px solid red;width:100px;height:36px');
+  add(710, 560, 'outline:6px solid rgba(0,0,0,.5);outline-offset:2px;border-radius:4px;opacity:.6;background:#eee;width:100px;height:36px');
+  document.body.innerHTML = html;
+</script>
+</body>
+</html>

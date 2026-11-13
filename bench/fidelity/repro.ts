@@ -59,6 +59,10 @@ async function shoot(kind: 'chromium' | 'pyro', name: string, viewport: { width:
   try {
     const page = await context.newPage();
     await page.goto(`${base}/fidelity/repros/${name}.html`, { waitUntil: 'load' });
+    // A first layout query, thrown away: pyro answers it with the fonts it has and fetches the page's web
+    // fonts meanwhile (its document.fonts.ready does not wait for them), so the numbers kept below, taken
+    // after the wait, are measured with the page's fonts, as the screenshot is drawn.
+    await page.evaluate(() => void (window as any).__measure?.());
     await page.evaluate(() => document.fonts.ready.then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
     await page.waitForTimeout(200);
     const measure = await page.evaluate(() => ((window as any).__measure ? (window as any).__measure() : null));

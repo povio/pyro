@@ -1,9 +1,12 @@
 <!doctype html>
 <!--
-  Known gap check: inline boxes with padding, border, border-radius and a
-  background (badges, chips, pills set inline in text), including one that
-  wraps across lines, next to the ToS shapes, which are inline-flex (the
-  Financial Status pills, the currency chips) and match.
+  Inline boxes with padding, border, border-radius and a background
+  (badges, chips, pills set inline in text), including one that wraps
+  across lines, next to the ToS shapes, which are inline-flex (the
+  Financial Status pills, the currency chips). pyro painted only the
+  background, as wide as the glyphs: the sides took no room in the line.
+  Each box's client rects (x, y, width, height per line) are published in
+  window.__measure.
 -->
 <html>
 <head>
@@ -21,5 +24,11 @@
 <body>
 <p>Status <span class="badge">Outstanding</span> and <span class="chip">EUR</span> after an <span class="badge">overdue invoice whose badge wraps onto the next line</span> here.</p>
 <p>Inline-flex pill <span class="pill"><span style="background:#fef9c3"></span><span style="background:#eceef0"></span></span> beside text.</p>
+<script>
+  window.__measure = () => [...document.querySelectorAll('.badge, .chip, .pill')].map((e) => ({
+    box: e.className + (e.textContent ? ' ' + e.textContent.slice(0, 11) : ''),
+    rects: [...e.getClientRects()].map((r) => [r.x, r.y, r.width, r.height].map((v) => +v.toFixed(2)).join(' ')).join(' | '),
+  }));
+</script>
 </body>
 </html>

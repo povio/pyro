@@ -110,7 +110,9 @@ impl FontInfo {
                 synth.vars[len] = (Tag::new(b"wght"), weight.value());
                 len += 1;
             }
-        } else if weight.value() > self.weight.value() + 200.0 {
+        } else if weight.value() >= SYNTHETIC_BOLD_WEIGHT && self.weight.value() < SYNTHETIC_BOLD_WEIGHT {
+            // pyro: as Chromium does (upstream: a requested weight more than 200 above the
+            // font's, which left 600 on a regular face thin). See README.pyro.md.
             synth.embolden = true;
         }
         if self.style != style {
@@ -320,6 +322,11 @@ impl FontInfo {
         }
     }
 }
+
+/// pyro: the weight from which a request counts as bold and a face as having it. Bold is
+/// synthesized for a request at or above it on a face (without a `wght` axis) below it, which
+/// is Chromium's rule (`FontSelectionAlgorithm`'s bold threshold, 600).
+const SYNTHETIC_BOLD_WEIGHT: f32 = 600.0;
 
 const WEIGHT_AXIS: u8 = 0x01;
 const WIDTH_AXIS: u8 = 0x02;
@@ -577,22 +584,18 @@ mod tests {
     }
 
     #[test]
-    fn static_weight_synthesis_requires_more_than_200_weight_increase() {
+    fn static_weight_synthesis_is_for_a_bold_request_on_a_lighter_face() {
         let font = font_info(ROBOTO);
+        assert!(font.weight().value() < SYNTHETIC_BOLD_WEIGHT);
 
-        let synthesis = font.synthesis(
-            font.width(),
-            font.style(),
-            FontWeight::new(font.weight().value() + 1.0),
-        );
-        assert!(!synthesis.any());
-
-        let synthesis = font.synthesis(
-            font.width(),
-            font.style(),
-            FontWeight::new(font.weight().value() + 201.0),
-        );
-        assert!(synthesis.embolden());
-        assert!(synthesis.variation_settings().is_empty());
+        for weight in [font.weight().value() + 1.0, 500.0, 599.0] {
+            let synthesis = font.synthesis(font.width(), font.style(), FontWeight::new(weight));
+            assert!(!synthesis.any(), "{weight}");
+        }
+        for weight in [600.0, 700.0, 900.0] {
+            let synthesis = font.synthesis(font.width(), font.style(), FontWeight::new(weight));
+            assert!(synthesis.embolden(), "{weight}");
+            assert!(synthesis.variation_settings().is_empty());
+        }
     }
 }

@@ -104,6 +104,25 @@ gets a layout broken under the other. An override given only to a builder still 
 blitz-dom sets it from `DocumentConfig::line_break_override`. Covered by
 `the_override_is_part_of_the_build_cache_key` in `crates/pyro-render/tests/hyphen_digit_breaks.rs`.
 
+Span edges (`inline_box.rs`, `resolve/tree.rs`, `builder.rs`, `layout/line_break.rs`, `layout/data.rs`,
+`layout/line.rs`, `layout/layout.rs`): the margin, border and padding of a CSS inline box that is not
+atomic (a `<span>`) take room in its line. `InlineBoxKind::SpanStart` and `SpanEnd` are an edge of such a
+box: its `width` is the side's margin, border and padding, it adds nothing to the line's height, and its
+positioned box is as tall as the span's content area on the line (`Line::span_content_area`, the ascent
+and descent of the style's first font; `PositionedInlineBox::style_index`, `Layout::style_parent`). An
+edge is no content of its own. The start edge stays on the line of the content after it (a wrap
+opportunity before that content is one before the edge, `LineState::after_span_start`,
+`wraps_before_item`; the content widths follow, `wraps_before`), the end edge on the line of the content
+before it. White space collapses through an edge as if it were not there (`tree.rs`,
+`collapse_after_edge`): space before a start edge is outside the span and the space after the edge
+collapses into it; space kept before an end edge is inside the span, so the edge moves behind it
+(`deferred_edges`, `edge_moves`, `TreeBuilder::finish_tree`); white space before an edge does not hang.
+`TreeBuilder::scale` gives the builder's scale to the caller. blitz-dom pushes the edges
+(see its README). An edge is an inline box to the build cache and to line resume, which both leave out paragraphs with
+inline boxes: a paragraph with an edge is built and broken anew each time. Not done:
+edges in right-to-left runs are placed in logical order. Covered by
+`crates/pyro-render/tests/inline_box_decorations.rs`.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

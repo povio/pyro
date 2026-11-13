@@ -48,7 +48,7 @@ index 619d5d4..96cd8c5 100644
  
      fn reset(&mut self) {
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..b8f9f07 100644
+index 1b09a33..00d3d0d 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -22,8 +22,18 @@ impl VelloCpuScenePainter {
@@ -71,3 +71,76 @@ index 1b09a33..b8f9f07 100644
              resources: vello_cpu::Resources::new(),
              image_cache: ImageCache::new(config),
          }
+@@ -177,7 +187,13 @@ impl PaintScene for VelloCpuScenePainter {
+                     .font_size(font_size)
+                     .hint(hint)
+                     .normalized_coords(normalized_coords)
+-                    .font_embolden(FontEmbolden::new(Diagonal2::new(embolden.x, embolden.y)))
++                    .font_embolden(embolden_in_cache_units(
++                        embolden,
++                        font,
++                        font_size,
++                        hint,
++                        transform * glyph_transform.unwrap_or_default(),
++                    ))
+                     .glyph_transform(glyph_transform.unwrap_or_default())
+                     .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
+                         id: g.id,
+@@ -218,6 +234,57 @@ impl PaintScene for VelloCpuScenePainter {
+     }
+ }
+ 
++/// pyro: `embolden` (how far each side of a glyph's outline grows, in pixels at the run's font
++/// size) as glifo 0.4 takes it. glifo expands the outline it caches, and that outline is in font
++/// design units unless the run is hinted (then it is at the size drawn), so an amount passed as
++/// it is came out `font_size / units_per_em` times too small without hinting: no synthetic bold
++/// at all. glifo's main branch converts the amount itself (`embolden_in_cache_units`); this is
++/// the same factor, the cached outline's size over the run's, from the outside.
++fn embolden_in_cache_units(
++    embolden: kurbo::Vec2,
++    font: &FontData,
++    font_size: f32,
++    hint: bool,
++    full_transform: Affine,
++) -> FontEmbolden {
++    let default = FontEmbolden::new(Diagonal2::new(embolden.x, embolden.y));
++    if embolden == kurbo::Vec2::ZERO || !(font_size > 0.0) {
++        return default;
++    }
++    const NEARLY_ZERO: f64 = 1.0 / 4096.0;
++    // glifo hints a run only under a positive uniform scale without vertical skew, and then
++    // caches outlines at the font size times that scale.
++    let [a, b, _, d, _, _] = full_transform.as_coeffs();
++    let hinted = hint && (a - d).abs() <= NEARLY_ZERO && a > 0.0 && d > 0.0 && b.abs() <= NEARLY_ZERO;
++    let factor = if hinted {
++        d
++    } else {
++        let Some(upem) = units_per_em(font) else {
++            return default;
++        };
++        f64::from(upem) / f64::from(font_size)
++    };
++    FontEmbolden::new(Diagonal2::new(embolden.x * factor, embolden.y * factor))
++        .with_tolerance(default.tolerance * factor)
++}
++
++/// The `unitsPerEm` of a font's `head` table (of the collection member `font.index`).
++fn units_per_em(font: &FontData) -> Option<u16> {
++    let data = font.data.data();
++    let u16_at = |at: usize| Some(u16::from_be_bytes(data.get(at..at + 2)?.try_into().ok()?));
++    let u32_at = |at: usize| Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?));
++    let directory = if data.get(..4)? == b"ttcf" {
++        u32_at(12 + 4 * font.index as usize)? as usize
++    } else {
++        0
++    };
++    (0..u16_at(directory + 4)? as usize)
++        .map(|table| directory + 12 + 16 * table)
++        .find(|&record| data.get(record..record + 4) == Some(b"head".as_slice()))
++        .and_then(|record| u16_at(u32_at(record + 8)? as usize + 18))
++        .filter(|&upem| upem > 0)
++}
++
+ #[cfg(test)]
+ mod clip_rule_tests {
+     use anyrender::{PaintScene, recording::Scene, render_to_buffer};

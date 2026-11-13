@@ -615,24 +615,36 @@ impl Fetcher for InterFetch {
     }
 }
 
-/// A font with no face of the weight asked for is drawn emboldened, as Chromium draws it (Skia's
-/// fake bold): more ink, the same advances.
+/// A family with no bold face is drawn emboldened for a bold weight, as Chromium draws it: from
+/// 600 up on a face below 600 (500 is drawn as it is, and so is a face declared bold), with
+/// Skia's fake bold, a stroke of 1/32 of the size at 40px: more ink, the same advances. The text
+/// is one the subset font covers, so no system face's real bold stands in.
 #[test]
 fn a_missing_bold_face_is_synthesized() {
-    let page = |weight: u32| {
+    let page = |face: u32, weight: u32| {
         format!(
-            "<!doctype html><style>@font-face {{ font-family: RegularOnly; src: url(inter.ttf); font-weight: 400 }}
-             body {{ margin: 0; background: white; font: {weight} 40px RegularOnly }}</style><div data-pyro-render-clip style='display:inline-block'>office</div>"
+            "<!doctype html><style>@font-face {{ font-family: OneFace; src: url(inter.ttf); font-weight: {face} }}
+             body {{ margin: 0; background: white; font: {weight} 40px OneFace }}</style><div data-pyro-render-clip style='display:inline-block'>MONITOR</div>"
         )
     };
     let fetcher: Arc<dyn Fetcher> = Arc::new(InterFetch);
     let mut r = Renderer::new();
-    let ink = |img: &RgbaImage| img.data.chunks_exact(4).map(|p| 255.0 - p[0] as f64).sum::<f64>();
-    let (regular, _, _) = r.render(&snap(&page(400)), Area::Element, Backend::Cpu, &fetcher).unwrap();
-    let (bold, _, _) = r.render(&snap(&page(700)), Area::Element, Backend::Cpu, &fetcher).unwrap();
-    assert_eq!(bold.width, regular.width, "the same advances");
-    let ratio = ink(&bold) / ink(&regular);
-    assert!(ratio > 1.1, "emboldened: {ratio} times the ink");
+    let mut ink = |face: u32, weight: u32| {
+        let (img, _, _) = r.render(&snap(&page(face, weight)), Area::Element, Backend::Cpu, &fetcher).unwrap();
+        (img.width, img.data.chunks_exact(4).map(|p| 255.0 - p[0] as f64).sum::<f64>())
+    };
+    let (width, regular) = ink(400, 400);
+    assert_eq!(ink(400, 500), (width, regular), "500 on a regular face is not bold");
+    for weight in [600, 700, 900] {
+        let (bold_width, bold) = ink(400, weight);
+        assert_eq!(bold_width, width, "{weight}: the same advances");
+        let ratio = bold / regular;
+        assert!((1.15..1.6).contains(&ratio), "{weight} on a regular face: {ratio} times the ink");
+    }
+    assert!(ink(300, 600).1 / regular > 1.15, "600 on a light face");
+    for (face, weight) in [(600, 600), (700, 700), (700, 900)] {
+        assert_eq!(ink(face, weight), (width, regular), "{weight} on a face declared {face} is drawn as it is");
+    }
 }
 
 /// Mixed fonts, sizes, scripts and a missing first family: every shaping path

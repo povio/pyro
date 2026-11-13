@@ -856,7 +856,7 @@ pub(crate) fn stroke_text<'a>(
                 } else {
                     kurbo::Vec2::default()
                 } + if synthesis.embolden() {
-                    synthetic_bold(font_size as f64, scale)
+                    synthetic_bold(font_size as f64, scale, fill_color, transform)
                 } else {
                     kurbo::Vec2::default()
                 };
@@ -1001,13 +1001,42 @@ pub(crate) fn draw_text_selection(
 /// a face of the weight asked for): Skia's fake bold, which Chromium draws, strokes the outline
 /// with a width of the text size times 1/24 at 9px and below, 1/32 at 36px and above, linear
 /// between. `font_size` is the run's (device) size, `scale` device pixels per CSS pixel; the
-/// result is in the glyphs' units.
-fn synthetic_bold(font_size: f64, scale: f64) -> kurbo::Vec2 {
+/// result is in pixels at the run's size.
+///
+/// On macOS the growth is less for dark text. Skia rasterizes the stroked outline itself (Core
+/// Text draws only the glyphs Skia leaves alone) and passes its coverage through the table its
+/// mask gamma has for the text color, which thins dark text: measured against the plain stroke
+/// (Lato, 12 to 144 device px, device scale 1 to 3), each edge loses the same fraction of a
+/// device pixel at every size, one of four amounts by the color's level, none for white.
+fn synthetic_bold(font_size: f64, scale: f64, color: Color, transform: Affine) -> kurbo::Vec2 {
+    /// Device pixels an edge loses, by [`skia_mac_luminance_level`].
+    const EDGE_LOSS: [f64; 4] = [0.26, 0.175, 0.085, 0.0];
     let css_size = if scale > 0.0 { font_size / scale } else { font_size };
     let t = ((css_size - 9.0) / (36.0 - 9.0)).clamp(0.0, 1.0);
     let ratio = 1.0 / 24.0 + t * (1.0 / 32.0 - 1.0 / 24.0);
-    let side = font_size * ratio / 2.0;
+    let mut side = font_size * ratio / 2.0;
+    if CORE_TEXT_GLYPHS {
+        let device_scale = transform.determinant().abs().sqrt();
+        if device_scale > 0.0 && device_scale.is_finite() {
+            side = (side - EDGE_LOSS[skia_mac_luminance_level(color)] / device_scale).max(0.0);
+        }
+    }
     kurbo::Vec2::new(side, side)
+}
+
+/// pyro: which of its coverage tables Skia uses for text of a color on macOS, 0 (black) to 3
+/// (white). Skia halves the color there (Core Graphics goes from a gamma of 2 for black text
+/// to 1 for white), keeps the top three bits of each channel, repeated down the byte, and takes
+/// the top three bits of that color's luminance: four levels in all. Measured in Chromium on 49
+/// colors, all at the level this gives.
+fn skia_mac_luminance_level(color: Color) -> usize {
+    let rgba = color.to_rgba8();
+    let canonical = |channel: u8| {
+        let bits = u32::from(channel / 2 >> 5);
+        bits << 5 | bits << 2 | bits >> 1
+    };
+    let luminance = (canonical(rgba.r) * 54 + canonical(rgba.g) * 183 + canonical(rgba.b) * 19) >> 8;
+    (luminance >> 5).min(3) as usize
 }
 
 /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount

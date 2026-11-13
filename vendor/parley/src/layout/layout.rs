@@ -66,6 +66,15 @@ impl<B: Brush> Layout<B> {
         &self.data.styles
     }
 
+    /// pyro: the index in [`Self::styles`] of the style of the span enclosing the span of style
+    /// `style_index`. The root style (index 0) is its own parent.
+    pub fn style_parent(&self, style_index: u16) -> u16 {
+        self.data
+            .styles
+            .get(usize::from(style_index))
+            .map_or(0, |style| style.parent)
+    }
+
     /// The inherent metrics of the root span (in CSS terms, that is the metrics of the
     /// [root inline box](https://www.w3.org/TR/css-inline-3/#root-inline-box)).
     ///

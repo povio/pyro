@@ -82,6 +82,17 @@ impl<'a, B: Brush> Line<'a, B> {
         }
     }
 
+    /// pyro: the content area of the span box that style `style_index` generates on this line:
+    /// the block-axis coordinates of its top and bottom, the ascent and descent of the style's
+    /// first available font around the span's baseline (rounded as the layout rounds them).
+    pub fn span_content_area(&self, style_index: u16) -> (f32, f32) {
+        let baseline = self.style_baseline(style_index);
+        match self.layout.data.style_metrics.get(usize::from(style_index)) {
+            Some(metrics) => (baseline - metrics.ascent, baseline + metrics.descent),
+            None => (baseline, baseline),
+        }
+    }
+
     /// Block-axis coordinate of the top edge of the layout's inline box `index`.
     pub(crate) fn inline_box_top(&self, index: usize) -> f32 {
         let layout_box = &self.layout.data.inline_boxes[index];
@@ -283,6 +294,8 @@ pub struct PositionedInlineBox {
     pub baseline: Option<f32>,
     pub id: u64,
     pub kind: InlineBoxKind,
+    /// pyro: the index in [`Layout::styles`] of the style of the span the box is in.
+    pub style_index: u16,
 }
 
 /// Sequence of fully positioned glyphs with the same style.
@@ -464,20 +477,29 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                     let box_index = self.line.layout.data.line_items
                         [self.line.data.item_range.start + self.item_index]
                         .index;
-                    let y = self.line.inline_box_top(box_index);
+                    // pyro: a span's edge is as tall as the span's content area on this line.
+                    let style_index =
+                        self.line.layout.data.inline_boxes[box_index].parent_style_index;
+                    let (y, height) = if inline_box.kind.is_span_edge() {
+                        let (top, bottom) = self.line.span_content_area(style_index);
+                        (top, bottom - top)
+                    } else {
+                        (self.line.inline_box_top(box_index), inline_box.height)
+                    };
 
                     self.item_index += 1;
-                    if inline_box.kind == InlineBoxKind::InFlow {
+                    if inline_box.kind.takes_inline_space() {
                         self.offset += inline_box.width;
                     }
                     return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {
                         x,
                         y,
                         width: inline_box.width,
-                        height: inline_box.height,
+                        height,
                         baseline: inline_box.baseline,
                         id: inline_box.id,
                         kind: inline_box.kind,
+                        style_index,
                     }));
                 }
                 LineItem::Run(run) => {

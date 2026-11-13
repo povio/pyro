@@ -5,6 +5,7 @@
 mod br_flex_item;
 mod container_queries;
 mod containing_block_chain;
+mod dotted_dashed_lines;
 mod font_optical_sizing;
 mod font_unicode_range;
 mod fractional_scroll_overflow;
@@ -12,6 +13,7 @@ mod hyphen_digit_breaks;
 mod image_input_replaced;
 mod incremental_construction;
 mod incremental_flex_overflow;
+mod inline_box_decorations;
 mod inline_svg_viewport;
 mod input_percentage_min_content;
 mod input_placeholder;

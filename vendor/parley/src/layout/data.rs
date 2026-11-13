@@ -445,6 +445,36 @@ struct ContentWidthsMeasurer {
     /// Indents for lines following a soft/hard wrap.
     soft_indent: f32,
     hard_indent: f32,
+
+    /// pyro: the last item measured is a span's start edge ([`InlineBoxKind::SpanStart`]): the
+    /// soft wrap opportunity before the content that follows was taken before the edge.
+    after_span_start: bool,
+}
+
+/// pyro: whether a line may wrap before the content that `items` starts with: text with a soft
+/// wrap opportunity before its first cluster, or an in-flow box. Span start edges and out-of-flow
+/// boxes before that content are passed over.
+fn wraps_before<B: Brush>(layout_data: &LayoutData<B>, items: &[LayoutItem]) -> bool {
+    for item in items {
+        match item.kind {
+            LayoutItemKind::TextRun => {
+                return layout_data
+                    .shaped_text
+                    .run_slice(item.index as u32)
+                    .shaped_clusters()
+                    .first()
+                    .is_some_and(|cluster| cluster.is_soft_wrap_opportunity_before());
+            }
+            LayoutItemKind::InlineBox => {
+                match layout_data.inline_boxes[item.index].inline_box.kind {
+                    InlineBoxKind::InFlow => return true,
+                    InlineBoxKind::SpanEnd => return false,
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
 }
 
 impl ContentWidthsMeasurer {
@@ -462,6 +492,7 @@ impl ContentWidthsMeasurer {
             soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
             hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
             line_has_content: false,
+            after_span_start: false,
         }
     }
 
@@ -538,6 +569,27 @@ impl ContentWidthsMeasurer {
                 }
                 LayoutItemKind::InlineBox => {
                     let inline_box = &layout_data.inline_boxes[item.index].inline_box;
+                    // pyro: a span's edge takes its width; white space before it does not hang.
+                    // The edges take wrap opportunities as the line breaker does.
+                    if inline_box.kind.is_span_edge() {
+                        if inline_box.kind == InlineBoxKind::SpanStart {
+                            if !self.after_span_start
+                                && self.text_wrap_mode == TextWrapMode::Wrap
+                                && wraps_before(layout_data, items.as_slice())
+                                && self.line_has_content
+                                && self.running_min_width >= 0.0
+                            {
+                                self.soft_break(true);
+                                self.line_has_content = false;
+                            }
+                            self.after_span_start = true;
+                        } else {
+                            self.after_span_start = false;
+                        }
+                        self.running_hanging_whitespace = 0.0;
+                        self.running_min_width += inline_box.width;
+                        self.running_max_width += inline_box.width;
+                    }
                     if inline_box.kind == InlineBoxKind::InFlow {
                         let next = items.as_slice().iter().find(|next| {
                             next.kind == LayoutItemKind::TextRun
@@ -612,7 +664,11 @@ impl ContentWidthsMeasurer {
                 skip_atom = false;
                 let prev_text_wrap_mode = self.text_wrap_mode;
                 self.text_wrap_mode = style.text_wrap_mode;
+                // pyro: the opportunity before text after a span's start edge was taken before
+                // the edge.
+                let after_span_start = core::mem::take(&mut self.after_span_start);
                 if prev_text_wrap_mode == TextWrapMode::Wrap
+                    && !after_span_start
                     && (cluster.is_soft_wrap_opportunity_before()
                         || style.overflow_wrap == OverflowWrap::Anywhere)
                 {
@@ -679,7 +735,9 @@ impl ContentWidthsMeasurer {
     fn measure_inline_box(&mut self, inline_box: &InlineBox, followed_by_inline_content: bool) {
         // Inline boxes have soft wrap opportunities on both sides.
         let wraps = self.text_wrap_mode == TextWrapMode::Wrap;
-        if wraps {
+        // pyro: the one before a box after a span's start edge was taken before the edge.
+        let after_span_start = core::mem::take(&mut self.after_span_start);
+        if wraps && !after_span_start {
             self.soft_break(self.line_has_content);
         }
         // Inline boxes don't hang.

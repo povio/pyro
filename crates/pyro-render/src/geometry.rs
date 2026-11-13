@@ -478,21 +478,26 @@ impl Geometry {
     }
 
     /// Union of the fragments of inline element `id` in its inline root's
-    /// text layout: glyph runs (content area: rounded ascent to descent) and atomic
-    /// inlines inside it.
+    /// text layout (see [`Geometry::inline_items`]), each grown by the
+    /// element's block-axis border and padding: its border box.
     fn inline_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
+        let (top, bottom) = inline_block_growth(doc, id);
         let mut acc: Option<Rect> = None;
         self.inline_items(doc, id, &mut |origin, _, r| {
-            let r = origin.transform_rect_bbox(r);
+            let r = origin.transform_rect_bbox(Rect::new(r.x0, r.y0 - top, r.x1, r.y1 + bottom));
             acc = Some(acc.map_or(r, |a| a.union(r)));
         })?;
         acc
     }
 
     /// Calls `f` with each fragment of inline element `id` in its inline
-    /// root's text layout (see [`Geometry::inline_union`]): the transform
-    /// from the root's text space to the document, the line index and the
-    /// fragment in text space (CSS px). `None` when `id` has no inline root.
+    /// root's text layout: the transform from the root's text space to the
+    /// document, the line index and the fragment in text space (CSS px).
+    /// The fragments are the glyph runs (content area: the ascent and
+    /// descent of the span's first font, as the lines round them) and atomic
+    /// inlines inside the element, and the edges of the spans inside it
+    /// (inline-axis margin, border and padding; its own without the margin).
+    /// `None` when `id` has no inline root.
     fn inline_items(&self, doc: &BaseDocument, id: NodeId, f: &mut dyn FnMut(Affine, usize, Rect)) -> Option<()> {
         // The nearest ancestor laying the element out inline: a DOM ancestor,
         // or an anonymous block one wraps its inline children in.
@@ -536,8 +541,11 @@ impl Geometry {
         for (index, line) in text.layout.lines().enumerate() {
             let origin = origin * line_slot(doc, root_id, &line.metrics(), scale);
             for item in line.items() {
-                let (start, r) = inline_item_rect(&item, scale);
+                let (start, mut r) = inline_item_rect(&line, &item, scale);
                 if within(start) {
+                    if start == Some(id) {
+                        r = span_edge_box(doc, &item, r, scale);
+                    }
                     f(origin, index, Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
                 }
             }
@@ -551,8 +559,8 @@ impl Geometry {
     /// containing-block chain (the points, not their bounding box, as
     /// Chromium's quads); other boxes keep [`Geometry::element_box`]. An
     /// inline box wrapping lines gets one quad per line: its fragments on
-    /// that line, grown by its vertical border and padding, and by its
-    /// start (end) border and padding on its first (last) line.
+    /// that line (its start and end edges among them), grown by its
+    /// vertical border and padding.
     pub(crate) fn element_quads(&self, doc: &BaseDocument, id: NodeId) -> Option<BoxQuads> {
         let node = doc.get_node(id)?;
         let style = node.primary_styles();
@@ -565,10 +573,10 @@ impl Geometry {
             let style = style?;
             let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
             let border = [
-                b.border_top_width.0.to_f64_px(),
-                b.border_right_width.0.to_f64_px(),
-                b.border_bottom_width.0.to_f64_px(),
-                b.border_left_width.0.to_f64_px(),
+                used_border(&b.border_top_width, b.border_top_style),
+                used_border(&b.border_right_width, b.border_right_style),
+                used_border(&b.border_bottom_width, b.border_bottom_style),
+                used_border(&b.border_left_width, b.border_left_style),
             ];
             let padding =
                 [side(&p.padding_top.0), side(&p.padding_right.0), side(&p.padding_bottom.0), side(&p.padding_left.0)];
@@ -592,16 +600,8 @@ impl Geometry {
             let count = lines.len();
             let fragments: Vec<[f64; 8]> = lines
                 .into_iter()
-                .enumerate()
-                .map(|(i, (origin, r))| {
-                    let left = if i == 0 { border[3] + padding[3] } else { 0.0 };
-                    let right = if i + 1 == count { border[1] + padding[1] } else { 0.0 };
-                    let r = Rect::new(
-                        r.x0 - left,
-                        r.y0 - border[0] - padding[0],
-                        r.x1 + right,
-                        r.y1 + border[2] + padding[2],
-                    );
+                .map(|(origin, r)| {
+                    let r = Rect::new(r.x0, r.y0 - border[0] - padding[0], r.x1, r.y1 + border[2] + padding[2]);
                     quad(origin, r)
                 })
                 .collect();
@@ -672,37 +672,83 @@ pub struct BoxQuads {
     pub fixed: bool,
 }
 
-/// One item of a line in its inline root's text space (device px): the
+/// One item of `line` in its inline root's text space (device px): the
 /// node it belongs to (a glyph run's text node or innermost element, an
-/// inline box's element) and its fragment rect.
+/// inline box's element, a span edge's span) and its fragment rect.
 pub(crate) fn inline_item_rect(
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
     item: &parley::PositionedLayoutItem<'_, blitz_dom::node::TextBrush>,
     scale: f64,
 ) -> (Option<NodeId>, Rect) {
     match item {
         parley::PositionedLayoutItem::GlyphRun(run) => {
-            // The content area from whole-pixel ascent and descent, as
-            // Chromium's font metrics and Parley's quantized lines round them
-            // (18px SF: 17 + 4, not 21.1875).
-            let metrics = run.run().font_metrics();
-            let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
-            (
-                Some(run.style().brush.id),
-                Rect::new(
-                    x,
-                    baseline - metrics.ascent.round() as f64,
-                    // Chromium's text fragments are their advance ceiled to
-                    // a layout unit (1/64 px).
-                    x + ((run.advance() as f64 / scale * 64.0 - 0.01).ceil() / 64.0) * scale,
-                    baseline + metrics.descent.round() as f64,
-                ),
-            )
+            // The content area of the span the run is in: the ascent and
+            // descent of its first font in whole CSS pixels, as Chromium's
+            // font metrics and Parley's quantized lines round them (18px SF:
+            // 17 + 4, not 21.1875), whatever font the run fell back to.
+            let (top, bottom) = line.span_content_area(run.style_index());
+            let x = run.offset() as f64;
+            // Chromium's text fragments are their advance ceiled to a layout
+            // unit (1/64 px).
+            let mut x1 = x + ((run.advance() as f64 / scale * 64.0 - 0.01).ceil() / 64.0) * scale;
+            // White space hanging at the line's end is in no fragment.
+            let metrics = line.metrics();
+            if !run.run().is_rtl() && metrics.hanging_advance > 0.0 {
+                x1 = x1.min((metrics.offset + metrics.advance - metrics.hanging_advance) as f64).max(x);
+            }
+            (Some(run.style().brush.id), Rect::new(x, top as f64, x1, bottom as f64))
         }
         parley::PositionedLayoutItem::InlineBox(b) => (
             Some(NodeId::from_u64(b.id)),
             Rect::new(b.x as f64, b.y as f64, (b.x + b.width) as f64, (b.y + b.height) as f64),
         ),
     }
+}
+
+/// The part of `r`, the rect of line item `item` (device px), that is in the
+/// border box of the span the item belongs to: an edge of the span without
+/// its margin; any other item whole.
+pub(crate) fn span_edge_box(
+    doc: &BaseDocument,
+    item: &parley::PositionedLayoutItem<'_, blitz_dom::node::TextBrush>,
+    r: Rect,
+    scale: f64,
+) -> Rect {
+    use style::values::generics::length::GenericMargin;
+    let parley::PositionedLayoutItem::InlineBox(b) = item else { return r };
+    if !b.kind.is_span_edge() {
+        return r;
+    }
+    let Some(style) = doc.get_node(NodeId::from_u64(b.id)).and_then(|n| n.primary_styles()) else { return r };
+    let margin = |v: &style::values::computed::Margin| match v {
+        GenericMargin::LengthPercentage(v) => v.resolve(style::values::computed::Length::new(0.0)).px() as f64 * scale,
+        _ => 0.0,
+    };
+    let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+    if (b.kind == parley::InlineBoxKind::SpanStart) != rtl {
+        Rect::new(r.x0 + margin(&style.get_margin().margin_left), r.y0, r.x1, r.y1)
+    } else {
+        Rect::new(r.x0, r.y0, r.x1 - margin(&style.get_margin().margin_right), r.y1)
+    }
+}
+
+/// The block-axis border and padding (CSS px) an inline element's fragments
+/// grow by to its border box: before and after them.
+pub(crate) fn inline_block_growth(doc: &BaseDocument, id: NodeId) -> (f64, f64) {
+    let Some(style) = doc.get_node(id).and_then(|n| n.primary_styles()) else { return (0.0, 0.0) };
+    let side = |v: &style::values::computed::LengthPercentage| {
+        v.resolve(style::values::computed::Length::new(0.0)).px() as f64
+    };
+    let (b, p) = (style.get_border(), style.get_padding());
+    (
+        used_border(&b.border_top_width, b.border_top_style) + side(&p.padding_top.0),
+        used_border(&b.border_bottom_width, b.border_bottom_style) + side(&p.padding_bottom.0),
+    )
+}
+
+/// A border side's used width in CSS px: none where the side has no style.
+fn used_border(width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle) -> f64 {
+    if style.none_or_hidden() { 0.0 } else { width.0.to_f64_px() }
 }
 
 /// The inline root's line coordinates (x inline, y block, in CSS px from the first line box) in
