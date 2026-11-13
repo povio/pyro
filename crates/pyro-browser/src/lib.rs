@@ -64,10 +64,32 @@ struct ContextState {
     id: ContextId,
     loader: Option<Rc<dyn ResourceLoader>>,
     net: Option<pyro_net::NetClient>,
+    /// The bodies its pages' layouts loaded, shared with the contexts that
+    /// go out with the same network identity ([`Browser::layout_bodies_for`]).
+    layout_bodies: std::sync::Arc<pyro_dom::layout::SubresourceBodies>,
     local_storage: pyro_webapi::StorageNamespace,
     /// Permissions and clipboard its pages share.
     services: Rc<pyro_webapi::ContextServices>,
     init_scripts: Vec<InitScript>,
+}
+
+/// A request for a sub-resource of `frame`'s document that the engine needs
+/// itself (a renderer's or layout's image, font or imported sheet): the
+/// document's frame and loader, its URL as referrer.
+fn subresource_request(frame: &Frame, page: PageId, url: String, kind: ResourceKind) -> FetchRequest {
+    FetchRequest {
+        post: None,
+        url,
+        kind,
+        page,
+        referrer: Some(frame.base_url.clone()),
+        frame_id: Some(frame.id.0.clone()),
+        loader_id: Some(frame.loader_id.0.clone()),
+        crossorigin: None,
+        initiator: None,
+        module: None,
+        part: None,
+    }
 }
 
 /// CDP frame id (upstream uses a stable string per frame).
@@ -733,6 +755,7 @@ impl BrowserThread {
                 id: DEFAULT_CONTEXT,
                 loader: None,
                 net: None,
+                layout_bodies: Default::default(),
                 local_storage: Default::default(),
                 services: Default::default(),
                 init_scripts: Vec::new(),
@@ -925,6 +948,7 @@ impl Browser {
             id,
             loader: None,
             net: None,
+            layout_bodies: Default::default(),
             local_storage,
             services: Default::default(),
             init_scripts: Vec::new(),
@@ -941,19 +965,56 @@ impl Browser {
 
     fn attach_network_with(&mut self, id: ContextId, net: ContextNet) -> std::io::Result<()> {
         let mut config = self.net_config.clone().unwrap_or_default();
+        let own_identity = net.proxy.is_some() || net.user_agent.is_some();
         if let Some(proxy) = net.proxy {
             config.proxy = proxy;
         }
         if let Some(user_agent) = net.user_agent {
             config.user_agent = user_agent;
         }
+        if own_identity {
+            // The opt-in cross-context asset cache would answer its requests
+            // with what other identities fetched, through their proxies.
+            config.shared_asset_cache = None;
+        }
+        let layout_bodies = Self::layout_bodies_for(own_identity, &config);
         let client = pyro_net::NetClient::new(config)?;
         client.set_ignore_certificate_errors(self.ignore_certificate_errors);
         if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
             c.loader = Some(Rc::new(NetLoader::new(client.clone())));
             c.net = Some(client);
+            c.layout_bodies = layout_bodies;
         }
         Ok(())
+    }
+
+    /// The layout bodies of a context going out with `config` (see
+    /// `pyro_dom::layout::SubresourceBodies`). One with a proxy or user agent
+    /// of its own (`own_identity`) gets bodies of its own, gone with it: a
+    /// scraper's identities share nothing, not even two through the same
+    /// proxy (each may be a session of its own). The contexts that go out as
+    /// the browser does share one set per process and browser-wide proxy and
+    /// user agent, kept for the process's life, so that a later context,
+    /// connection or fork lays out with them at once, as before contexts had
+    /// identities of their own.
+    fn layout_bodies_for(
+        own_identity: bool,
+        config: &pyro_net::NetConfig,
+    ) -> std::sync::Arc<pyro_dom::layout::SubresourceBodies> {
+        type Shared =
+            Vec<((Option<pyro_net::ProxyConfig>, String), std::sync::Arc<pyro_dom::layout::SubresourceBodies>)>;
+        static SHARED: std::sync::Mutex<Shared> = std::sync::Mutex::new(Vec::new());
+        if own_identity {
+            return Default::default();
+        }
+        let identity = (config.proxy.clone(), config.user_agent.clone());
+        let mut shared = SHARED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, bodies)) = shared.iter().find(|(i, _)| *i == identity) {
+            return bodies.clone();
+        }
+        let bodies = std::sync::Arc::<pyro_dom::layout::SubresourceBodies>::default();
+        shared.push((identity, bodies.clone()));
+        bodies
     }
 
     /// Closes a context: its pages are closed and its network client dropped.
@@ -1001,7 +1062,7 @@ impl Browser {
     /// for a renderer that needs bytes the DOM does not keep (screenshots:
     /// images, fonts, imported sheets). `done` runs on this thread.
     pub fn fetch_subresource(&mut self, page: PageId, url: String, kind: ResourceKind, done: FetchDone) {
-        let Some(frame) = self.page(page).map(|p| p.main_frame.clone()) else {
+        let Some(request) = self.page(page).map(|p| subresource_request(&p.main_frame, page, url, kind)) else {
             self.scheduler().post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("page is gone".into())));
             return;
         };
@@ -1010,20 +1071,45 @@ impl Browser {
                 .post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
         };
-        let request = FetchRequest {
-            post: None,
-            url,
-            kind,
-            page,
-            referrer: Some(frame.base_url.clone()),
-            frame_id: Some(frame.id.0.clone()),
-            loader_id: Some(frame.loader_id.0.clone()),
-            crossorigin: None,
-            initiator: None,
-            module: None,
-            part: None,
-        };
         loader.fetch(self, request, done);
+    }
+
+    /// Loads what the layout of `frame`'s document is laid out with (an
+    /// image, a font, an imported sheet) as [`Browser::fetch_subresource`]
+    /// does for the renderer: through the page's browser context (its proxy,
+    /// user agent, cookies, headers, offline state and interception),
+    /// attributed to that document's frame. Only while that document (the one
+    /// `loader` loaded) is the frame's; otherwise `done` is dropped uncalled.
+    /// `done` gets the body of a 2xx response.
+    pub(crate) fn fetch_layout_subresource(
+        &mut self,
+        frame: FrameKey,
+        loader: &LoaderId,
+        url: String,
+        kind: ResourceKind,
+        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+    ) {
+        let request = {
+            let Some(state) = self.doc(frame) else { return };
+            if state.main_frame.loader_id != *loader {
+                return;
+            }
+            subresource_request(&state.main_frame, frame.page, url, kind)
+        };
+        let Some(resource_loader) = self.loader_for(frame) else {
+            done(Err("no resource loader".into()));
+            return;
+        };
+        resource_loader.fetch(
+            self,
+            request,
+            Box::new(move |_, result| {
+                done(result.and_then(|r| match r.status {
+                    200..=299 => Ok(r.body),
+                    status => Err(format!("HTTP {status}")),
+                }))
+            }),
+        );
     }
 
     /// Creates a page in context `context`.

@@ -61,9 +61,10 @@ export type Profile = {
   base?: string;
   /**
    * The `User-Agent` of every request of the profile's pages (the document,
-   * its subresources, fetch and XHR, the `setup` steps' and every page's
-   * since) and their `navigator.userAgent`, instead of Pyro's own. Part of
-   * the definition: under a shared name a different one is refused.
+   * its subresources, fetch and XHR, what layout, screenshots and PDFs load,
+   * the `setup` steps' and every page's since) and their
+   * `navigator.userAgent`, instead of Pyro's own. Part of the definition:
+   * under a shared name a different one is refused.
    */
   userAgent?: string;
   /**

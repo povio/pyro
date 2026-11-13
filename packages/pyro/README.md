@@ -52,6 +52,7 @@ test.concurrent('closes a position', async () => {
   same definition after fixing the app, or a changed one) tries again.
 - **Identities.** `userAgent` in a profile is the `User-Agent` of every
   request its pages make (the document, subresources, fetch and XHR, the
+  images, fonts and imported sheets layout, screenshots and PDFs load, the
   `setup` steps' and, in fork mode, every page's since) and what
   `navigator.userAgent` reports; `proxyServer` (`http://[user:pass@]host:port`)
   and `proxyBypassList` send those requests through a proxy of its own
