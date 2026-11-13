@@ -32,7 +32,7 @@ index 5a82823024..7c13bb0dcf 100644
    const partiesResponsePromise = waitForPositionPartiesResponse(page, positionId);
 -  await chooseOption(page, partyLabel);
 +  try { await chooseOption(page, partyLabel); } finally {
-+    console.log("LP-PARTY-SCROLL " + JSON.stringify(await page.evaluate(() => {
++    console.log("Pyro-PARTY-SCROLL " + JSON.stringify(await page.evaluate(() => {
 +      const d=(window as any).__lpPartyScroll;d.record('after-choice');return {rows:d.rows,dropped:d.getDropped()};
 +    })));
 +  }

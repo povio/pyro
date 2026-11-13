@@ -29,9 +29,8 @@ A cold JavaScriptCore build takes about 7 minutes on a hosted runner (measured o
 the first run). `jsc.yml` rebuilds on `main` whenever the patches or
 `scripts/jsc/build.sh` change, so a tag normally finds the build cached.
 
-The npm package's arm64 browser is the fork build with its JavaScriptCore
-bundled (`scripts/release/bundle-jsc.sh`); its Intel browser is the standard
-build. Every release archive's client therefore carries the fork browser, but
+The npm package's arm64 browser is the fork build, with the patched
+JavaScriptCore linked into it; its Intel browser is the standard build. Every release archive's client therefore carries the fork browser, but
 launches the browser of its own archive first.
 Intel binaries are inspected in CI but never executed (no Rosetta on the
 runners).
@@ -41,8 +40,8 @@ for a release built outside CI.
 
 ## Contents
 
-Release assets contain a render-enabled `lightningpanda`, the matching
-`lp-snapshot-compare`, and one identical `lightning-panda` payload. For npm
+Release assets contain a render-enabled `pyro`, the matching
+`pyro-snapshot-compare`, and one identical `pyro` payload. For npm
 releases, the [tag-triggered workflow](NPM_PUBLISHING.md#release-tags) sets all
 versions automatically. For manual archive builds, run
 `node scripts/npm/release.mjs vX.Y.Z --write` and `cargo update --workspace`
@@ -51,37 +50,40 @@ input hashes and validation results; packaging alone is not functional testing.
 
 Publish these six assets for a release version `X.Y.Z`:
 
-- `lightningpanda-rust-vX.Y.Z-macos-arm64.tar.gz`: system JavaScriptCore.
-- `lightningpanda-rust-vX.Y.Z-macos-x64.tar.gz`: system JavaScriptCore.
-- `lightningpanda-rust-vX.Y.Z-macos-arm64-fork.tar.gz`: bundled patched JavaScriptCore.
-- `povio-lightning-panda-X.Y.Z.tgz`: the same client included in all binary archives.
-- `lightningpanda-jsc-source-vX.Y.Z.tar.gz`: matching patched JavaScriptCore source.
+- `pyro-rust-vX.Y.Z-macos-arm64.tar.gz`: system JavaScriptCore.
+- `pyro-rust-vX.Y.Z-macos-x64.tar.gz`: system JavaScriptCore.
+- `pyro-rust-vX.Y.Z-macos-arm64-fork.tar.gz`: patched JavaScriptCore, linked statically.
+- `povio-pyro-X.Y.Z.tgz`: the same client included in all binary archives.
+- `pyro-jsc-source-vX.Y.Z.tar.gz`: matching patched JavaScriptCore source.
 - `SHA256SUMS.txt`: hashes of the five payload assets after signing and packing.
 
-The standard builds use `LP_JSC=system`; the fork build uses the matching
-`LP_JSC_DIR`. They are separate builds: source JSC selects a different module-loader
-shim and timer integration, so changing only a binary's dynamic-library path does
-not convert it to a system-JSC build. Build the browser and comparison worker with
-`--features render -p lightningpanda -p lp-render` from the repository directory so
+The standard builds use `PYRO_JSC=system`; the fork build uses the matching
+`PYRO_JSC_DIR`. They are separate builds: source JSC selects a different module-loader
+shim and timer integration, and is linked into the binary. Build the browser and comparison worker with
+`--features render -p pyro -p pyro-render` from the repository directory so
 its Cargo linker/signing configuration applies. Keep each completed build in a
 separate staging location before building another variant.
 
-Stage both standard macOS binaries in `packages/lightning-panda/native/` as
+Stage both standard macOS binaries in `packages/pyro/native/` as
 described in [NPM_PUBLISHING.md](NPM_PUBLISHING.md), then use
 `scripts/pack-test-client.sh OUT_DIR` once. Unpack that exact resulting TGZ as
-`lightning-panda/` beside the browser in every platform archive. Keep `LICENSE`
-and `NOTICE` in each archive. Signing or relocation must affect staged copies,
-never the original build outputs or the cached JavaScriptCore library.
+`pyro-client/` beside the browser in every platform archive. Keep `LICENSE`
+and `NOTICE` in each archive. Signing must affect staged copies, never the
+original build outputs.
 
-## Bundled JavaScriptCore
+## Patched JavaScriptCore
 
-Place the copied patched library at `lib/libJavaScriptCore.dylib`. Change the
-copied browser's dependency to `@loader_path/lib/libJavaScriptCore.dylib` and the
-copied library's install ID to `@rpath/libJavaScriptCore.dylib`. The comparison
-worker currently has no JavaScriptCore dependency. Re-sign the relocated library,
-then both executables; executables retain `scripts/macos/jit.entitlements`.
-Verify signatures and reject dynamic dependencies on a developer's home directory
-or build cache.
+The fork browser holds the patched JavaScriptCore: `scripts/jsc/build.sh` builds
+one static archive (`lib/libJavaScriptCore.a`: JavaScriptCore, WTF, bmalloc) and
+the build links it in, so the archive ships no library beside the browser (macOS;
+Linux ships the ICU libraries the browser loads in `lib/`,
+`scripts/release/bundle-icu-linux.sh`). The executables keep the signature and
+`scripts/macos/jit.entitlements` the build's linker wrapper gave them. Verify
+signatures and reject dynamic dependencies outside `/System` and `/usr/lib`.
+
+JavaScriptCore is LGPL: a user who rebuilds it from the source asset relinks the
+browser from this repository's source (AGPL, public) with `PYRO_JSC_DIR` pointing at
+their build.
 
 The fork archive includes upstream license/notices files under
 `third-party/JavaScriptCore/` and a pointer to its matching source asset. Preserve
@@ -98,15 +100,16 @@ same JSC-only CMake configuration; do not apply the patches again:
 cmake -G Ninja -S webkit -B build \
   -DPORT=JSCOnly -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-  -DENABLE_STATIC_JSC=OFF -DDEVELOPER_MODE=OFF -DENABLE_TOOLS=OFF
-ninja -C build -j 2 JavaScriptCore
+  -DENABLE_STATIC_JSC=ON -DDEVELOPER_MODE=OFF -DENABLE_TOOLS=OFF
+pyro/scripts/jsc/archive.sh build out/lib/libJavaScriptCore.a
 ```
 
 Use a real Ruby executable if the build environment's version-manager shim does
-not work from the build directory. The built library is under
-`build/lib/JavaScriptCore.framework/Versions/`; copy its `JavaScriptCore` binary,
-set its install ID as described above and sign the copy. The accompanying
-`lightningpanda/scripts/jsc/build.sh` can instead fetch a **fresh** upstream
+not work from the build directory. `archive.sh` builds the static libraries and
+merges them, with the JIT subtarget's objects, into the one archive the browser
+links (`PYRO_JSC_DIR=out`, with `inputs/` copied from a released build or from
+`crates/pyro-jsc-sys/webkit`). The accompanying
+`pyro/scripts/jsc/build.sh` can instead fetch a **fresh** upstream
 checkout and apply the recorded inputs; do not point it at the supplied
 already-patched tree.
 
@@ -116,7 +119,7 @@ Extract archives into a fresh directory and inspect architecture, dependencies,
 code signatures and JIT entitlements. Smoke the extracted ARM builds with the
 matching SDK. The fork archive must report `fork: true`; standard archives report
 `fork: false`. Exercise the bundled client's automatic binary discovery as well
-as explicit `LIGHTNINGPANDA_BIN`, prepared-page retirement and screenshot capture
+as explicit `PYRO_BIN`, prepared-page retirement and screenshot capture
 and comparison. Confirm the fork process loads its bundled library rather than a
 build-cache path. Check the source archive includes its recorded revision,
 patches, introduced files and notices.

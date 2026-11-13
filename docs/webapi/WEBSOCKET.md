@@ -1,8 +1,8 @@
 # WebSocket and CloseEvent
 
-`crates/lp-webapi/src/websocket.rs` and `websocket.js` implement the HTML
+`crates/pyro-webapi/src/websocket.rs` and `websocket.js` implement the HTML
 `WebSocket` interface and `CloseEvent` in windows and dedicated workers. The
-connection (RFC 6455) is lp-net's: `crates/lp-net/src/websocket.rs`, on the
+connection (RFC 6455) is pyro-net's: `crates/pyro-net/src/websocket.rs`, on the
 browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
 
 - **Lazy.** Both interfaces are made in JS on a realm's first read of either
@@ -40,7 +40,7 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
   - Redirects are not followed.
   - The response's `Set-Cookie` headers are stored when the `open` task runs, so
     script never sees them earlier (WPT `cookies/007`).
-- **HTTP/2 (RFC 8441).** `crates/lp-net/src/h2_probe.rs`.
+- **HTTP/2 (RFC 8441).** `crates/pyro-net/src/h2_probe.rs`.
   - As in Chrome, a `wss:` socket uses HTTP/2 only when the context's pool
     already holds an HTTP/2 connection to the origin (made by an earlier
     request) whose server sent `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`. No
@@ -94,7 +94,7 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
   - A received Close is echoed with its code. Its code is checked with
     Chromium's rules, and its reason must be UTF-8.
   - A Close without a code reports 1005.
-- **permessage-deflate (RFC 7692).** `crates/lp-net/src/ws_deflate.rs`.
+- **permessage-deflate (RFC 7692).** `crates/pyro-net/src/ws_deflate.rs`.
   - The response's `Sec-WebSocket-Extensions` is checked as Chromium checks
     it. The connection fails, with Chromium's message, on a value that does
     not parse, an extension other than `permessage-deflate`, a second

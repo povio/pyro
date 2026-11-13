@@ -38,18 +38,18 @@ for this batch, and no cause is claimed. The business-partner table is not one
 of the components that set `renderer="dom"` at this TOS commit, so the W3-03
 uninvoiced-charges explanation is not assumed to apply.
 
-## W3-08: one lightningpanda regression, partly fixed in PR #86
+## W3-08: one pyro regression, partly fixed in PR #86
 
 Main fails "Quote Finances FE E2E › updates currencies and exchange rates from
 rendered Finances controls"; upstream passes it.
 
 ```
-press: Protocol error (Input.dispatchKeyEvent): Input editing commands, timestamps, system keys or alternate key metadata is not supported by lightningpanda
+press: Protocol error (Input.dispatchKeyEvent): Input editing commands, timestamps, system keys or alternate key metadata is not supported by pyro
   at e2e/fixtures/form.ts:660  await page.keyboard.press("Escape")
 ```
 
 - **Cause.** On macOS, Playwright 1.59.1 attaches the editing command
-  `["cancelOperation"]` to Escape. lp-cdp accepts editing commands only where
+  `["cancelOperation"]` to Escape. pyro-cdp accepts editing commands only where
   the engine's key default action performs them, and Escape was not listed.
 - **Partial fix: draft PR #86** (head `036476888739d35306a5398dac440d9ee9cf9935`)
   accepts Escape's `cancelOperation`. Its build on the W3 host (SHA-256
@@ -65,7 +65,7 @@ press: Protocol error (Input.dispatchKeyEvent): Input editing commands, timestam
   - The same case now stops earlier, at
     `form.ts:616 page.keyboard.press("ArrowDown")` (`["moveDown"]`).
 - **Remaining work.** ArrowUp/ArrowDown first need an engine caret default
-  action in lp-webapi. W2 owns that crate and is implementing it; lp-cdp
+  action in pyro-webapi. W2 owns that crate and is implementing it; pyro-cdp
   allowlist entries follow after that.
 - **Not yet verified:** the TOS case passing with both parts. These PR runs are
   candidate evidence, separate from the main results.
@@ -122,7 +122,7 @@ W2 and worker 3 have agreed to split the remaining 53 uncovered files:
     140 crates.
   - Signing: ad hoc, with the entitlement `com.apple.security.cs.allow-jit`. JIT
     use at runtime was not measured separately.
-- **Fixture:** `/private/tmp/lp-w3-lfix-1`, reused from the earlier W3 batches.
+- **Fixture:** `/private/tmp/pyro-w3-lfix-1`, reused from the earlier W3 batches.
   Its e2e tree is unchanged.
 - **Database cleanup:** each run created one database and dropped it by exact
   name. The test role then owned 0 databases.
@@ -139,7 +139,7 @@ W2 and worker 3 have agreed to split the remaining 53 uncovered files:
   | `w3l08` | 64.3 s | 38.6 s |
   | `w3l08u` | 46.7 s | 20.7 s |
 
-- **Artifacts:** on the W3 host in `/private/tmp/lp-w3-l05` … `-l08u`, plus
+- **Artifacts:** on the W3 host in `/private/tmp/pyro-w3-l05` … `-l08u`, plus
   `-l08e` and `-l08er`.
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and

@@ -1,0 +1,161 @@
+diff --git a/Source/JavaScriptCore/runtime/IntlNumberFormat.h b/Source/JavaScriptCore/runtime/IntlNumberFormat.h
+--- a/Source/JavaScriptCore/runtime/IntlNumberFormat.h
++++ b/Source/JavaScriptCore/runtime/IntlNumberFormat.h
+@@ -164,7 +164,16 @@
+ 
+     DECLARE_VISIT_CHILDREN;
+ 
+-    void initializeNumberFormat(JSGlobalObject*, JSValue locales, JSValue optionsValue);
++    // pyro: `No` resolves the options and builds the ICU skeleton without opening the
++    // formatter (openNumberFormatter()), so Number.prototype.toLocaleString can share a formatter.
++    enum class OpenFormatter : bool { No, Yes };
++    void initializeNumberFormat(JSGlobalObject*, JSValue locales, JSValue optionsValue, OpenFormatter = OpenFormatter::Yes);
++    void openNumberFormatter(JSGlobalObject*);
++    // Whether this and `other` format alike: the same ICU skeleton and data locale.
++    bool hasSameFormatterAs(const IntlNumberFormat& other) const
++    {
++        return m_numberFormatterSkeleton == other.m_numberFormatterSkeleton && m_dataLocale == other.m_dataLocale && m_numberingSystem == other.m_numberingSystem;
++    }
+     JSValue format(JSGlobalObject*, double) const;
+     JSValue format(JSGlobalObject*, IntlMathematicalValue&&) const;
+     JSValue formatToParts(JSGlobalObject*, double, JSString* sourceType = nullptr) const;
+diff --git a/Source/JavaScriptCore/runtime/IntlNumberFormat.cpp b/Source/JavaScriptCore/runtime/IntlNumberFormat.cpp
+--- a/Source/JavaScriptCore/runtime/IntlNumberFormat.cpp
++++ b/Source/JavaScriptCore/runtime/IntlNumberFormat.cpp
+@@ -291,7 +291,7 @@
+ }
+ 
+ // https://tc39.es/ecma402/#sec-intl.numberformat
+-void IntlNumberFormat::initializeNumberFormat(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue)
++void IntlNumberFormat::initializeNumberFormat(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue, OpenFormatter openFormatter)
+ {
+     VM& vm = globalObject->vm();
+     auto scope = DECLARE_THROW_SCOPE(vm);
+@@ -536,21 +536,30 @@
+ 
+     String skeleton = skeletonBuilder.toString();
+     dataLogLnIf(IntlNumberFormatInternal::verbose, skeleton);
+-    StringView skeletonView(skeleton);
++    // Defer creation of the range formatter; it is only needed for formatRange / formatRangeToParts.
++    m_numberFormatterSkeleton = WTF::move(skeleton);
++    m_dataLocaleWithExtensions = WTF::move(dataLocaleWithExtensions);
++
++    if (openFormatter == OpenFormatter::Yes)
++        RELEASE_AND_RETURN(scope, openNumberFormatter(globalObject));
++}
++
++void IntlNumberFormat::openNumberFormatter(JSGlobalObject* globalObject)
++{
++    VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
++    StringView skeletonView(m_numberFormatterSkeleton);
+     auto upconverted = skeletonView.upconvertedCharacters();
+ 
+     UErrorCode status = U_ZERO_ERROR;
+-    m_numberFormatter = std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>(unumf_openForSkeletonAndLocale(upconverted.get(), skeletonView.length(), dataLocaleWithExtensions.data(), &status));
++    m_numberFormatter = std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>(unumf_openForSkeletonAndLocale(upconverted.get(), skeletonView.length(), m_dataLocaleWithExtensions.data(), &status));
+     if (U_FAILURE(status)) {
+         throwTypeError(globalObject, scope, "Failed to initialize NumberFormat"_s);
+         return;
+     }
+ 
+     vm.heap.reportExtraMemoryAllocated(this, estimatedUNumberFormatterSize);
+-
+-    // Defer creation of the range formatter; it is only needed for formatRange / formatRangeToParts.
+-    m_numberFormatterSkeleton = WTF::move(skeleton);
+-    m_dataLocaleWithExtensions = WTF::move(dataLocaleWithExtensions);
+ }
+ 
+ UNumberRangeFormatter* IntlNumberFormat::createNumberRangeFormatterIfNecessary(JSGlobalObject* globalObject)
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.h b/Source/JavaScriptCore/runtime/JSGlobalObject.h
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.h
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.h
+@@ -289,6 +289,12 @@
+     WriteBarrier<IntlNumberFormat> m_cachedToLocaleStringNumberFormat;
+     String m_cachedToLocaleStringNumberFormatLocale;
+     uint64_t m_cachedToLocaleStringNumberFormatLanguagesEpoch { 0 };
++    // pyro: the number formats Number.prototype.toLocaleString(locales, options) used last,
++    // whose ICU formatters a call resolving to the same skeleton and locale formats with
++    // (toLocaleStringNumberFormatWithOptions()). Replaced in turn.
++    std::array<WriteBarrier<IntlNumberFormat>, 4> m_toLocaleStringNumberFormatsWithOptions;
++    unsigned m_nextToLocaleStringNumberFormatWithOptions { 0 };
++    uint64_t m_toLocaleStringNumberFormatsWithOptionsLanguagesEpoch { 0 };
+ 
+     LazyClassStructure m_durationStructure;
+     LazyClassStructure m_instantStructure;
+@@ -782,6 +788,7 @@
+     IntlDateTimeFormat* defaultTimeFormat() const LIFETIME_BOUND { return m_defaultTimeFormat.get(this); }
+     IntlNumberFormat* defaultNumberFormat() const LIFETIME_BOUND { return m_defaultNumberFormat.get(this); }
+     IntlNumberFormat* cachedToLocaleStringNumberFormat(JSString* locale);
++    IntlNumberFormat* toLocaleStringNumberFormatWithOptions(JSValue locales, JSValue options);
+ 
+     NullGetterFunction* nullGetterFunction() const LIFETIME_BOUND { return m_nullGetterFunction.get(); }
+     NullSetterFunction* nullSetterFunction() const LIFETIME_BOUND { return m_nullSetterFunction.get(); }
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+@@ -2912,6 +2912,8 @@
+     thisObject->m_defaultTimeFormat.visit(visitor);
+     thisObject->m_defaultNumberFormat.visit(visitor);
+     visitor.append(thisObject->m_cachedToLocaleStringNumberFormat);
++    for (auto& numberFormat : thisObject->m_toLocaleStringNumberFormatsWithOptions)
++        visitor.append(numberFormat);
+     thisObject->m_collatorStructure.visit(visitor);
+     thisObject->m_displayNamesStructure.visit(visitor);
+     thisObject->m_durationFormatStructure.visit(visitor);
+@@ -3171,6 +3173,38 @@
+     m_cachedToLocaleStringNumberFormatLocale = WTF::move(localeString);
+     m_cachedToLocaleStringNumberFormatLanguagesEpoch = vm.intlCache().languagesEpoch();
+     m_cachedToLocaleStringNumberFormat.set(vm, this, numberFormat);
++    return numberFormat;
++}
++
++// pyro: Number.prototype.toLocaleString(locales, options) reads the options as the spec says (getters and
++// proxies observe those reads), but a fresh ICU formatter costs its first format a DecimalFormatSymbols load from the
++// locale data: about 170 us with the system ICU, for every call. Formatting does not observe which formatter formats,
++// so a call whose options resolve to the skeleton and data locale of a recent call formats with that call's formatter.
++IntlNumberFormat* JSGlobalObject::toLocaleStringNumberFormatWithOptions(JSValue locales, JSValue options)
++{
++    VM& vm = this->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
++    IntlNumberFormat* numberFormat = IntlNumberFormat::create(vm, numberFormatStructure());
++    numberFormat->initializeNumberFormat(this, locales, options, IntlNumberFormat::OpenFormatter::No);
++    RETURN_IF_EXCEPTION(scope, nullptr);
++
++    if (!vm.intlCache().hasLanguageChange() && m_toLocaleStringNumberFormatsWithOptionsLanguagesEpoch == vm.intlCache().languagesEpoch()) {
++        for (auto& recent : m_toLocaleStringNumberFormatsWithOptions) {
++            if (recent && recent->hasSameFormatterAs(*numberFormat))
++                return recent.get();
++        }
++    } else {
++        for (auto& recent : m_toLocaleStringNumberFormatsWithOptions)
++            recent.clear();
++        m_toLocaleStringNumberFormatsWithOptionsLanguagesEpoch = vm.intlCache().languagesEpoch();
++    }
++
++    numberFormat->openNumberFormatter(this);
++    RETURN_IF_EXCEPTION(scope, nullptr);
++
++    m_toLocaleStringNumberFormatsWithOptions[m_nextToLocaleStringNumberFormatWithOptions].set(vm, this, numberFormat);
++    m_nextToLocaleStringNumberFormatWithOptions = (m_nextToLocaleStringNumberFormatWithOptions + 1) % m_toLocaleStringNumberFormatsWithOptions.size();
+     return numberFormat;
+ }
+ 
+diff --git a/Source/JavaScriptCore/runtime/NumberPrototype.cpp b/Source/JavaScriptCore/runtime/NumberPrototype.cpp
+--- a/Source/JavaScriptCore/runtime/NumberPrototype.cpp
++++ b/Source/JavaScriptCore/runtime/NumberPrototype.cpp
+@@ -642,10 +642,8 @@
+         numberFormat = globalObject->defaultNumberFormat();
+     else if (locales.isString() && options.isUndefined())
+         numberFormat = globalObject->cachedToLocaleStringNumberFormat(asString(locales));
+-    else {
+-        numberFormat = IntlNumberFormat::create(vm, globalObject->numberFormatStructure());
+-        numberFormat->initializeNumberFormat(globalObject, locales, options);
+-    }
++    else
++        numberFormat = globalObject->toLocaleStringNumberFormatWithOptions(locales, options);
+     RETURN_IF_EXCEPTION(scope, { });
+ 
+     RELEASE_AND_RETURN(scope, JSValue::encode(numberFormat->format(globalObject, x)));

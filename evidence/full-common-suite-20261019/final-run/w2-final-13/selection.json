@@ -1,6 +1,6 @@
 {
   "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
-  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "manifest_read_from": "/private/tmp/pyro-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
   "recorded_utc": "2026-10-19T04:02:50+00:00",
   "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
   "criteria": "Final frozen W2 whole-file common batch w2-final-13",

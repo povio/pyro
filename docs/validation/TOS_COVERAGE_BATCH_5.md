@@ -28,13 +28,13 @@ All four main failures are rewrite-specific:
     clicked the focused switch checkbox.
   - Fix: Space now clicks focused buttons and checkable inputs on keyup, as in
     Blink.
-- **CDP orientation override (W3 / lp-cdp).** Affected case: notification-settings
+- **CDP orientation override (W3 / pyro-cdp).** Affected case: notification-settings
   "automatically saves changes on mobile".
   - `page.setViewportSize` sends `Emulation.setDeviceMetricsOverride` with
     `screenOrientation {angle: 0, type: "landscapePrimary"}` and a portrait
     390x844 screen, and the rewrite rejected that combination.
   - W3 reproduced it. Upstream stores the override for `screen.orientation`. The
-    fix belongs to W3's lp-cdp increment, which will include a minimal
+    fix belongs to W3's pyro-cdp increment, which will include a minimal
     `Viewport.orientation`/`Screen.orientation` change reviewed by W2.
 
 Integrated main `b0f0319` contains PR #50 (with its review repair) and W3's
@@ -42,11 +42,11 @@ orientation PR #52. It passes all 13 cases, matching upstream.
 - Release binary: SHA-256
   `6210596644b56bf0e5865ab5c66eef7374d114215908b7380dba218635b3d8a2`, built from a
   fresh `--no-hardlinks` clone with its own target directory.
-- Fixture: a fresh, clean `/private/tmp/lp-tos-f9f-batch5-main`.
+- Fixture: a fresh, clean `/private/tmp/pyro-tos-f9f-batch5-main`.
 - Run: one Playwright worker and isolated native PostgreSQL. After cleanup the
   test role owned zero databases.
 - Time: 28.4 s Playwright and 67.0 s whole harness.
-- Artifacts: `/private/tmp/lp-tos-batch5-main`.
+- Artifacts: `/private/tmp/pyro-tos-batch5-main`.
 
 ## Provenance
 
@@ -67,13 +67,13 @@ orientation PR #52. It passes all 13 cases, matching upstream.
   | `89ef88f` | `946dbc74667abbc1d1609b36251415e0952bd3fd792417d14b3b8e50e79af6c7` |
   | upstream | `7f76ccfece22e7130d39c8884321f5dea51f4bb2e195542944c3440a86dc4339` |
 
-- Fixture: one fresh `git worktree add --detach` (`/private/tmp/lp-tos-f9f-batch5`),
+- Fixture: one fresh `git worktree add --detach` (`/private/tmp/pyro-tos-f9f-batch5`),
   clean before the main run.
   - Because disk space was low, the upstream and `89ef88f` runs reused this
     worktree.
   - Before those runs, its only change was the harness-generated
     `apps/pdfgen/src/data/common/common.models.ts`, which was left in place.
-- Setup: one Playwright worker, native PostgreSQL 17 with the `lp_bench` role, and
+- Setup: one Playwright worker, native PostgreSQL 17 with the `pyro_bench` role, and
   a per-run slug and template database. After each cleanup the test role owned
   zero databases.
 - Host: MacBookAir.localdomain, Apple M1, 8 GiB.
@@ -89,12 +89,12 @@ orientation PR #52. It passes all 13 cases, matching upstream.
 - Disk: before the `89ef88f` work, free space was low. The parent authorized
   removing only `deps`, `build`, `incremental` and `.fingerprint` under ten older
   completed browser clones' `target/release`. Retained binary SHA-256s were
-  unchanged; the record is in `/private/tmp/lp-tos-cleanup-1017`.
+  unchanged; the record is in `/private/tmp/pyro-tos-cleanup-1017`.
 
 Artifacts:
-- `/private/tmp/lp-tos-batch5`
-- `/private/tmp/lp-tos-batch5-up`
-- `/private/tmp/lp-tos-batch5-fix`
+- `/private/tmp/pyro-tos-batch5`
+- `/private/tmp/pyro-tos-batch5-up`
+- `/private/tmp/pyro-tos-batch5-fix`
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and
 assertion depth apply. Single runs do not establish flake rates.

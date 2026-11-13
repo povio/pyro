@@ -160,7 +160,7 @@ fn build_inline_layout_with(
         builder.build_into_keeping_lines(&mut text_layout.layout)
     };
     text_layout.text_nodes = std::mem::take(text_nodes);
-    // lightningpanda: the shaped text's content widths, for every layout of it (`TextLayout::
+    // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
     // own before it reads them.

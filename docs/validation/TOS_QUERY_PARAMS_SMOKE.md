@@ -19,9 +19,9 @@ MutationObserver and URLSearchParams exceptions from the preceding run are gone.
   test-token localStorage authentication, direct-lane documented version bypass,
   and unchanged `profile-settings.e2e.ts` assertions.
 
-Retained artifacts: `/private/tmp/lp-tos-smoke-url` (sanitized log/report,
+Retained artifacts: `/private/tmp/pyro-tos-smoke-url` (sanitized log/report,
 metadata, toolchain and DB ownership/preabsence checks), exact browser checkout
-`/private/tmp/lp-tos-browser-url`, and fixture `/private/tmp/lp-tos-f9f-url-smoke`.
+`/private/tmp/pyro-tos-browser-url`, and fixture `/private/tmp/pyro-tos-f9f-url-smoke`.
 The fixture was clean before execution; only the harness-generated PDF model
 changed afterward. Its sole leftover snapshot template was removed after exact
 ownership/prefix/preabsence checks; the test role then owned zero databases.

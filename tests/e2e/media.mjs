@@ -1,15 +1,15 @@
-// Real Playwright 1.59.1 (connectOverCDP) against `lightningpanda serve`:
+// Real Playwright 1.59.1 (connectOverCDP) against `pyro serve`:
 // media elements as Chrome runs them, with small generated files. The
 // resource is fetched as a Media request, its container headers give
 // duration and video size before the window load event, play() (from
 // page.evaluate, a user gesture) advances currentTime on the page clock
 // until `ended`, garbage fails with MEDIA_ERR_SRC_NOT_SUPPORTED, and a
-// screenshot paints the poster. Real AV1 and H.264 files (lp-media's
+// screenshot paints the poster. Real AV1 and H.264 files (pyro-media's
 // fixtures: frame N of ten is rgb(N*25, 255-N*25, 128)) paint their current
 // frame in screenshots, draw on a canvas and run requestVideoFrameCallback;
 // Web Audio renders offline and decodes an MP3.
 //
-// Usage: bun tests/e2e/media.mjs /abs/path/to/lightningpanda
+// Usage: bun tests/e2e/media.mjs /abs/path/to/pyro
 // Requires `bun install` in bench/ for the pinned playwright-core.
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -27,7 +27,7 @@ const { chromium } = require('playwright-core');
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: bun tests/e2e/media.mjs /abs/path/to/lightningpanda');
+  console.error('usage: bun tests/e2e/media.mjs /abs/path/to/pyro');
   process.exit(2);
 }
 
@@ -87,7 +87,7 @@ function firstPixel(shot) {
   return [raw[1], raw[2], raw[3]];
 }
 
-const fixture = (name) => readFileSync(path.join(here, '..', '..', 'crates', 'lp-media', 'tests', 'fixtures', name));
+const fixture = (name) => readFileSync(path.join(here, '..', '..', 'crates', 'pyro-media', 'tests', 'fixtures', name));
 const FILES = {
   '/frames-h264.mp4': ['video/mp4', fixture('frames-h264.mp4')],
   '/frames-av1.webm': ['video/webm', fixture('frames-av1.webm')],
@@ -127,7 +127,7 @@ for (;;) {
     const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) });
     if (r.ok) break;
   } catch {}
-  if (child.exitCode !== null) { console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
+  if (child.exitCode !== null) { console.error(`pyro exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
   if (performance.now() - started > 10_000) { console.error(`startup timed out: ${stderr}`); process.exit(1); }
   await new Promise((r) => setTimeout(r, 10));
 }

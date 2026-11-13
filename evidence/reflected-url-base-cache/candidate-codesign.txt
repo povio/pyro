@@ -1,2 +1,2 @@
-Executable=/private/tmp/lp-url-cache-evidence/lightningpanda-cache-candidate
+Executable=/private/tmp/pyro-url-cache-evidence/pyro-cache-candidate
 warning: Specifying ':' in the path is deprecated and will not work in a future release

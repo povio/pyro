@@ -1,6 +1,6 @@
 from pathlib import Path
 import json,hashlib,subprocess,collections
-b=Path('/private/tmp/lp-suite-20261019');fx=Path('/private/tmp/lp-tos-f9f-batch16-fx');m=fx/'apps/fe/e2e/suites/lightpanda.json';raw=m.read_bytes();sha=lambda x:hashlib.sha256(x).hexdigest();assert sha(raw)=='542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19';d=json.loads(raw)
+b=Path('/private/tmp/pyro-suite-20261019');fx=Path('/private/tmp/pyro-tos-f9f-batch16-fx');m=fx/'apps/fe/e2e/suites/lightpanda.json';raw=m.read_bytes();sha=lambda x:hashlib.sha256(x).hexdigest();assert sha(raw)=='542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19';d=json.loads(raw)
 key=lambda c:json.dumps([c['file'],c['titlePath']],ensure_ascii=False,separators=(',',':'))
 common={key(c):c for c in d['common']};assert len(common)==742;assert len({c['file']for c in common.values()})==141
 w3set=set();historical=[]

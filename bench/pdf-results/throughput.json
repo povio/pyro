@@ -19,7 +19,7 @@
   "p95Ms": 334.53912500001024,
   "peakRss": 4284612608
  },
- "lp-fixed": {
+ "pyro-fixed": {
   "concurrency": 6,
   "docs": 44,
   "failed": 0,
@@ -29,7 +29,7 @@
   "p95Ms": 417.25829100000556,
   "peakRss": 1164410880
  },
- "lp-blitz": {
+ "pyro-blitz": {
   "concurrency": 6,
   "docs": 44,
   "failed": 0,

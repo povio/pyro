@@ -1,0 +1,958 @@
+//! XMLHttpRequest. Native state is browser-thread confined; delivery buffers
+//! are bounded and I/O callbacks queue only routing IDs. A synchronous request
+//! parks the browser thread on those same callbacks; nothing else waits on it.
+//!
+//! Workers get the same object through [`WorkerXMLHttpRequest`], on their own
+//! thread with their own `PageDom`: no `responseXML`, `responseType =
+//! "document"` ignored, and a synchronous request may carry a `timeout`
+//! (`TimeoutError`) and ends when the worker is terminated.
+mod body;
+mod delivery;
+use crate::{
+    event::{EventCore, EventInterface},
+    page::{PageDom, RemotePoster},
+    target::{page_of, EventTarget, EventTargetData},
+    util::{dom_string, to_u32},
+};
+use bytes::Bytes;
+use delivery::Delivery;
+use pyro_dom::events::TargetKey;
+use pyro_js::{
+    Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, Object, Persistent, RealmId, Scope, Value, WeakRealm,
+};
+use pyro_net::http::{header, HeaderName, HeaderValue, Method};
+use pyro_net::{Credentials, Destination, NetError, NetworkDelivery, Request, RequestId, ResponseEvent, ResponseHead};
+use rustc_hash::FxHashMap;
+use std::{
+    cell::{Cell, RefCell},
+    rc::{Rc, Weak},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
+
+/// Independent XHR limits, with the same shape/defaults as fetch limits.
+pub type XhrLimits = crate::fetch::FetchLimits;
+const RESPONSE: &str = "__lpXhrResponse";
+/// A synchronous request parks the browser thread, so one that never settles
+/// must not wedge the connection: it fails with NetworkError after this long.
+const SYNC_WAIT: Duration = Duration::from_secs(60);
+/// How often a parked synchronous request asks the [`XhrState::sync_watch`]
+/// whether its thread should still wait.
+const SYNC_POLL: Duration = Duration::from_millis(50);
+
+pub(crate) struct XhrState {
+    limits: Cell<XhrLimits>,
+    budget: Arc<AtomicUsize>,
+    jobs: RefCell<FxHashMap<RequestId, Rc<Pending>>>,
+    instances: RefCell<FxHashMap<u64, Weak<Xhr>>>,
+    timers: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// Asked while a synchronous request waits: true ends the wait with a
+    /// network error (a worker being terminated).
+    sync_watch: RefCell<Option<Box<dyn Fn() -> bool>>>,
+}
+impl Default for XhrState {
+    fn default() -> Self {
+        Self {
+            limits: Cell::new(XhrLimits::default()),
+            budget: Arc::new(AtomicUsize::new(0)),
+            jobs: RefCell::default(),
+            instances: RefCell::default(),
+            timers: RefCell::default(),
+            sync_watch: RefCell::new(None),
+        }
+    }
+}
+struct Pending {
+    xhr: Rc<Xhr>,
+    _wrapper: Persistent,
+}
+thread_local! {static PAGES:RefCell<FxHashMap<u64,Weak<PageDom>>>=RefCell::default();}
+impl PageDom {
+    pub fn set_xhr_limits(&self, limits: XhrLimits) -> bool {
+        if !self.xhr_state.jobs.borrow().is_empty()
+            || self.xhr_state.instances.borrow().values().filter_map(Weak::upgrade).any(|x| x.wire.borrow().is_some())
+        {
+            return false;
+        }
+        self.xhr_state.limits.set(limits);
+        true
+    }
+    /// Pending browser delivery jobs and retained logical response bytes.
+    pub fn xhr_usage(&self) -> (usize, usize) {
+        (self.xhr_state.jobs.borrow().len(), self.xhr_state.budget.load(Ordering::Acquire))
+    }
+}
+
+pub struct XhrData {
+    target: EventTargetData,
+    state: Rc<Xhr>,
+}
+struct Xhr {
+    page: Weak<PageDom>,
+    realm: WeakRealm,
+    realm_id: RealmId,
+    key: TargetKey,
+    identity: IdentityKey,
+    instance: u64,
+    /// The global is a worker scope, not a Window: the steps the XHR spec
+    /// conditions on "the current global object is a Window object" are skipped.
+    worker: bool,
+    ready: Cell<u8>,
+    sent: Cell<bool>,
+    synchronous: Cell<bool>,
+    generation: Cell<u64>,
+    active: Cell<Option<RequestId>>,
+    request: RefCell<Option<Request>>,
+    head: RefCell<Option<ResponseHead>>,
+    wire: RefCell<Option<Arc<Mutex<Delivery>>>>,
+    response_type: RefCell<String>,
+    with_credentials: Cell<bool>,
+    timeout: Cell<u32>,
+    timer: Cell<Option<f64>>,
+    started: Cell<Option<Instant>>,
+    override_mime: RefCell<Option<String>>,
+    text: RefCell<Option<body::Text>>,
+    reported: Cell<usize>,
+    visible_chunks: Cell<usize>,
+    disposed: Cell<bool>,
+    /// `xhr.upload` (XMLHttpRequestUpload): its own non-node target, owned
+    /// here so its listeners live exactly as long as this request object.
+    upload_target: EventTargetData,
+    /// XHR "upload listener flag" (captured at send) and "upload complete flag".
+    upload_listeners: Cell<bool>,
+    upload_complete: Cell<bool>,
+    upload_total: Cell<usize>,
+}
+impl Drop for Xhr {
+    fn drop(&mut self) {
+        if let Some(page) = self.page.upgrade() {
+            page.xhr_state.instances.borrow_mut().remove(&self.instance);
+        }
+    }
+}
+fn invalid(message: &str) -> JsError {
+    JsError::dom("InvalidStateError", message)
+}
+fn unsupported(message: &str) -> JsError {
+    JsError::dom("NotSupportedError", message)
+}
+fn sync_access(message: &str) -> JsError {
+    JsError::dom("InvalidAccessError", message)
+}
+
+/// `XMLHttpRequest` of a Window.
+pub struct XMLHttpRequest;
+impl JsClass for XMLHttpRequest {
+    const NAME: &'static str = "XMLHttpRequest";
+    type Data = XhrData;
+    type Parent = EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        define_members(def, false);
+    }
+}
+
+/// `XMLHttpRequest` of a worker global: `responseXML` is `[Exposed=Window]`,
+/// so the prototype has none. Registered under the same interface name in a
+/// worker's own engine.
+pub struct WorkerXMLHttpRequest;
+impl JsClass for WorkerXMLHttpRequest {
+    const NAME: &'static str = "XMLHttpRequest";
+    type Data = XhrData;
+    type Parent = EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        define_members(def, true);
+    }
+}
+
+fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut ClassDef<C>, worker: bool) {
+    def.upcast(|d: &XhrData| &d.target);
+    def.constructor(0, |s, nt, _| {
+        let page = page_of(s)?;
+        if page.is_disposed() {
+            return Err(JsError::ContextDestroyed);
+        }
+        let target = EventTargetData::new(&page);
+        let TargetKey::Other(instance) = target.key else { unreachable!() };
+        let identity = page.other_identity(instance);
+        let state = Rc::new(Xhr {
+            page: Rc::downgrade(&page),
+            realm: s.realm().downgrade(),
+            realm_id: s.realm_id(),
+            key: target.key,
+            identity,
+            instance,
+            worker: crate::worker_scope::is_worker(s),
+            ready: Cell::new(0),
+            sent: Cell::new(false),
+            synchronous: Cell::new(false),
+            generation: Cell::new(0),
+            active: Cell::new(None),
+            request: RefCell::new(None),
+            head: RefCell::new(None),
+            wire: RefCell::new(None),
+            response_type: RefCell::new(String::new()),
+            with_credentials: Cell::new(false),
+            timeout: Cell::new(0),
+            timer: Cell::new(None),
+            started: Cell::new(None),
+            override_mime: RefCell::new(None),
+            text: RefCell::new(None),
+            reported: Cell::new(0),
+            visible_chunks: Cell::new(0),
+            disposed: Cell::new(false),
+            upload_target: EventTargetData::new(&page),
+            upload_listeners: Cell::new(false),
+            upload_complete: Cell::new(true),
+            upload_total: Cell::new(0),
+        });
+        page.xhr_state.instances.borrow_mut().insert(instance, Rc::downgrade(&state));
+        let wrapper = s.wrap_new::<C>(XhrData { target, state }, nt, Some(identity))?;
+        Ok(wrapper)
+    });
+    for (name, value) in [("UNSENT", 0.), ("OPENED", 1.), ("HEADERS_RECEIVED", 2.), ("LOADING", 3.), ("DONE", 4.)] {
+        def.constant(name, value);
+    }
+    def.getter("readyState", |s, d| Ok(s.number(d.state.ready.get() as f64)));
+    def.method("open", 2, |s, d, args| {
+        d.state.open(s, args)?;
+        Ok(s.undefined())
+    });
+    def.method("send", 0, |s, d, args| {
+        d.state.send(s, args.get(0))?;
+        Ok(s.undefined())
+    });
+    def.method("abort", 0, |s, d, _| {
+        d.state.abort();
+        Ok(s.undefined())
+    });
+    def.method("setRequestHeader", 2, |s, d, args| {
+        args.require(2, "XMLHttpRequest.setRequestHeader")?;
+        let name = crate::headers::byte_string(args.get(0))?;
+        let value = crate::headers::byte_string(args.get(1))?;
+        d.state.can_send()?;
+        let name =
+            crate::headers::validate_name(name).map_err(|_| JsError::dom("SyntaxError", "Invalid header name"))?;
+        let value =
+            crate::headers::validate_value(value).map_err(|_| JsError::dom("SyntaxError", "Invalid header value"))?;
+        if crate::fetch::forbidden_header(&name)
+            || (matches!(name.as_str(), "x-http-method" | "x-http-method-override" | "x-method-override")
+                && value
+                    .split(',')
+                    .any(|v| matches!(v.trim().to_ascii_uppercase().as_str(), "CONNECT" | "TRACE" | "TRACK")))
+        {
+            return Ok(s.undefined());
+        }
+        let key = HeaderName::from_bytes(name.as_bytes()).map_err(|_| JsError::dom("SyntaxError", "Invalid header"))?;
+        let mut request = d.state.request.borrow_mut();
+        let request = request.as_mut().expect("opened request");
+        let mut bytes = request
+            .headers
+            .get(&key)
+            .map(|v| {
+                let mut b = v.as_bytes().to_vec();
+                b.extend_from_slice(b", ");
+                b
+            })
+            .unwrap_or_default();
+        bytes.extend(value.chars().map(|c| c as u8));
+        request.headers.insert(
+            key,
+            HeaderValue::from_bytes(&bytes).map_err(|_| JsError::dom("SyntaxError", "Invalid header value"))?,
+        );
+        Ok(s.undefined())
+    });
+    def.getter("status", |s, d| {
+        Ok(s.number(
+            d.state
+                .head
+                .borrow()
+                .as_ref()
+                .filter(|_| d.state.ready.get() >= 2)
+                .map_or(0., |h| h.status.as_u16() as f64),
+        ))
+    });
+    def.getter("statusText", |s, d| {
+        Ok(s.string(
+            &d.state
+                .head
+                .borrow()
+                .as_ref()
+                .filter(|_| d.state.ready.get() >= 2)
+                .map_or(String::new(), |h| h.status_text.clone()),
+        ))
+    });
+    def.getter("responseURL", |s, d| {
+        Ok(s.string(
+            &d.state
+                .head
+                .borrow()
+                .as_ref()
+                .filter(|_| d.state.ready.get() >= 2)
+                .map_or(String::new(), |h| h.url.to_string()),
+        ))
+    });
+    def.getter("responseText", |s, d| d.state.response_text(s));
+    def.getter("response", |s, d| d.state.response(s));
+    if !worker {
+        def.getter("responseXML", |s, d| d.state.response_xml(s));
+    }
+    def.getter("upload", |s, d| upload_object(s, &d.state));
+    def.accessor(
+        "responseType",
+        |s, d| Ok(s.string(&d.state.response_type.borrow())),
+        |_s, d, value| {
+            let kind = dom_string(value)?;
+            // An unknown enum value is ignored before any state check.
+            if !matches!(kind.as_str(), "" | "text" | "json" | "arraybuffer" | "blob" | "document") {
+                return Ok(());
+            }
+            // A worker has no document response.
+            if d.state.worker && kind == "document" {
+                return Ok(());
+            }
+            if d.state.ready.get() >= 3 {
+                return Err(invalid("responseType cannot change after loading"));
+            }
+            if d.state.synchronous.get() && !d.state.worker {
+                return Err(sync_access("responseType cannot be set for a synchronous request"));
+            }
+            *d.state.response_type.borrow_mut() = kind;
+            Ok(())
+        },
+    );
+    def.accessor(
+        "withCredentials",
+        |s, d| Ok(s.boolean(d.state.with_credentials.get())),
+        |_s, d, value| {
+            if d.state.ready.get() > 1 || d.state.sent.get() {
+                return Err(invalid("withCredentials cannot change during a request"));
+            }
+            d.state.with_credentials.set(value.to_bool());
+            Ok(())
+        },
+    );
+    def.accessor(
+        "timeout",
+        |s, d| Ok(s.number(d.state.timeout.get() as f64)),
+        |s, d, value| {
+            let timeout = to_u32(value)?;
+            if d.state.synchronous.get() && !d.state.worker {
+                return Err(sync_access("timeout cannot be set for a synchronous request"));
+            }
+            d.state.timeout.set(timeout);
+            if d.state.sent.get() {
+                d.state.schedule_timer(s)?;
+            }
+            Ok(())
+        },
+    );
+    def.method("overrideMimeType", 1, |s, d, args| {
+        args.require(1, "XMLHttpRequest.overrideMimeType")?;
+        let mime = dom_string(args.get(0))?;
+        if d.state.ready.get() >= 3 {
+            return Err(invalid("MIME type cannot change after loading"));
+        }
+        *d.state.override_mime.borrow_mut() = Some(mime);
+        Ok(s.undefined())
+    });
+    def.method("getResponseHeader", 1, |s, d, args| {
+        args.require(1, "XMLHttpRequest.getResponseHeader")?;
+        let name = crate::headers::byte_string(args.get(0))?.to_ascii_lowercase();
+        let value = d.state.headers().into_iter().find(|(n, _)| n == &name).map(|(_, v)| v);
+        Ok(value.map_or(s.null(), |v| s.string(&v)))
+    });
+    def.method("getAllResponseHeaders", 0, |s, d, _| {
+        let mut out = String::new();
+        for (name, value) in d.state.headers() {
+            out.push_str(&name);
+            out.push_str(": ");
+            out.push_str(&value);
+            out.push_str("\r\n");
+        }
+        Ok(s.string(&out))
+    });
+    macro_rules! handler {
+        ($name:literal, $ty:literal) => {
+            def.accessor(
+                $name,
+                |s, d| crate::target::event_handler(s, &d.target, $ty),
+                |s, d, value| crate::target::set_event_handler(s, &d.target, $ty, value),
+            );
+        };
+    }
+    handler!("onreadystatechange", "readystatechange");
+    handler!("onloadstart", "loadstart");
+    handler!("onprogress", "progress");
+    handler!("onabort", "abort");
+    handler!("onerror", "error");
+    handler!("ontimeout", "timeout");
+    handler!("onload", "load");
+    handler!("onloadend", "loadend");
+}
+
+const UPLOAD: &str = "__lpXhrUpload";
+
+/// `xhr.upload`: one XMLHttpRequestUpload per request object. The XHR wrapper
+/// keeps it reachable through a traced hidden edge; the native target and its
+/// listeners belong to the `Xhr`.
+fn upload_object<'s>(s: &Scope<'s>, xhr: &Rc<Xhr>) -> JsResult<Value<'s>> {
+    let TargetKey::Other(instance) = xhr.upload_target.key else { unreachable!() };
+    let identity = xhr.upload_target.page.other_identity(instance);
+    let object = match s.lookup_identity(identity) {
+        Some(o) => o,
+        None => s.wrap::<XMLHttpRequestUpload>(UploadData { xhr: xhr.clone() }, Some(identity))?,
+    };
+    s.set_hidden(xhr.wrapper(s)?, UPLOAD, object.value())?;
+    Ok(object.value())
+}
+
+pub struct UploadData {
+    xhr: Rc<Xhr>,
+}
+
+pub struct XMLHttpRequestUpload;
+impl JsClass for XMLHttpRequestUpload {
+    const NAME: &'static str = "XMLHttpRequestUpload";
+    type Data = UploadData;
+    type Parent = EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &UploadData| &d.xhr.upload_target);
+        macro_rules! handler {
+            ($name:literal, $ty:literal) => {
+                def.accessor(
+                    $name,
+                    |s, d| crate::target::event_handler(s, &d.xhr.upload_target, $ty),
+                    |s, d, value| crate::target::set_event_handler(s, &d.xhr.upload_target, $ty, value),
+                );
+            };
+        }
+        handler!("onloadstart", "loadstart");
+        handler!("onprogress", "progress");
+        handler!("onabort", "abort");
+        handler!("onerror", "error");
+        handler!("ontimeout", "timeout");
+        handler!("onload", "load");
+        handler!("onloadend", "loadend");
+    }
+}
+
+impl Xhr {
+    fn page(&self) -> JsResult<Rc<PageDom>> {
+        let page = self.page.upgrade().ok_or(JsError::ContextDestroyed)?;
+        if self.disposed.get() || page.is_disposed() {
+            return Err(JsError::ContextDestroyed);
+        }
+        Ok(page)
+    }
+    fn can_send(&self) -> JsResult<()> {
+        self.page()?;
+        if self.ready.get() != 1 || self.sent.get() {
+            Err(invalid("XHR must be opened and not sending"))
+        } else {
+            Ok(())
+        }
+    }
+    fn wrapper<'s>(&self, s: &Scope<'s>) -> JsResult<Object<'s>> {
+        let realm = self.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+        let owner = realm.scope()?;
+        let wrapper = owner.lookup_identity(self.identity).ok_or(JsError::ContextDestroyed)?;
+        // SAFETY: same Engine/VM; receiver or active Pending roots this wrapper.
+        Ok(unsafe { Object::from_raw(s.ctx(), wrapper.as_raw()) })
+    }
+    fn headers(&self) -> Vec<(String, String)> {
+        if self.ready.get() < 2 {
+            return Vec::new();
+        }
+        self.head
+            .borrow()
+            .as_ref()
+            .map(|head| {
+                crate::response::filtered_headers(
+                    head,
+                    if self.with_credentials.get() { Credentials::Include } else { Credentials::SameOrigin },
+                )
+                .pairs()
+            })
+            .unwrap_or_default()
+    }
+    fn open(&self, s: &Scope<'_>, args: Args<'_>) -> JsResult<()> {
+        args.require(2, "XMLHttpRequest.open")?;
+        let method = crate::headers::byte_string(args.get(0))?;
+        let url = dom_string(args.get(1))?;
+        let asynchronous = args.len() < 3 || args.get(2).to_bool();
+        let username =
+            if args.get(3).is_null() || args.get(3).is_undefined() { String::new() } else { dom_string(args.get(3))? };
+        let password =
+            if args.get(4).is_null() || args.get(4).is_undefined() { String::new() } else { dom_string(args.get(4))? };
+        let page = self.page()?;
+        let upper = method.to_ascii_uppercase();
+        let method =
+            Method::from_bytes(if matches!(upper.as_str(), "DELETE" | "GET" | "HEAD" | "OPTIONS" | "POST" | "PUT") {
+                upper.as_bytes()
+            } else {
+                method.as_bytes()
+            })
+            .map_err(|_| JsError::dom("SyntaxError", "Invalid HTTP method"))?;
+        if matches!(upper.as_str(), "CONNECT" | "TRACE" | "TRACK") {
+            return Err(JsError::dom("SecurityError", "Forbidden HTTP method"));
+        }
+        let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &url);
+        let mut url = pyro_net::Url::parse(&resolved).map_err(|_| JsError::dom("SyntaxError", "Invalid URL"))?;
+        url.set_fragment(None);
+        if !asynchronous && !self.worker && (self.timeout.get() != 0 || !self.response_type.borrow().is_empty()) {
+            return Err(sync_access("A synchronous request cannot have a timeout or a responseType"));
+        }
+        // Credentials go into the URL (open() steps 11-12); the network
+        // layer does not send them yet (documented gap).
+        if !username.is_empty() || !password.is_empty() {
+            if url.cannot_be_a_base() {
+                return Err(JsError::dom("SyntaxError", "Invalid URL"));
+            }
+            let _ = url.set_username(&username);
+            let _ = url.set_password(if password.is_empty() { None } else { Some(&password) });
+        }
+        self.generation.set(self.generation.get().checked_add(1).expect("XHR generation exhausted"));
+        self.stop();
+        self.clear_response(s)?;
+        self.synchronous.set(!asynchronous);
+        self.upload_listeners.set(false);
+        self.upload_complete.set(true);
+        self.upload_total.set(0);
+        let mut request = Request::get(url, Destination::Xhr);
+        request.method = method;
+        *self.request.borrow_mut() = Some(request);
+        if self.ready.replace(1) != 1 {
+            self.fire("readystatechange", false, 0);
+        }
+        Ok(())
+    }
+    fn clear_response(&self, s: &Scope<'_>) -> JsResult<()> {
+        if let Some(wire) = self.wire.take() {
+            wire.lock().unwrap().close();
+        }
+        self.head.take();
+        self.text.take();
+        self.reported.set(0);
+        self.visible_chunks.set(0);
+        s.set_hidden(self.wrapper(s)?, RESPONSE, s.undefined())
+    }
+    fn current(&self, generation: u64, id: RequestId) -> bool {
+        self.generation.get() == generation && self.active.get() == Some(id) && !self.disposed.get()
+    }
+    fn send(self: &Rc<Self>, s: &Scope<'_>, body: Value<'_>) -> JsResult<()> {
+        self.can_send()?;
+        let generation = self.generation.get();
+        let mut request = self.request.borrow().as_ref().unwrap().clone();
+        if !matches!(request.method, Method::GET | Method::HEAD) && !body.is_null() && !body.is_undefined() {
+            let (bytes, mime) = if let Some(form) = crate::form_data::multipart_body(s, body)? {
+                form
+            } else if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
+                (blob.bytes.clone(), blob.mime.clone())
+            } else if let Some(params) = s.unwrap::<crate::url_search_params::URLSearchParams>(body) {
+                (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into())
+            } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, body)? {
+                (Bytes::from(bytes), String::new())
+            } else {
+                (Bytes::from(dom_string(body)?), "text/plain;charset=UTF-8".into())
+            };
+            if !mime.is_empty() && !request.headers.contains_key(header::CONTENT_TYPE) {
+                request.headers.insert(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_str(&mime).map_err(|_| JsError::Type("Invalid body MIME type".into()))?,
+                );
+            }
+            request.body = Some(bytes);
+        }
+        self.can_send()?;
+        if self.generation.get() != generation {
+            return Err(invalid("XHR was reopened during body conversion"));
+        }
+        let page = self.page()?;
+        // Referrer "client": the document, under its referrer policy.
+        request.referrer = page.document_url_parsed();
+        request.referrer_policy = page.referrer_policy();
+        let limits = page.xhr_state.limits.get();
+        if page.xhr_state.jobs.borrow().len() >= limits.max_requests {
+            return Err(JsError::dom("QuotaExceededError", "Too many pending XHR requests"));
+        }
+        let net = page.net.borrow().clone().ok_or_else(|| unsupported("Page networking is not installed"))?;
+        let poster = page.remote_poster().ok_or_else(|| unsupported("Browser task poster is not installed"))?;
+        if self.timeout.get() != 0 && !page.xhr_state.timers.borrow().contains_key(&self.realm_id) {
+            return Err(unsupported("Browser timers are not installed"));
+        }
+        request.credentials = if self.with_credentials.get() { Credentials::Include } else { Credentials::SameOrigin };
+        let doc_url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
+        request.origin = Some(s.realm().origin().unwrap_or_else(|| {
+            pyro_net::Url::parse(&doc_url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
+        }));
+        let context = page.request_context();
+        request.frame_id = context.frame_id;
+        request.loader_id = context.loader_id;
+        page.apply_request_defaults(&mut request);
+        crate::fetch::attach_blob(&page, &mut request);
+        request.max_body = Some(limits.max_body_bytes);
+        let id = net.next_request_id();
+        let wire = Arc::new(Mutex::new(Delivery::new(page.xhr_state.budget.clone())));
+        *self.wire.borrow_mut() = Some(wire.clone());
+        self.active.set(Some(id));
+        self.sent.set(true);
+        self.started.set(Some(Instant::now()));
+        if self.synchronous.get() {
+            return self.send_sync(&page, &net, request, id, wire, limits);
+        }
+        page.xhr_state
+            .jobs
+            .borrow_mut()
+            .insert(id, Rc::new(Pending { xhr: self.clone(), _wrapper: Persistent::new(s, self.wrapper(s)?.value()) }));
+        PAGES.with(|p| p.borrow_mut().insert(page.id(), Rc::downgrade(&page)));
+        if let Err(error) = self.schedule_timer(s) {
+            self.stop();
+            return Err(error);
+        }
+        let body_len = request.body.as_ref().map_or(0, Bytes::len);
+        self.upload_total.set(body_len);
+        self.upload_complete.set(request.body.is_none());
+        self.upload_listeners.set(page.dom.borrow().has_listeners(self.upload_target.key));
+        self.fire("loadstart", true, 0);
+        if !self.current(generation, id) {
+            return Ok(());
+        }
+        if !self.upload_complete.get() && self.upload_listeners.get() {
+            self.fire_upload("loadstart", 0, body_len);
+            if !self.current(generation, id) {
+                return Ok(());
+            }
+        }
+        let page_id = page.id();
+        let sink: pyro_net::ResponseSink =
+            Box::new(move |event| delivery::receive(&wire, page_id, id, &poster, limits, event));
+        let sink = crate::resource_timing::timed_sink(
+            &page,
+            crate::resource_timing::Initiator::XmlHttpRequest,
+            &request.url,
+            false,
+            sink,
+        );
+        crate::service_worker::route(&page, &net, id, request, sink);
+        Ok(())
+    }
+    /// The synchronous flag of `send()`: parks this thread until the I/O thread
+    /// reports the terminal event, with no events before it and an exception on
+    /// failure. Tasks and CDP commands wait, as for a dialog, but the transport
+    /// needs nothing from this thread unless the request is intercepted: the
+    /// decision would be read here, so it skips interception. A worker's
+    /// `timeout` bounds the wait (`TimeoutError`), and its termination ends it.
+    fn send_sync(
+        &self,
+        page: &Rc<PageDom>,
+        net: &pyro_net::NetClient,
+        mut request: Request,
+        id: RequestId,
+        wire: Arc<Mutex<Delivery>>,
+        limits: XhrLimits,
+    ) -> JsResult<()> {
+        request.skip_interception = true;
+        let generation = self.generation.get();
+        let (wake, woken) = std::sync::mpsc::channel::<()>();
+        let poster: RemotePoster = Arc::new(move |_| {
+            let _ = wake.send(());
+        });
+        let sink = wire.clone();
+        let page_id = page.id();
+        let sink: pyro_net::ResponseSink =
+            Box::new(move |event| delivery::receive(&sink, page_id, id, &poster, limits, event));
+        let sink = crate::resource_timing::timed_sink(
+            page,
+            crate::resource_timing::Initiator::XmlHttpRequest,
+            &request.url,
+            false,
+            sink,
+        );
+        net.fetch_with_id(id, request, sink);
+        let timeout = Some(self.timeout.get()).filter(|t| *t != 0).map(|t| Duration::from_millis(t as u64));
+        let deadline = Instant::now() + timeout.unwrap_or(SYNC_WAIT).min(SYNC_WAIT);
+        let watch = page.xhr_state.sync_watch.borrow().is_some();
+        let mut timed_out = false;
+        let (head, bytes, terminal, chunks, frontier) = loop {
+            let snapshot = wire.lock().unwrap().snapshot();
+            if snapshot.2.is_some() {
+                break snapshot;
+            }
+            if let Some(head) = snapshot.0 {
+                *self.head.borrow_mut() = Some(head);
+            }
+            if watch && page.xhr_state.sync_watch.borrow().as_ref().is_some_and(|closing| closing()) {
+                break (None, 0, None, 0, snapshot.4);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match woken.recv_timeout(if watch { remaining.min(SYNC_POLL) } else { remaining }) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if remaining.is_zero() {
+                        timed_out = timeout.is_some();
+                        break (None, 0, None, 0, snapshot.4);
+                    }
+                }
+                // The sink is gone: its terminal event, if any, is in the wire.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    let last = wire.lock().unwrap().snapshot();
+                    if last.2.is_some() {
+                        break last;
+                    }
+                    break (None, 0, None, 0, last.4);
+                }
+            }
+        };
+        self.visible_chunks.set(chunks);
+        page.network_delivery(id, frontier);
+        if let Some(head) = head {
+            *self.head.borrow_mut() = Some(head);
+        }
+        if !matches!(terminal, Some(Ok(()))) || self.head.borrow().is_none() {
+            let reason = match terminal {
+                Some(Err(error)) => error.to_string(),
+                _ if timed_out => "synchronous request timed out".to_owned(),
+                _ => "synchronous request did not complete".to_owned(),
+            };
+            self.stop();
+            self.head.take();
+            self.text.take();
+            self.ready.set(4);
+            let name = if timed_out { "TimeoutError" } else { "NetworkError" };
+            return Err(JsError::dom(name, format!("Failed to execute 'send': {reason}")));
+        }
+        self.active.set(None);
+        self.sent.set(false);
+        self.ready.set(4);
+        self.fire("readystatechange", false, bytes);
+        if self.generation.get() != generation {
+            return Ok(());
+        }
+        self.fire("load", true, bytes);
+        if self.generation.get() != generation {
+            return Ok(());
+        }
+        self.fire("loadend", true, bytes);
+        Ok(())
+    }
+    /// XHR "process request end-of-body": the body was fully transmitted. pyro-net
+    /// sends a request body in one piece, so there is a single upload progress
+    /// event (loaded == total) rather than intermediate ones.
+    fn upload_done(&self) {
+        if self.upload_complete.replace(true) || !self.upload_listeners.get() {
+            return;
+        }
+        let generation = self.generation.get();
+        let total = self.upload_total.get();
+        for ty in ["progress", "load", "loadend"] {
+            self.fire_upload(ty, total, total);
+            if self.generation.get() != generation {
+                return;
+            }
+        }
+    }
+    fn fire_upload(&self, ty: &str, loaded: usize, total: usize) {
+        let Ok(page) = self.page() else { return };
+        let event = EventCore::trusted(&page, EventInterface::ProgressEvent, ty, false, false);
+        {
+            let mut fields = event.fields.borrow_mut();
+            fields.loaded = loaded as f64;
+            fields.total = total as f64;
+            fields.length_computable = total > 0;
+        }
+        crate::target::fire(&page, self.upload_target.key, &event);
+    }
+    fn fire(&self, ty: &str, progress: bool, loaded: usize) {
+        let Ok(page) = self.page() else { return };
+        let event = EventCore::trusted(
+            &page,
+            if progress { EventInterface::ProgressEvent } else { EventInterface::Event },
+            ty,
+            false,
+            false,
+        );
+        if progress {
+            let total = self
+                .head
+                .borrow()
+                .as_ref()
+                .and_then(|h| h.headers.get(header::CONTENT_LENGTH))
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0);
+            let mut fields = event.fields.borrow_mut();
+            fields.loaded = loaded as f64;
+            fields.total = total as f64;
+            fields.length_computable = total > 0;
+        }
+        crate::target::fire(&page, self.key, &event);
+    }
+    fn stop(&self) -> Option<Rc<Pending>> {
+        let mut keep = None;
+        self.sent.set(false);
+        if let Some(realm) = self.realm.upgrade() {
+            if let Ok(s) = realm.scope() {
+                self.clear_timer(&s);
+            }
+        }
+        if let Some(id) = self.active.take() {
+            if let Some(page) = self.page.upgrade() {
+                if let Some(net) = page.net.borrow().as_ref() {
+                    net.cancel(id);
+                }
+                keep = page.xhr_state.jobs.borrow_mut().remove(&id);
+            }
+        }
+        if let Some(wire) = self.wire.borrow().as_ref() {
+            wire.lock().unwrap().close();
+        }
+        keep
+    }
+    fn fail(&self, kind: &str) {
+        if self.active.get().is_none() {
+            return;
+        }
+        let generation = self.generation.get();
+        let _keep = self.stop();
+        self.head.take();
+        self.text.take();
+        self.ready.set(4);
+        self.fire("readystatechange", false, 0);
+        if self.generation.get() != generation {
+            return;
+        }
+        // XHR "request error steps": the upload object hears the same error
+        // first, with 0 and 0.
+        if !self.upload_complete.replace(true) && self.upload_listeners.get() {
+            self.fire_upload(kind, 0, 0);
+            if self.generation.get() != generation {
+                return;
+            }
+            self.fire_upload("loadend", 0, 0);
+            if self.generation.get() != generation {
+                return;
+            }
+        }
+        self.fire(kind, true, 0);
+        if self.generation.get() != generation {
+            return;
+        }
+        self.fire("loadend", true, 0);
+    }
+    fn abort(&self) {
+        let generation = self.generation.get();
+        if self.sent.get() {
+            self.fail("abort");
+        }
+        if self.generation.get() == generation && self.ready.get() == 4 {
+            self.ready.set(0);
+            self.head.take();
+            if let Some(w) = self.wire.take() {
+                w.lock().unwrap().close();
+            }
+            self.text.take();
+            self.release_cached_response();
+        }
+    }
+    fn release_cached_response(&self) {
+        if let Some(realm) = self.realm.upgrade() {
+            if let Ok(s) = realm.scope() {
+                if let Ok(wrapper) = self.wrapper(&s) {
+                    let _ = s.set_hidden(wrapper, RESPONSE, s.undefined());
+                }
+            }
+        }
+    }
+    fn timer_functions<'s>(&self, s: &Scope<'s>) -> Option<Object<'s>> {
+        self.page.upgrade()?.xhr_state.timers.borrow().get(&self.realm_id)?.get(s).as_object()
+    }
+    fn clear_timer(&self, s: &Scope<'_>) {
+        if let Some(id) = self.timer.take() {
+            if let Some(functions) = self.timer_functions(s) {
+                if let Ok(Some(clear)) = functions.get_atom("clear").map(|v| v.as_object()) {
+                    let _ = clear.call(Some(s.global()), &[s.number(id)]);
+                }
+            }
+        }
+    }
+    fn schedule_timer(self: &Rc<Self>, s: &Scope<'_>) -> JsResult<()> {
+        self.clear_timer(s);
+        if !self.sent.get() || self.timeout.get() == 0 {
+            return Ok(());
+        }
+        let funcs = self.timer_functions(s).ok_or_else(|| unsupported("Browser timers are not installed"))?;
+        let remaining = Duration::from_millis(self.timeout.get() as u64)
+            .saturating_sub(self.started.get().map_or(Duration::ZERO, |t| t.elapsed()));
+        let weak = Rc::downgrade(self);
+        let generation = self.generation.get();
+        let id = self.active.get();
+        let callback = s.function("xhrTimeout", move |s, _, _| {
+            if let Some(xhr) = weak.upgrade() {
+                if xhr.generation.get() == generation && xhr.active.get() == id && xhr.sent.get() {
+                    xhr.fail("timeout");
+                }
+            }
+            Ok(s.undefined())
+        })?;
+        let timer = funcs
+            .get_atom("set")?
+            .as_object()
+            .unwrap()
+            .call(Some(s.global()), &[callback.value(), s.number(remaining.as_secs_f64() * 1000.)])?
+            .to_number()?;
+        self.timer.set(Some(timer));
+        Ok(())
+    }
+    fn dispose(&self) {
+        self.stop();
+        self.disposed.set(true);
+        self.ready.set(0);
+        self.head.take();
+        self.text.take();
+        self.wire.take();
+        self.release_cached_response();
+    }
+}
+
+pub(crate) fn install(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
+    let set = s.global().get_atom("setTimeout")?;
+    let clear = s.global().get_atom("clearTimeout")?;
+    if set.as_object().is_some_and(|o| o.is_function()) && clear.as_object().is_some_and(|o| o.is_function()) {
+        let object = s.object();
+        object.set_atom("set", set)?;
+        object.set_atom("clear", clear)?;
+        page.xhr_state.timers.borrow_mut().insert(s.realm_id(), Persistent::new(s, object.value()));
+    }
+    Ok(())
+}
+/// Makes a parked synchronous request of `page` poll `closing`: once it
+/// returns true the request fails with a NetworkError instead of waiting on.
+pub(crate) fn set_sync_watch(page: &PageDom, closing: Box<dyn Fn() -> bool>) {
+    *page.xhr_state.sync_watch.borrow_mut() = Some(closing);
+}
+pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
+    let instances: Vec<_> =
+        page.xhr_state.instances.borrow().values().filter_map(Weak::upgrade).filter(|x| x.realm_id == realm).collect();
+    for xhr in instances {
+        xhr.dispose();
+    }
+    page.xhr_state.timers.borrow_mut().remove(&realm);
+}
+pub(crate) fn dispose(page: &PageDom) {
+    PAGES.with(|p| p.borrow_mut().remove(&page.id()));
+    let instances: Vec<_> = page.xhr_state.instances.borrow().values().filter_map(Weak::upgrade).collect();
+    for xhr in instances {
+        xhr.dispose();
+    }
+    page.xhr_state.timers.borrow_mut().clear();
+}
+
+/// This module's part of [`crate::thread_state::reset_thread`]: what of its
+/// per-thread state still holds something, if any does.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    PAGES.with(|p| p.borrow_mut().retain(|_, page| page.strong_count() > 0));
+    PAGES.with(|p| !p.borrow().is_empty()).then_some("xhr::PAGES")
+}

@@ -28,7 +28,7 @@
     Checking want v0.3.2
     Checking generic-array v0.14.7
     Checking selectors v0.41.0
-   Compiling lp-jsc-sys v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-jsc-sys)
+   Compiling pyro-jsc-sys v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-jsc-sys)
     Checking tinystr v0.8.4
     Checking icu_locale_core v2.3.0
     Checking potential_utf v0.1.6
@@ -57,7 +57,7 @@
     Checking icu_provider v2.3.1
     Checking form_urlencoded v1.2.2
     Checking futures-channel v0.3.34
-    Checking lp-dom v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-dom)
+    Checking pyro-dom v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-dom)
     Checking cpufeatures v0.2.17
     Checking icu_normalizer v2.3.0
     Checking icu_properties v2.3.0
@@ -69,7 +69,7 @@
     Checking brotli-decompressor v6.1.0
     Checking http-body-util v0.1.5
     Checking base64 v0.23.1
-    Checking lp-js v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-js)
+    Checking pyro-js v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-js)
     Checking getrandom v0.3.4
     Checking idna_adapter v1.2.2
     Checking sha1 v0.10.7
@@ -79,6 +79,6 @@
     Checking hyper v1.12.0
     Checking cookie v0.18.2
     Checking hyper-util v0.1.21
-    Checking lp-net v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-net)
-    Checking lp-webapi v0.1.0 (/private/tmp/lp-style-variable-dimensions/crates/lp-webapi)
+    Checking pyro-net v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-net)
+    Checking pyro-webapi v0.1.0 (/private/tmp/pyro-style-variable-dimensions/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 6.77s

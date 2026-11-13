@@ -581,7 +581,7 @@ impl Uts46 {
                 }
             }
             Err(ProcessingError::ValidityError) => {
-                // Lightningpanda: browsers keep an all-ASCII URL host whose `xn--`
+                // Pyro: browsers keep an all-ASCII URL host whose `xn--`
                 // labels fail validation, and WPT url/ requires it. Forbidden
                 // domain code points still fail.
                 let denied = |b: u8| !b.is_ascii_uppercase() && ascii_deny_list.bits & (1u128 << b) != 0;

@@ -19,9 +19,9 @@ verbatim from f27a3e7; this follow-up does not implement new browser/realm WebAP
 | `8d2f66c8c367fce1151eacdbe57f52897e77c330` | Loader/navigation API cleanup |
 | `4e9432a66bd5def6045a2af6e1295415de2c5747` | Existing CLI fetch path over the loader |
 
-Dependency diff: `crates/lp-browser/{Cargo.toml,src/lib.rs,src/loader.rs,src/nav.rs,src/window.rs,tests/loading.rs}`,
-`crates/lightningpanda/{Cargo.toml,src/main.rs}`, their workspace dependency edges, and the previously published
-compatibility/optimization documentation plus module-metadata regression in `crates/lp-js/tests/runtime.rs`.
+Dependency diff: `crates/pyro-browser/{Cargo.toml,src/lib.rs,src/loader.rs,src/nav.rs,src/window.rs,tests/loading.rs}`,
+`crates/pyro/{Cargo.toml,src/main.rs}`, their workspace dependency edges, and the previously published
+compatibility/optimization documentation plus module-metadata regression in `crates/pyro-js/tests/runtime.rs`.
 The finalizer repair is already in main as f90494e (equivalent to integration cba2671); this PR does not reapply it.
 All external Cargo.lock versions/checksums are preserved. The base merge removed one duplicate identical
 ryu-js package block caused by ordering differences.
@@ -69,7 +69,7 @@ were checkpointed at `f68b6d6556a97e8cf37195fe2d52a263846b0347`; merging only th
 browser dependency left all four red at missing protocol child-frame discovery.
 The integration merge is `8e5cecd985ffc7fd0622f68bc4999ffa0132dfbc`.
 
-The W3 delta above the browser candidate is confined to lp-cdp, its real
+The W3 delta above the browser candidate is confined to pyro-cdp, its real
 Playwright harness, and automation documentation. It makes page sessions route
 native child frames, worlds, DOM identity, lifecycle and Network/Fetch traffic.
 It does not modify W1/W2 sources or dependency manifests/lockfiles, and does not

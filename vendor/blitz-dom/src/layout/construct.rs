@@ -423,7 +423,7 @@ fn collect_layout_children_with_wrap(
         *doc.nodes[container_node_id].display_constructed_as_mut() = display;
     }
 
-    // lightningpanda: a table built as another box now: its row groups and rows were parts of the
+    // pyro: a table built as another box now: its row groups and rows were parts of the
     // table, never boxes of their own, and are built as boxes now.
     let was_table = doc.nodes[container_node_id].flags.is_table_root();
     if was_table
@@ -447,7 +447,7 @@ fn collect_layout_children_with_wrap(
 
     flush_pseudo_elements(doc, container_node_id);
 
-    // lightningpanda: a select that was a drop-down had its options'
+    // pyro: a select that was a drop-down had its options'
     // construct damage cleared (below); as a list box they must build their
     // boxes again.
     let listbox_select = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
@@ -486,7 +486,7 @@ fn collect_layout_children_with_wrap(
             }
         }
 
-        // lightningpanda: a drop-down select is an atomic box sized from its
+        // pyro: a drop-down select is an atomic box sized from its
         // options (layout/mod.rs); as in Chromium's menu list, its children
         // generate no boxes (their computed `display` stays `block`). A list
         // box (`multiple`, or `size` above 1) lays its options out.
@@ -673,7 +673,7 @@ fn collect_layout_children_with_wrap(
 
             // TODO: fix display:contents
             if classification.all_inline {
-                // lightningpanda: an inline root built again for a change to its box alone (a
+                // pyro: an inline root built again for a change to its box alone (a
                 // cell's padding or collapsed border, its parent's children) keeps the inline
                 // layout its content built: its text, the styles the text is shaped with, its
                 // children and the boxes among them are as they were (no `INLINE_CONTENT` on it
@@ -767,7 +767,7 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             .as_ref()
             .and_then(|d| d.styles.pseudos.as_array()[0].clone());
 
-        // lightningpanda: `content: normal | none` generates no box (an
+        // pyro: `content: normal | none` generates no box (an
         // unset `var()` in `content` computes to `normal`).
         let generates =
             |s: &style::servo_arc::Arc<style::properties::ComputedValues>| !matches!(s.get_counters().content, Content::Normal | Content::None);
@@ -776,7 +776,7 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
 
         (before_style, after_style, before_node_id, after_node_id)
     };
-    // lightningpanda: an optgroup's label row, as Chromium's
+    // pyro: an optgroup's label row, as Chromium's
     // `-internal-optgroup-label` box, in the `::before` slot when the
     // optgroup has no `::before` of its own.
     let label = before_style.is_none().then(|| optgroup_label(doc, node_id)).flatten();
@@ -828,7 +828,7 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 .stylo_element_data_mut()
                 .ensure_init_mut() = element_data;
             doc.nodes[new_node_id].update_layout_styles();
-            // lightningpanda: damage is set with its flag (`Node::mark_damaged`), which the walks
+            // pyro: damage is set with its flag (`Node::mark_damaged`), which the walks
             // that follow damage rely on to skip a subtree (`Node::has_no_damage_below`).
             doc.nodes[new_node_id].mark_damaged();
 
@@ -894,7 +894,7 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 }
                 replaced
             };
-            // lightningpanda: with its flag, as above.
+            // pyro: with its flag, as above.
             doc.nodes[pe_node_id].mark_damaged();
             if replaced {
                 doc.nodes[pe_node_id].update_layout_styles();
@@ -904,7 +904,7 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
     }
 }
 
-/// lightningpanda: the style (UA `optgroup::-servo-text-control-inner-container`,
+/// pyro: the style (UA `optgroup::-servo-text-control-inner-container`,
 /// a pseudo-element pages cannot select) and text (its `label`) of an
 /// optgroup's label row.
 fn optgroup_label(

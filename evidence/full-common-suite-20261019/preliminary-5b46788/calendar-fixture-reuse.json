@@ -1,6 +1,6 @@
 {
-  "source_fixture": "/private/tmp/lp-tos-f9f-batch16-fx",
-  "new_fixture": "/private/tmp/lp-tos-calendar-6e7f7cf-fx",
+  "source_fixture": "/private/tmp/pyro-tos-f9f-batch16-fx",
+  "new_fixture": "/private/tmp/pyro-tos-calendar-6e7f7cf-fx",
   "mechanism": "APFS clone copy; source runtime input contents unchanged; prepared-runtime fail-closed guard required",
   "copied": [
     "node_modules",

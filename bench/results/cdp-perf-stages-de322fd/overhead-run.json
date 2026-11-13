@@ -1,5 +1,5 @@
 {
- "schema": "lightningpanda-cdp-perf/1",
+ "schema": "pyro-cdp-perf/1",
  "meta": {
   "startedAt": "2026-10-27T10:41:59.386Z",
   "host": {
@@ -19,7 +19,7 @@
   "filter": null,
   "perfTrace": false,
   "harnessSha256": "20d787650b8047c21a0ca8d5282f27a796aa6d9bebb07acfa8d6e1ea08e559a3",
-  "cpuSource": "/Users/xban1x/Povio/lp-cdp-perf-wt/bench/rss-sampler/target/release/rss-sampler",
+  "cpuSource": "/Users/xban1x/Povio/pyro-cdp-perf-wt/bench/rss-sampler/target/release/rss-sampler",
   "loadavg": {
    "start": [
     9.27880859375,
@@ -53,7 +53,7 @@
  "bins": [
   {
    "label": "plain",
-   "path": "/Users/xban1x/Povio/lp-cdp-perf-wt/target/release/lightningpanda",
+   "path": "/Users/xban1x/Povio/pyro-cdp-perf-wt/target/release/pyro",
    "sha256": "0c9413a63e236452189910082010a9d083ebe68c0f59411cc719ee165384242c",
    "startup": {
     "n": 93,
@@ -164,7 +164,7 @@
   },
   {
    "label": "traced",
-   "path": "/Users/xban1x/Povio/lp-cdp-perf-wt/target-perf/release/lightningpanda",
+   "path": "/Users/xban1x/Povio/pyro-cdp-perf-wt/target-perf/release/pyro",
    "sha256": "2a62c32ca3f66da048c299c66748a650d32a7c09376df327c2369c15b21e30d6",
    "startup": {
     "n": 93,

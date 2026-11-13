@@ -160,11 +160,7 @@ KEYFRAME_RULE = 1 << 2
 POSITION_TRY_RULE = 1 << 3
 SCOPE_RULE = 1 << 4
 
-ALL_RULES = STYLE_RULE | PAGE_RULE | KEYFRAME_RULE | SCOPE_RULE
 DEFAULT_RULES = STYLE_RULE | KEYFRAME_RULE | SCOPE_RULE
-DEFAULT_RULES_AND_PAGE = DEFAULT_RULES | PAGE_RULE
-DEFAULT_RULES_EXCEPT_KEYFRAME = STYLE_RULE | SCOPE_RULE
-DEFAULT_RULES_AND_POSITION_TRY = DEFAULT_RULES | POSITION_TRY_RULE
 
 # Rule name to value dict
 RULE_VALUES = {
@@ -181,7 +177,10 @@ def rule_values_from_arg(rule_types):
         return DEFAULT_RULES
     mask = 0
     for rule in rule_types:
+        assert rule != "scope", "scope is just derived from style"
         mask |= RULE_VALUES[rule]
+        if rule == "style":
+            mask |= SCOPE_RULE
     return mask
 
 
@@ -346,7 +345,7 @@ class Longhand(Property):
         servo_restyle_damage=None,
         affects=None,
     ):
-        # lightningpanda: a property that names no restyle damage gets the one its `affects`
+        # pyro: a property that names no restyle damage gets the one its `affects`
         # implies (upstream: `rebuild_box` for every one, so a change of `border-top-color`,
         # `visibility` or `box-shadow` relaid out). `affects` is required and checked below.
         if servo_restyle_damage is None:
@@ -1239,6 +1238,8 @@ class PropertyRestrictions:
                 "line-height",
                 # Kinda like css-backgrounds?
                 "background-blend-mode",
+                # Not yet in css-text spec, but coming
+                "text-autospace-size",
             ]
             + PropertyRestrictions.shorthand(data, "padding")
             + PropertyRestrictions.shorthand(data, "margin")
@@ -1272,6 +1273,8 @@ class PropertyRestrictions:
                 "line-height",
                 # Kinda like css-backgrounds?
                 "background-blend-mode",
+                # Not yet in css-text spec, but coming
+                "text-autospace-size",
             ]
             + PropertyRestrictions.spec(data, "css-fonts")
             + PropertyRestrictions.spec(data, "css-backgrounds")

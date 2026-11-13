@@ -1,6 +1,6 @@
-   Compiling lp-webapi v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-webapi)
+   Compiling pyro-webapi v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 1m 27s
-     Running unittests src/lib.rs (target/release/deps/lp_webapi-861023f6b56d7d09)
+     Running unittests src/lib.rs (target/release/deps/pyro_webapi-861023f6b56d7d09)
 
 running 7 tests
 test collections::tests::dataset_names ... ok
@@ -246,7 +246,7 @@ test xhr_timeout_uses_captured_timer_and_is_measured_from_send ... ok
 
 test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
 
-   Doc-tests lp_webapi
+   Doc-tests pyro_webapi
 
 running 0 tests
 

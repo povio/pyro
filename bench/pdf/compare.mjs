@@ -2,7 +2,7 @@
 // (100 dpi), compared per page with pixelmatch (threshold 0.1, as the ToS
 // pdf-visual e2e did), text compared with pdftotext (word multiset overlap).
 //
-//   bun compare.mjs --out <run.mjs out dir> [--a chrome-fixed] [--b lp-fixed] [--worst 6]
+//   bun compare.mjs --out <run.mjs out dir> [--a chrome-fixed] [--b pyro-fixed] [--worst 6]
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -15,7 +15,7 @@ const args = Object.fromEntries(
 );
 const out = path.resolve(args.out);
 const A = args.a ?? 'chrome-fixed';
-const B = args.b ?? 'lp-fixed';
+const B = args.b ?? 'pyro-fixed';
 const worstN = Number(args.worst ?? 6);
 const rasterDir = path.join(out, 'raster');
 

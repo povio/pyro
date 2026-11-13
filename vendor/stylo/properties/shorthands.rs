@@ -1620,7 +1620,6 @@ pub mod grid_area {
     }
 }
 
-#[cfg(feature = "gecko")]
 pub mod position_try {
     pub use crate::properties::generated::shorthands::position_try::*;
 

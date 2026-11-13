@@ -1,4 +1,4 @@
-// bun pdf-deltas.mjs <chrome pdf dir> <lp pdf dir> <out.json> [case,case]: position of Lightningpanda's content vs Chrome's in raw points from each page's top-left,
+// bun pdf-deltas.mjs <chrome pdf dir> <lp pdf dir> <out.json> [case,case]: position of Pyro's content vs Chrome's in raw points from each page's top-left,
 // by matching row and column ink profiles of 30 pt tiles at 600 dpi (sub-pixel by a parabola), and pixel diff at 150 dpi.
 import { execFileSync } from 'node:child_process'; import fs from 'node:fs'; import path from 'node:path'; import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url); const { PNG } = require('pngjs'); const pm = require('pixelmatch'); const pixelmatch = pm.default ?? pm;

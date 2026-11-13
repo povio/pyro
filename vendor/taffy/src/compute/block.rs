@@ -515,7 +515,7 @@ pub fn compute_block_layout(
 }
 
 /// [`compute_inner`] for a box that establishes a block formatting context.
-// lightningpanda: not inlined, so the formatting context is not part of the frame of
+// pyro: not inlined, so the formatting context is not part of the frame of
 // `compute_block_layout` for the boxes that join their parent's (that frame is on the stack once
 // per tree level of a recursive layout).
 #[inline(never)]
@@ -937,7 +937,7 @@ fn compute_inner(
 }
 
 /// Create a `Vec` of `BlockItem` structs where each item in the `Vec` represents a child of the current node
-// lightningpanda: not inlined, so its locals stay out of `compute_inner`'s frame, which is on the
+// pyro: not inlined, so its locals stay out of `compute_inner`'s frame, which is on the
 // stack once per tree level of a recursive layout.
 #[inline(never)]
 fn generate_item_list(
@@ -972,7 +972,7 @@ fn generate_item_list(
 
             let is_block = child_style.is_block();
             let is_table = child_style.is_table();
-            // lightningpanda: a tree may keep a block-level child at its content width
+            // pyro: a tree may keep a block-level child at its content width
             // (`block_child_width_fits_content`), as for compressible replaced elements.
             let is_compressible_replaced =
                 child_style.is_compressible_replaced() || tree.block_child_width_fits_content(child_node_id);
@@ -1102,7 +1102,7 @@ fn resolve_relative_offset(
 }
 
 /// Compute the content-based width in the case that the width of the container is not known
-// lightningpanda: not inlined (see `generate_item_list`).
+// pyro: not inlined (see `generate_item_list`).
 #[inline(never)]
 fn determine_content_based_container_width(
     tree: &mut impl LayoutPartialTree,

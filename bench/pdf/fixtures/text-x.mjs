@@ -1,5 +1,5 @@
-// bun text-x.mjs <work dir> <lightningpanda binary>: paper-cut and `.pz-page` documents with fractional text x, printed by
-// Chrome and Lightningpanda into <work dir>/{chrome,lp}, and screenshots of them into <work dir>/shots-lp, for pdf-deltas.mjs.
+// bun text-x.mjs <work dir> <pyro binary>: paper-cut and `.pz-page` documents with fractional text x, printed by
+// Chrome and Pyro into <work dir>/{chrome,lp}, and screenshots of them into <work dir>/shots-lp, for pdf-deltas.mjs.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';

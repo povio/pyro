@@ -1,4 +1,4 @@
-lightningpanda
+Pyro
 Copyright (C) 2026 Povio and contributors
 
 This project is a Rust rewrite of Lightpanda Browser
@@ -7,21 +7,23 @@ Lightpanda (Selecy SAS), Francis Bouvier, Pierre Tachoire; licensed under the GN
 The design, module structure, behaviour and tests are derived from the
 upstream source at commit 2ad38773fd674d3c9cea26a263b814ee46f6ba84.
 
-lightningpanda is distributed under the same license, AGPL-3.0-only; see
+Pyro is distributed under the same license, AGPL-3.0-only; see
 LICENSE. Network users of a modified version must be offered its source
 (AGPL section 13).
 
-It dynamically links JavaScriptCore (WebKit, LGPL-2.0+/BSD). Standard macOS
-archives use the operating-system framework. The optional macOS ARM64 fork
-archive includes a separately built, patched JavaScriptCore shared library.
-That variant includes upstream license files and identifies the matching
+It links JavaScriptCore (WebKit, LGPL-2.0+/BSD). Standard macOS archives load
+the operating-system framework. The macOS ARM64 fork archive and the Linux
+archives contain a separately built, patched JavaScriptCore, linked statically
+into the browser; relinking against a modified JavaScriptCore is a build of
+this project's source (scripts/jsc/build.sh, PYRO_JSC_DIR).
+Those variants include upstream license files and identify the matching
 JavaScriptCore source archive supplied with the same release. The source
 archive retains upstream notices and includes the exact WebKit revision,
-Lightningpanda patches and build instructions.
+Pyro patches and build instructions.
 
-crates/lp-dom/src/stylo/ua.css is the HTML user-agent stylesheet of
+crates/pyro-dom/src/stylo/ua.css is the HTML user-agent stylesheet of
 blitz-dom (https://github.com/DioxusLabs/blitz), derived from Mozilla
 Firefox's html.css, under the Mozilla Public License 2.0 (header kept),
 with Chrome's defaults for links and form controls.
-crates/lp-dom/src/stylo/hints.rs adapts blitz-dom's presentational hints
+crates/pyro-dom/src/stylo/hints.rs adapts blitz-dom's presentational hints
 (MIT OR Apache-2.0). Style computation uses Stylo (MPL-2.0).

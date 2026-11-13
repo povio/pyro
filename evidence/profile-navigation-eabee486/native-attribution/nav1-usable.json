@@ -1,22 +1,22 @@
 {
   "files": {
-    "lp-js-90879-ThreadId(2).csv": {
+    "pyro-js-90879-ThreadId(2).csv": {
       "sha256": "ba342a717912a47b364895155b015916ba94213445f64755fa76334f9b02b2d6",
       "root_count": 78223
     },
-    "lp-runtime-90879-ThreadId(2).csv": {
+    "pyro-runtime-90879-ThreadId(2).csv": {
       "sha256": "9c3c11c5637968e974ae2d4a3f891cfb2d332b7d0aebf3b62135033bc9a3cfa1",
       "root_count": 2142
     }
   },
   "crates": {
-    "lp-js": {
+    "pyro-js": {
       "roots": 25890,
       "cpu_ms": 521.0448880001267,
       "wall_ms": 825.9219999994887,
       "boundary_roots": [
         {
-          "file": "lp-js-90879-ThreadId(2).csv",
+          "file": "pyro-js-90879-ThreadId(2).csv",
           "root": "26228",
           "tag": "js.module_resolve",
           "start_ms": 1792344220317.268,
@@ -332,13 +332,13 @@
         }
       }
     },
-    "lp-runtime": {
+    "pyro-runtime": {
       "roots": 619,
       "cpu_ms": 502.03138699999965,
       "wall_ms": 805.2120000000016,
       "boundary_roots": [
         {
-          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "file": "pyro-runtime-90879-ThreadId(2).csv",
           "root": "104",
           "tag": "wait.remote",
           "start_ms": 1792344219166.2651,
@@ -346,7 +346,7 @@
           "cpu_ms": 0.004084
         },
         {
-          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "file": "pyro-runtime-90879-ThreadId(2).csv",
           "root": "724",
           "tag": "task.remote",
           "start_ms": 1792344220317.2659,
@@ -417,5 +417,5 @@
     1792344219348.2942,
     1792344220317.3262
   ],
-  "limits": "Separate crate interval trees overlap: do not add lp-js to lp-runtime. Boundary roots excluded without prorating. Native categories may include unwrapped FFI/JS; diagnostics overhead is not a baseline speed measurement."
+  "limits": "Separate crate interval trees overlap: do not add pyro-js to pyro-runtime. Boundary roots excluded without prorating. Native categories may include unwrapped FFI/JS; diagnostics overhead is not a baseline speed measurement."
 }

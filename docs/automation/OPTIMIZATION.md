@@ -7,7 +7,7 @@ yet, and it has no DOM or WebAPIs, so it does far less work than upstream.
 Environment for every measurement below:
 - Host: Apple M1, 8 GB, macOS 26.7.1.
 - Toolchain: rustc 1.99.1, `SDKROOT=MacOSX26.5.sdk`.
-- Builds: release builds of `lightningpanda` at 3d9d8d3 (plus the measurement scripts) and upstream lightpanda
+- Builds: release builds of `pyro` at 3d9d8d3 (plus the measurement scripts) and upstream lightpanda
   2ad38773f (`-Doptimize=fast`).
 - Raw outputs: `bench/results/rewrite-3d9d8d3/` and `bench/results/upstream-2ad38773f/`.
 
@@ -26,7 +26,7 @@ Environment for every measurement below:
 
 Every per-connection queue or table has a limit; exceeding it fails explicitly or closes the connection (1008). It is
 never dropped silently. Figures are macOS `phys_footprint` deltas of one process per scenario. They were measured
-with the real JavaScriptCore engine, a release build, and the state still retained. Source: `crates/lp-cdp/examples/memory_caps.rs`;
+with the real JavaScriptCore engine, a release build, and the state still retained. Source: `crates/pyro-cdp/examples/memory_caps.rs`;
 raw output (3 rounds): `bench/results/memory-caps-cdf2d33/memory_caps.txt`. Same host as above, `main` cdf2d33 plus
 the handle-budget change.
 
@@ -54,7 +54,7 @@ their memory. That is inherent to the protocol. It is the same in Chrome, which 
    - Expected saving: per-test process spawn plus engine creation (upstream ≈ 57–108 ms readiness).
    - Requires a TOS fixture change and parity validation. Not started.
 2. **Compiled-function cache for `Runtime.callFunctionOn`.**
-   - lp-js re-parses `functionDeclaration` on every call. Parse cost scales with source size (8 µs → 172 µs for 38 KB,
+   - pyro-js re-parses `functionDeclaration` on every call. Parse cost scales with source size (8 µs → 172 µs for 38 KB,
      measured).
    - Worthwhile only if Playwright's real per-call sources are large. Record their sizes from a TOS run with
      `cdp-record-proxy.mjs --params` before building a per-realm cache keyed by source hash.
@@ -65,7 +65,7 @@ their memory. That is inherent to the protocol. It is the same in Chrome, which 
 4. **Lazy WebAPI installation.**
    - There is no startup snapshot in JSC, so each realm will build its classes at creation.
    - Today an about:blank realm rebuild costs about 140 µs. That will grow with the DOM/WebAPI surface.
-   - Lazy prototype installation is a W1 item (docs/PARITY.md). Remeasure once lp-webapi lands.
+   - Lazy prototype installation is a W1 item (docs/PARITY.md). Remeasure once pyro-webapi lands.
 5. **Protocol round trips during Playwright page setup.**
    - Playwright sends about 15 commands per new page.
    - The in-process cost is about 0.5 ms, so socket/serialization overhead is the remaining variable. Measure it

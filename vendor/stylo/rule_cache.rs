@@ -26,7 +26,7 @@ pub struct RuleCacheConditions {
     line_height: Option<NonNegativeLength>,
     writing_mode: Option<WritingMode>,
     color_scheme: Option<ColorSchemeFlags>,
-    /// lightningpanda: reset properties the style inherits explicitly, with
+    /// pyro: reset properties the style inherits explicitly, with
     /// the parent's values: `*, ::before, ::after { box-sizing: inherit }`
     /// (MUI's and many resets' pattern, on every element) and the UA's
     /// `td, th, tr { vertical-align: inherit }`. A cached style serves an
@@ -36,7 +36,7 @@ pub struct RuleCacheConditions {
 
 macro_rules! inherited_resets {
     ($($variant:ident, $clone:ident, $ty:ty;)*) => {
-        /// lightningpanda: a reset property inherited explicitly, with the parent's value.
+        /// pyro: a reset property inherited explicitly, with the parent's value.
         #[derive(Clone, Debug, PartialEq)]
         pub enum InheritedReset {
             $(
@@ -64,7 +64,7 @@ inherited_resets! {
 }
 
 impl RuleCacheConditions {
-    /// lightningpanda: sets the style as depending on its parent's value of
+    /// pyro: sets the style as depending on its parent's value of
     /// an explicitly inherited reset property, instead of making it
     /// uncacheable.
     pub fn add_inherited_reset(&mut self, reset: InheritedReset) {

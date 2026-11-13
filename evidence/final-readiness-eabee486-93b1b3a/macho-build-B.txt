@@ -1,4 +1,4 @@
-/private/tmp/lp-final-readiness-93b1b3a/lightningpanda-B:
+/private/tmp/pyro-final-readiness-93b1b3a/pyro-B:
 Load command 11
       cmd LC_BUILD_VERSION
   cmdsize 32

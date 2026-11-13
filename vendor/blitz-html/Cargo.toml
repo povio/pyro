@@ -1,5 +1,5 @@
 # Standalone manifest for the vendored copy (workspace inheritance resolved by
-# lightningpanda; see README.lightningpanda.md).
+# pyro; see README.pyro.md).
 
 [package]
 name = "blitz-html"

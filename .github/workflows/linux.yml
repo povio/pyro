@@ -9,8 +9,9 @@ on:
       - .github/workflows/linux.yml
       - .github/workflows/linux-build.yml
       - scripts/linux/**
-      - scripts/release/bundle-jsc-linux.sh
-      - crates/lp-jsc-sys/**
+      - scripts/release/bundle-icu-linux.sh
+      - scripts/jsc/**
+      - crates/pyro-jsc-sys/**
   workflow_dispatch:
 
 permissions:

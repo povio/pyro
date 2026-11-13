@@ -28,14 +28,15 @@ where
         None => return false,
     };
 
-    // DOM mutations can allocate data before the first style is computed.
-    // Initial styling will resolve this subtree against the new viewport.
-    if data.styles.get_primary().is_none() {
+    if data.hint.will_recascade_subtree() {
+        debug!("invalidate_recursively: {:?} was already invalid", element);
         return false;
     }
 
-    if data.hint.will_recascade_subtree() {
-        debug!("invalidate_recursively: {:?} was already invalid", element);
+    // pyro: an element not styled yet (Blitz gives every element its
+    // data up front) has nothing to invalidate: its first styling uses the
+    // new viewport. `viewport_unit_usage` unwraps the primary style.
+    if data.styles.get_primary().is_none() {
         return false;
     }
 

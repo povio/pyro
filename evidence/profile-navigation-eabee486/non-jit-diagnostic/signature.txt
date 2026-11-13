@@ -1,1 +1,1 @@
-Executable=/private/tmp/lp-profile-main-eabee486/target/release/lightningpanda
+Executable=/private/tmp/pyro-profile-main-eabee486/target/release/pyro

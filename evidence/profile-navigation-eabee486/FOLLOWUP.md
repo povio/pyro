@@ -14,13 +14,13 @@ These are a small diagnostic, not a general speed/memory conclusion. Browser CPU
 
 The subsequent **diagnostic-only** ec6ae038fb71f0aecf6e601b8dc6d88b8af5d18c binary a0345b884025c8c8903f4223697235f64f932063cab69f90d822951332e1fdf6 also passed3/3 with the observer-free collector. Never merge its instrumentation or treat its timings as the baseline. W1's separate synthetic calibration measured material counter overhead (+27.6%CPU for that particular workload), not a universal correction factor. Navigation1 additionally includes one bounded native sample. Signed separately with allow-jit; polling explicittrue.
 
-|Nav|Instrumented usable wall ms|All-thread CPU to usable ms|lp-js included CPU ms|lp-runtime included CPU ms|
+|Nav|Instrumented usable wall ms|All-thread CPU to usable ms|pyro-js included CPU ms|pyro-runtime included CPU ms|
 |---:|---:|---:|---:|---:|
 |1|969.03|885.10|521.04|502.03|
 |2|604.80|854.82|481.85|470.57|
 |3|618.95|911.30|479.26|466.99|
 
-The lp-js and lp-runtime interval trees overlap: **do not add them**. Roots crossing each requested epoch window are excluded, never prorated; complete boundary root metadata is in each navN-usable/after-usable/horizon.json. Native categories can include unwrapped FFI/JS. Within lp-js included roots, js.call accounts for333/295/289ms, native.guard64/63/64ms, HTMLLinkElement45/44/44ms. This identifies candidate areas for source investigation, not an optimization or attribution to one specific application function. Runtime included CPU after usability is114/14/16ms, while much of its elapsed post-usability window is waiting.
+The pyro-js and pyro-runtime interval trees overlap: **do not add them**. Roots crossing each requested epoch window are excluded, never prorated; complete boundary root metadata is in each navN-usable/after-usable/horizon.json. Native categories can include unwrapped FFI/JS. Within pyro-js included roots, js.call accounts for333/295/289ms, native.guard64/63/64ms, HTMLLinkElement45/44/44ms. This identifies candidate areas for source investigation, not an optimization or attribution to one specific application function. Runtime included CPU after usability is114/14/16ms, while much of its elapsed post-usability window is waiting.
 
 Both runs used the same unchanged f9f batch16 fixture/nativePG/auth helpers and same-day template ledger; each cleanup verified0 run databases remaining with three ledger templates retained. No duplicate full suite or TOS compatibility claim.
 

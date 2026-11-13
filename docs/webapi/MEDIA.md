@@ -1,16 +1,16 @@
 # Media elements
 
-`crates/lp-webapi/src/media.rs` runs `HTMLMediaElement` (`<audio>`,
+`crates/pyro-webapi/src/media.rs` runs `HTMLMediaElement` (`<audio>`,
 `<video>`, `new Audio()`) like Chrome: the resource is fetched, its
 container headers are read in pure Rust
-(`crates/lp-webapi/src/media_format.rs`), and the element walks the ready
+(`crates/pyro-webapi/src/media_format.rs`), and the element walks the ready
 states and plays on a clock. A `<video>`'s frames are decoded on demand
-(`crates/lp-media`, AV1 and H.264) for screenshots, `drawImage`,
+(`crates/pyro-media`, AV1 and H.264) for screenshots, `drawImage`,
 `createImageBitmap` and `requestVideoFrameCallback`; an element's audio is
 never decoded (there is no output device). Web Audio
-(`crates/lp-webapi/src/webaudio.rs`) decodes audio files and renders
+(`crates/pyro-webapi/src/webaudio.rs`) decodes audio files and renders
 offline graphs. `TimeRanges`, `MediaError`, `TextTrackList` and
-`VideoPlaybackQuality` are made in JS (`crates/lp-webapi/src/media.js`) on a
+`VideoPlaybackQuality` are made in JS (`crates/pyro-webapi/src/media.js`) on a
 realm's first use.
 
 Nothing runs before a page asks: no decoder is made, no thread started and
@@ -20,7 +20,7 @@ snapshot and per animation frame.
 
 ## Loading
 
-The DOM (`crates/lp-dom/src/media_element.rs`) queues what starts a load for
+The DOM (`crates/pyro-dom/src/media_element.rs`) queues what starts a load for
 a document with a browsing context: `src` set or changed (the media element
 load algorithm), a media element inserted or created by the parser (resource
 selection, when its `networkState` is `NETWORK_EMPTY` and it has a source),
@@ -40,7 +40,7 @@ change, insertion and removal.
   Removing the `<source>` being tried keeps the selection's place (the next
   candidate is the one after it), as HTML's source pointer does.
 - The fetch goes through the embedder (`PageHooks::fetch_media`;
-  lp-browser's `crates/lp-browser/src/media.rs`) as an Audio or Video
+  pyro-browser's `crates/pyro-browser/src/media.rs`) as an Audio or Video
   request: CDP reports resource type `Media`, `Sec-Fetch-Dest` is
   `audio`/`video`, and Playwright routes see it. `blob:` URLs read the
   page's blob store. Only the container headers are needed: a body whose
@@ -118,7 +118,7 @@ change, insertion and removal.
   `ratechange` fire when they change. Non-finite values throw TypeError.
 - `videoWidth`/`videoHeight` give the video track's size once readyState is
   at least `HAVE_METADATA`; the size also becomes the `<video>`'s intrinsic
-  size for layout and screenshots (`lp_dom` natural size, the render
+  size for layout and screenshots (`pyro_dom` natural size, the render
   tree's `natural=` state).
 - `canPlayType()` answers as desktop Chrome for the codecs this build
   decodes: `maybe` for a supported container without codecs (`probably`
@@ -145,7 +145,7 @@ with NotAllowedError and the `autoplay` attribute leaves the element paused.
 
 A `<video>` whose resource has a video track keeps the fetched bytes (at
 most the 16 MB prefix read above) when this build has a video decoder. The
-first time a frame is needed, `lp_media::video::Player` lists the track's
+first time a frame is needed, `pyro_media::video::Player` lists the track's
 samples from the container (our own readers: the MP4 `moov` sample tables
 `stts`, `ctts`, `stsc`, `stsz`, `stco`/`co64`, `stss` and the edit list;
 WebM/Matroska `SimpleBlock`s and `BlockGroup`s), or drops the bytes when
@@ -166,7 +166,7 @@ kept per element.
   `play()` and seeking. While it is set, a `<video>` with a `poster` paints
   the poster; otherwise, from `HAVE_CURRENT_DATA`, it paints the frame at
   its current position (`PageDom::video_bitmaps`, sent with the render
-  snapshot like canvas bitmaps; lp-render puts the poster back when the
+  snapshot like canvas bitmaps; pyro-render puts the poster back when the
   frame goes away). A video without a decodable track paints its poster,
   or nothing. Blitz fits either by `object-fit` (`contain` by default). The
   intrinsic size is the video track's size once known, else the poster's,
@@ -203,15 +203,15 @@ often pages use it.
 
 H.264 patents: OpenH264's code is BSD-licensed, but Cisco's royalty-free
 patent licence covers only the binaries Cisco builds and distributes. A
-lightningpanda binary that compiles OpenH264 from source ships an H.264
+pyro binary that compiles OpenH264 from source ships an H.264
 decoder without that coverage, as FFmpeg-based builds do. A distributor
 who needs a binary without it builds
-`cargo build --release -p lightningpanda --no-default-features --features render,av1`:
+`cargo build --release -p pyro --no-default-features --features render,av1`:
 `canPlayType('video/mp4; codecs="avc1.42E01E"')` then answers `""` and
 H.264 videos paint their poster.
 
 Release binary size (macOS arm64, `cargo build --release -p
-lightningpanda`, unstripped as shipped), measured on this change:
+pyro`, unstripped as shipped), measured on this change:
 
 | Build | Size | Delta |
 | --- | --- | --- |
@@ -223,7 +223,7 @@ lightningpanda`, unstripped as shipped), measured on this change:
 
 ## Web Audio
 
-`crates/lp-webapi/src/webaudio.rs` and `webaudio.js`, made on a realm's
+`crates/pyro-webapi/src/webaudio.rs` and `webaudio.js`, made on a realm's
 first use of any of `BaseAudioContext`, `AudioContext`,
 `OfflineAudioContext`, `AudioBuffer`, `AudioParam`, `AudioNode`,
 `AudioDestinationNode`, `AudioScheduledSourceNode`,
@@ -266,7 +266,7 @@ first use of any of `BaseAudioContext`, `AudioContext`,
   computed. `suspend()`, `close()`, `baseLatency`, `outputLatency`,
   `getOutputTimestamp()`. `sampleRate` is 48000 unless given.
 - `decodeAudioData(buffer, success?, error?)` detaches the buffer, decodes
-  it with lp-media on a thread made for the call (MP3, AAC/M4A, Ogg
+  it with pyro-media on a thread made for the call (MP3, AAC/M4A, Ogg
   Vorbis/Opus, WebM Opus, FLAC, WAV PCM/float, AIFF, CAF, ALAC), resamples
   every channel to the context's rate (windowed sinc, `floor(frames * to /
   from)` frames as Chrome) and resolves in a task with the `AudioBuffer`;

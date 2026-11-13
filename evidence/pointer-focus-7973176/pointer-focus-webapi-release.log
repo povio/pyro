@@ -1,6 +1,6 @@
-   Compiling lp-webapi v0.1.0 (/private/tmp/lp-pointer-focus-scroll/crates/lp-webapi)
+   Compiling pyro-webapi v0.1.0 (/private/tmp/pyro-pointer-focus-scroll/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 1m 12s
-     Running unittests src/lib.rs (target/release/deps/lp_webapi-861023f6b56d7d09)
+     Running unittests src/lib.rs (target/release/deps/pyro_webapi-861023f6b56d7d09)
 
 running 7 tests
 test collections::tests::dataset_names ... ok
@@ -247,7 +247,7 @@ failures:
 
 ---- xhr_upload_events_fire_before_headers_for_a_request_body stdout ----
 
-thread 'xhr_upload_events_fire_before_headers_for_a_request_body' (6515908) panicked at crates/lp-webapi/tests/xhr_js.rs:377:5:
+thread 'xhr_upload_events_fire_before_headers_for_a_request_body' (6515908) panicked at crates/pyro-webapi/tests/xhr_js.rs:377:5:
 assertion `left == right` failed
   left: "rs1 x:loadstart u:loadstart(0/6,true) u:progress(6/6,true) u:load(6/6,true) u:loadend(6/6,true) rs2 rs3 x:progress(6/6,true) x:progress(6/6,true) rs4 x:load x:loadend"
  right: "rs1 x:loadstart u:loadstart(0/6,true) u:progress(6/6,true) u:load(6/6,true) u:loadend(6/6,true) rs2 rs3 x:progress(6/6,true) rs4 x:load x:loadend"
@@ -259,4 +259,4 @@ failures:
 
 test result: FAILED. 21 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
 
-error: test failed, to rerun pass `-p lp-webapi --test xhr_js`
+error: test failed, to rerun pass `-p pyro-webapi --test xhr_js`

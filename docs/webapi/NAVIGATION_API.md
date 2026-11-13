@@ -3,8 +3,8 @@
 `window.navigation` and its interfaces (`Navigation`, `NavigateEvent`,
 `NavigationHistoryEntry`, `NavigationDestination`, `NavigationTransition`,
 `NavigationCurrentEntryChangeEvent`) are made in JS
-(crates/lp-browser/src/navigation.js) on a realm's first use, over the
-frame's session history in `PageNav` (crates/lp-browser/src/nav.rs).
+(crates/pyro-browser/src/navigation.js) on a realm's first use, over the
+frame's session history in `PageNav` (crates/pyro-browser/src/nav.rs).
 
 ## What works
 

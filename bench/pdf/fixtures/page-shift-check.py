@@ -1,11 +1,11 @@
-# python3 page-shift-check.py, in a dir with r-base/lp-fixed and r-head/lp-fixed from run.mjs: pixels that differ at 96 dpi after undoing a 1 CSS px page shift.
+# python3 page-shift-check.py, in a dir with r-base/pyro-fixed and r-head/pyro-fixed from run.mjs: pixels that differ at 96 dpi after undoing a 1 CSS px page shift.
 import subprocess,re,os,glob,json,sys
 def pgm(f,pg):
     o=subprocess.run(['pdftoppm','-r','96','-f',str(pg),'-l',str(pg),'-gray',f],capture_output=True).stdout
     m=re.match(rb'P5\s+(\d+)\s+(\d+)\s+255\s',o); return int(m[1]),int(m[2]),o[m.end():]
 res={}
-for f in sorted(glob.glob('r-head/lp-fixed/*.pdf')):
-    c=os.path.basename(f)[:-4]; g='r-base/lp-fixed/'+c+'.pdf'
+for f in sorted(glob.glob('r-head/pyro-fixed/*.pdf')):
+    c=os.path.basename(f)[:-4]; g='r-base/pyro-fixed/'+c+'.pdf'
     n=int(re.search(r'Pages:\s+(\d+)',subprocess.run(['pdfinfo',f],capture_output=True,text=True,errors='replace').stdout)[1])
     land=c=='bmd-report'; sx,sy=(1,0) if land else (0,1)
     bad=0;tot=0;badmax=0

@@ -32,9 +32,9 @@ States covered, from script, CDP input or Playwright:
 | `:open`, `:modal`, `:popover-open` | `details.open`, `dialog.show()`/`showModal()`/`close()`, `showPopover()`/`hidePopover()` |
 | `:state()` | `ElementInternals.states` |
 
-The form states lp-dom computes (validity, placeholder shown, ranges, user
+The form states pyro-dom computes (validity, placeholder shown, ranges, user
 validity, open/modal/popover) reach Blitz as tokens of the render tree's
-`urn:x-lightningpanda:state` attribute; Blitz turns them into the element's
+`urn:x-pyro:state` attribute; Blitz turns them into the element's
 `ElementState` bits when the attribute is written, so Stylo's own state
 invalidation and style sharing see them like `:checked` or `:hover`.
 
@@ -50,7 +50,7 @@ invalidation and style sharing see them like `:checked` or `:hover`.
   visited restyled every anchor that could see it with its whole subtree: a
   page with `body:has(...)` restyled the document on every keystroke.
 
-`crates/lp-layout/tests/has_state.rs` checks both: each state change restyles
+`crates/pyro-layout/tests/has_state.rs` checks both: each state change restyles
 its anchor (incrementally and against a fresh document), and a page whose
 `body:has(.modal-open)` depends on neither `:checked` nor class `x` styles
 exactly as many elements for those changes as a page without `:has()`.

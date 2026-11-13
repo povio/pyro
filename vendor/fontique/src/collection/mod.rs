@@ -700,29 +700,90 @@ struct CommonData {
 }
 
 impl CommonData {
+    /// The files are opened, mapped and read on a few threads (opening them is most of
+    /// the time a scan of the system's font directories takes); their faces are then
+    /// registered here in the order a walk of `paths` finds them, each family built once.
     #[cfg(feature = "std")]
     fn load_fonts_from_paths(&mut self, paths: impl IntoIterator<Item = impl AsRef<Path>>) {
-        let mut families: HashMap<FamilyId, (FamilyName, Vec<FontInfo>)> = HashMap::default();
-        let mut scratch_family_name = String::default();
-        crate::scan::scan_paths(paths, 16, |scanned_font| {
-            let source = SourceInfo {
-                id: SourceId::new(),
-                kind: SourceKind::Path(Arc::from(scanned_font.path.unwrap())),
+        let files = crate::scan::list_files(paths, 16);
+        // One face: its family's name and what `register_scanned_font` makes of it.
+        type Face = (String, FontInfo);
+        let read = |path: &Path| -> Vec<Face> {
+            let mut faces = Vec::new();
+            crate::scan::scan_file(path, |scanned_font| {
+                let Some(name) = scanned_font
+                    .english_or_first_name(NameId::TYPOGRAPHIC_FAMILY_NAME)
+                    .or_else(|| scanned_font.english_or_first_name(NameId::FAMILY_NAME))
+                else {
+                    return;
+                };
+                let name: String = name.chars().collect();
+                if name.is_empty() {
+                    return;
+                }
+                let source = SourceInfo {
+                    id: SourceId::new(),
+                    kind: SourceKind::Path(Arc::from(path)),
+                };
+                if let Some(font) =
+                    FontInfo::from_font_ref(&scanned_font.font, source, scanned_font.index)
+                {
+                    faces.push((name, font));
+                }
+            });
+            faces
+        };
+        const MAX_THREADS: usize = 4;
+        const FILES_WORTH_A_THREAD: usize = 16;
+        let threads = std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(MAX_THREADS)
+            .min(files.len() / FILES_WORTH_A_THREAD);
+        let mut per_file: Vec<Vec<Face>> = Vec::new();
+        per_file.resize_with(files.len(), Vec::new);
+        if threads > 1 {
+            let next = core::sync::atomic::AtomicUsize::new(0);
+            let work = || {
+                let mut mine = Vec::new();
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = files.get(i) else {
+                        return mine;
+                    };
+                    mine.push((i, read(path)));
+                }
             };
-
-            // `scan_paths` invokes this callback once per face (each face of a
-            // collection is reported separately), so register exactly this font.
-            // Re-scanning the file here would register duplicate faces.
-            families.clear();
-            self.register_scanned_font(
-                scanned_font,
-                &source,
-                None,
-                &mut scratch_family_name,
-                &mut families,
-            );
-            self.merge_families(&families);
-        });
+            let done: Vec<(usize, Vec<Face>)> = std::thread::scope(|scope| {
+                let others: Vec<_> = (1..threads)
+                    .filter_map(|_| std::thread::Builder::new().spawn_scoped(scope, work).ok())
+                    .collect();
+                let mut done = work();
+                for other in others {
+                    match other.join() {
+                        Ok(theirs) => done.extend(theirs),
+                        Err(panic) => std::panic::resume_unwind(panic),
+                    }
+                }
+                done
+            });
+            for (i, faces) in done {
+                per_file[i] = faces;
+            }
+        } else {
+            for (i, path) in files.iter().enumerate() {
+                per_file[i] = read(path);
+            }
+        }
+        let mut families: HashMap<FamilyId, (FamilyName, Vec<FontInfo>)> = HashMap::default();
+        for (name, font) in per_file.into_iter().flatten() {
+            let name = self.family_names.get_or_insert(&name);
+            families
+                .entry(name.id())
+                .or_insert_with(|| (name, Vec::default()))
+                .1
+                .push(font);
+        }
+        self.merge_families(&families);
     }
 
     fn register_fonts(

@@ -34,7 +34,7 @@ covers:
 
 A diagnostic spec added in a separate worktree showed that Chromium also throws
 SecurityError for this init script on `about:blank` and reports the pageerror
-(`/private/tmp/lp-tos-diag15c`, `diag16c`).
+(`/private/tmp/pyro-tos-diag15c`, `diag16c`).
 - Caveat: the spec imported Playwright's `test` directly, bypassing the TOS
   browser fixture. Its "Lightpanda" runs (`diag15l`, `diag16l`) therefore also
   ran Chromium and are not rewrite evidence.
@@ -81,7 +81,7 @@ cases listed above and passed both filter-template cases.
 
 - Chromium: Playwright 1.59.1 chromium-headless-shell 147.0.7727.15.
 - Host: MacBookAir.localdomain, Apple M1, 8 GiB.
-- Setup: one Playwright worker, native PostgreSQL 17 with the `lp_bench` test
+- Setup: one Playwright worker, native PostgreSQL 17 with the `pyro_bench` test
   role, and a per-run slug and template database. Each run used a fresh clean
   fixture; afterwards only the harness-generated pdfgen model had changed. After
   cleanup the test role owned zero databases.
@@ -92,9 +92,9 @@ cases listed above and passed both filter-template cases.
   and every listed run happened after that.
 
 Artifacts:
-- `/private/tmp/lp-tos-batch4{,-up,-opaque,-opaque2}`
-- `/private/tmp/lp-tos-chrdft`
-- `/private/tmp/lp-tos-diag15c`, `diag15l`, `diag16c`, `diag16l`
+- `/private/tmp/pyro-tos-batch4{,-up,-opaque,-opaque2}`
+- `/private/tmp/pyro-tos-chrdft`
+- `/private/tmp/pyro-tos-diag15c`, `diag15l`, `diag16c`, `diag16l`
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and
 assertion depth apply. Single runs do not establish flake rates.

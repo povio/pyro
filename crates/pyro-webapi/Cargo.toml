@@ -1,0 +1,77 @@
+[package]
+name = "pyro-webapi"
+description = "JavaScript bindings for DOM/network WebAPIs over pyro-js (worker 2)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# One integration test binary (tests/integration.rs) instead of one per file.
+autotests = false
+
+[dependencies]
+# Web Crypto (crypto_subtle.rs) uses the RustCrypto primitives below; the
+# AES modes (GCM with any IV and tag length, CBC, CTR) are built on aes + ghash.
+aes = "0.8"
+aes-kw = { version = "0.2", features = ["alloc"] }
+base64 = "0.23.1"
+bytes = "1"
+cssparser = "0.38"
+# RSA (crypto_subtle/rsa.rs): constant-time big integers, prime generation and the
+# PKCS #1 key structures; the `rsa` crate itself carries RUSTSEC-2023-0071.
+crypto-bigint = { version = "0.7.10", features = ["alloc", "rand_core", "zeroize"] }
+crypto-primes = { version = "0.7.2", default-features = false }
+ed25519-dalek = "2"
+encoding_rs = "0.8"
+# CompressionStream / DecompressionStream; already pyro-net's.
+flate2 = "1.1.10"
+getrandom = "0.3"
+ghash = "0.5"
+hkdf = "0.12"
+hmac = "0.12"
+# Canvas path geometry (isPointInPath, Path2D SVG data); already in the tree via pyro-render/blitz.
+kurbo = "0.13.1"
+pyro-canvas = { workspace = true }
+pyro-dom = { workspace = true }
+pyro-js = { workspace = true }
+# Audio (decodeAudioData) and video frame decoding; codecs are cargo
+# features of pyro-media (on in the pyro binary).
+pyro-media = { workspace = true }
+pyro-net = { workspace = true }
+pyro-runtime = { workspace = true }
+markup5ever = "0.40"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
+p384 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
+p521 = { version = "0.13.3", features = ["ecdh", "ecdsa", "pkcs8"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+percent-encoding = "2.3.2"
+pkcs1 = { version = "0.7.5", features = ["alloc", "pkcs8"] }
+pkcs8 = { version = "0.10", features = ["alloc"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rustc-hash = "2"
+sha1 = { version = "0.10", features = ["oid"] }
+sha2 = { version = "0.10", features = ["oid"] }
+url = "2"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+# Observes GC outcomes (a closed realm must be collected after bounded synchronous GC). Its own process
+# restores the conditions its retention tests were validated under (no other engine collecting alongside),
+# like pyro-js string_allocation.
+[[test]]
+name = "payload_cycles"
+path = "tests/payload_cycles.rs"
+
+[dev-dependencies]
+# Every codec in this crate's tests.
+pyro-media = { workspace = true, features = ["av1", "h264"] }
+# Geometry for the layout tests (Blitz).
+pyro-layout = { workspace = true }
+pyro-render = { workspace = true }
+# Reads the WPT URL data files (tests/url_conformance.rs); already in the tree.
+serde_json.workspace = true
+tokio = { version = "1", features = ["sync"] }
+
+[lints]
+workspace = true

@@ -4,7 +4,7 @@
 Load average at start 9.79/13.69/17.69, at end 11.39/13.10/17.15.
 
 - **upstream**: `/Users/xban1x/Documents/Codex/2026-10-16/loa/work/lightpanda/bin/lightpanda` sha256 `f1156d20d4ef9b16`, startup median 64.758 ms
-- **rewrite**: `/Users/xban1x/Povio/lp-cdp-perf-wt/target/release/lightningpanda` sha256 `a26f6a1f0cc4748b`, startup median 6.564 ms
+- **rewrite**: `/Users/xban1x/Povio/pyro-cdp-perf-wt/target/release/pyro` sha256 `a26f6a1f0cc4748b`, startup median 6.564 ms
 
 Times are milliseconds per sample (median, p90 over all rounds); `rsd` is the robust relative spread; `cpu/op` is browser CPU per operation.
 

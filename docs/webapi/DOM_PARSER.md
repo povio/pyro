@@ -36,15 +36,15 @@ Rust-string conversion limitation.
 This increment targets the DOMParser path used by docx-preview 0.3.7. It does not
 add XML document navigation, XHR responseXML XMLSerializer, XML innerHTML parsing,or XML innerHTML parsing; the existingHTML-oriented serialization path is unchanged. `XMLSerializer` (which Playwright's`page.content()` calls for the doctype) writes declarations where the in-scope ones donot cover a name but does not generate prefixes (`ns1`) or check well-formedness. It does not establish a passing DOCX preview or new TOS coverage.
 
-Implementation: `lp-dom/src/xml.rs` uses the
+Implementation: `pyro-dom/src/xml.rs` uses the
 [quick-xml event reader](https://docs.rs/quick-xml/0.42.0/quick_xml/reader/struct.Reader.html)
 with explicit document, namespace, declaration, character and resource-limit
-validation. Only `lp-dom/Cargo.toml` and the corresponding lockfile entry change;
+validation. Only `pyro-dom/Cargo.toml` and the corresponding lockfile entry change;
 no root dependency policy or existing dependency versions change.
 
-Tests: native `crates/lp-dom/tests/xml.rs` covers namespace/entity normalization,
+Tests: native `crates/pyro-dom/tests/xml.rs` covers namespace/entity normalization,
 malformed inputs, limits and failed-parse collection. The DOMParser binding tests
-in `crates/lp-webapi/tests/dom_js.rs` cover Office-shaped qualified/namespaced
+in `crates/pyro-webapi/tests/dom_js.rs` cover Office-shaped qualified/namespaced
 queries, live collections, MIME types, CDATA, inert adoption, and argument
 conversion reentry. Existing HTML parser tests remain in place.
 

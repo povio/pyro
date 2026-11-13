@@ -5,6 +5,13 @@
  * The testharnessreport.js of lightpanda-io/wpt's fork branch. bench/wpt/serve.mjs serves it at
  * /resources/testharnessreport.js in place of the checkout's own copy; bench/wpt/run.mjs reads window.report.
  */
+// No result table in the page and no per-assert record, as upstream wptrunner's
+// testharnessreport.js sets for automated runs: with output on, testharness.js
+// formats every assert's arguments and takes a stack trace for it, which made
+// pages with millions of asserts (encoding/encodeInto-tail-unmodified.any.html:
+// about 6 M) run 20 s and cross the 30 s timeout on slow runners.
+setup({ output: false });
+
 var report = {
   complete: false,
   // Number of subtests with a result. wptrunner polls it to detect progress.

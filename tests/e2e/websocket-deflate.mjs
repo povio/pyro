@@ -1,11 +1,11 @@
-// Real Playwright 1.59.1 (connectOverCDP) against `lightningpanda serve`:
+// Real Playwright 1.59.1 (connectOverCDP) against `pyro serve`:
 // WebSocket permessage-deflate (RFC 7692) against Bun's WebSocket servers.
 // One server requires the extension (it answers 400 to a handshake that does
 // not offer it) and compresses everything it sends; the other refuses it.
 // The page sees `extensions`, round-trips text and binary, and CDP reports
 // the offer, the server's answer and the inflated payloads.
 //
-// Usage: bun tests/e2e/websocket-deflate.mjs /abs/path/to/lightningpanda
+// Usage: bun tests/e2e/websocket-deflate.mjs /abs/path/to/pyro
 // Requires Bun (Bun.serve) and `bun install` in bench/ for playwright-core.
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -20,7 +20,7 @@ const { chromium } = require('playwright-core');
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: bun tests/e2e/websocket-deflate.mjs /abs/path/to/lightningpanda');
+  console.error('usage: bun tests/e2e/websocket-deflate.mjs /abs/path/to/pyro');
   process.exit(2);
 }
 if (typeof Bun === 'undefined') {
@@ -101,7 +101,7 @@ for (;;) {
     const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) });
     if (r.ok) break;
   } catch {}
-  if (child.exitCode !== null) { console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
+  if (child.exitCode !== null) { console.error(`pyro exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
   if (performance.now() - started > 10_000) { console.error(`startup timed out: ${stderr}`); process.exit(1); }
   await new Promise((r) => setTimeout(r, 10));
 }

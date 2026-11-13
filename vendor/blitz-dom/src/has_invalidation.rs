@@ -1,4 +1,4 @@
-//! lightningpanda: `:has()` invalidation through Stylo's relative selector
+//! pyro: `:has()` invalidation through Stylo's relative selector
 //! invalidation, as Gecko runs it on every state and attribute change.
 //!
 //! Stylo leaves relative selectors to the embedder: the snapshot-driven
@@ -8,7 +8,7 @@
 //! manager for each change; this does the same for Blitz:
 //!
 //! - an element state change (`:checked`, `:focus`, `:hover`, the form states
-//!   lp-dom's render tree mirrors as [`LP_STATE_NS`] tokens, ...) looks up the
+//!   pyro-dom's render tree mirrors as [`PYRO_STATE_NS`] tokens, ...) looks up the
 //!   relative selector map's state dependencies for the changed bits;
 //! - an attribute change looks up its id, class, attribute name and custom
 //!   state dependencies.
@@ -38,12 +38,12 @@ use crate::node::{Node, NodeData};
 use crate::{BaseDocument, QualName, local_name, ns};
 use blitz_traits::node_id::NodeId;
 
-/// Namespace of the attributes lp-dom's render tree adds for the
-/// pseudo-classes Blitz cannot derive itself (lp-dom `snapshot::STATE_NS`).
-pub const LP_STATE_NS: &str = "urn:x-lightningpanda:state";
+/// Namespace of the attributes pyro-dom's render tree adds for the
+/// pseudo-classes Blitz cannot derive itself (pyro-dom `snapshot::STATE_NS`).
+pub const PYRO_STATE_NS: &str = "urn:x-pyro:state";
 
-/// The element states the `state` attribute of [`LP_STATE_NS`] carries.
-pub(crate) const LP_STATES: ElementState = ElementState::VALID
+/// The element states the `state` attribute of [`PYRO_STATE_NS`] carries.
+pub(crate) const PYRO_STATES: ElementState = ElementState::VALID
     .union(ElementState::INVALID)
     .union(ElementState::INDETERMINATE)
     .union(ElementState::REQUIRED)
@@ -60,10 +60,10 @@ pub(crate) const LP_STATES: ElementState = ElementState::VALID
     .union(ElementState::USER_VALID)
     .union(ElementState::USER_INVALID);
 
-/// The element states a [`LP_STATE_NS`] `state` attribute value (`None`: no
+/// The element states a [`PYRO_STATE_NS`] `state` attribute value (`None`: no
 /// such attribute) stands for. An element is `:read-only` unless the value
 /// says `read-write`.
-pub(crate) fn lp_state_bits(value: Option<&str>) -> ElementState {
+pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
     let mut state = ElementState::empty();
     for token in value.unwrap_or("").split_ascii_whitespace() {
         state |= match token {
@@ -91,9 +91,9 @@ pub(crate) fn lp_state_bits(value: Option<&str>) -> ElementState {
     state
 }
 
-/// The custom states (`:state()`) a [`LP_STATE_NS`] `custom-states`
+/// The custom states (`:state()`) a [`PYRO_STATE_NS`] `custom-states`
 /// attribute value lists.
-pub(crate) fn lp_custom_states(value: Option<&str>) -> impl Iterator<Item = &str> {
+pub(crate) fn pyro_custom_states(value: Option<&str>) -> impl Iterator<Item = &str> {
     value
         .unwrap_or("")
         .split('\u{1f}')
@@ -132,7 +132,7 @@ fn searched(node: &Node) -> bool {
 fn custom_states_attr(node: &Node) -> Option<&str> {
     node.attrs()?
         .iter()
-        .find(|a| &*a.name.ns == LP_STATE_NS && &*a.name.local == "custom-states")
+        .find(|a| &*a.name.ns == PYRO_STATE_NS && &*a.name.local == "custom-states")
         .map(|a| a.value.as_str())
 }
 
@@ -143,7 +143,7 @@ fn names_of(node: &Node, kind: AttrKind) -> SmallVec<[Atom; 4]> {
     match kind {
         AttrKind::Id => out.extend(el.id.clone()),
         AttrKind::Class => out.extend(el.classes.iter().cloned()),
-        AttrKind::CustomStates => out.extend(lp_custom_states(custom_states_attr(node)).map(Atom::from)),
+        AttrKind::CustomStates => out.extend(pyro_custom_states(custom_states_attr(node)).map(Atom::from)),
         AttrKind::Other => {}
     }
     out
@@ -162,7 +162,7 @@ impl AttributeChange {
             AttrKind::Id
         } else if name.ns == ns!() && name.local == local_name!("class") {
             AttrKind::Class
-        } else if &*name.ns == LP_STATE_NS && &*name.local == "custom-states" {
+        } else if &*name.ns == PYRO_STATE_NS && &*name.local == "custom-states" {
             AttrKind::CustomStates
         } else {
             AttrKind::Other
@@ -250,10 +250,18 @@ impl BaseDocument {
             return;
         }
         let snapshots = Snapshots::new(&self.snapshots);
+        // Given snapshots, Stylo (0.24 on) drops a dependency whose compound
+        // matches the element as it did per its snapshot. That holds only
+        // when the snapshot has what changed: an element never styled (in a
+        // `display: none` subtree) has none (`snapshot_node_impl`), and
+        // Servo's snapshot keeps no custom states. Both would read as
+        // unchanged.
+        let comparable =
+            node.has_snapshot() && !attr.is_some_and(|attr| matches!(attr.kind, AttrKind::CustomStates));
         let invalidator = RelativeSelectorInvalidator {
             element: node,
             quirks_mode: self.stylist.quirks_mode(),
-            snapshots: Some(&snapshots),
+            snapshots: comparable.then_some(&snapshots),
             invalidated: anchor_invalidated,
             sibling_traversal_map: SiblingTraversalMap::default(),
         };

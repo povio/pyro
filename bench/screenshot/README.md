@@ -1,12 +1,12 @@
 # Screenshot benchmark (end to end)
 
-`match-screenshot.ts` measures screenshots through the real path: a `lightningpanda` binary built with
+`match-screenshot.ts` measures screenshots through the real path: a `pyro` binary built with
 `--features render`, the fixtures served over HTTP by Bun (Lato as a web font, so the renderer fetches it through
-the page's network), and the `lightning-panda` client over CDP.
+the page's network), and the `pyro` client over CDP.
 
 ```sh
 cargo build --release --features render
-bun bench/screenshot/match-screenshot.ts --bin target/release/lightningpanda --iters 50
+bun bench/screenshot/match-screenshot.ts --bin target/release/pyro --iters 50
 ```
 
 Fixtures (copied from the prototype on `proto/blitz-screenshot`): `login` (flex-centered card, gradient,
@@ -19,5 +19,5 @@ page's first screenshot. `--pages <dir>` adds static page snapshots (one directo
 `resources` `{url, file}`, `res/<file>`), served with their sheets and resources:
 
 ```sh
-bun bench/screenshot/repeat.ts --bin target/release/lightningpanda --iters 30
+bun bench/screenshot/repeat.ts --bin target/release/pyro --iters 30
 ```

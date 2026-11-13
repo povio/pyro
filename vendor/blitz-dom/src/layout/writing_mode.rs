@@ -110,7 +110,7 @@ impl LayoutPassState<'_> {
         output
     }
 
-    /// lightningpanda: kept out of the frame of `compute_child_layout_in_own_wm`, which is on the
+    /// pyro: kept out of the frame of `compute_child_layout_in_own_wm`, which is on the
     /// stack once per tree level of a recursive layout.
     #[inline(never)]
     fn mirror_child_overflow(
@@ -263,7 +263,7 @@ impl LayoutPassState<'_> {
         placer_size: Size<f32>,
         parent_frac: Point<f32>,
     ) {
-        // lightningpanda: only a vertical placer reads it (`physical_layout`).
+        // pyro: only a vertical placer reads it (`physical_layout`).
         let is_scroll_container = placer_wm.is_vertical() && {
             let overflow = self.doc.nodes[dom_node_id(node_id)].layout_style().overflow();
             overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
@@ -293,11 +293,11 @@ impl LayoutPassState<'_> {
         self.set_final_layout(node_id, &layout);
 
         let wm = self.layout_wm_of(dom_node_id(node_id));
-        // lightningpanda: `content_box_subpixel_offset` (upstream #1382) stays zero: screenshots keep
+        // pyro: `content_box_subpixel_offset` (upstream #1382) stays zero: screenshots keep
         // text at the whole-pixel content box, and print moves text to its layout-unit x itself
         // (`fractional_text_x` in blitz-paint).
         self.node_from_id_mut(node_id).layout_data_mut().writing_mode = wm;
-        // lightningpanda: a table where it was rounds again only the cells its grid placed since:
+        // pyro: a table where it was rounds again only the cells its grid placed since:
         // the others' layouts and offsets, all their rounding reads, are the same.
         let table_cells = (self.nodes[dom_node_id(node_id)].flags.is_table_root() && !wm.is_vertical())
             .then(|| crate::layout::table::table_cells_to_round(self, dom_node_id(node_id), frac))
@@ -382,7 +382,7 @@ fn round_half_up(v: f32) -> f32 {
 /// absolute coordinates and every inner edge is rounded relative to them, so adjacent boxes never
 /// overlap or gap.
 ///
-/// lightningpanda: the absolute coordinates are kept modulo whole pixels. `parent_frac` is the
+/// pyro: the absolute coordinates are kept modulo whole pixels. `parent_frac` is the
 /// fractional part of the parent's absolute position; the box's position in the pixel grid is
 /// `parent_frac + location`, rounded half up, and the parent's is `parent_frac` rounded. Moving the
 /// parent by whole pixels changes nothing here (the arithmetic never sees the whole pixels), so
@@ -590,7 +590,7 @@ mod tests {
 
 /// `logical`, written by a placing algorithm running in `placer_wm` within a box of physical size
 /// `placer_size`, in physical coordinates.
-/// lightningpanda: whether `node` is a scroll container, for CSSOM geometry queries. These reach
+/// pyro: whether `node` is a scroll container, for CSSOM geometry queries. These reach
 /// boxes outside the layout tree too (below a `display: none` element, which have no styles), and
 /// an unstyled box is not one.
 fn is_styled_scroll_container(node: &Node) -> bool {
@@ -696,7 +696,7 @@ impl BaseDocument {
 
     /// Document-relative position, writing mode and physical size of the box that places `node`.
     ///
-    /// lightningpanda: a loop over the containing-block chain, outermost first, instead of a
+    /// pyro: a loop over the containing-block chain, outermost first, instead of a
     /// recursion per level (which overflowed the stack on deep vertical trees).
     fn placer_geometry(
         &self,

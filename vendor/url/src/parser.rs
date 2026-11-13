@@ -20,7 +20,7 @@ use percent_encoding::{percent_encode, utf8_percent_encode, AsciiSet, CONTROLS};
 const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
 
 /// https://url.spec.whatwg.org/#path-percent-encode-set
-/// lightningpanda: the standard added U+005E (^).
+/// pyro: the standard added U+005E (^).
 const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'^').add(b'{').add(b'}');
 
 /// https://url.spec.whatwg.org/#userinfo-percent-encode-set
@@ -512,7 +512,7 @@ impl Parser<'_> {
 
     /// https://url.spec.whatwg.org/#file-state, with the file slash and file host states.
     ///
-    /// lightningpanda: rewritten to the current standard. A host is kept next to a Windows
+    /// pyro: rewritten to the current standard. A host is kept next to a Windows
     /// drive letter (`file://host/C:/`), the base's host carries over to relative and
     /// drive-letter inputs, and leading empty path segments (`file:////x`) are kept.
     fn parse_file(
@@ -699,7 +699,7 @@ impl Parser<'_> {
                 })
             }
             Some('#') => self.fragment_only(base_url, input),
-            // lightningpanda: a backslash is a slash only in special URLs.
+            // pyro: a backslash is a slash only in special URLs.
             Some('/') | Some('\\') if first_char == Some('/') || scheme_type.is_special() => {
                 // relative slash state, then the special authority ignore slashes state: a
                 // special URL skips every further slash and backslash, others need exactly `//`.
@@ -1081,7 +1081,7 @@ impl Parser<'_> {
                 // If c is U+005C (\), validation error.
                 self.log_violation(SyntaxViolation::Backslash);
             }
-            // A special URL always has a non-empty path. lightningpanda: the slash is pushed
+            // A special URL always has a non-empty path. pyro: the slash is pushed
             // even after an empty file host (`file://`), so `file:////x` keeps its empty
             // leading segments.
             self.serialization.push('/');
@@ -1218,7 +1218,7 @@ impl Parser<'_> {
                 // If buffer is a double-dot path segment, shorten url’s path,
                 ".." | "%2e%2e" | "%2e%2E" | "%2E%2e" | "%2E%2E" | "%2e." | "%2E." | ".%2e"
                 | ".%2E" => {
-                    // lightningpanda: drop "/..[/]", shorten the path before it, then either
+                    // pyro: drop "/..[/]", shorten the path before it, then either
                     // start the next segment (c is a slash) or append the empty segment.
                     debug_assert!(self.serialization.as_bytes()[segment_start - 1] == b'/');
                     self.serialization.truncate(segment_start - 1);
@@ -1246,7 +1246,7 @@ impl Parser<'_> {
                                 self.serialization.push('/');
                             }
                         }
-                        // lightningpanda: the standard no longer clears the host here.
+                        // pyro: the standard no longer clears the host here.
                         if *has_host {
                             self.log_violation(SyntaxViolation::FileWithHostAndWindowsDrive);
                         }
@@ -1257,13 +1257,13 @@ impl Parser<'_> {
                 break;
             }
         }
-        // lightningpanda: the standard no longer removes leading empty segments of file paths.
+        // pyro: the standard no longer removes leading empty segments of file paths.
         input
     }
 
     /// https://url.spec.whatwg.org/#shorten-a-urls-path
     ///
-    /// lightningpanda: removes the last "/segment" of the path that starts at `path_start`,
+    /// pyro: removes the last "/segment" of the path that starts at `path_start`,
     /// except a lone normalized Windows drive letter of a file URL.
     fn shorten_path(&mut self, scheme_type: SchemeType, path_start: usize) {
         let path = &self.serialization[path_start..];
@@ -1296,7 +1296,7 @@ impl Parser<'_> {
                 Some(('?', _)) | Some(('#', _)) if self.context == Context::UrlParser => {
                     return input_before_c
                 }
-                // lightningpanda: a space right before the query or fragment is "%20", so
+                // pyro: a space right before the query or fragment is "%20", so
                 // removing those later cannot leave a trailing space in the opaque path.
                 Some((' ', _))
                     if self.context == Context::UrlParser

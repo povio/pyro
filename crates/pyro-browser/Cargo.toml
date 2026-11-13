@@ -1,0 +1,33 @@
+[package]
+name = "pyro-browser"
+description = "Browser/Session/Page/Frame orchestration, navigation, worlds, window timers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# One integration test binary (tests/integration.rs) instead of one per file.
+autotests = false
+
+[dependencies]
+pyro-js.workspace = true
+pyro-runtime.workspace = true
+pyro-dom.workspace = true
+pyro-net.workspace = true
+pyro-webapi.workspace = true
+url = "2"
+bytes = "1"
+percent-encoding = "2.3.2"
+http = "1"
+smallvec = "1"
+
+[dev-dependencies]
+pyro-layout.workspace = true
+# Every codec in this crate's tests (tests/media_decoding.rs).
+pyro-media = { workspace = true, features = ["av1", "h264"] }
+pyro-render.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

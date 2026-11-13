@@ -229,7 +229,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let LayoutInput { known_dimensions, run_mode, .. } = inputs;
 
     let table_rows = tree.grid_rows_are_table_rows(node);
-    // lightningpanda: a table's last layout, to lay out again only what changed since (`table_reuse`).
+    // pyro: a table's last layout, to lay out again only what changed since (`table_reuse`).
     let reuse = if table_rows && run_mode == RunMode::PerformLayout { tree.take_table_grid_state(node) } else { None };
     let style = tree.get_grid_container_style(node);
     let constants = compute_container_constants(tree, &style, inputs);
@@ -343,12 +343,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     // so they are excluded here. Each child's style is read and its named lines resolved exactly once; the
     // results drive both the grid size estimate and item placement below.
     //
-    // lightningpanda: a tree that places the items itself (a table, which places its cells as it builds them)
+    // pyro: a tree that places the items itself (a table, which places its cells as it builds them)
     // answers each item's area instead. Named-line resolution, the size estimate and auto-placement are then
     // skipped (see `LayoutGridContainer::track_counts`).
     let tree_extent = tree.track_counts(node);
     let child_count = tree.child_count(node);
-    // lightningpanda: nothing changed since the table's last layout and the inputs differ at most in
+    // pyro: nothing changed since the table's last layout and the inputs differ at most in
     // the available width (its container got wider or narrower, the table not): that layout stands.
     let reuse = match reuse {
         Some(reuse)
@@ -657,7 +657,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
         intrinsic_column_contribution_changed =
             items.iter_mut().filter(|item| item.crosses_intrinsic_column).fold(false, |any_changed, item| {
-                // lightningpanda: the first column pass read nothing of this item that depends on its content or
+                // pyro: the first column pass read nothing of this item that depends on its content or
                 // grid area (an `fr` column it does not size, with `min-width: 0` say), so the columns cannot
                 // change with it and measuring it here would only force a re-run on the empty cache. A definite
                 // container width is required as well: with an indefinite one the re-run expands `fr` tracks
@@ -881,7 +881,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     };
 
     // Position in-flow children (stored in items vector)
-    // lightningpanda: in a table laid out again, an item that did not change keeps its layout in the
+    // pyro: in a table laid out again, an item that did not change keeps its layout in the
     // same grid area and is moved to an area of the same size (`table_reuse`).
     let mut positioned: Vec<alignment::PositionedItem> = match replay.as_mut() {
         Some(replay) => core::mem::take(&mut replay.positioned),
@@ -972,7 +972,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         }
     }
 
-    // lightningpanda: whether to keep this layout of a table for the next (`table_reuse`).
+    // pyro: whether to keep this layout of a table for the next (`table_reuse`).
     let rows_sized = rows_sized.filter(|sized| {
         run_mode == RunMode::PerformLayout
             && !sized_again
@@ -1227,7 +1227,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     output
 }
 
-/// lightningpanda: checks the areas and track counts a tree answered through `LayoutGridContainer::track_counts`
+/// pyro: checks the areas and track counts a tree answered through `LayoutGridContainer::track_counts`
 /// and `resolved_placement` against what this module's own placement gives for the same items: named-line
 /// resolution, the grid size estimate and the auto-placement algorithm over an occupancy matrix.
 #[cfg(debug_assertions)]
@@ -1753,7 +1753,7 @@ impl DetailedGridItemsInfo {
     }
 }
 
-/// lightningpanda: the re-check of the items' min-content widths after row sizing.
+/// pyro: the re-check of the items' min-content widths after row sizing.
 #[cfg(all(test, feature = "taffy_tree"))]
 mod rerun_tests {
     use crate::prelude::*;

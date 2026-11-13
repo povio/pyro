@@ -41,7 +41,7 @@ jobs:
           path: |
             Cargo.toml
             Cargo.lock
-            packages/lightning-panda/package.json
+            packages/pyro/package.json
           if-no-files-found: error
           retention-days: 7
 
@@ -60,7 +60,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      LP_JSC: system
+      PYRO_JSC: system
       MACOSX_DEPLOYMENT_TARGET: '14.0'
     steps:
       - uses: actions/checkout@v6
@@ -73,22 +73,22 @@ jobs:
       - name: Build browser with rendering, and the comparison worker
         env:
           RUST_TARGET: ${{ matrix.target }}
-        run: cargo +stable build --locked --release --package lightningpanda --package lp-render --features render --target "$RUST_TARGET"
+        run: cargo +stable build --locked --release --package pyro --package pyro-render --features render --target "$RUST_TARGET"
       - name: Verify and stage binary
         env:
           ARCH: ${{ matrix.arch }}
           RUST_TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.release.outputs.version }}
         run: |
-          binary="target/$RUST_TARGET/release/lightningpanda"
+          binary="target/$RUST_TARGET/release/pyro"
           codesign --verify --strict "$binary"
           codesign -d --entitlements - "$binary" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
           otool -L "$binary"
-          "$binary" version | grep -Fx "lightningpanda $VERSION"
+          "$binary" version | grep -Fx "pyro $VERSION"
           "$binary" eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
           mkdir -p "native/darwin-$ARCH"
-          cp "$binary" "native/darwin-$ARCH/lightningpanda"
-          comparator="target/$RUST_TARGET/release/lp-snapshot-compare"
+          cp "$binary" "native/darwin-$ARCH/pyro"
+          comparator="target/$RUST_TARGET/release/pyro-snapshot-compare"
           codesign --verify --strict "$comparator"
           mkdir -p "archive/$ARCH"
           cp "$binary" "$comparator" "archive/$ARCH/"
@@ -112,11 +112,13 @@ jobs:
   jsc:
     uses: ./.github/workflows/jsc.yml
 
-  # The fork variant: the same browser linked against the patched JavaScriptCore.
+  # The fork variant: the same browser linked against the patched JavaScriptCore,
+  # built with profile-guided optimization (.github/actions/pgo-build; the
+  # comparison worker is a plain release build).
   fork:
     needs: [release, jsc]
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 150
     env:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
     steps:
@@ -129,40 +131,36 @@ jobs:
         with:
           name: patched-jsc
           path: patched-jsc
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --no-self-update
-      - name: Build browser and comparison worker against the patched JavaScriptCore
+      - name: Build browser (PGO)
+        uses: ./.github/actions/pgo-build
+      - name: Build comparison worker against the patched JavaScriptCore
         env:
           JSC_DIR: ${{ needs.jsc.outputs.dir }}
         run: |
-          # At the path it was built at: its install name is absolute.
-          export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
-          mkdir -p "$(dirname "$LP_JSC_DIR")"
-          mv patched-jsc "$LP_JSC_DIR"
-          cargo +stable build --locked --release --package lightningpanda --package lp-render --features render
+          export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
+          mkdir -p "$(dirname "$PYRO_JSC_DIR")"
+          mv patched-jsc "$PYRO_JSC_DIR"
+          cargo +stable build --locked --release --package pyro-render
+          cp target/aarch64-apple-darwin/release-pgo/pyro target/release/pyro
       - name: Verify and stage binaries
         env:
           VERSION: ${{ needs.release.outputs.version }}
         run: |
-          binary=target/release/lightningpanda
+          binary=target/release/pyro
           codesign --verify --strict "$binary"
-          otool -L "$binary" | grep libJavaScriptCore.dylib
-          "$binary" version | grep -Fx "lightningpanda $VERSION"
+          # The patched JavaScriptCore is inside the browser (a static archive): no library of that name is loaded.
+          if otool -L "$binary" | grep -F JavaScriptCore; then exit 1; fi
+          codesign -d --entitlements - "$binary" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
+          "$binary" version | grep -Fx "pyro $VERSION"
           "$binary" version | grep -q 'fork: true'
           mkdir -p archive/fork
-          cp "$binary" target/release/lp-snapshot-compare archive/fork/
-      - name: Bundle the patched JavaScriptCore for the npm package
-        env:
-          JSC_DIR: ${{ needs.jsc.outputs.dir }}
+          cp "$binary" target/release/pyro-snapshot-compare archive/fork/
+      - name: Stage the browser for the npm package
         run: |
           mkdir -p native/darwin-arm64
-          cp target/release/lightningpanda native/darwin-arm64/
-          scripts/release/bundle-jsc.sh native/darwin-arm64 "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR/lib/libJavaScriptCore.dylib"
-          # Moved, so nothing can load the build cache's copy instead.
-          mv "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR" "$RUNNER_TEMP/jsc-moved"
-          native/darwin-arm64/lightningpanda version | grep -q 'fork: true'
-          DYLD_PRINT_LIBRARIES=1 native/darwin-arm64/lightningpanda eval -e 1 2>&1 | grep libJavaScriptCore \
-            | grep -q "$PWD/native/darwin-arm64/lib/libJavaScriptCore.dylib"
+          cp target/release/pyro native/darwin-arm64/
+          codesign --verify --strict native/darwin-arm64/pyro
+          native/darwin-arm64/pyro version | grep -q 'fork: true'
       - uses: actions/upload-artifact@v4
         with:
           name: archive-fork
@@ -185,6 +183,7 @@ jobs:
       jsc-dir: ${{ needs.jsc.outputs.dir }}
       release: true
       version: ${{ needs.release.outputs.version }}
+      pgo: true
 
   # The JavaScriptCore source asset and the notices the fork archive ships.
   jsc-source:
@@ -224,12 +223,12 @@ jobs:
         with:
           pattern: native-*
           merge-multiple: true
-          path: packages/lightning-panda/native
+          path: packages/pyro/native
       - name: Install build dependencies
-        working-directory: packages/lightning-panda
+        working-directory: packages/pyro
         run: bun install --frozen-lockfile
       - name: Build and pack
-        working-directory: packages/lightning-panda
+        working-directory: packages/pyro
         run: |
           mkdir -p ../../npm-package
           npm pack --pack-destination ../../npm-package
@@ -251,9 +250,9 @@ jobs:
           cd "$RUNNER_TEMP/npm-client"
           npm init -y
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
-          node --input-type=module -e 'import { Lightningpanda, button, check } from "@povio/lightning-panda"; if (![Lightningpanda, button, check].every(x => typeof x === "function")) process.exit(1);'
+          node --input-type=module -e 'import { Pyro, button, check } from "@povio/pyro"; if (![Pyro, button, check].every(x => typeof x === "function")) process.exit(1);'
           cp "$GITHUB_WORKSPACE/scripts/npm/types.mts" .
-          node "$GITHUB_WORKSPACE/packages/lightning-panda/node_modules/typescript/bin/tsc" types.mts --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM,ESNext.Disposable --typeRoots "$GITHUB_WORKSPACE/packages/lightning-panda/node_modules/@types"
+          node "$GITHUB_WORKSPACE/packages/pyro/node_modules/typescript/bin/tsc" types.mts --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM,ESNext.Disposable --typeRoots "$GITHUB_WORKSPACE/packages/pyro/node_modules/@types"
       - uses: actions/upload-artifact@v4
         with:
           name: npm-package
@@ -288,12 +287,12 @@ jobs:
           cd "$RUNNER_TEMP/npm-smoke"
           npm init -y
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
-          ./node_modules/.bin/lightningpanda version
+          ./node_modules/.bin/pyro version
           # The macOS arm64 and both Linux browsers are fork builds; the macOS
           # Intel one uses system JavaScriptCore.
           want=false
           [[ "$(uname -m)" == arm64 || "$(uname -s)" == Linux ]] && want=true
-          ./node_modules/.bin/lightningpanda version | grep -q "fork: $want"
+          ./node_modules/.bin/pyro version | grep -q "fork: $want"
           node "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
           bun "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
 
@@ -352,23 +351,23 @@ jobs:
           path: jsc-source
       - name: Assemble and check the archives
         run: |
-          chmod +x release-in/*/lightningpanda release-in/*/lp-snapshot-compare
+          chmod +x release-in/*/pyro release-in/*/pyro-snapshot-compare
           mkdir release-out
-          mv "jsc-source/lightningpanda-jsc-source-v$VERSION.tar.gz" release-out/
+          mv "jsc-source/pyro-jsc-source-v$VERSION.tar.gz" release-out/
           mv jsc-source/jsc-licenses release-in/
           scripts/release/assemble.sh "$VERSION" "$GITHUB_SHA" release-in release-out
       - name: Test the client against the extracted browsers
         run: |
           mkdir "$RUNNER_TEMP/extracted"
-          for f in release-out/lightningpanda-rust-v"$VERSION"-macos-arm64*.tar.gz; do tar xzf "$f" -C "$RUNNER_TEMP/extracted"; done
-          cd packages/lightning-panda
+          for f in release-out/pyro-rust-v"$VERSION"-macos-arm64*.tar.gz; do tar xzf "$f" -C "$RUNNER_TEMP/extracted"; done
+          cd packages/pyro
           bun install --frozen-lockfile
           # The CLI tests run the built client.
           bun run build
           # Everything, fork mode included.
-          LIGHTNINGPANDA_BIN="$RUNNER_TEMP/extracted/lightningpanda-rust-v$VERSION-macos-arm64-fork/lightningpanda" bun test ./test
+          PYRO_BIN="$RUNNER_TEMP/extracted/pyro-rust-v$VERSION-macos-arm64-fork/pyro" bun test ./test
           # The standard build has no fork mode.
-          LIGHTNINGPANDA_BIN="$RUNNER_TEMP/extracted/lightningpanda-rust-v$VERSION-macos-arm64/lightningpanda" bun test test/binary.test.ts test/screenshot.test.ts
+          PYRO_BIN="$RUNNER_TEMP/extracted/pyro-rust-v$VERSION-macos-arm64/pyro" bun test test/binary.test.ts test/screenshot.test.ts
       - name: Publish the GitHub release
         env:
           TAG: ${{ github.ref_name }}
@@ -381,7 +380,7 @@ jobs:
           else
             prerelease=()
             [[ "$DIST_TAG" == next ]] && prerelease=(--prerelease)
-            gh release create "$TAG" --verify-tag --title "Rust Lightpanda $TAG" --generate-notes "${prerelease[@]}" "${assets[@]}"
+            gh release create "$TAG" --verify-tag --title "Pyro $TAG" --generate-notes "${prerelease[@]}" "${assets[@]}"
           fi
       - name: Verify the uploaded assets
         env:

@@ -1,0 +1,149 @@
+//! What a renderer needs to paint the document as it is now
+//! ([`PageDom::render_snapshot`]): HTML with form state written in, live
+//! sheet text, the emulated viewport and the window scroll position. Plain
+//! data, so another thread can render it.
+//!
+//! Canvas bitmaps and `<video>` frames travel beside the document
+//! ([`RenderSnapshot::canvases`]).
+//! Not captured: video pixels, iframe contents (empty boxes),
+//! `:active` state (the hovered
+//! and focused elements are carried as render keys for the renderer to
+//! apply), selection and caret, CSS animations/transitions (rendered at
+//! their final values), shadow-tree style scoping (shadow `<style>` applies
+//! document-wide).
+
+use std::collections::HashMap;
+
+use pyro_dom::snapshot::RenderHtml;
+use pyro_dom::NodeId;
+
+use crate::PageDom;
+
+#[derive(Clone, Debug, Default)]
+pub struct RenderSnapshot {
+    /// Empty when `tree` is set.
+    pub html: String,
+    /// The document as keyed nodes ([`PageDom::render_snapshot_tree`]).
+    pub tree: Option<pyro_dom::snapshot::RenderTree>,
+    /// `<link rel=stylesheet>` texts by absolute URL (CSSOM edits included).
+    pub sheets: HashMap<String, String>,
+    /// CSS px.
+    pub width: u32,
+    pub height: u32,
+    pub device_scale_factor: f64,
+    pub dark: bool,
+    /// Emulated `print` media.
+    pub print: bool,
+    pub scroll_x: f64,
+    pub scroll_y: f64,
+    /// Scrolled elements by render key, with their offset (CSS px), in
+    /// every form.
+    pub element_scroll: Vec<(u64, (f64, f64))>,
+    /// Render keys (`pyro_dom::snapshot::render_key`) of the element under the
+    /// pointer and the focused element, in every form.
+    pub hovered: Option<u64>,
+    pub focused: Option<u64>,
+    /// Bitmaps of the canvases drawn on (`PageDom::canvas_bitmaps`), in
+    /// every form.
+    pub canvases: Vec<crate::canvas::CanvasBitmap>,
+}
+
+/// How a snapshot carries the document.
+#[derive(Clone, Copy)]
+enum Form {
+    Html,
+    Tree,
+    None,
+}
+
+impl PageDom {
+    /// Snapshot of the document for rendering. `base_url` resolves link
+    /// URLs (the frame's base URL); `mark` puts a valueless attribute on one
+    /// element (a screenshot clip target).
+    pub fn render_snapshot(&self, base_url: &str, mark: Option<(NodeId, &str)>) -> RenderSnapshot {
+        self.snapshot_as(base_url, mark, Form::Html)
+    }
+
+    /// As [`PageDom::render_snapshot`], with the document as a keyed node
+    /// list (`pyro_dom::Dom::render_tree`) instead of HTML: a renderer can
+    /// diff it against the previous one. `mark`'s element is its `mark`.
+    pub fn render_snapshot_tree(&self, base_url: &str, mark: Option<NodeId>) -> RenderSnapshot {
+        self.snapshot_as(base_url, mark.map(|m| (m, "")), Form::Tree)
+    }
+
+    /// The viewport and scroll of a render snapshot, without the document.
+    pub fn render_view(&self) -> RenderSnapshot {
+        self.snapshot_as("", None, Form::None)
+    }
+
+    /// Changes whenever a render snapshot of the document could: the DOM
+    /// (tree, attributes, text, form state, image sizes) or the style
+    /// engine's sheets. Viewport and scroll are not included.
+    pub fn render_stamp(&self) -> (u64, u64, u64) {
+        let dom = self.dom.borrow();
+        let (version, generation, _, _) = self.layout.borrow().style().observation_stamp(&dom);
+        (dom.uid(), version, generation)
+    }
+
+    fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
+        let mut canvases = self.canvas_bitmaps();
+        canvases.extend(self.video_bitmaps());
+        let dom = self.dom.borrow();
+        let layout = self.layout();
+        RenderSnapshot { canvases, ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form) }
+    }
+}
+
+fn snapshot_of(
+    dom: &pyro_dom::Dom,
+    layout: &pyro_dom::layout::Layout,
+    document: NodeId,
+    base_url: &str,
+    mark: Option<(NodeId, &str)>,
+    form: Form,
+) -> RenderSnapshot {
+    {
+        let style = layout.style();
+        let base = url::Url::parse(base_url).ok();
+        let sheets = std::cell::RefCell::new(HashMap::new());
+        let style_text = |owner: NodeId| style.sheet_text(owner).map(str::to_owned);
+        let stylesheet_href = |link: NodeId| {
+            let text = style.sheet_text(link)?;
+            let href = dom.get_attribute(link, "href").ok().flatten()?;
+            let url = base.as_ref()?.join(href.trim()).ok()?.to_string();
+            sheets.borrow_mut().insert(url.clone(), text.to_owned());
+            Some(url)
+        };
+        let adopted = |scope: NodeId| style.adopted_sheets(scope);
+        let opts = RenderHtml {
+            style_text: &style_text,
+            stylesheet_href: &stylesheet_href,
+            mark,
+            adopted: style.has_adopted().then_some(&adopted as _),
+        };
+        let (html, tree) = match form {
+            Form::Html => {
+                (dom.render_html_scrolled(document, &opts, &layout.scrolled_elements()).unwrap_or_default(), None)
+            }
+            Form::Tree => (String::new(), Some(dom.render_tree(document, &opts).unwrap_or_default())),
+            Form::None => (String::new(), None),
+        };
+        let viewport = layout.viewport();
+        RenderSnapshot {
+            html,
+            tree,
+            sheets: sheets.into_inner(),
+            width: viewport.width,
+            height: viewport.height,
+            device_scale_factor: viewport.device_scale_factor,
+            dark: viewport.color_scheme == pyro_dom::media::ColorScheme::Dark,
+            print: viewport.print,
+            scroll_x: layout.scroll_x() as f64,
+            scroll_y: layout.scroll_y() as f64,
+            element_scroll: layout.scrolled_elements(),
+            hovered: dom.hovered(document).map(pyro_dom::snapshot::render_key),
+            focused: dom.focused(document).ok().flatten().map(pyro_dom::snapshot::render_key),
+            canvases: Vec::new(),
+        }
+    }
+}

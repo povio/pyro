@@ -88,7 +88,7 @@ No failure referenced interface objects or prototypes.
 - Chromium: Playwright 1.59.1 chromium-headless-shell 147.0.7727.15. It ran on the
   direct `playwright.e2e.config.ts` lane, with cold `page.goto` and native clicks.
 - Host: MacBookAir.localdomain, Apple M1, 8 GiB.
-- Setup: one Playwright worker, native PostgreSQL 17 with the `lp_bench` role, and
+- Setup: one Playwright worker, native PostgreSQL 17 with the `pyro_bench` role, and
   a per-run slug and template database. Every run used a fresh `git worktree add
   --detach` fixture, clean before execution. Afterwards only the harness-generated
   `apps/pdfgen/src/data/common/common.models.ts` had changed, and it was left in
@@ -99,20 +99,20 @@ No failure referenced interface objects or prototypes.
     template and its snapshot template.
   - No sessions remained on them.
   - Exactly those three names were dropped after checking that each was owned by
-    `lp_bench`, carried the run prefix and was absent before the run
+    `pyro_bench`, carried the run prefix and was absent before the run
     (`cleanup2.py`, `db-cleanup2.txt`).
 - Whole-harness wall time is 101.9–120.8 s per batch 3 run, and Playwright time is
   64.8–78.1 s. These cover the whole harness, are not browser-only, and are not a
   performance comparison.
 
 Artifacts:
-- `/private/tmp/lp-tos-batch3{,-main,-dp,-click,-xpath,-xpath2,-up}`
-- `/private/tmp/lp-tos-chrclose`
-- `/private/tmp/lp-tos-smoke-main`
-- `/private/tmp/lp-tos-coverage-main`
-- `/private/tmp/lp-tos-batch2-main`
+- `/private/tmp/pyro-tos-batch3{,-main,-dp,-click,-xpath,-xpath2,-up}`
+- `/private/tmp/pyro-tos-chrclose`
+- `/private/tmp/pyro-tos-smoke-main`
+- `/private/tmp/pyro-tos-coverage-main`
+- `/private/tmp/pyro-tos-batch2-main`
 
-Diagnostic runs (`/private/tmp/lp-tos-diag12` to `diag14`) used an added diagnostic
+Diagnostic runs (`/private/tmp/pyro-tos-diag12` to `diag14`) used an added diagnostic
 spec in a separate worktree and are not part of these measurements.
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and

@@ -74,8 +74,8 @@ The following are W2-reported targeted results, not new W3 executions:
 
 The implementation dependencies are merged by `eabee486`; these precise
 candidate results are not relabelled as executions on that main. W2 retained
-artifacts at `/private/tmp/lp-tos-preview-frames-ca24d212-r1`,
-`/private/tmp/lp-tos-preview-xlsx-123ea7f`, and its DOCX handoff. W2 reported
+artifacts at `/private/tmp/pyro-tos-preview-frames-ca24d212-r1`,
+`/private/tmp/pyro-tos-preview-xlsx-123ea7f`, and its DOCX handoff. W2 reported
 unchanged fixture/auth/assertion/manifest hashes and zero run databases. There
 is no whole-DocuBox pass claim, new upload disposition, or timing comparison.
 W2-26 HBL placement remains native geometry work. W2-29 calendar timing remains
