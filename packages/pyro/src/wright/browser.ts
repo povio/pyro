@@ -13,6 +13,7 @@ import { Download, type PageFunction } from './handles.js';
 import { APIRequestContext } from './request.js';
 import { HarRecorder } from './har.js';
 import { CDPSession } from './cdp-session.js';
+import { VideoRecorder, type RecordVideoOptions } from './video.js';
 import {
   Frame,
   type ConsoleMessage,
@@ -49,8 +50,8 @@ type SavedState = { cookies: Cookie[]; origins: { origin: string; localStorage: 
 
 /**
  * `browser.newContext()` options: Playwright's, with Playwright's meaning
- * (see the README, "Context options"). `forcedColors`, `strictSelectors` and
- * `recordVideo` are accepted and have no effect.
+ * (see the README, "Context options"). `forcedColors` and `strictSelectors` are
+ * accepted and have no effect.
  */
 export type BrowserContextOptions = {
   baseURL?: string;
@@ -78,8 +79,8 @@ export type BrowserContextOptions = {
   serviceWorkers?: 'allow' | 'block';
   strictSelectors?: boolean;
   timezoneId?: string;
-  /** Accepted; pyro records no video. */
-  recordVideo?: { dir: string; size?: { width: number; height: number } };
+  /** A video of each page, written when it closes (ffmpeg encodes it: see video.ts). */
+  recordVideo?: RecordVideoOptions;
   /** Recorded as `routeFromHAR(path, { update: true })` does. */
   recordHar?: { path: string; content?: 'omit' | 'embed' | 'attach'; mode?: 'full' | 'minimal'; urlFilter?: string | RegExp; omitContent?: boolean };
 };
@@ -360,6 +361,8 @@ export class BrowserContext {
   _ownedBy?: Page;
   /** Who made it (`setCallOwner`; `pyro run`: the test running then). */
   readonly _owner = callOwner();
+  /** `recordVideo`: its pages' videos. */
+  _recorder?: VideoRecorder;
 
   constructor(
     private _browser: Browser,
@@ -378,6 +381,7 @@ export class BrowserContext {
     if (o.viewport === null && o.isMobile) throw new Error(`"isMobile" option is not supported with null "viewport"`);
     if (o.geolocation) o.geolocation = verifyGeolocation(o.geolocation);
     if (o.proxy) proxyParams(o.proxy);
+    if (o.recordVideo) this._recorder = VideoRecorder.create(o.recordVideo, o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT));
     if (o.permissions?.length) this.addPermissions(o.permissions, '*');
     // First, so it is the first script of every document (see `localeScript`).
     if (o.locale) this._initScripts.push(localeScript(o.locale));
@@ -414,6 +418,7 @@ export class BrowserContext {
     const viewport = o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT);
     // No target yet: the page's first command decides which (see `_attachPage`).
     const page = new Page(this, this.cdp, viewport);
+    page._video = this._recorder?.add();
     this._pages.add(page);
     this._events.emit('page', page);
     return page;
@@ -527,6 +532,7 @@ export class BrowserContext {
     if (page._wants.workers) setup.push(send('Target.setAutoAttach', WORKER_AUTO_ATTACH));
     for (const recorder of this._har) if (recorder.covers(page)) recorder.attach(page);
     for (const b of [...this._bindings.values(), ...page._bindings.values()]) setup.push(page._installBinding(b));
+    if (page._video) setup.push(page._video._start(this.cdp, page._sessionId));
     await Promise.all(setup);
     if (fresh) this._cookies = []; // in the context's jar now
   }
@@ -543,6 +549,7 @@ export class BrowserContext {
   async _adoptPopup(targetId: string, sessionId: string, opener: Page, waiting: boolean): Promise<void> {
     const o = this._options;
     const page = new Page(this, this.cdp, o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT));
+    page._video = this._recorder?.add();
     this._pages.add(page);
     page._bind(sessionId, targetId);
     const attaching = (async (): Promise<Attachment> => {
@@ -770,6 +777,8 @@ export class BrowserContext {
     openContextSet.delete(this);
     for (const recorder of this._har) await recorder.save();
     for (const p of [...this._pages]) await p.close();
+    // Pages that closed on their own too.
+    await this._recorder?.finish();
     const id = this._id ?? (this._idPromise ? await this._idPromise.catch(() => undefined) : undefined);
     if (id) this.cdp.post('Target.disposeBrowserContext', { browserContextId: id });
     this._browser._contextClosed(this);

@@ -16,7 +16,7 @@ timed-out test keeps its page for `afterEach` hooks and fixture teardown, and
 `use: { screenshot: 'only-on-failure' }` captures it), and
 `pyro run --shard i/n` splits a run over CI jobs. Context options (`locale`,
 `timezoneId`, `proxy`, `geolocation` and `permissions`, `httpCredentials`,
-`offline`, device emulation, `javaScriptEnabled`, `ignoreHTTPSErrors`) mean
+`offline`, device emulation, `javaScriptEnabled`, `ignoreHTTPSErrors`, `recordVideo`) mean
 what they mean in Playwright; the README's "Context options" and "Not
 supported" list the differences. Rewrite a test into one `page.run([...])`
 only where its last milliseconds matter.
@@ -312,6 +312,10 @@ A profile's `setup` fails the same way, before any test: `pyro.profile()`
 throws `ProfileSetupError` (`profile app: setup step 1 (…): …`, `.step` is the
 index into `setup`), and every `page({ as: 'app' })` throws it until the
 profile is declared again.
+
+Under `pyro run`, `use: { video: 'retain-on-failure' }` keeps a video of each
+page of a failed test (`video.webm` in its output directory, named under the
+failure; it needs an ffmpeg, see the README's `recordVideo`).
 
 ## Do not
 

@@ -28,6 +28,8 @@ mod permissions;
 mod remote;
 mod runtime;
 #[cfg(feature = "render")]
+mod screencast;
+#[cfg(feature = "render")]
 mod screenshot;
 mod virtual_time;
 mod worker;
@@ -47,6 +49,43 @@ mod screenshot {
 
     impl super::EngineHost {
         pub(super) fn flush_renders(&mut self) {}
+    }
+}
+#[cfg(not(feature = "render"))]
+mod screencast {
+    //! Built without the `render` feature: screencasts are refused.
+    use crate::msg::{CdpError, CdpResult};
+    use crate::target::{PageCommand, PageKey};
+
+    #[derive(Default)]
+    pub(crate) struct Screencasts;
+
+    impl Screencasts {
+        pub(super) fn due(&self, _browser: &pyro_browser::Browser) -> bool {
+            false
+        }
+        pub(super) fn next_deadline(&self) -> Option<std::time::Instant> {
+            None
+        }
+        pub(super) fn forget_page(&mut self, _page: PageKey) {}
+        pub(super) fn forget_session(&mut self, _session: &str) {}
+        pub(super) fn clear(&mut self) {}
+    }
+
+    impl super::EngineHost {
+        pub(super) fn start_screencast(&mut self, _cmd: &PageCommand<'_, '_>) -> CdpResult<Option<serde_json::Value>> {
+            Err(CdpError::server("Page.startScreencast: pyro was built without the render feature"))
+        }
+        pub(super) fn screencast_frame_ack(
+            &mut self,
+            _cmd: &PageCommand<'_, '_>,
+        ) -> CdpResult<Option<serde_json::Value>> {
+            Ok(Some(serde_json::json!({})))
+        }
+        pub(super) fn stop_screencast(&mut self, _cmd: &PageCommand<'_, '_>) -> CdpResult<Option<serde_json::Value>> {
+            Ok(Some(serde_json::json!({})))
+        }
+        pub(super) fn service_screencasts(&mut self) {}
     }
 }
 mod storage;
@@ -417,6 +456,8 @@ pub struct EngineHost {
     network_wake: network::NetworkWake,
     /// Screenshot renders of this connection (`screenshot.rs`).
     renders: screenshot::Renders,
+    /// `Page.startScreencast` of its sessions (`screencast.rs`).
+    screencasts: screencast::Screencasts,
     pub(crate) pages: HashMap<PageKey, PageState>,
     pub(crate) sessions: HashMap<String, Session>,
     pub(crate) next_exception_id: i64,
@@ -654,6 +695,7 @@ impl EngineHost {
             body_budget,
             network_wake: network::NetworkWake::default(),
             renders: screenshot::Renders::default(),
+            screencasts: screencast::Screencasts::default(),
             timezone: None,
             pages: HashMap::new(),
             sessions: HashMap::new(),
@@ -699,14 +741,20 @@ impl EngineHost {
         let network_wake = &self.network_wake;
         let renders = &self.renders;
         let waiters = &self.waiters;
-        let deadline = [deadline, waiters.next_deadline()].into_iter().flatten().min();
+        let screencasts = &self.screencasts;
+        let deadline = [deadline, waiters.next_deadline(), screencasts.next_deadline()].into_iter().flatten().min();
         // One ready task or due timer first: `run_until` checks `wake` before
         // running anything, and with a client that always has a command
         // waiting (pipelined or concurrent requests) it would return at once
         // every time, so no timer ever ran between commands.
         thread.event_loop.run_one(&mut thread.browser);
         let mut ready = |b: &mut pyro_browser::Browser| {
-            wake() || !collector.is_empty() || network_wake.ready() || renders.ready() || waiters.ready(b)
+            wake()
+                || !collector.is_empty()
+                || network_wake.ready()
+                || renders.ready()
+                || waiters.ready(b)
+                || screencasts.due(b)
         };
         // Virtual time: instead of sleeping until a timer is due while a run
         // waits on a page that has nothing else to do, jump the page clock to
@@ -746,6 +794,7 @@ impl EngineHost {
         self.waiters.clear();
         self.collector.dialogs.driver_busy.set(false);
         self.renders.clear();
+        self.screencasts.clear();
         self.sessions.clear();
         self.pages.clear();
         self.thread.browser.close_all();
@@ -889,6 +938,8 @@ impl EngineHost {
             self.service_waiters();
             self.drain_collector();
         }
+        // Frames of what the above left the pages showing.
+        self.service_screencasts();
     }
 
     fn drain_collector(&mut self) {
@@ -1534,6 +1585,7 @@ impl Host for EngineHost {
             }
         }
         self.renders.forget(state.id);
+        self.screencasts.forget_page(page);
         self.collector.dialogs.forget(state.id);
         self.thread.browser.close_page(state.id);
         self.update_network_subscriptions();
@@ -1627,6 +1679,7 @@ impl Host for EngineHost {
         // pending promise reactions are still referenced by JavaScript.
         self.pending.cancel_session(session_id);
         self.disable_fetch(session_id);
+        self.screencasts.forget_session(session_id);
         self.coverage_session_detached(page, session_id);
         if let Some(session) = self.sessions.remove(session_id) {
             session.handles.borrow_mut().clear();

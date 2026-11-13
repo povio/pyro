@@ -265,6 +265,10 @@ impl EngineHost {
             "printToPDF" => {
                 Err(CdpError::server("Page.printToPDF: pyro was built without the render feature"))
             }
+            // screencast.rs
+            "startScreencast" => self.start_screencast(cmd),
+            "screencastFrameAck" => self.screencast_frame_ack(cmd),
+            "stopScreencast" => self.stop_screencast(cmd),
             // A blocking dialog is answered by its nested read loop
             // (dialog.rs). A reported one was already dismissed (it did not
             // block); this only answers the client that reacts to its

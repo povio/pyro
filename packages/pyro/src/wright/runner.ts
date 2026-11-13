@@ -384,7 +384,7 @@ const builtins: Record<string, unknown> = {
   testIdAttribute: ['data-testid', { option: true }],
   // The use options `browser.newContext()` starts from, as in Playwright (set below); in beforeAll/afterAll hooks too.
   _contextDefaults: [undefined, { auto: true }],
-  context: async ({ browser, _contextDefaults }: any, use: any, info: TestInfo) => {
+  context: async ({ browser, _contextDefaults, video }: any, use: any, info: TestInfo) => {
     void _contextDefaults;
     if (info?._hook) {
       throw new Error(
@@ -393,9 +393,31 @@ const builtins: Record<string, unknown> = {
           'If you would like to configure your page before each test, do that in beforeEach hook instead.',
       );
     }
-    const context = await (browser as Browser).newContext();
+    // `video`: as Playwright, a video of each page in the test's output
+    // directory (`video.webm`, `video-1.webm`, ...), attached to the test.
+    const mode = videoMode(video);
+    const recording = mode === 'on' || mode === 'retain-on-failure' || (mode === 'on-first-retry' && info.retry === 1);
+    const size = typeof video === 'object' ? video?.size : undefined;
+    // `contextOptions.recordVideo` wins, as in Playwright.
+    const own = (browser as Browser)._defaults.recordVideo;
+    const context = await (browser as Browser).newContext(recording ? { recordVideo: { ...(size ? { size } : {}), ...own } } : {});
     await use(context);
+    const failed = info.status !== info.expectedStatus || (info.status === 'passed' && info._softErrors.length > 0);
+    const keep = recording && (mode !== 'retain-on-failure' || failed);
+    const videos = context._recorder?.videos ?? [];
+    // Not kept, and not asked for by the test's own options: not encoded at all.
+    if (recording && !keep && !own) for (const v of videos) v._discard();
     await context.close();
+    if (!keep) return;
+    let n = 0;
+    for (const v of videos) {
+      const path = info.outputPath(`video${n ? `-${n}` : ''}.webm`);
+      n++;
+      try {
+        await v.saveAs(path);
+        info.attachments.push({ name: 'video', path, contentType: 'video/webm' });
+      } catch {}
+    }
   },
   page: async ({ context }: any, use: any) => use(await context.newPage()),
   request: async ({ baseURL, extraHTTPHeaders, httpCredentials, ignoreHTTPSErrors, userAgent, storageState }: any, use: any) => {
@@ -404,6 +426,12 @@ const builtins: Record<string, unknown> = {
     await r.dispose();
   },
 };
+/** The `video` option's mode (Playwright's deprecated `retry-with-video` is `on-first-retry`). */
+function videoMode(video: unknown): string {
+  const mode = typeof video === 'string' ? video : ((video as { mode?: string } | undefined)?.mode ?? 'off');
+  return mode === 'retry-with-video' ? 'on-first-retry' : mode;
+}
+
 // The `_contextDefaults` fixture reads every option: its parameter list is spelled out.
 (builtins._contextDefaults as [FixtureFn, object])[0] = new Function(
   'setTestDefaults',
