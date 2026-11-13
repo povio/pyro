@@ -174,13 +174,14 @@ test('closes a position', async ({ page }) => {
 ```sh
 npx pyro run                      # as `npx playwright test`
 npx pyro run -c playwright.e2e.config.ts positions-close -j 4
+npx pyro run --shard 2/4          # this CI job's quarter of the tests
 ```
 
-`pyro run` takes Playwright's usual flags (`-c`, `--project`,
+`pyro run` takes Playwright's usual flags (`-c`, `--project`, `--no-deps`,
 `-j/--workers`, `-g/--grep`, `--grep-invert`, `--retries`, `--timeout`,
-`-u`, `-x`, `--max-failures`, `--list`, `--reporter list|line|dot`) and file
-filters. It needs [Bun](https://bun.sh) on PATH: the tests run in `bun test`
-worker processes.
+`-u`, `--fully-parallel`, `--shard`, `-x`, `--max-failures`, `--list`,
+`--reporter list|line|dot`) and file filters. It needs
+[Bun](https://bun.sh) on PATH: the tests run in `bun test` worker processes.
 
 The module is the whole of Playwright's API, implemented here:
 
@@ -192,20 +193,27 @@ The module is the whole of Playwright's API, implemented here:
   `serial`, `parallel`, `configure`), `beforeEach`/`afterEach`/
   `beforeAll`/`afterAll` with fixtures, `test.extend` (test and worker
   fixtures, options, `auto`, overrides that use the fixture they replace),
-  `test.use`, `test.step`, `test.info()`, `skip`/`fixme`/`fail`/`slow`,
-  retries and timeouts. Built-in fixtures: `browser`, `context`, `page`,
-  `request`, `playwright`, `browserName` and every context option.
+  `test.use`, `test.step` (and `test.step.skip`, a step's `skip()`),
+  `test.info()` (`status` and `errors` set for `afterEach` hooks and fixture
+  teardown), `skip`/`fixme`/`fail`/`slow`, retries and timeouts. Built-in
+  fixtures: `browser`, `context`, `page`, `request`, `playwright`,
+  `browserName` and every context option, with Playwright's defaults
+  (`isMobile`, `hasTouch`, `offline`, ... false; `javaScriptEnabled` and
+  `acceptDownloads` true; `contextOptions` first).
 - **`expect`:** every web-first matcher on locators, pages (`toHaveURL`,
   `toHaveTitle`, `toHaveScreenshot`) and API responses (`toBeOK`), plus
   `.not`, `.soft`, `.poll`, `.configure`, `.extend` and `toPass`. Other
   matchers and the asymmetric ones (`expect.any`, `objectContaining`, ...)
   are Bun's, which follow Jest as Playwright's do.
 - **The config file:** `defineConfig` with `use` (the config's, then the
-  project's), `projects` (`$PYRO_PROJECT`, else the first), `timeout`,
-  `retries`, `expect.timeout`, `outputDir`, `webServer` (started, waited for
-  and stopped; `reuseExistingServer`), `globalSetup` and `globalTeardown`. The
-  file is `$PYRO_CONFIG`, else `pyro.config.*` or `playwright.config.*`
-  in the working directory.
+  project's), `projects` (with `dependencies`, `teardown`, `fullyParallel`,
+  `grep` and `grepInvert`), `timeout`, `retries`, `expect.timeout`,
+  `outputDir`, `fullyParallel`, `shard`, `webServer` (started, waited for and
+  stopped; `reuseExistingServer`), `globalSetup` and `globalTeardown` (both
+  get Playwright's `FullConfig`: `config.projects[0].use` is that project's
+  resolved `use`; the `FullConfig` and `FullProject` types come from
+  `@povio/pyro/wright` too). The file is `$PYRO_CONFIG`, else
+  `pyro.config.*` or `playwright.config.*` in the working directory.
 
 The browser is `$PYRO_WS`, else one launched per run
 (`$PYRO_BIN` or the bundled one), configurable with `use: {
@@ -217,22 +225,43 @@ How a run goes, as with `playwright test`:
 
 - **Files:** each project's `testDir`, `testMatch` (default
   `**/*.@(spec|test).?(c|m)[jt]s?(x)`; a pattern without `/` matches file
-  names, so TOS's `*.e2e.ts` lists work) and `testIgnore`. Each file gets its
-  own project's `use`.
+  names, so TOS's `*.e2e.ts` lists work) and `testIgnore`. A file runs in
+  each project that matches it, with that project's `use`.
+- **Projects:** a project's `dependencies` run first, to completion and in
+  full (file filters, `--grep` and `--shard` apply to the selected projects
+  only; `--project` takes the dependencies along, `--no-deps` leaves them
+  out). When a dependency has a failed test, the projects that depend on it
+  do not run ("did not run"). A `teardown` project runs after every project
+  that depends on its setup project, whatever the result. So the usual
+  sign-in setup works: a `setup` project saves the storage state, and the
+  projects that depend on it start from that file.
 - **Workers:** `workers` processes (the config's, `-j`, else half the CPUs),
   each with its own browser and module state. A file's tests run in order in
   one worker. Tests that are parallel (`fullyParallel`, or a describe with
-  `mode: 'parallel'`) spread over the workers, and a describe's `beforeAll`
-  and `afterAll` run in each worker that runs some of its tests. Web servers
-  and global setup run once, in the parent.
+  `mode: 'parallel'`) spread over the workers. Worker fixtures live as long
+  as the worker, across its files (one instance per worker and fixture
+  parameters). A describe's `beforeAll` hooks run with the first of its
+  tests a worker runs and its `afterAll` hooks after the last, in each
+  worker that runs some of its tests. A `beforeAll` error fails that first
+  test and the describe's other tests do not run; an `afterAll` error fails
+  the last test. Test fixtures in `beforeAll`/`afterAll` are the hook's own
+  (`page` and `context` are refused, as in Playwright). Web servers and
+  global setup run once, in the parent.
+- **Sharding:** `--shard i/n` (or `shard` in the config) runs part `i` of
+  `n`, split as Playwright splits it, so each CI job computes the same
+  parts: whole files, or single tests where they are parallel, in order,
+  balanced by test count. Each shard runs the dependencies it needs.
 - **Reporting:** passes, failures (with their errors), skips (declared or
-  `test.skip()` at run time), flaky tests (passed on a retry) and expected
-  failures, then a summary. The tests' own output is shown per worker.
+  `test.skip()` at run time), tests that did not run, flaky tests (passed on
+  a retry), expected failures and errors outside any test (a worker
+  fixture's teardown), then a summary. A test of a named project shows as
+  `[project] › file › title`. The tests' own output is shown per worker.
 
 Plain `bun test ./e2e/foo.e2e.ts` (with `$PYRO_CONFIG` naming the config) also
-runs the tests, in one process: Bun then reports a run-time `test.skip()` as
-a pass, since it cannot mark a running test as skipped. Not there either way:
-Playwright's HTML report, trace viewer, video and sharding.
+runs the tests, in one process and without project dependencies: Bun then
+reports a run-time `test.skip()` as a pass, since it cannot mark a running
+test as skipped. Not there either way: Playwright's HTML report, trace
+viewer and video.
 
 The TOS close flow (`test/wright/tos-flow.ts`, Playwright code as TOS
 writes it) takes 14.7 ms per test this way (median of 40, fresh page),
