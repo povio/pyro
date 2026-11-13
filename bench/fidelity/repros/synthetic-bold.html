@@ -1,0 +1,31 @@
+<!doctype html>
+<!--
+  Known gap check: synthetic bold. Lato is loaded with its regular face only
+  (bench/screenshot's fixture), so `font-weight: 600` and `700` have no face
+  of their own and Chromium emboldens the regular glyphs. system-ui below for
+  contrast: San Francisco has every weight, which is what the ToS app uses,
+  so no text there is synthesized.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="fidelity-viewport" content="420x170">
+<style>
+  @font-face { font-family: LatoRegularOnly; src: url(/screenshot/fixtures/fonts/Lato-Regular.ttf) format("truetype"); font-weight: 400; }
+  body { margin: 10px; font: 18px LatoRegularOnly; color: #292c33; }
+  p { margin: 0 0 6px; }
+  .s { font-family: system-ui; }
+  span { display: inline-block; }
+</style>
+</head>
+<body>
+<p><span>Grand Total 400</span></p>
+<p style="font-weight: 600"><span>Grand Total 600</span></p>
+<p style="font-weight: 700"><span>Grand Total 700</span></p>
+<p class="s"><span>Grand Total 400</span></p>
+<p class="s" style="font-weight: 700"><span>Grand Total 700</span></p>
+<script>
+  window.__measure = () => [...document.querySelectorAll('span')].map((s, i) => ({ case: s.textContent + (i > 2 ? ' system-ui' : ' Lato'), width: +s.getBoundingClientRect().width.toFixed(2) }));
+</script>
+</body>
+</html>
