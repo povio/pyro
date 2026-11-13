@@ -136,6 +136,79 @@ pub struct ExternalQuads {
     pub fixed: bool,
 }
 
+/// What a sub-resource a geometry source loads is for (the request's
+/// destination: its `Accept`, `Sec-Fetch-Dest` and CDP resource type).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubresourceKind {
+    Image,
+    Font,
+    /// An `@import`ed sheet.
+    Style,
+}
+
+/// How a document's geometry source reaches the network for what it lays the
+/// document out with (images, fonts, imported sheets): the embedder's loader
+/// for that document ([`crate::layout::Layout::set_subresource_loader`]), which
+/// sends each request as the document's own sub-resource requests go, through
+/// its browser context (proxy, user agent, cookies, extra headers, offline
+/// state, interception). A geometry source without one loads nothing from the
+/// network.
+pub trait SubresourceLoader: Send + Sync {
+    /// Starts loading `url`. `done` gets the body of a successful response,
+    /// or why there is none, on any thread. A loader that can no longer send
+    /// the request (its document is gone) drops `done` without calling it.
+    fn load(&self, url: String, kind: SubresourceKind, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>);
+    /// The bodies loaded for the documents that go out with this one's
+    /// network identity, which they reuse ([`SubresourceBodies`]).
+    fn bodies(&self) -> &std::sync::Arc<SubresourceBodies>;
+}
+
+/// Sub-resource bodies loaded from the network for the layouts of the
+/// documents of one network identity: the pages of a browser context with a
+/// proxy or user agent of its own, or of every context that goes out as the
+/// browser does. A body serves its identity only: one loaded through one
+/// proxy, or as one user agent, never stands in for a request another
+/// identity's document would send.
+#[derive(Default)]
+pub struct SubresourceBodies {
+    bodies: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>>,
+    arrivals: std::sync::atomic::AtomicU64,
+}
+
+impl SubresourceBodies {
+    /// The bodies by URL (what a load in flight or failed leaves is the
+    /// embedder's loading policy).
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>> {
+        self.bodies.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A body arrived: the documents of this identity laid out without it
+    /// lay out again.
+    pub fn arrived(&self) {
+        self.arrivals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// How many bodies arrived ([`Self::arrived`]).
+    pub fn arrivals(&self) -> u64 {
+        self.arrivals.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A body the documents' own loader fetched (a `<style>`'s `@import`ed
+    /// sheet) that their layouts would otherwise fetch again, behind the
+    /// page's back: they take it from here. The documents laid out without
+    /// it (an empty entry, the embedder's load in flight) or with another
+    /// body lay out again.
+    pub fn provide(&self, url: &str, body: &[u8]) {
+        if body.is_empty() {
+            return;
+        }
+        let previous = self.lock().insert(url.to_owned(), std::sync::Arc::new(body.to_vec()));
+        if previous.is_some_and(|b| b.is_empty() || **b != *body) {
+            self.arrived();
+        }
+    }
+}
+
 /// The engine laying the document out (Blitz in `render` builds).
 pub trait GeometrySource {
     /// Brings the engine's layout up to the document; the other queries
@@ -194,6 +267,9 @@ pub trait GeometrySource {
     fn has_sticky(&self) -> bool;
     /// The document's URL (relative sub-resources resolve against it).
     fn set_base_url(&self, _url: &str) {}
+    /// The document's network, for the sub-resources it is laid out with
+    /// (see [`SubresourceLoader`]).
+    fn set_subresource_loader(&self, _loader: std::sync::Arc<dyn SubresourceLoader>) {}
     /// The source itself (its owner reaches its engine's document).
     fn as_any(&self) -> &dyn std::any::Any;
     /// Whether the source answers now (else nothing is laid out).

@@ -501,6 +501,22 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   outbox, drained). A profile's `setup` steps run there once the page is loaded and quiet: the template
   acquires the page, runs them as an `Pyro.run`, hands the page back to the pool (`Browser::return_to_prepared`)
   and settles it. The forked child serves its socket with that same state (`serve::serve_browser`).
+- **Profile status**: the root keeps each profile's `ProfileStatus` (`booting`, `ready`, `failed` with an error),
+  which `registerPreparedPage`'s reply, `Pyro.preparedProfileStatus`, `adoptPreparedPage` and `preparedProfiles`
+  report; clients wait on it (the SDK's `profile()` does). A setup step that fails (`setup step N (…): …`), a page
+  that has not loaded after 30 s with its setup pending, or a derived template that cannot start or exits fails the
+  profile: `Browser::fail_prepared_profile` closes its waiting page, and acquiring one fails with the error
+  (code -32000, `data.setupError`) in every connection forked from then on. A derived template reports its own
+  profile's outcome to the root (`Outcome`, no reply); the root fails the profiles derived from a failed one,
+  drops their pending derives and serves their connections itself, so they never wait for a template that will
+  not come. A failed profile stays registered (named, held) until retired as usual, so that adopters get its
+  error (`adoptPreparedPage` refuses it without holding it); registering the same definition again boots a new
+  attempt, and under a name the name and its holders move to it.
+- A profile's `userAgent` and proxy (`proxyServer`, `proxyBypassList`) are its page's browser context's
+  (`Host::create_context_with`: a `NetClient` whose configured `User-Agent` and proxy they are), so the
+  document, subresources, fetch/XHR and setup steps of the template's page carry them, and so does every fork:
+  the client and its settings are copied, its I/O thread restarted. A derived profile has its base's. What the
+  engine loads for a page by itself goes out the same way (see [Engine loads](#engine-loads-of-a-page)).
 - Snapshots build on snapshots: a profile with `base: <id>` is never booted. The root template asks the template
   holding the base (itself or a derived one) to fork off a **derived template** listening on
   `<root socket>.<id>`; it runs only the profile's `setup` on its copy of the base page, relabels the page, and
@@ -558,6 +574,29 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   a page that only navigates inside its prepared app loads no module and gains nothing (580 M to 598 M).
 - Measured on an M1 Max with a release build: an app whose startup runs 0.8 s of JavaScript is handed to a new
   connection, booted, in about 20 ms (the fork itself took 12-18 ms with the 512 MB JIT pool).
+
+## Engine loads of a page
+
+Besides the page's own requests, the engine loads what it lays out and paints: the images, `@font-face` fonts
+and `@import`ed sheets of a document's layout (Blitz geometry, which also prints `Page.printToPDF`), and of the
+render thread's copy of it (screenshots, `matchScreenshot`). Both go through the page's browser context, as its
+own sub-resources do: its proxy and bypass list, `User-Agent`, cookies, extra headers, offline state, `Pyro.run`
+mocks and Fetch interception apply, and CDP sees the requests on the document's frame.
+
+- The render thread asks the browser thread (`Browser::fetch_subresource`) and caches per document (loader id).
+- Layout: pyro-browser gives every document it creates its network (`pyro_dom::layout::SubresourceLoader`,
+  `bindings::LayoutLoader`), from which `engine/blitz_geometry.rs` makes the document's fetcher. A miss starts
+  `Browser::fetch_layout_subresource` in a task of its own and answers nothing now: a layout never waits for the
+  network (a request held by interception needs the browser thread). A document without a network loads nothing
+  from it; there is no fallback to another context's client.
+- Layout bodies are kept by URL per network identity (`SubresourceBodies`): a context with a proxy or user agent
+  of its own (`ContextNet`, prepared profiles, `Target.createBrowserContext {proxyServer, userAgent}`) has its own,
+  gone with it, so one identity never lays out with what another loaded, and two identities through the same
+  proxy share nothing either. The contexts that go out as the browser does share one set per process and
+  browser-wide proxy and user agent, kept for the process's life (later contexts, connections and forks lay out
+  with them at once, as before). A body that arrives lays out again only the documents of its identity. Only
+  bodies are shared: a failed load (an interception abort, a 401 for this page's cookies) is remembered by its
+  document alone, and the identity's other documents ask again.
 
 ## Platform support
 

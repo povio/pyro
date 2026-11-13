@@ -3624,6 +3624,9 @@ mod aria_snapshot;
 #[path = "engine_cdp/coverage.rs"]
 mod coverage;
 
+#[cfg(feature = "render")]
+#[path = "engine_cdp/context_identity.rs"]
+mod context_identity;
 #[path = "engine_cdp/context_options.rs"]
 mod context_options;
 
@@ -7030,6 +7033,61 @@ mod screenshot {
         assert_eq!(pixel(&again, 25, 25), [255, 0, 0, 255]);
     }
 
+    /// `mobile: true`, as Playwright sends it for `devices['iPhone 13']`: a
+    /// page without `<meta name="viewport">` lays out 980 px wide, zoomed out
+    /// to the device's width. Expected: Chrome 147 (Playwright 1.59.1's
+    /// Chromium) on the same page.
+    #[test]
+    fn mobile_metrics_layout_metrics_and_screenshots_follow_the_meta_viewport() {
+        let mut h = Harness::new();
+        let iphone = json!({"width":390,"height":664,"deviceScaleFactor":3,"mobile":true,"screenWidth":390,"screenHeight":844,"screenOrientation":{"angle":0,"type":"portraitPrimary"}});
+        assert_eq!(h.page("Emulation.setDeviceMetricsOverride", iphone.clone())["result"], json!({}));
+        load_html(
+            &mut h,
+            "<!doctype html><body style=margin:0><div style='height:200px;background:linear-gradient(90deg,red,blue)'></div><div style='width:50%;height:300px;background:lime'></div>",
+        );
+        let probe = "[innerWidth, innerHeight, document.documentElement.clientWidth, document.documentElement.clientHeight, visualViewport.scale, outerWidth, screen.height]";
+        assert_eq!(eval_value(&mut h, probe), json!([980, 1669, 980, 1668, 0.3979591727256775, 390, 844]));
+        let m = h.page("Page.getLayoutMetrics", json!({}))["result"].clone();
+        let layout = json!({"pageX":0,"pageY":0,"clientWidth":980,"clientHeight":1669});
+        let visual = json!({"offsetX":0,"offsetY":0,"pageX":0,"pageY":0,"clientWidth":980.0,"clientHeight":1668.5128173828125,"scale":0.3979591727256775,"zoom":1});
+        let content = json!({"x":0,"y":0,"width":980.0,"height":1669.0});
+        assert_eq!(
+            m,
+            json!({"layoutViewport":layout,"visualViewport":visual,"contentSize":content,
+                   "cssLayoutViewport":layout,"cssVisualViewport":visual,"cssContentSize":content})
+        );
+        // Without a clip: the visual viewport in device pixels (Chrome: 1170 x 1992), the
+        // band's red start and blue end in view, the lime block over the left half.
+        let shows_the_layout = |img: &pyro_render::RgbaImage| {
+            let [r, _, b, _] = pixel(img, 10, 100);
+            assert!(r > 200 && b < 60, "red start: {:?}", pixel(img, 10, 100));
+            let [r, _, b, _] = pixel(img, 1160, 100);
+            assert!(b > 200 && r < 60, "blue end: {:?}", pixel(img, 1160, 100));
+            assert_eq!(pixel(img, 290, 400), [0, 255, 0, 255]);
+            assert_eq!(pixel(img, 570, 400), [0, 255, 0, 255]);
+            assert_eq!(pixel(img, 600, 400), [255, 255, 255, 255]);
+        };
+        let img = png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!((img.width, img.height), (1170, 1992));
+        shows_the_layout(&img);
+        // Playwright's clip, the visual viewport in whole CSS px at its scale (Chrome: 1170 x 1991).
+        let clip = json!({"clip": {"x":0,"y":0,"width":980,"height":1668,"scale":0.3979591727256775}});
+        let img = png_of(&h.page("Page.captureScreenshot", clip)["result"]["data"]);
+        assert_eq!((img.width, img.height), (1170, 1991));
+        shows_the_layout(&img);
+        // `mobile: false` lays the page out at the device's width again.
+        let mut desktop = iphone;
+        desktop["mobile"] = json!(false);
+        assert_eq!(h.page("Emulation.setDeviceMetricsOverride", desktop)["result"], json!({}));
+        assert_eq!(eval_value(&mut h, probe), json!([390, 664, 390, 664, 1, 390, 844]));
+        let img = png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!((img.width, img.height), (1170, 1992));
+        // At scale 1 the band is 600 device px tall and the lime block half of 390 px.
+        assert_eq!(pixel(&img, 290, 1000), [0, 255, 0, 255]);
+        assert_eq!(pixel(&img, 600, 1000), [255, 255, 255, 255]);
+    }
+
     #[test]
     fn capture_screenshot_renders_the_viewport_clip_and_full_page() {
         let mut h = Harness::new();
@@ -7384,6 +7442,102 @@ fn prepared_profile_init_scripts_capture_popup_errors_and_survive_navigation() {
         ]}),
     );
     assert_eq!(r["result"]["reads"]["isolated"], "undefined", "{r}");
+}
+
+/// Requests a test server answered, as (request line, User-Agent), in order.
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+/// An HTTP server that records every request and answers a document for
+/// paths ending in `/page`, `ok <path>` for the rest. It takes absolute-form
+/// requests too, as an HTTP proxy would (and answers them itself).
+fn recording_site() -> (std::net::SocketAddr, Seen) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = Seen::default();
+    let record = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let record = record.clone();
+            std::thread::spawn(move || {
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&request).into_owned();
+                let line = head.lines().next().unwrap_or_default().to_owned();
+                let agent = head
+                    .lines()
+                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("user-agent")))
+                    .map(|(_, v)| v.trim().to_owned())
+                    .unwrap_or_default();
+                let path = line.split(' ').nth(1).unwrap_or("/").to_owned();
+                record.lock().unwrap().push((line, agent));
+                let (ty, body) = if path.ends_with("/page") {
+                    ("text/html", "<!doctype html><p id=ready>ready</p>".to_owned())
+                } else {
+                    ("text/plain", format!("ok {path}"))
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body.as_bytes());
+            });
+        }
+    });
+    (address, seen)
+}
+
+/// A prepared profile's `userAgent` and proxy belong to its pages' browser
+/// context: the document request, fetches and `navigator.userAgent` of its
+/// pages have them; pages of other contexts keep the browser's.
+#[test]
+fn prepared_profiles_send_their_user_agent_and_go_through_their_proxy() {
+    let (site, seen) = recording_site();
+    let mut h = Harness::new();
+    let take = |h: &mut Harness, params: Value| {
+        let r = h.call(None, "Pyro.registerPreparedPage", params);
+        let profile = r["result"]["profileId"].as_u64().unwrap_or_else(|| panic!("{r}"));
+        let r = h.call(None, "Pyro.acquirePreparedPage", json!({"profileId": profile, "attach": true}));
+        let session = r["result"]["sessionId"].as_str().unwrap_or_else(|| panic!("{r}")).to_owned();
+        h.call(
+            Some(&session),
+            "Pyro.run",
+            json!({"steps": [
+                {"loaded": {}},
+                {"eval": {"expression": "navigator.userAgent", "as": "agent"}},
+                {"eval": {"expression": "fetch('/api').then((r) => r.text())", "as": "api"}},
+            ]}),
+        )
+    };
+
+    let agent = "ScraperBot/1.0 (identity one)";
+    let r = take(&mut h, json!({"url": format!("http://{site}/direct/page"), "pool": 1, "userAgent": agent}));
+    assert_eq!(r["result"]["reads"], json!({"agent": agent, "api": "ok /api"}), "{r}");
+    // Through the proxy: `proxied.test` resolves nowhere, only the proxy answers for it.
+    let r = take(
+        &mut h,
+        json!({"url": "http://proxied.test/page", "pool": 1, "userAgent": "Proxied/2.0", "proxyServer": format!("http://{site}")}),
+    );
+    assert_eq!(r["result"]["reads"], json!({"agent": "Proxied/2.0", "api": "ok http://proxied.test/api"}), "{r}");
+    let seen = seen.lock().unwrap().clone();
+    let request = |line: &str| seen.iter().find(|(l, _)| l == line).map(|(_, a)| a.clone());
+    assert_eq!(request("GET /direct/page HTTP/1.1").as_deref(), Some(agent), "{seen:?}");
+    assert_eq!(request("GET /api HTTP/1.1").as_deref(), Some(agent), "{seen:?}");
+    assert_eq!(request("GET http://proxied.test/page HTTP/1.1").as_deref(), Some("Proxied/2.0"), "{seen:?}");
+    assert_eq!(request("GET http://proxied.test/api HTTP/1.1").as_deref(), Some("Proxied/2.0"), "{seen:?}");
+
+    // The harness's own page (another context) keeps the browser's agent.
+    let r = h.page("Pyro.run", json!({"steps": [{"eval": {"expression": "navigator.userAgent", "as": "agent"}}]}));
+    let own = r["result"]["reads"]["agent"].as_str().unwrap_or_else(|| panic!("{r}"));
+    assert!(own.starts_with("Mozilla/5.0 (compatible; pyro/"), "{r}");
 }
 
 #[test]

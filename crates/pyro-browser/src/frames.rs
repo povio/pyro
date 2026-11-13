@@ -169,6 +169,8 @@ pub(crate) struct FrameHost {
     pub settings: RefCell<Settings>,
     pub page: PageId,
     pub context: ContextId,
+    /// The bodies its documents' layouts load, its context's.
+    pub layout_bodies: std::sync::Arc<pyro_dom::layout::SubresourceBodies>,
     pub sched: Scheduler<Browser>,
     pub handle: LoopHandle<Browser>,
     pub observer: ObserverCell,
@@ -188,6 +190,7 @@ impl FrameHost {
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
         let state = browser.contexts.iter().find(|c| c.id == context).expect("context");
         let (local, services) = (state.local_storage.clone(), state.services.clone());
+        let layout_bodies = state.layout_bodies.clone();
         Rc::new(Self {
             children: RefCell::new(BTreeMap::new()),
             root: RefCell::new(root),
@@ -209,6 +212,7 @@ impl FrameHost {
             }),
             page,
             context,
+            layout_bodies,
             sched: browser.sched.clone(),
             handle: browser.handle.clone(),
             observer: browser.observer.clone(),

@@ -1,19 +1,29 @@
 //! Blitz geometry for the engine's pages (`pyro_layout`): sub-resources resolve
 //! against the document's URL and load synchronously when they are local:
 //! `data:` URLs, `file:` URLs and `serve --static` roots. Network ones are
-//! fetched in the background through the browser's network client and kept
-//! per process by URL: a layout never waits for the network, and later
-//! documents lay out with them at once.
+//! fetched in the background through the document's own network
+//! (`pyro_dom::layout::SubresourceLoader`, which pyro-browser gives every
+//! document): as its page's sub-resource requests, through its browser
+//! context's proxy, user agent, cookies, headers, offline state and request
+//! interception, attributed to its frame. A document without one fetches
+//! nothing: no request of a page goes out through another context's client.
+//!
+//! Bodies are kept by URL per network identity
+//! (`pyro_dom::layout::SubresourceBodies`): the contexts that go out as the
+//! browser does share one set for the process's life, a context with a proxy
+//! or user agent of its own has its own. A layout never waits for the network,
+//! and later documents of the same identity lay out with them at once; a body
+//! fetched through one identity never serves another's document. A failed load
+//! is remembered by its document only, since the failure may be its page's
+//! own (interception, cookies).
 
+use std::rc::Rc;
 use std::sync::Arc;
 
+use pyro_dom::layout::{SubresourceBodies, SubresourceKind, SubresourceLoader};
 use pyro_render::Fetcher;
 
 pub(crate) use pyro_layout::{set_fork_template, take_stats};
-
-/// Network sub-resources loaded for layouts, by URL (process-wide).
-static NETWORK_BODIES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Arc<Vec<u8>>>>> =
-    std::sync::LazyLock::new(Default::default);
 
 /// Network fetches for layouts still in flight.
 static IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -24,71 +34,103 @@ static PDF_WAITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 type Waker = Box<dyn FnOnce() + Send>;
 static PDF_WAKER: std::sync::Mutex<Option<Waker>> = std::sync::Mutex::new(None);
 
-/// Makes this thread's new documents take their geometry from Blitz.
-pub(crate) fn install(statics: pyro_net::StaticFiles, net: Option<pyro_net::NetClient>) {
-    pyro_layout::install(Arc::new(LocalFiles { statics, net }));
+/// Makes this thread's new documents take their geometry from Blitz, each
+/// loading its sub-resources through its own network.
+pub(crate) fn install(statics: pyro_net::StaticFiles) {
+    pyro_layout::install_with(Rc::new(move |loader: Option<&Arc<dyn SubresourceLoader>>| {
+        Arc::new(LocalFiles { statics: statics.clone(), loader: loader.cloned(), failed: Arc::default() })
+            as Arc<dyn Fetcher>
+    }));
 }
 
-/// Loads sub-resources synchronously: `data:` and `file:` URLs and
-/// `serve --static` roots from disk, the rest through `net` (cached).
+/// URLs whose network load failed for one document.
+type Failed = Arc<std::sync::Mutex<std::collections::HashSet<String>>>;
+
+/// Loads one document's sub-resources synchronously: `data:` and `file:`
+/// URLs and `serve --static` roots from disk, the rest through the
+/// document's network (cached per identity).
 struct LocalFiles {
     statics: pyro_net::StaticFiles,
-    net: Option<pyro_net::NetClient>,
+    /// The document's network (`None`: it has none, and loads nothing from
+    /// the network).
+    loader: Option<Arc<dyn SubresourceLoader>>,
+    /// What failed for this document, which does not ask for it again. Only
+    /// bodies are shared with the identity: a failure may be this page's
+    /// own (its interception aborted the request, its cookies got a 401),
+    /// and the identity's other documents ask again.
+    failed: Failed,
+}
+
+/// A layout fetch in flight, counted until the loader drops its callback.
+struct InFlight {
+    bodies: Arc<SubresourceBodies>,
+    failed: Failed,
+    key: String,
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        // No body (a failure, or no answer because the document went first):
+        // the identity's next document asks again.
+        {
+            let mut bodies = self.bodies.lock();
+            if bodies.get(&self.key).is_some_and(|b| b.is_empty()) {
+                bodies.remove(&self.key);
+            }
+        }
+        let last = IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1;
+        if last && PDF_WAITING.load(std::sync::atomic::Ordering::Acquire) {
+            wake_pdf();
+        }
+    }
 }
 
 impl LocalFiles {
-    /// A network body from the process cache. A miss starts the fetch in
+    /// A network body from the identity's cache. A miss starts the fetch in
     /// the background (into the cache) and answers `None` now: a layout
-    /// never waits for the network (a request held by interception would
-    /// need this thread), and the next documents get the body at once.
+    /// never waits for the network (a request held by interception needs
+    /// this thread), and the identity's next documents get the body at once.
     fn network(&self, url: &pyro_net::Url) -> Option<Vec<u8>> {
+        // No network of its own: nothing goes out, never through another
+        // context's client.
+        let loader = self.loader.as_ref()?;
+        let bodies = loader.bodies().clone();
         let key = url.as_str().to_owned();
+        if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
+            return None;
+        }
         {
-            let mut cache = NETWORK_BODIES.lock().ok()?;
+            let mut cache = bodies.lock();
             match cache.get(&key) {
                 Some(b) if !b.is_empty() => return Some(b.to_vec()),
                 Some(_) => return None,
-                // An empty entry marks the fetch in flight (or failed).
+                // An empty entry marks the fetch in flight.
                 None => cache.insert(key.clone(), Arc::new(Vec::new())),
             };
         }
-        let net = self.net.as_ref()?;
-        // Counts the fetch in flight until pyro-net drops its callback.
         IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        struct Done;
-        impl Drop for Done {
-            fn drop(&mut self) {
-                let last = IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1;
-                if last && PDF_WAITING.load(std::sync::atomic::Ordering::Acquire) {
-                    wake_pdf();
-                }
-            }
-        }
-        let done = Done;
+        let fetch = InFlight { bodies, failed: self.failed.clone(), key };
         let path = url.path().to_ascii_lowercase();
-        let destination = if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
-            pyro_net::Destination::Font
+        let kind = if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
+            SubresourceKind::Font
         } else if path.ends_with(".css") || url.host_str() == Some("fonts.googleapis.com") {
-            pyro_net::Destination::Style
+            SubresourceKind::Style
         } else {
-            pyro_net::Destination::Image
+            SubresourceKind::Image
         };
-        let mut body = Vec::new();
-        let mut ok = false;
-        net.fetch(
-            pyro_net::Request::get(url.clone(), destination),
-            Box::new(move |ev| {
-                let _ = &done;
-                match ev {
-                    pyro_net::ResponseEvent::Response(h) => ok = h.status.is_success(),
-                    pyro_net::ResponseEvent::Data(d) => body.extend_from_slice(&d),
-                    pyro_net::ResponseEvent::Finished { .. } if ok => {
-                        if let Ok(mut cache) = NETWORK_BODIES.lock() {
-                            cache.insert(key.clone(), Arc::new(std::mem::take(&mut body)));
-                        }
-                        pyro_layout::resources_changed();
+        loader.load(
+            url.as_str().to_owned(),
+            kind,
+            Box::new(move |result| match result {
+                Ok(body) if !body.is_empty() => {
+                    fetch.bodies.lock().insert(fetch.key.clone(), Arc::new(body));
+                    fetch.bodies.arrived();
+                }
+                // An empty body counts as a failure (nothing to lay out with).
+                _ => {
+                    if let Ok(mut failed) = fetch.failed.lock() {
+                        failed.insert(fetch.key.clone());
                     }
-                    _ => {}
                 }
             }),
         );
@@ -118,18 +160,6 @@ impl Fetcher for LocalFiles {
             }
         })();
         done(body.ok_or_else(|| format!("{url}: not a local resource")));
-    }
-
-    /// Kept with the network bodies: a layout takes it from the cache
-    /// rather than fetching it (again, behind the page's back).
-    fn provide(&self, url: &str, body: &[u8]) -> bool {
-        if body.is_empty() || !url.starts_with("http") {
-            return false;
-        }
-        let Ok(mut cache) = NETWORK_BODIES.lock() else { return false };
-        let previous = cache.insert(url.to_owned(), Arc::new(body.to_vec()));
-        // An empty entry: a layout asked and laid out without it.
-        previous.is_some_and(|b| b.is_empty() || **b != *body)
     }
 }
 

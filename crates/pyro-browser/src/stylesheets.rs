@@ -528,7 +528,11 @@ impl Browser {
             entry.failed |= !ok && depth == 1;
         }
         if let Some(r) = result.as_ref().ok().filter(|r| ok && r.mime.eq_ignore_ascii_case("text/css")) {
-            pyro_dom::layout::provide_resource(url, &r.body);
+            // The page's layouts take this body rather than fetching the
+            // sheet again (they read `file:` and `data:` URLs themselves).
+            if let Some(p) = self.page(page.page).filter(|_| url.starts_with("http")) {
+                p.frames.layout_bodies.provide(url, &r.body);
+            }
             if depth < MAX_IMPORT_DEPTH {
                 let base = url::Url::parse(&r.url).ok();
                 let nested: Vec<String> = pyro_dom::cssom::leading_imports(&r.text())

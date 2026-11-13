@@ -20,8 +20,8 @@ export type TestDetails = { tag?: string | string[]; annotation?: TestAnnotation
 export interface WorkerInfo {
   workerIndex: number;
   parallelIndex: number;
-  project: TestInfo['project'];
-  config: TestInfo['config'];
+  project: FullProject;
+  config: FullConfig;
 }
 
 export type TestFixture<R, Args extends {}> = (args: Args, use: (r: R) => Promise<void>, testInfo: TestInfo) => any;
@@ -277,3 +277,54 @@ export interface PlaywrightTestConfig<TestArgs = {}, WorkerArgs = {}> extends Om
 /** `PlaywrightTestConfig` by its other name in `@playwright/test`. */
 export type Config<TestArgs = {}, WorkerArgs = {}> = PlaywrightTestConfig<TestArgs, WorkerArgs>;
 export type Project<TestArgs = {}, WorkerArgs = {}> = TestProject<TestArgs, WorkerArgs>;
+export type PlaywrightTestProject<TestArgs = {}, WorkerArgs = {}> = TestProject<TestArgs, WorkerArgs>;
+
+export type Metadata = { [key: string]: any };
+
+/** A project as the run resolved it (`config.projects[i]` in `globalSetup`, `testInfo.project`). */
+export interface FullProject<TestArgs = {}, WorkerArgs = {}> {
+  /** The config's `use`, then the project's. */
+  use: UseOptions<TestArgs, WorkerArgs>;
+  dependencies: string[];
+  grep: RegExp | RegExp[];
+  grepInvert: RegExp | RegExp[] | null;
+  ignoreSnapshots: boolean;
+  metadata: Metadata;
+  name: string;
+  outputDir: string;
+  repeatEach: number;
+  retries: number;
+  snapshotDir: string;
+  teardown?: string;
+  testDir: string;
+  testIgnore: Matcher;
+  testMatch: Matcher;
+  timeout: number;
+}
+
+/** The run's resolved config: `globalSetup`'s and `globalTeardown`'s argument, `testInfo.config`. */
+export interface FullConfig<TestArgs = {}, WorkerArgs = {}> {
+  projects: FullProject<TestArgs, WorkerArgs>[];
+  reporter: ReporterDescription[];
+  webServer: WebServerConfig | null;
+  configFile?: string;
+  forbidOnly: boolean;
+  fullyParallel: boolean;
+  globalSetup: string | null;
+  globalTeardown: string | null;
+  globalTimeout: number;
+  grep: RegExp | RegExp[];
+  grepInvert: RegExp | RegExp[] | null;
+  maxFailures: number;
+  metadata: Metadata;
+  preserveOutput: 'always' | 'never' | 'failures-only';
+  quiet: boolean;
+  reportSlowTests: { max: number; threshold: number } | null;
+  rootDir: string;
+  shard: { total: number; current: number } | null;
+  tags: string[];
+  updateSnapshots: 'all' | 'changed' | 'missing' | 'none';
+  updateSourceMethod: 'overwrite' | '3way' | 'patch';
+  version: string;
+  workers: number;
+}

@@ -61,9 +61,9 @@ matter) are fetched through the context loader first (CDP sees them as styleshee
 `css`), then the imports of those sheets, 16 levels and 64 sheets at most per element. `load` comes once
 all of them have arrived; `error` when an import of the element's own sheet failed (a network error or a
 status outside 2xx; a wrong MIME type still loads, and a failed import of an imported sheet does not fail
-the element, both as in Chromium). Each `text/css` body also goes to the layout engine's fetcher
-(`pyro_dom::layout::provide_resource`), so the sheet applies with it when the event fires instead of the
-layout fetching it again. While its imports load, a parser-inserted element whose `media` matches is a
+the element, both as in Chromium). Each `text/css` body also goes to the bodies the layouts of the page's
+network identity load (`SubresourceBodies::provide`), so the sheet applies with it when the event fires
+instead of the layout fetching it again. While its imports load, a parser-inserted element whose `media` matches is a
 script-blocking style sheet (the parser's next script waits, and sees the imported rules) and blocks
 rendering (`blocking=render` does for any element). New text, a non-CSS `type` or removal drops the
 pending imports and their event.

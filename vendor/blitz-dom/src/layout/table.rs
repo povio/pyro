@@ -2912,6 +2912,9 @@ fn collect_table_cells(
                 style.size.height = style_helpers::auto();
             }
             style.size.width = style_helpers::auto();
+            // pyro: `max-width` does not apply to a table cell (CSS 2.1 leaves it undefined;
+            // Chromium ignores it): the cell spans its column, as wide as the column grew.
+            style.max_size.width = style_helpers::auto();
             crate::resolve::phase_profile::table_cell_collected();
             let length_width = if is_fixed { None } else { length_width };
             let percent_lengths = percent_width

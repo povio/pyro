@@ -214,6 +214,9 @@ pub struct Dom {
     candidates: Vec<u32>,
     /// A `<base>` element was created; until then no document walks for one.
     pub(crate) base_seen: bool,
+    /// Bumped whenever a document's viewport `<meta>` changes
+    /// (`Dom::viewport_meta_version`).
+    pub(crate) viewport_meta_version: u64,
     /// An `<audio>` or `<video>` element was created; until then no
     /// mutation looks for media load triggers (`media_element`).
     pub(crate) media_seen: bool,
@@ -319,6 +322,7 @@ impl Dom {
             shadow_roots: 0,
             pending_inline_handlers: Vec::new(),
             base_seen: false,
+            viewport_meta_version: 0,
             media_seen: false,
             canvas_seen: false,
             media: Default::default(),
@@ -837,6 +841,7 @@ impl Dom {
             document_element: NIL,
             head: NIL,
             body: NIL,
+            viewport_meta: None,
         };
         let idx = self.alloc(NodeKind::Document(Box::new(data)), NIL);
         // A document owns itself, and is connected.
@@ -898,6 +903,59 @@ impl Dom {
         if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
             d.html_base.take();
         }
+    }
+
+    pub(crate) fn is_html_meta(&self, idx: u32) -> bool {
+        self.n(idx).element().is_some_and(|e| e.name.local == local_name!("meta") && e.is_html())
+    }
+
+    /// Blink's `HTMLMetaElement::ProcessContent` for the viewport, after the
+    /// `<meta>` `idx` was inserted or its `name` or `content` changed: in a
+    /// document tree, a viewport `<meta>` with a `content` becomes its
+    /// document's ([`crate::viewport_meta`]). The latest one processed wins,
+    /// unless it is of a lower kind, and removing it changes nothing, as in
+    /// Chrome.
+    pub(crate) fn process_viewport_meta(&mut self, idx: u32) {
+        let n = self.n(idx);
+        if !n.in_document_tree() {
+            return;
+        }
+        let Some(e) = n.element() else { return };
+        let (Some(name), Some(content)) = (e.attr_local(&local_name!("name")), e.attr_local(&local_name!("content")))
+        else {
+            return;
+        };
+        let Some(meta) = crate::viewport_meta::MetaViewport::from_meta(name, content) else { return };
+        let doc = n.owner_doc;
+        let d = self.doc_data_mut(doc);
+        if d.viewport_meta.as_ref().is_some_and(|old| old.kind > meta.kind || *old == meta) {
+            return;
+        }
+        d.viewport_meta = Some(meta);
+        self.viewport_meta_version += 1;
+    }
+
+    /// [`Dom::process_viewport_meta`] for the `<meta>` elements of an
+    /// inserted subtree, in tree order.
+    pub(crate) fn process_viewport_metas(&mut self, root: u32) {
+        let mut i = root;
+        while i != NIL {
+            if self.is_html_meta(i) {
+                self.process_viewport_meta(i);
+            }
+            i = self.following_in(i, root);
+        }
+    }
+
+    /// The viewport `<meta>` `doc` processed last: what lays it out under
+    /// mobile emulation ([`crate::viewport_meta`]).
+    pub fn viewport_meta(&self, doc: NodeId) -> Option<&crate::viewport_meta::MetaViewport> {
+        self.document_data(doc).ok()?.viewport_meta.as_ref()
+    }
+
+    /// Bumped whenever a document's viewport `<meta>` changes.
+    pub fn viewport_meta_version(&self) -> u64 {
+        self.viewport_meta_version
     }
     /// Sets an inherited, already-resolved base URL without changing URL/origin.
     /// None restores resolution against the document's current URL.
