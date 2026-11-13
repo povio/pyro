@@ -6,8 +6,12 @@ source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 Porting an existing Playwright suite? Do not rewrite it: replace the imports
 of `playwright` and `@playwright/test` with `@povio/pyro/wright`,
 keep the Playwright code and run it with `pyro run` (README, "Playwright
-tests, unchanged"). Rewrite a test into one `page.run([...])` only where its
-last milliseconds matter.
+tests, unchanged"). Keep the config too: project `dependencies` and
+`teardown` (a sign-in setup project that saves `storageState`), global
+setup and teardown (they get Playwright's `FullConfig`; import its type from
+`@povio/pyro/wright`), hooks and worker fixtures work as in Playwright, and
+`pyro run --shard i/n` splits a run over CI jobs. Rewrite a test into one
+`page.run([...])` only where its last milliseconds matter.
 
 ## The model
 
