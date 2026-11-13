@@ -148,20 +148,32 @@ pub struct TextRun {
 }
 
 impl TextRun {
+    /// The run's glyphs in `kept` (indices in drawing order; pyro: `text-overflow` draws a
+    /// part), whose atoms span `extent` (layout x).
     pub(crate) fn new(
         run: &parley::GlyphRun<'_, blitz_dom::node::TextBrush>,
         source: Option<&str>,
         transform: kurbo::Affine,
+        kept: std::ops::Range<usize>,
+        extent: Option<(f32, f32)>,
     ) -> TextRun {
         let mut count = 0;
-        let fingerprint = glyphs_fingerprint(run.positioned_glyphs().map(|g| {
+        let fingerprint = glyphs_fingerprint(run.positioned_glyphs().skip(kept.start).take(kept.len()).map(|g| {
             count += 1;
             (g.id, g.x, g.y)
         }));
         let mut text = String::new();
         let mut glyph_text = Vec::new();
         if let Some(source) = source {
-            let atoms: Vec<_> = run.atom_texts().collect();
+            let mut first = 0;
+            let atoms: Vec<_> = run
+                .atom_texts()
+                .filter(|(_, n)| {
+                    let at = first;
+                    first += n;
+                    at >= kept.start && at < kept.end
+                })
+                .collect();
             let start = atoms.iter().map(|(r, _)| r.start).min().unwrap_or(0);
             let end = atoms.iter().map(|(r, _)| r.end).max().unwrap_or(0);
             if let Some(t) = source.get(start..end) {
@@ -177,11 +189,12 @@ impl TextRun {
             }
         }
         let metrics = run.run().font_metrics();
-        let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
+        let (x0, x1) = extent.unwrap_or((run.offset(), run.offset() + run.advance()));
+        let baseline = run.baseline() as f64;
         let rect = kurbo::Rect::new(
-            x,
+            x0 as f64,
             baseline - metrics.ascent as f64,
-            x + run.advance() as f64,
+            x1 as f64,
             baseline + metrics.descent as f64,
         );
         TextRun {

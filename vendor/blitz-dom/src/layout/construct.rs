@@ -515,7 +515,12 @@ fn collect_layout_children_with_wrap(
             });
 
             match crate::util::parse_svg_image(outer_html.as_bytes()) {
-                Ok(svg) => {
+                Ok(mut svg) => {
+                    // pyro: without a `viewBox` its content is laid out in its CSS box
+                    // (`SvgImageData::sized`, at paint).
+                    if svg.intrinsic_dimensions.view_box.is_none() {
+                        svg.inline_source = Some(outer_html.as_str().into());
+                    }
                     doc.get_node_mut(container_node_id)
                         .unwrap()
                         .element_data_mut()
@@ -1041,6 +1046,8 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
     } else {
         node.attr(local_name!("value")).unwrap_or("").to_string()
     };
+    let placeholder = input_placeholder(doc, input_element_id, is_multiline);
+    let node = &mut doc.nodes[input_element_id];
     let is_focussed = node.is_focussed();
     let element = &mut node.data.downcast_element_mut().unwrap();
     if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
@@ -1060,6 +1067,8 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
         unreachable!();
     };
 
+    // pyro: a textarea's placeholder is broken into lines at its width by layout.
+    text_input_data.placeholder = placeholder;
     let editor = &mut text_input_data.editor;
     editor.set_scale(doc.viewport.scale_f64() as f32);
     editor.set_width(None);
@@ -1087,6 +1096,65 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
     editor.set_base_direction(base_direction);
 
     editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
+}
+
+/// pyro: the `placeholder` attribute of an `<input>` or `<textarea>` laid out
+/// in its `::placeholder` style, as Chromium paints it while the value is
+/// empty: a single-line input's text loses its line breaks (HTML), and the UA
+/// sheet's `line-height: initial !important` makes its line `normal` (Stylo
+/// applies no author `line-height` to `::placeholder` either). `None` when the
+/// element has no placeholder text.
+fn input_placeholder(
+    doc: &mut BaseDocument,
+    node_id: NodeId,
+    is_multiline: bool,
+) -> Option<Box<crate::node::InputPlaceholder>> {
+    use style::selector_parser::PseudoElement;
+    use style::stylist::RuleInclusion;
+    let node = &doc.nodes[node_id];
+    let attr = node.attr(local_name!("placeholder"))?;
+    let text: String = if is_multiline {
+        attr.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        attr.chars().filter(|c| !matches!(c, '\n' | '\r')).collect()
+    };
+    if text.is_empty() {
+        return None;
+    }
+    let input_style = node.primary_styles()?;
+    let placeholder_style = {
+        let read_guard = doc.guard.read();
+        let guards = StylesheetGuards::same(&read_guard);
+        doc.stylist.lazily_compute_pseudo_element_style::<&Node>(
+            &guards,
+            node,
+            &PseudoElement::Placeholder,
+            RuleInclusion::All,
+            &input_style,
+            false,
+            None,
+        )
+    };
+    let style: &style::properties::ComputedValues = match &placeholder_style {
+        Some(style) => style,
+        None => &input_style,
+    };
+    let mut text_style = stylo_to_parley::style(node_id, style);
+    text_style.line_height = parley::LineHeight::NORMAL;
+    let mut color = style.clone_color();
+    color.alpha *= style.get_effects().opacity;
+    let mut placeholder = Box::new(crate::node::InputPlaceholder {
+        text,
+        style: text_style,
+        layout: parley::Layout::new(),
+        color,
+        alignment: stylo_to_parley::text_align(style.clone_text_align()),
+        base_direction: stylo_to_parley::base_direction(style.clone_direction(), style.clone_unicode_bidi()),
+    });
+    let scale = doc.viewport.scale();
+    let mut font_ctx = doc.font_ctx.lock().unwrap();
+    placeholder.relayout(&mut font_ctx, &mut doc.layout_ctx, scale, None);
+    Some(placeholder)
 }
 
 fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {

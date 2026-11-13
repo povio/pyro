@@ -379,6 +379,48 @@ pub(crate) struct DrawTextContext {
     pub(crate) runs: Option<Vec<crate::TextRun>>,
     /// How far the next `stroke_text` moves its text along x (device px; 0 unless printing).
     pub(crate) text_shift: f64,
+    /// pyro: the atoms the next `stroke_text` leaves out (`text-overflow: ellipsis`).
+    pub(crate) cut: Option<TextCut>,
+}
+
+/// pyro: where `text-overflow: ellipsis` cuts a line: the atoms (clusters, ligatures) of its
+/// glyph runs that end past `edge` (layout x; `keep_left`) or start before it (right-to-left
+/// lines) are not drawn.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TextCut {
+    pub edge: f32,
+    pub keep_left: bool,
+}
+
+impl TextCut {
+    /// The glyphs of `run` (in [`parley::GlyphRun::glyphs`] order) this cut keeps, and the x
+    /// extent of their atoms (`None` when it keeps none). A left-to-right cut keeps a prefix of
+    /// the run's atoms in visual order, a right-to-left one a suffix.
+    pub(crate) fn kept(&self, run: &parley::GlyphRun<'_, TextBrush>) -> (std::ops::Range<usize>, Option<(f32, f32)>) {
+        // Atom advances within a run add up to fractions of a layout unit off the line's.
+        const EPSILON: f32 = 1.0 / 128.0;
+        let advances: Vec<f32> = run.glyphs().map(|g| g.advance).collect();
+        let (mut pen, mut index) = (run.offset(), 0);
+        let (mut range, mut extent) = (None::<std::ops::Range<usize>>, None::<(f32, f32)>);
+        for (_, count) in run.atom_texts() {
+            let Some(glyphs) = advances.get(index..index + count) else { break };
+            let advance: f32 = glyphs.iter().sum();
+            let keep = if self.keep_left {
+                pen + advance <= self.edge + EPSILON
+            } else {
+                pen >= self.edge - EPSILON
+            };
+            if keep {
+                let r = range.get_or_insert(index..index);
+                r.end = index + count;
+                let e = extent.get_or_insert((pen, pen + advance));
+                *e = (e.0.min(pen), e.1.max(pen + advance));
+            }
+            pen += advance;
+            index += count;
+        }
+        (range.unwrap_or(0..0), extent)
+    }
 }
 
 /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
@@ -733,8 +775,10 @@ pub(crate) fn stroke_text<'a>(
         win_ascent_ratios,
         runs,
         text_shift,
+        cut,
     } = context;
     let shift = *text_shift;
+    let cut = *cut;
     stack.clear();
     path_scratch.clear();
     deco_boxes.clear();
@@ -815,14 +859,19 @@ pub(crate) fn stroke_text<'a>(
                 let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
                 let unshifted = transform;
                 let transform = shifted(transform, shift);
+                // pyro: the glyphs `text-overflow` keeps of the run (all without a cut).
+                let (kept, kept_extent) = match cut {
+                    Some(cut) => cut.kept(&glyph_run),
+                    None => (0..usize::MAX, Some((glyph_run.offset(), glyph_run.offset() + glyph_run.advance()))),
+                };
                 // Zero-size text is invisible, but hinting can give its glyphs ink. Fully
                 // transparent text is skipped too: backends draw color (emoji) glyphs opaque.
                 // pyro: a recording paint (the PDF's) keeps it, as invisible text.
-                if font_size > 0.0 && (fill_color.components[3] > 0.0 || runs.is_some()) {
+                if font_size > 0.0 && (fill_color.components[3] > 0.0 || runs.is_some()) && !kept.is_empty() {
                     // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
                     // next recorded one, so a run recorded but not drawn would stop the matching.
                     if let Some(runs) = runs.as_mut() {
-                        runs.push(crate::TextRun::new(&glyph_run, source, unshifted));
+                        runs.push(crate::TextRun::new(&glyph_run, source, unshifted, kept.clone(), kept_extent));
                     }
                     scene.draw_glyphs(
                         font,
@@ -835,11 +884,15 @@ pub(crate) fn stroke_text<'a>(
                         1.0, // alpha
                         transform,
                         glyph_xform,
-                        glyph_run.positioned_glyphs().map(|glyph| anyrender::Glyph {
-                            id: glyph.id as _,
-                            x: glyph.x,
-                            y: glyph.y,
-                        }),
+                        glyph_run
+                            .positioned_glyphs()
+                            .skip(kept.start)
+                            .take(kept.len())
+                            .map(|glyph| anyrender::Glyph {
+                                id: glyph.id as _,
+                                x: glyph.x,
+                                y: glyph.y,
+                            }),
                     );
                 }
 
@@ -859,8 +912,9 @@ pub(crate) fn stroke_text<'a>(
                     css_font_size,
                 };
                 let run_node_id = style.brush.id;
-                let run_x0 = glyph_run.offset() as f64;
-                let run_x1 = run_x0 + glyph_run.advance() as f64;
+                // pyro: decorations span what the cut keeps of the run.
+                let Some((run_x0, run_x1)) = kept_extent else { continue };
+                let (run_x0, run_x1) = (run_x0 as f64, run_x1 as f64);
 
                 for entry in stack.iter() {
                     if entry.decoration.is_none() {
