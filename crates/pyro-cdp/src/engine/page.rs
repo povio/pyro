@@ -67,6 +67,8 @@ fn secure_context_type(url: &str) -> &'static str {
     }
 }
 
+/// `Page.Frame`. `unreachable`: the frame shows the error document of a
+/// navigation to that URL (Chrome's `unreachableUrl`).
 fn frame_description(
     id: &str,
     parent: Option<&FrameId>,
@@ -74,6 +76,7 @@ fn frame_description(
     url: &str,
     name: &str,
     origin: &str,
+    unreachable: Option<&str>,
 ) -> serde_json::Value {
     let mut value = json!({
         "id": id, "loaderId": loader, "url": url, "name": name,
@@ -84,12 +87,15 @@ fn frame_description(
     if let Some(parent) = parent {
         value["parentId"] = json!(parent.0);
     }
+    if let Some(unreachable) = unreachable {
+        value["unreachableUrl"] = json!(unreachable);
+    }
     value
 }
 
 fn frame_tree(frame: &FrameInfo, frames: &[FrameInfo]) -> serde_json::Value {
     let mut value = json!({"frame": frame_description(&frame.id.0, frame.parent.as_ref(), &frame.loader_id.0,
-        &frame.url, &frame.name, &frame.origin)});
+        &frame.url, &frame.name, &frame.origin, frame.unreachable_url.as_deref())});
     let children: Vec<_> =
         frames.iter().filter(|f| f.parent.as_ref() == Some(&frame.id)).map(|f| frame_tree(f, frames)).collect();
     if !children.is_empty() {
@@ -590,7 +596,15 @@ impl EngineHost {
                     self.event_to("Runtime.executionContextCreated", &json!({ "context": context }), &runtime);
                 }
             }
-            PageEvent::FrameNavigated { frame_id, loader_id, url, reason, cdp_request_id, timestamp } => {
+            PageEvent::FrameNavigated {
+                frame_id,
+                loader_id,
+                url,
+                reason,
+                cdp_request_id,
+                timestamp,
+                unreachable_url,
+            } => {
                 if root.as_ref() == Some(&frame_id) {
                     if let Some(state) = self.pages.get_mut(&page) {
                         state.uncommitted_popup_of = None;
@@ -639,21 +653,22 @@ impl EngineHost {
                     .or_else(|| info.as_ref().map(|(origin, _)| origin.as_str()))
                     .unwrap_or("null");
                 let name = info.as_ref().map_or("", |(_, name)| name.as_str());
-                let frame = frame_description(&frame_id.0, parent.as_ref(), &loader_id.0, &url, name, origin);
+                let frame = frame_description(
+                    &frame_id.0,
+                    parent.as_ref(),
+                    &loader_id.0,
+                    &url,
+                    name,
+                    origin,
+                    unreachable_url.as_deref(),
+                );
                 self.event_to("Page.frameNavigated", &json!({"frame":frame,"type":"Navigation"}), &all);
                 for (realm, world, origin) in pending {
                     let context = context_description(realm, world.as_deref(), &origin, &frame_id.0);
                     self.event_to("Runtime.executionContextCreated", &json!({ "context": context }), &runtime);
                 }
             }
-            PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, .. } => {
-                let mut requested = false;
-                if let Some(state) = self.pages.get_mut(&page) {
-                    let frame = state.frames.entry(frame_id.clone()).or_default();
-                    frame.navigating = false;
-                    requested = std::mem::take(&mut frame.requested);
-                    frame.pending_realms.clear();
-                }
+            PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, error_page, .. } => {
                 if let Some(id) = cdp_request_id {
                     self.navigate_response(
                         page,
@@ -661,6 +676,19 @@ impl EngineHost {
                         id,
                         json!({ "frameId": frame_id.0, "loaderId": loader_id.0, "errorText": error }),
                     );
+                }
+                // Chrome answers Page.navigate with the error, then commits
+                // its error document under the same loader: the frame is
+                // still navigating, and that document's load ends it.
+                if error_page {
+                    return;
+                }
+                let mut requested = false;
+                if let Some(state) = self.pages.get_mut(&page) {
+                    let frame = state.frames.entry(frame_id.clone()).or_default();
+                    frame.navigating = false;
+                    requested = std::mem::take(&mut frame.requested);
+                    frame.pending_realms.clear();
                 }
                 for s in &all {
                     // Chrome clears a requested (anchor/script) navigation it

@@ -1025,7 +1025,9 @@ enum Phase {
     /// Tried; tried again when the document changes.
     Try,
     /// `goto` started; waits for the new document's `load` (or DOMContentLoaded).
-    Load { loader: String, dom_ready: bool },
+    /// `navigation`: the step navigated (`goto`, `reload`), which fails when
+    /// it commits an error document; a `loaded` step waits for any document.
+    Load { loader: String, dom_ready: bool, navigation: bool },
     /// The step's action ran (or an `idle` step started); waits until the
     /// page is quiet with at most `requests` requests in flight.
     Settle { requests: usize, since: Instant, until: Instant },
@@ -1340,7 +1342,9 @@ impl Waiter {
                 Some(doc) => doc.is_disposed() || doc.dom.borrow().version() != self.seen,
                 None => true,
             },
-            Phase::Load { loader, dom_ready } => load_reached(browser, self.job.pid, loader, *dom_ready),
+            Phase::Load { loader, dom_ready, navigation } => {
+                load_reached(browser, self.job.pid, loader, *dom_ready, *navigation)
+            }
             Phase::Settle { requests, .. } => browser.page_work(self.job.pid).is_none_or(|w| w.quiet(*requests)),
             Phase::Await(settled) => settled.borrow().is_some(),
             Phase::Render(settled) => settled.borrow().is_some(),
@@ -1411,14 +1415,20 @@ enum LoadState {
     Reached,
     /// Another navigation superseded it before it committed: wait for that one.
     Follow(String),
-    /// Neither committed nor pending: the navigation failed.
+    /// Neither committed nor pending: the navigation failed. Or, for a
+    /// navigation, it committed an error document.
     Failed,
 }
 
-fn load_state(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool) -> LoadState {
+fn load_state(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool, navigation: bool) -> LoadState {
     let Some(p) = browser.page(pid) else { return LoadState::Reached };
     let f = &p.main_frame;
     if f.loader_id.0 == loader {
+        // A new window's failed navigation commits Chrome's error document
+        // under its loader: the navigation failed all the same.
+        if navigation && f.unreachable.is_some() {
+            return LoadState::Failed;
+        }
         let done = if dom_ready { f.dom_content_loaded } else { f.loaded };
         return if done { LoadState::Reached } else { LoadState::Waiting };
     }
@@ -1429,8 +1439,8 @@ fn load_state(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool) -> 
     }
 }
 
-fn load_reached(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool) -> bool {
-    !matches!(load_state(browser, pid, loader, dom_ready), LoadState::Waiting)
+fn load_reached(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool, navigation: bool) -> bool {
+    !matches!(load_state(browser, pid, loader, dom_ready, navigation), LoadState::Waiting)
 }
 
 /// The document a `loaded` step waits for: the navigation being fetched
@@ -4726,11 +4736,11 @@ impl EngineHost {
                         }
                     }
                 }
-                Phase::Load { loader, dom_ready } => {
-                    match load_state(&self.thread.browser, pid, &loader, dom_ready) {
+                Phase::Load { loader, dom_ready, navigation } => {
+                    match load_state(&self.thread.browser, pid, &loader, dom_ready, navigation) {
                         LoadState::Reached => {}
                         LoadState::Follow(next) => {
-                            w.phase = Phase::Load { loader: next, dom_ready };
+                            w.phase = Phase::Load { loader: next, dom_ready, navigation };
                             continue;
                         }
                         LoadState::Failed => {
@@ -4746,7 +4756,7 @@ impl EngineHost {
                                 ));
                                 return Err(w.job.fail(error));
                             }
-                            w.phase = Phase::Load { loader, dom_ready };
+                            w.phase = Phase::Load { loader, dom_ready, navigation };
                             return Ok(Drive::Park(Box::new(w)));
                         }
                     }
@@ -4769,12 +4779,12 @@ impl EngineHost {
                             .navigate(pid, NavigateOpts::address_bar(url.as_str()))
                             .map_err(|e| w.job.fail(CdpError::server(format!("navigation failed: {e}"))))?;
                         self.thread.browser.checkpoint();
-                        w.phase = Phase::Load { loader: loader.0, dom_ready: *dom_ready };
+                        w.phase = Phase::Load { loader: loader.0, dom_ready: *dom_ready, navigation: true };
                         continue;
                     }
                     if let Step::Loaded = step {
                         let loader = loader_to_wait_for(&self.thread.browser, pid);
-                        w.phase = Phase::Load { loader, dom_ready: false };
+                        w.phase = Phase::Load { loader, dom_ready: false, navigation: false };
                         continue;
                     }
                     if let Step::Idle = step {
@@ -4795,7 +4805,7 @@ impl EngineHost {
                             .navigate(pid, NavigateOpts::address_bar(url.as_str()))
                             .map_err(|e| w.job.fail(CdpError::server(format!("reload failed: {e}"))))?;
                         self.thread.browser.checkpoint();
-                        w.phase = Phase::Load { loader: loader.0, dom_ready: false };
+                        w.phase = Phase::Load { loader: loader.0, dom_ready: false, navigation: true };
                         continue;
                     }
                     let before = matches!(
@@ -4956,7 +4966,22 @@ impl EngineHost {
                             // `pushState` on `about:blank` throws (origin null): a
                             // prepared page whose navigation is under way gets
                             // there; one that never navigated never will.
-                            let blank = self.thread.browser.page(pid).filter(|p| p.main_frame.url == "about:blank");
+                            // Nor on the error document of a failed navigation (one
+                            // under way may still get there).
+                            let failed = self.thread.browser.page(pid).and_then(|p| {
+                                p.main_frame.unreachable.clone().filter(|_| p.pending_loader().is_none())
+                            });
+                            if let Some(failed) = failed {
+                                return Err(w.job.fail(CdpError::server(format!(
+                                    "the page shows the error document of its navigation to {} ({}): \
+                                     route needs a document",
+                                    failed.url, failed.error
+                                ))));
+                            }
+                            let blank =
+                                self.thread.browser.page(pid).filter(|p| {
+                                    p.main_frame.url == "about:blank" || p.main_frame.unreachable.is_some()
+                                });
                             if let Some(p) = blank {
                                 if p.pending_loader().is_none() {
                                     return Err(w.job.fail(CdpError::server(

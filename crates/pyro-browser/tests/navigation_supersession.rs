@@ -64,9 +64,13 @@ fn failed_replacement_does_not_replace_the_next_navigation_history_entry() {
         t.browser.set_loader(Some(loader));
         t.browser.navigate(page, NavigateOpts::address_bar("http://new.test/")).unwrap();
         settle(&mut t);
-        // The navigation replaced the initial about:blank entry (Chrome);
-        // the failed replacement left no entry of its own.
-        assert_eq!(eval(&t, page, "history.length"), "1", "failed replacement leaked into next navigation");
+        // Without a loader the replacement fails at once and leaves the
+        // initial about:blank entry, which the navigation replaces (Chrome).
+        // A fetch that fails commits the new window's error document in
+        // that entry, as Chrome does: the navigation then pushes its own.
+        // Either way it does not replace as the failed one would have.
+        let want = if asynchronous { "2" } else { "1" };
+        assert_eq!(eval(&t, page, "history.length"), want, "failed replacement leaked into next navigation");
     }
 }
 

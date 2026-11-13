@@ -155,6 +155,9 @@ pub enum PageEvent {
         reason: NavigationReason,
         cdp_request_id: Option<u64>,
         timestamp: f64,
+        /// The committed document is the error document of a navigation
+        /// to this URL ([`ERROR_DOCUMENT_URL`]; CDP `Frame.unreachableUrl`).
+        unreachable_url: Option<String>,
     },
     FrameNavigatedWithinDocument {
         frame_id: FrameId,
@@ -167,6 +170,9 @@ pub enum PageEvent {
         url: String,
         error: String,
         cdp_request_id: Option<u64>,
+        /// An error document for the failure commits next, under the same
+        /// loader (`FrameNavigated` with `unreachable_url`): loading goes on.
+        error_page: bool,
     },
     /// A realm became available for (frame, world); init scripts already ran.
     RealmCreated {
@@ -378,6 +384,23 @@ pub struct Frame {
     pub(crate) opaque_origin: u64,
     pub dom_content_loaded: bool,
     pub loaded: bool,
+    /// The frame shows the error document of a navigation that failed
+    /// ([`ERROR_DOCUMENT_URL`]): the URL it could not reach, and why.
+    pub unreachable: Option<NavigationError>,
+}
+
+/// URL of the document a new window shows when its navigation fails on the
+/// network, as in Chrome (its `Frame.unreachableUrl` is the URL that failed).
+pub const ERROR_DOCUMENT_URL: &str = "chrome-error://chromewebdata/";
+
+/// A navigation that failed with a network error, which a frame's error
+/// document stands for ([`Frame::unreachable`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NavigationError {
+    /// The URL the navigation could not reach.
+    pub url: String,
+    /// The network error (`net::ERR_CONNECTION_REFUSED`, ...).
+    pub error: String,
 }
 
 impl Frame {
@@ -408,6 +431,7 @@ impl Frame {
             && self.origin == other.origin
             && self.opaque_origin == other.opaque_origin
             && self.dom_content_loaded == other.dom_content_loaded
+            && self.unreachable == other.unreachable
             && self.loaded == other.loaded
     }
     pub fn main_realm(&self) -> Option<&Realm> {
@@ -1040,6 +1064,7 @@ impl Browser {
             opaque_origin: self.next(),
             dom_content_loaded: false,
             loaded: false,
+            unreachable: None,
         };
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         let frames = FrameHost::new(self, id, context, frame.clone(), nav.clone());
@@ -1405,6 +1430,14 @@ impl Browser {
             }
             history => history,
         };
+        // Reloading an error document (its URL is Chrome's error page)
+        // fetches the URL it could not reach, as Chrome does.
+        let mut opts = opts;
+        if opts.url == ERROR_DOCUMENT_URL {
+            if let Some(unreachable) = self.doc(page).and_then(|doc| doc.main_frame.unreachable.clone()) {
+                opts.url = unreachable.url;
+            }
+        }
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         // Invalidate the previous fetch even for blank or failed navigation.
         self.cancel_pending_document(page);
@@ -1431,7 +1464,7 @@ impl Browser {
             self.navigation_failed(page, &opts, loader_id, error);
             return Err(JsError::Unsupported(&"navigation to non-blank URLs"));
         }
-        self.commit_document(page, &opts, loader_id.clone(), "null", history)?;
+        self.commit_document(page, &opts, loader_id.clone(), "null", history, None)?;
         self.finish_blank_document(page);
         Ok(loader_id)
     }
@@ -1463,7 +1496,10 @@ impl Browser {
     }
 
     /// Replaces the frame's realms with fresh ones for the new document, runs
-    /// init scripts, then emits `FrameNavigated`.
+    /// init scripts, then emits `FrameNavigated`. `unreachable`: the document
+    /// is the error document of that failed navigation, whose URL its
+    /// session history entry keeps (Chrome's, which a reload or a traversal
+    /// fetches again).
     pub(crate) fn commit_document(
         &mut self,
         page: FrameKey,
@@ -1471,6 +1507,7 @@ impl Browser {
         loader_id: LoaderId,
         origin: &str,
         history: HistoryHandling,
+        unreachable: Option<NavigationError>,
     ) -> Result<(), JsError> {
         // The document being replaced (and its frames) unloads first.
         self.unload_documents(page);
@@ -1574,7 +1611,9 @@ impl Browser {
             p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
-            p.nav.commit_document(&opts.url, history, None);
+            p.main_frame.unreachable = unreachable.clone();
+            let entry_url = unreachable.as_ref().map_or(opts.url.as_str(), |u| u.url.as_str());
+            p.nav.commit_document_at(&opts.url, entry_url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
             p.nav.set_page_dom(&page_dom);
             (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced))
@@ -1639,6 +1678,7 @@ impl Browser {
                 reason: opts.reason,
                 cdp_request_id: opts.cdp_request_id,
                 timestamp: self.timestamp(),
+                unreachable_url: unreachable.map(|u| u.url),
             },
         );
         Ok(())

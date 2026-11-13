@@ -3677,6 +3677,92 @@ fn links_and_window_open_targeting_blank_open_paused_popups() {
 }
 
 #[test]
+fn a_new_windows_failed_navigation_commits_chromes_error_document() {
+    // Recorded from Chromium 147 (Playwright 1.59's headless shell): a popup
+    // whose navigation fails (here a refused connection) commits the error
+    // document: Network.loadingFailed, then frameNavigated at
+    // chrome-error://chromewebdata/ with the URL as unreachableUrl (opaque
+    // origin "://"), its execution context after it, DOMContentLoaded and
+    // load, and only then frameStoppedLoading. Playwright's `popup` event
+    // waits for that commit.
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    h.page("Page.enable", json!({}));
+    let refused = "http://127.0.0.1:1/refused";
+    h.page("Runtime.evaluate", json!({ "expression": format!("window.open('{refused}'); 1") }));
+    let attached =
+        h.until_event(|m| m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != opener);
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let popup_frame = attached["params"]["targetInfo"]["targetId"].clone();
+    for method in ["Page.enable", "Runtime.enable", "Network.enable"] {
+        h.call(Some(&popup), method, json!({}));
+    }
+    h.call(Some(&popup), "Page.setLifecycleEventsEnabled", json!({"enabled": true}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut events = h.until_response(id);
+    let is_stopped = |m: &Value| m["method"] == "Page.frameStoppedLoading" && m["sessionId"] == json!(popup);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !events.iter().any(is_stopped) {
+        assert!(Instant::now() < deadline, "{events:#?}");
+        events.extend(h.run_for(20));
+    }
+    let mine: Vec<&Value> = events.iter().filter(|m| m["sessionId"] == json!(popup)).collect();
+    let at = |name: &str| mine.iter().position(|m| m["method"] == name || m["params"]["name"] == name);
+    let navigated = mine.iter().find(|m| m["method"] == "Page.frameNavigated").unwrap_or_else(|| panic!("{mine:#?}"));
+    let frame = &navigated["params"]["frame"];
+    assert_eq!(frame["id"], popup_frame);
+    assert_eq!(frame["url"], "chrome-error://chromewebdata/");
+    assert_eq!(frame["unreachableUrl"], refused);
+    assert_eq!(frame["securityOrigin"], "://");
+    assert_eq!(frame["secureContextType"], "InsecureScheme");
+    let failed = mine.iter().find(|m| m["method"] == "Network.loadingFailed").expect("loadingFailed");
+    assert_eq!(failed["params"]["errorText"], "net::ERR_CONNECTION_REFUSED");
+    let order: Vec<usize> = [
+        "Network.loadingFailed",
+        "Page.frameNavigated",
+        "Runtime.executionContextCreated",
+        "DOMContentLoaded",
+        "load",
+        "Page.frameStoppedLoading",
+    ]
+    .iter()
+    .map(|name| at(name).unwrap_or_else(|| panic!("{name} missing: {mine:#?}")))
+    .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}: {mine:#?}");
+    assert_eq!(mine.iter().filter(|m| m["method"] == "Page.frameStoppedLoading").count(), 1, "{mine:#?}");
+    let tree = h.call(Some(&popup), "Page.getFrameTree", json!({}));
+    assert_eq!(tree["result"]["frameTree"]["frame"]["unreachableUrl"], refused, "{tree}");
+    let r = h.call(
+        Some(&popup),
+        "Runtime.evaluate",
+        json!({"expression": "[location.href, location.origin].join()", "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "chrome-error://chromewebdata/,null", "{r}");
+
+    // A new page navigated with Page.navigate: the error first, then the commit.
+    drop(h);
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let mut events = h.page_with_events("Page.navigate", json!({"url": refused}));
+    let reply =
+        events.iter().position(|m| m["result"]["errorText"] == "net::ERR_CONNECTION_REFUSED").expect("errorText");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !events.iter().any(|m| m["method"] == "Page.frameNavigated") {
+        assert!(Instant::now() < deadline, "{events:#?}");
+        events.extend(h.run_for(20));
+    }
+    let navigated = events.iter().position(|m| m["method"] == "Page.frameNavigated").unwrap();
+    assert!(reply < navigated, "{events:#?}");
+    assert_eq!(events[navigated]["params"]["frame"]["unreachableUrl"], refused);
+    // A page with a document of its own keeps it, as before.
+    let events = h.page_with_events("Page.navigate", json!({"url": "http://127.0.0.1:1/again"}));
+    assert!(events.iter().any(|m| m["result"]["errorText"] == "net::ERR_CONNECTION_REFUSED"), "{events:#?}");
+    let later = h.run_for(100);
+    assert!(!later.iter().chain(&events).any(|m| m["method"] == "Page.frameNavigated"), "{later:#?}");
+    assert_eq!(eval_value(&mut h, "location.href"), "chrome-error://chromewebdata/");
+}
+
+#[test]
 fn window_open_returns_a_minimal_popup_object() {
     let mut h = Harness::new();
     let opener = h.frame_id.clone();

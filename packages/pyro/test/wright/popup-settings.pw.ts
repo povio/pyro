@@ -5,7 +5,7 @@
 // 1.59.1 gives on its Chromium (147) for the same pages.
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { expect, isStock, test } from './fixtures';
+import { expect, test } from './fixtures';
 import type { BrowserContext, Page } from '../../src/wright/index';
 
 /** Requests the site saw, by path (with the query). */
@@ -187,18 +187,17 @@ test('httpCredentials, javaScriptEnabled and offline reach a popup first documen
   }
   await noScript.close();
 
-  // Offline: its document is never requested. Chromium commits an error
-  // page for the failed navigation, which Playwright's `popup` event waits
-  // for; pyro commits none, so stock Playwright over CDP never announces
-  // this popup (wright does once the navigation ended).
-  if (isStock) return;
+  // Offline: its document is never requested. The failed navigation
+  // commits Chromium's error document, which Playwright's `popup` event
+  // waits for (see popup-error-page.pw.ts).
   const offline = await browser.newContext();
   const page2 = await offline.newPage();
   await page2.goto(`${SITE}/opener?frame=&to=/offline-link`);
   await offline.setOffline(true);
   for (const [via, path] of [['window.open', '/offline-open'], ['target=_blank', '/offline-link']] as const) {
     const opened = await popup(page2, path, via);
-    await opened.waitForLoadState().catch(() => {});
+    expect(opened.url()).toBe('chrome-error://chromewebdata/');
+    await opened.waitForLoadState();
     expect(seen.some((s) => s.path === path)).toBe(false);
   }
   await offline.close();

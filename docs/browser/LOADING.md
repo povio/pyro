@@ -35,7 +35,16 @@ This increment does not load images, iframes or script-inserted script resources
 and does not dispatch script-element load/error events. Inline style resource events are applied, and
 `<style>` elements get `load`/`error` ([STYLESHEETS](STYLESHEETS.md#style-elements)).
 History state is JSON rather than structured clone; popstate/hashchange remain absent. Form POST
-navigates the frame; POST to a new window and named browsing targets fail explicitly. Native HTTPS
+navigates the frame; POST to a new window and named browsing targets fail explicitly.
+
+A navigation whose document request fails on the network reports `FrameNavigateFailed` (CDP
+`errorText`). In a new window, a top-level frame still showing its first about:blank document (a
+popup, a new page), any network error but an aborted navigation, an unknown scheme or an invalid URL
+then commits Chrome's error document under the same loader: an empty document at
+`chrome-error://chromewebdata/` (`ERROR_DOCUMENT_URL`) with an opaque origin, whose frame keeps the
+URL it could not reach (`Frame::unreachable`, CDP `unreachableUrl`) and whose history entry has that
+URL, so a reload fetches it again. A frame with a document of its own keeps it, and a child frame's
+failure leaves its initial document (Chrome commits error pages in both). Native HTTPS
 remains unsupported. See [parity](../PARITY.md)
 and [runtime limits](../COMPATIBILITY.md). No TOS compatibility or matched TOS performance result is
 claimed by these local HTTP and synthetic-loader tests.

@@ -334,7 +334,9 @@ Also covered:
   `:chain`, `:control=enter-frame`), and CSS with `:has-text()`, `:text()`,
   `:text-is()`, `:text-matches()`, `:visible`, `:nth-match()` and `:light()`
 - popups (`page.on('popup')`, `context.on('page')`, which come once the
-  popup's document committed, so `url()` is its own), downloads
+  popup's document committed, so `url()` is its own; a popup, or a new
+  page's first `goto`, whose navigation fails shows Chromium's error
+  document, `chrome-error://chromewebdata/`, and `goto` still rejects), downloads
   (`page.on('download')`, `saveAs`, `path`; a `target=_blank` link or
   `window.open` answered with an attachment downloads on the opener, and its
   popup closes, as in Chrome), file choosers
