@@ -81,7 +81,7 @@ An identity file holds the context options for that identity, plus the settings 
 | `userAgent`, `viewport`, `extraHTTPHeaders` | Context options; the library honors them. |
 | `locale` | CDP `Emulation.setLocaleOverride`: `navigator.language(s)` and `Accept-Language`. `Intl` and `Date` formatting keep the process locale. The library's own `locale` option has no effect. |
 | `timezoneId` | CDP `Emulation.setTimezoneOverride`: `Date`, `Intl`, `Temporal`. It applies to the whole connection, so two contexts on one connection cannot have different zones. The library's own `timezoneId` option has no effect. |
-| `proxy`, `proxyBypass` | `pyro serve --proxy` and `--proxy-bypass`: one browser server per distinct proxy. The library's `proxy` context option has no effect. |
+| `proxy`, `proxyBypass` | `pyro serve --proxy` and `--proxy-bypass`: one browser server per distinct proxy. The library's `proxy` context option has no effect. Loopback hosts (`localhost`, `127.0.0.1`) skip the proxy unless `proxyBypass` contains `<-loopback>`. |
 
 [Proxies, user agents, headers](/scraping/identity) explains each setting and what else is available.
 
@@ -215,14 +215,18 @@ First run, then a second run:
 
 ```
 $ PASSWORD_ALICE=... PASSWORD_BOB=... bun scrape.ts alice bob
+pyro: CDP server listening on ws://127.0.0.1:51214/
 alice signed in [ "A-1: 12.5", "A-2: 99" ]
 bob signed in [ "A-1: 12.5", "A-2: 99" ]
 $ bun scrape.ts alice bob
+pyro: CDP server listening on ws://127.0.0.1:51221/
 alice reused [ "A-1: 12.5", "A-2: 99" ]
 bob reused [ "A-1: 12.5", "A-2: 99" ]
 ```
 
-The second run needs no passwords: both sessions came from the files.
+The second run needs no passwords: both sessions came from the files. The `pyro:` line is the launched server's startup message on stderr; each distinct proxy in the identity files starts one more server and prints one more such line.
+
+With identity files in place, each identity looks as its file says on every run, the reused ones included. In a test with the example identity file above for `alice` (pointing at a local proxy) and a second file for `bob` with another user agent, time zone and proxy, `alice`'s pages reported `navigator.language` `de-DE`, the `Europe/Berlin` time zone, a 1440 px wide viewport and the Chrome user agent, and every request went through her proxy with her credentials. `bob`'s went through his.
 
 ### Only signing in
 

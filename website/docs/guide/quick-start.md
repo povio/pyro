@@ -10,6 +10,10 @@ bun init -y
 bun add --dev @povio/pyro
 ```
 
+::: tip Not on npm yet
+`@povio/pyro` has not been published yet. Until it is, install the client from a checkout and set `PYRO_BIN` as described in [Before the first `@povio/pyro` release](/guide/installation#try-today); every command on this page then works unchanged.
+:::
+
 All three starts use the same small app. Save it as `site/index.html`:
 
 ```html
@@ -78,12 +82,14 @@ bunx pyro run
 ```
 
 ```text
-  ✓   1 e2e/todo.spec.ts › adds a todo (398ms)
+Running 1 file using 5 workers
 
-  1 passed (0.6s)
+  ✓   1 e2e/todo.spec.ts › adds a todo (179ms)
+
+  1 passed (0.2s)
 ```
 
-`pyro run` takes Playwright's usual flags (`-c`, `--project`, `-j`, `-g`, `--retries`, `-u`, ...) and needs Bun on `PATH`. The browser starts once per worker. Next: [Migrating a suite](/playwright/migration).
+`pyro run` takes Playwright's usual flags (`-c`, `--project`, `-j`, `-g`, `--retries`, `-u`, ...) and needs Bun on `PATH`. Without `-j` or a `workers` setting it uses half the CPUs. The browser starts once per worker. Next: [Migrating a suite](/playwright/migration).
 
 ## 2. Write a native `page.run` test
 
@@ -127,7 +133,7 @@ bun test tests/todo.test.ts
 There is no `await` per step and no polling. `button('Add').click()` waits until the page is quiet before the next step starts, so the check sees the new item. If a step never holds, `page.run` throws a `RunError` naming the step and what it was waiting for. Next: [Your first test](/e2e/first-test).
 
 ::: tip
-`await using` closes the page when the test ends. An open page keeps its connection from booting the next page for the profile, so always close pages.
+`await using` closes the page when the test ends. While a page is open, its connection waits for a 15 ms gap between commands before it boots the next page for the profile, so close pages as soon as a test is done.
 :::
 
 ## 3. Save a signed-in profile and scrape
@@ -165,11 +171,15 @@ bun scrape.ts
 ```
 
 ```text
+pyro: serving http://app.test from /…/pyro-start/site
+pyro: CDP server listening on ws://127.0.0.1:61467/
 {
   title: "Todo",
   user: "Signed in as ada",
 }
 ```
+
+The two `pyro:` lines are the launched server's own output on stderr.
 
 `evaluate(expression, name)` stores the JSON value of a page expression under `r.values[name]`; a returned promise is awaited. To scrape a real site, drop `--static` and use its URL in the profile. The client also runs under Node 22+ from a `.mjs` file. Next: [Scraping and automation](/scraping/overview).
 

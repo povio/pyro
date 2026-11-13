@@ -68,7 +68,7 @@ Yes, through `Page.printToPDF` (`page.pdf()` in the Playwright module). Text in 
 
 ## How much memory does it use?
 
-It depends on your app, since every booted page is a full copy of it. On a small HTTP workload (50 navigations, 20 browser contexts) a process peaked at 15.9 MB resident. A 20-test loop on a 2 MB app plateaued at 275 MB in the project's measurement. Profiles keep `pool` pages per connection booted, so they trade memory for speed; fork mode shares a profile's memory between tests copy-on-write. See [Profiles](/guide/profiles#memory).
+It depends on your app, since every booted page is a full copy of it. On a small HTTP workload (50 navigations, 20 browser contexts) a process peaked at 15,904 KiB (about 16 MB) resident. A 20-test loop on a 2 MB app plateaued at 275 MB in the project's measurement. Profiles keep `pool` pages per connection booted, so they trade memory for speed; fork mode shares a profile's memory between tests copy-on-write. See [Profiles](/guide/profiles#memory).
 
 ## Why is fork mode not available on my Mac?
 

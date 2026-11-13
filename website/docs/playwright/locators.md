@@ -111,7 +111,7 @@ Standard CSS, including `:has()`, `:is()`, `:not()` and attribute selectors, is 
 
 ## Shadow DOM
 
-Measured on version 0.0.33: CSS selectors, `getByRole`, `getByLabel` and `getByPlaceholder` do not find elements inside open shadow roots, while `getByText` does. Playwright's locators pierce open shadow roots. If your app renders into shadow DOM (web components), locate those elements by text, or test them through their host element.
+Measured on version 0.0.33 and again on the current code: CSS selectors, `getByRole`, `getByLabel` and `getByPlaceholder` do not find elements inside open shadow roots, while `getByText` does. Playwright's locators pierce open shadow roots. If your app renders into shadow DOM (web components), locate those elements by text, or test them through their host element.
 
 ## Actions
 

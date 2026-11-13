@@ -206,7 +206,7 @@ export const expect: typeof pyro.expect = stock ? (stock.expect as any) : pyro.e
 | An assertion on a loading spinner or "Saving..." text times out | Actions settle before they return; the transient state is already gone. | Assert the final state, or wait for the request. See [Behaviour differences](/playwright/differences#actions-settle-before-they-return). |
 | A `confirm()` dialog acts as if Cancel was pressed | A dialog with no `page.on('dialog')` listener is dismissed. | Register a listener before the action, as Playwright requires. |
 | `toHaveRole('button')` fails on a `<button>` | `toHaveRole` reads the `role` attribute only, not implicit roles. | Use `getByRole('button')` to find it, or drop the assertion. |
-| An element inside an open shadow root is not found | CSS and `getByRole` locators do not enter shadow roots (measured on 0.0.33); `getByText` does. | Locate by text, or test through the host element's API. |
+| An element inside an open shadow root is not found | CSS and `getByRole` locators do not enter shadow roots; `getByText` does. | Locate by text, or test through the host element's API. |
 | Each test runs once although there are three browser projects | All projects run on Pyro, each file once. | Expected. Use `--project` to pick one. |
 | `await page.goto(url)` returns `null`, or its response has no headers | Pooled pages turn `goto` into a route change, which returns `null`; a normal `goto` response carries status and URL only. | Check status with `waitForResponse`, or read headers from `page.request`. |
 | `afterEach` that takes a screenshot when `testInfo.status !== testInfo.expectedStatus` never fires | `testInfo.status` stays `'passed'` during hooks. | See [Behaviour differences](/playwright/differences#test-runner). |

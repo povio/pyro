@@ -76,18 +76,20 @@ It does not suit:
 - Apps without client-side routing for the target. `pushState` + `popstate` must make the router render the target.
 - Tests that assert on the boot itself (first paint, loading screens).
 
-To see whether pages came from the pool, read `browser._stats` (internal, may change): `{ pooled, fresh }`.
+To see whether pages came from the pool, read `browser._stats` (internal, may change): `{ pooled, fresh }`, counted for the worker's browser.
 
 ```ts
-test.afterAll(async ({ browser }) => {
-  console.log((browser as any)._stats); // { pooled: 12, fresh: 1 }
+test.afterEach(async ({ browser }) => {
+  console.log((browser as any)._stats); // { pooled: 4, fresh: 0 } after the fourth test
 });
 ```
+
+Read it in `afterEach` or in a test. In `afterAll` the `browser` fixture is a different browser and shows `{ pooled: 0, fresh: 0 }`.
 
 ## Fork mode
 
 Pyro's fork mode (`pyro serve --fork`) serves each connection from a fork of a process that booted the profiles once. The Playwright layer opens one connection per worker and keeps it, so it does not get a fork per test.
 
-Measured with version 0.0.33: with `use: { pyro: { args: ['--fork'], boot: [...] } }`, every page was fresh (`{ pooled: 0, fresh: 4 }` for four tests that took booted pages without `--fork`). Do not combine `boot` with `--fork`.
+Measured with version 0.0.33 and again on the current code: with `use: { pyro: { args: ['--fork'], boot: [...] } }`, every page was fresh (`{ pooled: 0, fresh: 4 }` for four tests that took booted pages without `--fork`). Do not combine `boot` with `--fork`.
 
 Fork mode pays off with the native API, where each test opens its own connection: see [Connections and fork mode](/guide/fork-mode) and [Fork mode in tests](/e2e/fork). Pre-booted pages there are called profiles; see [Profiles and pre-booted pages](/guide/profiles).

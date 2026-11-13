@@ -8,7 +8,7 @@ It needs [Bun](https://bun.sh) on `PATH`: the CLI hands `e2e` over to Bun even w
 
 ## A spec file
 
-Specs import `describe`, `test`, the hooks and `expect` from `@povio/pyro/e2e` instead of `bun:test`, and get the browser from `browser()`:
+Specs import `describe`, `test`, the hooks and `expect` from `@povio/pyro/e2e` instead of `bun:test`, and get the browser from `browser()`. The app is the todo app from [Your first test](/e2e/first-test) grown a little: a sign-in screen (the same as on [Fork mode in tests](/e2e/fork)), a `/settings` route, a Delete button per item with a confirmation dialog, and `POST /api/seed`; `../server` exports its `startServer()`:
 
 ```ts
 // e2e/todos.test.ts
@@ -70,16 +70,30 @@ export function signedInProfile() {
 }
 ```
 
+A second file uses the shared profile directly, with a `route`:
+
+```ts
+// e2e/settings.test.ts
+import { browser, test } from '@povio/pyro/e2e';
+import { check, heading } from '@povio/pyro';
+import { signedInProfile } from './app';
+
+test('opens settings', async () => {
+  await signedInProfile();
+  await using page = await (await browser()).page({ as: 'app', route: '/settings' });
+  await page.run([check(heading('Settings')).visible()]);
+});
+```
+
 ```sh
 $ bunx pyro e2e e2e --setup e2e/setup.ts -j 4 --timeout 10000 --junit junit.xml
-pyro: CDP server listening on ws://127.0.0.1:49843/ (fork mode)
-✓ e2e/settings.test.ts > opens settings [320.10ms]
-✓ e2e/todos.test.ts > todos > adds a todo [159.22ms]
-✓ e2e/todos.test.ts > todos > deletes a seeded todo [166.88ms]
-✓ e2e/todos.test.ts > todos > runs alone [29.62ms]
+pyro: CDP server listening on ws://127.0.0.1:51595/ (fork mode)
+✓ e2e/settings.test.ts > opens settings [91.14ms]
+✓ e2e/todos.test.ts > todos > adds a todo [52.60ms]
+✓ e2e/todos.test.ts > todos > deletes a seeded todo [57.23ms]
 
- 4 pass
-Ran 4 tests across 2 files. [415.78ms]
+ 3 pass
+Ran 3 tests across 2 files. [130.47ms]
 ```
 
 The first tests of a run include the profile boots they waited for.

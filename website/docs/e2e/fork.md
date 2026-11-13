@@ -51,6 +51,8 @@ Nothing in the test changes. The same test file runs against a forking and a non
 
 ## A test against a forking server
 
+`APP` is the origin of a small app with a sign-in screen: an `Email` field and a `Sign in` button that store `tok-<email>` as `token` in `localStorage`, reload, and show `Signed in`.
+
 ```ts
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { Pyro, button, check, evaluate, label, text } from '@povio/pyro';
@@ -123,7 +125,7 @@ Registering a profile whose base is still booting waits for the base (up to 90 s
 | The test | Per page | Your app's JavaScript and layout. On ToS, about 0.57 s of user CPU per page (PR #291) |
 | Close | Per page | The process exits without tearing the page down |
 
-In a 10-page loop on the small todo app from [Your first test](/e2e/first-test), on a busy M1 Max, `pyro.page()` plus a two-step run took between 3.5 and 19 ms per page.
+In a 10-page loop on that sign-in app, `pyro.page()` plus a two-step run took 1.2 to 1.6 ms per page on an idle Apple silicon machine, and between 3.5 and 19 ms in an earlier run on a busy M1 Max.
 
 What fork mode buys:
 
@@ -135,13 +137,13 @@ What it costs:
 
 - **A process per page.** Concurrency is bounded by CPU, not by browser threads. Size `-j` to your cores (see [CI recipes](/e2e/ci#concurrency)).
 - **One connection per page.** The server's `--cdp-max-connections` (default 16) caps open pages. Raise it when more tests run at once: `args: ['--fork', '--cdp-max-connections', '64']`. `pyro e2e` sets it to at least 64.
-- **JavaScriptCore's optimizing tiers are off in forks.** Forked pages run without the DFG and FTL JITs, because connections are too short for them to pay off. Set `JSC_useDFGJIT` in the server's environment to override.
+- **JavaScriptCore's optimizing tiers are off in forks.** Forked pages run without the DFG and FTL JITs, because connections are too short for them to pay off. Set `JSC_useDFGJIT=true` in the server's environment to override.
 - **Templates run the app.** Every template and spare process runs your app's timers and polling while it waits, so many profiles cost CPU even when idle. Release the ones you no longer need.
 
 ## Platform limits
 
 - Fork mode needs the patched JavaScriptCore: macOS on Apple silicon and Linux. The macOS Intel build has no fork mode.
-- On macOS, `fork()` copies JavaScriptCore's executable-memory reservation. The template uses a 32 MB JIT pool to keep forks cheap (it took 14 ms per fork with 512 MB).
+- On macOS, `fork()` copies JavaScriptCore's executable-memory reservation. The template uses a 32 MB JIT pool to keep forks cheap (a fork took 15 ms of the template's time with 512 MB, 3.5 ms with 32 MB).
 - Fork mode is for one host: the template and its forks are local processes. Remote clients connect over WebSocket as usual.
 
 ## Several processes on one forking server

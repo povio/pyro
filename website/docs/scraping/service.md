@@ -12,7 +12,7 @@ pyro serve --host 127.0.0.1 --port 9222 --cdp-max-connections 32
 | --- | --- | --- |
 | `--host <HOST>` | `127.0.0.1` | Address to listen on. `0.0.0.0` listens on every interface; see [Securing it](#securing-it) first. |
 | `--port <INT>` | `9222` | |
-| `--advertise-host <HOST>` | `--host` | The host written into `webSocketDebuggerUrl` in `/json/version`. Set it when clients reach the server at another address than it binds, for example `--host 0.0.0.0 --advertise-host 10.0.0.5`. It must be an IP address (see below). |
+| `--advertise-host <HOST>` | `--host` | The host written into `webSocketDebuggerUrl` in `/json/version`. Set it when clients reach the server at another address than it binds, for example `--host 0.0.0.0 --advertise-host 10.0.0.5`. Use an IP address: a client that connects by host name gets `403` (see below). |
 | `--cdp-max-connections <INT>` | `16` | Connections served at once. More wait in the kernel's backlog until one closes. In fork mode, one per open page. |
 | `--cdp-max-message-size <INT>` | `67108864` (64 MiB) | Largest WebSocket message. |
 | `--cdp-max-http-message-size <INT>` | `1048576` | Largest HTTP request to the discovery endpoints. |
@@ -31,15 +31,15 @@ The npm package carries the browser for each platform under `native/<platform>/`
 
 ```
 node_modules/@povio/pyro/native/
-  linux-x64/    pyro, lib/ (patched JavaScriptCore and ICU)
+  linux-x64/    pyro, lib/ (ICU)
   linux-arm64/  pyro, lib/
-  darwin-arm64/ pyro, lib/
+  darwin-arm64/ pyro
   darwin-x64/   pyro
 ```
 
-Keep `pyro` and its `lib/` directory together; the binary finds its libraries next to itself. You can run it directly, without Node.js, or through `npx pyro`, which spawns the same binary and forwards signals to it.
+The patched JavaScriptCore is linked into the `pyro` binary. On Linux, keep `pyro` and its `lib/` directory together; the binary loads the bundled ICU libraries from there. You can run it directly, without Node.js, or through `npx pyro`, which spawns the same binary and forwards signals to it.
 
-On Linux it needs glibc 2.39 or newer (for example Ubuntu 24.04) and these system libraries: `libstdc++6`, `libatomic1` and `libfontconfig1`, plus some fonts for screenshots and PDFs. It does not need a display server or a GPU. HTTPS uses built-in Mozilla root certificates, so no `ca-certificates` package is needed for the browser itself.
+On Linux it needs glibc 2.39 or newer (for example Ubuntu 24.04) and these system libraries: `libstdc++6`, `libatomic1` (x64; harmless on arm64) and `libfontconfig1`, plus some fonts for screenshots and PDFs. It does not need a display server or a GPU. HTTPS uses built-in Mozilla root certificates, so no `ca-certificates` package is needed for the browser itself.
 
 ## systemd (Ubuntu 24.04)
 

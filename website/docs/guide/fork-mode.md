@@ -43,11 +43,11 @@ Measured on an M1 Max with a release build (`docs/ARCHITECTURE.md`):
 | App whose startup runs 0.8 s of JavaScript, handed to a new connection, booted | about 20 ms |
 | Connect to an evaluated expression in a booted page, with a spare waiting (8 MB test app) | 3.6 ms |
 
-The cost is independent of how long your app takes to boot, because the boot happened once in the template. Linux browsers are fork-capable too, but no Linux numbers have been published.
+The 20 ms figure dates from before forks used a 32 MB JIT pool: `fork()` itself took 12-18 ms then, and `docs/ARCHITECTURE.md` measures it at 3.5 ms with the smaller pool. The cost is independent of how long your app takes to boot, because the boot happened once in the template. Linux browsers are fork-capable too, but no Linux numbers have been published.
 
 ### No optimizing JIT in forks
 
-Forked children run without JavaScriptCore's DFG and FTL optimizing tiers. A connection lives for one test, too short for those tiers to repay their compile time. Interpreted and baseline-JIT code still run. If a test does heavy computation in page JavaScript, set `JSC_useDFGJIT` explicitly to keep the tiers on.
+Forked children run without JavaScriptCore's DFG and FTL optimizing tiers. A connection lives for one test, too short for those tiers to repay their compile time. Interpreted and baseline-JIT code still run. If a test does heavy computation in page JavaScript, set `JSC_useDFGJIT=true` explicitly to keep the tiers on.
 
 When the server serves an app with `--static`, the template also compiles the app's JavaScript modules once before its first page. Forked pages that load the same module text reuse the result without parsing it. `PYRO_FORK_PRECOMPILE=off` turns this off.
 
@@ -145,7 +145,7 @@ On a browser without it, `serve --fork` exits with `--fork needs the patched Jav
 
 - **On Intel Macs.** It is not available.
 - **When tests should share state in one browser.** Every connection is a separate process; cookies, storage and page state do not carry from one test to the next. That is usually what you want for tests, and the opposite of what a long-running scraper session needs.
-- **When a single page runs heavy, long JavaScript.** Forks have no optimizing JIT. Use thread mode, or set `JSC_useDFGJIT`.
+- **When a single page runs heavy, long JavaScript.** Forks have no optimizing JIT. Use thread mode, or set `JSC_useDFGJIT=true`.
 - **For one long-lived page.** Fork mode pays off when you open many short-lived pages of the same app. A script that opens one page and keeps it gains nothing.
 
 ## Inspecting forks

@@ -207,7 +207,7 @@ All storage is in memory: nothing is written to disk, and a new browser context 
 | Area | Default | Notes |
 | --- | --- | --- |
 | User agent | `Mozilla/5.0 (compatible; pyro/<version>)` | Override per page through CDP `Emulation.setUserAgentOverride` (Playwright `userAgent`); `serve` has no user-agent flag. `navigator.userAgentData` and low-entropy `Sec-CH-UA` headers follow the override's metadata. Some sites serve different assets to this UA than to Chrome's. |
-| Viewport | 1280x720 at DPR 1 over CDP (observed with the SDK on 0.0.33) | Set per page through CDP `Emulation.setDeviceMetricsOverride` or the SDK/Playwright `viewport`. A size change fires `resize`. |
+| Viewport | 1920x1080 at DPR 1 for pages made over CDP or by the SDK; 1280x720 under the Playwright drop-in (Playwright's default) | Set per page through CDP `Emulation.setDeviceMetricsOverride`, the SDK profile `viewport` or Playwright's `viewport`. A size change fires `resize`. |
 | Locale | Process locale | `navigator.language` and `Accept-Language` follow the per-page locale; `Intl` and `Date` keep the process locale. |
 | Timezone | Process timezone | One timezone per connection: a different zone in a second context of the same connection fails. |
 | Permissions | Prompt | Per context through `Browser.grantPermissions`; `Notification` shows nothing (fires `show` when granted). `navigator.geolocation` exists; geolocation emulation is not recorded. |

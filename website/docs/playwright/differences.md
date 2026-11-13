@@ -50,7 +50,7 @@ Register the listener **before** the action. If a listener answers a dialog that
 
 ## Shadow DOM
 
-Measured on version 0.0.33: CSS selectors, `getByRole`, `getByLabel` and `getByPlaceholder` do not find elements inside open shadow roots; `getByText` does. Playwright pierces open shadow roots with all of them. Locate shadow DOM content by text.
+Measured on version 0.0.33 and again on the current code: CSS selectors, `getByRole`, `getByLabel` and `getByPlaceholder` do not find elements inside open shadow roots; `getByText` does. Playwright pierces open shadow roots with all of them. Locate shadow DOM content by text.
 
 ## Context options without effect
 
@@ -110,7 +110,7 @@ See [API coverage](/playwright/api-coverage) for the full list.
 - **The `Response` from `page.goto()`** has the URL and status only: `headers()` is empty and `body()` throws. `page.reload()` is the same. `goBack()` and `goForward()` return `null`. A `goto` on a [booted page](/playwright/boot-pools) returns `null`.
 - **`request.frame()`** is always the main frame, and `request.timing()` fields are all -1.
 - **`context.storageState()`** collects `localStorage` only from origins with an open page.
-- **`storageState` seeding** leaves a `__lpStorageState` key in `localStorage`.
+- **`storageState` seeding** leaves a `__pyroStorageState` key in `localStorage`.
 - **`page.routeWebSocket()`** is not implemented.
 
 ## Assertions and locators

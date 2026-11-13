@@ -1,6 +1,6 @@
 # CLI
 
-The `pyro` command ships in the npm package `@povio/pyro` (its `bin`). It has two halves: the native browser binary (`version`, `eval`, `serve`, `fetch`) and two test runners written in TypeScript that need [Bun](https://bun.sh) (`test`, `e2e`).
+The `pyro` command ships in the npm package `@povio/pyro` (its `bin`). It has two halves: the native browser binary (`version`, `eval`, `serve`, `fetch`) and two test runners written in TypeScript that need [Bun](https://bun.sh) (`run`, `e2e`).
 
 ```sh
 bunx pyro <command> [options]
@@ -15,7 +15,7 @@ bun add -d @povio/pyro
 | [`eval`](#eval) | Runs JavaScript in an `about:blank` page until idle | native binary |
 | [`serve`](#serve) | CDP server over WebSocket | native binary |
 | [`fetch`](#fetch) | Loads a URL (scripts run) and prints the DOM after `load` | native binary |
-| [`test`](#test) | Playwright-style test runner (`playwright test` replacement) | Bun |
+| [`run`](#run) | Playwright-style test runner (`playwright test` replacement) | Bun |
 | [`e2e`](#e2e) | One-process runner for `@povio/pyro/e2e` specs | Bun |
 | `help`, `--help`, `-h`, no command | Prints the usage summary | native binary |
 
@@ -23,7 +23,7 @@ bun add -d @povio/pyro
 
 The npm `bin` is a small Node/Bun script (`dist/cli.js`):
 
-- `test` and `e2e` run in-process when the script runs under Bun. Under Node it re-launches itself with `bun` on `PATH`; with no Bun it prints `pyro run: needs Bun (https://bun.sh) on PATH` and exits 1.
+- `run` and `e2e` run in-process when the script runs under Bun. Under Node it re-launches itself with `bun` on `PATH`; with no Bun it prints `pyro run: needs Bun (https://bun.sh) on PATH` (or `pyro e2e: …`) and exits 1.
 - Every other command is forwarded, arguments unchanged, to the native binary. `SIGINT`, `SIGTERM` and `SIGHUP` are forwarded to it, and its exit code (or signal) becomes the wrapper's.
 
 The native binary is chosen in this order:
@@ -32,7 +32,7 @@ The native binary is chosen in this order:
 2. A `pyro` file next to the package directory (the layout of a release archive).
 3. The bundled binary `native/<platform>-<arch>/pyro` (`darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`).
 
-On any other platform it fails with: `Pyro has no bundled browser for <platform>-<arch>. The browser supports macOS 14+ and Linux (glibc 2.39+) on arm64 and x64.` See [Platforms and limits](/guide/platforms).
+On any other platform it fails with: `Pyro has no bundled browser for <platform>-<arch>. The browser supports macOS 14+ and Linux (glibc 2.39+) on arm64 and x64. Use Pyro.connect() for a remote browser, or set PYRO_BIN.` On a supported platform whose binary is missing from the package it fails with `Missing bundled browser: <path>. Reinstall @povio/pyro or set PYRO_BIN to a built browser.` Either error prints as `pyro: <message>` and exits 1. See [Platforms and limits](/guide/platforms).
 
 ## Exit codes {#exit-codes}
 
@@ -45,7 +45,7 @@ Native commands:
 | `2` | Usage error: unknown command, unknown or malformed option, unreadable `eval` file; `serve --fork` on a build without fork support |
 | `124` | `eval` / `fetch`: the `--timeout-ms` deadline passed |
 
-`test` and `e2e` exit `0` when every test passed, `1` on any failure, and `2` on a usage error. `e2e` interrupted by a signal exits `128 + signal` (130 for `SIGINT`).
+`run` and `e2e` exit `0` when every test passed, `1` on any failure, and `2` on a usage error. `e2e` interrupted by a signal exits `128 + signal` (130 for `SIGINT`).
 
 ## version {#version}
 
@@ -127,7 +127,7 @@ Loads `URL` with the network enabled, runs its scripts, waits for the `load` eve
 | --- | --- | --- | --- |
 | `URL` | URL | required | `http:`, `https:`, `data:` or `file:` (exactly one; an argument starting with `-` is an option). |
 | `--dump html\|none` | enum | `html` | `html`: print `<!DOCTYPE html>` (when the document has a doctype) and the `outerHTML` of the root element. `none`: print nothing (exit code only). |
-| `--wait-ms N` | integer (ms) | `0` | After `load`, keep running the page until it is idle or `N` ms pass (for content rendered after `load`). Bounded by `--timeout-ms`. |
+| `--wait-ms N` | integer (ms) | `0` | After `load`, keep running the page until no timer or queued task is left, or `N` ms pass. A `fetch()` or XHR still in flight does not keep it running, so data loaded by a request may be missing; see [fetch](/scraping/fetch). Bounded by `--timeout-ms`. |
 | `--timeout-ms N` | integer (ms) | `30000` | Overall deadline. If `load` has not fired by then, or the wait runs past it, the command exits `124`. |
 
 Console output of the page goes to stdout/stderr as for [`eval`](#eval). A failed navigation prints `pyro: <url>: <error>` (for example `net::ERR_CONNECTION_REFUSED`) and exits `1`. `fetch` has no `--help` (it is a usage error).
@@ -140,7 +140,7 @@ pyro fetch --dump none https://example.com && echo reachable
 
 See [One-off fetches](/scraping/fetch) for recipes.
 
-## test {#test}
+## run {#run}
 
 ```text
 pyro run [options] [test-filter...]
@@ -150,8 +150,8 @@ Runs tests written against `@povio/pyro/wright` the way `playwright test` does: 
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `-c`, `--config <file>` | path | `pyro.config.{ts,mts,mjs,js}`, else `playwright.config.*` in the working directory | Config file. Sets `PYRO_CONFIG` for the workers. |
-| `--project <name>` | string | all projects | Only this project (repeatable). An unknown name exits `1`. |
+| `-c`, `--config <file>` | path | `$PYRO_CONFIG`, else `$PLAYWRIGHT_CONFIG`, else `pyro.config.{ts,mts,mjs,js}`, else `playwright.config.{ts,mts,mjs,js}` in the working directory | Config file. Sets `PYRO_CONFIG` for the workers. |
+| `--project <name>` | string | all projects | Only this project (repeatable). Unknown names are skipped; when none of the names exists it prints `pyro run: no project named <names>` and exits `1`. |
 | `-j`, `--workers <n\|n%>` | count or percentage of CPUs | the config's `workers`, else half the CPUs | Worker processes. |
 | `-g`, `--grep <regex>` | regex | | Only tests whose title path matches. |
 | `--grep-invert <regex>` | regex | | Skip tests whose title path matches. |
@@ -164,10 +164,10 @@ Runs tests written against `@povio/pyro/wright` the way `playwright test` does: 
 | `--reporter <name>` | `list` \| `line` \| `dot` | `list` | Console reporter. |
 | `--list` | flag | | List the tests without running them (one worker, no web servers or global setup). |
 | `-q`, `--quiet` | flag | | Do not print the tests' own output. |
-| `--headed`, `--debug`, `--ui` | flag | | Accepted; print `has no effect (pyro is headless)`. |
+| `--headed`, `--debug`, `--ui` | flag | | Accepted; print `pyro run: <flag> has no effect (pyro is headless)`. |
 | `-h`, `--help` | flag | | Print the usage and exit `0`. |
 
-Options also take the `--name=value` form. `test-filter` arguments are regular expressions; a file runs when its absolute or relative path matches any of them. With no files found the command prints `pyro run: no tests found` and exits `1`.
+Options also take the `--name=value` form. Any other option prints `pyro run: unknown option <flag>` and the usage, and exits `2`. `test-filter` arguments are regular expressions; a file runs when its absolute or relative path matches any of them. With no files found the command prints `pyro run: no tests found` and exits `1`.
 
 The browser is `$PYRO_WS` when set (an already running `serve`), else each worker launches its own. Test output lines are prefixed `[wN]`; colors are off when stdout is not a TTY or `NO_COLOR` is set.
 

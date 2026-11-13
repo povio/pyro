@@ -80,11 +80,11 @@ import puppeteer from 'puppeteer-core';
 const browser = await puppeteer.connect({ browserWSEndpoint: 'ws://127.0.0.1:9222/' });
 const page = await browser.newPage();
 await page.goto('https://example.com/');
-console.log(await page.$eval('h1', (e) => e.textContent));
+console.log(await page.title()); // Example Domain
 await browser.disconnect();
 ```
 
-Pyro implements most of the CDP commands Playwright 1.59 sends (stock Playwright's `chromium.connectOverCDP` works against it), plus its own `Pyro.*` and `Pyro.*` domains. A basic Puppeteer flow (connect, new page, `goto`, `$eval`, `click`) works with `puppeteer-core` 25, but Puppeteer is not part of the project's tested matrix, and commands outside the implemented set return an explicit error rather than a fake success. Every round trip costs a hop over the socket, so raw CDP is the slowest way to drive a test. See [Puppeteer and raw CDP](/scraping/cdp), [CDP coverage](/reference/cdp) and the [Pyro CDP domain](/reference/cdp-domain).
+Pyro implements most of the CDP commands Playwright 1.59 sends (stock Playwright's `chromium.connectOverCDP` works against it), plus its own `Pyro.*` domain. A basic Puppeteer flow (connect, new page, `goto`, `$eval`, `click`) works with `puppeteer-core` 25, but Puppeteer is not part of the project's tested matrix, and commands outside the implemented set return an explicit error rather than a fake success. Every round trip costs a hop over the socket, so raw CDP is the slowest way to drive a test. See [Puppeteer and raw CDP](/scraping/cdp), [CDP coverage](/reference/cdp) and the [Pyro CDP domain](/reference/cdp-domain).
 
 ## Mixing them
 

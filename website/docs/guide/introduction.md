@@ -5,7 +5,7 @@ Pyro is a headless browser written in Rust. It runs JavaScript on JavaScriptCore
 It ships as one npm package, `@povio/pyro`. The package holds the browser binaries for macOS and Linux, the `pyro` CLI, a typed client, a Playwright-compatible test API and a suite runner. You do not need a Rust toolchain, Chrome or Playwright to use it.
 
 ::: info Formerly Lightningpanda
-Pyro was called Lightningpanda up to version 0.0.33, published as `@povio/lightning-panda` with the `lightningpanda` command. From the next release the package is `@povio/pyro`; every name moved with it (class `Pyro`, `PYRO_*` environment variables, the `Pyro.*` CDP domain, `@povio/pyro/wright` and `pyro run` for Playwright tests). The old package keeps its old names. See [Versions](/reference/versions#renamed-from-lightningpanda).
+Pyro was called Lightningpanda up to version 0.0.33, published as `@povio/lightning-panda` with the `lightningpanda` command. The rename moved every name (class `Pyro`, `PYRO_*` environment variables, the `Pyro.*` CDP domain, `@povio/pyro/wright` and `pyro run` for Playwright tests), and these docs use the new ones. `@povio/pyro` is not on npm yet: the next release is the first under that name. [Installation](/guide/installation#try-today) says how to try Pyro today; [Versions](/reference/versions#renamed-from-lightningpanda) maps each old name to its new one.
 :::
 
 ## Who it is for

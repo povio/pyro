@@ -29,7 +29,7 @@ bunx pyro version
 | `latest` | `vX.Y.Z` | Stable releases. `bun add @povio/pyro` installs this. |
 | `next` | `vX.Y.Z-rc.N` or `vX.Y.Z-rc` | Release candidates. Publishing a stable version does not move `next`; it keeps pointing at the last RC. |
 
-`@povio/pyro` is published from the first release after the rename. Releases up to 0.0.33 are on npm as `@povio/lightning-panda` (there `latest` is `0.0.33` and `next` is the old `0.0.17-rc.1`). Use `next` only when a release candidate is announced.
+`@povio/pyro` is published from the first release after the rename. To try the new names before then, see [Before the first `@povio/pyro` release](/guide/installation#try-today). Releases up to 0.0.33 are on npm as `@povio/lightning-panda` (there `latest` is `0.0.33` and `next` is the old `0.0.17-rc.1`). Use `next` only when a release candidate is announced.
 
 ```sh
 bun add @povio/pyro          # latest
@@ -93,13 +93,13 @@ The repository is private at the time of writing, so the GitHub releases need re
 
 A new version can take a while to appear on npm after its release: npm has listed versions up to about an hour after publication. If `bun add @povio/pyro@X.Y.Z` cannot find a fresh version, wait and retry.
 
-## Unreleased (main) {#unreleased}
+## Newer than 0.0.33 {#unreleased}
 
-On `main` after v0.0.33:
+In the first `@povio/pyro` release (not on npm yet), on top of 0.0.33:
 
 - **Renamed to Pyro.** The package is `@povio/pyro` and every name moved with it; see [Renamed from Lightningpanda](#renamed-from-lightningpanda).
 - **Faster connection start and fork mode** (#303): no JavaScript realm is created before a connection's first command; the fork template is forked from the server process.
-- **Engine reuse across connections** (#304): connections reuse the engine; the patched JavaScriptCore is linked statically (the arm64 macOS package no longer carries a `lib/` directory beside the browser); memory is returned after pages close.
+- **Engine reuse across connections** (#304): a connection that made no page leaves its browser thread and engine to the next ([`--engine-reuse`](/reference/serve#engine-reuse), `PYRO_ENGINE_REUSE`); the patched JavaScriptCore is linked statically (the arm64 macOS package no longer carries a `lib/` directory beside the browser); memory is returned after pages close.
 - **Vendored engines updated** (#302): Blitz, Taffy and Stylo 0.24.0.
 
 ## Renamed from Lightningpanda {#renamed-from-lightningpanda}
@@ -112,25 +112,34 @@ Pyro was called Lightningpanda up to 0.0.33. The rename changed every name, with
 | `@povio/lightning-panda/playwright` | `@povio/pyro/wright` |
 | `lightningpanda` command | `pyro` |
 | `lightningpanda test` | `pyro run` |
-| `lightningpanda e2e`, `serve`, `fetch`, `eval` | `pyro e2e`, `serve`, `fetch`, `eval` |
+| `lightningpanda e2e`, `serve`, `fetch`, `eval`, `version` | `pyro e2e`, `serve`, `fetch`, `eval`, `version` |
 | `Lightningpanda` class (`Lightningpanda.launch`, `.connect`) | `Pyro` (`Pyro.launch`, `.connect`) |
-| `LIGHTNINGPANDA_*` and `LP_*` environment variables | `PYRO_*` (for example `PYRO_WS`, `PYRO_BIN`, `PYRO_CONFIG`, `PYRO_UPDATE_SNAPSHOTS`) |
-| CDP domains `LP.*` and `Lightningpanda.*` | one domain, `Pyro.*` (`Pyro.run`, `Pyro.acquirePreparedPage`, ...) |
-| `data-lp-handle`, `data-lp-frame` attributes | `data-pyro-handle`, `data-pyro-frame` |
+| Config file `lightningpanda.config.*` | `pyro.config.*` (`playwright.config.*` still works) |
+| Playwright option `use: { lightningpanda: {...} }`, type `LightningpandaOptions` | `use: { pyro: {...} }`, `PyroOptions` |
+| `LIGHTNINGPANDA_BIN`, `LIGHTNINGPANDA_WS` | `PYRO_BIN`, `PYRO_WS` (same meaning: the browser binary, a running server's endpoint) |
+| `LP_*` variables of the Playwright runner (`LP_CONFIG`, `LP_PROJECT`, `LP_RETRIES`, `LP_TIMEOUT`, `LP_UPDATE_SNAPSHOTS`, `LP_CONCURRENT`) | `PYRO_CONFIG`, `PYRO_PROJECT`, `PYRO_RETRIES`, `PYRO_TIMEOUT`, `PYRO_UPDATE_SNAPSHOTS`, `PYRO_CONCURRENT` |
+| `LIGHTNINGPANDA_*` variables of the browser (`LIGHTNINGPANDA_STATIC`, `LIGHTNINGPANDA_FORK`, `LIGHTNINGPANDA_PARENT_PID`, ...) | `PYRO_*` with the same suffix (`PYRO_STATIC`, `PYRO_FORK`, `PYRO_PARENT_PID`, ...) |
+| CDP domains `LP.*` (`LP.run`, `LP.act`, ...) and `Lightningpanda.*` (`Lightningpanda.acquirePreparedPage`, ...) | one domain, `Pyro.*` (`Pyro.run`, `Pyro.acquirePreparedPage`, ...) |
+| `data-lp-*` attributes (`data-lp-handle`, `data-lp-frame`, ...) | `data-pyro-*` |
 | User agent `compatible; lightningpanda/X.Y.Z` | `compatible; pyro/X.Y.Z` |
+| Release assets `lightningpanda-rust-vX.Y.Z-*.tar.gz`, `povio-lightning-panda-X.Y.Z.tgz` | `pyro-rust-vX.Y.Z-*.tar.gz`, `povio-pyro-X.Y.Z.tgz` |
 | Release archive client folder `lightning-panda/` | `pyro-client/` |
-| GitHub `povio/lightningpanda` | `povio/pyro` (the old URL redirects) |
+| GitHub releases "Rust Lightpanda vX.Y.Z" in `povio/lightningpanda` | "Pyro vX.Y.Z" in `povio/pyro` (the old repository URL redirects) |
 
 A mechanical replace covers most projects: the package path first, then the names.
 
 ```sh
-grep -rlE 'lightning-?panda|Lightningpanda|LIGHTNINGPANDA|\bLP[_.][A-Za-z]' --exclude-dir=node_modules . | xargs perl -pi -e '
+grep -rlE 'lightning-?panda|Lightningpanda|LIGHTNINGPANDA|data-lp-|\bLP[_.][A-Za-z]' --exclude-dir=node_modules --exclude-dir=.git . | xargs perl -pi -e '
   s#\@povio/lightning-panda/playwright#\@povio/pyro/wright#g; s#lightningpanda test#pyro run#g;
   s#lightning-panda#pyro#g; s#LIGHTNINGPANDA_#PYRO_#g; s#\bLP_(?=[A-Z])#PYRO_#g;
-  s#\bLP\.(?=[a-z])#Pyro.#g; s#Lightningpanda#Pyro#g; s#lightningpanda#pyro#g'
+  s#\bLP\.(?=[a-z])#Pyro.#g; s#data-lp-#data-pyro-#g; s#Lightningpanda#Pyro#g; s#lightningpanda#pyro#g'
 ```
 
-Review the diff: the last rules also rewrite any prose and unrelated `LP_` names in your project.
+Then:
+
+- Rename a `lightningpanda.config.*` file to `pyro.config.*` (the replace only edits file contents).
+- Set the dependency to a real `@povio/pyro` version: the replace keeps the old version number (`"@povio/pyro": "0.0.33"`), which does not exist, and a lockfile entry rewritten this way no longer matches its tarball. Run `bun add -d @povio/pyro` so the lockfile is written again.
+- Review the diff: the last rules also rewrite prose and unrelated `LP_` names, and a release-archive path such as `…/lightning-panda/` becomes `…/pyro/`, while the folder is now `pyro-client/`.
 
 ## Version history {#history}
 

@@ -1,6 +1,6 @@
 # Puppeteer and raw CDP
 
-`pyro serve` is a Chrome DevTools Protocol server. Anything that speaks CDP can drive it: Puppeteer, a WebSocket client in any language, or tools built on either. This page shows Puppeteer, then the protocol by hand, then Pyro's own `Pyro.*` and `Pyro.*` commands.
+`pyro serve` is a Chrome DevTools Protocol server. Anything that speaks CDP can drive it: Puppeteer, a WebSocket client in any language, or tools built on either. This page shows Puppeteer, then the protocol by hand, then Pyro's own `Pyro.*` commands.
 
 ## The endpoints
 
@@ -62,7 +62,7 @@ await context.close();
 await browser.disconnect(); // leaves the server running
 ```
 
-Tested with puppeteer-core 25.17.0 against Pyro 0.0.33. These worked:
+Tested with puppeteer-core 25.17.0 against Pyro 0.0.33, and the example above re-run against the renamed `pyro` build. These worked:
 
 | Area | Calls |
 | --- | --- |
@@ -171,18 +171,18 @@ Notes:
 
 The same pattern works from any language with a WebSocket client: Python's `websockets`, Go's `gorilla/websocket`, and so on.
 
-## The `Pyro` and `Pyro` domains
+## The `Pyro` domain
 
-Pyro adds two domains of its own.
+Pyro adds one domain of its own, `Pyro`.
 
 **`Pyro.run`** (on a page session) runs a list of steps in the browser and replies once: navigation, locating elements by CSS, text, role, label or test id, actions (click, fill, type, press, hover, wheel, drag, upload), checks that wait until they hold, reads, network mocks, request checks, downloads and screenshots. Each action settles before the next step. `Pyro.idle { timeout }` waits until the page is quiet on its own. The reply has `reads`, `results`, `requests` and `ms`. The step format is in [Pyro.run wire format](/reference/pyro-run); the native SDK builds it for you.
 
-**`Pyro.*`** (on the browser session) manages pre-booted pages:
+The other `Pyro.*` commands (on the browser session) manage pre-booted pages:
 
 | Command | What it does |
 | --- | --- |
 | `Pyro.capabilities` | `{ fork, sharedProfiles }`: whether the server forks connections. |
-| `Pyro.registerPreparedPage` | Declare a profile: `url`, `initScripts`, `viewport`, `pool`; with `--fork` also `setup`, `base` and `name`. Returns `profileId`. |
+| `Pyro.registerPreparedPage` | Declare a profile: `url`, `initScripts`, `viewport`, `pool`, `refillAfterClose`; with `--fork` also `setup`, `base` and `name`. Returns `profileId`. |
 | `Pyro.acquirePreparedPage` | Take a booted page of a profile (`profileId` or `url`), optionally attached in the same call (`attach: true`). |
 | `Pyro.preparedPages` | Pages booted and waiting, with `ready`. |
 | `Pyro.unregisterPreparedPage` | Remove a profile (`profileId`), or drop this connection's hold on a named one (`name`). |

@@ -121,7 +121,7 @@ type Profile = {
 | `url` | `string` | required | Where its pages boot (and stay until a test takes one). |
 | `localStorage` | `Record<string, string>` | | Written to `localStorage` before the app's scripts run (for example auth tokens). Applied by an init script, so it applies to every origin the page visits. |
 | `initScripts` | `string[]` | | Scripts run in every document before its own scripts. |
-| `viewport` | `{ width, height }` | server default (1280×720) | CSS px. |
+| `viewport` | `{ width, height }` | server default (1920×1080) | CSS px. |
 | `pool` | `number` | `2` | Pages kept booted per connection (1-8). Ignored with `--fork`: the template keeps one snapshot per profile. |
 | `prepare` | `boolean` | `true` | `false`: nothing is booted ahead; each `page({ as })` boots a fresh page and navigates to `url`. |
 | `setup` | [`StepLike[]`](/reference/steps) | | `serve --fork` only: steps run once on the booted page in the template. Every page of the profile starts from their result (for example a signed-in state). |

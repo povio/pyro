@@ -1,6 +1,6 @@
 # serve options
 
-`pyro serve` starts the CDP server: the Chrome DevTools Protocol over WebSocket on `ws://HOST:PORT/`. Every connection gets its own browser thread with its own JavaScriptCore engine (or, with [`--fork`](#fork), its own forked process). This page lists every option of 0.0.33 plus what is newer on `main`; `pyro serve --help` prints the list for the installed version.
+`pyro serve` starts the CDP server: the Chrome DevTools Protocol over WebSocket on `ws://HOST:PORT/`. Every connection gets its own browser thread with its own JavaScriptCore engine (or, with [`--fork`](#fork), its own forked process). This page lists every option of the first `@povio/pyro` release; options newer than 0.0.33 (the last `@povio/lightning-panda` release) are marked. `pyro serve --help` (or `-h`) prints the list for the installed version.
 
 ```sh
 pyro serve [OPTIONS]
@@ -30,7 +30,7 @@ Options take their value as the next argument (`--port 9333`; the `--port=9333` 
 | [`--prepare-refill`](#prepare-refill) | `quiet` \| `after-close` | `quiet` | `PYRO_PREPARE_REFILL` |
 | [`--fork`](#fork) | flag | off | `PYRO_FORK=1` |
 | [`--spare-engine`](#spare-engine) | `on` \| `off` | on with `--prepare`, else off | `PYRO_SPARE_ENGINE` |
-| [`--engine-reuse`](#engine-reuse) (main, after 0.0.33) | `on` \| `off` \| `thread` \| `always` | `on` | `PYRO_ENGINE_REUSE` |
+| [`--engine-reuse`](#engine-reuse) (newer than 0.0.33) | `on` \| `off` \| `thread` \| `always` | `on` | `PYRO_ENGINE_REUSE` |
 | [`--render-prewarm`](#render-prewarm) | `on` \| `off` | on with `--prepare`, else off | `PYRO_RENDER_PREWARM` |
 | [`--hyphen-digit-breaks`](#hyphen-digit-breaks) | `on` \| `off` | `off` | `PYRO_HYPHEN_DIGIT_BREAKS` |
 | [`--parent-pid`](#parent-pid) | PID | | `PYRO_PARENT_PID` |
@@ -182,15 +182,16 @@ Applies to `--prepare` profiles; `registerPreparedPage` takes its own `refillAft
 
 ### `--fork` {#fork}
 
-`--fork`, env `PYRO_FORK=1`. Serves every connection from a `fork()` of a template process that booted the prepared pages once. Needs the patched JavaScriptCore of the release builds (`pyro version` shows `fork: true`); otherwise the server exits `2` with `--fork needs the patched JavaScriptCore`.
+`--fork`, env `PYRO_FORK=1`. Serves every connection from a `fork()` of a template process that booted the prepared pages once. Needs the patched JavaScriptCore of the release builds (`pyro version` shows `fork: true`); otherwise the server exits `2` with `pyro serve: --fork needs the patched JavaScriptCore (scripts/jsc/build.sh)`.
 
 - One template process boots one page per prepared profile: `--prepare` URLs and every `Pyro.registerPreparedPage` from any connection. Registering a profile boots it in the template for the connections that follow.
 - Each connection is a fork of the template: it starts with every profile's page booted, shares the template's memory until it writes to it, and its process exits when the connection closes. Open one connection per test; `Pyro.capabilities` reports `{fork: true}`.
 - A profile's `setup` (Pyro.run steps, `registerPreparedPage {setup}`) runs once in the template after the page loads; every connection starts from the state the steps left. A profile can derive from another (`base`), forking from its snapshot.
 - Connecting to `ws://HOST:PORT/?profile=<id>` gives a connection forked from that profile's snapshot (what `pyro.page({ as })` does).
 - Each template keeps `PYRO_FORK_SPARES` (default `2`) forks waiting, so a connection does not wait for its fork.
-- Forks run without JavaScriptCore's DFG/FTL tiers (connections are too short for them to pay off) unless `JSC_useDFGJIT` is set; see [env](/reference/env#jsc).
+- Forks run without JavaScriptCore's DFG/FTL tiers (connections are too short for them to pay off) unless `JSC_useDFGJIT=true` is set; see [env](/reference/env#jsc).
 - The template starts while the server begins listening; the first connection waits for it. A template that fails to start ends the server (exit `1`).
+- A profile's `setup` that fails is reported on the server's stderr (`pyro: template: setup of profile <id>: step <i>: <reason>`), not to the `registerPreparedPage` call, which has already returned the id.
 - `--render-prewarm` does not apply (the template must not start threads before it forks).
 
 **Shared profiles.** Several clients (test workers in other processes) can use one server. `registerPreparedPage {name, ...}` registers a profile under a name every client shares: the same definition under the same name finds it already booted; a different one is refused while another client holds it. `Pyro.adoptPreparedPage {name}` → `{profileId, url, initScripts, viewport, setup, base}` holds a profile another client registered, `unregisterPreparedPage {name}` releases this connection's hold, and `Pyro.preparedProfiles` lists the names with their holders. A connection's holds end when it closes; a profile is retired once no connection holds it and no other profile derives from it.
@@ -210,7 +211,7 @@ Guides: [Connections and fork mode](/guide/fork-mode), [Fork mode in tests](/e2e
 ### `--engine-reuse` {#engine-reuse}
 
 ::: info Newer than 0.0.33
-`--engine-reuse` is on `main` (PR #304) and not in the 0.0.33 binary, which rejects it as an unknown option.
+`--engine-reuse` ships since the first `@povio/pyro` release (PR #304). The 0.0.33 binary of `@povio/lightning-panda` rejects it as an unknown option.
 :::
 
 `--engine-reuse <on|off|thread|always>`, default `on`; env `PYRO_ENGINE_REUSE`. What a connection that ends leaves to the next connection. At most one thread waits, for at most 10 s, then it ends and its engine is destroyed.

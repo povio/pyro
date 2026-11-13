@@ -51,7 +51,8 @@ Sessions use flat mode only. `Target.attachToTarget` and `Target.setAutoAttach` 
 | --- | --- |
 | Domain or method the engine does not implement | `{"code": -32000, "message": "<Method> is not supported by pyro"}` |
 | Page method sent on the browser session (no `sessionId`), for example `Page.navigate` | same `-32000 … is not supported by pyro`. Attach to the target first. |
-| Unknown `Pyro.*` method, or a method name without a `.` | `{"code": -32601, "message": "'<Method>' wasn't found"}` |
+| Unknown `Pyro.*` method on the browser session (this includes the page-level `Pyro.run` family sent without a `sessionId`), or a method name without a `.` | `{"code": -32601, "message": "'<Method>' wasn't found"}` |
+| Unknown `Pyro.*` method on a page session | `-32000 … is not supported by pyro` |
 | Unknown `sessionId` | `{"code": -32001, "message": "Session with given id not found."}` |
 | Bad params | `-32602` with the parse or validation message (Chrome's text where Chrome has one) |
 
@@ -106,7 +107,7 @@ These are sent with the `sessionId` of an attached page.
 | Method | Status | Notes |
 | --- | --- | --- |
 | `Page.enable` / `disable` | implemented | |
-| `Page.navigate` | implemented | about:blank, data: and HTTP(S) documents. `frameId` can target child frames. A download response fails the navigation with `net::ERR_ABORTED`. |
+| `Page.navigate` | implemented | about:blank, data:, file: (unless [`PYRO_FILE_URLS=0`](/reference/env#pyro-file-urls)) and HTTP(S) documents. `frameId` can target child frames. A download response fails the navigation with `net::ERR_ABORTED`. |
 | `Page.reload` | implemented | Same limits as `navigate`. |
 | `Page.getFrameTree` | implemented | Nested frames with loader ids and security origins. |
 | `Page.setLifecycleEventsEnabled` | implemented | Per-frame lifecycle events. Milestones already reached are replayed. |
@@ -234,7 +235,7 @@ These are sent with the `sessionId` of an attached page.
 
 | Method | Status | Notes |
 | --- | --- | --- |
-| `Browser.getWindowForTarget` | partial | One headless window per page. Reports the bounds set with `setWindowBounds`, else the viewport (default 1280x720). |
+| `Browser.getWindowForTarget` | partial | One headless window per page. Reports the bounds set with `setWindowBounds`, else the viewport (default 1920x1080). |
 | `Browser.setWindowBounds` | accepted | Stored and reported back. No page API observes it. |
 | `Performance.enable` / `disable` | accepted | No timeline events. |
 | `Performance.getMetrics` | implemented | `Timestamp`, `Documents`, `Frames`, `Nodes`, `LayoutCount`, `RecalcStyleCount`, `LayoutDuration`, `RecalcStyleDuration`. No JS heap metrics. |
@@ -244,6 +245,7 @@ These are sent with the `sessionId` of an attached page.
 | `Security.*` | see [Browser, Storage, Security](#browser-storage-security) | |
 | `Target.getTargets`, `Target.getTargetInfo`, `Target.setAutoAttach` | implemented | On a page session, `setAutoAttach` attaches the page's dedicated workers. Iframes are frames of the page, not separate targets. |
 | `Pyro.run`, `Pyro.idle`, `Pyro.act`, `Pyro.expect`, `Pyro.query`, `Pyro.dialogs` | implemented | Pyro's native driver. See [Pyro.run wire format](/reference/pyro-run). |
+| `Pyro.geometryStats` | implemented | Diagnostic layout counters; see [Pyro.geometryStats](/reference/pyro-run#pyro-geometry-stats). |
 
 ### Worker sessions
 

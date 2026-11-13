@@ -32,7 +32,7 @@ Settling gives up after **1,000 ms** and carries on. The result then has `settle
 { "pending": { "requests": 1 }, "settleMs": 1002.07, "settled": false }
 ```
 
-These steps settle: every locator action except `focus()` and `blur()`, `mouse(...)`, `route(...)` and `viewport(...)`. Pass `{ settle: false }` to an action whose requests never finish (polling, streaming, a request a mock holds) or that you do not want to wait for. An action that does not settle, an `evaluate` and an `advanceTime` still give the page one event-loop turn before the next step, so work they queued with `setTimeout(fn, 0)` runs first. See [Settling and auto-waiting](/guide/settling).
+These steps settle: every locator action except `focus()` and `blur()`, `mouse(...)`, `route(...)`, `viewport(...)` and `media(...)`. Pass `{ settle: false }` to an action whose requests never finish (polling, streaming, a request a mock holds) or that you do not want to wait for. An action that does not settle, an `evaluate` and an `advanceTime` still give the page one event-loop turn before the next step, so work they queued with `setTimeout(fn, 0)` runs first. See [Settling and auto-waiting](/guide/settling).
 
 ## Actions
 
@@ -63,7 +63,7 @@ All actions take `{ settle?: boolean; timeout?: number }`.
 
 ### Pointer options
 
-`click`, `dblclick`, `hover` and `wheel` take these options as well:
+`click`, `dblclick` and `hover` take these options as well:
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -201,7 +201,7 @@ It is an expression string, not a function: nothing from the test's scope is cap
 | Step | What it does |
 |---|---|
 | `viewport(width, height)` | Resizes the viewport mid-run. `innerWidth`/`innerHeight` and layout follow at once, `resize` and `matchMedia` `change` listeners fire, and the step settles like an action. Result: `{ width, height, settleMs }` |
-| `media({ colorScheme, reducedMotion?, media? })` | Emulates media features. `colorScheme`: `'light'`, `'dark'`, `'no-preference'`; `reducedMotion`: `'reduce'`, `'no-preference'`; `media`: `'screen'`, `'print'` |
+| `media({ colorScheme, reducedMotion?, media? })` | Emulates media features. `colorScheme`: `'light'`, `'dark'`, `'no-preference'`; `reducedMotion`: `'reduce'`, `'no-preference'`; `media`: `'screen'`, `'print'`. Settles like an action. Result: `{ settleMs }` |
 
 `media` replaces the whole emulation: a field you omit resets to its default (`light`, `no-preference`, `screen`). `@media` rules, `matchMedia(...).matches` and its `change` listeners follow.
 
@@ -291,4 +291,4 @@ These are stable parts of the wire format, but they have no TypeScript types in 
 
 ## Step results at a glance
 
-`r.results[i]` is the result of your step `i`. Actions give `{ settleMs }` (plus `settled: false` and `pending` when settling gave up), checks `{ actual }`, reads and `evaluate` their value, `goto`/`reload`/`loaded` `{}`, `waitForUrl` `{ url }`, `viewport` `{ width, height, settleMs }`, `request` checks the matched request (or `{ count }` with `.count(n)`), `mock` `{ mockId, mocks }`, `unmock` `{ removed }`, `release` `{ released }`. The steps that `pyro.page({ route, url })` added in front of yours are not included.
+`r.results[i]` is the result of your step `i`. Actions give `{ settleMs }` (plus `settled: false` and `pending` when settling gave up), checks `{ actual }`, reads and `evaluate` their value, `goto`/`reload`/`loaded` `{}`, `idle` and `media` `{ settleMs }`, `waitForUrl` `{ url }`, `viewport` `{ width, height, settleMs }`, `downloadCount` the number, `request` checks the matched request (or `{ count }` with `.count(n)`), `mock` `{ mockId, mocks }`, `unmock` `{ removed }`, `release` `{ released }`. The steps that `pyro.page({ route, url })` added in front of yours are not included.

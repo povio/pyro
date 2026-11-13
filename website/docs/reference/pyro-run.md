@@ -4,7 +4,7 @@
 
 ## The Pyro domain {#domain}
 
-The `Pyro.*` commands are page-session commands: send them with the `sessionId` of an attached page (flat mode, `Target.attachToTarget {flatten: true}`). Without a session they fail with `-32000 Pyro.run is not supported by pyro`.
+The `Pyro.*` commands on this page are page-session commands: send them with the `sessionId` of an attached page (flat mode, `Target.attachToTarget {flatten: true}`). Without a session they reach the browser-level [Pyro domain](/reference/cdp-domain), which answers `-32601 'Pyro.run' wasn't found`. An unknown `Pyro.*` method on a page session fails with `-32000 Pyro.<method> is not supported by pyro`.
 
 | Command | Params | Result |
 | --- | --- | --- |
@@ -14,6 +14,7 @@ The `Pyro.*` commands are page-session commands: send them with the `sessionId` 
 | [`Pyro.query`](#pyro-query) | one [`read`](#read) step body | `{value}` |
 | [`Pyro.idle`](#pyro-idle) | `{timeout?}` | the [`idle`](#idle) step's result |
 | [`Pyro.dialogs`](#pyro-dialogs) | `{block}` | `{}` |
+| [`Pyro.geometryStats`](#pyro-geometry-stats) | none | layout counters (diagnostic) |
 
 ## Pyro.run {#pyro-run}
 
@@ -55,7 +56,7 @@ The run fails at the first failing step. The JSON-RPC error has:
 
 | Code | When | Message |
 | --- | --- | --- |
-| `-32602` | A step does not parse or validate. Nothing has run. | `step <i>: <reason>`, e.g. `step 0: locator needs exactly one of css, xpath, testId, text, role, label, placeholder, ariaRef, of` |
+| `-32602` | A step does not parse or validate. Nothing has run. | `step <i>: <reason>`, e.g. `step 0: locator needs exactly one of css, xpath, testId, text, role, label, placeholder, ariaRef, of`; an unknown step kind gives `step 0: unknown variant …, expected one of …` with the list of step kinds |
 | `-32602` | More than 10000 steps | `too many steps` |
 | `-32000` | A step failed or timed out while running | `step <i> (<what>): <reason>` |
 | `-32000` | Over 1024 commands are already waiting on this connection | `too many waiting Pyro commands` |
@@ -66,8 +67,8 @@ The run fails at the first failing step. The JSON-RPC error has:
 step 0 (expect Visible {"css":"#nope"}): timed out after 100 ms: expect Visible {"css":"#nope"}: expected Visible null, got false
 step 2 (Click {"name":"Save","role":"button"}): strict mode violation: {"name":"Save","role":"button"} matched 2 elements: <button> "Save", <button> "Save"
 step 1 (goto http://app.test/): the navigation failed before its document loaded
-step 3 (eval): rejected: TypeError: ...
-step 4 (matchScreenshot home): matchScreenshot 'home': 812 pixels differ (1280x720); the actual image and the diff are in error.data
+step 3 (eval): rejected: boom
+step 4 (matchScreenshot home): matchScreenshot 'home': 812 pixels differ (1920x1080); the actual image and the diff are in error.data
 ```
 
 A failed `matchScreenshot` step carries `error.data`: its [result object](#match-screenshot-result) with `actual` and `diff` (base64 PNGs). Steps before the failing one have taken effect. Mocks they registered stay registered.
@@ -412,7 +413,7 @@ Resizes the viewport in CSS px and settles. Result `{width, height}`.
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | string | required | Also the key under which this connection caches the baseline |
-| `baseline` | base64 PNG | the baseline cached under `name` on this connection | Omitted with nothing cached: the render is returned (`recorded: true`) |
+| `baseline` | base64 PNG | the last baseline sent under `name` on this connection | The connection keeps each baseline it was sent, so a client sends it once. Omitted with none sent: the render is returned (`recorded: true`); a returned render is not kept as the baseline |
 | `sceneHash` | hex string | | Display-list hash stored with the baseline. If it matches, the step passes without rasterizing (`hashHit`). |
 | `threshold` | number 0-1 | `0` | Per-channel difference a pixel may have and still match |
 | `maxDiffPixels` | integer | | Differing pixels allowed |
@@ -420,16 +421,18 @@ Resizes the viewport in CSS px and settles. Result `{width, height}`.
 | `clip` | `{x, y, width, height}` | | CSS px of the document. Width and height must be positive. |
 | `fullPage` | boolean | `false` | Whole document |
 | `locator` | locator | | This element's box |
-| `update` | boolean | `false` | Ignore the baseline: render and return the image |
-| `captureOnly` | boolean | `false` | Render and return the image without comparing |
+| `update` | boolean | `false` | Ignore the baseline (and drop the one kept under `name`): render and return the image |
+| `captureOnly` | boolean | `false` | Return the page's render snapshot instead of an image: no raster, no compare (see below) |
 | `as` | string | | Key in `reads` |
 | `timeout` | integer | | Wait for the render |
 
-Give at most one of `clip`, `fullPage` and `locator`.
+Give at most one of `clip`, `fullPage` and `locator`. `name` must not be empty, `threshold` and `maxDiffPixelRatio` must be within 0-1, and `sceneHash` must be hex; each violation is a `-32602` validation error.
 
 #### Result {#match-screenshot-result}
 
-`{name, pass, hashHit, recorded, diffPixels, sceneHash, width, height, ms, actual?, diff?}`. `sceneHash` is 16 hex digits. `ms` holds the timings of the stages. `actual` (base64 PNG) is included when the render is returned. On a mismatch the step fails, and the same object, with `actual` and `diff`, is the error's `data`.
+`{name, pass, hashHit, recorded, diffPixels, sceneHash, width, height, ms, actual?, diff?}`. `sceneHash` is 16 hex digits. `ms` holds the timings of the stages (`snapshot`, `layout`, `scene`, `raster`, `compare`, `encode`, `decode`, `fetch`, `total`, and `mirror` with layout-mirror counters). `actual` (base64 PNG) is included when the render is returned. On a mismatch the step fails, and the same object, with `actual` and `diff`, is the error's `data`.
+
+With `captureOnly: true` the result is `{captured: true, snapshotMs, snapshot: {html, baseUrl, sheets, width, height, deviceScaleFactor, dark, scrollX, scrollY}}`: the serialized document and its stylesheets as the renderer would take them, for rendering elsewhere.
 
 ## Step results {#step-results}
 
@@ -504,6 +507,10 @@ Runs one [`idle`](#idle) step: it waits until the page is quiet, with no request
 ```
 
 With `block: true`, dialogs (`alert`, `confirm`, `prompt`) opened by this page's driver steps wait for `Page.handleJavaScriptDialog`, like other dialogs. By default they return what a dismissed dialog gives. Result `{}`.
+
+## Pyro.geometryStats {#pyro-geometry-stats}
+
+*Diagnostic.* Layout counters of the page's browser thread since the previous call (`layouts`, `deltas`, `snapshotMs`, `layoutMs`, `readMs`, `mirrorMs`, `settleMs`, `resolveMs`), plus cumulative renderer counters under `blitzCumulative` and the `processId`. The first call starts the timers. The shape may change between releases.
 
 ## Raw CDP example {#example}
 

@@ -22,7 +22,7 @@ What the table shows: the same browser is about 12 times faster per test when th
 
 ### Fork mode
 
-From `docs/ARCHITECTURE.md`, M1 Max, release build:
+From `docs/ARCHITECTURE.md`, M1 Max, release build. The first row was measured with JavaScriptCore's 512 MB JIT pool, when `fork()` itself took 12-18 ms; forks now use a 32 MB pool, which brings `fork()` to about 3.5 ms (same document).
 
 | Measurement | Result |
 | --- | ---: |
@@ -38,13 +38,13 @@ From `docs/ARCHITECTURE.md`, M1 Max, release build:
 
 ### Against upstream Lightpanda
 
-A matched HTTP workload (50 navigations and 20 context cycles, three fresh processes per binary, 2026-10-17) in `bench/results/http-cpu-d673567`:
+A matched HTTP workload (50 navigations and 20 context cycles, three fresh processes per binary, Apple M1 with 8 GB, 2026-10-17) in `bench/results/http-cpu-d673567`:
 
 | Median of 3 | Lightpanda (upstream) | Pyro |
 | --- | ---: | ---: |
 | 50 navigations, browser CPU | 283.5 ms | 77.9 ms |
 | 20 context cycles, browser CPU | 73.2 ms | 49.5 ms |
-| Peak resident memory | 32.0 MB | 15.9 MB |
+| Sampled peak resident memory | 32,032 KiB | 15,904 KiB |
 
 This workload has no DOM interaction, subresources or TLS. It measures the navigation path, not whole-browser parity.
 

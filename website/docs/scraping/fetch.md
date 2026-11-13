@@ -17,19 +17,19 @@ If you installed the npm package locally, run it as `npx pyro` or `bunx pyro`.
 | `URL` | required | The page to load. One URL per run. |
 | `--dump html` | yes | Print the DOM after the page loaded, as `<!DOCTYPE html>` plus the `<html>` element's outer HTML. |
 | `--dump none` | | Load the page and print nothing. Useful to check that a page loads, or to see its console output. |
-| `--wait-ms N` | `0` | After `load`, keep running the page until it is idle or `N` ms have passed, whichever comes first. |
+| `--wait-ms N` | `0` | After `load`, keep running the page's timers and queued tasks until none is left or `N` ms have passed, whichever comes first. Requests still in flight do not count (see below). |
 | `--timeout-ms N` | `30000` | Deadline for the whole run, the `load` and the wait included. Running JavaScript is stopped when it passes. |
 
 How a run goes:
 
 1. The browser navigates to `URL`, running the page's scripts as they load.
 2. It waits for the `load` event.
-3. With `--wait-ms`, it keeps running timers, `fetch` callbacks and other tasks until nothing is left to do, or until `N` ms have passed.
+3. With `--wait-ms`, it keeps running timers and queued tasks until none is left, or until `N` ms have passed.
 4. It prints the DOM and exits.
 
-### `--wait-ms` matters for JavaScript-rendered pages
+### `--wait-ms` and JavaScript-rendered pages
 
-Without `--wait-ms`, the DOM is printed right at `load`. Data a page fetches after `load` is not there yet. A test page that starts a `fetch` and a 200 ms timer from an inline script:
+Without `--wait-ms`, the DOM is printed right at `load`. Anything a page adds later is not there yet. A test page that inserts `<div id="fetched">` from a 200 ms timer:
 
 ```sh
 $ pyro fetch http://127.0.0.1:4500/late | grep -c 'id="fetched"'
@@ -38,7 +38,11 @@ $ pyro fetch --wait-ms 1000 http://127.0.0.1:4500/late | grep -c 'id="fetched"'
 1
 ```
 
-`--wait-ms` is a cap, not a sleep. The run ends as soon as the page is idle: `--wait-ms 5000` on that page finished in 0.6 s. A page that never goes idle (polling, a ticking clock) runs until the cap. Set the cap to the longest you are willing to wait.
+`--wait-ms` is a cap, not a sleep. The run ends as soon as no timer or task is left: `--wait-ms 5000` on that page finished in 0.2 s. A page that never goes idle (polling, a ticking clock) runs until the cap. Set the cap to the longest you are willing to wait.
+
+::: warning `--wait-ms` does not wait for requests
+A `fetch()` or XHR that is still in flight does not keep the run going. If the page has no timer or task pending while it waits for a response, the run ends and prints the DOM without that data. A page that builds its content from an API call made after `load` often comes out empty, whatever the cap. For those pages, use a script: `page.goto()` in the Playwright library and the native SDK waits for the requests the page starts, and a locator waits for the element you need. See [Scripting a browser](/scraping/library).
+:::
 
 ### Output and exit codes
 

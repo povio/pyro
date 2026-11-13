@@ -45,6 +45,7 @@ Caveats:
 
 - **Start before `goto` for whole scripts.** Started after the page ran, coverage reports what Chrome does: counts start at zero, and a function is listed only when it ran since. A script's top level and functions that do not run again are left out.
 - **One gap**: an async function or generator that was suspended when coverage started and resumes after it is not reported.
+- **`source` can be missing** when `stopJSCoverage()` is called right after `goto`: script sources are fetched in the background and may not have arrived. Another action, an assertion or a short wait before stopping avoids it.
 - Turning JS coverage on or off makes the engine recompile the page's code once. Expect the first actions after `startJSCoverage()` to be slower.
 
 ## ARIA snapshots
@@ -131,7 +132,7 @@ const [download] = await Promise.all([
 await download.saveAs('out/export.csv');
 ```
 
-`Download` has `page`, `url`, `suggestedFilename`, `path`, `saveAs`, `failure`, `createReadStream` and `delete`. `cancel()` does nothing. Files land in a temporary directory that is removed when the browser closes. `acceptDownloads` defaults to `true`. In testing, an HTTP response with `Content-Disposition: attachment` raised the event; a `<a download>` link to a `data:` URL did not.
+`Download` has `page`, `url`, `suggestedFilename`, `path`, `saveAs`, `failure`, `createReadStream` and `delete`. `cancel()` does nothing. Files land in a temporary directory that is removed when the browser closes. `acceptDownloads` defaults to `true`. Both an HTTP response with `Content-Disposition: attachment` and a click on an `<a download>` link to a `data:` URL raise the event.
 
 ## Popups
 

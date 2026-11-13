@@ -6,10 +6,10 @@ Pyro's browser runs on macOS and Linux. The client runs anywhere Node 22+ or Bun
 
 | Platform | Browser | Fork mode | JavaScriptCore | Tested in the release workflow |
 | --- | --- | --- | --- | --- |
-| macOS 14+, Apple silicon | bundled | yes | patched, bundled | `macos-15` runner |
+| macOS 14+, Apple silicon | bundled | yes | patched, linked into the binary | `macos-15` runner |
 | macOS 14+, Intel | bundled | no | macOS system framework | `macos-15-intel` runner |
-| Linux x64, glibc 2.39+ | bundled | yes | patched, bundled, with ICU in `lib/` | `ubuntu-24.04` runner |
-| Linux arm64, glibc 2.39+ | bundled | yes | patched, bundled, with ICU in `lib/` | `ubuntu-24.04-arm` runner |
+| Linux x64, glibc 2.39+ | bundled | yes | patched, linked into the binary; ICU in `lib/` | `ubuntu-24.04` runner |
+| Linux arm64, glibc 2.39+ | bundled | yes | patched, linked into the binary; ICU in `lib/` | `ubuntu-24.04-arm` runner |
 | Windows | none | | | client only, against a remote browser |
 | Linux with older glibc, Alpine (musl) | none | | | client only, against a remote browser |
 
@@ -53,7 +53,7 @@ EOF
 codesign -f -s - --entitlements jit.entitlements path/to/pyro
 ```
 
-When you copy a browser out of the package, copy its whole `native/<platform>/` directory: some builds load libraries from the `lib/` directory next to the binary.
+When you copy a browser out of the package, copy its whole `native/<platform>/` directory: the Linux builds load ICU libraries from the `lib/` directory next to the binary.
 
 ## Windows
 
@@ -74,14 +74,14 @@ For Playwright-style tests on Windows, set `PYRO_WS=ws://pyro-host:9222/`. Note 
 ## Docker and Linux notes
 
 - Use a base image with glibc 2.39 or newer: `ubuntu:24.04`, `debian:trixie`, or newer. Alpine and other musl-based images do not work.
-- The Linux browser links `libfontconfig.so.1` and `libstdc++.so.6`, and ships its own JavaScriptCore and ICU in `lib/`. Slim images need fontconfig and at least one font package for text in screenshots and PDFs.
+- The Linux browser links `libfontconfig.so.1` and `libstdc++.so.6`, and on x64 also `libatomic.so.1` (from JavaScriptCore). Its JavaScriptCore is linked into the binary and its ICU libraries ship in `lib/`. Slim images need fontconfig and at least one font package for text in screenshots and PDFs.
 - To reach the browser from outside the container, start it with `--host 0.0.0.0` and publish the port. Pass `--advertise-host` with a name clients can resolve if they read `/json/version`.
 - Linux browsers are built and tested in CI only. The project has not yet published Linux performance numbers.
 
 ```dockerfile
 FROM ubuntu:24.04
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl unzip libfontconfig1 fonts-dejavu-core \
+ && apt-get install -y --no-install-recommends ca-certificates curl unzip libatomic1 libfontconfig1 fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH=/root/.bun/bin:$PATH

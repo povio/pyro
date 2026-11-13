@@ -12,7 +12,7 @@ This page explains the parts of Pyro a test author or script writer runs into: t
  │ Puppeteer, raw CDP  │                │ browser thread per connection:               │
  └─────────────────────┘                │   JavaScriptCore engine (one VM)             │
                                         │   DOM (Rust arena), Stylo styles             │
-                                        │   event loop, CDP domains, Pyro.run driver     │
+                                        │   event loop, CDP domains, Pyro.run driver   │
                                         │                                              │
                                         │ network thread (HTTP, cookies, cache)        │
                                         │ render thread per connection (Blitz, Vello)  │
@@ -28,7 +28,7 @@ This page explains the parts of Pyro a test author or script writer runs into: t
 | Layout | Blitz with Taffy (flex, grid, block) and Parley (text). Layout queries such as `getBoundingClientRect`, scrolling and hit testing are answered from the same layout that screenshots and PDFs paint. |
 | Painting | Vello's CPU rasterizer for PNG screenshots; a PDF writer for `Page.printToPDF`. See [Rendering](/guide/rendering). |
 | Network | An HTTP client on its own I/O thread: cookies, CORS, redirects, proxies, interception for `page.route` and mocks. |
-| Protocol | A CDP server compatible with what Playwright 1.59 sends, plus the `Pyro.*` and `Pyro.*` domains. |
+| Protocol | A CDP server compatible with what Playwright 1.59 sends, plus the `Pyro.*` domain. |
 
 ## One browser thread per connection
 

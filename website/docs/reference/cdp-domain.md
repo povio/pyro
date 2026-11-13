@@ -42,12 +42,12 @@ Profiles come from two places:
 | --- | --- | --- | --- |
 | `url` | string | required | Absolute URL each page navigates to. Not absolute: `-32602 url is not an absolute URL`. |
 | `initScripts` | string[] | `[]` | Scripts run before the document's own scripts in every page of the profile's context, popups included. They replace the `Page.addScriptToEvaluateOnNewDocument` calls a test would otherwise make after the page exists. |
-| `viewport` | `{width, height}` (integers) | server default (1280x720) | Viewport set before the navigation. |
+| `viewport` | `{width, height}` (integers) | server default (1920x1080) | Viewport set before the navigation. |
 | `pool` | integer 1–8 | `1` | Pages kept booted per profile. Each acquisition starts booting the next one. Outside 1–8: `-32602 pool must be between 1 and 8`. Ignored in fork mode, where the template keeps exactly one page per profile. The SDK sends `2` by default. |
 | `refillAfterClose` | boolean | `false` | Boot the replacement only once the acquired page's browser context closes, not as soon as the thread is quiet. You get at most `pool` booted apps instead of `pool` + 1, but the next test waits for the boot when tests run back to back. The per-request form of `--prepare-refill after-close`. Ignored in fork mode. |
-| `setup` | object[] | `[]` | [`Pyro.run` steps](/reference/pyro-run) run once on the booted page before any test gets it. **`--fork` only**: the template runs them, and every connection forked afterwards starts from the state they leave. The steps must finish within 60 s. |
+| `setup` | object[] | `[]` | [`Pyro.run` steps](/reference/pyro-run) run once on the booted page before any test gets it. **`--fork` only**: the template runs them, and every connection forked afterwards starts from the state they leave. The steps must finish within 60 s. The call returns before they run: a failing step is reported on the server's stderr (`pyro: template: setup of profile <id>: step <i>: <reason>`), not as an error of this call. |
 | `base` | integer (profile id) | — | Start from another profile's page instead of booting `url`. The template forks that profile's snapshot and runs only this profile's `setup` on it. **`--fork` only.** Pages of a derived profile are never booted from `url`. |
-| `name` | string | — | Register as a shared, named profile. **`--fork` only.** Must not be empty. See [Shared profiles](#shared-profiles). |
+| `name` | string | — | Register as a shared, named profile. **`--fork` only.** Empty: `-32602 name must not be empty`. See [Shared profiles](#shared-profiles). |
 
 Without `--fork`, `setup` or `base` returns `-32602 setup and base need serve --fork`, and `name` returns `-32602 profile names need serve --fork`.
 
@@ -69,7 +69,7 @@ Reports what the server supports. The SDK calls it once after connecting. An old
 Declares a profile and starts booting its pages.
 
 - **Without `--fork`:** the profile belongs to this connection. Its `pool` pages start booting on the connection's browser thread right away.
-- **With `--fork`:** the template process boots the profile once. Connections opened **after** the call start with its page already booted and share its memory copy-on-write. The registering connection is a fork made earlier, so it does not get the page itself: open a new connection (see [Connecting to a profile's fork](#connecting-to-a-profile-s-fork)). Registering a definition identical to an active profile returns that profile's id; nothing boots again.
+- **With `--fork`:** the template process boots the profile once (`pool` and `refillAfterClose` are ignored). Connections opened **after** the call start with its page already booted and share its memory copy-on-write. The registering connection is a fork made earlier, so it does not get the page itself: open a new connection (see [Connecting to a profile's fork](#connecting-to-a-profile-s-fork)). Registering a definition identical to an active profile returns that profile's id; nothing boots again.
 
 **Params:** the [profile object](#the-profile-object).
 
@@ -155,8 +155,8 @@ Retires a profile, or, in fork mode, releases this connection's hold on a named 
 **Errors:**
 
 - `-32602 profileId or name is required`
-- `-32602 Unknown prepared profile` (id out of range)
-- `-32602 Prepared profile still has dependent profiles` (another active profile uses it as `base`)
+- `Unknown prepared profile` (id out of range): `-32602`, or `-32000` in fork mode
+- `Prepared profile still has dependent profiles` (another active profile uses it as `base`): `-32602`, or `-32000` in fork mode
 - `-32602 profile names need serve --fork` (`name` without fork mode)
 
 ## adoptPreparedPage

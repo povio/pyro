@@ -104,17 +104,20 @@ These fail the step at once, without `timed out after`:
 | `step 0: unknown variant 'bogus', expected one of ...` | A malformed step (only with hand-written wire steps) |
 | `mock takes body or json, not both` and the other mock errors | See [Requests and mocks](/e2e/network#options) |
 
-Errors from the SDK itself, before anything reaches the browser:
+Errors that `pyro.profile()`, `pyro.page()`, `pyro.warm()`, `Pyro.launch()` and the builders throw, outside a run:
 
 | Message | Cause |
 |---|---|
-| `no profile X: declare it with pyro.profile()` | `pyro.page({ as: 'X' })` for an undeclared profile |
+| `no profile X: declare it with pyro.profile()` | `pyro.page({ as: 'X' })` for a profile this client did not declare (`lp` is the SDK's name for the `Pyro` instance) |
+| `no profile X on this server: declare it with pyro.profile()` | The same on a fork-mode server, where no client registered `X` either; also for `base: 'X'` and `pyro.adopt('X')` |
+| `no profile X: adopting a profile needs pyro serve --fork` | `pyro.adopt('X')` on a server without `--fork` |
 | `filter before first() / last() / nth()` | A filter chained after a pick |
 | `read(as, 'css', property) needs the property` | `read(..., 'css')` without the property |
 | `screenshot name '...': use letters, digits, ...` | An invalid screenshot name |
 | `no booted page for X after N ms` | `pyro.warm()` timed out |
 | `pyro serve did not start: ...` | `Pyro.launch()` could not start the server within 15 s |
-| `setup and base need serve --fork` | Fork-only profile options on a plain server |
+| `Pyro.registerPreparedPage: setup and base need serve --fork` | Fork-only profile options on a plain server (the server refuses the registration) |
+| `Pyro.registerPreparedPage: pool must be between 1 and 8` | A `pool` out of range (also from the server) |
 
 ## Timeouts
 

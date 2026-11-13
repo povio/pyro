@@ -1,6 +1,6 @@
 # Environment variables
 
-Every environment variable Pyro reads, by the component that reads it. The browser binary reads the `PYRO_*` and `JSC_*` variables, the SDK and the runners read `PYRO_BIN`, `PYRO_WS` and the `LP_*` variables. Variables marked *diagnostic* or *tuning* exist to measure or compare behaviour. They are stable enough to use, but you should not need them.
+Every environment variable Pyro reads, by the component that reads it. The browser binary reads the `PYRO_*` serve, browser and tuning variables and `JSC_*`; the SDK and the runners read `PYRO_BIN`, `PYRO_WS`, the Playwright drop-in's `PYRO_*` variables, `NO_COLOR` and `NODE_ENV`. Releases up to 0.0.33 (`@povio/lightning-panda`) read the same variables as `LIGHTNINGPANDA_*` (browser, `LIGHTNINGPANDA_BIN`, `LIGHTNINGPANDA_WS`) and `LP_*` (Playwright drop-in); see [Renamed from Lightningpanda](/reference/versions#renamed-from-lightningpanda). Variables marked *diagnostic* or *tuning* exist to measure or compare behaviour. They are stable enough to use, but you should not need them.
 
 ## Quick reference {#quick-reference}
 
@@ -15,7 +15,7 @@ Every environment variable Pyro reads, by the component that reads it. The brows
 | [`PYRO_TIMEOUT`](#pyro-timeout) | Playwright drop-in | config | Test timeout, ms |
 | [`PYRO_UPDATE_SNAPSHOTS`](#pyro-update-snapshots) | SDK, Playwright drop-in, `e2e` | unset | Write screenshot baselines |
 | [`PYRO_CONCURRENT`](#pyro-concurrent) | Playwright drop-in | unset | Run parallel describes concurrently in a worker |
-| [`NO_COLOR`](#no-color) | `test`, `e2e` reporters | unset | Disable colors |
+| [`NO_COLOR`](#no-color) | `run`, `e2e` reporters | unset | Disable colors |
 | [`PYRO_LOCAL_STORAGE`](#pyro-local-storage) | `serve` | | `--local-storage` |
 | [`PYRO_STATIC`](#pyro-static) | `serve` | | `--static` entries |
 | [`PYRO_PREPARE`](#pyro-prepare) | `serve` | | `--prepare` URLs |
@@ -24,7 +24,7 @@ Every environment variable Pyro reads, by the component that reads it. The brows
 | [`PYRO_FORK_SPARES`](#pyro-fork-spares) | `serve --fork` | `2` | Forks kept waiting |
 | [`PYRO_FORK_PRECOMPILE`](#pyro-fork-precompile) | `serve --fork` | `modules` | Precompile static module scripts |
 | [`PYRO_SPARE_ENGINE`](#pyro-spare-engine) | `serve` | on with `--prepare` | `--spare-engine` |
-| [`PYRO_ENGINE_REUSE`](#pyro-engine-reuse) | `serve` (main) | `on` | `--engine-reuse` |
+| [`PYRO_ENGINE_REUSE`](#pyro-engine-reuse) | `serve` (newer than 0.0.33) | `on` | `--engine-reuse` |
 | [`PYRO_RENDER_PREWARM`](#pyro-render-prewarm) | `serve` | on with `--prepare` | `--render-prewarm` |
 | [`PYRO_HYPHEN_DIGIT_BREAKS`](#pyro-hyphen-digit-breaks) | `serve` | `off` | `--hyphen-digit-breaks` |
 | [`PYRO_PARENT_PID`](#pyro-parent-pid) | `serve` | set by `launch()` | `--parent-pid` |
@@ -56,7 +56,7 @@ Path of the Playwright-style config file the drop-in loads (absolute, or relativ
 
 ### `PYRO_PROJECT` {#pyro-project}
 
-Name of the config project whose settings apply. Default: the first project. An unknown name throws `no project named "<name>"`. When it is unset and the config has several projects, a file takes the project whose `testDir`/`testMatch` include it.
+Name of the config project whose settings apply. Default: the first project. An unknown name throws `pyro: no project named "<name>" in <config file>`. When it is unset and the config has several projects, a file takes the project whose `testDir`/`testMatch` include it.
 
 ### `PYRO_RETRIES` {#pyro-retries}
 
@@ -142,7 +142,7 @@ What the root fork-mode template does with the module scripts of the [`--static`
 
 ### `PYRO_ENGINE_REUSE` {#pyro-engine-reuse}
 
-`on`, `off`, `thread` or `always` for [`--engine-reuse`](/reference/serve#engine-reuse). Only on `main`, newer than 0.0.33.
+`on`, `off`, `thread` or `always` (also `1`/`0`, `true`/`false`) for [`--engine-reuse`](/reference/serve#engine-reuse). Newer than 0.0.33: since the first `@povio/pyro` release.
 
 ### `PYRO_RENDER_PREWARM` {#pyro-render-prewarm}
 
@@ -186,7 +186,7 @@ A positive integer turns on a process-wide cache of public static assets shared 
 | `PYRO_RELEASE_GROWTH` | `32:25` | `<MB>[:<percent>]`: how far the footprint must grow past its low point before a close collects. `0` collects on every close |
 | `PYRO_RELEASE_PUT_OFF` | `1` | How many closes past the gate may leave their collection to an idle moment before one collects at once |
 | `PYRO_DECOMMIT` | patched behaviour | `madvise`: keep JavaScriptCore's stock page release. By default, freed pages leave the resident set at once |
-| `PYRO_HEAP_ARENA` (main, macOS) | on | `0`: use mimalloc's own arenas for the Rust heap instead of one reserved range whose freed pages leave the resident set at once |
+| `PYRO_HEAP_ARENA` (macOS, newer than 0.0.33) | on | `0`: use mimalloc's own arenas for the Rust heap instead of one reserved range whose freed pages leave the resident set at once |
 | `PYRO_FORK_FAST_EXIT` | on | `0`: a forked connection process tears down as a shared process does instead of exiting at once |
 | `PYRO_STATIC_DIRECT` | on | `0`: `--static` hits go through the I/O thread instead of being answered on the browser thread |
 
@@ -197,9 +197,13 @@ A positive integer turns on a process-wide cache of public static assets shared 
 | Variable | Output |
 | --- | --- |
 | `PYRO_FORK_STATS=<file>` | JSON lines appended to `<file>`, one per fork, reaped child, child life step and precompile in `serve --fork` |
-| `PYRO_ENGINE_REUSE_LOG=1` (main) | One stderr line per connection end: what became of its engine |
+| `PYRO_ENGINE_REUSE_LOG=1` (newer than 0.0.33) | One stderr line per connection end (`pyro: engine reuse: …`): what became of its engine |
 | `PYRO_TRACE_MODULES=1` | One stderr line per step of every ES module load |
 | `PYRO_FLOW_STATS=1` | Layout flow statistics |
+| `PYRO_GEOMETRY_PROFILE` (any value) | Time spent in layout syncs, whole-document reads and box reads, printed to stderr every 250 syncs |
+| `PYRO_GEOMETRY_DEBUG` (any value) | Describes elements whose layout box is empty |
+| `PYRO_MIRROR_FULL_LAYOUT` (any value) | The render mirror relays out the whole document on every render instead of incrementally (tells a layout difference from a mirroring one) |
+| `PYRO_MIRRORDBG` (any value) | Logs mirror nodes that arrive with unknown children |
 | `PYRO_RUN_STEP_TRACE=1` | Per-step trace records of each `Pyro.run` (not `Pyro.act`/`Pyro.expect`) |
 | `PYRO_POINTER_WAIT_DIAGNOSTICS` (any value) | Pointer-action timeout messages include why the action was not ready |
 
@@ -217,3 +221,7 @@ JavaScriptCore reads `JSC_<option>` variables once, when it creates its first VM
 | `JSC_jitMemoryReservationSize` | `33554432` in fork-mode forks | 32 MB JIT pool instead of 512 MB, so `fork()` is faster on macOS |
 
 Any other `JSC_*` option reaches JavaScriptCore unchanged. Options you set this way are outside what Pyro tests.
+
+## Build-time variables {#build}
+
+Read when building Pyro from source, not by a built binary: `PYRO_JSC=system` (link the system JavaScriptCore framework instead of the patched build), `PYRO_JSC_DIR=<dir>` (link the patched JavaScriptCore in `<dir>/lib`) and `PYRO_JSC_CACHE` (the artifact root `scripts/jsc/build.sh` writes to). `PYRO_HEAP_PROFILE` and `PYRO_HEAP_PROFILE_INTERVAL` only work in binaries built with the `heap-profile` feature, which release builds are not.

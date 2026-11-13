@@ -34,10 +34,10 @@ With `network`, a missing path goes to the network at its original URL, navigati
 
 ## A run against a static build
 
-Here the "backend" is a Bun server that only answers `/api/items`; the HTML and JavaScript come from the directory, through the same origin:
+Here the "backend" is a Bun server that only answers `/api/items`. The HTML and JavaScript are the `public/` directory of the app from [Your first test](/e2e/first-test), served by the browser on the same origin:
 
 ```ts
-import { Pyro, check, evaluate, heading, text } from '@povio/pyro';
+import { Pyro, check, heading, text } from '@povio/pyro';
 
 const api = Bun.serve({
   port: 0,
@@ -48,12 +48,19 @@ const api = Bun.serve({
   },
 });
 const origin = api.url.origin;
-const dist = new URL('./app/', import.meta.url).pathname;
+const dist = new URL('./public/', import.meta.url).pathname;
 
 const pyro = await Pyro.launch({ args: ['--fork', '--static', `${origin}=${dist}`] });
 try {
-  await using page = await pyro.page({ url: `${origin}/settings` });     // an SPA route: index.html
-  const r = await page.run([check(heading('Settings')).visible(), check(text('From API')).visible()]);
+  await using page = await pyro.page({
+    url: `${origin}/settings`,                                  // no such file: index.html (SPA fallback)
+    initScripts: ['localStorage.setItem("token", "t")'],        // the app's sign-in
+  });
+  const r = await page.run([
+    check(heading('Todos')).visible(),
+    check(text('From API')).visible(),
+    check.request('GET', '/api/items').status(200),
+  ]);
   console.log(r.requests.map((q) => `${q.method} ${q.url} ${q.status}`));
 } finally {
   pyro.close();
@@ -62,10 +69,11 @@ try {
 ```
 
 ```text
-pyro: serving http://localhost:55436 from /private/tmp/pyro-docs-verify-e2e/app/
-pyro: CDP server listening on ws://127.0.0.1:55438/ (fork mode)
-[ "GET http://localhost:55436/settings 200", "GET http://localhost:55436/app.js 200",
-  "GET http://localhost:55436/api/items 200" ]
+pyro: serving http://localhost:62233 from /private/tmp/docs-r1-e2e/public/
+pyro: CDP server listening on ws://127.0.0.1:62234/ (fork mode)
+[ "GET http://localhost:62233/settings 200", "GET http://localhost:62233/app.js 200",
+  "GET http://localhost:62233/api/items 200"
+]
 ```
 
 `/settings` and `/app.js` came from the directory; `/api/items` reached the API server, which never served a file.
@@ -75,6 +83,9 @@ pyro: CDP server listening on ws://127.0.0.1:55438/ (fork mode)
 The origin does not have to exist: `--static http://app.test=./dist` works, and the page loads `http://app.test/`. Requests the directory cannot answer then go to the network for `app.test` and fail, so mock the API:
 
 ```ts
+import { Pyro, check, goto, mock, text } from '@povio/pyro';
+
+const dist = new URL('./public/', import.meta.url).pathname;
 const pyro = await Pyro.launch({ args: ['--static', `http://app.test=${dist}`] });
 await using page = await pyro.page({ initScripts: ['localStorage.setItem("token", "t")'] });
 await page.run([
@@ -82,6 +93,7 @@ await page.run([
   goto('http://app.test/'),
   check(text('Mocked item')).visible(),
 ]);
+pyro.close();
 ```
 
 Use your real API origin when the tests should hit a real backend.
@@ -125,8 +137,8 @@ For launchers that cannot pass flags:
 At start the server prints what it serves and seeds on standard error (at the default `--log-level info`):
 
 ```text
-pyro: localStorage preload for http://localhost:55436: 1 entries
-pyro: serving http://localhost:55436 from /private/tmp/pyro-docs-verify-e2e/app/
+pyro: localStorage preload for http://localhost:3000: 1 entries
+pyro: serving http://localhost:3000 from ./dist
 ```
 
 ## With the suite runner

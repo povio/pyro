@@ -32,7 +32,7 @@ What follows from it:
 
 Every open page holds a full copy of its app: its DOM, its JavaScript heap, its styles. Memory grows with the pages you keep open, not with the pages you have visited:
 
-- Closing a context or page frees its memory, and the server returns freed memory to the operating system right away. A 20-page loop on a 2 MB app measured a plateau of 275 MB with this release and 323 MB without it. `PYRO_RELEASE_ON_CLOSE=0` turns the release off, for comparisons only.
+- Closing a context or page frees its memory, and the server returns freed memory to the operating system right away. A 20-page loop on a 2 MB app measured a plateau of 275 MB with the release and 323 MB without it. `PYRO_RELEASE_ON_CLOSE=0` turns the release off, for comparisons only.
 - Close each context when its job is done. A job that leaves its context open leaks a whole page.
 - In fork mode, a page shares its memory with the template until it writes to it, and its process exits when the connection closes. Nothing accumulates across jobs.
 - With `--prepare` or SDK profiles, each pooled page is one more copy of the app, booted ahead. `--prepare-refill after-close` caps the pool at its size.
@@ -142,6 +142,7 @@ That figure is for a tiny local test page; real sites are bounded by their respo
 - **One connection per worker** gives each worker its own thread on the server. The workers are async functions in one Node.js or Bun process; that process only sends commands and is rarely the bottleneck.
 - **A fresh context per job** isolates jobs: nothing a page stored leaks into the next job, and closing the context frees everything.
 - **The `busy` set** keeps one job per identity. Drop it if your identities may run in parallel.
+- **One server, one proxy.** `contextOptions` drops the `proxy`, `locale` and `timezoneId` of the identity files, because a context cannot set them through the library. Every job here goes out through the server's own proxy, if any. For identities with their own proxies, run one server per proxy and give each job a connection to its identity's server, as the [profile store](/scraping/profiles#a-profile-store) does; set locale and time zone over a CDP session as `newContext` there does.
 - **The signed-out check** turns an expired session into a failed job instead of scraping the login page. Combine it with `openProfile` from [Stored profiles](/scraping/profiles#a-profile-store) to sign in again.
 - **Per-site limits.** For crawling sites you do not own, add a per-host limiter (at most N requests in flight and M per second per host) around `runJob`.
 

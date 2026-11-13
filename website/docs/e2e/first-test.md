@@ -1,6 +1,6 @@
 # Your first test
 
-This page builds one test from nothing: install the package, start a tiny app, launch the browser, declare a profile, take a page, run the scenario, read values back and close everything. Every file below was run as shown with version 0.0.33 and Bun.
+This page builds one test from nothing: install the package, start a tiny app, launch the browser, declare a profile, take a page, run the scenario, read values back and close everything. Every file below was run as shown with Bun 1.4.
 
 ## Install
 

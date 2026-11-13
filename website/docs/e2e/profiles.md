@@ -28,7 +28,7 @@ Declares the profile and starts booting its pages. It resolves once the server h
 | `setup` | `StepLike[]` | | Steps run once on the booted page before tests get it. Fork mode only |
 | `base` | `string` | | Start from another profile's snapshot. Fork mode only |
 
-Declaring `setup` or `base` against a server without `--fork` fails with `setup and base need serve --fork`. A `pool` outside 1 to 8 fails with `pool must be between 1 and 8`.
+Declaring `setup` or `base` against a server without `--fork` fails with `Pyro.registerPreparedPage: setup and base need serve --fork`. A `pool` outside 1 to 8 fails with `Pyro.registerPreparedPage: pool must be between 1 and 8`.
 
 ### Signing in with `localStorage`
 
@@ -124,7 +124,7 @@ await pyro.profile('app', {
 });
 ```
 
-`base` forks the new profile's page from the base profile's snapshot, and only the new profile's own `setup` runs on it. Chains work: boot the login page once, sign in once, then one snapshot per test file on top. A `base` the client does not know fails with `no prepared profile <name> to start from`. Details and the cost model are on [Fork mode in tests](/e2e/fork).
+`base` forks the new profile's page from the base profile's snapshot, and only the new profile's own `setup` runs on it. Chains work: boot the login page once, sign in once, then one snapshot per test file on top. A `base` that neither this client nor any other client of the server registered fails with `no profile <name> on this server: declare it with pyro.profile()`; against a server without `--fork`, with `no prepared profile <name> to start from`. Details and the cost model are on [Fork mode in tests](/e2e/fork).
 
 ## warm()
 

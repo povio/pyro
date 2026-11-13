@@ -2,7 +2,7 @@
 
 This page lists Playwright's library API class by class and marks what `@povio/pyro/wright` implements. Use it to check whether a suite depends on something missing before you migrate.
 
-**How this was derived.** The tables come from reading the classes in `packages/pyro/src/wright/` (`page.ts`, `browser.ts`, `handles.ts`, `request.ts`, `clock.ts`, `coverage.ts`, `cdp-session.ts`, `index.ts`) at version 0.0.33 and comparing their methods with Playwright's documented API. Many entries were also checked by running scripts against the published 0.0.33 package. The test runner and `expect` are covered in [Fixtures, hooks and steps](/playwright/fixtures), [Config and the test runner](/playwright/runner) and [Assertions](/playwright/assertions).
+**How this was derived.** The tables come from reading the classes in `packages/pyro/src/wright/` (`page.ts`, `browser.ts`, `handles.ts`, `request.ts`, `clock.ts`, `coverage.ts`, `cdp-session.ts`, `index.ts`) and comparing their methods with Playwright's documented API. They were first written against version 0.0.33 and checked again on the current code, including a script that tests each class for the methods listed as missing. The test runner and `expect` are covered in [Fixtures, hooks and steps](/playwright/fixtures), [Config and the test runner](/playwright/runner) and [Assertions](/playwright/assertions).
 
 **Legend.** Supported: works as in Playwright. Partial: works with the limits noted. No-op: exists and does nothing. Not supported: missing (a type error, and `undefined` at run time) or throws.
 

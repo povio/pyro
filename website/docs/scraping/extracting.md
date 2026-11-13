@@ -2,7 +2,7 @@
 
 Once a page has loaded, there are several ways to get data out of it: run JavaScript in the page, read through locators, take a compact accessibility snapshot, or skip the DOM and capture the JSON the page fetched. This page shows each, with the waiting, pagination, scrolling and download patterns around them.
 
-All examples run against a local test site at `http://127.0.0.1:4500` and were checked with version 0.0.33. Replace the URLs and selectors with your own.
+All examples run against a local test site at `http://127.0.0.1:4500`. Replace the URLs and selectors with your own.
 
 ## Run JavaScript in the page
 
@@ -130,16 +130,17 @@ Start waiting before the action that triggers the request, as above, or you can 
 **Collect every response:**
 
 ```ts
-const captured: unknown[] = [];
-page.on('response', async (response) => {
+const captured: Promise<{ url: string; body: unknown }>[] = [];
+page.on('response', (response) => {
   if (!response.url().includes('/api/') || !response.ok()) return;
-  captured.push({ url: response.url(), body: await response.json().catch(() => null) });
+  captured.push(response.json().catch(() => null).then((body) => ({ url: response.url(), body })));
 });
 await page.goto('http://127.0.0.1:4500/late');
 await page.waitForLoadState('networkidle');
+const bodies = await Promise.all(captured); // [{ url, body }, ...]
 ```
 
-`context.on('response')` does the same for every page of a context. Response bodies are kept in the browser within a budget (8 MiB per body, 64 MiB in total by default); read them promptly.
+Keep the body promises and await them at the end. Reading the body takes another round trip to the browser, so a handler that pushes only after `await response.json()` can still be running when `waitForLoadState` returns, and the list is empty at that moment. `context.on('response')` does the same for every page of a context. Response bodies are kept in the browser within a budget (8 MiB per body, 64 MiB for the whole server); read them promptly.
 
 **Call the API yourself.** Once you know the endpoint, `page.evaluate(() => fetch(url).then((r) => r.json()))` calls it with the page's cookies and origin. `context.request.get(url)` calls it from Node.js, outside the browser, with the cookies from the context's `storageState`.
 

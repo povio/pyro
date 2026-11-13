@@ -25,15 +25,15 @@ On Linux, an error such as `version 'GLIBC_2.39' not found` means the system's g
 
 ### `pyro run: needs Bun (https://bun.sh) on PATH`
 
-`pyro run` and `pyro e2e` run on Bun. Install Bun, or on CI add `oven-sh/setup-bun`. The client library itself works under Node 22+.
+`pyro run` and `pyro e2e` run on Bun (the second prints `pyro e2e: needs Bun ...`). Install Bun, or on CI add `oven-sh/setup-bun`. The client library itself works under Node 22+.
 
-### `Address already in use`
+### `pyro serve: Address already in use (os error 48)`
 
-Another process listens on the port. `pyro serve` defaults to 9222, which Chrome's remote debugging also uses. Pick another `--port`. `Pyro.launch()` always picks a free port, so this only affects servers you start yourself.
+Another process listens on the port (the error number is 98 on Linux). `pyro serve` defaults to 9222, which Chrome's remote debugging also uses. Pick another `--port`. `Pyro.launch()` always picks a free port, so this only affects servers you start yourself.
 
 ## Fork mode
 
-### `pyro serve: --fork needs the patched JavaScriptCore`
+### `pyro serve: --fork needs the patched JavaScriptCore (scripts/jsc/build.sh)`
 
 The binary has no fork mode. The Intel macOS build uses the system JavaScriptCore and cannot fork. Check with:
 
@@ -41,7 +41,7 @@ The binary has no fork mode. The Intel macOS build uses the system JavaScriptCor
 bunx pyro version   # look for fork: true
 ```
 
-On an Intel Mac, drop `--fork` and use [profiles](/guide/profiles) with several connections. `pyro e2e` falls back by itself and prints `has no fork mode; every page boots its profile`.
+On an Intel Mac, drop `--fork` and use [profiles](/guide/profiles) with several connections. `pyro e2e` falls back by itself and prints `pyro e2e: <binary> has no fork mode; every page boots its profile`.
 
 ### `no profile <name>: adopting a profile needs pyro serve --fork`
 
@@ -73,8 +73,7 @@ Other causes of slow tests:
 `page.run` throws a `RunError` with the index of the failing step (`err.step`) and why it was still waiting when it timed out:
 
 ```text
-step 0 (Click {"name":"Save","role":"button"}): timed out after 5000 ms:
-  Click {"name":"Save","role":"button"}: {"name":"Save","role":"button"} matched no element
+step 0 (Click {"name":"Save","role":"button"}): timed out after 5000 ms: Click {"name":"Save","role":"button"}: {"name":"Save","role":"button"} matched no element
 ```
 
 | Reason | Meaning | Fix |
@@ -108,9 +107,9 @@ Baselines taken with Chromium never match: pixels come from Pyro's renderer. Reg
 
 Text uses system fonts when the page does not load its own, and machines have different fonts. Generate baselines on the same OS and font set as CI, or load web fonts in the app.
 
-### `captureScreenshot` or `printToPDF` fails with an explicit "render" error
+### `pyro was built without the render feature`
 
-The browser was built from source without the `render` feature. All bundled browsers have it. Use the bundled browser, or rebuild with rendering enabled.
+`Page.captureScreenshot`, `Page.printToPDF` or a `matchScreenshot` step fails with this message when the browser was built from source without the `render` feature. All bundled browsers have it. Use the bundled browser, or rebuild with rendering enabled.
 
 ### Text is missing from screenshots or PDFs on Linux
 
@@ -130,7 +129,7 @@ The server accepts 16 connections at a time by default; more wait in the kernel'
 pyro serve --fork --cdp-max-connections 64
 ```
 
-`pyro e2e` sets it to at least 64 (or four times the concurrency plus 8) unless you pass your own.
+`pyro e2e` sets it to the larger of 64 and four times the concurrency plus 8, unless you pass your own.
 
 ### A browser keeps running after tests
 

@@ -187,7 +187,7 @@ await context.storageState({ path: 'e2e/.auth/user.json' });
 export default defineConfig({ use: { storageState: 'e2e/.auth/user.json' } });
 ```
 
-- `storageState` (a path or an object) seeds cookies and `localStorage`. Local storage entries are written once per context, by an init script, the first time a document of that origin loads. A marker key, `__lpStorageState`, stays in `localStorage` so later documents do not overwrite the app's changes. Code that lists every key of `localStorage` sees it.
+- `storageState` (a path or an object) seeds cookies and `localStorage`. Local storage entries are written once per context, by an init script, the first time a document of that origin loads. A marker key, `__pyroStorageState`, stays in `localStorage` so later documents do not overwrite the app's changes. Code that lists every key of `localStorage` sees it.
 - `context.storageState({ path })` returns cookies and the `localStorage` of the origins of the context's open pages. Origins with no open page are not included. `indexedDB` is not saved.
 - `context.addCookies()`, `context.cookies(urls?)` and `context.clearCookies()` work. A cookie needs `url` or `domain`. Before the context's first page exists, cookies are held and set when the page gets its target. `clearCookies` options are ignored; it clears all cookies.
 

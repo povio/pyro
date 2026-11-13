@@ -3,8 +3,21 @@
 Pyro is one npm package, `@povio/pyro`. It contains the browser binaries, the `pyro` CLI and the TypeScript client. Installing it runs no install scripts and downloads nothing else.
 
 ::: info Formerly Lightningpanda
-Pyro was called Lightningpanda up to version 0.0.33, published as `@povio/lightning-panda` with the `lightningpanda` command. From the next release the package is `@povio/pyro`; every name moved with it (class `Pyro`, `PYRO_*` environment variables, the `Pyro.*` CDP domain, `@povio/pyro/wright` and `pyro run` for Playwright tests). The old package keeps its old names. See [Versions](/reference/versions#renamed-from-lightningpanda).
+Pyro was called Lightningpanda up to version 0.0.33, published as `@povio/lightning-panda` with the `lightningpanda` command. The rename moved every name, with no aliases: class `Pyro`, `PYRO_*` environment variables, the `Pyro.*` CDP domain, `@povio/pyro/wright` and `pyro run` for Playwright tests. These docs use the new names. See [Versions](/reference/versions#renamed-from-lightningpanda) for the full mapping.
 :::
+
+## Before the first `@povio/pyro` release {#try-today}
+
+`@povio/pyro` is not on npm yet. The next release is the first published under that name, and the install commands below work from then on. To try Pyro today, either:
+
+- install `@povio/lightning-panda` (0.0.33, `bun add --dev @povio/lightning-panda`) and use the old names from the table in [Versions](/reference/versions#renamed-from-lightningpanda). It lacks the changes made on `main` since 0.0.33; or
+- build the browser from a checkout of the [repository](https://github.com/povio/pyro) (see [Building from source](#building-from-source)), build the client there, install it from the checkout, and point it at your browser. A checkout has no bundled browsers in `native/`, so `PYRO_BIN` is required:
+
+  ```sh
+  (cd /path/to/pyro/packages/pyro && bun install && bun run build)
+  bun add --dev /path/to/pyro/packages/pyro
+  PYRO_BIN=/path/to/pyro/target/release/pyro bunx pyro version
+  ```
 
 ## Install the package
 
@@ -56,10 +69,10 @@ The package carries one browser per platform under `native/`:
 
 | Directory | Platform | JavaScriptCore | Fork mode |
 | --- | --- | --- | --- |
-| `native/darwin-arm64/` | macOS, Apple silicon | patched build, bundled | yes |
+| `native/darwin-arm64/` | macOS, Apple silicon | patched build, linked into the binary | yes |
 | `native/darwin-x64/` | macOS, Intel | macOS system framework | no |
-| `native/linux-x64/` | Linux x64 | patched build, bundled, with its ICU libraries in `lib/` | yes |
-| `native/linux-arm64/` | Linux arm64 | patched build, bundled, with its ICU libraries in `lib/` | yes |
+| `native/linux-x64/` | Linux x64 | patched build, linked into the binary; its ICU libraries in `lib/` | yes |
+| `native/linux-arm64/` | Linux arm64 | patched build, linked into the binary; its ICU libraries in `lib/` | yes |
 
 Every bundled browser is built with rendering enabled: layout, screenshots and PDF work out of the box. Fork mode (`serve --fork`) needs the patched JavaScriptCore, which is why the Intel macOS build does not have it. See [Fork mode](/guide/fork-mode).
 
@@ -103,7 +116,7 @@ bunx pyro eval -e 'console.log(navigator.userAgent)'
 
 1. the `bin` option (`Pyro.launch({ bin })`, or `use: { pyro: { bin } }` in a Playwright config);
 2. the `PYRO_BIN` environment variable;
-3. a `pyro` binary next to the package, when the package was unpacked from a GitHub release archive;
+3. a `pyro` binary next to the package folder, as in a GitHub release archive, where the client folder `pyro-client/` sits beside the browser;
 4. the bundled binary for the current platform and architecture.
 
 The CLI and `launch()` never fall back to another `pyro` on your `PATH`. Set `PYRO_BIN` to use a browser you built from source or downloaded separately:
@@ -113,7 +126,7 @@ PYRO_BIN=/opt/pyro/pyro bunx pyro run
 ```
 
 ::: warning Copying binaries on macOS
-The macOS binaries are signed ad hoc with the `com.apple.security.cs.allow-jit` entitlement. Without it, JavaScriptCore runs every script in its interpreter, which is much slower. Copying the file keeps the signature; re-signing it, or stripping it, removes the entitlement. Copy the whole `native/<platform>/` directory, including `lib/` when present. See [Platforms](/guide/platforms#the-jit-entitlement-on-macos) for how to re-sign.
+The macOS binaries are signed ad hoc with the `com.apple.security.cs.allow-jit` entitlement. Without it, JavaScriptCore runs every script in its interpreter, which is much slower. Copying the file keeps the signature; re-signing it, or stripping it, removes the entitlement. Copy the whole `native/<platform>/` directory, including `lib/` on Linux. See [Platforms](/guide/platforms#the-jit-entitlement-on-macos) for how to re-sign.
 :::
 
 ## Remote browsers
@@ -156,12 +169,12 @@ jobs:
       - run: bunx pyro e2e e2e --concurrency 8 --junit junit.xml
 ```
 
-For containers, use a base image with glibc 2.39 or newer, such as `ubuntu:24.04` or `debian:trixie`. The Linux browser links `libfontconfig.so.1` and `libstdc++.so.6`. Slim images may lack fontconfig and fonts; install them if text is missing from screenshots and PDFs:
+For containers, use a base image with glibc 2.39 or newer, such as `ubuntu:24.04` or `debian:trixie`. The Linux browser links `libfontconfig.so.1` and `libstdc++.so.6`, and on x64 also `libatomic.so.1` (from JavaScriptCore). Slim images may lack fontconfig and fonts; install them if text is missing from screenshots and PDFs:
 
 ```dockerfile
 FROM ubuntu:24.04
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates libfontconfig1 fonts-dejavu-core \
+ && apt-get install -y --no-install-recommends ca-certificates libatomic1 libfontconfig1 fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 ```
 

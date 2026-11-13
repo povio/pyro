@@ -15,7 +15,7 @@ With `--fork`, the server starts a **template process**. When you register a pro
 
 Each new CDP connection is then served by a `fork()` of the template. The forked process starts with every profile's page already booted, and shares its memory with the template copy-on-write: a page uses new memory only for what it changes. When the connection closes, its process exits and all of its memory goes back to the operating system at once.
 
-The SDK detects fork mode by itself (`Pyro.capabilities` reports `{ fork: true }`). Each `pyro.page({ as })` opens its own connection, forked from that profile's snapshot, and closing the page ends the process.
+The SDK detects fork mode by itself (the CDP command `Pyro.capabilities` reports `{ fork: true }`). Each `pyro.page({ as })` opens its own connection, forked from that profile's snapshot, and closing the page ends the process.
 
 Fork mode is available on macOS on Apple silicon and on Linux x64 and arm64. The macOS Intel build has no fork mode.
 
@@ -127,17 +127,26 @@ await pyro.profile('alice', { url: `${BASE}/login`, setup: signInSteps('alice') 
 await pyro.warm('alice', 10_000);
 ```
 
-`releaseProfile` drops this client's hold, and the server retires a profile once no client holds it and no other profile derives from it. Registering the same name with the same definition while it is still held adopts the existing snapshot instead of booting again, so release first. Pages already open keep running from the old snapshot.
+`releaseProfile` drops this client's hold, and the server retires a profile once no client holds it and no other profile derives from it. Registering the same name with the same definition while it is still held adopts the existing snapshot instead of booting again, so release first. Other clients that adopted the profile (see the next section) hold it too: they must release it as well, or you register the fresh sign-in under a new name (`alice-2`) and point new jobs at that. Pages already open keep running from the old snapshot.
 
 A simple policy: re-register on a timer shorter than the site's session lifetime, or when a job's first check finds the page signed out.
 
 ## One server, many worker processes
 
-A fork-mode server keeps profiles by name for all its clients. Start the server and register the profiles in one launcher process, then hand its endpoint to worker processes. The launcher below uses `Bun.spawn`; with Node.js use `child_process.spawn`. `signInSteps` is the helper from the previous section.
+A fork-mode server keeps profiles by name for all its clients. Start the server and register the profiles in one launcher process, then hand its endpoint to worker processes. The launcher below uses `Bun.spawn`; with Node.js use `child_process.spawn`.
 
 ```ts
 // launcher.ts
-import { Pyro } from '@povio/pyro';
+import { Pyro, button, css, label, waitForUrl } from '@povio/pyro';
+
+const BASE = 'http://127.0.0.1:4500';
+const signInSteps = (user: string) => [
+  label('User').fill(user),
+  label('Password').fill(process.env[`PASSWORD_${user.toUpperCase()}`] ?? ''),
+  button('Sign in').click(),
+  waitForUrl('/account'),
+  css('.order').first().read('firstOrder'),
+];
 
 const pyro = await Pyro.launch({ args: ['--fork', '--cdp-max-connections', '64'] });
 await pyro.profile('alice', { url: `${BASE}/login`, setup: signInSteps('alice') });
@@ -168,7 +177,7 @@ try {
 }
 ```
 
-A worker's `pyro.page({ as: 'alice' })` adopts the profile the launcher registered (`pyro.adopt(name)` does it explicitly). A worker calling `pyro.profile(name, def)` with the same definition adopts it too; a different definition under a name another client holds is refused. A client holds the profiles it registered or adopted until it calls `releaseProfile` or disconnects. `Pyro.preparedProfiles` lists the names and how many clients hold each.
+A worker's `pyro.page({ as: 'alice' })` adopts the profile the launcher registered (`pyro.adopt(name)` does it explicitly). A worker calling `pyro.profile(name, def)` with the same definition adopts it too; a different definition under a name another client holds is refused. A client holds the profiles it registered or adopted until it calls `releaseProfile` or disconnects. The CDP command `Pyro.preparedProfiles` lists the names and how many clients hold each: `await pyro.cdp.send('Pyro.preparedProfiles')` returns `{ profiles: [{ name, profileId, url, holders }] }`.
 
 The same works with a long-running server you start yourself (`pyro serve --fork --port 9222`) and clients that `Pyro.connect('ws://127.0.0.1:9222/')`. See [One server, many workers](/e2e/shared-server).
 
@@ -194,7 +203,7 @@ Fork profiles win when you run many short jobs as the same identity against a he
 
 - **Connections.** In fork mode each page is a connection, and the server accepts `--cdp-max-connections` at once (default 16). Further connections wait until one closes. Raise it to the number of jobs you run at once.
 - **Spare forks.** Each template keeps `PYRO_FORK_SPARES` forks waiting (default 2) so a connection does not wait for its fork.
-- **JIT tiers.** Forks run without JavaScriptCore's DFG and FTL optimizing tiers, because connections are usually too short for them to pay off. Set `JSC_useDFGJIT` in the server's environment to turn them back on for long jobs.
+- **JIT tiers.** Forks run without JavaScriptCore's DFG and FTL optimizing tiers, because connections are usually too short for them to pay off. Set `JSC_useDFGJIT=true` in the server's environment to turn them back on for long jobs.
 - **Profile ids are per server.** A restart forgets every profile; register them again on start.
 
 ## Related

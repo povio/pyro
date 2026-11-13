@@ -158,7 +158,7 @@ The worker count is not capped by the number of files, because parallel describe
 
 `webServer` is one object or a list. For each:
 
-1. If `url` (or `port`) already answers, the server is reused, unless `reuseExistingServer: false`, which is an error.
+1. If `url` (or `port`) already answers, the server is reused, unless `reuseExistingServer: false`, which is an error. Unlike Playwright, an unset `reuseExistingServer` reuses. Make sure nothing else listens on that port: the runner reuses whatever answers.
 2. Otherwise `command` runs in a shell, in `cwd` (relative to the config file) with `env` added, in its own process group.
 3. The runner polls `url` (any status below 404, or 405) or the TCP `port` every 100 ms until it answers, for up to `timeout` (default 60 000 ms). It fails if the command exits first.
 
@@ -170,14 +170,14 @@ The worker count is not capped by the number of files, because parallel describe
 
 ## Reporting
 
-The report shows each test as it finishes: passes, failures, skips (declared, or `test.skip()` at run time), flaky tests (passed on a retry) and expected failures (`test.fail()`). The tests' own `console.log` output is printed per worker, prefixed with `[w0]`, `[w1]`, ... After the run come the failures with their errors and a summary.
+The report shows each test as it finishes: passes, failures, skips (declared, or `test.skip()` at run time, with the reason in parentheses), flaky tests (passed on a retry) and expected failures (`test.fail()`). The tests' own `console.log` output is printed per worker, prefixed with `[w0]`, `[w1]`, ... After the run come the failures with their errors and a summary.
 
 ```text
 Running 2 files using 4 workers
 
   ✓   1 e2e/todo.spec.ts › todos › adds a todo (359ms)
   ✘   2 e2e/todo.spec.ts › todos › ua and role (4962ms)
-  -   3 e2e/todo.spec.ts › todos › runtime skip (skipped at run time)
+  -   3 e2e/todo.spec.ts › todos › runtime skip (needs FEATURE_X)
 
   1 failed
   1 skipped

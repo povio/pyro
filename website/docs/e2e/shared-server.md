@@ -6,6 +6,8 @@ If you can use [`pyro e2e`](/e2e/runner) instead, do: it runs every file in one 
 
 ## The pattern
 
+The app is the one the [suite runner](/e2e/runner#a-spec-file) example uses (a todo app with a sign-in screen); `../server` exports its `startServer()`.
+
 ```ts
 // shared/run.ts: starts the app and one fork-mode browser, boots the shared
 // profile once, then runs `bun test --parallel` against it.
@@ -55,6 +57,8 @@ test.concurrent('a: uses its own derived profile', async () => {
   await page.run([check(label('New todo')).value('a')]);
 });
 ```
+
+`shared/b.test.ts` is the same file with `b` in place of `a`.
 
 ```sh
 $ bun shared/run.ts
