@@ -84,7 +84,7 @@ pub fn compute_root_layout(
     compute_root_layout_in(tree, root, available_space, available_space)
 }
 
-/// lightningpanda: [`compute_root_layout`] with an initial containing block of another size than the
+/// pyro: [`compute_root_layout`] with an initial containing block of another size than the
 /// space the root is laid out in: Blink's print layout has one rounded down and one rounded up.
 pub fn compute_root_layout_in(
     tree: &mut (impl crate::tree::LayoutContainingBlock + CacheTree),
@@ -196,7 +196,7 @@ pub fn compute_root_layout_in(
             let claims = tree.get_core_container_style(root).is_containing_block();
             !claims.absolute && !claims.fixed
         } {
-            // lightningpanda: a root which claims no out-of-flow box itself hoists exactly the boxes
+            // pyro: a root which claims no out-of-flow box itself hoists exactly the boxes
             // of this pass, which may differ from the last run's even when its own layout is cached:
             // a box relaid here (its ancestors' layout untouched) can surface other candidates.
             tree.clear_hoisted_children(root);

@@ -37,10 +37,10 @@ binaries, so their results must not be added together.
 - Binary: the immutable `9f100bd` release build, SHA-256
   `3da6500e6f7f8f14589875998d2d8b0531206dc535fd62cab033be7550cd2406`. It was
   rehashed before the run and not rebuilt.
-- Fixture: a fresh, clean `git worktree add --detach` (`/private/tmp/lp-tos-f9f-batch18`).
+- Fixture: a fresh, clean `git worktree add --detach` (`/private/tmp/pyro-tos-f9f-batch18`).
   The manifest hash was verified after install.
 - Setup: frozen install, one Playwright worker, and native PostgreSQL 17 with the
-  `lp_bench` role and a per-run slug and template database.
+  `pyro_bench` role and a per-run slug and template database.
   - Backend test token into localStorage, not UI login.
   - The same direct-lane version-gate bypass as earlier batches.
   - After the exact-name run-owned cleanup, the test role owned zero databases.
@@ -48,7 +48,7 @@ binaries, so their results must not be added together.
 - Time: Playwright 16.7 s and 54.5 s whole harness. This is not a performance
   comparison.
 - No files were cleaned up for this batch.
-- Artifacts: `/private/tmp/lp-tos-batch18`.
+- Artifacts: `/private/tmp/pyro-tos-batch18`.
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and
 assertion depth apply. Single runs do not establish flake rates.

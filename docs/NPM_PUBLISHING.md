@@ -1,22 +1,21 @@
-# Publishing @povio/lightning-panda
+# Publishing @povio/pyro
 
-One public npm package contains the testing API, `lightningpanda` CLI launcher,
-and two native browsers: `native/darwin-arm64/lightningpanda` and
-`native/darwin-x64/lightningpanda`. The source package lives at
-`packages/lightning-panda`.
+One public npm package contains the testing API, `pyro` CLI launcher,
+and two native browsers: `native/darwin-arm64/pyro` and
+`native/darwin-x64/pyro`. The source package lives at
+`packages/pyro`.
 The browsers require macOS 14 or newer, or Linux with glibc 2.39+ (Ubuntu 24.04,
 Debian 13, Fedora 40 or newer) on x64 or arm64; `native/linux-<arch>/` holds
-the browser with its patched JavaScriptCore and ICU in `lib/`. Remote CDP connections can be used from
+the browser (patched JavaScriptCore linked in) with its ICU in `lib/`. Remote CDP connections can be used from
 other operating systems; the package deliberately has no `os` restriction.
 
 Both browsers have rendering enabled. The **arm64 browser is the fork-capable
-build**: it is linked against the patched JavaScriptCore, which ships beside it
-as `native/darwin-arm64/lib/libJavaScriptCore.dylib`
-(`scripts/release/bundle-jsc.sh`), so fork mode (`--fork`) and the patched
-engine's fast paths work out of the box. The Intel browser uses **system
-JavaScriptCore** (the patched library is built for arm64 only), so it has no
-fork mode. `npm pack` refuses an arm64 browser without its library. No
-install-time scripts or downloads run.
+build**: the patched JavaScriptCore is linked into it (a static archive,
+`scripts/jsc/build.sh`), so fork mode (`--fork`) and the patched engine's fast
+paths work out of the box with no library beside it. The Intel browser uses
+**system JavaScriptCore** (the patched library is built for arm64 only), so it
+has no fork mode. `npm pack` refuses a `native/darwin-arm64/lib` left by a
+build that still shipped the library. No install-time scripts or downloads run.
 
 ## One-time npm setup
 
@@ -29,11 +28,11 @@ Publish the first version locally using your npm account with 2FA. With both
 native binaries staged as described below, run:
 
 ```sh
-cd packages/lightning-panda
+cd packages/pyro
 bun install --frozen-lockfile
 npm login
 npm pack
-npm publish ./povio-lightning-panda-0.0.17.tgz --access public --tag latest
+npm publish ./povio-pyro-0.0.17.tgz --access public --tag latest
 ```
 
 Use the tarball filename for the actual package version. `npm pack` runs the
@@ -51,7 +50,7 @@ package settings:
 
 - Provider: GitHub Actions
 - Organization/user: `povio`
-- Repository: `lightningpanda`
+- Repository: `pyro`
 - Workflow filename: `publish-npm.yml`
 - Environment: leave blank (the workflow does not use a GitHub Environment)
 
@@ -115,20 +114,20 @@ Without `--write`, the release script only validates the tag and prints its
 version and npm dist-tag. It does not change any files.
 
 ```sh
-cd packages/lightning-panda
+cd packages/pyro
 bun install --frozen-lockfile
 bun run build
 bun run test:package
 ```
 
 To pack a complete release locally, build on both native architectures with
-`LP_JSC=system cargo build --locked --release -p lightningpanda --features render`
+`PYRO_JSC=system cargo build --locked --release -p pyro --features render`
 from the repository root. Copy each output to its corresponding
-`packages/lightning-panda/native/darwin-{arm64,x64}/lightningpanda` path.
+`packages/pyro/native/darwin-{arm64,x64}/pyro` path.
 Preserve the binaries' ad hoc signatures and JIT entitlements. Then run:
 
 ```sh
-cd packages/lightning-panda
+cd packages/pyro
 npm pack
 ```
 
@@ -136,14 +135,14 @@ npm pack
 sets executable permissions, and copies the root `LICENSE` and `NOTICE`. It
 refuses incomplete packages. The generated native files, `dist/`, copied notices
 and tarballs are ignored by git. The tarball is named
-`povio-lightning-panda-<version>.tgz`.
+`povio-pyro-<version>.tgz`.
 
 `scripts/pack-test-client.sh OUT_DIR [ARCHIVE_DIR]` uses the same prepack checks
 and can additionally unpack the package into a legacy archive's
-`lightning-panda/` directory.
+`pyro-client/` directory.
 
 The workflow's `npm-package` artifact is the exact tarball installed by smoke
 tests and subsequently published. To test it manually, install it into a clean
 temporary project with `npm install --ignore-scripts /absolute/path/package.tgz`,
-run `./node_modules/.bin/lightningpanda version`, and run
+run `./node_modules/.bin/pyro version`, and run
 `node /absolute/path/to/repo/scripts/npm/smoke.mjs` from that project.

@@ -19,13 +19,13 @@ syscall costs as pessimistic.
 | navigate simple (`page.navigate.simple`) | 2641 µs | 180 µs | same realm rebuild: JSC 1637, DOM 360, GC 106, watchdog 82 |
 
 ¹ cross-thread wake/park (self-pipe `write`/`poll`/`read`, tokio `kevent`), socket `sendto`/`recvfrom`, tokio,
-serde JSON, WebSocket framing, outbox. ² Includes `lp_browser` `sleep`/`post`, which wrap the pipe.
+serde JSON, WebSocket framing, outbox. ² Includes `pyro_browser` `sleep`/`post`, which wrap the pipe.
 
 ## Hot spots and waste
 
 1. **Cross-thread hop per command (≈ 11–15 µs CPU, ≈ 15 µs latency).** The socket thread (tokio, main
    thread) posts each message to the browser thread through a self-pipe (`write`). The browser thread wakes
-   from `poll` and drains with `read` (`lp_runtime::wake::Sleeper`). The reply goes back through a tokio
+   from `poll` and drains with `read` (`pyro_runtime::wake::Sleeper`). The reply goes back through a tokio
    mpsc, whose waker triggers `kevent`, and tokio parks in `kevent` again after every write. That is 5–6
    syscalls per command on top of `recvfrom` + `sendto`. The perf-trace stages show the same thing as latency:
    `io.to_browser` 8–10 µs, `io.outbound_queue` 4.7–5.3 µs and `outbox.push` 1.6 µs (it includes the wake).
@@ -39,7 +39,7 @@ serde JSON, WebSocket framing, outbox. ² Includes `lp_browser` `sleep`/`post`, 
    binding call (93 µs/op), `JSValueProtect`/`Unprotect` for each Persistent cost ≈ 0.23 ms/op, and
    `JSValueIsObjectOfClass` ≈ 30 µs/op. `drain_finalized` → `JSWeakRelease` → `~JSLockHolder` drains the
    microtask queue (120 µs of 204 µs). `Value::to_string` (DOM strings) costs 148 µs and wrapper creation 172 µs.
-4. **Realm creation per page (`target.lifecycle`, every navigation).** `lp_js::realm::install_classes` /
+4. **Realm creation per page (`target.lifecycle`, every navigation).** `pyro_js::realm::install_classes` /
    `install_members_raw` / `structured_clone::install` make JS calls costing ≈ 0.8–1 ms per realm. DFG
    compiles them over and over (`DFG::AbstractInterpreter::executeEffects` ≈ 96 µs, `Plan::compileInThread`).
    `Watchdog::startTimer` → `thread_selfusage` costs 80 µs per realm, about 1 µs per VM entry.

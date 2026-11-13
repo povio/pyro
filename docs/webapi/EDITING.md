@@ -1,6 +1,6 @@
 # Editing, clipboard and caret APIs
 
-Code: `crates/lp-webapi/src/editing.rs` (selection, contenteditable typing),
+Code: `crates/pyro-webapi/src/editing.rs` (selection, contenteditable typing),
 `edit_commands.rs` (granular moves and deletions, `Selection.modify`,
 multi-click, `execCommand`/`queryCommand*`, undo), `clipboard.rs` (copy, cut,
 paste) and `editing_globals.rs`/`.js` (`ClipboardEvent`, `CaretPosition`,

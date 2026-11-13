@@ -1,4 +1,4 @@
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-dom)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-dom)
     Finished `release` profile [optimized] target(s) in 5.33s
      Running tests/layout.rs (target/release/deps/layout-7fddc7aed37eea63)
 

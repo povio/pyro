@@ -3,7 +3,7 @@
 2026-10-27T13:45:33.404Z on Apple M1 Max (10 CPUs, darwin 27.0.0), 3 round(s), scale 1.
 Load average at start 18.16/19.78/16.39, at end 17.66/19.65/16.37.
 
-- **traced**: `/Users/xban1x/Povio/lp-cdp-perf-wt/target-perf/release/lightningpanda` sha256 `dce293f375c99563`, startup median 6.756 ms
+- **traced**: `/Users/xban1x/Povio/pyro-cdp-perf-wt/target-perf/release/pyro` sha256 `dce293f375c99563`, startup median 6.756 ms
 
 Times are milliseconds per sample (median, p90 over all rounds); `rsd` is the robust relative spread; `cpu/op` is browser CPU per operation.
 
@@ -112,7 +112,7 @@ Timer floor: clock 18.4 ns, one record 56.2 ns.
 | io.ws_decode | 618.4 | 1.01 | 612.2 | 384 | 5120 |
 | outbox.push | 315.8 | 1.01 | 312.7 | 320 | 768 |
 | host.flush | 39.6 | 1.01 | 39.2 | 40 | 80 |
-| cdp.dispatch LP.perfReset | 30 | 0.01 | 3000 | 2560 | 2560 |
+| cdp.dispatch Pyro.perfReset | 30 | 0.01 | 3000 | 2560 | 2560 |
 
 ### runtime.callFunctionOn.small [traced]
 
@@ -134,7 +134,7 @@ Timer floor: clock 17.9 ns, one record 56 ns.
 | io.ws_decode | 273.3 | 1 | 272.4 | 192 | 768 |
 | outbox.push | 164.8 | 1 | 164.3 | 80 | 512 |
 | host.flush | 39.8 | 1 | 39.7 | 40 | 80 |
-| cdp.dispatch LP.perfReset | 11.1 | 0 | 3333 | 3072 | 3072 |
+| cdp.dispatch Pyro.perfReset | 11.1 | 0 | 3333 | 3072 | 3072 |
 
 ### runtime.callFunctionOn.38KB [traced]
 
@@ -156,7 +156,7 @@ Timer floor: clock 18.5 ns, one record 56 ns.
 | json.serialize | 322.7 | 1 | 321.1 | 224 | 1024 |
 | outbox.push | 198.6 | 1 | 197.6 | 80 | 640 |
 | host.flush | 41.9 | 1 | 41.6 | 40 | 80 |
-| cdp.dispatch LP.perfReset | 16.9 | 0.01 | 3375 | 3072 | 3072 |
+| cdp.dispatch Pyro.perfReset | 16.9 | 0.01 | 3375 | 3072 | 3072 |
 
 ### runtime.handle+release [traced]
 
@@ -200,7 +200,7 @@ Timer floor: clock 17.9 ns, one record 57.1 ns.
 | json.serialize | 442.9 | 1 | 440.7 | 320 | 1536 |
 | outbox.push | 212.3 | 1 | 211.3 | 112 | 512 |
 | host.flush | 38.1 | 1 | 37.9 | 40 | 40 |
-| cdp.dispatch LP.perfReset | 19 | 0.01 | 3792 | 3584 | 3584 |
+| cdp.dispatch Pyro.perfReset | 19 | 0.01 | 3792 | 3584 | 3584 |
 
 ### dom.textContent.2k [traced]
 
@@ -222,7 +222,7 @@ Timer floor: clock 18.8 ns, one record 56 ns.
 | outbox.push | 212.1 | 1.01 | 210 | 80 | 512 |
 | cdp.params | 203.3 | 1 | 203.3 | 160 | 640 |
 | host.flush | 37 | 1.01 | 36.7 | 40 | 80 |
-| cdp.dispatch LP.perfReset | 30 | 0.01 | 3000 | 2560 | 2560 |
+| cdp.dispatch Pyro.perfReset | 30 | 0.01 | 3000 | 2560 | 2560 |
 
 ### dom.mutate.1k [traced]
 
@@ -243,7 +243,7 @@ Timer floor: clock 18.5 ns, one record 63.9 ns.
 | io.ws_decode | 1198.3 | 1.02 | 1174.8 | 640 | 16384 |
 | remote.describe | 1156.6 | 1 | 1156.6 | 1024 | 2560 |
 | outbox.push | 339.2 | 1.02 | 332.5 | 256 | 1024 |
-| cdp.dispatch LP.perfReset | 98.3 | 0.02 | 4917 | 4096 | 4096 |
+| cdp.dispatch Pyro.perfReset | 98.3 | 0.02 | 4917 | 4096 | 4096 |
 | host.flush | 43.3 | 1.02 | 42.5 | 40 | 80 |
 
 ### dom.handle.describe+quads [traced]
@@ -269,7 +269,7 @@ Timer floor: clock 18.5 ns, one record 56.2 ns.
 | cdp.params | 1105 | 5 | 221 | 112 | 768 |
 | outbox.push | 767.6 | 4 | 191.7 | 80 | 640 |
 | host.flush | 192.2 | 4 | 48 | 40 | 80 |
-| cdp.dispatch LP.perfReset | 23.3 | 0.01 | 4666 | 4096 | 4096 |
+| cdp.dispatch Pyro.perfReset | 23.3 | 0.01 | 4666 | 4096 | 4096 |
 
 ### page.navigate.dom2k [traced]
 
@@ -287,7 +287,7 @@ Timer floor: clock 18.3 ns, one record 60.1 ns.
 | io.ws_decode | 1398.6 | 1.03 | 1353.5 | 768 | 4096 |
 | outbox.push | 1238.7 | 9.03 | 137.1 | 80 | 512 |
 | cdp.params | 791.7 | 1 | 791.7 | 640 | 1536 |
-| cdp.dispatch LP.perfReset | 137.5 | 0.03 | 4125 | 4096 | 4096 |
+| cdp.dispatch Pyro.perfReset | 137.5 | 0.03 | 4125 | 4096 | 4096 |
 | host.flush | 38.8 | 1.03 | 37.6 | 40 | 80 |
 
 ### input.mouse.click [traced]
@@ -307,7 +307,7 @@ Timer floor: clock 18.6 ns, one record 56.1 ns.
 | json.serialize | 347.7 | 2 | 173.4 | 160 | 768 |
 | outbox.push | 222.3 | 2 | 110.9 | 80 | 512 |
 | host.flush | 78.9 | 2 | 39.4 | 40 | 80 |
-| cdp.dispatch LP.perfReset | 17.5 | 0.01 | 3500 | 3072 | 3072 |
+| cdp.dispatch Pyro.perfReset | 17.5 | 0.01 | 3500 | 3072 | 3072 |
 
 ### input.key.type [traced]
 
@@ -326,7 +326,7 @@ Timer floor: clock 18.2 ns, one record 53.7 ns.
 | json.serialize | 326.3 | 2 | 162.7 | 160 | 448 |
 | outbox.push | 247.8 | 2 | 123.6 | 80 | 512 |
 | host.flush | 79.6 | 2 | 39.7 | 40 | 80 |
-| cdp.dispatch LP.perfReset | 17.5 | 0.01 | 3500 | 3072 | 3072 |
+| cdp.dispatch Pyro.perfReset | 17.5 | 0.01 | 3500 | 3072 | 3072 |
 
 ### wv.navigate.dom2k [traced]
 
@@ -348,6 +348,6 @@ Timer floor: clock 17.8 ns, one record 56.9 ns.
 | cdp.params | 1677.8 | 2 | 838.9 | 768 | 1280 |
 | io.ws_decode | 1641.5 | 2.03 | 807.3 | 512 | 2048 |
 | outbox.push | 1342.6 | 10.03 | 133.8 | 80 | 512 |
-| cdp.dispatch LP.perfReset | 100 | 0.03 | 3000 | 2560 | 2560 |
+| cdp.dispatch Pyro.perfReset | 100 | 0.03 | 3000 | 2560 | 2560 |
 | host.flush | 82 | 2.03 | 40.3 | 40 | 80 |
 

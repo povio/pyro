@@ -1,4 +1,4 @@
-// Spawn-to-first-assertion timing for `lightningpanda serve`, two setups:
+// Spawn-to-first-assertion timing for `pyro serve`, two setups:
 //   server:  a front-end build served by a separate static HTTP server, auth
 //            injected per context through Playwright storageState + init script
 //            (what the TOS fixtures do today);
@@ -56,7 +56,7 @@ const free = () => new Promise((r, j) => { const s = net.createServer(); s.on('e
 
 // A small single-page app: shell + script + stylesheet + a JSON asset. The
 // script renders from localStorage like a token-gated front end.
-const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-first-test-'));
+const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'pyro-first-test-'));
 fs.mkdirSync(path.join(dist, 'assets'));
 let extraTags = '';
 for (let i = 0; i < assets; i++) {
@@ -107,7 +107,7 @@ async function once(mode) {
     if (mode === 'prepared') extra.push('--prepare', `${origin}/dashboard`);
   }
   const t0 = performance.now();
-  const env = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', LIGHTNINGPANDA_STATIC_DIRECT: mode === 'overlay' ? '0' : '1' };
+  const env = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_STATIC_DIRECT: mode === 'overlay' ? '0' : '1' };
   const child = spawn(bin, ['serve', '--host', '127.0.0.1', '--port', String(port), ...FLAGS, ...extra], { stdio: 'ignore', env });
   const rec = { ready: null, connected: null, context: null, page: null, loaded: null, asserted: null, reload: null, error: null };
   let browser;
@@ -125,7 +125,7 @@ async function once(mode) {
       const cdp = await browser.newBrowserCDPSession();
       const defaultContext = browser.contexts()[0];
       const take = async () => {
-        const [page] = await Promise.all([defaultContext.waitForEvent('page'), cdp.send('Lightningpanda.acquirePreparedPage', { url: origin + '/dashboard' })]);
+        const [page] = await Promise.all([defaultContext.waitForEvent('page'), cdp.send('Pyro.acquirePreparedPage', { url: origin + '/dashboard' })]);
         await page.waitForLoadState('load');
         return page;
       };

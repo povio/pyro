@@ -1,5 +1,5 @@
 # Standalone manifest for the vendored copy (workspace inheritance resolved by
-# lightningpanda; see README.lightningpanda.md).
+# pyro; see README.pyro.md).
 
 [package]
 name = "blitz-paint"
@@ -16,7 +16,7 @@ rust-version = "1.91.0"
 [features]
 default = ["svg"]
 tracing = ["dep:tracing"]
-svg = ["dep:anyrender_svg", "dep:usvg", "blitz-dom/svg"]
+svg = ["dep:anyrender_svg", "blitz-dom/svg"]
 "custom-widget" = ["blitz-dom/custom-widget"]
 "font-embolden" = []
 "apple-font-embolden" = []
@@ -27,15 +27,13 @@ anyrender = { version = "0.14.0" }
 anyrender_svg = { optional = true, version = "0.15.0" }
 blitz-traits = { version = "=0.3.0-beta.4", default-features = false }
 blitz-dom = { version = "=0.3.0-beta.4", default-features = false }
-style = { version = "0.23.0", package = "stylo" }
-euclid = { version = "0.22" }
+style = { version = "0.24.0", package = "stylo" }
 taffy = { default-features = false, features = ["std", "flexbox", "flexbox_balance", "grid", "block_layout", "content_size", "calc", "detailed_layout_info"], version = "0.15" }
 parley = { version = "0.12", default-features = false, features = ["std", "bytemuck"] }
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
 color = { version = "0.3" }
 peniko = { version = "0.6.0" }
 kurbo = { version = "0.13.1" }
-usvg = { version = "0.48.1", optional = true }
 bytemuck = { version = "1" }
 smallvec = { version = "1" }
 tracing = { version = "0.1.40", optional = true }

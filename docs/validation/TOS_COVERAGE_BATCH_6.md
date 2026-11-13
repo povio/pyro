@@ -53,7 +53,7 @@ that the page stays put. This run does not validate any download functionality.
     the harness-generated `apps/pdfgen/src/data/common/common.models.ts`, left in
     place.
   - The `92a679b` run used its own fresh, clean fixture.
-- Setup: one Playwright worker, native PostgreSQL 17 with the `lp_bench` role, and
+- Setup: one Playwright worker, native PostgreSQL 17 with the `pyro_bench` role, and
   a per-run slug and template database. After each cleanup the test role owned
   zero databases.
 - Host: MacBookAir.localdomain, Apple M1, 8 GiB.
@@ -68,12 +68,12 @@ that the page stays put. This run does not validate any download functionality.
 - Disk cleanup: after these runs, the parent authorized removing only `deps`,
   `build`, `incremental` and `.fingerprint` under eight older completed browser
   clones' `target/release`. Retained binary SHA-256s were unchanged; the audit is
-  in `/private/tmp/lp-tos-cleanup-1017b`.
+  in `/private/tmp/pyro-tos-cleanup-1017b`.
 
 Artifacts:
-- `/private/tmp/lp-tos-batch6`
-- `/private/tmp/lp-tos-batch6-up`
-- `/private/tmp/lp-tos-batch6-blob`
+- `/private/tmp/pyro-tos-batch6`
+- `/private/tmp/pyro-tos-batch6-up`
+- `/private/tmp/pyro-tos-batch6-blob`
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and
 assertion depth apply. Single runs do not establish flake rates.

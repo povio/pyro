@@ -6,12 +6,12 @@
     "tos_commit": "6e7f7cfb5647f92df57cf8801b23d02cab1942d0",
     "run_slug": "lpsuite19calendar-1019-025718",
     "template_database": "fe_e2e_w2tpl_6e7f7cfb_lptoscalendar6e7_template",
-    "binary": "/private/tmp/lp-suite-20261019/lightningpanda-5b46788",
-    "worktree": "/private/tmp/lp-tos-calendar-6e7f7cf-fx",
+    "binary": "/private/tmp/pyro-suite-20261019/pyro-5b46788",
+    "worktree": "/private/tmp/pyro-tos-calendar-6e7f7cf-fx",
     "auth": "backend test-token -> localStorage; no UI login",
     "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
     "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
-    "lightningpanda_shared_asset_cache_mb": "64",
+    "pyro_shared_asset_cache_mb": "64",
     "expected_selected_cases": 1,
     "specs": [
       "e2e/calendar/calendar-filters.e2e.ts"
@@ -44,7 +44,7 @@
     }
   ],
   "setup_failure_before": {
-    "path": "/private/tmp/lp-suite-20261019/calendar-corrected",
+    "path": "/private/tmp/pyro-suite-20261019/calendar-corrected",
     "tests_executed": 0,
     "reason": "prepared database missing; source runtime cache matched"
   },

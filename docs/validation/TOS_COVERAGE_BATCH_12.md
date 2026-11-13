@@ -15,12 +15,12 @@ templates as HTML rows and opens the nested folder details".
 - The test calls `page.keyboard.press("ArrowRight")` to expand a folder.
 - On macOS, Playwright 1.59.1 attaches Mac editing `commands` to key events, here
   `["moveRight"]`. On Linux it sends none.
-- lp-cdp rejected any non-empty `commands` with "Input editing commands … not
+- pyro-cdp rejected any non-empty `commands` with "Input editing commands … not
   supported".
-- A minimal repro (`/private/tmp/lp-keypress-repro`) shows ArrowRight, ArrowLeft
+- A minimal repro (`/private/tmp/pyro-keypress-repro`) shows ArrowRight, ArrowLeft
   and Home rejected on the rewrite but accepted on upstream. Enter and printable
   keys work on both.
-- The fix belongs to W3 (lp-cdp) and has been routed there.
+- The fix belongs to W3 (pyro-cdp) and has been routed there.
 
 After W3's fix, the unchanged docubox-templates file will be rerun. Accepting
 `commands` would only stop rejecting Playwright's macOS key events. It would not
@@ -66,10 +66,10 @@ binaries, so their results must not be added together.
 
 - Fixture:
   - The rewrite run used a fresh, clean `git worktree add --detach`
-    (`/private/tmp/lp-tos-f9f-batch12`).
+    (`/private/tmp/pyro-tos-f9f-batch12`).
   - The upstream run reused it to save disk space. Its e2e tree was verified
     unchanged; the only change was the harness-generated pdfgen model.
-- Setup: one Playwright worker and native PostgreSQL 17 with the `lp_bench` role
+- Setup: one Playwright worker and native PostgreSQL 17 with the `pyro_bench` role
   and a per-run slug and template database.
   - Backend test token into localStorage, not UI login.
   - The same direct-lane version-gate bypass as earlier batches.
@@ -85,9 +85,9 @@ binaries, so their results must not be added together.
 
 - No files were cleaned up for this batch.
 - Artifacts:
-  - `/private/tmp/lp-tos-batch12`
-  - `/private/tmp/lp-tos-batch12-up`
-  - `/private/tmp/lp-keypress-repro`
+  - `/private/tmp/pyro-tos-batch12`
+  - `/private/tmp/pyro-tos-batch12-up`
+  - `/private/tmp/pyro-keypress-repro`
 
 ## Rerun of the docubox-templates file on integrated main `9f100bd`
 
@@ -108,7 +108,7 @@ Integrated main `9f100bd0b7dcbb62a77f70dfcaa823d8dc67717b` contains W3's PR #66
 - This rerun covers only the docubox-templates file. It is separate from the
   12/13 and 13/13 runs above, and no full-batch result is claimed.
 - The minimal key repro on `9f100bd`
-  (`/private/tmp/lp-keypress-repro/results-9f100bd.txt`) shows ArrowRight,
+  (`/private/tmp/pyro-keypress-repro/results-9f100bd.txt`) shows ArrowRight,
   ArrowLeft, Enter and `a` accepted, and Home still refused. No support for
   unsupported keys is claimed.
 
@@ -119,14 +119,14 @@ Rerun provenance:
   `3da6500e6f7f8f14589875998d2d8b0531206dc535fd62cab033be7550cd2406`, built with
   its own target directory and rehashed before the run.
 - Fixture: to save disk space, the rerun reused the batch 12 fixture
-  `/private/tmp/lp-tos-f9f-batch12` at `f9fde4aa0d`.
+  `/private/tmp/pyro-tos-f9f-batch12` at `f9fde4aa0d`.
   - Its e2e tree was verified unchanged and the manifest hash matched.
   - The only change was the harness-generated pdfgen model.
 - Databases: fresh per-run slug and template. After the exact-name run-owned
   cleanup, the test role owned zero databases.
 - Time: Playwright 9.5 s and 37.9 s whole harness. This is not a performance
   comparison.
-- Artifacts: `/private/tmp/lp-tos-batch12-keyfix`, including `rerun-subset.json`
+- Artifacts: `/private/tmp/pyro-tos-batch12-keyfix`, including `rerun-subset.json`
   (6 of the 13 selected cases).
 - The pinned `82477c9` binary and the earlier batch 12 evidence are unchanged.
 

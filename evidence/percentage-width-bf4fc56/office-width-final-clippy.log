@@ -56,7 +56,7 @@
     Checking tracing-core v0.1.36
     Checking http-body v1.1.0
     Checking tokio v1.53.3
-   Compiling lp-jsc-sys v0.1.0 (/private/tmp/lp-office-widths/crates/lp-jsc-sys)
+   Compiling pyro-jsc-sys v0.1.0 (/private/tmp/pyro-office-widths/crates/pyro-jsc-sys)
     Checking httparse v1.10.1
     Checking block-buffer v0.10.4
     Checking icu_provider v2.3.1
@@ -82,7 +82,7 @@
     Checking crc32fast v1.5.2
     Checking form_urlencoded v1.2.2
     Checking cpufeatures v0.2.17
-    Checking lp-dom v0.1.0 (/private/tmp/lp-office-widths/crates/lp-dom)
+    Checking pyro-dom v0.1.0 (/private/tmp/pyro-office-widths/crates/pyro-dom)
     Checking futures-channel v0.3.34
     Checking tower-service v0.3.3
     Checking psl-types v2.0.11
@@ -95,13 +95,13 @@
     Checking http-body-util v0.1.5
     Checking base64 v0.23.1
     Checking url v2.5.8
-    Checking lp-js v0.1.0 (/private/tmp/lp-office-widths/crates/lp-js)
+    Checking pyro-js v0.1.0 (/private/tmp/pyro-office-widths/crates/pyro-js)
     Checking getrandom v0.3.4
     Checking sha2 v0.10.9
     Checking sha1 v0.10.7
     Checking cookie v0.18.2
     Checking hyper v1.12.0
     Checking hyper-util v0.1.21
-    Checking lp-net v0.1.0 (/private/tmp/lp-office-widths/crates/lp-net)
-    Checking lp-webapi v0.1.0 (/private/tmp/lp-office-widths/crates/lp-webapi)
+    Checking pyro-net v0.1.0 (/private/tmp/pyro-office-widths/crates/pyro-net)
+    Checking pyro-webapi v0.1.0 (/private/tmp/pyro-office-widths/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 7.06s

@@ -130,7 +130,7 @@ pub use linebender_resource_handle::FontData;
 pub use parlance::BaseDirection;
 pub use parley_engine::break_overrides::{
     AsciiLineBreakTable, AsciiLineBreakTableBuilder, CHROMIUM_LINE_BREAK_OVERRIDE,
-    LineBreakContext, LineBreakOverrideFn,
+    HYPHEN_DIGIT_LINE_BREAK_OVERRIDE, LineBreakContext, LineBreakOverrideFn,
 };
 
 pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};

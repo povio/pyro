@@ -1,12 +1,12 @@
 # Dedicated workers
 
-`crates/lp-webapi/src/worker.rs` (page side) and `worker_scope.rs` (worker side)
+`crates/pyro-webapi/src/worker.rs` (page side) and `worker_scope.rs` (worker side)
 implement `new Worker(url)`. A worker runs its script off the page's thread.
 
 ## Design
 
 - **Thread and VM.** One thread per worker, with its own JavaScriptCore VM
-  (`lp_js::Engine`), event loop and an empty, unexposed document at the worker's
+  (`pyro_js::Engine`), event loop and an empty, unexposed document at the worker's
   URL. Nothing is shared with the page: this is the same one-engine-per-thread
   model as a browser thread. A page without workers pays one empty-list check
   when disposed; `worker_wire.js` is compiled on a realm's first worker use.
@@ -134,7 +134,7 @@ times out.
 - A worker started on a page prebooted by `serve --prepare` outside fork mode runs,
   but has no CDP target: the connection did not exist to record it.
 
-Tests: `crates/lp-browser/src/tests.rs` (`worker_*`, `message_ports_cross_*`,
+Tests: `crates/pyro-browser/src/tests.rs` (`worker_*`, `message_ports_cross_*`,
 `a_port_from_a_worker_*`, `two_workers_talk_*`, `streams_transfer_*`,
-`crypto_keys_cross_*`), `crates/lp-webapi/tests/dom_js.rs`
+`crypto_keys_cross_*`), `crates/pyro-webapi/tests/dom_js.rs`
 (`worker_*`), `tests/e2e/about-blank.mjs`.

@@ -354,14 +354,14 @@ pub trait LayoutGridContainer: LayoutPartialTree {
     /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
 
-    /// Whether `node_id`'s rows are a table's (lightningpanda): an item spanning several rows grows them
+    /// Whether `node_id`'s rows are a table's (pyro): an item spanning several rows grows them
     /// as Chromium grows the rows under a rowspan cell (`DistributeExcessBlockSizeToRows`) rather than
     /// as a grid distributes a spanning item. The default is false.
     fn grid_rows_are_table_rows(&self, _node_id: NodeId) -> bool {
         false
     }
 
-    /// lightningpanda: a table's grid as its last full layout left it (see `TableGridState`), and the
+    /// pyro: a table's grid as its last full layout left it (see `TableGridState`), and the
     /// items that changed since, for `compute_grid_layout` to lay out again only the rows those are in.
     /// Asked once per layout (`RunMode::PerformLayout`) of a grid whose rows are a table's. `None`
     /// (the default): lay out the whole grid. A layout that can be done again this way offers its state
@@ -370,9 +370,9 @@ pub trait LayoutGridContainer: LayoutPartialTree {
         None
     }
 
-    /// lightningpanda: keeps a table's grid layout for the next [`take_table_grid_state`](Self::take_table_grid_state).
+    /// pyro: keeps a table's grid layout for the next [`take_table_grid_state`](Self::take_table_grid_state).
     fn store_table_grid_state(&mut self, _node_id: NodeId, _state: crate::util::sys::Box<crate::compute::grid::TableGridState>) {}
-    /// Whether the tree places `node_id`'s in-flow children itself (lightningpanda: a table places its cells
+    /// Whether the tree places `node_id`'s in-flow children itself (pyro: a table places its cells
     /// in rows and columns as it builds them). `Some(extent)`: the number of tracks the placed items reach from
     /// the grid's first explicit line, in each axis (`width`: columns, `height`: rows). The grid then reads each
     /// item's area from [`Self::resolved_placement`] instead of resolving named lines, estimating the grid's size

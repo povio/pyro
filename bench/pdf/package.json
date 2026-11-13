@@ -1,8 +1,8 @@
 {
-  "name": "lightningpanda-bench-pdf",
+  "name": "pyro-bench-pdf",
   "private": true,
   "type": "module",
-  "description": "Page.printToPDF: Lightningpanda (krilla) vs Chrome on the ToS pdfgen visual cases",
+  "description": "Page.printToPDF: Pyro (krilla) vs Chrome on the ToS pdfgen visual cases",
   "dependencies": {
     "pixelmatch": "7.1.0",
     "pngjs": "7.0.0",

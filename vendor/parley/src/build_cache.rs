@@ -39,6 +39,8 @@ pub(crate) struct BuildKey<B: Brush> {
     scale: u32,
     quantize: bool,
     base_direction: BaseDirection,
+    /// The address of the context's `'static` line-break override, 0 without one.
+    line_break_override: usize,
     runs: Vec<(u16, Range<usize>)>,
     styles: Vec<StyleKey<B>>,
 }
@@ -52,6 +54,7 @@ impl<B: Brush> BuildKey<B> {
         scale: f32,
         quantize: bool,
         base_direction: BaseDirection,
+        line_break_override: usize,
     ) -> Self {
         let styles = style_table
             .iter()
@@ -76,6 +79,7 @@ impl<B: Brush> BuildKey<B> {
             scale: scale.to_bits(),
             quantize,
             base_direction,
+            line_break_override,
             runs: style_runs.iter().map(|r| (r.style_index, r.range.clone())).collect(),
             styles,
         }
@@ -99,6 +103,7 @@ impl<B: Brush> BuildKey<B> {
             && self.scale == other.scale
             && self.quantize == other.quantize
             && self.base_direction == other.base_direction
+            && self.line_break_override == other.line_break_override
             && self.runs == other.runs
             && self.styles == other.styles
     }

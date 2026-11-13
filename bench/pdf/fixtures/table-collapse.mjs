@@ -1,4 +1,4 @@
-// Boxes of collapsed-border tables. bun table-collapse.mjs chrome|<lightningpanda binary> out.json
+// Boxes of collapsed-border tables. bun table-collapse.mjs chrome|<pyro binary> out.json
 // For each table: every cell's border box and its content box (an inner div), in CSS px from the table.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';

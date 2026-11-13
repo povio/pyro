@@ -1,0 +1,47 @@
+[package]
+name = "pyro-cdp"
+description = "Chrome DevTools Protocol server and domains (worker 3)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# One integration test binary (tests/integration.rs) instead of one per file.
+autotests = false
+rust-version.workspace = true
+
+[features]
+default = ["render"]
+# Stage timers for CDP handling, read with Pyro.perfStats (see pyro-cdp-protocol/src/perf.rs).
+perf-trace = ["pyro-cdp-protocol/perf-trace"]
+# Blitz (pyro-render): layout geometry, Page.captureScreenshot, Page.printToPDF
+# and the Pyro.run matchScreenshot step. Without it nothing is laid out.
+render = ["dep:pyro-render", "dep:pyro-layout"]
+
+[dependencies]
+pyro-browser.workspace = true
+pyro-js.workspace = true
+pyro-runtime.workspace = true
+pyro-net.workspace = true
+pyro-webapi.workspace = true
+pyro-dom.workspace = true
+pyro-cdp-protocol.workspace = true
+pyro-render = { workspace = true, optional = true }
+pyro-layout = { workspace = true, optional = true }
+bytes = "1"
+http = "1"
+url = "2"
+regress = "0.12"
+serde = { version = "1", features = ["derive"] }
+getrandom = "0.3"
+libc = "0.2"
+serde_json = { workspace = true, features = ["raw_value"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

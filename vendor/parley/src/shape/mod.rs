@@ -56,7 +56,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
     analysis_data_sources: &AnalysisDataSources,
     first_fonts: &mut Vec<Option<FontInstance>>,
 ) {
-    // lightningpanda: one slot per style for the first available font the selector saw.
+    // pyro: one slot per style for the first available font the selector saw.
     first_fonts.clear();
     first_fonts.resize(styles.len(), None);
 
@@ -102,6 +102,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
             }
         })
         .collect();
+
+    // pyro: the layout's scale (set before shaping), to shape with the unscaled size as the point size.
+    let scale = layout.data.scale;
 
     // Split when shaping-relevant style properties change and at inline boxes.
     let items = {
@@ -177,6 +180,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
                 options: ShapeOptions {
                     language: item_style.locale,
                     font_size: item_style.font_size,
+                    // pyro: tracking follows the unscaled size (styles hold sizes times the scale).
+                    point_size: if scale > 0.0 { item_style.font_size / scale } else { item_style.font_size },
                     features: &style_features[item_style_index as usize],
                     variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
                 },
@@ -265,7 +270,7 @@ enum LastResortFont {
 
 struct FontSelector<'a, 'b, B: Brush> {
     query: &'b mut Query<'a>,
-    /// lightningpanda: per style, the first font [`Self::query`] yields for the style's own
+    /// pyro: per style, the first font [`Self::query`] yields for the style's own
     /// families and attributes whose `unicode-range` includes U+0020 (its CSS first available
     /// font), recorded when the style's fonts are first queried; `None` where its families yield
     /// no such font or the style shaped no text.
@@ -378,7 +383,7 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
         // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
         // this check and do the last-resort scan after the failed query:
         // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
-        // lightningpanda: this pass also finds the style's first available font, which the style
+        // pyro: this pass also finds the style's first available font, which the style
         // metrics need: the first font the query yields for the current families and attributes
         // whose `unicode-range` includes U+0020, if it comes from the style's own families (not
         // the script fallbacks or the emoji family, which the query yields after them). Fonts

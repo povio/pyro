@@ -1,11 +1,11 @@
 diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
---- a/invalidation/element/invalidation_map.rs	2026-11-08 11:10:45
-+++ b/invalidation/element/invalidation_map.rs	2026-11-08 11:10:45
+--- a/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
++++ b/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
 @@ -399,6 +399,11 @@
      pub used: bool,
      /// Flag indicating if invalidating a relative selector requires ancestor traversal.
      pub needs_ancestors_traversal: bool,
-+    /// lightningpanda: every element state some relative selector's
++    /// pyro: every element state some relative selector's
 +    /// argument depends on (the union of `state_affecting_selectors`' states
 +    /// in the relative selector map), so an embedder can tell with one flag
 +    /// test that a state change cannot change any `:has()` match.
@@ -33,7 +33,7 @@ diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/inva
      fn this_scope_dependencies(&mut self) -> &mut Option<Vec<Dependency>>;
      fn update_states(&mut self, element_state: ElementState, document_state: DocumentState);
  
-+    /// lightningpanda: `element_state` goes into `state_map()`; a relative
++    /// pyro: `element_state` goes into `state_map()`; a relative
 +    /// selector map records the union
 +    /// (`AdditionalRelativeSelectorInvalidationMap::state_dependencies`).
 +    fn note_state_dependency(&mut self, element_state: ElementState);
@@ -75,9 +75,26 @@ diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/inva
      }
  
      fn attribute_map(&mut self) -> &mut LocalNameDependencyMap {
+diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
+--- a/invalidation/viewport_units.rs	2026-11-11 19:55:57
++++ b/invalidation/viewport_units.rs	2026-11-11 20:50:48
+@@ -33,6 +33,13 @@
+         return false;
+     }
+ 
++    // pyro: an element not styled yet (Blitz gives every element its
++    // data up front) has nothing to invalidate: its first styling uses the
++    // new viewport. `viewport_unit_usage` unwraps the primary style.
++    if data.styles.get_primary().is_none() {
++        return false;
++    }
++
+     let usage = data.styles.viewport_unit_usage();
+     let uses_viewport_units = usage != ViewportUnitUsage::None;
+     if uses_viewport_units {
 diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
---- a/properties/counted_unknown_properties.py	2026-11-08 11:10:45
-+++ b/properties/counted_unknown_properties.py	2026-11-08 11:10:45
+--- a/properties/counted_unknown_properties.py	2026-11-11 19:55:57
++++ b/properties/counted_unknown_properties.py	2026-11-11 19:55:57
 @@ -7,8 +7,6 @@
      "speak",
      "text-size-adjust",
@@ -88,9 +105,9 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-margin-before",
      "-webkit-margin-after",
 diff -ruN a/properties/data.py b/properties/data.py
---- a/properties/data.py	2026-11-08 11:10:45
-+++ b/properties/data.py	2026-11-08 11:10:45
-@@ -343,9 +343,19 @@
+--- a/properties/data.py	2026-11-11 19:55:57
++++ b/properties/data.py	2026-11-11 20:10:18
+@@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
          vector=None,
@@ -98,7 +115,7 @@ diff -ruN a/properties/data.py b/properties/data.py
 +        servo_restyle_damage=None,
          affects=None,
      ):
-+        # lightningpanda: a property that names no restyle damage gets the one its `affects`
++        # pyro: a property that names no restyle damage gets the one its `affects`
 +        # implies (upstream: `rebuild_box` for every one, so a change of `border-top-color`,
 +        # `visibility` or `box-shadow` relaid out). `affects` is required and checked below.
 +        if servo_restyle_damage is None:
@@ -112,14 +129,14 @@ diff -ruN a/properties/data.py b/properties/data.py
              self,
              name=name,
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
---- a/properties/helpers.mako.rs	2026-11-08 11:10:45
-+++ b/properties/helpers.mako.rs	2026-11-08 11:10:45
+--- a/properties/helpers.mako.rs	2026-11-11 19:55:57
++++ b/properties/helpers.mako.rs	2026-11-11 19:55:57
 @@ -64,7 +64,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
                          % if not property.style_struct.inherited:
 +                            % if property.name in ("box-sizing", "baseline-shift", "baseline-source", "alignment-baseline"):
-+                            // lightningpanda: the parent's value is a cache condition.
++                            // pyro: the parent's value is a cache condition.
 +                            {
 +                                let parent = context.builder.inherited_style.slow_clone_${property.ident}();
 +                                context.rule_cache_conditions.borrow_mut().add_inherited_reset(
@@ -133,9 +150,9 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml	2026-11-08 11:10:45
-+++ b/properties/longhands.toml	2026-11-08 11:10:45
-@@ -474,7 +474,6 @@
+--- a/properties/longhands.toml	2026-11-11 19:55:57
++++ b/properties/longhands.toml	2026-11-11 20:10:18
+@@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
  struct = "box"
@@ -143,7 +160,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-after"
  animation_type = "discrete"
  affects = "layout"
-@@ -483,7 +482,6 @@
+@@ -482,7 +481,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
  struct = "box"
@@ -151,7 +168,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -492,9 +490,26 @@
+@@ -491,9 +489,26 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -180,8 +197,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [caption-side]
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
---- a/properties/shorthands.rs	2026-11-08 11:10:45
-+++ b/properties/shorthands.rs	2026-11-08 11:10:45
+--- a/properties/shorthands.rs	2026-11-11 19:55:57
++++ b/properties/shorthands.rs	2026-11-11 20:10:18
 @@ -542,7 +542,6 @@
      }
  }
@@ -191,8 +208,8 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml	2026-11-08 11:10:45
-+++ b/properties/shorthands.toml	2026-11-08 11:10:45
+--- a/properties/shorthands.toml	2026-11-11 19:55:57
++++ b/properties/shorthands.toml	2026-11-11 20:10:18
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -223,13 +240,13 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
 diff -ruN a/rule_cache.rs b/rule_cache.rs
---- a/rule_cache.rs	2026-11-08 11:10:45
-+++ b/rule_cache.rs	2026-11-08 11:10:45
+--- a/rule_cache.rs	2026-11-11 19:55:57
++++ b/rule_cache.rs	2026-11-11 19:55:57
 @@ -26,9 +26,53 @@
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
      color_scheme: Option<ColorSchemeFlags>,
-+    /// lightningpanda: reset properties the style inherits explicitly, with
++    /// pyro: reset properties the style inherits explicitly, with
 +    /// the parent's values: `*, ::before, ::after { box-sizing: inherit }`
 +    /// (MUI's and many resets' pattern, on every element) and the UA's
 +    /// `td, th, tr { vertical-align: inherit }`. A cached style serves an
@@ -239,7 +256,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
  
 +macro_rules! inherited_resets {
 +    ($($variant:ident, $clone:ident, $ty:ty;)*) => {
-+        /// lightningpanda: a reset property inherited explicitly, with the parent's value.
++        /// pyro: a reset property inherited explicitly, with the parent's value.
 +        #[derive(Clone, Debug, PartialEq)]
 +        pub enum InheritedReset {
 +            $(
@@ -267,7 +284,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
 +}
 +
  impl RuleCacheConditions {
-+    /// lightningpanda: sets the style as depending on its parent's value of
++    /// pyro: sets the style as depending on its parent's value of
 +    /// an explicitly inherited reset property, instead of making it
 +    /// uncacheable.
 +    pub fn add_inherited_reset(&mut self, reset: InheritedReset) {
@@ -307,13 +324,13 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
          self.map
              .entry(rules)
 diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
---- a/servo/restyle_damage.rs	2026-11-08 11:10:45
-+++ b/servo/restyle_damage.rs	2026-11-08 11:10:45
+--- a/servo/restyle_damage.rs	2026-11-11 19:55:57
++++ b/servo/restyle_damage.rs	2026-11-11 19:55:57
 @@ -161,6 +161,9 @@
          || old_box.original_display != new_box.original_display
          || old_box.has_transform_or_perspective() != new_box.has_transform_or_perspective()
          || old.get_effects().filter.0.is_empty() != new.get_effects().filter.0.is_empty()
-+        // lightningpanda: a `backdrop-filter` makes a containing block for fixed boxes, as a
++        // pyro: a `backdrop-filter` makes a containing block for fixed boxes, as a
 +        // `filter` does; otherwise it is `recalculate_overflow` damage (it affects overflow).
 +        || old.get_effects().backdrop_filter.0.is_empty() != new.get_effects().backdrop_filter.0.is_empty()
  }
@@ -323,7 +340,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  ) -> bool {
      restyle_damage_rebuild_stacking_context(old, new)
          || old.guarantees_stacking_context() != new.guarantees_stacking_context()
-+        // lightningpanda: a mask makes a stacking context in Blitz's paint tree
++        // pyro: a mask makes a stacking context in Blitz's paint tree
 +        // (`applies_atomic_paint_effect`); `mask-image` is otherwise `repaint` damage.
 +        || has_mask_image(old) != has_mask_image(new)
 +}
@@ -338,25 +355,14 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  }
  
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
-diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
---- a/servo/selector_parser.rs	2026-11-08 11:10:45
-+++ b/servo/selector_parser.rs	2026-11-08 11:10:45
-@@ -629,6 +629,7 @@
-             "focus-within" => NonTSPseudoClass::FocusWithin,
-             "fullscreen" => NonTSPseudoClass::Fullscreen,
-             "hover" => NonTSPseudoClass::Hover,
-+            "in-range" => NonTSPseudoClass::InRange,
-             "indeterminate" => NonTSPseudoClass::Indeterminate,
-             "invalid" => NonTSPseudoClass::Invalid,
-             "link" => NonTSPseudoClass::Link,
 diff -ruN a/style_resolver.rs b/style_resolver.rs
---- a/style_resolver.rs	2026-11-08 11:10:45
-+++ b/style_resolver.rs	2026-11-08 11:10:45
-@@ -586,6 +586,47 @@
+--- a/style_resolver.rs	2026-11-11 19:55:57
++++ b/style_resolver.rs	2026-11-11 20:10:18
+@@ -588,6 +588,47 @@
          );
          matching_context.extra_data.originating_element_style = Some(originating_element_style);
  
-+        // lightningpanda: no rule that can generate a `::before`/`::after` box matches, so the
++        // pyro: no rule that can generate a `::before`/`::after` box matches, so the
 +        // style matched and cascaded below would be dropped by
 +        // `eager_pseudo_is_definitely_not_generated`. Only for the unvisited pass: when it goes
 +        // on, the visited pass matches every rule, as upstream.
@@ -376,7 +382,7 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
 +                    Some(pseudo_element),
 +                    None,
 +                    None,
-+                    Default::default(),
++                    &animation_declarations,
 +                    self.rule_inclusion,
 +                    &mut applicable_declarations,
 +                    &mut matching_context,
@@ -401,8 +407,8 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          // traversing them.
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
---- a/stylesheets/rule_parser.rs	2026-11-08 11:10:45
-+++ b/stylesheets/rule_parser.rs	2026-11-08 11:10:45
+--- a/stylesheets/rule_parser.rs	2026-11-11 19:55:57
++++ b/stylesheets/rule_parser.rs	2026-11-11 19:55:57
 @@ -282,7 +282,7 @@
              "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
              "media" => Self::Media,
@@ -413,10 +419,10 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
              "keyframes" => Self::Keyframes(None),
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
 diff -ruN a/stylist.rs b/stylist.rs
---- a/stylist.rs	2026-11-08 11:10:45
-+++ b/stylist.rs	2026-11-08 11:10:45
-@@ -32,8 +32,8 @@
- #[cfg(feature = "gecko")]
+--- a/stylist.rs	2026-11-11 19:55:57
++++ b/stylist.rs	2026-11-11 20:10:18
+@@ -31,8 +31,8 @@
+ use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
  use crate::properties::{
 -    self, AnimationDeclarations, CascadeMode, ComputedValues, FirstLineReparenting,
@@ -426,7 +432,7 @@ diff -ruN a/stylist.rs b/stylist.rs
  };
  use crate::properties_and_values::registry::{
      PropertyRegistration, ScriptRegistry as CustomPropertyScriptRegistry,
-@@ -999,6 +999,13 @@
+@@ -1042,6 +1042,13 @@
          ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
      }
  
@@ -440,11 +446,11 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the number of selectors.
      pub fn num_selectors(&self) -> usize {
          self.cascade_data
-@@ -1176,6 +1183,62 @@
+@@ -1219,6 +1226,62 @@
          doc_author_rules_apply && f(&self.cascade_data.author)
      }
  
-+    /// lightningpanda: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
++    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
 +    /// rule that matches leaves `content` at `normal` (it is not inherited) and declares neither
@@ -458,15 +464,15 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    /// ones it leaves unset belong to rules that cannot generate a box.
 +    ///
 +    /// `scratch` must be empty, and is left empty.
-+    pub fn may_generate_box_for_pseudo<E>(
-+        &self,
++    pub fn may_generate_box_for_pseudo<'a, E>(
++        &'a self,
 +        element: E,
 +        pseudo: &PseudoElement,
-+        scratch: &mut ApplicableDeclarationList,
++        scratch: &mut ApplicableDeclarationList<'a>,
 +        context: &mut MatchingContext<E::Impl>,
 +    ) -> bool
 +    where
-+        E: TElement,
++        E: TElement + 'a,
 +    {
 +        debug_assert!(scratch.is_empty());
 +        if !pseudo.is_before_or_after()
@@ -503,11 +509,11 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Execute callback for all applicable style rule data.
      pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
      where
-@@ -2814,6 +2877,82 @@
+@@ -2866,6 +2929,82 @@
      }
  }
  
-+/// lightningpanda: the `::before` and `::after` rules (one pseudo-element level, in
++/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
 +/// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
 +/// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
 +/// `var()` and the CSS-wide keywords count. Without one of them matching, `content` is `normal`
@@ -517,7 +523,7 @@ diff -ruN a/stylist.rs b/stylist.rs
 +/// A copy of the rules kept in `normal_rules`, filled by the same `add_styles` and cleared with
 +/// it; a CSSOM declaration edit rebuilds both (`RuleChangeKind::StyleRuleDeclarations` is
 +/// `DataValidity::FullyInvalid`).
-+/// lightningpanda: whether a `::before`/`::after` rule with these declarations can make the
++/// pyro: whether a `::before`/`::after` rule with these declarations can make the
 +/// pseudo-element generate a box (see `BoxGeneratingPseudoRules`).
 +pub fn declarations_may_generate_pseudo_box(block: &PropertyDeclarationBlock) -> bool {
 +    BoxGeneratingPseudoRules::declarations_may_generate_box(block)
@@ -534,7 +540,7 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    /// `::before` or `::after` rule).
 +    ///
 +    /// `content: normal | none` and `animation-name: none` cannot make the box appear, so they
-+    /// do not count: lightningpanda's UA `*::before, *::after { animation: none !important }`
++    /// do not count: pyro's UA `*::before, *::after { animation: none !important }`
 +    /// would otherwise put a rule matching every element in the index. Their CSS-wide keyword
 +    /// and `var()` forms still count.
 +    fn declarations_may_generate_box(block: &PropertyDeclarationBlock) -> bool {
@@ -586,18 +592,18 @@ diff -ruN a/stylist.rs b/stylist.rs
  /// The id of a given layer, a sequentially-increasing identifier.
  #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
  pub struct LayerId(u16);
-@@ -3238,6 +3377,10 @@
+@@ -3361,6 +3500,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
  
-+    /// lightningpanda: the rules of `normal_rules` that can make a `::before` or `::after`
++    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
 +    /// generate a box.
 +    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
 +
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
      /// the featureless host.
-@@ -3401,6 +3544,7 @@
+@@ -3526,6 +3669,7 @@
      pub fn new() -> Self {
          Self {
              normal_rules: ElementAndPseudoRules::default(),
@@ -605,18 +611,18 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3594,6 +3738,25 @@
+@@ -3732,6 +3876,25 @@
          self.normal_rules.rules(pseudo_elements)
      }
  
-+    /// lightningpanda: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
++    /// pyro: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
 +    /// or `::after`) generate a box. `None` for other pseudo-elements.
 +    #[inline]
 +    pub fn box_generating_pseudo_rules(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
 +        self.box_generating_pseudo_rules.map(pseudo)
 +    }
 +
-+    /// lightningpanda: whether any rule here is for `pseudo`, in any of the maps the rule
++    /// pyro: whether any rule here is for `pseudo`, in any of the maps the rule
 +    /// collector reads for it.
 +    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
 +        let pseudos = std::slice::from_ref(pseudo);
@@ -631,7 +637,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the featureless pseudo rule map for a given pseudo-element.
      #[inline]
      pub fn featureless_host_rules(
-@@ -3712,6 +3875,7 @@
+@@ -3850,6 +4013,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -639,7 +645,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3848,7 +4012,9 @@
+@@ -3955,7 +4119,9 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -650,7 +656,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          for selector in selectors.slice() {
              self.num_selectors += 1;
  
-@@ -4003,6 +4169,15 @@
+@@ -4102,6 +4268,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -666,7 +672,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4701,6 +4876,7 @@
+@@ -4817,6 +4992,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();
@@ -675,8 +681,8 @@ diff -ruN a/stylist.rs b/stylist.rs
              slotted_rules.clear();
          }
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
---- a/values/generics/mod.rs	2026-11-08 11:10:45
-+++ b/values/generics/mod.rs	2026-11-08 11:10:45
+--- a/values/generics/mod.rs	2026-11-11 19:55:57
++++ b/values/generics/mod.rs	2026-11-11 19:55:57
 @@ -110,6 +110,7 @@
      ToCss,
      ToResolvedValue,
@@ -686,8 +692,8 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
---- a/values/specified/box.rs	2026-11-08 11:10:45
-+++ b/values/specified/box.rs	2026-11-08 11:10:45
+--- a/values/specified/box.rs	2026-11-11 19:55:57
++++ b/values/specified/box.rs	2026-11-11 19:55:57
 @@ -2013,6 +2013,8 @@
      Auto,
      Page,

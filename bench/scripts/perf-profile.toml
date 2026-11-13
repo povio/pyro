@@ -33,6 +33,6 @@ incremental = false
 [profile.perf.package.taffy]
 incremental = false
 
-# As in [profile.release]: lp-webapi's many small modules are the slowest crate to generate code for.
-[profile.perf.package.lp-webapi]
+# As in [profile.release]: pyro-webapi's many small modules are the slowest crate to generate code for.
+[profile.perf.package.pyro-webapi]
 codegen-units = 64

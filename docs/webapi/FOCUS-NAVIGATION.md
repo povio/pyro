@@ -21,7 +21,7 @@ the hit element: slottables go to their slot, shadow roots to their host.
 
 ## Sequential navigation (Tab, Shift+Tab)
 
-`lp_dom::focus_nav` follows HTML's flattened tabindex-ordered focus navigation
+`pyro_dom::focus_nav` follows HTML's flattened tabindex-ordered focus navigation
 scopes, as Chrome's `FocusController` does. The document, every shadow host and
 every slot own a scope listing their elements in tree order without entering
 nested owners; elements with a positive tabindex come first (ascending, ties in

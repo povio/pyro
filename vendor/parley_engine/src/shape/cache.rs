@@ -190,6 +190,8 @@ pub(crate) struct GlyphKey<'a> {
     pub script: harfrust::Script,
     pub language: Option<&'a harfrust::Language>,
     pub font_size: f32,
+    /// The size tracking is looked up at (see `ShapeOptions::point_size`).
+    pub point_size: f32,
     pub text: &'a str,
     /// The text around the run that shaping looks at.
     pub pre_context: &'a str,
@@ -207,6 +209,7 @@ impl GlyphKey<'_> {
         self.script.hash(&mut h);
         self.language.hash(&mut h);
         self.font_size.to_bits().hash(&mut h);
+        self.point_size.to_bits().hash(&mut h);
         self.text.hash(&mut h);
         self.pre_context.hash(&mut h);
         self.post_context.hash(&mut h);
@@ -224,11 +227,12 @@ struct GlyphEntry {
     script: harfrust::Script,
     language: Option<harfrust::Language>,
     font_size: u32,
+    point_size: u32,
     text: Box<str>,
     pre_context: Box<str>,
     post_context: Box<str>,
     glyphs: harfrust::GlyphBuffer,
-    /// lightningpanda: the run's font metrics, computed when it was shaped (the key holds
+    /// pyro: the run's font metrics, computed when it was shaped (the key holds
     /// everything they depend on: font, synthesis, variations and size).
     metrics: RunMetrics,
 }
@@ -244,6 +248,7 @@ impl GlyphEntry {
             && self.script == key.script
             && self.language.as_ref() == key.language
             && self.font_size == key.font_size.to_bits()
+            && self.point_size == key.point_size.to_bits()
             && *self.text == *key.text
             && *self.pre_context == *key.pre_context
             && *self.post_context == *key.post_context
@@ -293,6 +298,7 @@ impl GlyphCache {
             script: key.script,
             language: key.language.cloned(),
             font_size: key.font_size.to_bits(),
+            point_size: key.point_size.to_bits(),
             text: key.text.into(),
             pre_context: key.pre_context.into(),
             post_context: key.post_context.into(),

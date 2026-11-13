@@ -7,13 +7,13 @@ page completed, and how long it took.
 ## How a run works
 
 1. `prepare` (Linux, seconds): cache keys. The browser is keyed by every input of its build (the git object ids of
-   `crates/`, `vendor/`, `Cargo.*`, `.cargo/`, `scripts/macos/`, `bundle-jsc.sh` and `wpt.yml`, the stable toolchain
+   `crates/`, `vendor/`, `Cargo.*`, `.cargo/`, `scripts/macos/` and `wpt.yml`, the stable toolchain
    and the patched JavaScriptCore), so a pull request that changes none of them skips the next two jobs.
 2. `jsc`: the patched JavaScriptCore (`jsc.yml`), only when neither it nor the browser is cached. The gate tests the
    fork build because the system framework lacks window named properties and import maps: ~3,200 more subtests fail
    with it, for that reason alone.
 3. `build`: `cargo build --profile release-fast` (dependencies cached by `Swatinem/rust-cache`, saved from `main`
-   only), bundled with its JavaScriptCore (`scripts/release/bundle-jsc.sh`) and saved to the cache.
+   only), the patched JavaScriptCore linked in, saved to the cache.
 4. `wpt`: four macOS shards. Each restores the pinned WPT checkout (`fetch-wpt.sh`: revision `wpt-revision.txt`,
    only the paths in `wpt-paths.txt`, ~85 MB, cached), takes its share of the pages (longest first, balanced by the
    baseline's durations) and runs it at `--jobs 4` (3 CPUs). Every page whose result differs from the baseline then
@@ -121,9 +121,9 @@ so the base-branch comparison catches accidental weakening of the baseline, not 
 
 ```sh
 (cd bench && bun install)
-bench/wpt/fetch-wpt.sh ~/wpt-lp                    # a new directory: the pinned revision, ~15 s
+bench/wpt/fetch-wpt.sh ~/wpt-pyro                    # a new directory: the pinned revision, ~15 s
 cargo build --profile release-fast                 # with the patched JavaScriptCore (scripts/jsc/build.sh)
-bun bench/wpt/gate.mjs run --wpt ~/wpt-lp --bin target/release-fast/lightningpanda --out /tmp/wpt.json
+bun bench/wpt/gate.mjs run --wpt ~/wpt-pyro --bin target/release-fast/pyro --out /tmp/wpt.json
 ```
 
 `fetch-wpt.sh` only touches a directory it made (it moves that one to a new pinned revision in place); a WPT checkout

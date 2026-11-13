@@ -1,6 +1,6 @@
 # Persistent page identity
 
-`Browser::set_user_agent_override(PageId, Option<lp_webapi::UserAgentOverride>)`
+`Browser::set_user_agent_override(PageId, Option<pyro_webapi::UserAgentOverride>)`
 updates a page's current navigator state and its native request defaults. It
 returns `JsError::Type` for a missing page or invalid HTTP header value before
 changing state. `None` clears every field; an empty `user_agent` selects the
@@ -23,6 +23,17 @@ separate CDP work. `UserAgentOverride::metadata` (CDP userAgentMetadata) drives
 does not implement locale/timezone emulation or a platform change outside
 navigator.platform.
 Custom ResourceLoader implementations remain responsible for their transport.
+
+A browser context may have a default UA of its own instead of the browser's
+(`Browser::create_context_with(ContextNet { user_agent, proxy })`): the
+configured `User-Agent` of its NetClient, which its pages and workers report as
+`navigator.userAgent` unless a page override takes its place. Prepared profiles
+(`Pyro.registerPreparedPage {userAgent, proxyServer}`) and
+`Target.createBrowserContext {userAgent}` create their contexts this way.
+What the engine loads for those pages by itself (layout's images, fonts and
+imported sheets, screenshots, PDFs) goes through that NetClient too, with the
+page's request defaults, and a context with a UA or proxy of its own lays out
+only with bodies loaded through it (ARCHITECTURE.md, Engine loads of a page).
 
 Tests cover current/new isolated worlds, init scripts across navigation, reset
 and locale-only requests, atomic rejection, and real redirected HTTP document,

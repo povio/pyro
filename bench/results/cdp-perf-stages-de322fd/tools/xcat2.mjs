@@ -5,24 +5,24 @@ import { demangle } from './demangle.mjs';
 const [file, cpuUs, topN = 20] = process.argv.slice(2);
 const x = fs.readFileSync(file, 'utf8');
 const RULES = [
-  [/sleep<lp_browser|post<lp_browser|wake::Sleeper|wake::Notifier|LoopHandle::post|wake_by_val|wake_by_ref|park_internal|Driver::turn|Driver::park|unpark|Inject::push/, 'plumbing: cross-thread wake/park (pipe, kevent)'],
+  [/sleep<pyro_browser|post<pyro_browser|wake::Sleeper|wake::Notifier|LoopHandle::post|wake_by_val|wake_by_ref|park_internal|Driver::turn|Driver::park|unpark|Inject::push/, 'plumbing: cross-thread wake/park (pipe, kevent)'],
   [/TcpStream|write_all|poll_read_priv|poll_write_priv/, 'plumbing: socket syscalls'],
-  [/^lp_cdp::ws::|ws::Decoder|OutFrame|finish_text|apply_mask|unmask/, 'plumbing: websocket framing'],
+  [/^pyro_cdp::ws::|ws::Decoder|OutFrame|finish_text|apply_mask|unmask/, 'plumbing: websocket framing'],
   [/Watchdog|CPUTime::forCurrentThread/, 'engine: JSC watchdog timer'],
   [/serde_json|serde::de|serde::ser|ryu|itoa|parse_command|Command::params|to_frame|result_frame|event_frame/, 'plumbing: JSON (serde)'],
   [/Outbox::push|outbox::|INBOX|Inbound::/, 'plumbing: channels/outbox'],
   [/tokio::|mio::|batch_semaphore|scheduler::current_thread|runtime::task|io::driver|time::Driver|Semaphore/, 'plumbing: tokio runtime'],
-  [/selectors::|lp_dom::select|select::|matches_|query_selector|QuerySelector/, 'work: selector matching'],
-  [/html5ever|lp_html|tokenizer|TreeBuilder|tree_builder|markup5ever/, 'work: HTML parse'],
-  [/cssparser|lp_css|stylesheet|Stylesheet/, 'work: CSS parse'],
+  [/selectors::|pyro_dom::select|select::|matches_|query_selector|QuerySelector/, 'work: selector matching'],
+  [/html5ever|pyro_html|tokenizer|TreeBuilder|tree_builder|markup5ever/, 'work: HTML parse'],
+  [/cssparser|pyro_css|stylesheet|Stylesheet/, 'work: CSS parse'],
   [/checkpoint|sync_root|FrameHost::|after_task|drain_finalized/, 'browser: event-loop checkpoint'],
   [/remote::|RemoteObject|runtime_protocol/, 'cdp: RemoteObject describe/register'],
   [/Heap::|GCActivity|Collect|Marking|SlotVisitor|Sweep|MarkedBlock|IsoSubspace/, 'engine: JSC GC'],
   [/Parser<|JSC::parse|BytecodeGenerator|CodeBlock|UnlinkedCodeBlock|SourceCodeKey|CodeCache|StringImpl::hash|Lexer/, 'engine: JSC parse/compile/codecache'],
-  [/lp_net|hyper|h2::|reqwest|http::|lp_fetch|fetch::/, 'work: network/fetch'],
-  [/lp_webapi|lp_dom|lp_browser|lp_js::class|bindings|Document|Element|Node/, 'work: DOM/webapi + bindings'],
-  [/lp_js::|JSObjectCall|JSEvaluateScript|JSValue|^JSC::|^WTF::|LLInt|llint|^Yarr|bmalloc|pas_/, 'engine: JSC execute'],
-  [/lp_cdp::|target::|dispatch|EngineHost|Browser<|handle_text/, 'cdp: dispatch/target logic'],
+  [/pyro_net|hyper|h2::|reqwest|http::|pyro_fetch|fetch::/, 'work: network/fetch'],
+  [/pyro_webapi|pyro_dom|pyro_browser|pyro_js::class|bindings|Document|Element|Node/, 'work: DOM/webapi + bindings'],
+  [/pyro_js::|JSObjectCall|JSEvaluateScript|JSValue|^JSC::|^WTF::|LLInt|llint|^Yarr|bmalloc|pas_/, 'engine: JSC execute'],
+  [/pyro_cdp::|target::|dispatch|EngineHost|Browser<|handle_text/, 'cdp: dispatch/target logic'],
 ];
 const frames = new Map(), bts = new Map(); const cat = new Map(), self = new Map(); let total = 0;
 for (const r of x.split('<row>').slice(1)) {

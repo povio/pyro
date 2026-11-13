@@ -8,9 +8,9 @@ import http from 'node:http';
 
 const PAGE = `<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>LP smoke page</title></head>
+<head><meta charset="utf-8"><title>Pyro smoke page</title></head>
 <body>
-  <h1>LP smoke</h1>
+  <h1>Pyro smoke</h1>
   <form id="f">
     <label for="name">Name</label>
     <input id="name" name="name" type="text" value="">

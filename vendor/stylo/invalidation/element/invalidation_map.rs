@@ -399,7 +399,7 @@ pub struct AdditionalRelativeSelectorInvalidationMap {
     pub used: bool,
     /// Flag indicating if invalidating a relative selector requires ancestor traversal.
     pub needs_ancestors_traversal: bool,
-    /// lightningpanda: every element state some relative selector's
+    /// pyro: every element state some relative selector's
     /// argument depends on (the union of `state_affecting_selectors`' states
     /// in the relative selector map), so an embedder can tell with one flag
     /// test that a state change cannot change any `:has()` match.
@@ -602,7 +602,7 @@ trait Collector {
     fn this_scope_dependencies(&mut self) -> &mut Option<Vec<Dependency>>;
     fn update_states(&mut self, element_state: ElementState, document_state: DocumentState);
 
-    /// lightningpanda: `element_state` goes into `state_map()`; a relative
+    /// pyro: `element_state` goes into `state_map()`; a relative
     /// selector map records the union
     /// (`AdditionalRelativeSelectorInvalidationMap::state_dependencies`).
     fn note_state_dependency(&mut self, element_state: ElementState);

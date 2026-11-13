@@ -1,9 +1,9 @@
 # Flow layout (staged)
 
 Status: Stages 1-4 (block/inline with floats, flex, tables, grid), with incremental relayout. The flow layout is the default geometry of
-new documents; `LIGHTNINGPANDA_GEOMETRY=approximate` selects the upstream "faux layout"
-(`crates/lp-dom/src/layout.rs`) for comparisons. A `Layout` built directly still defaults to
-`Geometry::Approximate`, so lp-dom's own tests name the geometry they exercise.
+new documents; `PYRO_GEOMETRY=approximate` selects the upstream "faux layout"
+(`crates/pyro-dom/src/layout.rs`) for comparisons. A `Layout` built directly still defaults to
+`Geometry::Approximate`, so pyro-dom's own tests name the geometry they exercise.
 
 ## Why
 
@@ -19,7 +19,7 @@ the popover at its `top/left`.
 
 ## Module and switch
 
-- `crates/lp-dom/src/flow.rs`: computes border-box rects (document
+- `crates/pyro-dom/src/flow.rs`: computes border-box rects (document
   coordinates) for every rendered element and scroll extents per box, from a
   [`FlowStyleSource`] and the viewport. One pass, cached on the layout
   observation stamp (DOM version, style generation, focus/hover) and viewport.
@@ -207,7 +207,7 @@ reuse in `flow_reuse.rs`, invalidation in `Layout::flow`):
   every descendant at every ancestor; debug builds check each against the
   walk. A stretched item in a single-line flex container of definite cross
   size is not measured (the line decides its size).
-- `LIGHTNINGPANDA_FLOW_VERIFY=1` compares every incremental result with a
+- `PYRO_FLOW_VERIFY=1` compares every incremental result with a
   fresh layout and panics on the first difference (for test runs);
   `long_mutation_sequences_relayout_like_a_fresh_pass` does the same over
   160 random edits, inserts and removals.

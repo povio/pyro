@@ -2,9 +2,9 @@
   "commit": "3f11e0cf6327789dc2d34eca9e6de1934df2298e",
   "tree": "31f8732da7ffe4295fa31fe52e1a66a86108b020",
   "sha256": "3c487d8b0289d6f3b3b76c8078e92003ff633152e7f5f26da3eb4e53dfb21919",
-  "binary": "/private/tmp/lp-hbl-focus-validation/lightningpanda-3f11e0c",
-  "build_cwd": "/private/tmp/lp-hbl-popover-geometry",
-  "build_command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p lightningpanda",
+  "binary": "/private/tmp/pyro-hbl-focus-validation/pyro-3f11e0c",
+  "build_cwd": "/private/tmp/pyro-hbl-popover-geometry",
+  "build_command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p pyro",
   "allow_jit": true,
   "JSC_usePollingTraps": true
 }

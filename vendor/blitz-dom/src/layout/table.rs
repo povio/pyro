@@ -130,7 +130,7 @@ impl TableTreeWrapper<'_, '_> {
             _ => 0.0,
         }).collect();
         let mut max = min.clone();
-        // lightningpanda: the cells' widths are those last measured, but for the cells that changed
+        // pyro: the cells' widths are those last measured, but for the cells that changed
         // (`CellWidths`); a column's are summed again only when a cell that set them got narrower.
         // Another table content width (a shrink-to-fit table whose container got wider or
         // narrower) changes the intrinsic widths of the cells with percentage or `calc()` lengths
@@ -506,11 +506,11 @@ pub struct TableContext {
     /// half of the borders around them as their own, and the table half of its outer ones. A
     /// uniform table instead has them as gutters of the grid (`style.gap`) and this is `None`.
     pub collapsed_edges: Option<CollapsedEdges>,
-    /// lightningpanda: the borders of a collapsed table's row groups its collapsed borders were
+    /// pyro: the borders of a collapsed table's row groups its collapsed borders were
     /// resolved with: a row group restyled with others is built again (`update_rows` collects only
     /// the rows of a group).
     group_borders: Vec<(NodeId, ServoArc<Border>)>,
-    /// lightningpanda: the collapsed borders of a collapsed table that has them as gutters (when
+    /// pyro: the collapsed borders of a collapsed table that has them as gutters (when
     /// `collapsed_edges` is `None`), kept so that a change can be resolved locally, and the
     /// gutters the first cell's borders give.
     spare_edges: Option<CollapsedEdges>,
@@ -518,7 +518,7 @@ pub struct TableContext {
     /// Laid out with the fixed table layout algorithm: cell contents don't size
     /// the columns, so cells have no intrinsic width.
     pub is_fixed: bool,
-    /// lightningpanda: what `update_table_context` checks a change against: whether it can update
+    /// pyro: what `update_table_context` checks a change against: whether it can update
     /// the table at all (no cell spans rows, no box is out of flow, each row's cells follow those of
     /// the rows before), the columns the cells reach, and the cells spanning one column, per column.
     incremental: bool,
@@ -526,7 +526,7 @@ pub struct TableContext {
     single_cell_columns: Vec<u32>,
     /// The cells with a percentage `width`.
     percent_cells: usize,
-    /// lightningpanda: the cells that changed (their subtree, or their entry) since the grid was last
+    /// pyro: the cells that changed (their subtree, or their entry) since the grid was last
     /// laid out (indices into `cells`; damage propagation and `update_table_context` add to it), the
     /// grid's last layout (`taffy::TableGridState`), and each cell's min-content and max-content
     /// widths as the automatic table layout last measured them: the data a layout of the table starts
@@ -536,7 +536,7 @@ pub struct TableContext {
     /// The rows replaced by others since the grid's last layout, if any (`update_rows`).
     grid_splice: AtomicRefCell<Option<taffy::TableGridSplice>>,
     pub(crate) widths: AtomicRefCell<CellWidths>,
-    /// lightningpanda: the cells the grid placed since rounding and `resolve_transforms` last
+    /// pyro: the cells the grid placed since rounding and `resolve_transforms` last
     /// visited the table, and where the table was then (`TableTreeWrapper::set_unrounded_layout`): a
     /// cell neither placed nor damaged since is rounded and transformed as it was.
     pub(crate) placed: AtomicRefCell<PlacedCells>,
@@ -552,7 +552,7 @@ pub struct TableContext {
 }
 
 impl TableContext {
-    /// lightningpanda: each row's hit-test extent (parallel to `rows`): the union of its cells'
+    /// pyro: each row's hit-test extent (parallel to `rows`): the union of its cells'
     /// hit contributions in the table's coordinates at `scale` (`BaseDocument::resolve_hit_overflow`,
     /// device px), as of the last hit pass; `f` gets an empty slice when the pass has not
     /// covered the current rows (the caller then computes from the cells).
@@ -578,13 +578,13 @@ pub(crate) struct PlacedCells {
     transform: Option<Vec<usize>>,
     pub(crate) overflow: Vec<kurbo::Rect>,
     pub(crate) overflow_scale: f64,
-    /// lightningpanda: cells the transform passes visited since the last hit pass (all of them
+    /// pyro: cells the transform passes visited since the last hit pass (all of them
     /// when `None`: `BaseDocument::table_cells_hit`), each cell's hit contribution in the table as
     /// that pass computed it (parallel to `cells`; see `LayoutData::hit_overflow`), at its scale.
     hit_again: Option<Vec<usize>>,
     pub(crate) hit: Vec<kurbo::Rect>,
     pub(crate) hit_scale: f64,
-    /// lightningpanda: the union of `hit` over the cells originating in each row (parallel to
+    /// pyro: the union of `hit` over the cells originating in each row (parallel to
     /// `TableContext::rows`, `Rect::ZERO` without cells), kept with `hit`; empty when the rows
     /// changed since (`splice`) until the next hit pass.
     pub(crate) row_overflow: Vec<kurbo::Rect>,
@@ -668,7 +668,7 @@ impl PlacedCells {
         })
     }
 
-    /// lightningpanda: a transform pass visited these cells (sorted; all of them: `None`), whose
+    /// pyro: a transform pass visited these cells (sorted; all of them: `None`), whose
     /// hit contributions the next hit pass computes again.
     pub(crate) fn transformed(&mut self, again: Option<&[usize]>, cells: usize) {
         match (again, &mut self.hit_again) {
@@ -687,7 +687,7 @@ impl PlacedCells {
         }
     }
 
-    /// lightningpanda: the cells whose hit contributions to compute again (all of them: `None`),
+    /// pyro: the cells whose hit contributions to compute again (all of them: `None`),
     /// and the next ones.
     pub(crate) fn take_hit(&mut self) -> Option<Vec<usize>> {
         std::mem::replace(&mut self.hit_again, Some(Vec::new())).map(|mut cells| {
@@ -1158,7 +1158,7 @@ pub struct TableCell {
     rowspan: u16,
     /// Whether its computed `width` is a percentage (`TableTreeWrapper::has_percent_cell`).
     percent_width: bool,
-    /// lightningpanda: whether its intrinsic widths depend on the table's content width: a
+    /// pyro: whether its intrinsic widths depend on the table's content width: a
     /// percentage or `calc()` `width`, `min-width`, `max-width`, padding or margin (`CellWidths`).
     percent_lengths: bool,
     /// In the auto table layout algorithm, the larger of the cell's and its column's
@@ -1171,7 +1171,7 @@ pub struct TableCell {
     min_height: Option<f32>,
     /// `height` as a border box before collapsed borders, and whether they add to it (`content-box`).
     height_base: Option<(f32, bool)>,
-    /// lightningpanda: the cell's own length `width` as a border box (auto tables), and `min_width`
+    /// pyro: the cell's own length `width` as a border box (auto tables), and `min_width`
     /// and `min_height` before the halves of collapsed borders are added: what a cell rebuilt on its
     /// own starts from (`update_table_context`).
     length_width: Option<f32>,
@@ -1241,7 +1241,7 @@ pub struct TableRow {
     /// specified length `height`. Such rows do not receive excess table height when there
     /// are unconstrained rows to receive it instead.
     pub is_constrained: bool,
-    /// lightningpanda: the number of cells originating in the row (they follow those of the rows
+    /// pyro: the number of cells originating in the row (they follow those of the rows
     /// before it in `TableContext::cells`), and the column after its last cell.
     pub cell_count: u32,
     pub columns: u16,
@@ -1269,7 +1269,7 @@ fn table_wm(doc: &BaseDocument, table_root_node_id: NodeId) -> WritingMode {
 
 /// Convert a table part's style into the table's writing mode
 ///
-/// lightningpanda: the physical Taffy style is the one converted when the node's style was
+/// pyro: the physical Taffy style is the one converted when the node's style was
 /// written (`Node::table_part_taffy_style`); only a node that is not a table part by its own style
 /// is converted here.
 fn table_taffy_style(node: &crate::Node, table_wm: WritingMode) -> taffy::Style<Atom> {
@@ -1379,7 +1379,7 @@ pub(crate) fn build_table_context(
     let mut cursor = ColumnCursor::default();
 
     let wm = table_wm(doc, table_root_node_id);
-    // lightningpanda: the cells of the table built last time, released below if they are no longer.
+    // pyro: the cells of the table built last time, released below if they are no longer.
     let former = former_table_context(doc, table_root_node_id);
     let root_node = &mut doc.nodes[table_root_node_id];
 
@@ -1464,7 +1464,7 @@ pub(crate) fn build_table_context(
             );
         }
     }
-    // lightningpanda: a rowspan stops at the end of its row group (the HTML table model;
+    // pyro: a rowspan stops at the end of its row group (the HTML table model;
     // Chromium's effective rowspan), rather than adding implicit rows past it.
     for cell in cells.iter_mut() {
         let start = cell.row as usize;
@@ -1624,7 +1624,7 @@ pub(crate) fn build_table_context(
         };
     }
 
-    // lightningpanda: a table whose collapsed borders are not one uniform grid has each cell keep half
+    // pyro: a table whose collapsed borders are not one uniform grid has each cell keep half
     // of the borders around it, and the table half of its outer ones, as Chromium's boxes do.
     let collapse_gap = (style.gap.width.into_raw().value(), style.gap.height.into_raw().value());
     let ncols = style.grid_template_columns.len();
@@ -1738,7 +1738,7 @@ fn apply_collapsed_borders(
     edges: &CollapsedEdges,
 ) -> bool {
     if r0 >= r1 || c0 >= c1 {
-        // lightningpanda: a cell outside the grid's columns has no collapsed borders, as in a
+        // pyro: a cell outside the grid's columns has no collapsed borders, as in a
         // fresh build (not those it had where it was before).
         doc.nodes[cell.node_id].set_collapsed_border(None);
         return false;
@@ -1789,7 +1789,7 @@ struct RowChange {
 
 /// Whether the node or its subtree changed in this pass (a restyle damages a node without marking
 /// it as having damaged descendants).
-/// lightningpanda: whether a row group of a collapsed table has the border its collapsed borders
+/// pyro: whether a row group of a collapsed table has the border its collapsed borders
 /// were resolved with (`TableContext::group_borders`).
 fn group_border_kept(ctx: &TableContext, group: &crate::Node) -> bool {
     if ctx.border_collapse != BorderCollapse::Collapse {
@@ -1948,7 +1948,7 @@ pub(crate) fn keeps_cells(ctx: &TableContext) -> bool {
     ctx.incremental && ctx.oof_children.is_empty()
 }
 
-/// lightningpanda: the layout children `resolve_layout_children` visits in `table` when the table is
+/// pyro: the layout children `resolve_layout_children` visits in `table` when the table is
 /// neither built again nor updated (a change inside its cells): the cells damage propagation noted
 /// as changed in layout since the grid's last layout (`TableContext::changed_cells`), and the
 /// pseudo-elements. `None`: `table` does not keep its cells, and all its layout children are visited.
@@ -2003,7 +2003,7 @@ pub(crate) fn is_incremental(doc: &BaseDocument, table: NodeId) -> bool {
         })
 }
 
-/// lightningpanda: brings the table's `TableContext` up to date when only some of its rows changed
+/// pyro: brings the table's `TableContext` up to date when only some of its rows changed
 /// (a cell's content or style, rows added to or removed from a row group): those rows are collected
 /// again and the collapsed borders around them resolved again; the other rows and cells stay as they
 /// are. `false`: the change is not one of those, and the table is to be built again.
@@ -2526,7 +2526,7 @@ fn collect_columns(
     }
 }
 
-/// lightningpanda: the `TableContext` `table` was last built with, if it was a table.
+/// pyro: the `TableContext` `table` was last built with, if it was a table.
 fn former_table_context(doc: &BaseDocument, table: NodeId) -> Option<Arc<TableContext>> {
     match &doc.nodes[table].data.downcast_element()?.special_data {
         SpecialElementData::TableRoot(ctx) => Some(Arc::clone(ctx)),
@@ -2539,7 +2539,7 @@ fn former_table_context(doc: &BaseDocument, table: NodeId) -> Option<Arc<TableCo
 /// They are those of the table's last `TableContext`, whatever their `display` is now (a row group of
 /// a table made a flex container is a block item now): table construction dropped the boxes they had
 /// (`drop_part_box`). Its cells are released (`release_cell`), and the context dropped: the box is no
-/// table (lp-render reads a table's collapsed borders from it).
+/// table (pyro-render reads a table's collapsed borders from it).
 pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId) {
     let Some(element) = doc.nodes[node_id].data.downcast_element_mut() else { return };
     if !matches!(element.special_data, SpecialElementData::TableRoot(_)) {
@@ -2580,7 +2580,7 @@ pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId)
     release_former_cells(doc, node_id, &ctx.cells, &[]);
 }
 
-/// lightningpanda: a cell collected while no container lists it (`Node::layout_child_of`): new, or
+/// pyro: a cell collected while no container lists it (`Node::layout_child_of`): new, or
 /// back from outside the layout tree (its row was `display: contents`, it was a block the table
 /// ignored). Stylo styled it meanwhile and `clear_damage_and_dirty_flags` cleared the damage that no
 /// pass consumed (no pass reached it), so what its subtree built before is stale: built again, as a
@@ -2595,7 +2595,7 @@ fn enter_layout_tree(doc: &mut BaseDocument, node_id: NodeId) {
     });
 }
 
-/// lightningpanda: a node that is no longer one of a table's cells (a box of its own, out of flow, or
+/// pyro: a node that is no longer one of a table's cells (a box of its own, out of flow, or
 /// its table gone) has no half collapsed borders (its layout style and paint, which draws a node's
 /// own borders only without them, follow) and no index into the table's cells.
 fn release_cell(doc: &mut BaseDocument, node_id: NodeId) {
@@ -2604,7 +2604,7 @@ fn release_cell(doc: &mut BaseDocument, node_id: NodeId) {
     node.layout_data_mut().table_cell_index = u32::MAX;
 }
 
-/// lightningpanda: `table`'s former cells (`old`) that it lists no more (`cells`, whose nodes hold
+/// pyro: `table`'s former cells (`old`) that it lists no more (`cells`, whose nodes hold
 /// their index) are released (`release_cell`), except one another container collected since.
 fn release_former_cells(doc: &mut BaseDocument, table: NodeId, old: &[TableCell], cells: &[TableCell]) {
     for cell in old {
@@ -2620,7 +2620,7 @@ fn release_former_cells(doc: &mut BaseDocument, table: NodeId, old: &[TableCell]
     }
 }
 
-/// lightningpanda: `node_id`'s layout children that are still listed there (`Node::layout_child_of`)
+/// pyro: `node_id`'s layout children that are still listed there (`Node::layout_child_of`)
 /// leave its list; one another container collected since points there and is left alone.
 fn leave_layout_children(doc: &mut BaseDocument, node_id: NodeId) {
     let BaseDocument { nodes, left_layout_lists, .. } = doc;
@@ -2684,7 +2684,7 @@ fn collect_table_cells(
     // block rather than as part of the table grid.
     let position = node.primary_styles().unwrap().clone_position();
     if position.is_absolutely_positioned() {
-        // lightningpanda: a box of its own, laid out and painted with its own borders.
+        // pyro: a box of its own, laid out and painted with its own borders.
         release_cell(doc, node_id);
         oof_children.push((node_id, stylo_taffy::convert::position(position)));
         return;
@@ -2912,6 +2912,9 @@ fn collect_table_cells(
                 style.size.height = style_helpers::auto();
             }
             style.size.width = style_helpers::auto();
+            // pyro: `max-width` does not apply to a table cell (CSS 2.1 leaves it undefined;
+            // Chromium ignores it): the cell spans its column, as wide as the column grew.
+            style.max_size.width = style_helpers::auto();
             crate::resolve::phase_profile::table_cell_collected();
             let length_width = if is_fixed { None } else { length_width };
             let percent_lengths = percent_width

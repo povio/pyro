@@ -2,7 +2,7 @@
 
 `IntersectionObserver` now supplies the constructor missing from eight cases in
 [TOS coverage batch 1](../validation/TOS_COVERAGE_BATCH_1.md). This binding computes
-intersections from lp-dom's existing faux layout; it does not report every target
+intersections from pyro-dom's existing faux layout; it does not report every target
 as visible. It is not evidence of complete CSS layout or full TOS compatibility.
 
 Supported options are an Element/Document/null root, rootMargin with one to four
@@ -50,7 +50,7 @@ Element `scrollTop`/`scrollLeft` offsets now shift the client rects of the
 element's descendants (`Layout::ancestor_scroll_offset`), so scrolling an
 overflow root changes observed geometry without a DOM mutation. Upstream's faux
 layout subtracts only the window scroll (Element.zig:1734-1741); this is a
-documented lightningpanda deviation. Hit testing (`elementFromPoint`, CDP mouse
+documented pyro deviation. Hit testing (`elementFromPoint`, CDP mouse
 input) applies the same offsets so a rect's interior hits its element, and
 `scrollIntoView[IfNeeded]` first reveals clipped elements inside
 `overflow: auto/scroll` ancestors, including fresh containers with zero offsets.

@@ -11,13 +11,13 @@
     "iframe"
   ],
   "summary": {
-    "/Users/povioserver/lp-baseline/browser/zig-out/bin/lightpanda": {
+    "/Users/povioserver/pyro-baseline/browser/zig-out/bin/lightpanda": {
       "ready": 57,
       "connected": 60.6,
       "page": 63,
       "evaluated": 64.7
     },
-    "/Users/povioserver/Documents/GitHub/lightningpanda/bench/../target/release/lightningpanda": {
+    "/Users/povioserver/Documents/GitHub/pyro/bench/../target/release/pyro": {
       "ready": 6.8,
       "connected": 10.4,
       "page": 12.9,
@@ -25,7 +25,7 @@
     }
   },
   "results": {
-    "/Users/povioserver/lp-baseline/browser/zig-out/bin/lightpanda": [
+    "/Users/povioserver/pyro-baseline/browser/zig-out/bin/lightpanda": [
       {
         "ready": 103.4,
         "connected": 139.1,
@@ -97,7 +97,7 @@
         "error": null
       }
     ],
-    "/Users/povioserver/Documents/GitHub/lightningpanda/bench/../target/release/lightningpanda": [
+    "/Users/povioserver/Documents/GitHub/pyro/bench/../target/release/pyro": [
       {
         "ready": 7.4,
         "connected": 11.2,

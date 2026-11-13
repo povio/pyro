@@ -6,10 +6,10 @@ tos-monorepo `HEAD` (a clean export, not the working tree); the cases come from 
 [summary.md](summary.md) (final run).
 
 Engines: `chrome-base` (Chrome, base build), `chrome-fixed` (Chrome, `--paprize-page-box-shadow: none`),
-`lp-fixed` (Lightningpanda, fixed build). Each runs the production flow: postMessage → `#document-generated` →
+`pyro-fixed` (Pyro, fixed build). Each runs the production flow: postMessage → `#document-generated` →
 `fonts.ready` → `page.pdf` (A4, margin 0, printBackground). `run.mjs` drives both engines with Playwright
 `connectOverCDP`. `puppeteer-flow.mjs` runs the ToS `PdfRenderer` steps unchanged with puppeteer-core 25.2.1
-against LP. Each case runs three interleaved repetitions after one untimed warm-up, and the tables report
+against Pyro. Each case runs three interleaved repetitions after one untimed warm-up, and the tables report
 medians. Peak RSS covers the whole process tree, sampled every 50 ms.
 
 ## Latest: closing on Chrome's pagination (2026-11-01, afternoon)
@@ -21,7 +21,7 @@ selectors require (Blitz restyled the parent's whole subtree). Measured in one r
 per case, 6-concurrent throughput after); load average 23 → 16 during the run. Every one of the 44 PDFs is
 byte-identical to the morning run's. Per-case table: [summary.md](summary.md).
 
-| | chrome-fixed | lp (flow geometry, earlier) | lp (Blitz, morning) | lp (Blitz, now) |
+| | chrome-fixed | pyro (flow geometry, earlier) | pyro (Blitz, morning) | pyro (Blitz, now) |
 |---|---|---|---|---|
 | page count equal to Chrome | – | 43/44 | 44/44 | **44/44** |
 | pixel diff per case, median | – | 4.7% | 4.3% | **4.3%** |
@@ -39,7 +39,7 @@ byte-identical to the morning run's. Per-case table: [summary.md](summary.md).
   run's (4618 MB, ~1800–2000 MB per case). The harness and the Chrome build (156) are the same; by this run
   the machine was under heavy memory pressure (some 2.4 million pages in the compressor), and RSS on macOS
   leaves out compressed pages, which hits Chrome's large idle heaps hardest. The morning figure stands for
-  Chrome; LP's RSS (1172 → 1186 MB) moved little, but carries the same caveat.
+  Chrome; Pyro's RSS (1172 → 1186 MB) moved little, but carries the same caveat.
 
 ## Earlier: Blitz relayout as fast as flow (2026-11-01)
 
@@ -48,7 +48,7 @@ content into pages), and two whole-tree scans per sync are gone. Measured in one
 repetitions per case, 6-concurrent throughput after; load average 25 → 14 during the run), and again
 without Chrome right after (3289 ms pagination, 24.3 docs/s). Per-case table: [summary.md](summary.md).
 
-| | chrome-fixed | lp (flow geometry, earlier) | lp (Blitz, 2026-10-31) | lp (Blitz, now) |
+| | chrome-fixed | pyro (flow geometry, earlier) | pyro (Blitz, 2026-10-31) | pyro (Blitz, now) |
 |---|---|---|---|---|
 | page count equal to Chrome | – | 43/44 | 44/44 | **44/44** |
 | pixel diff per case, median | – | 4.7% | 4.3% | **4.3%** |
@@ -66,12 +66,12 @@ without Chrome right after (3289 ms pagination, 24.3 docs/s). Per-case table: [s
 
 ## Earlier: Blitz is the only geometry, with HTTPS (2026-10-31)
 
-lp-dom's flow layout and the approximate layout are gone: every layout query is answered from the page's
-Blitz document, the one printToPDF prints. lp-net fetches HTTPS (rustls), so ToS pdfgen's Inter loads from
+pyro-dom's flow layout and the approximate layout are gone: every layout query is answered from the page's
+Blitz document, the one printToPDF prints. pyro-net fetches HTTPS (rustls), so ToS pdfgen's Inter loads from
 Google Fonts. Measured in one run (2 interleaved repetitions per case, 6-concurrent throughput after); the
 machine was shared (load average 15–45 during the run). Per-case table: [summary.md](summary.md).
 
-| | chrome-fixed | lp (flow geometry, earlier) | lp (Blitz only, now) |
+| | chrome-fixed | pyro (flow geometry, earlier) | pyro (Blitz only, now) |
 |---|---|---|---|
 | page count equal to Chrome | – | 43/44 | **44/44** |
 | pixel diff per case, median | – | 4.7% | **4.3%** |
@@ -86,16 +86,16 @@ machine was shared (load average 15–45 during the run). Per-case table: [summa
   ([side by side](booking-request-overflow-https-p1-6.7pct.png)). Their header logo (an SVG with
   `h-[37mm] w-auto` in a centered flex row) was 130 px off to the left; fixed (a replaced item's automatic
   minimum width is its natural width).
-- Pagination is still LP's slow part: the forced layouts themselves. In cmr-overflow (2544 forced layouts per
-  render) one sync costs 0.29 ms: 0.006 ms building lp-dom's change delta, 0.026 ms applying it to the
+- Pagination is still Pyro's slow part: the forced layouts themselves. In cmr-overflow (2544 forced layouts per
+  render) one sync costs 0.29 ms: 0.006 ms building pyro-dom's change delta, 0.026 ms applying it to the
   mirror, 0.27 ms in Blitz's incremental restyle and relayout. Chrome does the same pagination in 266 ms
-  (about 0.1 ms per layout); LP takes 880 ms.
+  (about 0.1 ms per layout); Pyro takes 880 ms.
 - The 6-concurrent throughput dropped from ~25 to 19 docs/s under a heavier machine load than the earlier
   runs; not separated from the pagination cost above.
 
 ## Measured: first run → after the three fixes
 
-| | chrome-base | chrome-fixed | lp-fixed (first) | lp-fixed (fixed) |
+| | chrome-base | chrome-fixed | pyro-fixed (first) | pyro-fixed (fixed) |
 |---|---|---|---|---|
 | sum of median paginate ms (44 cases) | 2254 | 2281 | 3421 | 3306 |
 | sum of median printToPDF ms | 8615 | 4054 | 882 | 918 |
@@ -109,7 +109,7 @@ machine was shared (load average 15–45 during the run). Per-case table: [summa
 The Chrome columns come from the final run; the first run gave similar Chrome numbers (see git history). On this
 Mac the shadow fix halves Chrome's printToPDF and changes zero pixels; it did not reach the 6x seen on Linux.
 
-## Fidelity (lp-fixed vs chrome-fixed; pdftoppm at 100 dpi, pixelmatch threshold 0.1)
+## Fidelity (pyro-fixed vs chrome-fixed; pdftoppm at 100 dpi, pixelmatch threshold 0.1)
 
 | | first | after fixes |
 |---|---|---|
@@ -124,11 +124,11 @@ Mac the shadow fix halves Chrome's printToPDF and changes zero pixels; it did no
 - Remaining overflow: a header SVG logo, 92 px (23 pages). There is no `<svg>` overflow in Chrome, which shrinks
   the logo to its container. The invoice watermark overflows the same way in Chrome and is clipped there too.
   `bmd-report` overflows by 784 px because Blitz computes table column widths differently from Chrome.
-- `house-bl-final-overflowing-table`: Chrome gives 4 pages, LP 3. Paprize measures with lp-dom's geometry,
+- `house-bl-final-overflowing-table`: Chrome gives 4 pages, Pyro 3. Paprize measures with pyro-dom's geometry,
   whose rows are 0.5–1 px shorter than Chrome's and which counts one wrapped two-line cell as a single line
   (22 vs 44 px). It therefore fits 26 rows on page 1 instead of Chrome's 24. Fixes 1–3 cannot change this,
   because Blitz is not what Paprize measures. Exact pagination needs `getBoundingClientRect` answered from
-  Blitz's layout, or lp-dom text wrapping that matches.
+  Blitz's layout, or pyro-dom text wrapping that matches.
 - Lowest text overlaps after the fixes: `vermas-overflow` 0.83 (not investigated) and the CMR cases at 0.90.
   The CMR margin labels use `writing-mode: vertical-rl`, which Blitz does not support.
 
@@ -138,7 +138,7 @@ Mac the shadow fix halves Chrome's printToPDF and changes zero pixels; it did no
    definite available space took its max-content width, so a row inside an `align-items:center` column
    (ToS footers) overflowed by up to 1092 px instead of wrapping. It is now `min(max-content,
    max(min-content, available))`, applied in the inline axis only. All 6605 upstream tests pass, the patch is in
-   `vendor/taffy/UPSTREAM.patch`, and there are two regression tests in lp-render. I tried a second Taffy
+   `vendor/taffy/UPSTREAM.patch`, and there are two regression tests in pyro-render. I tried a second Taffy
    change for the SVG logo (content size suggestion ignoring the preferred cross size). It broke 12 Chromium
    tests, so I reverted it.
 2. **Memory on navigation** (`8e21af0`). This was not a leak: a navigation disposed the old document but left
@@ -146,9 +146,9 @@ Mac the shadow fix halves Chrome's printToPDF and changes zero pixels; it did no
    close already did (synchronous collection, then free pages returned to the OS). Over 200 iterations of
    goto + generate + printToPDF, RSS went from 6783 MB to 330 MB, and each iteration got faster (172 → 157 ms).
    The collection costs about 5 ms per navigation. About 0.3 MB per navigation is still retained.
-   `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns this off. `navmem.mjs` measures it.
+   `PYRO_RELEASE_ON_CLOSE=0` turns this off. `navmem.mjs` measures it.
 3. **Puppeteer** (`db84ceb`). puppeteer ≥ 22 auto-attaches to tab targets and attaches each page from its tab's
-   session; LP had only page targets, so `newPage()` hung. Each page now has a virtual tab target. Page setup
+   session; Pyro had only page targets, so `newPage()` hung. Each page now has a virtual tab target. Page setup
    also needed Audits/Performance enable, `Network.setUserAgentOverride`, and
    `Emulation.setTouchEmulationEnabled(false)`. Result: the unchanged ToS `PdfRenderer` flow produces 44/44 PDFs
    with puppeteer-core 25.2.1, with page counts identical to the Playwright run.
@@ -158,24 +158,24 @@ Mac the shadow fix halves Chrome's printToPDF and changes zero pixels; it did no
 - Mapped: fills and strokes; solid colors and linear, radial and sweep gradients, including stop alpha; image
   brushes, including repeat tiling; glyph runs, with embedded subset fonts and text recovered from a reverse
   cmap; clip, opacity and blend layers; inset box shadows, drawn as a box-minus-hole even-odd fill.
-- Not mapped, counted in the reply's `lp.stats`: outset box shadows (skipped), filters, compose modes other
+- Not mapped, counted in the reply's `pyro.stats`: outset box shadows (skipped), filters, compose modes other
   than source-over, variable-font coordinates, synthetic bold. The 44 cases use none of these.
 - Zero-area fills are dropped. vendor/blitz-paint also skips zero-width border edges: Tailwind's
   `border: 0 solid` otherwise prints as hairlines.
 
-## Blitz-backed layout queries (`LIGHTNINGPANDA_GEOMETRY=blitz`, `a04026e`)
+## Blitz-backed layout queries (`PYRO_GEOMETRY=blitz`, `a04026e`)
 
-Paprize paginates with `getBoundingClientRect()` heights (plus the computed margins). By default LP answers those
-from lp-dom's flow layout, an approximation. With `LIGHTNINGPANDA_GEOMETRY=blitz`, LP answers them from the same
+Paprize paginates with `getBoundingClientRect()` heights (plus the computed margins). By default Pyro answers those
+from pyro-dom's flow layout, an approximation. With `PYRO_GEOMETRY=blitz`, Pyro answers them from the same
 Blitz layout that printToPDF paints. Per-case table: [summary.md](summary.md). Final run, load average 12–22.
 
 **Design.** Layout queries are synchronous on the JS thread, and the render worker's Blitz documents live on
-another thread. In this mode the browser thread therefore keeps its own `lp_render::Renderer`, with one persistent,
-mirrored Blitz document per page document. lp-dom recomputes its layout only when the DOM, styles or viewport
+another thread. In this mode the browser thread therefore keeps its own `pyro_render::Renderer`, with one persistent,
+mirrored Blitz document per page document. pyro-dom recomputes its layout only when the DOM, styles or viewport
 changed (the existing stamp cache skips everything otherwise). When it does, a `GeometrySource` hook builds the
 keyed node list, the mirror applies the difference, Blitz restyles and relays out incrementally, and the element
-boxes replace lp-dom's. Every geometry getter (bounding/client rects, `offset*`, `client*`, `scroll*`) follows from
-that one replacement. Text and range geometry stays lp-dom's. Fonts are the ones Blitz paints with: system fonts
+boxes replace pyro-dom's. Every geometry getter (bounding/client rects, `offset*`, `client*`, `scroll*`) follows from
+that one replacement. Text and range geometry stays pyro-dom's. Fonts are the ones Blitz paints with: system fonts
 plus `data:` web fonts. Other sub-resources are not loaded in this mode.
 
 Chromium reports boxes differently from what Blitz paints in four places, so the queries are adjusted:
@@ -187,7 +187,7 @@ Chromium reports boxes differently from what Blitz paints in four places, so the
 - In collapsed-border tables, cells take half of the collapsed cell and row borders. Blitz lays collapsed
   borders out as gutters and ignores row borders, so `tr.border-t border-b` rows measured 1 px short each.
 
-| | Chrome (fixed) | LP, lp-dom geometry | LP, Blitz geometry |
+| | Chrome (fixed) | Pyro, pyro-dom geometry | Pyro, Blitz geometry |
 |---|---|---|---|
 | page count equal to Chrome | – | 43/44 | 42/44 |
 | cases with `.pz-page` content overflowing vertically | – | 1 (vermas-overflow, 324 px) | **0** |
@@ -199,23 +199,23 @@ Chromium reports boxes differently from what Blitz paints in four places, so the
 | 6 concurrent: p50 / p95 ms | 213 / 335 | 92 / 417 | 118 / 1469 |
 | 6 concurrent: peak RSS MB | 4285 | 1164 | 1332 |
 
-- house-bl-final-overflowing-table now has 4 pages, as in Chrome (3 with lp-dom geometry). vermas-overflow no
+- house-bl-final-overflowing-table now has 4 pages, as in Chrome (3 with pyro-dom geometry). vermas-overflow no
   longer clips 13 rows: 36 rows on page 1, as in Chrome. Its text match went from 0.83 to 0.99.
 - booking-request-overflow and booking-confirmation-overflow give 9 pages; Chrome gives 10. All heights match now
   except one cell, where Chrome wraps "1.130,069 ft³" onto two lines in a 62 px column and Blitz keeps one line
   (Blitz's text widths come out whole-pixel: 62.00 vs Chrome's 61.56). Each page ends up a row longer. Not fixed.
 - Cost: 3205 forced layouts over the 44 cases, 1.7 ms each. That splits into 1.1 ms of mirror diff plus Blitz
-  restyle/relayout, 0.35 ms rebuilding the node list and 0.25 ms reading boxes, plus lp-dom's own pass. cmr-overflow
+  restyle/relayout, 0.35 ms rebuilding the node list and 0.25 ms reading boxes, plus pyro-dom's own pass. cmr-overflow
   alone forces 2544 layouts (3.5 s; Chrome takes 0.3 s for the same work). house-bl forces 147 (570 ms; Chrome 77 ms).
   Already done: no work when the DOM/style/viewport stamp is unchanged, incremental Blitz relayout through the
   mirror, an O(n) box read, text layouts walked only for inline elements that need a rect, and FxHash maps.
-  The next step is feeding lp-dom's change journal to the mirror, instead of rebuilding and diffing the whole node
-  list per layout, and skipping lp-dom's flow pass in this mode.
-- Default behaviour is unchanged: without the variable, all getters use lp-dom's flow layout.
+  The next step is feeding pyro-dom's change journal to the mirror, instead of rebuilding and diffing the whole node
+  list per layout, and skipping pyro-dom's flow pass in this mode.
+- Default behaviour is unchanged: without the variable, all getters use pyro-dom's flow layout.
 
 ## The two cases below 90% text match after the Taffy fix
 
-- **vermas-overflow (0.83):** a pagination mismatch, the same cause as house-bl. Paprize, measuring with lp-dom's
+- **vermas-overflow (0.83):** a pagination mismatch, the same cause as house-bl. Paprize, measuring with pyro-dom's
   geometry, put 36 rows on page 1. In Blitz they ran 324 px past the page box and 13 rows were clipped. Blitz
   geometry fixes it (0.99). The word "TRANSOCEAN" is still missing: it is SVG `<text>` in the logo, which usvg draws
   as paths.

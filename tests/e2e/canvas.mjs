@@ -1,10 +1,10 @@
-// Real Playwright (connectOverCDP) against `lightningpanda serve`: canvas 2D
+// Real Playwright (connectOverCDP) against `pyro serve`: canvas 2D
 // rasterization through the real browser. Pixels drawn by script read back
 // exactly (getImageData), a loaded same-origin <img> draws its decoded
 // pixels, a cross-origin one taints the canvas (SecurityError on readback),
 // toDataURL round-trips, and Page.captureScreenshot shows the canvas.
 //
-// Usage: bun tests/e2e/canvas.mjs /abs/path/to/lightningpanda
+// Usage: bun tests/e2e/canvas.mjs /abs/path/to/pyro
 // Requires `bun install` in bench/ for the pinned playwright-core.
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -21,7 +21,7 @@ const { chromium } = require('playwright-core');
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: bun tests/e2e/canvas.mjs /abs/path/to/lightningpanda');
+  console.error('usage: bun tests/e2e/canvas.mjs /abs/path/to/pyro');
   process.exit(2);
 }
 
@@ -95,7 +95,7 @@ for (;;) {
     const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) });
     if (r.ok) break;
   } catch {}
-  if (child.exitCode !== null) { console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
+  if (child.exitCode !== null) { console.error(`pyro exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
   if (performance.now() - started > 10_000) { console.error(`startup timed out: ${stderr}`); process.exit(1); }
   await new Promise((r) => setTimeout(r, 10));
 }

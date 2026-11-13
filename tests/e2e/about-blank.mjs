@@ -1,7 +1,7 @@
-// Real Playwright 1.59.1 (connectOverCDP) against `lightningpanda serve` on JavaScriptCore.
+// Real Playwright 1.59.1 (connectOverCDP) against `pyro serve` on JavaScriptCore.
 // Covers about:blank plus real HTTP navigation, redirects, response bodies and explicit network failures.
 //
-// Usage: node tests/e2e/about-blank.mjs /abs/path/to/lightningpanda
+// Usage: node tests/e2e/about-blank.mjs /abs/path/to/pyro
 // Requires `bun install` (or npm install) in bench/ for the pinned playwright-core.
 // Exit status: 0 when every check passed, 1 on any failure, 2 for usage errors.
 import { spawn } from 'node:child_process';
@@ -22,7 +22,7 @@ const { chromium } = require('playwright-core');
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: node tests/e2e/about-blank.mjs /abs/path/to/lightningpanda');
+  console.error('usage: node tests/e2e/about-blank.mjs /abs/path/to/pyro');
   process.exit(2);
 }
 
@@ -70,7 +70,7 @@ for (;;) {
     if (r.ok) break;
   } catch {}
   if (child.exitCode !== null) {
-    console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`);
+    console.error(`pyro exited early (${child.exitCode}): ${stderr}`);
     process.exit(1);
   }
   if (performance.now() - started > 10_000) {
@@ -707,7 +707,7 @@ try {
   await check('client hints from Playwright userAgent, grantPermissions clipboard round trip and hasTouch tap', async () => {
     // Playwright derives userAgentMetadata (no brands, mobile from isMobile)
     // from the agent string; Chrome fills the brands with its own, which
-    // for lightningpanda's own agent are none.
+    // for pyro's own agent are none.
     const agent = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36';
     const touchContext = await browser.newContext({ hasTouch: true, userAgent: agent });
     try {
@@ -1435,7 +1435,7 @@ await check('streams: ReadableStream, pipeThrough and Response bodies', async ()
 // A local forward proxy: absolute-form requests answered here, CONNECT tunnelled
 // to a local TLS server whatever the host asked for.
 {
-  const data = path.join(here, '..', '..', 'crates', 'lp-net', 'tests', 'data');
+  const data = path.join(here, '..', '..', 'crates', 'pyro-net', 'tests', 'data');
   const certificate = {
     cert: new X509Certificate(readFileSync(path.join(data, 'self-signed.der'))).toString(),
     key: createPrivateKey({ key: readFileSync(path.join(data, 'self-signed.key.der')), format: 'der', type: 'pkcs8' })

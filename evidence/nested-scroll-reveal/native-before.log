@@ -44,7 +44,7 @@
    Compiling markup5ever v0.40.0
    Compiling html5ever v0.40.1
    Compiling selectors v0.41.0
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-dom)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-dom)
     Finished `release` profile [optimized] target(s) in 17.78s
      Running tests/layout.rs (target/release/deps/layout-7fddc7aed37eea63)
 
@@ -55,7 +55,7 @@ failures:
 
 ---- scroll_into_view_reveals_fresh_nested_overflow_containers stdout ----
 
-thread 'scroll_into_view_reveals_fresh_nested_overflow_containers' (6426659) panicked at crates/lp-dom/tests/layout.rs:2450:5:
+thread 'scroll_into_view_reveals_fresh_nested_overflow_containers' (6426659) panicked at crates/pyro-dom/tests/layout.rs:2450:5:
 fresh inner overflow container must scroll
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
@@ -65,4 +65,4 @@ failures:
 
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
 
-error: test failed, to rerun pass `-p lp-dom --test layout`
+error: test failed, to rerun pass `-p pyro-dom --test layout`

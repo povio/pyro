@@ -1,11 +1,11 @@
 # Triage of shared TOS failures in worker 3 batches, 2026-10-18
 
-This note follows up the failures that both lightningpanda and upstream had in
+This note follows up the failures that both pyro and upstream had in
 batches W3-07, W3-10, W3-12, W3-17, W3-18 and W3-19. W3-03 is covered in
 [W3-03/W3-04](TOS_COVERAGE_W3_03_04.md#follow-up-triage-added-after-merge).
 
 The triage was read-only. Nothing in TOS changed: source, tests, authentication,
-assertions and the manifest are as before. A failure shared by lightningpanda and
+assertions and the manifest are as before. A failure shared by pyro and
 upstream does not prove the browser had no part in it. Each case below is
 classified only as far as the evidence goes, and unknowns are left explicit.
 
@@ -66,7 +66,7 @@ Both cases wait for the placeholder "Select INTTRA Service Type". TOS commit
 test's last edit) renamed it to "Select Carrier Service Type" in
 `translation.json`; the old string no longer exists in `apps/fe/src`. Upstream
 fails the same two cases, plus "updates air import customs status", which
-lightningpanda passes.
+pyro passes.
 
 ### W3-07: business-partner canvas table (TOS renderer drift)
 
@@ -87,7 +87,7 @@ requests, one per item type, for the same position (`Promise.all`). These go
 through Playwright's API request context, not a page.
 
 The backend logged `error: deadlock detected` when committing the transaction,
-and the fixture got `500 uncaught-exception`. This happened on both lightningpanda
+and the fixture got `500 uncaught-exception`. This happened on both pyro
 and upstream, and no browser is involved in that request. The new position-cache
 triggers (deferred constraint trigger at commit) are a plausible contributor, but
 no cause is claimed. It was not run on Chromium.
@@ -105,7 +105,7 @@ no cause is claimed. It was not run on Chromium.
 ### W3-12: two cases fail only in the Lightpanda lanes
 
 - **Chromium diagnostic run** `w3l12c-1018-111322`: all 15 selected cases pass,
-  as do 12 extras. Both lightningpanda and upstream fail the same two cases.
+  as do 12 extras. Both pyro and upstream fail the same two cases.
 - **Failure modes.**
   - Incoterm: neither a visible "CPT" value nor a select trigger with "CPT" is
     found in the transshipment row (`prepareRouteInlineOption`).
@@ -174,12 +174,12 @@ is claimed about why upstream fails. The static repro at the end did run on both
     for the missed clicks. A native repair and unchanged-case rerun are still
     needed to establish their contribution to each failure. Upstream's full-page
     failure mechanism was not probed and remains unresolved.
-  - The repro has been sent to W2, who owns layout and hit-testing (lp-dom and
-    lp-webapi). There is no production change here.
+  - The repro has been sent to W2, who owns layout and hit-testing (pyro-dom and
+    pyro-webapi). There is no production change here.
 - **Limits.**
   - Two simpler repros did not reproduce the miss on any engine. They had no
     `pointer-events: none`, and they stay on the W3 host in
-    `/private/tmp/lp-w3-probes`:
+    `/private/tmp/pyro-w3-probes`:
     - `hit-test-repro.mjs`: overflow-hidden cells and nested flex;
     - `hit-test-min.mjs`: six nested divs in a 26 px cell.
   - The probe adds one evaluation and one local WebSocket hop per press.
@@ -193,7 +193,7 @@ is claimed about why upstream fails. The static repro at the end did run on both
 ## Provenance
 
 - **TOS:** unchanged `f9fde4aa0dce7d1d7a1ffebffe3306399973cd80`, manifest
-  `542d479b…`, fixture `/private/tmp/lp-w3-lfix-1`.
+  `542d479b…`, fixture `/private/tmp/pyro-w3-lfix-1`.
 - **Selections:** the same files as the original batches, so the same hashes
   (see `evidence/tos-coverage-w3/selections`).
 - **Chromium diagnostic runs** (`w3l17c`, `w3l10c`, `w3l12c`): Chromium lane,
@@ -204,7 +204,7 @@ is claimed about why upstream fails. The static repro at the end did run on both
   `2641569`, SHA-256
   `b79372659084464730fc1a64589d8a7c82c0137e0afe21f34d37548fcef3e4ff`. These are
   not coverage evidence.
-  - Recording wrapper `lp-record-wrapper.mjs`: `f0c15757…`.
+  - Recording wrapper `pyro-record-wrapper.mjs`: `f0c15757…`.
   - Proxies: `cdp-hittest-proxy.mjs` `81f2b411…` and `cdp-snapshot-proxy.mjs`
     `e2b6cf7a…`.
   - Snapshot SHA-256 values:
@@ -221,7 +221,7 @@ is claimed about why upstream fails. The static repro at the end did run on both
   (`7f76ccfe…`).
 - **TOS harness diagnostic runs:**
   - Each used the harness's retained template and
-    `LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB=64`, which the Chromium lane ignores.
+    `PYRO_SHARED_ASSET_CACHE_MB=64`, which the Chromium lane ignores.
   - Each created one database and dropped it by exact name, leaving 0 run
     databases. The static data-URL probes use no backend or database.
 - **Retained template ledger:**
@@ -232,6 +232,6 @@ is claimed about why upstream fails. The static repro at the end did run on both
   - It is retained until W3 TOS work ends, and then dropped by exact name.
   - The template database query was read-only
     (`default_transaction_read_only`).
-- **Artifacts:** on the W3 host in `/private/tmp/lp-w3-l17c`, `-l10c`, `-l12c`,
-  `-l12h`, `-l12s` and `-l12d` (excluded), and `/private/tmp/lp-w3-probes`, plus
+- **Artifacts:** on the W3 host in `/private/tmp/pyro-w3-l17c`, `-l10c`, `-l12c`,
+  `-l12h`, `-l12s` and `-l12d` (excluded), and `/private/tmp/pyro-w3-probes`, plus
   the original batch run directories.

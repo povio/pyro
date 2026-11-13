@@ -1,7 +1,7 @@
 # Per-connection memory caps (measurement)
 
 This directory holds the `memory_caps.txt` results. They come from 3 rounds of 5 scenarios, with one process per
-scenario, run by `crates/lp-cdp/examples/memory_caps.rs` in a release build.
+scenario, run by `crates/pyro-cdp/examples/memory_caps.rs` in a release build.
 
 - **Source:** `main` cdf2d33 plus this branch's connection-wide `HandleBudget` (default 100,000).
 - **Host:** Apple M1, 8 GB, macOS 26.7.1, rustc 1.99.1, `SDKROOT=MacOSX26.5.sdk`.

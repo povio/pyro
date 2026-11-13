@@ -1,29 +1,29 @@
 # Upstream Lightpanda baseline on TOS (Worker 2 host)
 
-Copied from the Worker 2 handoff (`~/lp-bench/BASELINE-HANDOFF.md`), sanitized: no credentials, tokens or secret contents. Raw logs and Playwright JSON reports stay on the Worker 2 host under `~/lp-bench/<run>/` (paths below) and are not committed because they contain local environment details.
+Copied from the Worker 2 handoff (`~/pyro-bench/BASELINE-HANDOFF.md`), sanitized: no credentials, tokens or secret contents. Raw logs and Playwright JSON reports stay on the Worker 2 host under `~/pyro-bench/<run>/` (paths below) and are not committed because they contain local environment details.
 
 **Canonical configuration for future rewrite comparisons: B (TOS f9fde4aa0d, unmodified).** Comparisons must use the same TOS revision, the same specs/assertions/authentication, the same host and build conditions, and report both binary hashes. Whole-harness and browser-process timing/RSS are reported separately.
 
 # Upstream Lightpanda baseline handoff - TOS FE E2E Lightpanda lane (Worker 2, this Mac)
 
-Generated 2026-10-17. Host: macOS 26 (Darwin 25.6.0) arm64, 8 cores / 8 GiB, native PostgreSQL 17.11 (Homebrew) at localhost:5432, role `lp_bench` (CREATEDB, not superuser). Bun 1.4.3 (`/opt/homebrew/bin/bun`, matches repo `packageManager: bun@1.4.3`).
+Generated 2026-10-17. Host: macOS 26 (Darwin 25.6.0) arm64, 8 cores / 8 GiB, native PostgreSQL 17.11 (Homebrew) at localhost:5432, role `pyro_bench` (CREATEDB, not superuser). Bun 1.4.3 (`/opt/homebrew/bin/bun`, matches repo `packageManager: bun@1.4.3`).
 
 Labels: **[measured]** = observed in this host's logs/commands; **[inferred]** = reasoning, not directly measured.
 
 ## Upstream Lightpanda binary (used for both A and B)
 
-- Path: `/Users/softwarefarm/lp-bench/browser/zig-out/bin/lightpanda` (92,909,656 B, mtime 2026-10-17 10:39)
+- Path: `/Users/softwarefarm/pyro-bench/browser/zig-out/bin/lightpanda` (92,909,656 B, mtime 2026-10-17 10:39)
 - `lightpanda version`: `1.1.0-nightly.10716+2ad38773f` [measured]
 - sha256: `7f76ccfece22e7130d39c8884321f5dea51f4bb2e195542944c3440a86dc4339` [measured, re-verified 2026-10-17 10:48]
-- Source checkout `~/lp-bench/browser` HEAD `2ad38773fd674d3c9cea26a263b814ee46f6ba84`
+- Source checkout `~/pyro-bench/browser` HEAD `2ad38773fd674d3c9cea26a263b814ee46f6ba84`
 - **W3 reported a differing sha256 `cf1545da…` for the same nominal version.** Cross-host byte reproducibility is NOT established. Any performance/compat comparison must use binaries built and run on the same host.
 - Note: TOS routing manifest `apps/fe/e2e/suites/lightpanda.json:697` pins `"lightpandaVersion": "1.0.0-nightly.9610+744bf768c"`, and `scripts/run-fe-e2e-routed.mjs:122` rejects other versions. Both A and B call `scripts/run-fe-e2e.mjs` directly with `playwright.routed.config.ts`, which bypasses that version preflight. So these runs use an unvalidated (newer) upstream build on purpose.
 
 ## Configuration A - "TOS 37ff64fe9a + native-PG infra patch from a384f409a8 (worktree-only)"
 
 - Source commit: `37ff64fe9ab00505d5527f8b1eb356a7dac38069` (Merge PR #1472)
-- Worktree: `~/lp-bench/tos-lpbase-20261017102215`, run slug `lpbase-20261017102215`, artifacts `~/lp-bench/lpbase-20261017102215/`
-- Patch: `~/lp-bench/lpbase-20261017102215/native-pg-a384f409a8.patch`
+- Worktree: `~/pyro-bench/tos-lpbase-20261017102215`, run slug `lpbase-20261017102215`, artifacts `~/pyro-bench/lpbase-20261017102215/`
+- Patch: `~/pyro-bench/lpbase-20261017102215/native-pg-a384f409a8.patch`
   - sha256 `94175bbb0664140c7d387ed8303ceb3041e070ada915eb92ef334fde49a03546` [measured]
   - `git show` of `a384f409a89a21826020b0dcf261b220fa3c2f91` ("fix(e2e): reuse native PostgreSQL on development workers"). It touches 2 files: `apps/be/scripts/e2e/database-snapshot.mjs` and `scripts/run-fe-e2e.mjs`.
   - `git diff` of those 2 files in the A worktree matches the patch body byte-for-byte. Only the 6-line commit header differs [measured].
@@ -43,7 +43,7 @@ Labels: **[measured]** = observed in this host's logs/commands; **[inferred]** =
 ## Configuration B - "TOS f9fde4aa0d unmodified"
 
 - Commit `f9fde4aa0dce7d1d7a1ffebffe3306399973cd80` (Merge PR #1666, 2026-10-15). It was already present locally, so no fetch was needed. `a384f409a8` is an ancestor. Between a384f409a8 and f9f the native-PG files differ only by 3 cosmetic lines (Docker image 17→18-alpine default, `pg_isready -h 127.0.0.1` in Docker mode, an error message). The native path is the same.
-- Run slug `lpbase-f9f-20261017104836`. Worktree `~/lp-bench/tos-lpbase-f9f-20261017104836` (detached at f9f). Artifacts are in `~/lp-bench/lpbase-f9f-20261017104836/`.
+- Run slug `lpbase-f9f-20261017104836`. Worktree `~/pyro-bench/tos-lpbase-f9f-20261017104836` (detached at f9f). Artifacts are in `~/pyro-bench/lpbase-f9f-20261017104836/`.
 - `bun install --frozen-lockfile`: exit 0, 1499 packages (`bun-install.log`)
 - `git status --porcelain` before run: **empty (clean)** (`git-status-pre.txt`). After run: ` M apps/pdfgen/src/data/common/common.models.ts` (harness codegen, `git-status-post.txt`).
 - Env vars confirmed at this commit (`scripts/run-fe-e2e.mjs:45-53,202,843,913,1794`, `apps/fe/playwright.routed.config.ts:6,20`, `apps/fe/e2e/fixtures/lightpanda.ts:8`): `FE_E2E_POSTGRES_MODE`, `FE_E2E_POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `FE_E2E_RUN_SLUG`, `FE_E2E_REUSE_TEMPLATE_DATABASE`, `E2E_TEMPLATE_DATABASE`, `E2E_DATABASE_SNAPSHOT_RESTORE_WITH_DOCKER`, `E2E_ROUTING_ENGINE`, `E2E_ROUTING_REPORT`, `LIGHTPANDA_EXECUTABLE`, `E2E_PLAYWRIGHT_WORKERS`. No changes were needed.
@@ -68,19 +68,19 @@ A vs B wall-time difference (26.69 s vs 41.74 s) [inferred]: mostly harness cach
 ```sh
 git -C /Users/softwarefarm/Documents/GitHub/tos-monorepo cat-file -t f9fde4aa0dce7d1d7a1ffebffe3306399973cd80   # commit
 RUN=lpbase-f9f-20261017104836
-git -C /Users/softwarefarm/Documents/GitHub/tos-monorepo worktree add --detach ~/lp-bench/tos-$RUN f9fde4aa0dce7d1d7a1ffebffe3306399973cd80
-cd ~/lp-bench/tos-$RUN && perl -e 'alarm 900; exec @ARGV' bun install --frozen-lockfile
-git -C ~/lp-bench/tos-$RUN status --porcelain   # empty
-# runner: ~/lp-bench/$RUN/tools/run-smoke.sh $RUN (starts the RSS sampler, then, in the worktree root):
-FE_E2E_POSTGRES_MODE=native FE_E2E_POSTGRES_PORT=5432 POSTGRES_USER=lp_bench \
-POSTGRES_PASSWORD='<redacted; read from ~/lp-bench/pg_lp_bench.pass>' \
+git -C /Users/softwarefarm/Documents/GitHub/tos-monorepo worktree add --detach ~/pyro-bench/tos-$RUN f9fde4aa0dce7d1d7a1ffebffe3306399973cd80
+cd ~/pyro-bench/tos-$RUN && perl -e 'alarm 900; exec @ARGV' bun install --frozen-lockfile
+git -C ~/pyro-bench/tos-$RUN status --porcelain   # empty
+# runner: ~/pyro-bench/$RUN/tools/run-smoke.sh $RUN (starts the RSS sampler, then, in the worktree root):
+FE_E2E_POSTGRES_MODE=native FE_E2E_POSTGRES_PORT=5432 POSTGRES_USER=pyro_bench \
+POSTGRES_PASSWORD='<redacted; read from ~/pyro-bench/pg_lp_bench.pass>' \
 FE_E2E_RUN_SLUG=$RUN E2E_TEMPLATE_DATABASE=fe_e2e_${RUN//-/_}_template \
 FE_E2E_REUSE_TEMPLATE_DATABASE=0 E2E_DATABASE_SNAPSHOT_RESTORE_WITH_DOCKER=0 \
-E2E_ROUTING_ENGINE=lightpanda E2E_ROUTING_REPORT=$HOME/lp-bench/$RUN/lightpanda.json \
-LIGHTPANDA_EXECUTABLE=$HOME/lp-bench/browser/zig-out/bin/lightpanda E2E_PLAYWRIGHT_WORKERS=1 \
+E2E_ROUTING_ENGINE=lightpanda E2E_ROUTING_REPORT=$HOME/pyro-bench/$RUN/lightpanda.json \
+LIGHTPANDA_EXECUTABLE=$HOME/pyro-bench/browser/zig-out/bin/lightpanda E2E_PLAYWRIGHT_WORKERS=1 \
 perl -e 'alarm 1800; exec @ARGV' /usr/bin/time -l bun --no-orphans scripts/run-fe-e2e.mjs run \
   --config playwright.routed.config.ts e2e/configuration/profile-settings.e2e.ts
-# RSS sampler: ~/lp-bench/$RUN/tools/rss-sampler.sh "^$HOME/lp-bench/browser/zig-out/bin/lightpanda serve" <out> <stopfile>
+# RSS sampler: ~/pyro-bench/$RUN/tools/rss-sampler.sh "^$HOME/pyro-bench/browser/zig-out/bin/lightpanda serve" <out> <stopfile>
 #   loop: pgrep -f <pattern> -> ps -o rss= -p <pid> every 0.2 s
 ```
 Configuration A used the same command style on the 37ff64fe9a worktree with `RUN=lpbase-20261017102215` and `E2E_ROUTING_REPORT` pointing at its run dir.
@@ -115,7 +115,7 @@ Neither test performs a mutation or form submit. Both are render/role/state asse
 
 ## Cleanup manifest (B)
 
-Before the run, `lp_bench` owned 0 databases [measured].
+Before the run, `pyro_bench` owned 0 databases [measured].
 
 Databases created during the run (from the log):
 | Database | Disposition |
@@ -123,14 +123,14 @@ Databases created during the run (from the log):
 | `fe_e2e_lpbase_f9f_20261017104836_template` | dropped by harness (`FE_E2E_REUSE_TEMPLATE_DATABASE=0`) |
 | `fe_e2e_lpbase_f9f_2026101710483_1rw_0` | dropped by harness cleanup |
 | `fe_e2e_lpbase_f9f_2026101710483_1rw_0_standby` | never created ("does not exist, skipping") |
-| `fe_e2e_lpbase_f9f_20261017104836_template_bun_e2e_8f4d6e232f35` (owner lp_bench, `datistemplate=t`, `datallowconn=f`) | **dropped by me**: `ALTER DATABASE … IS_TEMPLATE false ALLOW_CONNECTIONS true; DROP DATABASE … WITH (FORCE);` exit 0 (`db-cleanup.log`) |
+| `fe_e2e_lpbase_f9f_20261017104836_template_bun_e2e_8f4d6e232f35` (owner pyro_bench, `datistemplate=t`, `datallowconn=f`) | **dropped by me**: `ALTER DATABASE … IS_TEMPLATE false ALLOW_CONNECTIONS true; DROP DATABASE … WITH (FORCE);` exit 0 (`db-cleanup.log`) |
 
-After cleanup, `lp_bench` owns 0 databases (`db-post-cleanup.txt`). No other databases or roles were touched.
+After cleanup, `pyro_bench` owns 0 databases (`db-post-cleanup.txt`). No other databases or roles were touched.
 
 ## Resources left in place
 
-- Role `lp_bench` and secret `~/lp-bench/pg_lp_bench.pass` (unchanged)
-- Worktree A `~/lp-bench/tos-lpbase-20261017102215` and its artifacts `~/lp-bench/lpbase-20261017102215/`
-- Worktree B `~/lp-bench/tos-lpbase-f9f-20261017104836` (registered in the tos-monorepo worktree list; only harness-generated `common.models.ts` is modified) and artifacts `~/lp-bench/lpbase-f9f-20261017104836/`: `smoke-profile-settings.log` (sha256 `2d42f801…9f4b`), `lightpanda.json`, `lightpanda-rss-samples.txt`, `lightpanda-rss-peak.txt`, `bun-install.log`, `git-status-pre.txt`, `git-status-post.txt`, `db-pre-cleanup.txt`, `db-cleanup.log`, `db-post-cleanup.txt`, `smoke.start`/`smoke.end`, `tools/run-smoke.sh`, `tools/rss-sampler.sh`
+- Role `pyro_bench` and secret `~/pyro-bench/pg_lp_bench.pass` (unchanged)
+- Worktree A `~/pyro-bench/tos-lpbase-20261017102215` and its artifacts `~/pyro-bench/lpbase-20261017102215/`
+- Worktree B `~/pyro-bench/tos-lpbase-f9f-20261017104836` (registered in the tos-monorepo worktree list; only harness-generated `common.models.ts` is modified) and artifacts `~/pyro-bench/lpbase-f9f-20261017104836/`: `smoke-profile-settings.log` (sha256 `2d42f801…9f4b`), `lightpanda.json`, `lightpanda-rss-samples.txt`, `lightpanda-rss-peak.txt`, `bun-install.log`, `git-status-pre.txt`, `git-status-post.txt`, `db-pre-cleanup.txt`, `db-cleanup.log`, `db-post-cleanup.txt`, `smoke.start`/`smoke.end`, `tools/run-smoke.sh`, `tools/rss-sampler.sh`
 - Harness temp/build outputs under each worktree's `.tmp/`
-- Lightpanda binary `~/lp-bench/browser/zig-out/bin/lightpanda` (unchanged)
+- Lightpanda binary `~/pyro-bench/browser/zig-out/bin/lightpanda` (unchanged)

@@ -1,9 +1,9 @@
 diff --git a/src/build_cache.rs b/src/build_cache.rs
 new file mode 100644
-index 0000000..ccc79cb
+index 0000000..0930692
 --- /dev/null
 +++ b/src/build_cache.rs
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,151 @@
 +// Copyright 2026 the Parley Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
@@ -45,6 +45,8 @@ index 0000000..ccc79cb
 +    scale: u32,
 +    quantize: bool,
 +    base_direction: BaseDirection,
++    /// The address of the context's `'static` line-break override, 0 without one.
++    line_break_override: usize,
 +    runs: Vec<(u16, Range<usize>)>,
 +    styles: Vec<StyleKey<B>>,
 +}
@@ -58,6 +60,7 @@ index 0000000..ccc79cb
 +        scale: f32,
 +        quantize: bool,
 +        base_direction: BaseDirection,
++        line_break_override: usize,
 +    ) -> Self {
 +        let styles = style_table
 +            .iter()
@@ -82,6 +85,7 @@ index 0000000..ccc79cb
 +            scale: scale.to_bits(),
 +            quantize,
 +            base_direction,
++            line_break_override,
 +            runs: style_runs.iter().map(|r| (r.style_index, r.range.clone())).collect(),
 +            styles,
 +        }
@@ -105,6 +109,7 @@ index 0000000..ccc79cb
 +            && self.scale == other.scale
 +            && self.quantize == other.quantize
 +            && self.base_direction == other.base_direction
++            && self.line_break_override == other.line_break_override
 +            && self.runs == other.runs
 +            && self.styles == other.styles
 +    }
@@ -151,10 +156,22 @@ index 0000000..ccc79cb
 +    }
 +}
 diff --git a/src/builder.rs b/src/builder.rs
-index 4d5dcf2..5f443ed 100644
+index 4d5dcf2..f702093 100644
 --- a/src/builder.rs
 +++ b/src/builder.rs
-@@ -334,6 +334,25 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -35,6 +35,11 @@ impl BuilderOptions<'_> {
+             line_break_override: None,
+         }
+     }
++
++    pub(crate) fn with_line_break_override(mut self, overrides: Option<&'static LineBreakOverrideFn>) -> Self {
++        self.line_break_override = overrides;
++        self
++    }
+ }
+ 
+ /// Builder for constructing a text layout with ranged attributes.
+@@ -334,6 +339,25 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
          let text = self.build_into(&mut layout);
          (layout, text)
      }
@@ -180,15 +197,26 @@ index 4d5dcf2..5f443ed 100644
  }
  
  fn build_into_layout<B: Brush>(
-@@ -355,6 +374,24 @@ fn build_into_layout<B: Brush>(
+@@ -355,6 +379,35 @@ fn build_into_layout<B: Brush>(
          "at least one style run is required"
      );
  
 +    // A layout built before from the same text and styles (cloned content,
 +    // the same paragraph built again) is reused: only the styles' brushes,
 +    // which nothing before line breaking depends on, are its own.
-+    let cache_key = (options.line_break_override.is_none() && lcx.inline_boxes.is_empty())
-+        .then(|| crate::build_cache::BuildKey::new(&lcx.rcx, &lcx.style_table, &lcx.style_runs, text, options.scale, options.quantize, options.base_direction));
++    // A layout built with a line-break override is cached only for the context's own `'static`
++    // override, whose address is part of the key; another one may not be the same function next
++    // time.
++    let line_break_override = match options.line_break_override {
++        None => Some(0),
++        Some(o) => lcx
++            .line_break_override
++            .filter(|d| core::ptr::addr_eq(*d, o))
++            .map(|d| core::ptr::from_ref(d).cast::<()>() as usize),
++    };
++    let cache_key = line_break_override.filter(|_| lcx.inline_boxes.is_empty()).map(|line_break_override| {
++        crate::build_cache::BuildKey::new(&lcx.rcx, &lcx.style_table, &lcx.style_runs, text, options.scale, options.quantize, options.base_direction, line_break_override)
++    });
 +    if let Some(key) = &cache_key
 +        && let Some(data) = lcx.build_cache.get(key)
 +    {
@@ -205,7 +233,7 @@ index 4d5dcf2..5f443ed 100644
      crate::analysis::analyze_text(
          lcx,
          text,
-@@ -406,6 +443,7 @@ fn build_into_layout<B: Brush>(
+@@ -406,6 +459,7 @@ fn build_into_layout<B: Brush>(
              text,
              layout,
              &lcx.analysis_data_sources,
@@ -213,7 +241,7 @@ index 4d5dcf2..5f443ed 100644
          );
      }
  
-@@ -415,6 +453,7 @@ fn build_into_layout<B: Brush>(
+@@ -415,6 +469,7 @@ fn build_into_layout<B: Brush>(
          fcx,
          &lcx.style_table,
          &layout.data.shaped_text,
@@ -221,7 +249,7 @@ index 4d5dcf2..5f443ed 100644
          options.quantize,
          &mut layout.data.style_metrics,
      );
-@@ -422,6 +461,10 @@ fn build_into_layout<B: Brush>(
+@@ -422,6 +477,10 @@ fn build_into_layout<B: Brush>(
      // Move inline boxes into the layout
      layout.data.inline_boxes.clear();
      core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
@@ -233,15 +261,23 @@ index 4d5dcf2..5f443ed 100644
  
  fn resolve_range(range: impl RangeBounds<usize>, len: usize) -> Range<usize> {
 diff --git a/src/context.rs b/src/context.rs
-index 9aa2c89..1f0ee21 100644
+index 9aa2c89..bc1f9d8 100644
 --- a/src/context.rs
 +++ b/src/context.rs
-@@ -40,9 +40,21 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
+@@ -7,6 +7,7 @@ use core::ops::Range;
+ 
+ use alloc::{vec, vec::Vec};
+ 
++use parley_engine::break_overrides::LineBreakOverrideFn;
+ use parley_engine::{Analysis, AnalysisDataSources, Analyzer, LineBreakConfig, Shaper};
+ 
+ use super::FontContext;
+@@ -40,9 +41,25 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
      /// Style index for each character, parallel to [`Analysis::char_info`].
      pub(crate) char_style_indices: Vec<u16>,
      pub(crate) scx: Shaper,
 +    /// Per style of the layout being built, the first available font the shaper's font selector
-+    /// found (lightningpanda; see `shape::FontSelector`), for the style metrics.
++    /// found (pyro; see `shape::FontSelector`), for the style metrics.
 +    pub(crate) style_first_fonts: Vec<Option<parley_engine::FontInstance>>,
  
      // Unicode analysis data sources (provided by icu)
@@ -255,19 +291,37 @@ index 9aa2c89..1f0ee21 100644
 +    ///
 +    /// [`TreeBuilder::build_into_keeping_lines`]: crate::TreeBuilder::build_into_keeping_lines
 +    pub(crate) previous_layout: crate::layout::data::LayoutData<B>,
++
++    /// The line-break override every builder of this context starts with
++    /// (pyro; see [`Self::set_line_break_override`]).
++    pub(crate) line_break_override: Option<&'static LineBreakOverrideFn>,
  }
  
  impl<B: Brush> LayoutContext<B> {
-@@ -61,9 +73,18 @@ impl<B: Brush> LayoutContext<B> {
+@@ -61,9 +78,32 @@ impl<B: Brush> LayoutContext<B> {
              char_style_indices: vec![],
              analysis_data_sources: AnalysisDataSources::new(),
              scx: Shaper::default(),
 +            style_first_fonts: vec![],
 +            build_cache: Default::default(),
 +            previous_layout: Default::default(),
++            line_break_override: None,
          }
      }
  
++    /// Sets the line-break override every builder made from this context starts with (a
++    /// builder's own `set_line_break_override` still replaces it). Unlike an override given to
++    /// a builder, this one keeps layouts in the build cache: a `'static` override is part of
++    /// the cache key.
++    pub fn set_line_break_override(&mut self, overrides: Option<&'static LineBreakOverrideFn>) {
++        self.line_break_override = overrides;
++    }
++
++    /// The override set with [`Self::set_line_break_override`].
++    pub fn line_break_override(&self) -> Option<&'static LineBreakOverrideFn> {
++        self.line_break_override
++    }
++
 +    /// Forgets the layouts built so far: the fonts they were shaped with
 +    /// changed (a font was registered).
 +    pub fn clear_build_cache(&mut self) {
@@ -277,6 +331,33 @@ index 9aa2c89..1f0ee21 100644
      fn resolve_style_set(
          &mut self,
          font_ctx: &mut FontContext,
+@@ -109,7 +149,7 @@ impl<B: Brush> LayoutContext<B> {
+         fcx.source_cache.prune(128, false);
+ 
+         RangedBuilder {
+-            options: BuilderOptions::new(scale, quantize),
++            options: BuilderOptions::new(scale, quantize).with_line_break_override(self.line_break_override),
+             lcx: self,
+             fcx,
+         }
+@@ -135,7 +175,7 @@ impl<B: Brush> LayoutContext<B> {
+         fcx.source_cache.prune(128, false);
+ 
+         StyleRunBuilder {
+-            options: BuilderOptions::new(scale, quantize),
++            options: BuilderOptions::new(scale, quantize).with_line_break_override(self.line_break_override),
+             len: text.len(),
+             lcx: self,
+             fcx,
+@@ -177,7 +217,7 @@ impl<B: Brush> LayoutContext<B> {
+         fcx.source_cache.prune(128, false);
+ 
+         TreeBuilder {
+-            options: BuilderOptions::new(scale, quantize),
++            options: BuilderOptions::new(scale, quantize).with_line_break_override(self.line_break_override),
+             lcx: self,
+             fcx,
+         }
 diff --git a/src/layout/data.rs b/src/layout/data.rs
 index e6ab383..e9031cd 100644
 --- a/src/layout/data.rs
@@ -635,7 +716,7 @@ index 3c3798c..f49024d 100644
                              self.state.mark_line_break_opportunity();
                          }
 +                    } else if self.state.line.x == 0.0 {
-+                        // lightningpanda: at the start of the line this box will never fit, so
++                        // pyro: at the start of the line this box will never fit, so
 +                        // consume it, accept the overflow and mark the soft wrap opportunity after
 +                        // it: content that follows breaks there, and a box ending the paragraph
 +                        // ends its last line (Chromium) rather than leaving an empty line behind.
@@ -974,7 +1055,7 @@ index 7b7b147..74e7b8b 100644
  /// style builders guarantee. `shaped_text` is the already shaped text of the layout, whose run
  /// metrics are reused where a style's first available font was also used for shaping.
 +/// `first_fonts` holds, per style, the first available font the shaper's font selector found
-+/// (lightningpanda; see `shape::FontSelector`); a style without one is queried here.
++/// (pyro; see `shape::FontSelector`); a style without one is queried here.
  pub(crate) fn resolve_style_metrics<B: Brush>(
      rcx: &ResolveContext,
      fcx: &mut FontContext,
@@ -1020,7 +1101,7 @@ index 7b7b147..74e7b8b 100644
              ascent + half_leading
          };
 diff --git a/src/lib.rs b/src/lib.rs
-index e967f50..ae51e02 100644
+index e967f50..c985a90 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -109,6 +109,7 @@ extern crate std;
@@ -1031,8 +1112,17 @@ index e967f50..ae51e02 100644
  mod builder;
  mod context;
  mod font;
+@@ -129,7 +130,7 @@ pub use linebender_resource_handle::FontData;
+ pub use parlance::BaseDirection;
+ pub use parley_engine::break_overrides::{
+     AsciiLineBreakTable, AsciiLineBreakTableBuilder, CHROMIUM_LINE_BREAK_OVERRIDE,
+-    LineBreakContext, LineBreakOverrideFn,
++    HYPHEN_DIGIT_LINE_BREAK_OVERRIDE, LineBreakContext, LineBreakOverrideFn,
+ };
+ 
+ pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..cbbd406 100644
+index 060a32d..d938f1e 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -54,7 +54,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
@@ -1041,14 +1131,33 @@ index 060a32d..cbbd406 100644
      analysis_data_sources: &AnalysisDataSources,
 +    first_fonts: &mut Vec<Option<FontInstance>>,
  ) {
-+    // lightningpanda: one slot per style for the first available font the selector saw.
++    // pyro: one slot per style for the first available font the selector saw.
 +    first_fonts.clear();
 +    first_fonts.resize(styles.len(), None);
 +
      // If we have both empty text and no inline boxes, shape with a fake space
      // to generate metrics that can be used to size a cursor.
      if text.is_empty() && inline_boxes.is_empty() {
-@@ -179,7 +184,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -98,6 +103,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
+         })
+         .collect();
+ 
++    // pyro: the layout's scale (set before shaping), to shape with the unscaled size as the point size.
++    let scale = layout.data.scale;
++
+     // Split when shaping-relevant style properties change and at inline boxes.
+     let items = {
+         // TODO: we currently walk characters here, but we could instead just walk boundaries of
+@@ -172,6 +180,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
+                 options: ShapeOptions {
+                     language: item_style.locale,
+                     font_size: item_style.font_size,
++                    // pyro: tracking follows the unscaled size (styles hold sizes times the scale).
++                    point_size: if scale > 0.0 { item_style.font_size / scale } else { item_style.font_size },
+                     features: &style_features[item_style_index as usize],
+                     variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
+                 },
+@@ -179,7 +189,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
          })
      };
  
@@ -1058,11 +1167,11 @@ index 060a32d..cbbd406 100644
  
      scx.shape_text(
          text,
-@@ -259,6 +265,15 @@ enum LastResortFont {
+@@ -259,6 +270,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
-+    /// lightningpanda: per style, the first font [`Self::query`] yields for the style's own
++    /// pyro: per style, the first font [`Self::query`] yields for the style's own
 +    /// families and attributes whose `unicode-range` includes U+0020 (its CSS first available
 +    /// font), recorded when the style's fonts are first queried; `None` where its families yield
 +    /// no such font or the style shaped no text.
@@ -1074,7 +1183,7 @@ index 060a32d..cbbd406 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +299,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +304,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -1089,11 +1198,11 @@ index 060a32d..cbbd406 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +378,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +383,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
-+        // lightningpanda: this pass also finds the style's first available font, which the style
++        // pyro: this pass also finds the style's first available font, which the style
 +        // metrics need: the first font the query yields for the current families and attributes
 +        // whose `unicode-range` includes U+0020, if it comes from the style's own families (not
 +        // the script fallbacks or the emoji family, which the query yields after them). Fonts
@@ -1128,7 +1237,7 @@ index 060a32d..cbbd406 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +415,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +420,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });

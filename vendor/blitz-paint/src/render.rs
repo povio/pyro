@@ -125,7 +125,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) initial_y: f64,
     /// The id of the document's root element (cached to avoid re-resolving it for every element)
     pub(crate) root_element_id: Option<NodeId>,
-    /// lightningpanda: the document's top layer, bottom first (usually
+    /// pyro: the document's top layer, bottom first (usually
     /// empty). Its elements are skipped where the tree puts them and painted
     /// above everything, each over its `::backdrop`.
     pub(crate) top_layer: Vec<NodeId>,
@@ -312,7 +312,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
     }
 
-    /// lightningpanda: paints the top layer above the document, bottom
+    /// pyro: paints the top layer above the document, bottom
     /// first: each element's `::backdrop` (a viewport-sized box: its
     /// background color, `opacity` and `backdrop-filter`), then the element
     /// in its own root stacking context, positioned as a box hoisted to the
@@ -471,7 +471,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 || element.and_then(|e| e.sub_doc_data()).is_some()
                 || element.and_then(|e| e.text_input_data()).is_some()
                 || contain_paint
-                // lightningpanda: `overflow` on `body` is the viewport's, not body's.
+                // pyro: `overflow` on `body` is the viewport's, not body's.
                 || ((!matches!(box_style.overflow_x, Overflow::Visible)
                     || !matches!(box_style.overflow_y, Overflow::Visible))
                     && !self.dom.as_ref().body_overflow_goes_to_viewport(node.id)))
@@ -577,7 +577,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
-        // lightningpanda: a top-layer element paints above the document
+        // pyro: a top-layer element paints above the document
         // (`paint_top_layer`), not here.
         if !self.top_layer.is_empty()
             && self.top_layer_root.get() != Some(node_id)
@@ -895,7 +895,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let node = &self.dom.as_ref().tree()[node_id];
 
         match &node.data {
-            // lightningpanda: once per tree level; a tree of any depth paints on a stack grown on
+            // pyro: once per tree level; a tree of any depth paints on a stack grown on
             // demand (blitz-dom `util::ensure_stack`).
             NodeData::Element(_) | NodeData::AnonymousBlock(_) => blitz_dom::util::ensure_stack(|| {
                 self.render_element(scene, node_id, parent_style_transform, clip_rect)

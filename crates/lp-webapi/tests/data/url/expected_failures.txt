@@ -1,3 +1,0 @@
-# WPT URL cases that are known to fail, one test name per line, exactly as
-# crates/lp-webapi/tests/url_conformance.rs prints them (the part before " -- ").
-# Empty: every case of urltestdata.json, setters_tests.json and toascii.json passes.

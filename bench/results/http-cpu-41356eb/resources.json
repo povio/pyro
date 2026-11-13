@@ -11,21 +11,21 @@
   "binaries": [
     {
       "name": "upstream",
-      "path": "/Users/povioserver/lp-baseline/browser/zig-out/bin/lightpanda",
+      "path": "/Users/povioserver/pyro-baseline/browser/zig-out/bin/lightpanda",
       "sourceSha": "2ad38773fd674d3c9cea26a263b814ee46f6ba84",
       "sha256": "cf1545dac0239e2ff18165583bd8c6983de030a9adfb2dfabb688929b519590b",
       "bytes": 92895000
     },
     {
       "name": "rewrite",
-      "path": "/private/tmp/lp-w3-bench-41356eb-bin/lightningpanda",
+      "path": "/private/tmp/pyro-w3-bench-41356eb-bin/pyro",
       "sourceSha": "41356ebf27909caf3039b8d6d2b2702122d629cd",
       "sha256": "2bbe638d5a31b40008b7458836d5aedc6347fd7789e386cca1868c97aff4f7bf",
       "bytes": 12549120
     }
   ],
   "sampler": {
-    "path": "/private/tmp/lp-w3-sampler-target/release/rss-sampler",
+    "path": "/private/tmp/pyro-w3-sampler-target/release/rss-sampler",
     "sha256": "7d31b30cab16622eda1333be012d1aa8fba2bbed6669b2e269c681725d198569"
   },
   "harnessSha256": "c70d5f2de867c5f39881a8606996a01c975eeaf377f9ee96391d686a8b550fc7",

@@ -5,8 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
 const require = createRequire(resolve('package.json'));
-const { Lightningpanda, check, css, evaluate, goto } = await import(pathToFileURL(require.resolve('@povio/lightning-panda')).href);
-const browser = await Lightningpanda.launch();
+const { Pyro, check, css, evaluate, goto } = await import(pathToFileURL(require.resolve('@povio/pyro')).href);
+const browser = await Pyro.launch();
 try {
   const page = await browser.page();
   const result = await page.run([

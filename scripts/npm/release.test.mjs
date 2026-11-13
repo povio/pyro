@@ -20,11 +20,11 @@ test('malformed tags and other prereleases cannot publish to latest', () => {
 });
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'lp-release-'));
-  mkdirSync(join(root, 'packages/lightning-panda'), { recursive: true });
+  const root = mkdtempSync(join(tmpdir(), 'pyro-release-'));
+  mkdirSync(join(root, 'packages/pyro'), { recursive: true });
   mkdirSync(join(root, 'crates/browser/src'), { recursive: true });
   mkdirSync(join(root, 'vendor/dependency/src'), { recursive: true });
-  writeFileSync(join(root, 'packages/lightning-panda/package.json'), JSON.stringify({ name: '@povio/lightning-panda', version: '0.0.1', exports: './dist/index.js' }));
+  writeFileSync(join(root, 'packages/pyro/package.json'), JSON.stringify({ name: '@povio/pyro', version: '0.0.1', exports: './dist/index.js' }));
   writeFileSync(join(root, 'Cargo.toml'), '[workspace]\nmembers = ["crates/*"]\nexclude = ["vendor/dependency"]\nresolver = "2"\n\n[workspace.package]\nversion = "0.0.2" # development version\nedition = "2021"\n\n[workspace.dependencies]\nexample-dependency = { path = "vendor/dependency", version = "0.0.2" }\n');
   writeFileSync(join(root, 'crates/browser/Cargo.toml'), '[package]\nname = "browser"\nversion.workspace = true\nedition.workspace = true\n\n[dependencies]\nexample-dependency.workspace = true\n');
   writeFileSync(join(root, 'vendor/dependency/Cargo.toml'), '[package]\nname = "example-dependency"\nversion = "0.0.2"\nedition = "2021"\n');
@@ -41,7 +41,7 @@ for (const version of ['1.2.3', '2.0.0-rc.4']) {
       cargo(['generate-lockfile', '--offline']);
       const before = readFileSync(join(root, 'Cargo.lock'), 'utf8');
       stampRelease(`v${version}`, root);
-      const pkg = JSON.parse(readFileSync(join(root, 'packages/lightning-panda/package.json'), 'utf8'));
+      const pkg = JSON.parse(readFileSync(join(root, 'packages/pyro/package.json'), 'utf8'));
       assert.equal(pkg.version, version);
       assert.equal(pkg.exports, './dist/index.js');
       const manifest = readFileSync(join(root, 'Cargo.toml'), 'utf8');
@@ -61,7 +61,7 @@ for (const version of ['1.2.3', '2.0.0-rc.4']) {
 test('invalid tags or missing workspace version fail before changing manifests', () => {
   const root = fixture();
   try {
-    const packagePath = join(root, 'packages/lightning-panda/package.json');
+    const packagePath = join(root, 'packages/pyro/package.json');
     const cargoPath = join(root, 'Cargo.toml');
     const pkg = readFileSync(packagePath, 'utf8');
     const cargo = readFileSync(cargoPath, 'utf8');
