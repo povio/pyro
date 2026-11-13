@@ -112,11 +112,13 @@ jobs:
   jsc:
     uses: ./.github/workflows/jsc.yml
 
-  # The fork variant: the same browser linked against the patched JavaScriptCore.
+  # The fork variant: the same browser linked against the patched JavaScriptCore,
+  # built with profile-guided optimization (.github/actions/pgo-build; the
+  # comparison worker is a plain release build).
   fork:
     needs: [release, jsc]
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 150
     env:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
     steps:
@@ -129,16 +131,17 @@ jobs:
         with:
           name: patched-jsc
           path: patched-jsc
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --no-self-update
-      - name: Build browser and comparison worker against the patched JavaScriptCore
+      - name: Build browser (PGO)
+        uses: ./.github/actions/pgo-build
+      - name: Build comparison worker against the patched JavaScriptCore
         env:
           JSC_DIR: ${{ needs.jsc.outputs.dir }}
         run: |
           export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
           mkdir -p "$(dirname "$LP_JSC_DIR")"
           mv patched-jsc "$LP_JSC_DIR"
-          cargo +stable build --locked --release --package lightningpanda --package lp-render --features render
+          cargo +stable build --locked --release --package lp-render --features render
+          cp target/aarch64-apple-darwin/release-pgo/lightningpanda target/release/lightningpanda
       - name: Verify and stage binaries
         env:
           VERSION: ${{ needs.release.outputs.version }}

@@ -1,0 +1,63 @@
+name: PGO build
+
+# The macOS arm64 release browser is built with profile-guided optimization
+# (.github/actions/pgo-build, used by publish-npm.yml's `fork` job). This
+# workflow runs the same build when its inputs change, so a broken PGO build
+# shows on the pull request and not at release time. Runs on `main` also save
+# the instrumented JavaScriptCore to the cache release tags restore.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actions/pgo-build/**
+      - .github/workflows/pgo.yml
+      - crates/lp-cdp/src/pgo_training.rs
+      - crates/lp-jsc-sys/webkit/**
+      - scripts/jsc/**
+      - scripts/macos/linker/**
+      - scripts/pgo/**
+  pull_request:
+    paths:
+      - .github/actions/pgo-build/**
+      - .github/workflows/pgo.yml
+      - crates/lp-cdp/src/pgo_training.rs
+      - crates/lp-jsc-sys/webkit/**
+      - scripts/jsc/**
+      - scripts/macos/linker/**
+      - scripts/pgo/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pgo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pgo:
+    runs-on: macos-15
+    timeout-minutes: 150
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pgo-build
+      - name: Check the binary
+        run: |
+          binary=target/aarch64-apple-darwin/release-pgo/lightningpanda
+          codesign --verify --strict "$binary"
+          if otool -L "$binary" | grep -F JavaScriptCore; then exit 1; fi
+          codesign -d --entitlements - "$binary" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
+          "$binary" version
+          "$binary" version | grep -q 'fork: true'
+          "$binary" eval -e 'console.log("pgo-smoke-ok")' | grep -Fx pgo-smoke-ok
+      - name: Training logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgo-training-logs
+          path: target/pgo/*.log
+          if-no-files-found: ignore
+          retention-days: 7
