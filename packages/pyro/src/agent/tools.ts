@@ -9,9 +9,12 @@
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Locator } from '../wright/page.js';
-import { clip, errorResult, quote, text, untrusted, type ToolContent, type ToolResult } from './content.js';
+import { capture, elementBox, enclosing, fitsModel, MODEL_IMAGE, pageMetrics, previewScale, RENDER_MAX, sha256, trim, type Captured, type Format, type Metrics, type Rect } from './capture.js';
+import { clip, errorResult, fence, quote, text, untrusted, type ToolContent, type ToolResult } from './content.js';
+import { when } from './profiles.js';
 import { s, type JsonSchema, type ObjectSchema } from './schema.js';
-import { settle, withTimeout, type BrowserAgentSession, type Tab } from './session.js';
+import { expiredHint, settle, withTimeout, type BrowserAgentSession, type Tab } from './session.js';
+import { checkSession, looksLikeSignIn } from './signin.js';
 
 /** Groups of tools that can be switched off (`--caps`); `core` always stays. */
 export const CAPABILITIES = ['core', 'tabs', 'evaluate', 'files', 'profiles'] as const;
@@ -158,7 +161,7 @@ async function report(
   session: BrowserAgentSession,
   tab: Tab,
   result: string,
-  o: { before?: string; snapshot?: boolean; extra?: ToolContent[] } = {},
+  o: { before?: string; snapshot?: boolean; extra?: ToolContent[]; structured?: Record<string, unknown> } = {},
 ): Promise<ToolResult> {
   // The title is a round trip on the browser's connection: events sent before
   // it (a popup the action opened) have arrived once it is back.
@@ -168,12 +171,20 @@ async function report(
   const modal = modalLines(session);
   if (modal.length) sections.push(`### Modal state\n${modal.join('\n')}`);
   const notes = session.takeNotes();
+  // A stored identity's tab on a sign-in page: its session may be gone, and the agent never signs in.
+  const profile = tab.entry.profile;
+  if (profile && !tab.page.isClosed() && looksLikeSignIn(tab.page.url()) && tab.signInNoted !== tab.page.url() && !result.includes('`pyro profile login')) {
+    tab.signInNoted = tab.page.url();
+    notes.push(
+      `This tab is stored identity ${quote(profile)} and the page looks like a sign-in page: its session may have expired. Do not sign in yourself: ask the person to run \`${session.loginCommand(profile, tab.entry.login)}\`, then load the identity again (browser_profiles load).`,
+    );
+  }
   if (notes.length) sections.push(`### Events\n${notes.map((n) => `- ${n}`).join('\n')}`);
   if (session.tabs.length > 1) sections.push(`### Tabs\n${await tabLines(session)}`);
   const held = !!session.modalTab();
   if (!tab.page.isClosed()) {
     const url = tab.page.url();
-    let page = `### Page\n- URL: ${url}${o.before !== undefined && o.before !== url ? ` (was ${o.before})` : ''}\n- Title: ${quote(tab.title)}`;
+    let page = `### Page\n- URL: ${url}${o.before !== undefined && o.before !== url ? ` (was ${o.before})` : ''}\n- Title: ${quote(tab.title)}\n- Viewport: ${viewportLine(tab)}`;
     const errors = tab.takeNewErrors();
     if (errors.length) {
       page += `\n${untrusted(`- New console errors (${errors.length})`, errors.map((e) => `${e.text}${e.where ? ` (${e.where})` : ''}`).join('\n'))}`;
@@ -189,7 +200,14 @@ async function report(
       sections.push('(Snapshots after actions are off: call browser_snapshot to see the page.)');
     }
   }
-  return { content: [text(sections.join('\n\n')), ...(o.extra ?? [])] };
+  return { content: [text(sections.join('\n\n')), ...(o.extra ?? [])], ...(o.structured ? { structuredContent: o.structured } : {}) };
+}
+
+/** "2056x1200 CSS px at deviceScaleFactor 3 (6168x3600 device px)". */
+function viewportLine(tab: Tab): string {
+  const { width, height } = tab.viewport();
+  const dsf = tab.deviceScaleFactor;
+  return `${width}x${height} CSS px at deviceScaleFactor ${dsf}${dsf !== 1 ? ` (${Math.round(width * dsf)}x${Math.round(height * dsf)} device px)` : ''}`;
 }
 
 function message(e: unknown): string {
@@ -224,10 +242,6 @@ async function navigate(session: BrowserAgentSession, tab: Tab, url: string, pre
 
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
 
-function pngSize(buf: Buffer): string {
-  return buf.length > 24 && buf.toString('ascii', 1, 4) === 'PNG' ? `, ${buf.readUInt32BE(16)}x${buf.readUInt32BE(20)}` : '';
-}
-
 /** Collapses the whitespace of page text: trimmed lines, at most one empty line in a row. */
 function compactText(raw: string): string {
   return raw
@@ -238,8 +252,181 @@ function compactText(raw: string): string {
     .trim();
 }
 
-/** Largest image side the Claude API accepts. */
-const MAX_IMAGE_SIDE = 8000;
+// ---- screenshots and boxes ----
+
+type ShotInput = {
+  type?: Format;
+  filename?: string;
+  fullPage?: boolean;
+  element?: string;
+  ref?: string;
+  scale?: 'device' | 'css';
+  clip?: Rect;
+  includeImage?: boolean;
+};
+
+/** A number for a result line: at most 3 decimals. */
+const num = (n: number) => String(Math.round(n * 1000) / 1000);
+const rectText = (r: Rect) => `x ${num(r.x)}, y ${num(r.y)}, ${num(r.width)}x${num(r.height)}`;
+const round3 = (r: Rect): Rect => ({ x: +num(r.x), y: +num(r.y), width: +num(r.width), height: +num(r.height) });
+const scaled = (r: Rect, k: number): Rect => round3({ x: r.x * k, y: r.y * k, width: r.width * k, height: r.height * k });
+const percent = (f: number) => `${f < 0.1 ? Math.round(f * 1000) / 10 : Math.round(f * 100)}%`;
+
+/** What to capture: the area in CSS px from the document's top-left (CDP's clip), and how. */
+type ShotPlan = {
+  what: string;
+  /** The area as the agent sees it: relative to the viewport, or to the document. */
+  shown: Rect & { relativeTo: 'viewport' | 'document' };
+  area: Rect;
+  /** Painted from the document's top-left instead of at the scroll position. */
+  beyond: boolean;
+  /** The viewport: at device pixels, `Page.captureScreenshot` without a clip. */
+  viewport: boolean;
+  notes: string[];
+};
+
+async function planShot(i: ShotInput, tab: Tab, session: BrowserAgentSession, m: Metrics): Promise<ShotPlan> {
+  const notes: string[] = [];
+  if (i.ref) {
+    const name = quote(i.element ?? i.ref);
+    const locator = await locate(tab, i.ref);
+    // As Playwright's element screenshots: scrolled into view, the box rounded out to whole CSS px.
+    await locator.scrollIntoViewIfNeeded({ timeout: session.actionTimeout });
+    const box = await elementBox(locator, session.actionTimeout);
+    if (box.crossOrigin) throw new ToolInputError(`${name} is inside a cross-origin iframe, so its place on the page is unknown: capture the iframe element instead.`);
+    if (!(box.width > 0 && box.height > 0)) throw new ToolInputError(`${name} has no size on the page (hidden or empty): there is nothing to capture.`);
+    const now = await pageMetrics(tab.page);
+    if (now.scrollX !== m.scrollX || now.scrollY !== m.scrollY) notes.push(`Scrolled it into view first: the page is scrolled to x ${num(now.scrollX)}, y ${num(now.scrollY)} now.`);
+    Object.assign(m, now);
+    const area = enclosing({ x: box.x + now.scrollX, y: box.y + now.scrollY, width: box.width, height: box.height });
+    const fits = box.width <= now.width && box.height <= now.height;
+    return { what: name, shown: { ...area, relativeTo: 'document' }, area, beyond: !fits, viewport: false, notes };
+  }
+  if (i.clip) {
+    const where = i.fullPage ? 'document' : 'viewport';
+    const bounds = i.fullPage ? { width: m.documentWidth, height: m.documentHeight } : { width: m.width, height: m.height };
+    const c = trim(i.clip, bounds);
+    if (!c) {
+      throw new ToolInputError(
+        `The clip (${rectText(i.clip)}) is outside the ${where} (${num(bounds.width)}x${num(bounds.height)} CSS px).${i.fullPage ? '' : ' A clip is relative to the viewport; with fullPage: true it is relative to the document.'}`,
+      );
+    }
+    if (c.x !== i.clip.x || c.y !== i.clip.y || c.width !== i.clip.width || c.height !== i.clip.height) notes.push(`The clip reached past the ${where}: trimmed to ${rectText(c)}.`);
+    const area = i.fullPage ? c : { ...c, x: c.x + m.scrollX, y: c.y + m.scrollY };
+    return { what: `the clip ${rectText(c)} of the ${i.fullPage ? 'page' : 'viewport'}`, shown: { ...c, relativeTo: where }, area, beyond: !!i.fullPage, viewport: false, notes };
+  }
+  if (i.fullPage) {
+    const area = { x: 0, y: 0, width: m.width, height: m.documentHeight };
+    return { what: 'the full page', shown: { ...area, relativeTo: 'document' }, area, beyond: true, viewport: false, notes };
+  }
+  const shown = { x: 0, y: 0, width: m.width, height: m.height, relativeTo: 'viewport' as const };
+  return { what: 'the viewport', shown, area: { x: m.scrollX, y: m.scrollY, width: m.width, height: m.height }, beyond: false, viewport: true, notes };
+}
+
+/** Why an area is not rendered at that size, and how to capture it instead. */
+function tooLarge(p: ShotPlan, size: { width: number; height: number }, perCss: number, dpr: number, scale: 'device' | 'css'): string {
+  const at = scale === 'css' ? 'CSS pixels' : `device pixels (deviceScaleFactor ${num(dpr)})`;
+  let msg = `${p.what[0].toUpperCase()}${p.what.slice(1)} is ${num(p.area.width)}x${num(p.area.height)} CSS px: ${size.width}x${size.height} px at ${at}, more than the ${RENDER_MAX} px a side Pyro renders.`;
+  const tallest = Math.floor(RENDER_MAX / perCss);
+  if (p.area.width * perCss <= RENDER_MAX) {
+    // In document coordinates, as fullPage clips take them.
+    const { x, y } = p.area;
+    const parts = Math.ceil(p.area.height / tallest);
+    msg += ` Capture it in ${parts} parts of at most ${tallest} CSS px: fullPage: true with clip { x: ${num(x)}, y: ${num(y)}, width: ${num(p.area.width)}, height: ${tallest} }, then y: ${num(y + tallest)}, and so on.`;
+  }
+  if (scale === 'device' && Math.max(p.area.width, p.area.height) <= RENDER_MAX) msg += ` Or use scale: "css" (${Math.round(p.area.width)}x${Math.round(p.area.height)} px).`;
+  return msg;
+}
+
+/**
+ * `browser_take_screenshot`: the capture as the browser encoded it, saved
+ * when asked (path, pixel size, sha256), and an image for the model: the
+ * capture itself when it fits the model's image limits, else a smaller
+ * rendering of the same area.
+ */
+async function takeScreenshot(i: ShotInput, session: BrowserAgentSession): Promise<ToolResult> {
+  if (i.fullPage && i.ref) throw new ToolInputError('fullPage cannot be used with an element');
+  if (i.ref && i.clip) throw new ToolInputError('give an element (element and ref) or a clip, not both');
+  if (i.clip && !(i.clip.width > 0 && i.clip.height > 0)) throw new ToolInputError('clip width and height must be positive (CSS px)');
+  const wantImage = i.includeImage ?? true;
+  if (!wantImage && i.filename === undefined) throw new ToolInputError('with includeImage: false nothing would come back: give a filename to save the capture, or leave includeImage out');
+  const tab = await session.tab();
+  const format: Format = i.type ?? 'png';
+  const scale = i.scale ?? 'device';
+  // The file's name first: a bad one fails before anything is rendered.
+  const path = i.filename !== undefined ? session.outputPath(i.filename, `page-${stamp()}.${format === 'png' ? 'png' : 'jpg'}`) : undefined;
+  const m = await pageMetrics(tab.page);
+  const p = await planShot(i, tab, session, m);
+  const dpr = m.deviceScaleFactor;
+  tab.deviceScaleFactor = dpr;
+  const perCss = scale === 'css' ? 1 : dpr;
+  const size = { width: Math.round(p.area.width * perCss), height: Math.round(p.area.height * perCss) };
+  if (path && (size.width > RENDER_MAX || size.height > RENDER_MAX)) throw new ToolInputError(tooLarge(p, size, perCss, dpr, scale));
+  const cdp = await tab.cdp();
+  /** The area at `px` image pixels per CSS px. */
+  const shoot = (px: number, f: Format): Promise<Captured> =>
+    p.viewport && px === dpr ? capture(cdp, { format: f }) : capture(cdp, { format: f, clip: p.area, clipScale: px / dpr, beyond: p.beyond });
+
+  let file: Captured | undefined;
+  if (path) {
+    file = await shoot(perCss, format);
+    writeFileSync(path, file.buf);
+  }
+  let image: Captured | undefined;
+  if (wantImage) {
+    const fit = previewScale(p.area.width, p.area.height, perCss);
+    let px = fit >= perCss * 0.999 ? perCss : fit;
+    let f = format;
+    for (let attempt = 0; attempt < 5 && !image; attempt++) {
+      const c = px === perCss && file && file.format === f ? file : await shoot(px, f);
+      if (fitsModel(c)) image = c;
+      else if (f === 'png') f = 'jpeg'; // too many bytes: the same pixels as JPEG
+      else px *= 0.7;
+    }
+  }
+
+  const at = scale === 'css' ? 'at CSS pixels' : `at device pixels (deviceScaleFactor ${num(dpr)})`;
+  const limits = `the model's image limits (at most ${MODEL_IMAGE.maxSide} px a side and ${MODEL_IMAGE.maxTokens} image tokens)`;
+  const lines: string[] = [];
+  const extra: ToolContent[] = [];
+  const structured: Record<string, unknown> = {
+    area: { ...round3(p.shown), relativeTo: p.shown.relativeTo },
+    deviceScaleFactor: dpr,
+    scale,
+    format,
+    width: file?.width ?? size.width,
+    height: file?.height ?? size.height,
+  };
+  if (file && path) {
+    const hash = sha256(file.buf);
+    Object.assign(structured, { path, bytes: file.buf.length, sha256: hash });
+    lines.push(
+      `Screenshot of ${p.what} saved to ${path}: ${file.width}x${file.height} ${format === 'png' ? 'PNG' : 'JPEG'} ${at}, ${file.buf.length} bytes, sha256 ${hash}${format === 'png' ? ', the PNG exactly as the browser encoded it (lossless)' : ''}.`,
+    );
+  }
+  if (image) {
+    extra.push({ type: 'image', data: image.buf.toString('base64'), mimeType: image.format === 'png' ? 'image/png' : 'image/jpeg' });
+    structured.image = { width: image.width, height: image.height, format: image.format, preview: image !== file && (image.width !== size.width || image.height !== size.height) };
+    const kind = image.format === 'png' ? 'PNG' : 'JPEG';
+    if (image === file) lines.push('The image below is the saved file itself.');
+    else if (file) lines.push(`The image below is a ${image.width}x${image.height} ${kind} preview of it (${percent(image.width / file.width)} of its width), sized to ${limits}; the file is full size.`);
+    else if (image.width === size.width && image.height === size.height) lines.push(`Screenshot of ${p.what} (${image.format}, ${image.width}x${image.height}).`);
+    else lines.push(`Screenshot of ${p.what} (${image.format}, ${image.width}x${image.height}): a preview at ${percent(image.width / size.width)} of the ${size.width}x${size.height} ${scale === 'css' ? 'CSS-pixel' : 'device-pixel'} capture, sized to ${limits}. Give a filename to save it at full size.`);
+  } else if (wantImage) {
+    lines.push(`No image: ${p.what} does not fit ${limits} even scaled down; look at it in parts with clip.`);
+  } else {
+    lines.push('No image returned (includeImage: false).');
+  }
+  if (image && image.height > image.width * 6) lines.push('The area is much taller than wide, so the image is narrow: look at parts of it with clip for detail.');
+  lines.push(...p.notes);
+  if (file && path) extra.push({ type: 'resource_link', uri: pathToFileURL(path).href, name: i.filename || path.split(/[\\/]/).pop()!, mimeType: format === 'png' ? 'image/png' : 'image/jpeg' });
+  return report(session, tab, lines.join('\n'), { snapshot: false, extra, structured });
+}
+
+/** `e12` from a ref as the model may write it (`[ref=e12]`). */
+const refId = (input: string) => /((?:f\d+)?e\d+)/.exec(input)?.[1] ?? input;
+
+const RECT_SCHEMA = (description: string): JsonSchema => ({ type: 'object', description, properties: { x: s.number('Left edge'), y: s.number('Top edge'), width: s.number('Width'), height: s.number('Height') } });
 
 // ---- the tools ----
 
@@ -628,51 +815,115 @@ export const TOOLS: BrowserTool[] = [
     name: 'browser_take_screenshot',
     title: 'Screenshot',
     description:
-      "Take a screenshot of the current tab's viewport, of the whole scrollable page (fullPage), or of one element (element and ref), and return the image. Use it to check what the page looks like (layout, images, charts, colors); to find and act on elements use browser_snapshot, since refs only come from snapshots. filename also saves the image in the output directory.",
+      "Capture the current tab: the viewport, the whole scrollable page (fullPage), a rectangle (clip, CSS px) or one element (element and ref). The capture is at device pixels by default (CSS size x deviceScaleFactor: a 2056x1200 viewport at deviceScaleFactor 3 is 6168x3600), or at CSS pixels with scale: \"css\"; clips and elements are cropped at that resolution. filename saves it in the output directory, byte for byte as the browser encoded it (PNG is lossless), and the result gives its path, pixel size and sha256. Unless includeImage is false you also get an image to look at: the capture itself when it fits the model's image limits (2576 px a side, 4784 image tokens), else a smaller preview of the same area. To act on elements use browser_snapshot: refs only come from snapshots.",
     inputSchema: s.object({
-      type: s.enum(['png', 'jpeg'], 'Image format (default png)'),
-      filename: s.string('File name to save the image as, inside the output directory (e.g. "home.png")'),
-      fullPage: s.boolean('The whole scrollable page instead of the viewport (default false; not with an element)'),
-      element: s.string(`${ELEMENT}; with ref, only this element is captured`),
+      type: s.enum(['png', 'jpeg'], 'Image format (default png; jpeg is lossy, quality 80)'),
+      filename: s.string('Save the capture in the output directory under this name (e.g. "home.png"); the result gives its path, pixel size and sha256'),
+      fullPage: s.boolean(`The whole scrollable page instead of the viewport (default false; not with an element). Pyro renders at most ${RENDER_MAX} px a side: at deviceScaleFactor 3 a page up to ${Math.floor(RENDER_MAX / 3)} CSS px tall; taller pages are refused with how to capture them in parts`),
+      element: s.string(`${ELEMENT}; with ref, only this element is captured: its bounding box rounded out to whole CSS px, scrolled into view first`),
       ref: s.string(`${REF}; with element, only this element is captured`),
+      scale: s.enum(['device', 'css'], 'Resolution: "device" (default), one image pixel per device pixel (CSS px x deviceScaleFactor); "css", one per CSS pixel'),
+      clip: {
+        ...s.object({ x: s.number('Left edge, CSS px'), y: s.number('Top edge, CSS px'), width: s.number('Width, CSS px'), height: s.number('Height, CSS px') }, ['x', 'y', 'width', 'height']),
+        description:
+          "Only this rectangle, in CSS px, cropped at the scale's resolution (a 100x50 clip at deviceScaleFactor 3 is 300x150 device px). Relative to the viewport's top-left (browser_get_bounding_box's css.viewport box); with fullPage, relative to the document's top-left (its css.document box). Not with an element",
+      },
+      includeImage: s.boolean('Return an image to look at (default true): the capture when it fits the model\'s image limits, else a preview of it. false returns only the saved file\'s path, size and sha256 (needs filename)'),
     }),
+    outputSchema: {
+      type: 'object',
+      properties: {
+        area: { ...RECT_SCHEMA('The captured area in CSS px'), properties: { ...RECT_SCHEMA('').properties, relativeTo: s.enum(['viewport', 'document'], 'What x and y are relative to') } },
+        deviceScaleFactor: s.number('Device pixels per CSS pixel of the page'),
+        scale: s.enum(['device', 'css'], 'Resolution of the capture'),
+        format: s.enum(['png', 'jpeg'], 'Format of the capture'),
+        width: s.integer('Width of the capture in pixels (of the saved file, when saved)'),
+        height: s.integer('Height of the capture in pixels'),
+        path: s.string('The saved file (with filename)'),
+        bytes: s.integer('Size of the saved file in bytes'),
+        sha256: s.string('SHA-256 of the saved file, hex'),
+        image: { type: 'object', description: 'The image returned to look at', properties: { width: s.integer('Width'), height: s.integer('Height'), format: s.enum(['png', 'jpeg'], 'Format'), preview: s.boolean('A scaled-down preview, not the capture itself') } },
+      },
+    },
     annotations: READ,
     capability: 'core',
-    async execute(i: { type?: 'png' | 'jpeg'; filename?: string; fullPage?: boolean; element?: string; ref?: string }, session) {
-      if (i.fullPage && i.ref) throw new ToolInputError('fullPage cannot be used with an element');
+    async execute(i: ShotInput, session) {
+      return takeScreenshot(i, session);
+    },
+  },
+  {
+    name: 'browser_get_bounding_box',
+    title: 'Element bounding boxes',
+    description:
+      "Get the bounding boxes of elements by ref, to compute crop regions for browser_take_screenshot. For each element: css.viewport, its box in CSS px relative to the viewport (getBoundingClientRect; pass it as clip); css.document, relative to the document (plus the scroll offsets; pass it as clip with fullPage: true); device.viewport and device.document, the same boxes in device pixels (x deviceScaleFactor), where the element is in a device-pixel screenshot. Also the viewport size, the scroll offsets, the document size and the device scale factor. Elements inside iframes are given in the page's coordinates.",
+    inputSchema: s.object(
+      { elements: s.array(s.object({ element, ref }, ['element', 'ref']), 'The elements: a description and the ref from the latest snapshot of each') },
+      ['elements'],
+    ),
+    outputSchema: {
+      type: 'object',
+      properties: {
+        viewport: { type: 'object', description: 'Viewport size, CSS px', properties: { width: s.number('Width'), height: s.number('Height') } },
+        scroll: { type: 'object', description: 'Scroll offsets of the page, CSS px', properties: { x: s.number('Horizontal'), y: s.number('Vertical') } },
+        document: { type: 'object', description: 'Scrollable size of the document, CSS px', properties: { width: s.number('Width'), height: s.number('Height') } },
+        deviceScaleFactor: s.number('Device pixels per CSS pixel'),
+        elements: s.array(
+          {
+            type: 'object',
+            properties: {
+              element: s.string('The description given'),
+              ref: s.string('The ref'),
+              css: { type: 'object', description: 'CSS px', properties: { viewport: RECT_SCHEMA('Relative to the viewport'), document: RECT_SCHEMA('Relative to the document') } },
+              device: { type: 'object', description: 'Device px', properties: { viewport: RECT_SCHEMA('Relative to the viewport'), document: RECT_SCHEMA('Relative to the document') } },
+              inViewport: s.enum(['full', 'partial', 'none'], 'How much of the box the viewport shows'),
+            },
+          },
+          'One entry per element, in order',
+        ),
+      },
+    },
+    annotations: READ,
+    capability: 'core',
+    async execute({ elements }: { elements: { element: string; ref: string }[] }, session) {
+      if (!elements.length) throw new ToolInputError('give at least one element (element and ref)');
       const tab = await session.tab();
-      const type = i.type ?? 'png';
-      const quality = type === 'jpeg' ? 80 : undefined;
-      let buf: Buffer;
-      let what: string;
-      let note = '';
-      if (i.ref) {
-        const locator = await locate(tab, i.ref);
-        buf = await locator.screenshot({ type, quality, timeout: session.actionTimeout });
-        what = quote(i.element ?? i.ref);
-      } else if (i.fullPage) {
-        const size = await tab.page.evaluate<{ w: number; h: number }>('({ w: document.documentElement.clientWidth, h: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0) })');
-        if (size.h > MAX_IMAGE_SIDE) {
-          buf = await tab.page.screenshot({ type, quality, fullPage: true, clip: { x: 0, y: 0, width: size.w, height: MAX_IMAGE_SIDE } });
-          note = ` Cut at ${MAX_IMAGE_SIDE} px of ${size.h}: the page is taller than an image may be; scroll, or take parts by element.`;
-        } else {
-          buf = await tab.page.screenshot({ type, quality, fullPage: true });
-        }
-        what = 'the full page';
-      } else {
-        buf = await tab.page.screenshot({ type, quality });
-        what = 'the viewport';
+      const located: Locator[] = [];
+      for (const e of elements) located.push(await locate(tab, e.ref));
+      const m = await pageMetrics(tab.page);
+      const dpr = m.deviceScaleFactor;
+      tab.deviceScaleFactor = dpr;
+      const out = [];
+      for (const [k, e] of elements.entries()) {
+        const b = await elementBox(located[k], session.actionTimeout);
+        const viewport = round3(b);
+        const document = round3({ ...b, x: b.x + m.scrollX, y: b.y + m.scrollY });
+        const right = b.x + b.width;
+        const bottom = b.y + b.height;
+        const shownW = Math.min(right, m.width) - Math.max(b.x, 0);
+        const shownH = Math.min(bottom, m.height) - Math.max(b.y, 0);
+        const inViewport = !(b.width > 0 && b.height > 0) || shownW <= 0 || shownH <= 0 ? 'none' : shownW >= b.width - 1e-6 && shownH >= b.height - 1e-6 ? 'full' : 'partial';
+        out.push({
+          element: e.element,
+          ref: refId(e.ref),
+          css: { viewport, document },
+          device: { viewport: scaled(viewport, dpr), document: scaled(document, dpr) },
+          inViewport,
+          ...(!(b.width > 0 && b.height > 0) ? { note: 'not rendered: the box has no size' } : {}),
+          ...(b.crossOrigin ? { note: 'inside a cross-origin iframe: the box is relative to that iframe, not the page' } : {}),
+        });
       }
-      const mimeType = type === 'png' ? ('image/png' as const) : ('image/jpeg' as const);
-      const extra: ToolContent[] = [{ type: 'image', data: buf.toString('base64'), mimeType }];
-      let saved = '';
-      if (i.filename !== undefined) {
-        const path = session.outputPath(i.filename, `page-${stamp()}.${type === 'png' ? 'png' : 'jpg'}`);
-        writeFileSync(path, buf);
-        saved = ` Saved to ${path}.`;
-        extra.push({ type: 'resource_link', uri: pathToFileURL(path).href, name: i.filename, mimeType });
-      }
-      return report(session, tab, `Screenshot of ${what} (${type}${pngSize(buf)}).${note}${saved}`, { snapshot: false, extra });
+      const data = {
+        viewport: { width: m.width, height: m.height },
+        scroll: { x: m.scrollX, y: m.scrollY },
+        document: { width: m.documentWidth, height: m.documentHeight },
+        deviceScaleFactor: dpr,
+        elements: out,
+      };
+      const head = `Bounding boxes of ${out.length} element${out.length === 1 ? '' : 's'}: viewport ${num(m.width)}x${num(m.height)} CSS px, scrolled to x ${num(m.scrollX)}, y ${num(m.scrollY)}, deviceScaleFactor ${num(dpr)}. css.viewport is getBoundingClientRect (a clip for a viewport screenshot), css.document adds the scroll (a clip with fullPage: true), device.* are the same boxes in device pixels.`;
+      // One line per element: compact for the model, and still JSON.
+      const { elements: list, ...top } = data;
+      const json = `${JSON.stringify(top).slice(0, -1)},"elements":[\n${list.map((e) => JSON.stringify(e)).join(',\n')}\n]}`;
+      return report(session, tab, `${head}\n${fence(json, 'json')}`, { snapshot: false, structured: data });
     },
   },
   {
@@ -765,22 +1016,35 @@ export const TOOLS: BrowserTool[] = [
   {
     name: 'browser_resize',
     title: 'Resize viewport',
-    description: "Resize the current tab's viewport, in CSS pixels (e.g. 390x844 for a phone, 1280x720 for a laptop). Each side 100 to 8000.",
-    inputSchema: s.object({ width: s.integer('Width in CSS pixels'), height: s.integer('Height in CSS pixels') }, ['width', 'height']),
+    description:
+      "Resize the current tab's viewport, in CSS pixels (e.g. 390x844 for a phone, 1280x720 for a laptop; each side 100 to 8000), and optionally set its device scale factor (devicePixelRatio, 0.5 to 8: 2 or 3 for a high-density screen). Screenshots are taken at device pixels: 2056x1200 at deviceScaleFactor 3 gives 6168x3600 images. The page keeps both across navigations.",
+    inputSchema: s.object(
+      {
+        width: s.integer('Width in CSS pixels'),
+        height: s.integer('Height in CSS pixels'),
+        deviceScaleFactor: s.number('Device pixels per CSS pixel, 0.5 to 8 (default: unchanged)'),
+      },
+      ['width', 'height'],
+    ),
     annotations: { ...ACT, idempotentHint: true, openWorldHint: false },
     capability: 'core',
-    async execute(i: { width: number; height: number }, session) {
+    async execute(i: { width: number; height: number; deviceScaleFactor?: number }, session) {
       for (const v of [i.width, i.height]) if (v < 100 || v > 8000) throw new ToolInputError('width and height are 100 to 8000');
+      if (i.deviceScaleFactor !== undefined && !(i.deviceScaleFactor >= 0.5 && i.deviceScaleFactor <= 8)) throw new ToolInputError('deviceScaleFactor is 0.5 to 8');
       const tab = await session.tab();
-      await tab.page.setViewportSize({ width: i.width, height: i.height });
-      return report(session, tab, `Resized the viewport to ${i.width}x${i.height}. The layout may have changed: take a new snapshot before acting.`, { snapshot: false });
+      await session.resize(tab, { width: i.width, height: i.height }, i.deviceScaleFactor);
+      const m = await pageMetrics(tab.page);
+      tab.deviceScaleFactor = m.deviceScaleFactor;
+      const asked = i.deviceScaleFactor === undefined || m.deviceScaleFactor === i.deviceScaleFactor;
+      const result = `Resized the viewport to ${num(m.width)}x${num(m.height)} CSS px at deviceScaleFactor ${num(m.deviceScaleFactor)}: a device-pixel screenshot of it is ${Math.round(m.width * m.deviceScaleFactor)}x${Math.round(m.height * m.deviceScaleFactor)}.${asked ? '' : ` (The page reports deviceScaleFactor ${num(m.deviceScaleFactor)}, not the ${i.deviceScaleFactor} asked for.)`} The layout may have changed: take a new snapshot before acting.`;
+      return report(session, tab, result, { snapshot: false });
     },
   },
   {
     name: 'browser_profiles',
     title: 'Stored identities',
     description:
-      "Stored identities, to stay signed in across sessions: save writes the current tab's cookies and localStorage under name; load opens a new tab in a context of its own with that saved state and the identity's settings (user agent, proxy, locale, time zone, viewport from <name>.identity.json) and switches to it; list shows the stored identities; delete removes a saved state. Sign in once, save, and next time load instead of signing in again. Saved states are credentials: save only what the user wants kept.",
+      "Stored identities, to stay signed in across sessions without signing in. load opens a new tab in a context of its own with a saved state (cookies and localStorage) and the identity's settings (user agent, proxy, locale, time zone, viewport, device scale factor from <name>.identity.json) and switches to it; for an identity a person signed in with `pyro profile login`, it also opens the app and says whether the session still holds. list shows the stored identities; save writes the current tab's cookies and localStorage under name; delete removes a saved state. Never sign in yourself to make or renew one: when a session has expired, ask the person to run `pyro profile login <name>`. Saved states are credentials: save only what the user wants kept; their values are never shown.",
     inputSchema: s.object({ action: s.enum(['list', 'save', 'load', 'delete'], 'What to do'), name: s.string('Profile name (letters, digits, "_", "-", "."), for save, load and delete') }, ['action']),
     annotations: { ...CHANGE, openWorldHint: false },
     capability: 'profiles',
@@ -788,34 +1052,62 @@ export const TOOLS: BrowserTool[] = [
       const store = session.profiles;
       if (i.action === 'list') {
         const list = store.list();
-        const lines = list.map((p) => `- ${p.name}: ${p.state ? `saved ${p.savedAt}, ${p.cookies} cookie${p.cookies === 1 ? '' : 's'}${p.sites.length ? `, signed in at ${p.sites.join(', ')}` : ''}` : 'no saved state'}${p.identity ? '; identity file' : ''}`);
+        const lines = list.map((p) => {
+          const saved = p.state ? `saved ${p.savedAt}, ${p.cookies} cookie${p.cookies === 1 ? '' : 's'}${p.sites.length ? `, signed in at ${p.sites.join(', ')}` : ''}` : 'no saved state';
+          const login = p.login ? `; signed in by a person at ${p.login.url}` : '';
+          const expiry = p.session?.expired ? `; its session cookies expired ${when(p.session.expiresAt!)}` : p.session?.expiresAt ? `; its session cookies expire ${when(p.session.expiresAt)}` : '';
+          return `- ${p.name}: ${saved}${login}${expiry}${p.identity ? '; identity file' : ''}`;
+        });
         return { content: [text(list.length ? `### Stored identities in ${store.dir}\n${lines.join('\n')}` : `No stored identities in ${store.dir}.`)], structuredContent: { profiles: list } };
       }
       if (!i.name) throw new ToolInputError(`name is required for ${i.action}`);
-      store.paths(i.name);
+      const name = i.name;
+      store.paths(name);
       if (i.action === 'save') {
         const tab = await session.tab();
         const state = await tab.entry.context.storageState();
-        const { kept } = store.save(i.name, state);
+        const { kept } = store.save(name, state);
         const origins = state.origins.filter((o) => o.localStorage.length).map((o) => o.origin);
         const domains = [...new Set(state.cookies.map((c) => (c.domain ?? '').replace(/^\./, '')).filter(Boolean))];
         return {
           content: [
             text(
-              `Saved profile ${quote(i.name)} to ${store.paths(i.name).state} (owner-only): ${state.cookies.length} cookie${state.cookies.length === 1 ? '' : 's'}${domains.length ? ` for ${domains.join(', ')}` : ''}; localStorage of ${origins.length ? origins.join(', ') : 'no origin'}${kept.length ? `; kept the localStorage of ${kept.join(', ')} from the previous save` : ''}. Load it later with browser_profiles load.`,
+              `Saved profile ${quote(name)} to ${store.paths(name).state} (owner-only): ${state.cookies.length} cookie${state.cookies.length === 1 ? '' : 's'}${domains.length ? ` for ${domains.join(', ')}` : ''}; localStorage of ${origins.length ? origins.join(', ') : 'no origin'}${kept.length ? `; kept the localStorage of ${kept.join(', ')} from the previous save` : ''}. Load it later with browser_profiles load.`,
             ),
           ],
         };
       }
       if (i.action === 'delete') {
-        const { identityKept } = store.delete(i.name);
-        return { content: [text(`Deleted the saved state of profile ${quote(i.name)}.${identityKept ? ' Its identity file stays.' : ''}`)] };
+        const { identityKept } = store.delete(name);
+        return { content: [text(`Deleted the saved state of profile ${quote(name)}.${identityKept ? ' Its identity file stays.' : ''}`)] };
       }
-      const { tab, state, applied } = await session.profileContext(i.name);
+      const { tab, state, applied, login, session: status } = await session.profileContext(name);
       const cookies = state?.cookies.length ?? 0;
       const origins = state?.origins.filter((o) => o.localStorage.length).map((o) => o.origin) ?? [];
-      const result = `Loaded profile ${quote(i.name)} into a new tab [${session.tabs.indexOf(tab)}] with a context of its own: ${cookies} cookie${cookies === 1 ? '' : 's'}${origins.length ? `, localStorage of ${origins.join(', ')}` : ''}${applied.length ? `; identity settings: ${applied.join(', ')}` : ''}. Navigate to the site to continue as this identity.`;
-      return report(session, tab, result, { snapshot: false });
+      const loaded = `Loaded profile ${quote(name)} into a new tab [${session.tabs.indexOf(tab)}] with a context of its own: ${cookies} cookie${cookies === 1 ? '' : 's'}${origins.length ? `, localStorage of ${origins.join(', ')}` : ''}${applied.length ? `; identity settings: ${applied.join(', ')}` : ''}.`;
+      const command = session.loginCommand(name, login);
+      if (status?.expired) {
+        const r = await report(session, tab, `${loaded} ${expiredHint(name, `its session cookies expired ${when(status.expiresAt!)}`, command)}`, { snapshot: false });
+        return { ...r, isError: true };
+      }
+      if (!login || session.policy.check(login.url)) {
+        const expires = status?.expiresAt ? ` Its session cookies expire ${when(status.expiresAt)}.` : '';
+        return report(session, tab, `${loaded}${expires} Navigate to the site to continue as this identity. If it asks you to sign in, the session has expired: do not sign in yourself, ask the person to run \`${command}\`.`, { snapshot: false });
+      }
+      // Signed in by a person: open the app where they did and read whether the session holds.
+      let expired = false;
+      const done = (v: unknown) => {
+        const c = v as Awaited<ReturnType<typeof checkSession>> | { error: string };
+        if ('error' in c) return `${loaded} Opened ${login.url} to check the session, which failed: ${c.error}`;
+        if (c.signedIn === false) {
+          expired = true;
+          return `${loaded} Opened ${login.url} to check the session: ${c.why}. ${expiredHint(name, 'the app does not take it any more', command)}`;
+        }
+        if (c.signedIn === undefined) return `${loaded} Opened ${login.url} to check the session: ${c.why}. Look at the page: if it asks you to sign in, the session has expired; do not sign in yourself, ask the person to run \`${command}\`.`;
+        return `${loaded} Opened ${login.url}: signed in (${c.why}, as when the person signed in${login.at ? ` ${when(login.at)}` : ''}). Continue from this page.`;
+      };
+      const r = await act(session, tab, done, () => checkSession(tab.page, login, session.navigationTimeout).catch((e) => ({ error: message(e) })), { snapshot: true });
+      return expired ? { ...r, isError: true } : r;
     },
   },
   {

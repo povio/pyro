@@ -54,9 +54,9 @@ export function resolveCaps(caps?: string | string[]): Set<Capability> {
 /** The tools of `caps` (stored identities only when profiles may be written). */
 export function selectTools(caps: Set<Capability>, o: { isolated?: boolean } = {}): BrowserTool[] {
   return TOOLS.filter((t) => caps.has(t.capability) && !(t.capability === 'profiles' && o.isolated)).map((t) => {
-    // Without the files group nothing is written to disk: no screenshot file name.
+    // Without the files group nothing is written to disk: no screenshot file name (nor includeImage: false, which needs one).
     if (t.name !== 'browser_take_screenshot' || caps.has('files')) return t;
-    const { filename: _filename, ...properties } = t.inputSchema.properties;
+    const { filename: _filename, includeImage: _includeImage, ...properties } = t.inputSchema.properties;
     return { ...t, inputSchema: { ...t.inputSchema, properties } };
   });
 }

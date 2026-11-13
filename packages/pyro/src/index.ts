@@ -168,12 +168,13 @@ export class Pyro {
    *
    * `args` are extra `pyro serve` flags (`pyro serve --help`), e.g.
    * `['--hyphen-digit-breaks', 'on']` to wrap text between a hyphen and a digit as Chrome
-   * does (`4b87-|916e`; off by default).
+   * does (`4b87-|916e`; off by default). `stderr: 'ignore'` keeps the server's
+   * own output (its address, engine warnings) off this process's stderr.
    */
-  static async launch(opts: ConnectOptions & { bin?: string; args?: string[] } = {}): Promise<Pyro> {
+  static async launch(opts: ConnectOptions & { bin?: string; args?: string[]; stderr?: 'inherit' | 'ignore' } = {}): Promise<Pyro> {
     const port = await freePort();
     const child = spawn(opts.bin ?? resolveBinary(), ['serve', '--host', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])], {
-      stdio: ['ignore', 'ignore', 'inherit'],
+      stdio: ['ignore', 'ignore', opts.stderr ?? 'inherit'],
       detached: process.platform !== 'win32',
       // `serve --parent-pid`: a runner may stop this process without running
       // its exit handlers (bun test --parallel workers), and the browser's

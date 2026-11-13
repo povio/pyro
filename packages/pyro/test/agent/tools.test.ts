@@ -333,5 +333,6 @@ test('caps switch tool groups off', () => {
   expect(names('core')).toEqual(names('core').filter((n) => !['browser_tabs', 'browser_evaluate', 'browser_profiles', 'browser_file_upload', 'browser_pdf_save'].includes(n)));
   const shot = createBrowserTools({ caps: '-files' }).tools.find((t) => t.name === 'browser_take_screenshot')!;
   expect(Object.keys(shot.inputSchema.properties)).not.toContain('filename');
+  expect(Object.keys(shot.inputSchema.properties)).not.toContain('includeImage');
   expect(() => names('-bogus')).toThrow('unknown tool group');
 });

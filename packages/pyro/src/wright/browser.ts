@@ -847,7 +847,7 @@ function cdpCookie(c: Cookie): Record<string, unknown> {
 /** `chromium` for scripts that launch a browser themselves (`chromium.launch()`). */
 export const chromium = {
   name: () => 'chromium',
-  async launch(o: ConnectOptions & { bin?: string; args?: string[]; boot?: BootSpec[] } = {}): Promise<Browser> {
+  async launch(o: ConnectOptions & { bin?: string; args?: string[]; boot?: BootSpec[]; stderr?: 'inherit' | 'ignore' } = {}): Promise<Browser> {
     return new Browser(await Pyro.launch(o), true, o.boot);
   },
   /** A running pyro's CDP endpoint (`ws://…` or `http://host:port`). */
