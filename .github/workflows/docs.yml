@@ -1,0 +1,50 @@
+name: Docs
+
+# Builds the documentation site in website/ on pull requests and deploys it to
+# its Robodev Lite project (website/robodev/.robodev) when main changes.
+# The deploy needs the project's deploy key as the ROBODEV_DEPLOY_KEY secret
+# (Robodev project → Connect → Deploy keys); without it the deploy step is skipped.
+
+on:
+  pull_request:
+    paths:
+      - website/**
+      - .github/workflows/docs.yml
+  push:
+    branches: [main]
+    paths:
+      - website/**
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Deploy to Robodev
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          ROBODEV_DEPLOY_KEY: ${{ secrets.ROBODEV_DEPLOY_KEY }}
+        run: |
+          if [ -z "$ROBODEV_DEPLOY_KEY" ]; then
+            echo "ROBODEV_DEPLOY_KEY is not set; skipping the deploy."
+            exit 0
+          fi
+          bun run deploy

@@ -1,0 +1,143 @@
+# Troubleshooting
+
+Common errors, what they mean, and how to fix them. For failing test steps in particular, see also [Debugging failures](/e2e/debugging).
+
+## The browser does not start
+
+### `Pyro has no bundled browser for <platform>-<arch>`
+
+You are on a platform without a bundled browser, such as Windows or Linux on another architecture. Run the browser on a supported machine and connect to it with `Pyro.connect(ws)` or `PYRO_WS`, or point `PYRO_BIN` at a browser you built. See [Platforms](/guide/platforms).
+
+### `Missing bundled browser: …/native/<platform>-<arch>/pyro`
+
+The package is installed but its binary is missing. This happens when a tool prunes "unneeded" files from `node_modules`, or when the package was copied without `native/`. Reinstall `@povio/pyro`, or set `PYRO_BIN`.
+
+### `pyro serve did not start: …`
+
+`Pyro.launch()` could not start the server or reach it. The message carries the cause. Run the binary yourself to see its output:
+
+```sh
+bunx pyro version
+bunx pyro serve --port 9222
+```
+
+On Linux, an error such as `version 'GLIBC_2.39' not found` means the system's glibc is too old. Use Ubuntu 24.04, Debian 13 or newer. An error about `libfontconfig.so.1` means fontconfig is missing: install `libfontconfig1` (Debian, Ubuntu).
+
+### `pyro run: needs Bun (https://bun.sh) on PATH`
+
+`pyro run` and `pyro e2e` run on Bun (the second prints `pyro e2e: needs Bun ...`). Install Bun, or on CI add `oven-sh/setup-bun`. The client library itself works under Node 22+.
+
+### `pyro serve: Address already in use (os error 48)`
+
+Another process listens on the port (the error number is 98 on Linux). `pyro serve` defaults to 9222, which Chrome's remote debugging also uses. Pick another `--port`. `Pyro.launch()` always picks a free port, so this only affects servers you start yourself.
+
+## Fork mode
+
+### `pyro serve: --fork needs the patched JavaScriptCore (scripts/jsc/build.sh)`
+
+The binary has no fork mode. The Intel macOS build uses the system JavaScriptCore and cannot fork. Check with:
+
+```sh
+bunx pyro version   # look for fork: true
+```
+
+On an Intel Mac, drop `--fork` and use [profiles](/guide/profiles) with several connections. `pyro e2e` falls back by itself and prints `pyro e2e: <binary> has no fork mode; every page boots its profile`.
+
+### `no profile <name>: adopting a profile needs pyro serve --fork`
+
+`pyro.adopt(name)`, or `pyro.page({ as })` for a name this client never declared, only works against a fork-mode server, where profiles are shared between clients. Against a thread-mode server, declare the profile in each client with `pyro.profile()`.
+
+### A profile definition is refused
+
+In fork mode, profile names are shared by every client of the server. Registering a different definition under a name another client holds is refused. Give per-worker or per-file profiles unique names, for example `feature-${process.pid}`.
+
+## Slow tests on macOS
+
+If everything works but JavaScript-heavy pages are many times slower than expected, check that the binary still has its JIT entitlement:
+
+```sh
+codesign -d --entitlements - node_modules/@povio/pyro/native/darwin-arm64/pyro
+# Intel Macs: native/darwin-x64/pyro
+```
+
+Without `com.apple.security.cs.allow-jit`, JavaScriptCore runs only its interpreter. This happens when a binary was re-signed or stripped. See [Platforms](/guide/platforms#the-jit-entitlement-on-macos) to restore it.
+
+Other causes of slow tests:
+
+- **Pages boot for every test.** `pyro.stats.fresh` grows. Declare a [profile](/guide/profiles), raise `pool`, or open more `connections`.
+- **A step waits the full settle second.** An action started work that never finishes (polling with a short `setTimeout`, a long-lived request). Add `idle({ timeout: 2000 })` after it and read `pending`, then use `{ settle: false }` on the action. See [Settling](/guide/settling).
+- **The dev server is slow.** Serve a production build with `--static`. See [Serving a build](/e2e/static).
+
+## `RunError`: a step failed
+
+`page.run` throws a `RunError` with the index of the failing step (`err.step`) and why it was still waiting when it timed out:
+
+```text
+step 0 (Click {"name":"Save","role":"button"}): timed out after 5000 ms: Click {"name":"Save","role":"button"}: {"name":"Save","role":"button"} matched no element
+```
+
+`pyro e2e` and `bun test` print it as `RunError: step …`.
+
+| Reason | Meaning | Fix |
+| --- | --- | --- |
+| `matched no element` | The locator found nothing before the timeout. | Check the locator, and the step before it: the UI may never have reached this state. |
+| `strict mode violation: … matched 3 elements` | An action needs exactly one element. | Scope the locator (`dialog().button(...)`), filter it, use `{ exact: true }`, or `.first()` when any match will do. |
+| `<div> intercepts pointer events` | Another element covers the target at its click point. | Close the overlay first, or click what a user would click. |
+| `element is disabled`, `not editable`, `not visible` | The element exists but cannot take the action. | Wait for the state with a check, or fix the precondition. |
+| `no matching request yet` / `last match was {… status: 500 …}` | A `check.request` did not see the expected request. | The reply's `requests` lists everything the page requested; compare paths and methods. Request checks only see requests made in the same `run`. |
+| `test timed out after 5000 ms`, with no step reason | The test timeout equals the 5 s step timeout, so the test is stopped before the step can report why. | Run the tests with a longer timeout than their steps: `bun test --timeout 10000`. `pyro e2e` gives a test 30 s by default; do not set its `--timeout` to 5000 or less. |
+| `expected Visible …, got false` | A check's condition never held. | The app never reached that state, or reached it and left it (see [transient states](/guide/settling#transient-states)). |
+
+Do not fix a `RunError` by raising the timeout. A step waits only for its own condition, so a timeout means the condition never held.
+
+## Missing web APIs
+
+A page that works in Chrome throws `ReferenceError: X is not defined`, or a feature silently does nothing. Pyro's web API coverage is partial. Known absences include WebGL, WebGPU, WebRTC and `SharedWorker`. Check [Web platform support](/reference/web-platform). Options:
+
+- Feature-detect in the app and fall back, as you would for an older browser.
+- Stub the API with an init script (`initScripts` in a profile, `page.addInitScript`) when the test does not depend on it.
+- Open an issue on the [repository](https://github.com/povio/pyro) with the API and the page that needs it.
+
+CDP commands that are not implemented return an explicit error (`… is not supported by pyro`) rather than a fake success. See [CDP coverage](/reference/cdp).
+
+## Screenshots and PDFs
+
+### Every screenshot fails against my baselines
+
+Baselines taken with Chromium never match: pixels come from Pyro's renderer. Regenerate them with Pyro (`PYRO_UPDATE_SNAPSHOTS=1`, `bun test -u`, or `pyro run -u`). See [Rendering](/guide/rendering).
+
+### Screenshots differ between my machine and CI
+
+Text uses system fonts when the page does not load its own, and machines have different fonts. Generate baselines on the same OS and font set as CI, or load web fonts in the app.
+
+### `pyro was built without the render feature`
+
+`Page.captureScreenshot`, `Page.printToPDF` or a `matchScreenshot` step fails with this message when the browser was built from source without the `render` feature. All bundled browsers have it. Use the bundled browser, or rebuild with rendering enabled.
+
+### Text is missing from screenshots or PDFs on Linux
+
+The container has no fonts. Install fontconfig and a font package (for example `libfontconfig1 fonts-dejavu-core`).
+
+### PDF ignores my print styles
+
+The page prints with its current emulated media, `screen` by default. Emulate `print` media before printing. See [Rendering](/guide/rendering#pdf).
+
+## Connections
+
+### Clients hang when many tests start at once
+
+The server accepts 16 connections at a time by default; more wait in the kernel's backlog until one closes. In fork mode every page is a connection. Raise the limit:
+
+```sh
+pyro serve --fork --cdp-max-connections 64
+```
+
+`pyro e2e` sets it to the larger of 64 and four times the concurrency plus 8, unless you pass your own.
+
+### A browser keeps running after tests
+
+`Pyro.launch()` tells the server to exit with the launching process, however it ends. A server you started yourself with `pyro serve` runs until you stop it. To list running browsers without printing their arguments:
+
+```sh
+pgrep -x pyro
+```

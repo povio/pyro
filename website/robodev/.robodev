@@ -1,0 +1,10 @@
+{
+  "projectId": "prj-pqvevmsxr7el",
+  "apiUrl": "https://robodev.povio.dev",
+  "projectApiUrl": "https://prj-pqvevmsxr7el.robodev.povio.dev",
+  "frontend": {
+    "root": ".",
+    "script": "build",
+    "outDir": "dist"
+  }
+}
