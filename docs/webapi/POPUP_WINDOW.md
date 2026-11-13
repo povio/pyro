@@ -3,6 +3,8 @@
 `window.open(url, target, features)` opens a new page in the opener's browser
 context. CDP clients see a target with `openerId`, paused under auto-attach
 until `Runtime.runIfWaitingForDebugger`, so Playwright's `popup` event fires.
+Playwright and pyro/wright use the pause to give the popup its context's
+settings (emulation, headers, routes, init scripts) before its first document.
 
 | Call | Returns |
 | --- | --- |
