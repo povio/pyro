@@ -81,7 +81,7 @@ jobs:
           mv patched-jsc "$LP_JSC_DIR"
           if [[ "$PGO" == true ]]; then
             scripts/pgo/build.sh --locked
-            cargo +stable build --locked --release --package lp-render --features render
+            cargo +stable build --locked --release --package lp-render
             host="$(rustc -vV | sed -n 's/^host: //p')"
             cp "target/$host/release-pgo/lightningpanda" target/release/lightningpanda
             rm -rf target/pgo/profraw "target/$host/release-pgo/deps" "target/$host/release-pgo/build"

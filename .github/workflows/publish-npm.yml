@@ -140,7 +140,7 @@ jobs:
           export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
           mkdir -p "$(dirname "$LP_JSC_DIR")"
           mv patched-jsc "$LP_JSC_DIR"
-          cargo +stable build --locked --release --package lp-render --features render
+          cargo +stable build --locked --release --package lp-render
           cp target/aarch64-apple-darwin/release-pgo/lightningpanda target/release/lightningpanda
       - name: Verify and stage binaries
         env:
