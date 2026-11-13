@@ -30,6 +30,10 @@ configured `User-Agent` of its NetClient, which its pages and workers report as
 `navigator.userAgent` unless a page override takes its place. Prepared profiles
 (`Pyro.registerPreparedPage {userAgent, proxyServer}`) and
 `Target.createBrowserContext {userAgent}` create their contexts this way.
+What the engine loads for those pages by itself (layout's images, fonts and
+imported sheets, screenshots, PDFs) goes through that NetClient too, with the
+page's request defaults, and a context with a UA or proxy of its own lays out
+only with bodies loaded through it (ARCHITECTURE.md, Engine loads of a page).
 
 Tests cover current/new isolated worlds, init scripts across navigation, reset
 and locale-only requests, atomic rejection, and real redirected HTTP document,

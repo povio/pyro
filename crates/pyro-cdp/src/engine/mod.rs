@@ -523,11 +523,10 @@ impl EngineHost {
         thread
             .enable_network(profile.net.clone())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
+        // Each document's layout loads through its own context
+        // (`pyro_browser` gives it its network).
         #[cfg(feature = "render")]
-        blitz_geometry::install(
-            profile.net.static_files.clone(),
-            thread.browser.context_net(pyro_browser::DEFAULT_CONTEXT).cloned(),
-        );
+        blitz_geometry::install(profile.net.static_files.clone());
         if !profile.local_storage.is_empty() {
             thread.set_local_storage_seed(profile.local_storage.clone());
         }

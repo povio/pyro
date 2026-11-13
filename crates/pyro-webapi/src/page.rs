@@ -2044,6 +2044,13 @@ impl PageDom {
         self.layout.borrow().set_base_url(url);
     }
 
+    /// The document's network, for a layout engine that loads sub-resources
+    /// (`pyro_dom::layout::SubresourceLoader`): set by the embedder before
+    /// anything lays the document out.
+    pub fn set_subresource_loader(&self, loader: std::sync::Arc<dyn pyro_dom::layout::SubresourceLoader>) {
+        self.layout.borrow().set_subresource_loader(loader);
+    }
+
     /// Borrow helper for bindings.
     pub fn with_dom<R>(&self, f: impl FnOnce(&mut Dom) -> R) -> R {
         f(&mut self.dom.borrow_mut())

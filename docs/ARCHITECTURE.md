@@ -515,9 +515,8 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
 - A profile's `userAgent` and proxy (`proxyServer`, `proxyBypassList`) are its page's browser context's
   (`Host::create_context_with`: a `NetClient` whose configured `User-Agent` and proxy they are), so the
   document, subresources, fetch/XHR and setup steps of the template's page carry them, and so does every fork:
-  the client and its settings are copied, its I/O thread restarted. A derived profile has its base's. Layout's
-  own background loads of network images and fonts (`engine/blitz_geometry.rs`) still go through the default
-  context, as they do for `Target.createBrowserContext proxyServer` contexts.
+  the client and its settings are copied, its I/O thread restarted. A derived profile has its base's. What the
+  engine loads for a page by itself goes out the same way (see [Engine loads](#engine-loads-of-a-page)).
 - Snapshots build on snapshots: a profile with `base: <id>` is never booted. The root template asks the template
   holding the base (itself or a derived one) to fork off a **derived template** listening on
   `<root socket>.<id>`; it runs only the profile's `setup` on its copy of the base page, relabels the page, and
@@ -575,6 +574,29 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   a page that only navigates inside its prepared app loads no module and gains nothing (580 M to 598 M).
 - Measured on an M1 Max with a release build: an app whose startup runs 0.8 s of JavaScript is handed to a new
   connection, booted, in about 20 ms (the fork itself took 12-18 ms with the 512 MB JIT pool).
+
+## Engine loads of a page
+
+Besides the page's own requests, the engine loads what it lays out and paints: the images, `@font-face` fonts
+and `@import`ed sheets of a document's layout (Blitz geometry, which also prints `Page.printToPDF`), and of the
+render thread's copy of it (screenshots, `matchScreenshot`). Both go through the page's browser context, as its
+own sub-resources do: its proxy and bypass list, `User-Agent`, cookies, extra headers, offline state, `Pyro.run`
+mocks and Fetch interception apply, and CDP sees the requests on the document's frame.
+
+- The render thread asks the browser thread (`Browser::fetch_subresource`) and caches per document (loader id).
+- Layout: pyro-browser gives every document it creates its network (`pyro_dom::layout::SubresourceLoader`,
+  `bindings::LayoutLoader`), from which `engine/blitz_geometry.rs` makes the document's fetcher. A miss starts
+  `Browser::fetch_layout_subresource` in a task of its own and answers nothing now: a layout never waits for the
+  network (a request held by interception needs the browser thread). A document without a network loads nothing
+  from it; there is no fallback to another context's client.
+- Layout bodies are kept by URL per network identity (`SubresourceBodies`): a context with a proxy or user agent
+  of its own (`ContextNet`, prepared profiles, `Target.createBrowserContext {proxyServer, userAgent}`) has its own,
+  gone with it, so one identity never lays out with what another loaded, and two identities through the same
+  proxy share nothing either. The contexts that go out as the browser does share one set per process and
+  browser-wide proxy and user agent, kept for the process's life (later contexts, connections and forks lay out
+  with them at once, as before). A body that arrives lays out again only the documents of its identity. Only
+  bodies are shared: a failed load (an interception abort, a 401 for this page's cookies) is remembered by its
+  document alone, and the identity's other documents ask again.
 
 ## Platform support
 

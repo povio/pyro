@@ -147,8 +147,9 @@ await using page = await pyro.page({ as: 'app' });                              
   `warm()`, `adopt()` and profiles with that `base` throw it too, and no page
   of it is handed out. Fix the step or the app and call `profile()` again.
 - `userAgent`, `proxyServer` and `proxyBypassList` in a profile give its pages
-  (document, fetch/XHR, setup steps, every forked page) that `User-Agent`
-  (`navigator.userAgent` too) and that HTTP proxy: one profile per identity.
+  (document, fetch/XHR, what layout, screenshots and PDFs load, setup steps,
+  every forked page) that `User-Agent` (`navigator.userAgent` too) and that
+  HTTP proxy: one profile per identity.
   A derived profile has its base's.
 - `Pyro.launch()` passes its pid to the server, which exits when
   that process does (even when a runner stops it without exit handlers).
