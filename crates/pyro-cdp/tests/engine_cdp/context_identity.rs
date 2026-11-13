@@ -17,8 +17,12 @@ const PNG: &str =
 const IDENTITY: &str = "LayoutIdentity/1.0 (one proxy)";
 
 /// The sub-resources only layout and the renderer load (the page's own
-/// loader does not), and the image both do.
-const ENGINE_LOADS: [&str; 4] = ["bg.png", "imported.css", "imported-bg.png", "font.ttf"];
+/// loader does not).
+const ENGINE_LOADS: [&str; 3] = ["bg.png", "imported-bg.png", "font.ttf"];
+
+/// What the page's own loader loads: the image (layout does too) and the
+/// `<style>`'s `@import`ed sheet, whose body it hands to its layouts.
+const PAGE_LOADS: [&str; 2] = ["img.png", "imported.css"];
 
 /// Requests a server saw: the path and the User-Agent.
 type Hits = Arc<Mutex<Vec<(String, String)>>>;
@@ -176,7 +180,7 @@ fn layout_and_render_loads_go_through_the_context_proxy_with_its_user_agent() {
     let mut h = Harness::new();
     let ctx = context(&mut h, &proxy);
     let session = open(&mut h, Some(&ctx), &format!("{origin}/id/page"));
-    let want: Vec<String> = ENGINE_LOADS.iter().chain(&["img.png"]).map(|name| format!("/id/{name}")).collect();
+    let want: Vec<String> = ENGINE_LOADS.iter().chain(&PAGE_LOADS).map(|name| format!("/id/{name}")).collect();
     lay_out_until(&mut h, &session, &proxied, &want);
 
     // A screenshot: the render thread loads what it paints again (the

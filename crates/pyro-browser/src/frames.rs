@@ -87,6 +87,8 @@ pub struct FrameInfo {
     pub network_idle: NetworkIdle,
     pub dom_content_loaded: bool,
     pub loaded: bool,
+    /// The frame shows the error document of a navigation to this URL.
+    pub unreachable_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -488,6 +490,7 @@ impl FrameHost {
             dom_content_loaded: false,
             loaded: false,
             sandbox,
+            unreachable: None,
         };
         self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::type_error(format!("{e:?}")))?;
         self.children.borrow_mut().insert(
@@ -536,6 +539,7 @@ impl FrameHost {
                 reason: NavigationReason::InitialFrameNavigation,
                 cdp_request_id: None,
                 timestamp: self.started.elapsed().as_secs_f64(),
+                unreachable_url: None,
             });
             self.queue_attributes(key, lid);
             Ok(())
@@ -1135,6 +1139,7 @@ impl Browser {
                         network_idle: f.network_idle.clone(),
                         dom_content_loaded: f.dom_content_loaded,
                         loaded: f.loaded,
+                        unreachable_url: f.unreachable.as_ref().map(|u| u.url.clone()),
                     }
                 })
             })

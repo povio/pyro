@@ -398,6 +398,7 @@ impl<A: DomAccess> Sink<A> {
         let owner = self.doc_owner(d);
         d.base_seen |= name.local == local_name!("base");
         let is_details = name.local == local_name!("details") && name.ns == markup5ever::ns!(html);
+        let is_style = name.local == local_name!("style") && name.ns == markup5ever::ns!(html);
         match name.local {
             local_name!("audio") | local_name!("video") => d.media_seen = true,
             local_name!("canvas") => d.canvas_seen = true,
@@ -408,6 +409,10 @@ impl<A: DomAccess> Sink<A> {
             attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),
         );
         el.flags = self.elem_flags;
+        if is_style {
+            // Until `pop` (`Dom::resources_element_popped`).
+            el.flags |= crate::node::element_flags::STYLE_PARSING;
+        }
         let i = d.alloc_raw(NodeKind::Element(Box::new(el)), owner);
         if template {
             let inert = d.inert_doc_for_pub(owner);

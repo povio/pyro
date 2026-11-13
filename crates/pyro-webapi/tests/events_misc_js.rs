@@ -293,6 +293,39 @@ fn the_global_object_reports_its_interface_as_constructor() {
 }
 
 #[test]
+fn a_documents_lifecycle_events_are_dispatched_at_the_window_with_the_document_as_target() {
+    // DOM "dispatch" with the legacy target override flag: the Window is the
+    // whole path (a capturing listener of the document hears nothing), its
+    // listeners run at the target phase, and `target` stays the document
+    // after the dispatch while `currentTarget`, `eventPhase` and
+    // `composedPath()` reset. (Chromium keeps those three as they were.)
+    let e = env("<body></body>");
+    let r = &e.main;
+    eval(
+        r,
+        "globalThis.seen = []; globalThis.n = t => t === window ? 'window' : t === document ? 'document' : String(t); \
+         const rec = ev => seen.push([ev.type, n(ev.target), n(ev.srcElement), n(ev.currentTarget), ev.eventPhase, \
+           ev.composedPath().map(n).join('+'), ev.bubbles, ev.cancelable, ev.isTrusted].join()); \
+         for (const type of ['load', 'pageshow', 'beforeunload', 'pagehide', 'unload']) addEventListener(type, rec); \
+         document.addEventListener('load', () => seen.push('document'), true); \
+         addEventListener('load', ev => { globalThis.after = ev; });",
+    );
+    lifecycle::load(&e.page, e.page.document());
+    assert!(!lifecycle::before_unload(&e.page));
+    lifecycle::unload(&e.page);
+    assert_eq!(
+        eval(r, "seen.join(' | ')"),
+        "load,document,document,window,2,window,false,false,true | pageshow,document,document,window,2,window,true,true,true | \
+         beforeunload,document,document,window,2,window,false,true,true | pagehide,document,document,window,2,window,true,true,true | \
+         unload,document,document,window,2,window,false,false,true"
+    );
+    assert_eq!(
+        eval(r, "[n(after.target), after.currentTarget, after.eventPhase, after.composedPath().length].join()"),
+        "document,,0,0"
+    );
+}
+
+#[test]
 fn beforeunload_asks_through_the_handler_return_value_and_return_value() {
     let e = env("<body></body>");
     let r = &e.main;

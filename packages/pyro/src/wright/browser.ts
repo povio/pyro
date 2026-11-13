@@ -13,6 +13,7 @@ import { Download, type PageFunction } from './handles.js';
 import { APIRequestContext } from './request.js';
 import { HarRecorder } from './har.js';
 import { CDPSession } from './cdp-session.js';
+import { VideoRecorder, type RecordVideoOptions } from './video.js';
 import {
   Frame,
   type ConsoleMessage,
@@ -49,8 +50,8 @@ type SavedState = { cookies: Cookie[]; origins: { origin: string; localStorage: 
 
 /**
  * `browser.newContext()` options: Playwright's, with Playwright's meaning
- * (see the README, "Context options"). `forcedColors`, `strictSelectors` and
- * `recordVideo` are accepted and have no effect.
+ * (see the README, "Context options"). `forcedColors` and `strictSelectors` are
+ * accepted and have no effect.
  */
 export type BrowserContextOptions = {
   baseURL?: string;
@@ -78,8 +79,8 @@ export type BrowserContextOptions = {
   serviceWorkers?: 'allow' | 'block';
   strictSelectors?: boolean;
   timezoneId?: string;
-  /** Accepted; pyro records no video. */
-  recordVideo?: { dir: string; size?: { width: number; height: number } };
+  /** A video of each page, written when it closes (ffmpeg encodes it: see video.ts). */
+  recordVideo?: RecordVideoOptions;
   /** Recorded as `routeFromHAR(path, { update: true })` does. */
   recordHar?: { path: string; content?: 'omit' | 'embed' | 'attach'; mode?: 'full' | 'minimal'; urlFilter?: string | RegExp; omitContent?: boolean };
 };
@@ -172,23 +173,45 @@ export class Browser {
     this._wire(_lp.cdp);
   }
 
-  /** Popups and downloads of the contexts on `cdp`; target and download events on. */
+  /**
+   * Pages, popups and downloads of the contexts on `cdp`. Every page target
+   * is attached as it is created, as Playwright asks Chromium to: a popup
+   * (`window.open`, a `target=_blank` link) starts paused, so its context
+   * configures it (`BrowserContext._adoptPopup`) before its first document
+   * loads, and only then lets it navigate.
+   */
   private _wire(cdp: Cdp): void {
     const contexts = () => [...this._contexts].filter((c) => c._cdp === cdp);
-    // Popups: targets announced with an opener become pages of the opener's context.
-    cdp.on('Target.targetCreated', (p) => {
+    const sessions = new Map<string, string>();
+    this._autoSessions.set(cdp, sessions);
+    cdp.on('Target.attachedToTarget', (p, parent) => {
       const info = p.targetInfo;
-      if (info?.type !== 'page' || !info.openerId) return;
-      for (const context of contexts()) {
-        const opener = context.pages().find((page) => page._targetId === info.openerId);
-        if (opener) return void context._adoptPopup(info.targetId, opener);
+      if (parent || info?.type !== 'page') return;
+      if (info.openerId) {
+        for (const context of contexts()) {
+          const opener = context.pages().find((page) => page._targetId === info.openerId);
+          if (opener) return void context._adoptPopup(info.targetId, p.sessionId, opener, !!p.waitingForDebugger);
+        }
       }
+      // Not a popup of these contexts: it goes on as it is.
+      if (p.waitingForDebugger) cdp.post('Runtime.runIfWaitingForDebugger', {}, p.sessionId);
+      // A page `Target.createTarget` made: `_takeAutoSession` claims it.
+      else sessions.set(info.targetId, p.sessionId);
+    });
+    cdp.on('Target.detachedFromTarget', (p) => {
+      if (p.targetId && sessions.get(p.targetId) === p.sessionId) sessions.delete(p.targetId);
     });
     const downloads = new Map<string, Download>();
     cdp.on('Browser.downloadWillBegin', (p) => {
       for (const context of contexts()) {
-        const page = context.pages().find((page) => page._mainFrameIdValue === p.frameId) ?? (p.frameId ? undefined : context.pages()[0]);
-        if (!page) continue;
+        const from = context.pages().find((page) => page._hasFrame(p.frameId)) ?? (p.frameId ? undefined : context.pages()[0]);
+        if (!from) continue;
+        // A popup whose navigation became the download (a `target=_blank`
+        // link or `window.open` answered with an attachment) has no document
+        // of its own: as in Playwright the download is its opener's (the
+        // browser closes the popup, as Chrome closes the tab it opened).
+        const opener = from._opener;
+        const page = opener && !from._committed && !opener.isClosed() ? opener : from;
         const download = new Download(page, p.url, p.suggestedFilename, context._options.acceptDownloads === false);
         downloads.set(p.guid, download);
         page._emit('download', download);
@@ -201,8 +224,18 @@ export class Browser {
       downloads.delete(p.guid);
       download._finish(p.state === 'completed' ? { path: p.filePath ?? join(this._downloadDir, p.guid), failure: null } : { path: null, failure: 'canceled' });
     });
-    cdp.post('Target.setDiscoverTargets', { discover: true });
+    cdp.post('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
     cdp.post('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: this._downloadDir, eventsEnabled: true });
+  }
+
+  /** Sessions `cdp` attached to its new page targets, by target id, until claimed. */
+  private _autoSessions = new Map<Cdp, Map<string, string>>();
+  /** The session the connection attached to the page `targetId` when it was created (and forgets it). */
+  _takeAutoSession(cdp: Cdp, targetId: string): string | undefined {
+    const sessions = this._autoSessions.get(cdp);
+    const sessionId = sessions?.get(targetId);
+    sessions?.delete(targetId);
+    return sessionId;
   }
 
   /** The connection for a new context: the first one, or its time zone's (`_release` it on close). */
@@ -334,6 +367,8 @@ export class BrowserContext {
   _ownedBy?: Page;
   /** Who made it (`setCallOwner`; `pyro run`: the test running then). */
   readonly _owner = callOwner();
+  /** `recordVideo`: its pages' videos. */
+  _recorder?: VideoRecorder;
 
   constructor(
     private _browser: Browser,
@@ -352,6 +387,7 @@ export class BrowserContext {
     if (o.viewport === null && o.isMobile) throw new Error(`"isMobile" option is not supported with null "viewport"`);
     if (o.geolocation) o.geolocation = verifyGeolocation(o.geolocation);
     if (o.proxy) proxyParams(o.proxy);
+    if (o.recordVideo) this._recorder = VideoRecorder.create(o.recordVideo, o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT));
     if (o.permissions?.length) this.addPermissions(o.permissions, '*');
     // First, so it is the first script of every document (see `localeScript`).
     if (o.locale) this._initScripts.push(localeScript(o.locale));
@@ -388,6 +424,7 @@ export class BrowserContext {
     const viewport = o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT);
     // No target yet: the page's first command decides which (see `_attachPage`).
     const page = new Page(this, this.cdp, viewport);
+    page._video = this._recorder?.add();
     this._pages.add(page);
     this._events.emit('page', page);
     return page;
@@ -441,6 +478,7 @@ export class BrowserContext {
       this._id = await this._idPromise;
       if (acquired) {
         this._browser._stats.pooled++;
+        this._browser._takeAutoSession(this.cdp, acquired.targetId); // the reply's own
         const { frameTree } = await this.cdp.send('Page.getFrameTree', {}, acquired.sessionId);
         page._bind(acquired.sessionId, acquired.targetId, frameTree.frame.id, frameTree.frame.url);
         page._seedFrames(frameTree);
@@ -450,7 +488,10 @@ export class BrowserContext {
     }
     const browserContextId = await this.contextId();
     const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank', browserContextId });
-    const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    // Attached as it was created, before the reply (`Browser._wire`).
+    const sessionId =
+      this._browser._takeAutoSession(this.cdp, targetId) ??
+      (await this.cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true })).sessionId;
     page._bind(sessionId, targetId);
     this._browser._stats.fresh++;
     await this.setUp(page, true, scripts);
@@ -497,22 +538,40 @@ export class BrowserContext {
     if (page._wants.workers) setup.push(send('Target.setAutoAttach', WORKER_AUTO_ATTACH));
     for (const recorder of this._har) if (recorder.covers(page)) recorder.attach(page);
     for (const b of [...this._bindings.values(), ...page._bindings.values()]) setup.push(page._installBinding(b));
+    if (page._video) setup.push(page._video._start(this.cdp, page._sessionId));
     await Promise.all(setup);
     if (fresh) this._cookies = []; // in the context's jar now
   }
 
-  /** A popup `opener` opened: a page of this context on the existing target. */
-  async _adoptPopup(targetId: string, opener: Page): Promise<void> {
+  /**
+   * A popup `opener` opened, attached as `sessionId`: a page of this context.
+   * A popup `waiting` (for the debugger, as every new target is) has not
+   * started its navigation: it gets all of the context's settings first
+   * (emulation, headers, routes, init scripts and bindings), as
+   * Playwright's popups on Chromium do, then goes on. As in Playwright, the
+   * `popup` and `page` events come once that navigation committed (or
+   * ended without a document), so `url()` is the popup's.
+   */
+  async _adoptPopup(targetId: string, sessionId: string, opener: Page, waiting: boolean): Promise<void> {
     const o = this._options;
     const page = new Page(this, this.cdp, o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT));
+    page._video = this._recorder?.add();
     this._pages.add(page);
+    page._opener = opener;
+    page._bind(sessionId, targetId);
     const attaching = (async (): Promise<Attachment> => {
-      const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
-      page._bind(sessionId, targetId);
       await this.setUp(page, true, this._initScripts);
       const { frameTree } = await page._sendNow('Page.getFrameTree');
-      page._bind(sessionId, targetId, frameTree.frame.id, frameTree.frame.url);
+      // ':' is the initial document of a popup that has not navigated yet.
+      const initial = frameTree.frame.url === ':';
+      if (!initial) page._committed = true;
+      page._bind(sessionId, targetId, frameTree.frame.id, initial ? undefined : frameTree.frame.url);
       page._seedFrames(frameTree);
+      if (waiting) {
+        const committed = navigationEnd(this.cdp, sessionId, targetId);
+        await page._sendNow('Runtime.runIfWaitingForDebugger');
+        await committed;
+      }
       return { pooled: false, ready: true };
     })();
     page._adopt(attaching);
@@ -520,8 +579,11 @@ export class BrowserContext {
       await attaching;
     } catch {
       this._pages.delete(page);
+      // Not left paused for want of its settings.
+      if (waiting) this.cdp.post('Runtime.runIfWaitingForDebugger', {}, sessionId);
       return;
     }
+    if (page.isClosed()) return;
     this._events.emit('page', page);
     opener._emit('popup', page);
   }
@@ -724,12 +786,33 @@ export class BrowserContext {
     openContextSet.delete(this);
     for (const recorder of this._har) await recorder.save();
     for (const p of [...this._pages]) await p.close();
+    // Pages that closed on their own too.
+    await this._recorder?.finish();
     const id = this._id ?? (this._idPromise ? await this._idPromise.catch(() => undefined) : undefined);
     if (id) this.cdp.post('Target.disposeBrowserContext', { browserContextId: id });
     this._browser._contextClosed(this);
     this._browser._release(this._options.timezoneId);
     this._events.emit('close', this);
   }
+}
+
+/**
+ * Resolves once the page `targetId` (attached as `sessionId`, Page events
+ * on) committed a main-frame document, its navigation ended without one (a
+ * download, a 204), or it went away.
+ */
+function navigationEnd(cdp: Cdp, sessionId: string, targetId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const offs = [
+      cdp.on('Page.frameNavigated', (p, sid) => sid === sessionId && !p.frame?.parentId && done()),
+      cdp.on('Page.frameStoppedLoading', (p, sid) => sid === sessionId && p.frameId === targetId && done()),
+      cdp.on('Target.detachedFromTarget', (p) => p.sessionId === sessionId && done()),
+    ];
+    function done() {
+      for (const off of offs) off();
+      resolve();
+    }
+  });
 }
 
 /** Options a booted-ahead page would not have loaded with (or whose browser context it lacks). */

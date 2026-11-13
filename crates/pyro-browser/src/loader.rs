@@ -893,6 +893,16 @@ pub(crate) fn integrity_error(
     })
 }
 
+/// Whether a document request that failed with `error` (a loader error)
+/// shows Chrome's error document: any network error (`net::ERR_...`) but an
+/// aborted navigation (a download, a cancel) and the URLs Chrome hands
+/// elsewhere or never navigates to (an unknown scheme, an invalid URL).
+fn shows_error_document(error: &str) -> bool {
+    let Some(code) = error.strip_prefix("net::ERR_") else { return false };
+    let code = &code[..code.bytes().take_while(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_').count()];
+    !code.is_empty() && !matches!(code, "ABORTED" | "UNKNOWN_URL_SCHEME" | "INVALID_URL")
+}
+
 impl Browser {
     pub fn set_loader(&mut self, loader: Option<Rc<dyn ResourceLoader>>) {
         self.loader = loader;
@@ -933,6 +943,7 @@ impl Browser {
                 url,
                 error: "net::ERR_ABORTED".into(),
                 cdp_request_id: None,
+                error_page: false,
             },
         );
     }
@@ -1054,7 +1065,7 @@ impl Browser {
                             b.navigation_failed(page, &opts, loader_id, e.to_string());
                         }
                     }
-                    Err(e) => b.navigation_failed(page, &opts, loader_id, e),
+                    Err(e) => b.document_fetch_failed(page, opts, loader_id, e, history),
                 }
             }),
         );
@@ -1062,6 +1073,93 @@ impl Browser {
             d.pending_cancel = cancel;
         }
         Ok(())
+    }
+
+    /// The document request of a navigation failed on the network. A new
+    /// window's navigation (its top-level frame still shows its first
+    /// about:blank document: a popup, a new target) then commits an error
+    /// document ([`Browser::commit_error_document`]), as Chrome commits
+    /// one, so the window has a document and clients waiting for its first
+    /// commit (Playwright's `popup` event) go on. Any other navigation fails
+    /// and leaves the document as it was (Chrome would show its error page
+    /// there too).
+    fn document_fetch_failed(
+        &mut self,
+        page: FrameKey,
+        opts: NavigateOpts,
+        loader_id: LoaderId,
+        error: String,
+        history: HistoryHandling,
+    ) {
+        let new_window = page.child.is_none() && self.doc(page).is_some_and(|d| d.nav.is_first_blank());
+        if new_window && shows_error_document(&error) {
+            self.commit_error_document(page, opts, loader_id, error, history);
+        } else {
+            self.navigation_failed(page, &opts, loader_id, error);
+        }
+    }
+
+    /// Commits Chrome's error document for a navigation that failed with
+    /// `error`: an empty HTML document at [`crate::ERROR_DOCUMENT_URL`]
+    /// (chromium-headless-shell's is empty too; Chrome's full build fills
+    /// it with its "This site can't be reached" page), opaque origin, under
+    /// the failed navigation's loader, with the URL it could not reach as
+    /// its frame's `unreachable` and its session history entry's URL (a
+    /// reload fetches that URL again). As in Chrome, `Page.navigate` first
+    /// gets the error (`FrameNavigateFailed` with `error_page`), then the
+    /// document commits and loads.
+    fn commit_error_document(
+        &mut self,
+        page: FrameKey,
+        opts: NavigateOpts,
+        loader_id: LoaderId,
+        error: String,
+        history: HistoryHandling,
+    ) {
+        let Some(frame_id) = self.doc(page).map(|p| p.main_frame.id.clone()) else { return };
+        self.forget_network_activity(page, &loader_id);
+        self.emit(
+            page.page,
+            PageEvent::FrameNavigateFailed {
+                frame_id: frame_id.clone(),
+                loader_id: loader_id.clone(),
+                url: opts.url.clone(),
+                error: error.clone(),
+                cdp_request_id: opts.cdp_request_id,
+                error_page: true,
+            },
+        );
+        let unreachable = crate::NavigationError { url: opts.url.clone(), error };
+        let document = NavigateOpts { post: None, url: crate::ERROR_DOCUMENT_URL.into(), cdp_request_id: None, ..opts };
+        let resource = Resource {
+            url: crate::ERROR_DOCUMENT_URL.into(),
+            status: 200,
+            mime: "text/html".into(),
+            charset: None,
+            body: Vec::new(),
+            content_disposition: None,
+            header_csp: false,
+            refresh: None,
+            referrer_policy: None,
+            timing: None,
+            partial: None,
+        };
+        if let Err(e) =
+            self.begin_document_with(page, &document, loader_id.clone(), resource, history, Some(unreachable))
+        {
+            // Nothing committed: the navigation ends as a plain failure.
+            self.emit(
+                page.page,
+                PageEvent::FrameNavigateFailed {
+                    frame_id,
+                    loader_id,
+                    url: document.url,
+                    error: e.to_string(),
+                    cdp_request_id: None,
+                    error_page: false,
+                },
+            );
+        }
     }
 
     pub(crate) fn navigation_failed(
@@ -1081,6 +1179,7 @@ impl Browser {
                 url: opts.url.clone(),
                 error,
                 cdp_request_id: opts.cdp_request_id,
+                error_page: false,
             },
         );
         // A failed initial child navigation leaves its initial empty document
@@ -1095,8 +1194,22 @@ impl Browser {
         page: FrameKey,
         opts: &NavigateOpts,
         loader_id: LoaderId,
+        resource: Resource,
+        history: HistoryHandling,
+    ) -> Result<(), JsError> {
+        self.begin_document_with(page, opts, loader_id, resource, history, None)
+    }
+
+    /// [`Browser::begin_document`] of the error document of `unreachable`
+    /// when it is set ([`Browser::commit_document`]).
+    fn begin_document_with(
+        &mut self,
+        page: FrameKey,
+        opts: &NavigateOpts,
+        loader_id: LoaderId,
         mut resource: Resource,
         history: HistoryHandling,
+        unreachable: Option<crate::NavigationError>,
     ) -> Result<(), JsError> {
         let origin = origin_of(&resource.url);
         // The policy the navigation request was sent with (its initiator's).
@@ -1110,7 +1223,7 @@ impl Browser {
         if let Some(nav) = &nav {
             nav.set_incoming_fetch(resource.timing.take());
         }
-        let committed = self.commit_document(page, opts, loader_id.clone(), &origin, history);
+        let committed = self.commit_document(page, opts, loader_id.clone(), &origin, history, unreachable);
         if let Some(nav) = &nav {
             nav.set_incoming_fetch(None);
         }
@@ -1720,6 +1833,11 @@ impl Browser {
                 }
             }
         }
+        // HTML queues DOMContentLoaded as a task: `<style>` events queued
+        // before it fire first (the last one comes back here).
+        if self.doc(page).is_some_and(|d| d.stylesheets.style_events_queued()) {
+            return;
+        }
         self.fire_dom_content_loaded(page);
     }
 
@@ -1866,6 +1984,7 @@ impl Browser {
         if state.main_frame.loaded
             || !state.main_frame.dom_content_loaded
             || state.stylesheets.pending() != 0
+            || state.stylesheets.styles_pending()
             || state.images.blocking_load() != 0
             || state.main_frame.page_dom.as_ref().is_some_and(|d| d.media_delays_load())
         {

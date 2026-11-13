@@ -32,6 +32,7 @@ import type { Clock } from './clock.js';
 import { renderAria, type AriaNode } from './aria.js';
 import { callDeclaration, Download, ElementHandle, hasHandles, JSHandle, serializeArg, valueOf, type PageElement, type PageFunction, type PageFunctionOn, type Sender, type SmartHandle } from './handles.js';
 import { APIRequestContext, credentialsApply } from './request.js';
+import type { Video } from './video.js';
 
 const SENT = new WeakMap<Cdp, Map<string, string>>();
 
@@ -1327,6 +1328,10 @@ export class Page extends Scope {
     return this.context().clock;
   }
   private _url = 'about:blank';
+  /** The page that opened this popup (`BrowserContext._adoptPopup`). */
+  _opener?: Page;
+  /** A main-frame document committed since the page was attached (its initial one aside). */
+  _committed = false;
   private _mainFrameId?: string;
   private _mainFrame = new Frame(this);
   private _closed = false;
@@ -1341,6 +1346,8 @@ export class Page extends Scope {
   private _workers = new Map<string, Worker>();
   /** `page.addInitScript` before the page has a target. */
   _pendingScripts: string[] = [];
+  /** Its recording, in a context with `recordVideo` (started with its target, written when it closes). */
+  _video?: Video;
   _routes: RouteEntry[] = [];
   /** Child frames by id, from Page events (or the frame tree when attaching to a booted page). */
   private _frames = new Map<string, Frame>();
@@ -1386,6 +1393,7 @@ export class Page extends Scope {
       }
       this._mainFrameId = p.frame.id;
       this._loaderId = p.frame.loaderId;
+      this._committed = true;
       this.setUrl(p.frame.url + (p.frame.urlFragment ?? ''));
     });
     on('Page.frameAttached', (p) => {
@@ -1519,8 +1527,9 @@ export class Page extends Scope {
     } else f._parent = parent;
     return f;
   }
-  get _mainFrameIdValue(): string | undefined {
-    return this._mainFrameId;
+  /** `frameId` is this page's main frame or one of its child frames. */
+  _hasFrame(frameId: string | undefined): boolean {
+    return !!frameId && (frameId === (this._mainFrameId ?? this._targetId) || this._frames.has(frameId));
   }
   /** Children of `frame`; marks their `<iframe>` elements so their locators can find them. */
   _childFrames(frame: Frame): Frame[] {
@@ -1629,6 +1638,7 @@ export class Page extends Scope {
     this._closed = true;
     // Taken out first: an `off` may remove itself from `_off` (coverage does).
     for (const off of this._off.splice(0)) off();
+    void this._video?._stop();
     this._context._pageClosed(this);
     this._events.emit('close', this);
   }
@@ -2366,9 +2376,9 @@ export class Page extends Scope {
   }
   async bringToFront(): Promise<void> {}
   async pause(): Promise<void> {}
-  /** Always null: pyro records no video. */
+  /** The page's video, in a context with `recordVideo` (else null). */
   video(): Video | null {
-    return null;
+    return this._video ?? null;
   }
   /** API requests sharing this page's context settings (base URL, extra headers). */
   get request(): APIRequestContext {
@@ -2385,9 +2395,12 @@ export class Page extends Scope {
     if (this._closed) return;
     if (this._attaching) {
       await this._attaching.catch(() => undefined);
+      await this._video?._lastFrame();
       if (this._targetId) this._cdp.post('Target.closeTarget', { targetId: this._targetId });
     }
     this.markClosed();
+    // As Playwright: the page's video is written when this returns.
+    await this._video?._stop();
   }
 }
 
@@ -2537,13 +2550,6 @@ export class Route {
     r.headers.forEach((v, k) => (h[k] = v));
     return new FetchedResponse(r.url, r.status, r.statusText, h, Buffer.from(await r.arrayBuffer()));
   }
-}
-
-/** Playwright's Video; `page.video()` is always null here. */
-export interface Video {
-  path(): Promise<string>;
-  saveAs(path: string): Promise<void>;
-  delete(): Promise<void>;
 }
 
 // ---- event maps ----

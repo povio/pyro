@@ -581,6 +581,26 @@ impl Dom {
         }
     }
 
+    /// [`Dom::event_path`] for a dispatch with the legacy target override
+    /// flag (DOM "dispatch" step 5): `target`'s own entry has
+    /// `target_override` as its shadow-adjusted target, so its listeners run
+    /// at the target phase with the event's `target` being `target_override`.
+    /// HTML fires a document's `load`, `pageshow`, `pagehide`, `unload` and
+    /// `beforeunload` at its Window that way, with the document as override
+    /// (a Window has no parent: it is the whole path).
+    pub fn event_path_with_target_override(
+        &self,
+        target: TargetKey,
+        target_override: TargetKey,
+        ev: &EventState,
+    ) -> Vec<(TargetKey, TargetKey)> {
+        let mut path = self.event_path(target, ev);
+        if let Some(first) = path.first_mut() {
+            first.1 = target_override;
+        }
+        path
+    }
+
     /// Builds the event path: (invocation target, shadow-adjusted target).
     pub fn event_path(&self, target: TargetKey, ev: &EventState) -> Vec<(TargetKey, TargetKey)> {
         let origin_root = match target {
@@ -614,14 +634,17 @@ pub struct PathItem {
     /// The event's `relatedTarget` while this item's listeners run: the
     /// event's own, retargeted against the invocation target.
     pub related_target: Option<TargetKey>,
+    at_target: bool,
 }
 
 impl PathItem {
     /// The item's shadow-adjusted target is non-null: the dispatch target
-    /// itself, or a shadow host the event is retargeted to. Its listeners
-    /// run at the target phase whether or not the event bubbles.
+    /// itself (whose `target` is the override of a dispatch with the legacy
+    /// target override flag), or a shadow host the event is retargeted to.
+    /// Its listeners run at the target phase whether or not the event
+    /// bubbles.
     pub fn at_target(&self) -> bool {
-        self.invocation_target == self.target
+        self.at_target
     }
 }
 
@@ -686,7 +709,8 @@ pub fn dispatch_on_path(
                 if k > 0 && shadow_target == cur && related_target == Some(cur) {
                     break;
                 }
-                items.push(PathItem { invocation_target: cur, target: shadow_target, related_target });
+                let at_target = k == 0 || shadow_target == cur;
+                items.push(PathItem { invocation_target: cur, target: shadow_target, related_target, at_target });
             }
             // Steps 6.10 and 6.11 ("clearTargets"), decided before listeners
             // can move nodes: the outermost target or relatedTarget the event

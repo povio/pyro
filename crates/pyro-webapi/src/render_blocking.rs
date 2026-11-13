@@ -2,8 +2,9 @@
 //! set. While it is not empty the document has no rendering opportunity, so
 //! animation frame callbacks wait.
 //!
-//! The loader blocks rendering on the scripts and stylesheets it fetches
-//! (`PageDom::block_rendering`) and unblocks it when they are done.
+//! The loader blocks rendering on the scripts and stylesheets it fetches,
+//! `<style>` elements' `@import`s included (`PageDom::block_rendering`), and
+//! unblocks it when they are done.
 //! `<link rel=expect blocking=render href="#id">` elements are found here:
 //! they block until the element their `href` indicates is parsed. As in the
 //! standard, an element can only be added while the document is loading and
@@ -23,7 +24,8 @@
 //!
 //! Deviations: there is no time limit on render-blocking; a document without
 //! a body is not render-blocked by that alone (only by the elements in the
-//! set); `<style>` elements with pending `@import`s do not block.
+//! set); a `<style>` element blocks only while its `@import`s load (HTML
+//! blocks on every one until its `load` task, which Chromium does not).
 
 use std::cell::{Cell, RefCell};
 

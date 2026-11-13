@@ -298,7 +298,7 @@ How a run goes, as with `playwright test`:
   in case the test fails later: that would cost a screenshot per page of
   every passing test.
 - **Reporting:** passes, failures (with their errors and the files they
-  attached, such as the screenshots), skips (declared or `test.skip()` at
+  attached, such as the screenshots and videos), skips (declared or `test.skip()` at
   run time), tests that did not run, flaky tests (passed on a retry),
   expected failures and errors outside any test (a worker fixture's
   teardown), then a summary. A test of a named project shows as
@@ -307,8 +307,8 @@ How a run goes, as with `playwright test`:
 Plain `bun test ./e2e/foo.e2e.ts` (with `$PYRO_CONFIG` naming the config) also
 runs the tests, in one process and without project dependencies: Bun then
 reports a run-time `test.skip()` as a pass, since it cannot mark a running
-test as skipped. Not there either way: Playwright's HTML report, trace
-viewer and video.
+test as skipped. Not there either way: Playwright's HTML report and trace
+viewer.
 
 The TOS close flow (`test/wright/tos-flow.ts`, Playwright code as TOS
 writes it) takes 14.7 ms per test this way (median of 40, fresh page),
@@ -337,7 +337,11 @@ offline, JavaScript off, HTTPS errors, CSP bypass, blocked service workers,
 refused downloads), and any other first call, get a fresh page.
 
 **Context options.** `browser.newContext()` and `use: {}` take Playwright's
-options with Playwright's meaning:
+options with Playwright's meaning. Every page of the context has them from
+its first document on, and so do its init scripts, `exposeFunction` /
+`exposeBinding`, `route`s and `setExtraHTTPHeaders`: as Playwright's popups
+on Chromium, a popup (`window.open`, a `target=_blank` link) starts paused
+and navigates once it has them all; frames have their page's.
 
 - `viewport` and `screen`; `deviceScaleFactor` (`devicePixelRatio`, and
   screenshots in device pixels, Playwright's default `scale: 'device'`);
@@ -396,6 +400,25 @@ options with Playwright's meaning:
   still fires; `download.failure()` returns Playwright's "Pass {
   acceptDownloads: true } when you are creating your browser context.", which
   `path()`, `saveAs()` and `createReadStream()` throw
+- `recordVideo` (`dir`, `size`): a WebM of each page, popups included, as
+  Playwright records it: VP8 at 25 frames a second, `size` or else the
+  viewport scaled down to fit 800x800, frames padded with gray to the size;
+  `page.video()` gives `path()`, `saveAs()` and `delete()`. Pyro sends a
+  frame (CDP `Page.startScreencast`) whenever what the page shows changes, at
+  most 25 a second, rendered as screenshots are (so CSS animations show at
+  their end); a page that does not change costs nothing. The frames wait in a
+  temporary directory and are encoded when the page closes, and the page's
+  state at that moment gets a frame of its own: `page.close()` and
+  `context.close()` return once the file is written (a few tenths of a
+  second per 10 s of video). The encoder is ffmpeg: `$PYRO_FFMPEG`, else
+  `ffmpeg` on PATH, else Playwright's (`bunx playwright install ffmpeg`);
+  without one, `newContext({ recordVideo })` fails and says how to get one.
+  The runner's `video` option (`'on'`, `'retain-on-failure'`,
+  `'on-first-retry'`, or `{ mode, size }`) records the `context` fixture's
+  pages into the test's output directory (`video.webm`, `video-1.webm`, ...),
+  attached to the test and listed under a failure by `pyro run`; under
+  `retain-on-failure` the pages a passing test leaves open are not encoded
+  at all
 
 Also covered:
 
@@ -412,8 +435,13 @@ Also covered:
   `:testid`, `:has`, `:has-not`, `:has-text`, `:has-not-text`, `:and`, `:or`,
   `:chain`, `:control=enter-frame`), and CSS with `:has-text()`, `:text()`,
   `:text-is()`, `:text-matches()`, `:visible`, `:nth-match()` and `:light()`
-- popups (`page.on('popup')`, `context.on('page')`), downloads
-  (`page.on('download')`, `saveAs`, `path`), file choosers
+- popups (`page.on('popup')`, `context.on('page')`, which come once the
+  popup's document committed, so `url()` is its own; a popup, or a new
+  page's first `goto`, whose navigation fails shows Chromium's error
+  document, `chrome-error://chromewebdata/`, and `goto` still rejects), downloads
+  (`page.on('download')`, `saveAs`, `path`; a `target=_blank` link or
+  `window.open` answered with an attachment downloads on the opener, and its
+  popup closes, as in Chrome), file choosers
   (`page.on('filechooser')`, `setFiles`), workers (`page.on('worker')`,
   `worker.evaluate`)
 - `keyboard.down/up`, click modifiers
@@ -495,8 +523,8 @@ JavaScriptCore).
 
 Not supported, accepted so configs and `devices` descriptors keep working:
 
-- context options with no effect: `forcedColors`, `strictSelectors` and
-  `recordVideo`
+- context options with no effect: `forcedColors` and `strictSelectors`
+- `recordVideo.showActions` and the runner's `video.show` draw no annotations
 - `toHaveScreenshot` renders at the context's `deviceScaleFactor` (Playwright's
   default there is `scale: 'css'`), and `screenshot()` has no `scale` option
 - `context.request` and the `request` fixture do not go through `proxy`

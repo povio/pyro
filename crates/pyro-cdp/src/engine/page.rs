@@ -67,6 +67,8 @@ fn secure_context_type(url: &str) -> &'static str {
     }
 }
 
+/// `Page.Frame`. `unreachable`: the frame shows the error document of a
+/// navigation to that URL (Chrome's `unreachableUrl`).
 fn frame_description(
     id: &str,
     parent: Option<&FrameId>,
@@ -74,6 +76,7 @@ fn frame_description(
     url: &str,
     name: &str,
     origin: &str,
+    unreachable: Option<&str>,
 ) -> serde_json::Value {
     let mut value = json!({
         "id": id, "loaderId": loader, "url": url, "name": name,
@@ -84,12 +87,15 @@ fn frame_description(
     if let Some(parent) = parent {
         value["parentId"] = json!(parent.0);
     }
+    if let Some(unreachable) = unreachable {
+        value["unreachableUrl"] = json!(unreachable);
+    }
     value
 }
 
 fn frame_tree(frame: &FrameInfo, frames: &[FrameInfo]) -> serde_json::Value {
     let mut value = json!({"frame": frame_description(&frame.id.0, frame.parent.as_ref(), &frame.loader_id.0,
-        &frame.url, &frame.name, &frame.origin)});
+        &frame.url, &frame.name, &frame.origin, frame.unreachable_url.as_deref())});
     let children: Vec<_> =
         frames.iter().filter(|f| f.parent.as_ref() == Some(&frame.id)).map(|f| frame_tree(f, frames)).collect();
     if !children.is_empty() {
@@ -265,6 +271,10 @@ impl EngineHost {
             "printToPDF" => {
                 Err(CdpError::server("Page.printToPDF: pyro was built without the render feature"))
             }
+            // screencast.rs
+            "startScreencast" => self.start_screencast(cmd),
+            "screencastFrameAck" => self.screencast_frame_ack(cmd),
+            "stopScreencast" => self.stop_screencast(cmd),
             // A blocking dialog is answered by its nested read loop
             // (dialog.rs). A reported one was already dismissed (it did not
             // block); this only answers the client that reacts to its
@@ -590,8 +600,19 @@ impl EngineHost {
                     self.event_to("Runtime.executionContextCreated", &json!({ "context": context }), &runtime);
                 }
             }
-            PageEvent::FrameNavigated { frame_id, loader_id, url, reason, cdp_request_id, timestamp } => {
+            PageEvent::FrameNavigated {
+                frame_id,
+                loader_id,
+                url,
+                reason,
+                cdp_request_id,
+                timestamp,
+                unreachable_url,
+            } => {
                 if root.as_ref() == Some(&frame_id) {
+                    if let Some(state) = self.pages.get_mut(&page) {
+                        state.uncommitted_popup_of = None;
+                    }
                     self.popup_url_committed(page, &url);
                     for session in self.sessions_of(page, |s| s.dom_enabled) {
                         self.event("DOM.documentUpdated", &json!({}), &session);
@@ -636,21 +657,22 @@ impl EngineHost {
                     .or_else(|| info.as_ref().map(|(origin, _)| origin.as_str()))
                     .unwrap_or("null");
                 let name = info.as_ref().map_or("", |(_, name)| name.as_str());
-                let frame = frame_description(&frame_id.0, parent.as_ref(), &loader_id.0, &url, name, origin);
+                let frame = frame_description(
+                    &frame_id.0,
+                    parent.as_ref(),
+                    &loader_id.0,
+                    &url,
+                    name,
+                    origin,
+                    unreachable_url.as_deref(),
+                );
                 self.event_to("Page.frameNavigated", &json!({"frame":frame,"type":"Navigation"}), &all);
                 for (realm, world, origin) in pending {
                     let context = context_description(realm, world.as_deref(), &origin, &frame_id.0);
                     self.event_to("Runtime.executionContextCreated", &json!({ "context": context }), &runtime);
                 }
             }
-            PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, .. } => {
-                let mut requested = false;
-                if let Some(state) = self.pages.get_mut(&page) {
-                    let frame = state.frames.entry(frame_id.clone()).or_default();
-                    frame.navigating = false;
-                    requested = std::mem::take(&mut frame.requested);
-                    frame.pending_realms.clear();
-                }
+            PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, error_page, .. } => {
                 if let Some(id) = cdp_request_id {
                     self.navigate_response(
                         page,
@@ -658,6 +680,19 @@ impl EngineHost {
                         id,
                         json!({ "frameId": frame_id.0, "loaderId": loader_id.0, "errorText": error }),
                     );
+                }
+                // Chrome answers Page.navigate with the error, then commits
+                // its error document under the same loader: the frame is
+                // still navigating, and that document's load ends it.
+                if error_page {
+                    return;
+                }
+                let mut requested = false;
+                if let Some(state) = self.pages.get_mut(&page) {
+                    let frame = state.frames.entry(frame_id.clone()).or_default();
+                    frame.navigating = false;
+                    requested = std::mem::take(&mut frame.requested);
+                    frame.pending_realms.clear();
                 }
                 for s in &all {
                     // Chrome clears a requested (anchor/script) navigation it
@@ -765,12 +800,15 @@ impl EngineHost {
                 self.file_chooser_opened(page, &frame_id, input, multiple);
             }
             PageEvent::DownloadStarted => {
-                if let Some(state) = self.pages.get_mut(&page) {
+                let owner = self.download_owner(page);
+                if let Some(state) = self.pages.get_mut(&owner) {
                     state.download_count += 1;
                 }
             }
             PageEvent::Download { frame_id, url, suggested_filename, body } => {
-                if let Some(state) = self.pages.get_mut(&page) {
+                let transient = self.pages.get(&page).is_some_and(|state| state.uncommitted_popup_of.is_some());
+                let owner = self.download_owner(page);
+                if let Some(state) = self.pages.get_mut(&owner) {
                     state.downloads.push(super::DownloadRecord {
                         url: url.clone(),
                         filename: suggested_filename.clone(),
@@ -788,7 +826,12 @@ impl EngineHost {
                     }
                     self.waiters.log_changed = true;
                 }
+                // Announced with the frame that started it (the popup's, as
+                // in Chrome): clients report it on the opener.
                 self.deliver_download(page, &frame_id.0, &url, &suggested_filename, body);
+                if transient {
+                    self.close_requests.push(page);
+                }
             }
             PageEvent::JavascriptDialogOpening { kind, message, default_prompt, .. } => {
                 if let Some(state) = self.pages.get_mut(&page) {
@@ -821,6 +864,20 @@ impl EngineHost {
 }
 
 impl EngineHost {
+    /// The page a download of `page` belongs to (its `Pyro.run` download
+    /// steps): the opener of a popup that committed no document of its own
+    /// (a `target=_blank` link or `window.open` whose response is an
+    /// attachment), as Playwright reports such a download on the opener,
+    /// else `page`. Chrome closes a tab it opened for a download; the
+    /// caller closes the popup once it has delivered the download.
+    fn download_owner(&self, page: PageKey) -> PageKey {
+        self.pages
+            .get(&page)
+            .and_then(|state| state.uncommitted_popup_of)
+            .filter(|opener| self.pages.contains_key(opener))
+            .unwrap_or(page)
+    }
+
     /// Delivers a page download as Chrome does under an allow behavior:
     /// Browser.downloadWillBegin, the file written to downloadPath (named by
     /// guid for allowAndName, else as suggested), then Browser.downloadProgress
