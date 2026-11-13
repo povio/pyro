@@ -164,6 +164,18 @@ textarea:focus {
     outline: 2px solid #4D90FE;
 }
 
+/* pyro: Chromium's UA sheet (light colour scheme). Its `line-height:
+   initial !important` is applied in layout: Stylo applies no `line-height`
+   to `::placeholder`. */
+::placeholder {
+    color: #757575;
+}
+
+input::placeholder {
+    white-space: pre;
+    overflow-wrap: normal;
+}
+
 button,
 input[type="submit"],
 input[type="reset"],

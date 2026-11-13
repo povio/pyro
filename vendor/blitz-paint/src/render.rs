@@ -1314,9 +1314,13 @@ impl ElementCx<'_, '_> {
             // within the content box of it's node.
             let y_offset = self.node.text_input_v_centering_offset(self.scale);
             let subpixel_offset = input_data.content_box_subpixel_offset;
-            let pos = Point {
+            let content_origin = Point {
                 x: pos.x + subpixel_offset.x as f64,
-                y: pos.y + subpixel_offset.y as f64 + y_offset,
+                y: pos.y + subpixel_offset.y as f64,
+            };
+            let pos = Point {
+                x: content_origin.x,
+                y: content_origin.y + y_offset,
             };
 
             // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
@@ -1331,6 +1335,48 @@ impl ElementCx<'_, '_> {
 
             let transform = self.transform
                 * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
+
+            // pyro: an empty input shows its placeholder, its lines placed as the
+            // value's (a single line centred in the content box), under the caret.
+            if let Some(placeholder) = input_data.shown_placeholder() {
+                let layout = self.node.final_layout();
+                let box_width = layout.content_box_width() * self.scale as f32;
+                let y = if input_data.is_multiline {
+                    0.0
+                } else {
+                    let height = placeholder.layout.height() / self.scale as f32;
+                    ((layout.content_box_height() - height) / 2.0).max(0.0) as f64
+                };
+                let origin = Point {
+                    x: content_origin.x,
+                    y: content_origin.y + y,
+                };
+                let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                for line in placeholder.layout.lines() {
+                    // A wrapped (textarea) placeholder is aligned by its layout.
+                    let x = if input_data.is_multiline {
+                        0.0
+                    } else {
+                        placeholder.line_start(line.metrics().advance, box_width) as f64
+                    };
+                    let transform = self.transform
+                        * Affine::translate((origin.x * self.scale + x, origin.y * self.scale));
+                    crate::text::stroke_text(
+                        scene,
+                        std::iter::once(line),
+                        self.context.dom,
+                        transform,
+                        TextPaintOptions {
+                            scale: self.scale,
+                            brush_override: Some(placeholder.color.as_srgb_color()),
+                        },
+                        self.node.id,
+                        Some(&placeholder.text),
+                        &mut draw_text_context,
+                        None,
+                    );
+                }
+            }
 
             if self.node.is_focussed() {
                 // Render selection/caret

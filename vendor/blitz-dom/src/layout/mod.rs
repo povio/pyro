@@ -556,6 +556,10 @@ impl LayoutPassState<'_> {
                                 &mut doc.font_ctx.lock().unwrap(),
                                 &mut doc.layout_ctx,
                             );
+                            // pyro: the placeholder wraps at the same width.
+                            if let Some(placeholder) = input.placeholder.as_deref_mut() {
+                                placeholder.break_lines(Some(content_width * scale));
+                            }
                         }
                     }
                     return ChildLayout::Done(output);

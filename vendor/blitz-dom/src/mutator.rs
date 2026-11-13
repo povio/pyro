@@ -343,6 +343,19 @@ impl DocumentMutator<'_> {
         }
     }
 
+    /// pyro: a text input lays its `placeholder` out with its box: the box is
+    /// built again when the attribute changes.
+    fn rebuild_text_input_for_attribute(&mut self, node_id: NodeId, name: &QualName) {
+        if name.local != local_name!("placeholder") {
+            return;
+        }
+        let node = &mut self.doc.nodes[node_id];
+        if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
+            node.insert_damage(ALL_DAMAGE);
+            node.mark_ancestors_dirty();
+        }
+    }
+
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
         if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
             self.doc.note_lp_state(node_id, Some(value));
@@ -352,6 +365,7 @@ impl DocumentMutator<'_> {
         // `:has()` search visited it.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
+        self.rebuild_text_input_for_attribute(node_id, &name);
         self.set_attribute_impl(node_id, name, value);
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);
@@ -513,6 +527,7 @@ impl DocumentMutator<'_> {
         // pyro: as in `set_attribute`.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
+        self.rebuild_text_input_for_attribute(node_id, &name);
         self.clear_attribute_impl(node_id, name);
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);

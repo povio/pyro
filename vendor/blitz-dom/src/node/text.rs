@@ -115,6 +115,72 @@ pub struct TextInputData {
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
     pub content_box_subpixel_offset: taffy::Point<f32>,
+    /// pyro: the `placeholder` attribute laid out in the element's `::placeholder` style
+    /// (`None` without one); paint shows it while the value is empty.
+    pub placeholder: Option<Box<InputPlaceholder>>,
+}
+
+/// pyro: the placeholder text of an `<input>` or `<textarea>`, laid out in its
+/// `::placeholder` style.
+pub struct InputPlaceholder {
+    /// The text (a single-line input's without its line breaks).
+    pub text: String,
+    /// The style it was laid out in, kept to lay it out again at another scale.
+    pub style: parley::TextStyle<'static, 'static, TextBrush>,
+    pub layout: parley::Layout<TextBrush>,
+    /// Its colour (`opacity` folded into the alpha).
+    pub color: style::color::AbsoluteColor,
+    /// `text-align` and the base direction (`direction`, `unicode-bidi`) it resolves against.
+    pub alignment: parley::Alignment,
+    pub base_direction: parley::BaseDirection,
+}
+
+impl InputPlaceholder {
+    /// Shapes the text again (at a new `scale`) and breaks it into lines at
+    /// `width` (device px; `None`: at its line breaks only).
+    pub fn relayout(
+        &mut self,
+        font_ctx: &mut FontContext,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        scale: f32,
+        width: Option<f32>,
+    ) {
+        let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &self.style);
+        builder.set_base_direction(self.base_direction);
+        builder.push_text(&self.text);
+        self.layout = builder.build().0;
+        self.break_lines(width);
+    }
+
+    /// Breaks the shaped text into lines at `width` (device px), aligned in it.
+    pub fn break_lines(&mut self, width: Option<f32>) {
+        self.layout.break_all_lines(width);
+        if width.is_some() {
+            self.layout
+                .align(self.alignment, parley::AlignmentOptions::default());
+        }
+    }
+
+    /// Where a line `line_width` wide starts in a content box `box_width` wide
+    /// (both device px): `text-align`, and start-aligned when it overflows (CSS Text 3).
+    pub fn line_start(&self, line_width: f32, box_width: f32) -> f32 {
+        use parley::Alignment;
+        let rtl = self.base_direction == parley::BaseDirection::Rtl
+            || self.base_direction == parley::BaseDirection::Auto && self.layout.is_rtl();
+        let free = box_width - line_width;
+        if free < 0.0 {
+            // Start-aligned: it overflows its end edge.
+            return if rtl { free } else { 0.0 };
+        }
+        match self.alignment {
+            Alignment::Left => 0.0,
+            Alignment::Right => free,
+            Alignment::Center => free / 2.0,
+            Alignment::End if !rtl => free,
+            Alignment::Start | Alignment::Justify if rtl => free,
+            _ => 0.0,
+        }
+    }
 }
 
 // FIXME: Implement Clone for PlainEditor
@@ -132,7 +198,15 @@ impl TextInputData {
             is_multiline,
             scroll_offset: 0.0,
             content_box_subpixel_offset: taffy::Point::ZERO,
+            placeholder: None,
         }
+    }
+
+    /// pyro: the placeholder to paint now: the element has one and its value is empty.
+    pub fn shown_placeholder(&self) -> Option<&InputPlaceholder> {
+        self.placeholder
+            .as_deref()
+            .filter(|_| self.editor.raw_text().is_empty())
     }
 
     pub fn set_text(

@@ -29,4 +29,4 @@ pub use stylo_data::ComputedStyleRef;
 pub(crate) use stylo_data::LayoutStyles;
 #[cfg(feature = "svg")]
 pub use svg::{SvgImageData, SvgIntrinsicDimensions};
-pub use text::{GeneratedTextInputEvent, TextBrush, TextInputData, TextLayout};
+pub use text::{GeneratedTextInputEvent, InputPlaceholder, TextBrush, TextInputData, TextLayout};

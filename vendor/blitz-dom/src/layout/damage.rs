@@ -809,6 +809,11 @@ impl BaseDocument {
                 input.editor.set_scale(scale);
                 let mut font_ctx = font_ctx.lock().unwrap();
                 input.editor.refresh_layout(&mut font_ctx, layout_ctx);
+                // pyro: the placeholder is shaped again too (a textarea's is broken into
+                // lines again by the relayout).
+                if let Some(placeholder) = input.placeholder.as_deref_mut() {
+                    placeholder.relayout(&mut font_ctx, layout_ctx, scale, None);
+                }
                 node.insert_damage(ONLY_RELAYOUT);
             }
         }

@@ -102,7 +102,7 @@ const PAGE: &str = r#"<!doctype html><html><head><style>
 <form><input id="name" value="x"><input id="agree" type="checkbox"><textarea id="note">n</textarea>
 <select id="pick"><option>a</option><option id="b">b</option></select></form>
 <svg id="icon" width="40" height="20"><rect id="bar" width="10" height="20" fill="red"/></svg>
-<input id="kind" type="text" value="v">
+<input id="kind" type="text" value="v"><input id="hint" placeholder="Search">
 <table id="t"><tbody><tr><td>1</td><td>2</td></tr><tr><td>3</td><td>4</td></tr></tbody></table>
 </body></html>"#;
 
@@ -231,6 +231,34 @@ fn each_mutation_kind_matches_a_fresh_build() {
             Box::new(|p| {
                 let n = p.find("#kind");
                 p.dom.borrow_mut().set_attribute(n, "type", "checkbox").unwrap();
+            }),
+        ),
+        (
+            "a placeholder's text",
+            Box::new(|p| {
+                let n = p.find("#hint");
+                p.dom.borrow_mut().set_attribute(n, "placeholder", "Find a position").unwrap();
+            }),
+        ),
+        (
+            "a value typed over a placeholder",
+            Box::new(|p| {
+                let n = p.find("#hint");
+                p.dom.borrow_mut().set_value(n, "typed").unwrap();
+            }),
+        ),
+        (
+            "the value cleared, the placeholder back",
+            Box::new(|p| {
+                let n = p.find("#hint");
+                p.dom.borrow_mut().set_value(n, "").unwrap();
+            }),
+        ),
+        (
+            "the placeholder removed",
+            Box::new(|p| {
+                let n = p.find("#hint");
+                p.dom.borrow_mut().remove_attribute(n, "placeholder").unwrap();
             }),
         ),
         (

@@ -13,6 +13,7 @@ mod image_input_replaced;
 mod incremental_construction;
 mod incremental_flex_overflow;
 mod input_percentage_min_content;
+mod input_placeholder;
 mod line_break_resume;
 mod mirror;
 mod out_of_flow_boundary;
