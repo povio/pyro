@@ -58,6 +58,10 @@ pub struct TextLayout {
     pub hit_reach: Option<f64>,
     /// pyro: the last alignment justified some lines.
     pub justified: bool,
+    /// pyro: "…" shaped in the inline root's style, when the root clips its overflow and has
+    /// `text-overflow: ellipsis` at the end of its lines: paint ends each line that overflows
+    /// the content box with it.
+    pub ellipsis: Option<Box<parley::layout::Layout<TextBrush>>>,
 }
 
 impl TextLayout {

@@ -1010,6 +1010,43 @@ struct ElementCx<'dom, 'a> {
 }
 
 /// Converts parley BoundingBox into peniko Rect
+/// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
+/// (without its hanging white space) overflows the content box `width` wide (device px) loses
+/// the atoms that do not fit beside the ellipsis at its end edge, and the ellipsis follows the
+/// last atom kept (at the line's start when none is). Returns the cut and the ellipsis's x
+/// (layout coordinates), `None` for a line that fits.
+fn truncate_line(
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
+    width: f32,
+    rtl: bool,
+) -> Option<(crate::text::TextCut, f32)> {
+    const EPSILON: f32 = 1.0 / 128.0;
+    let metrics = line.metrics();
+    let ellipsis_width = ellipsis.full_width();
+    let runs = || {
+        line.items().filter_map(|item| match item {
+            parley::PositionedLayoutItem::GlyphRun(run) => Some(run),
+            parley::PositionedLayoutItem::InlineBox(_) => None,
+        })
+    };
+    if !rtl {
+        if metrics.offset + metrics.advance - metrics.hanging_advance <= width + EPSILON {
+            return None;
+        }
+        let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true };
+        let end = runs().filter_map(|run| cut.kept(&run).1).map(|(_, x1)| x1).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.max(x))));
+        Some((cut, end.unwrap_or(metrics.offset)))
+    } else {
+        if metrics.offset + metrics.hanging_advance >= -EPSILON {
+            return None;
+        }
+        let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
+        let start = runs().filter_map(|run| cut.kept(&run).1).map(|(x0, _)| x0).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.min(x))));
+        Some((cut, start.unwrap_or(metrics.offset + metrics.advance) - ellipsis_width))
+    }
+}
+
 fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
     peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
 }
@@ -1190,20 +1227,58 @@ impl ElementCx<'_, '_> {
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             draw_text_context.text_shift = self.fractional_text_x_of_node();
-            crate::text::stroke_text(
-                scene,
-                text_layout.layout.lines(),
-                self.context.dom,
-                transform,
-                TextPaintOptions {
-                    scale: self.scale,
-                    brush_override: None,
-                },
-                self.node.id,
-                Some(&text_layout.text),
-                &mut draw_text_context,
-                None,
-            );
+            let options = TextPaintOptions {
+                scale: self.scale,
+                brush_override: None,
+            };
+            match text_layout.ellipsis.as_deref() {
+                None => crate::text::stroke_text(
+                    scene,
+                    text_layout.layout.lines(),
+                    self.context.dom,
+                    transform,
+                    options,
+                    self.node.id,
+                    Some(&text_layout.text),
+                    &mut draw_text_context,
+                    None,
+                ),
+                Some(ellipsis) => {
+                    let width = self.node.final_layout().content_box_width() * self.scale as f32;
+                    for line in text_layout.layout.lines() {
+                        let truncation = truncate_line(&line, ellipsis, width, text_layout.layout.is_rtl());
+                        draw_text_context.cut = truncation.map(|(cut, _)| cut);
+                        crate::text::stroke_text(
+                            scene,
+                            std::iter::once(line.clone()),
+                            self.context.dom,
+                            transform,
+                            options,
+                            self.node.id,
+                            Some(&text_layout.text),
+                            &mut draw_text_context,
+                            None,
+                        );
+                        draw_text_context.cut = None;
+                        // The ellipsis on the line's baseline, next to the last atom kept.
+                        if let Some((_, x)) = truncation {
+                            let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
+                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64);
+                            crate::text::stroke_text(
+                                scene,
+                                ellipsis.lines(),
+                                self.context.dom,
+                                transform * Affine::translate(offset),
+                                options,
+                                self.node.id,
+                                Some("\u{2026}"),
+                                &mut draw_text_context,
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
             draw_text_context.text_shift = 0.0;
         }
     }
