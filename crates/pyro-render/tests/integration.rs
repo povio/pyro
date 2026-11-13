@@ -14,6 +14,7 @@ mod incremental_construction;
 mod incremental_flex_overflow;
 mod input_percentage_min_content;
 mod line_break_resume;
+mod line_height_normal;
 mod mirror;
 mod out_of_flow_boundary;
 mod pdf_fidelity;

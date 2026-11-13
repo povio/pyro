@@ -156,7 +156,7 @@ index 0000000..0930692
 +    }
 +}
 diff --git a/src/builder.rs b/src/builder.rs
-index 4d5dcf2..f702093 100644
+index 4d5dcf2..4b63e36 100644
 --- a/src/builder.rs
 +++ b/src/builder.rs
 @@ -35,6 +35,11 @@ impl BuilderOptions<'_> {
@@ -241,15 +241,16 @@ index 4d5dcf2..f702093 100644
          );
      }
  
-@@ -415,6 +469,7 @@ fn build_into_layout<B: Brush>(
+@@ -415,13 +469,18 @@ fn build_into_layout<B: Brush>(
          fcx,
          &lcx.style_table,
          &layout.data.shaped_text,
+-        options.quantize,
 +        &lcx.style_first_fonts,
-         options.quantize,
++        if options.quantize { options.scale } else { 0. },
          &mut layout.data.style_metrics,
      );
-@@ -422,6 +477,10 @@ fn build_into_layout<B: Brush>(
+ 
      // Move inline boxes into the layout
      layout.data.inline_boxes.clear();
      core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
@@ -359,7 +360,7 @@ index 9aa2c89..bc1f9d8 100644
              fcx,
          }
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..e9031cd 100644
+index e6ab383..2535f24 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -370,6 +371,23 @@ index e6ab383..e9031cd 100644
  use crate::layout::whitespace::whitespace_hangs;
  use crate::layout::{ContentWidths, LineMetrics, Style};
  use crate::resolve::ResolvedStyle;
+@@ -58,13 +59,13 @@ pub(crate) struct RunData {
+ pub(crate) fn run_box_metrics<B: Brush>(
+     style: &Style<B>,
+     shaped_run: &ShapedRun,
+-    quantize: bool,
++    quantum: f32,
+ ) -> Option<BoxMetrics> {
+     match style.line_height {
+         LineHeight::MetricsRelative(_) => {
+             let (size, metrics) = (shaped_run.font_size, &shaped_run.font_metrics);
+-            let line_height = style.line_height.resolve(size, metrics, quantize);
+-            Some(BoxMetrics::from_font(metrics, line_height, quantize))
++            let line_height = style.line_height.resolve(size, metrics, quantum);
++            Some(BoxMetrics::from_font(metrics, line_height, quantum))
+         }
+         LineHeight::FontSizeRelative(_) | LineHeight::Absolute(_) => None,
+     }
 @@ -220,6 +221,11 @@ pub(crate) struct LayoutData<B: Brush> {
      ///
      /// Each line owns a contiguous slice ([`LineData::aligned_subtree_offsets`]).
@@ -391,7 +409,20 @@ index e6ab383..e9031cd 100644
              alignment: None,
              layout_max_advance: 0.0,
              indent_amount: 0.0,
-@@ -286,6 +294,8 @@ impl<B: Brush> LayoutData<B> {
+@@ -266,6 +274,12 @@ impl<B: Brush> Default for LayoutData<B> {
+ }
+ 
+ impl<B: Brush> LayoutData<B> {
++    /// pyro: the layout units of a CSS pixel when metrics are quantized (the scale), else 0:
++    /// what [`LineHeight::resolve`] and [`BoxMetrics::from_font`] round font metrics to.
++    pub(crate) fn quantum(&self) -> f32 {
++        if self.quantize { self.scale } else { 0. }
++    }
++
+     pub(crate) fn clear(&mut self) {
+         self.scale = 1.;
+         self.quantize = true;
+@@ -286,6 +300,8 @@ impl<B: Brush> LayoutData<B> {
          self.lines.clear();
          self.line_items.clear();
          self.aligned_subtree_offsets.clear();
@@ -400,6 +431,24 @@ index e6ab383..e9031cd 100644
          self.alignment = None;
      }
  
+@@ -319,7 +335,7 @@ impl<B: Brush> LayoutData<B> {
+         let line_height = self.styles[style_index as usize].line_height.resolve(
+             shaped_run.font_size,
+             &shaped_run.font_metrics,
+-            self.quantize,
++            self.quantum(),
+         );
+ 
+         // The run's box metrics, if it's uniform across all the styles within the run. A run's box
+@@ -337,7 +353,7 @@ impl<B: Brush> LayoutData<B> {
+                 run_box_metrics(
+                     &self.styles[usize::from(first_style)],
+                     shaped_run,
+-                    self.quantize,
++                    self.quantum(),
+                 )
+             } else {
+                 None
 diff --git a/src/layout/line.rs b/src/layout/line.rs
 index 1569071..c3b1e35 100644
 --- a/src/layout/line.rs
@@ -447,7 +496,7 @@ index 1569071..c3b1e35 100644
      ///
      /// See also [`Self::style_index`].
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..f49024d 100644
+index 3c3798c..3795b7a 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -11,6 +11,7 @@ use core_maths::CoreFloat;
@@ -491,6 +540,15 @@ index 3c3798c..f49024d 100644
      }
  
      /// Drops the lines from `len` onwards, along with their aligned subtree offsets.
+@@ -449,7 +464,7 @@ impl LineBoxMetrics {
+         let shaped_run = &data.shaped_text.runs()[run_idx];
+         let Some(run_box) = data.runs[run_idx]
+             .run_box
+-            .or_else(|| run_box_metrics(&data.styles[style], shaped_run, data.quantize))
++            .or_else(|| run_box_metrics(&data.styles[style], shaped_run, data.quantum()))
+         else {
+             return;
+         };
 @@ -768,6 +783,33 @@ impl BreakerState {
          self.subtrees.restore(prev_state.subtrees_len);
      }
@@ -1047,10 +1105,19 @@ index 0000000..75dffe5
 +    kept
 +}
 diff --git a/src/layout/style_metrics.rs b/src/layout/style_metrics.rs
-index 7b7b147..74e7b8b 100644
+index 7b7b147..2f3534c 100644
 --- a/src/layout/style_metrics.rs
 +++ b/src/layout/style_metrics.rs
-@@ -101,11 +101,14 @@ pub(crate) struct StyleMetrics {
+@@ -56,7 +56,7 @@ use fontique::{Query, QueryFamily};
+ use parley_engine::{FontInstance, FontMetrics, ShapedText};
+ 
+ use crate::resolve::{ResolveContext, ResolvedStyle};
+-use crate::style::Brush;
++use crate::style::{round_to, Brush};
+ use crate::{AlignmentBaseline, BaselineShift, FontContext, FontData, InlineBox, VerticalAlign};
+ 
+ /// Metrics of the span box generated by one style table entry.
+@@ -101,33 +101,45 @@ pub(crate) struct StyleMetrics {
  /// Relies on the style table being ordered parent-first (`style.parent <= index`), which both
  /// style builders guarantee. `shaped_text` is the already shaped text of the layout, whose run
  /// metrics are reused where a style's first available font was also used for shaping.
@@ -1061,11 +1128,15 @@ index 7b7b147..74e7b8b 100644
      fcx: &mut FontContext,
      styles: &[ResolvedStyle<B>],
      shaped_text: &ShapedText,
+-    quantize: bool,
 +    first_fonts: &[Option<FontInstance>],
-     quantize: bool,
++    quantum: f32,
      out: &mut Vec<StyleMetrics>,
  ) {
-@@ -115,11 +118,19 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
++    let quantize = quantum > 0.;
+     out.clear();
+     out.reserve(styles.len());
+ 
      let mut query = fcx.collection.query(&mut fcx.source_cache);
  
      for (index, style) in styles.iter().enumerate() {
@@ -1088,18 +1159,58 @@ index 7b7b147..74e7b8b 100644
              })
              .unwrap_or_else(|| FontMetrics::fallback(style.font_size));
  
-@@ -231,7 +242,10 @@ impl BoxMetrics {
+         let line_height = style
+             .line_height
+-            .resolve(style.font_size, &font_metrics, quantize);
++            .resolve(style.font_size, &font_metrics, quantum);
+ 
+-        let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantize);
++        let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantum);
+         metrics.font_size = style.font_size;
+ 
+         if index == 0 {
+@@ -220,18 +232,23 @@ pub(crate) struct BoxMetrics {
+ impl BoxMetrics {
+     /// The box of `font` expanded to `line_height`.
+     ///
+-    /// The half-leading is distributed as in CSS 2 §10.8.1. With `quantize`, ascent and descent
+-    /// are rounded to whole pixels and the leading above the baseline is floored, mirroring how
+-    /// text runs are placed.
+-    pub(crate) fn from_font(font: &FontMetrics, line_height: f32, quantize: bool) -> Self {
++    /// The half-leading is distributed as in CSS 2 §10.8.1. With a `quantum` (pyro: the layout
++    /// units of a CSS pixel; 0 for none), ascent and descent are rounded to whole CSS pixels
++    /// (Blink's `FontMetrics`) and the leading above the baseline is floored to whole CSS pixels
++    /// (Blink's `FontHeight::AddLeading`), at any device scale.
++    pub(crate) fn from_font(font: &FontMetrics, line_height: f32, quantum: f32) -> Self {
++        let quantize = quantum > 0.;
+         let (ascent, descent) = if quantize {
+-            (font.ascent.round(), font.descent.round())
++            (round_to(font.ascent, quantum), round_to(font.descent, quantum))
+         } else {
+             (font.ascent, font.descent)
          };
          let half_leading = (line_height - (ascent + descent)) / 2.;
          let over = if quantize {
 -            ascent + half_leading.floor()
-+            // In Chromium's layout units (1/64 px), whose division truncates: a line height one
-+            // unit short of the content area leaves no half-leading, not a whole pixel of it.
-+            let leading = ((line_height - (ascent + descent)) * 64.).round();
-+            ascent + ((leading / 2.).trunc() / 64.).floor()
++            // In Chromium's layout units (1/64 CSS px), whose division truncates: a line height
++            // one unit short of the content area leaves no half-leading, not a whole pixel of it.
++            let leading = ((line_height - (ascent + descent)) * 64. / quantum).round();
++            ascent + ((leading / 2.).trunc() / 64.).floor() * quantum
          } else {
              ascent + half_leading
          };
+@@ -248,8 +265,9 @@ impl StyleMetrics {
+     /// The font-derived metrics of a span box: its [`BoxMetrics`] and x-height. The remaining
+     /// fields describe the box's place in the style tree and are filled in by
+     /// [`resolve_style_metrics`].
+-    fn from_font(font: &FontMetrics, line_height: f32, quantize: bool) -> Self {
+-        let box_metrics = BoxMetrics::from_font(font, line_height, quantize);
++    fn from_font(font: &FontMetrics, line_height: f32, quantum: f32) -> Self {
++        let quantize = quantum > 0.;
++        let box_metrics = BoxMetrics::from_font(font, line_height, quantum);
+         // Fonts without an `OS/2.sxHeight` get the same estimate Gecko and Blink use
+         // (`DEFAULT_XHEIGHT_FACTOR`); css-inline-3 §A.2 suggests measuring the `x` glyph or
+         // `0.5em` instead, but this keeps us in line with browsers.
 diff --git a/src/lib.rs b/src/lib.rs
 index e967f50..c985a90 100644
 --- a/src/lib.rs
@@ -1250,3 +1361,46 @@ index 060a32d..d938f1e 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
+diff --git a/src/style/mod.rs b/src/style/mod.rs
+index d9977df..0001e58 100644
+--- a/src/style/mod.rs
++++ b/src/style/mod.rs
+@@ -89,15 +89,20 @@ impl LineHeight {
+ 
+     /// The line height in layout units for text set in a font with `metrics` at `font_size`.
+     ///
+-    /// With `quantize`, the font's ascent, descent and leading are each rounded to whole pixels
+-    /// before being summed for [`MetricsRelative`](Self::MetricsRelative), as browsers do for
+-    /// `line-height: normal`, so that such lines are a whole number of pixels tall.
+-    pub(crate) fn resolve(self, font_size: f32, metrics: &FontMetrics, quantize: bool) -> f32 {
++    /// With a `quantum` (pyro: the layout units of a CSS pixel, the layout's scale; 0 for
++    /// none), the font's ascent, descent and leading are each rounded to whole CSS pixels before
++    /// being summed for [`MetricsRelative`](Self::MetricsRelative), as browsers do for
++    /// `line-height: normal`, so that such lines are a whole number of CSS pixels tall at any
++    /// device scale (Blink's `FontMetrics`).
++    pub(crate) fn resolve(self, font_size: f32, metrics: &FontMetrics, quantum: f32) -> f32 {
+         match self {
+             Self::Absolute(value) => value,
+             Self::FontSizeRelative(value) => value * font_size,
+-            Self::MetricsRelative(value) if quantize => {
+-                (metrics.ascent.round() + metrics.descent.round() + metrics.leading.round()) * value
++            Self::MetricsRelative(value) if quantum > 0. => {
++                (round_to(metrics.ascent, quantum)
++                    + round_to(metrics.descent, quantum)
++                    + round_to(metrics.leading, quantum))
++                    * value
+             }
+             Self::MetricsRelative(value) => {
+                 (metrics.ascent + metrics.descent + metrics.leading) * value
+@@ -106,6 +111,11 @@ impl LineHeight {
+     }
+ }
+ 
++/// pyro: `value` rounded to a whole number of `quantum`s (a CSS pixel in layout units).
++pub(crate) fn round_to(value: f32, quantum: f32) -> f32 {
++    (value / quantum).round() * quantum
++}
++
+ /// Which reference of a span (or [`InlineBox`]) is aligned with the same reference of its
+ /// *parent* span (the enclosing style span, or the root style for top-level content). Mirrors the
+ /// CSS `alignment-baseline` property.

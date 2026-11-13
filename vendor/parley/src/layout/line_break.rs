@@ -464,7 +464,7 @@ impl LineBoxMetrics {
         let shaped_run = &data.shaped_text.runs()[run_idx];
         let Some(run_box) = data.runs[run_idx]
             .run_box
-            .or_else(|| run_box_metrics(&data.styles[style], shaped_run, data.quantize))
+            .or_else(|| run_box_metrics(&data.styles[style], shaped_run, data.quantum()))
         else {
             return;
         };
