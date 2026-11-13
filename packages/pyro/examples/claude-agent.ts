@@ -54,6 +54,8 @@ try {
     tools,
     messages: [{ role: 'user', content: task }],
     max_iterations: 40,
+    // The runner sends each turn on a message thread (beta, not zero-data-retention
+    // eligible); `thread: false` sends the whole conversation every turn instead.
   });
   if (message.stop_reason === 'refusal') {
     console.error(`Declined${message.stop_details?.category ? ` (${message.stop_details.category})` : ''}: ${message.stop_details?.explanation ?? 'no explanation'}`);
