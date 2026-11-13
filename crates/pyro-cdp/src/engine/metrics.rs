@@ -1,8 +1,11 @@
 //! Device metrics over the browser's persistent page viewport. Screen
 //! orientation overrides are stored on the viewport and reported by
-//! `screen.orientation` (as upstream and Chrome). Mobile layout and visual
-//! viewport transforms remain explicit gaps. `Page.getLayoutMetrics` reports
-//! the same viewport, window scroll offset and document scroll size.
+//! `screen.orientation` (as upstream and Chrome). `mobile: true` lays the
+//! main frame out as Chrome's mobile emulation does: in the layout viewport
+//! its `<meta name="viewport">` asks for (980 px without one), shown at a
+//! page scale (`pyro_dom::viewport_meta`). `Page.getLayoutMetrics` reports
+//! the layout viewport (the frame), the visual viewport, the window scroll
+//! offset and the document scroll size.
 use std::collections::BTreeMap;
 
 use pyro_dom::media::{self, ScreenOrientation, Viewport};
@@ -48,11 +51,7 @@ struct Metrics {
     width: u32,
     height: u32,
     device_scale_factor: f64,
-    // Accepted without a separate layout viewport: `width` is the layout width
-    // whatever the page's `<meta name=viewport>` says, as for
-    // `width=device-width, initial-scale=1`.
-    #[serde(rename = "mobile")]
-    _mobile: bool,
+    mobile: bool,
     screen_width: Option<u32>,
     screen_height: Option<u32>,
     screen_orientation: Option<Orientation>,
@@ -118,6 +117,7 @@ impl EngineHost {
             viewport.screen_width = defaults.screen_width;
             viewport.screen_height = defaults.screen_height;
             viewport.orientation = defaults.orientation;
+            viewport.mobile = defaults.mobile;
         } else {
             let p: Metrics = cmd.command.params()?;
             if [Some(p.width), Some(p.height), p.screen_width, p.screen_height]
@@ -138,6 +138,7 @@ impl EngineHost {
                 if p.device_scale_factor == 0.0 { defaults.device_scale_factor } else { p.device_scale_factor };
             viewport.screen_width = p.screen_width;
             viewport.screen_height = p.screen_height;
+            viewport.mobile = p.mobile;
             // CDP and Chrome apply the override independently of the screen
             // dimensions: Playwright sends landscapePrimary/0 for every
             // non-mobile viewport, including portrait ones.
@@ -160,9 +161,12 @@ impl EngineHost {
     }
 
     /// `Page.getLayoutMetrics` for the main frame, in CSS px. There is no
-    /// pinch zoom, so the visual viewport is the layout viewport. Headless
-    /// Chromium reports the same values in the deprecated device-pixel
-    /// fields (checked at device scale factors 1 and 2) and so does this.
+    /// pinch zoom, so the visual viewport is the layout viewport, except
+    /// under mobile emulation: then the layout viewport is the frame
+    /// (`innerWidth`, `innerHeight`) and the visual viewport the device at
+    /// the page scale (Playwright's screenshots read it). Headless Chromium
+    /// reports the same values in the deprecated device-pixel fields
+    /// (checked at device scale factors 1, 2 and 3) and so does this.
     pub(super) fn layout_metrics(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -170,22 +174,29 @@ impl EngineHost {
         cmd.command.params::<P>()?;
         let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let page = self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?;
-        let (width, height) = (page.viewport().width, page.viewport().height);
-        let (scroll_x, scroll_y, content_width, content_height) = match &page.main_frame.page_dom {
+        let (mut width, mut height) = (page.viewport().width, page.viewport().height);
+        let (scroll_x, scroll_y, content_width, content_height, mobile) = match &page.main_frame.page_dom {
             Some(bindings) => {
                 let dom = bindings.dom.borrow();
                 let layout = bindings.layout();
                 let (w, h) = layout.document_scroll_size(&dom);
-                (layout.scroll_x(), layout.scroll_y(), w, h)
+                (width, height) = layout.window_size();
+                (layout.scroll_x(), layout.scroll_y(), w, h, layout.mobile_metrics())
             }
-            None => (0, 0, width as f64, height as f64),
+            None => (0, 0, width as f64, height as f64, None),
         };
         let layout_viewport =
             json!({"pageX": scroll_x, "pageY": scroll_y, "clientWidth": width, "clientHeight": height});
-        let visual_viewport = json!({
-            "offsetX": 0, "offsetY": 0, "pageX": scroll_x, "pageY": scroll_y,
-            "clientWidth": width, "clientHeight": height, "scale": 1, "zoom": 1,
-        });
+        let visual_viewport = match mobile {
+            Some(m) => json!({
+                "offsetX": 0, "offsetY": 0, "pageX": scroll_x, "pageY": scroll_y,
+                "clientWidth": m.visual.0, "clientHeight": m.visual.1, "scale": m.scale, "zoom": 1,
+            }),
+            None => json!({
+                "offsetX": 0, "offsetY": 0, "pageX": scroll_x, "pageY": scroll_y,
+                "clientWidth": width, "clientHeight": height, "scale": 1, "zoom": 1,
+            }),
+        };
         let content_size = json!({"x": 0, "y": 0, "width": content_width, "height": content_height});
         Ok(Some(json!({
             "layoutViewport": layout_viewport,

@@ -6856,6 +6856,61 @@ mod screenshot {
         assert_eq!(pixel(&again, 25, 25), [255, 0, 0, 255]);
     }
 
+    /// `mobile: true`, as Playwright sends it for `devices['iPhone 13']`: a
+    /// page without `<meta name="viewport">` lays out 980 px wide, zoomed out
+    /// to the device's width. Expected: Chrome 147 (Playwright 1.59.1's
+    /// Chromium) on the same page.
+    #[test]
+    fn mobile_metrics_layout_metrics_and_screenshots_follow_the_meta_viewport() {
+        let mut h = Harness::new();
+        let iphone = json!({"width":390,"height":664,"deviceScaleFactor":3,"mobile":true,"screenWidth":390,"screenHeight":844,"screenOrientation":{"angle":0,"type":"portraitPrimary"}});
+        assert_eq!(h.page("Emulation.setDeviceMetricsOverride", iphone.clone())["result"], json!({}));
+        load_html(
+            &mut h,
+            "<!doctype html><body style=margin:0><div style='height:200px;background:linear-gradient(90deg,red,blue)'></div><div style='width:50%;height:300px;background:lime'></div>",
+        );
+        let probe = "[innerWidth, innerHeight, document.documentElement.clientWidth, document.documentElement.clientHeight, visualViewport.scale, outerWidth, screen.height]";
+        assert_eq!(eval_value(&mut h, probe), json!([980, 1669, 980, 1668, 0.3979591727256775, 390, 844]));
+        let m = h.page("Page.getLayoutMetrics", json!({}))["result"].clone();
+        let layout = json!({"pageX":0,"pageY":0,"clientWidth":980,"clientHeight":1669});
+        let visual = json!({"offsetX":0,"offsetY":0,"pageX":0,"pageY":0,"clientWidth":980.0,"clientHeight":1668.5128173828125,"scale":0.3979591727256775,"zoom":1});
+        let content = json!({"x":0,"y":0,"width":980.0,"height":1669.0});
+        assert_eq!(
+            m,
+            json!({"layoutViewport":layout,"visualViewport":visual,"contentSize":content,
+                   "cssLayoutViewport":layout,"cssVisualViewport":visual,"cssContentSize":content})
+        );
+        // Without a clip: the visual viewport in device pixels (Chrome: 1170 x 1992), the
+        // band's red start and blue end in view, the lime block over the left half.
+        let shows_the_layout = |img: &pyro_render::RgbaImage| {
+            let [r, _, b, _] = pixel(img, 10, 100);
+            assert!(r > 200 && b < 60, "red start: {:?}", pixel(img, 10, 100));
+            let [r, _, b, _] = pixel(img, 1160, 100);
+            assert!(b > 200 && r < 60, "blue end: {:?}", pixel(img, 1160, 100));
+            assert_eq!(pixel(img, 290, 400), [0, 255, 0, 255]);
+            assert_eq!(pixel(img, 570, 400), [0, 255, 0, 255]);
+            assert_eq!(pixel(img, 600, 400), [255, 255, 255, 255]);
+        };
+        let img = png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!((img.width, img.height), (1170, 1992));
+        shows_the_layout(&img);
+        // Playwright's clip, the visual viewport in whole CSS px at its scale (Chrome: 1170 x 1991).
+        let clip = json!({"clip": {"x":0,"y":0,"width":980,"height":1668,"scale":0.3979591727256775}});
+        let img = png_of(&h.page("Page.captureScreenshot", clip)["result"]["data"]);
+        assert_eq!((img.width, img.height), (1170, 1991));
+        shows_the_layout(&img);
+        // `mobile: false` lays the page out at the device's width again.
+        let mut desktop = iphone;
+        desktop["mobile"] = json!(false);
+        assert_eq!(h.page("Emulation.setDeviceMetricsOverride", desktop)["result"], json!({}));
+        assert_eq!(eval_value(&mut h, probe), json!([390, 664, 390, 664, 1, 390, 844]));
+        let img = png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!((img.width, img.height), (1170, 1992));
+        // At scale 1 the band is 600 device px tall and the lime block half of 390 px.
+        assert_eq!(pixel(&img, 290, 1000), [0, 255, 0, 255]);
+        assert_eq!(pixel(&img, 600, 1000), [255, 255, 255, 255]);
+    }
+
     #[test]
     fn capture_screenshot_renders_the_viewport_clip_and_full_page() {
         let mut h = Harness::new();
