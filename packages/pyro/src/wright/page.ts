@@ -2107,11 +2107,11 @@ export class Page extends Scope {
     // `inFrame`: the locator is an <iframe> and `fn` returns a value of its document.
     const realmFrame = o.inFrame ? o.locator : o.locator?.frame;
     const stash = o.inFrame
-      ? `async (x, arg) => { const v = await (${fn}\n)(x, arg); (x.contentWindow[Symbol.for('lp.handoff')] ??= []).push(v); return null; }`
-      : `async (x, arg) => { const v = await (${fn}\n)(x, arg); (globalThis[Symbol.for('lp.handoff')] ??= []).push(v); return null; }`;
+      ? `async (x, arg) => { const v = await (${fn}\n)(x, arg); (x.contentWindow[Symbol.for('pyro.handoff')] ??= []).push(v); return null; }`
+      : `async (x, arg) => { const v = await (${fn}\n)(x, arg); (globalThis[Symbol.for('pyro.handoff')] ??= []).push(v); return null; }`;
     await this._call(api, stash, o, describe);
     if (!realmFrame) {
-      const r = await this._send('Runtime.evaluate', { expression: `globalThis[Symbol.for('lp.handoff')].shift()`, returnByValue: false });
+      const r = await this._send('Runtime.evaluate', { expression: `globalThis[Symbol.for('pyro.handoff')].shift()`, returnByValue: false });
       return this._handle(r.result);
     }
     // The value waits in the frame's window: taken through its <iframe> element.
@@ -2119,7 +2119,7 @@ export class Page extends Scope {
     try {
       const r = await this._send('Runtime.callFunctionOn', {
         objectId: iframe._objectId,
-        functionDeclaration: `function () { return this.contentWindow[Symbol.for('lp.handoff')].shift(); }`,
+        functionDeclaration: `function () { return this.contentWindow[Symbol.for('pyro.handoff')].shift(); }`,
         returnByValue: false,
       });
       if (r.exceptionDetails) throw new Error(`${api}: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);

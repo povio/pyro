@@ -289,7 +289,7 @@ function controller() {
     } catch {}
   }
   if (g.Event) {
-    const stamp = Symbol('lp.clock.timeStamp');
+    const stamp = Symbol('pyro.clock.timeStamp');
     try {
       Object.defineProperty(g.Event.prototype, 'timeStamp', {
         configurable: true,
