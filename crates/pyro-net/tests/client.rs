@@ -856,16 +856,24 @@ fn requests_in_flight_are_told_apart_by_when_they_started() {
 /// HTTPS server with a self-signed certificate for `127.0.0.1` (checked in
 /// under tests/data, valid until 2126), answering every request with "secure".
 pub(crate) fn start_tls_server() -> u16 {
+    start_tls_server_with(include_bytes!("data/self-signed.der"), include_bytes!("data/self-signed.key.der"))
+}
+
+/// [`start_tls_server`] with the certificate and the PKCS#8 key given, both DER.
+fn start_tls_server_with(cert: &[u8], key: &[u8]) -> u16 {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-    let cert = CertificateDer::from(include_bytes!("data/self-signed.der").to_vec());
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(include_bytes!("data/self-signed.key.der").to_vec()));
+    let cert = CertificateDer::from(cert.to_vec());
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec()));
     let provider = Arc::new(rustls::crypto::ring::default_provider());
+    // Through a resolver: `with_single_cert` reads the certificate to compare it with the key, and so refuses
+    // one webpki cannot parse (X.509 version 1).
+    let key = provider.key_provider.load_private_key(key).unwrap();
+    let certified = rustls::sign::CertifiedKey::new(vec![cert], key);
     let config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_no_client_auth()
-        .with_single_cert(vec![cert], key)
-        .unwrap();
+        .with_cert_resolver(Arc::new(rustls::sign::SingleCertAndKey::from(certified)));
     let config = Arc::new(config);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -909,6 +917,22 @@ fn self_signed_certificate_fails_unless_errors_are_ignored() {
     c.set_ignore_certificate_errors(false);
     let (_, _, _, e) = collect(&c, Request::get(url, Destination::Fetch));
     assert_eq!(e.map(|e| e.error_text().to_owned()).as_deref(), Some("net::ERR_CERT_AUTHORITY_INVALID"));
+}
+
+/// `openssl req -x509` of LibreSSL (macOS's /usr/bin/openssl) writes an X.509 version 1 certificate, which webpki
+/// does not parse. With certificate errors ignored it loads all the same, as in Chromium.
+#[test]
+fn a_version_1_certificate_loads_when_errors_are_ignored() {
+    let port =
+        start_tls_server_with(include_bytes!("data/self-signed-v1.der"), include_bytes!("data/self-signed-v1.key.der"));
+    let url = Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let (_, _, _, e) = collect(&c, Request::get(url.clone(), Destination::Fetch));
+    assert!(e.is_some(), "a certificate no one vouches for fails");
+
+    c.set_ignore_certificate_errors(true);
+    let (k, _, b, e) = collect(&c, Request::get(url, Destination::Fetch));
+    assert_eq!((k, b, e), (vec!["response 200".to_owned(), "finished".to_owned()], b"secure".to_vec(), None));
 }
 
 fn header_lines(c: &NetClient, req: Request) -> Vec<String> {

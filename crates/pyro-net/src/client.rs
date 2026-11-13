@@ -1178,8 +1178,11 @@ fn tls_config_insecure() -> Arc<rustls::ClientConfig> {
         .clone()
 }
 
-/// Accepts every server certificate; handshake signatures are still verified
-/// with the provider's algorithms.
+/// Accepts every server certificate, and the handshake signature made with it.
+///
+/// The signature is not checked either: rustls checks it through webpki, which refuses a certificate it cannot
+/// parse (X.509 version 1, as LibreSSL's `openssl req -x509` writes), and with any certificate accepted a
+/// valid signature says nothing about who the server is.
 #[derive(Debug)]
 struct AnyCertificate(Arc<rustls::crypto::CryptoProvider>);
 
@@ -1196,19 +1199,19 @@ impl rustls::client::danger::ServerCertVerifier for AnyCertificate {
     }
     fn verify_tls12_signature(
         &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
     }
     fn verify_tls13_signature(
         &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
     }
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
         self.0.signature_verification_algorithms.supported_schemes()
