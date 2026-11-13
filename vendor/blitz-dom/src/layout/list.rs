@@ -99,7 +99,11 @@ fn node_list_item_child(
         ListStylePosition::Outside => {
             let mut parley_style = stylo_to_parley::style(child_id, &styles);
 
-            if let Some(font_family) = font_for_bullet_style(list_style_type) {
+            // pyro: blitz-paint paints a disc, circle or square as a shape sized from the item's
+            // font (Blink's `ListMarker::RelativeSymbolMarkerRect`), so their layout is a line of
+            // that font.
+            let symbol = matches!(marker, Marker::Char('•' | '◦' | '▪'));
+            if let Some(font_family) = font_for_bullet_style(list_style_type).filter(|_| !symbol) {
                 parley_style.font_family = font_family;
             }
 
@@ -113,6 +117,7 @@ fn node_list_item_child(
             );
 
             match &marker {
+                Marker::Char(_) if symbol => builder.push_text("x"),
                 Marker::Char(char) => {
                     let mut buf = [0u8; 4];
                     builder.push_text(char.encode_utf8(&mut buf));

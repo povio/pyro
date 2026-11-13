@@ -951,8 +951,15 @@ impl Layout {
         if !(if axis == Axis::Width { clips.x } else { clips.y }) && !text_control {
             return Some(0.0);
         }
-        let client = self.client_axis(dom, el, axis);
-        Some((self.scroll_axis_size(dom, el, axis) - client).max(0.0))
+        // Chromium's maximum offset is its pixel-snapped scroll size less its
+        // pixel-snapped client size (`PaintLayerScrollableArea::MaximumScrollOffset`),
+        // the sizes script reads: content ending a layout unit short of a
+        // pixel still scrolls to that pixel.
+        let (scroll, client) = match axis {
+            Axis::Width => (Metric::ScrollWidth, Metric::ClientWidth),
+            Axis::Height => (Metric::ScrollHeight, Metric::ClientHeight),
+        };
+        Some((self.metric(dom, el, scroll) - self.metric(dom, el, client)).max(0.0))
     }
 
     /// `offsetWidth` / `offsetHeight` (Element.zig:1915-1927).
@@ -2770,7 +2777,9 @@ impl Layout {
                 let left = (axes.x || explicit)
                     .then(|| {
                         offset_x(
-                            target.left() - container.left() - if script { self.client_left(dom, node) } else { 0.0 },
+                            // From the scrollport (the padding box), as Blink's scroll into view
+                            // measures for script and for an action's reveal alike.
+                            target.left() - container.left() - self.client_left(dom, node),
                             target.width,
                             self.client_width(dom, node),
                             self.scroll_left(node),
@@ -2780,7 +2789,7 @@ impl Layout {
                 let top = (axes.y || explicit)
                     .then(|| {
                         offset_y(
-                            target.top() - container.top() - if script { self.client_top(dom, node) } else { 0.0 },
+                            target.top() - container.top() - self.client_top(dom, node),
                             target.height,
                             self.client_height(dom, node),
                             self.scroll_top(node),
@@ -3157,9 +3166,11 @@ fn focus_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Op
     Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(0.0, i32::MAX as f64) as i32)
 }
 
-/// Window.zig:848-851.
+/// Window.zig:848-851. The document's pixel-snapped size (what `scrollHeight`
+/// reads) less the viewport, as Chromium clamps: a document whose overflow
+/// ends a layout unit short of a pixel still scrolls to that pixel.
 fn scroll_limit(size: f64, visible: u32) -> u32 {
-    (size - visible as f64).clamp(0.0, u32::MAX as f64) as u32
+    (round_layout_unit(size) - visible as f64).clamp(0.0, u32::MAX as f64) as u32
 }
 
 /// frame/user_input.zig:612-615.

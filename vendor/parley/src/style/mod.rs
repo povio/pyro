@@ -94,8 +94,20 @@ impl LineHeight {
     /// being summed for [`MetricsRelative`](Self::MetricsRelative), as browsers do for
     /// `line-height: normal`, so that such lines are a whole number of CSS pixels tall at any
     /// device scale (Blink's `FontMetrics`).
+    ///
+    /// pyro: with a `quantum` the other two are in Blink's layout units (1/64 of a CSS pixel), as
+    /// `ComputedStyle::ComputedLineHeightAsFixed` has them: a length rounded, a number times the
+    /// font size (rounded to units) cut to units, in Blink's single-precision arithmetic. Lines of
+    /// `19px/1.43` text are 27.15625px apart there, not 27.17px, which over three lines is another
+    /// whole pixel for the text to be painted at.
     pub(crate) fn resolve(self, font_size: f32, metrics: &FontMetrics, quantum: f32) -> f32 {
         match self {
+            Self::Absolute(value) if quantum > 0. => (value / quantum * 64.).round() / 64. * quantum,
+            Self::FontSizeRelative(value) if quantum > 0. => {
+                let font_size = (font_size / quantum * 64.).round() / 64.;
+                // The number is a percentage in Blink.
+                (font_size * (value * 100.) / 100. * 64.).trunc() / 64. * quantum
+            }
             Self::Absolute(value) => value,
             Self::FontSizeRelative(value) => value * font_size,
             Self::MetricsRelative(value) if quantum > 0. => {

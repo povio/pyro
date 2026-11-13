@@ -29,5 +29,6 @@ mod table_cell_height;
 mod table_cell_width;
 mod table_collapsed_borders;
 mod table_flex_intrinsic_height;
+mod text_line_tops;
 mod text_overflow_ellipsis;
 mod vertical_writing_mode;

@@ -1036,7 +1036,9 @@ impl Node {
             .and_then(|el| el.text_input_data())
         {
             if !input_data.is_multiline {
-                let content_box_height = self.final_layout().content_box_height();
+                // pyro: in the unrounded box, as Chromium centres in layout units: a 33.5px
+                // input's line is 8.25px down (painted from 8px), not 8.5px (9px).
+                let content_box_height = self.unrounded_layout().content_box_height();
                 let input_height = input_data.editor.try_layout().unwrap().height() / scale as f32;
                 let y_offset = ((content_box_height - input_height) / 2.0).max(0.0);
 

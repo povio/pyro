@@ -58,6 +58,16 @@ pub fn paint_scene(
     paint_scene_with(scene, doc, scale, width, height, x_offset, y_offset, true)
 }
 
+/// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded
+/// top (`origin`, the unrounded top of its layout in the document in CSS px, plus the line's
+/// `unquantized_top` in layout units, `scale` to a CSS px) in Blink's layout units of 1/64 px,
+/// rounded half up to a whole pixel.
+pub fn snapped_line_top(origin: f64, unquantized_top: f32, scale: f64) -> f64 {
+    // The small term keeps a sum of floats that is a 64th short of one by noise on it.
+    let top = ((origin + unquantized_top as f64 / scale) * 64.0 + 1e-3).floor() / 64.0;
+    (top + 0.5).floor()
+}
+
 /// [`paint_scene`], with background colors and images left out when
 /// `backgrounds` is false (printing without `printBackground`).
 ///
