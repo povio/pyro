@@ -16,6 +16,7 @@ mod inline_svg_viewport;
 mod input_percentage_min_content;
 mod input_placeholder;
 mod line_break_resume;
+mod line_height_normal;
 mod mirror;
 mod out_of_flow_boundary;
 mod pdf_fidelity;

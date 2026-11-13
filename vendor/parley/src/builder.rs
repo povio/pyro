@@ -470,7 +470,7 @@ fn build_into_layout<B: Brush>(
         &lcx.style_table,
         &layout.data.shaped_text,
         &lcx.style_first_fonts,
-        options.quantize,
+        if options.quantize { options.scale } else { 0. },
         &mut layout.data.style_metrics,
     );
 

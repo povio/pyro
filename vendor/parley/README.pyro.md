@@ -36,6 +36,16 @@ truncating division, as in Chromium. A line height one unit short of the content
 Inter, 16 px of ascent and descent) lost a whole pixel above the baseline, in any writing mode. Covered by
 `a_line_a_layout_unit_short_keeps_its_baseline` in `crates/pyro-render/tests/vertical_writing_mode.rs`.
 
+`style/mod.rs` (`LineHeight::resolve`, `round_to`), `layout/style_metrics.rs` (`BoxMetrics::from_font`,
+`resolve_style_metrics`), `layout/data.rs` (`LayoutData::quantum`), `builder.rs`, `layout/line_break.rs`: a quantized
+layout rounds the font's ascent, descent and line gap to whole CSS pixels (the layout's scale in layout units), not to
+whole layout units, and floors the half-leading to whole CSS pixels, as Blink does at any device scale (`FontMetrics`
+rounds them, `FontHeight::AddLeading` floors the leading). At deviceScaleFactor 3 a `line-height: normal` line of
+14px system-ui was 16.33px tall (49 device px) where Chromium's is 17px, and a 13px Arial one 14.67px for 15px; text
+under an explicit `line-height` sat up to a CSS pixel off Chromium's baseline. At scale 1 nothing changes. Covered by
+`a_normal_line_is_whole_css_pixels_at_every_scale` in `crates/pyro-render/tests/line_height_normal.rs`; repro
+`bench/fidelity/repros/system-ui-line-height.html`.
+
 Pagination scripts clone rows and paragraphs into pages, so the same text is built again and again
 under new elements. On the `cmr-overflow` PDF case Blitz's inline construction went from 222 to 107
 ms and pagination from about 597 to 485 ms per run; the PDF is byte-identical. pyro-render's
