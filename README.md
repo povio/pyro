@@ -131,9 +131,12 @@ or the connection has no open page.
 A test takes it with the browser-level CDP command
 `Pyro.acquirePreparedPage {url}`: the page is announced like a new
 target, so Playwright sees it as a page of its default context, already loaded.
-`Pyro.registerPreparedPage {url, initScripts, viewport, pool}` declares
-a profile at run time, including the scripts a test would otherwise install
-with `addInitScript`; `Pyro.preparedPages` lists what is waiting.
+`Pyro.registerPreparedPage {url, initScripts, viewport, pool, userAgent,
+proxyServer, proxyBypassList}` declares a profile at run time, including the
+scripts a test would otherwise install with `addInitScript`; its pages send
+`userAgent` on every request (and report it as `navigator.userAgent`) and go
+through their own proxy, which suits one profile per signed-in identity.
+`Pyro.preparedPages` lists what is waiting.
 
 Memory: every booted page is a full copy of the app, so a pool of N holds N
 of them plus one in use. `--prepare-refill after-close` (or `refillAfterClose`
@@ -150,6 +153,9 @@ with those pages booted and sharing their memory copy-on-write. Open one
 connection per test; it costs about 20 ms however long the app takes to boot,
 and its process exits when the connection closes. `@povio/pyro` does
 this by itself when the server reports `Pyro.capabilities {fork: true}`.
+A profile's `setup` steps (a sign-in, say) run once in that process; when
+one fails, `Pyro.preparedProfileStatus` reports the step and why, and no page
+of the profile is handed out (`pyro.profile()` rejects with that error).
 
 ### Fast E2E tests: `Pyro.run` and `@povio/pyro`
 

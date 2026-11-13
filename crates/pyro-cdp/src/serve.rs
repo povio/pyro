@@ -129,8 +129,12 @@ command Pyro.acquirePreparedPage {url?, profileId?, attach?} -> {targetId,
 browserContextId, sessionId?, ready}; the page is announced like a new target
 (Target.targetCreated / attachedToTarget), so Playwright sees it as a page of
 its default context. Pyro.registerPreparedPage {url, initScripts?,
-viewport?, pool?} declares a profile at run time, with the init scripts a
-test would otherwise install after the page exists. Pyro.preparedPages
+viewport?, pool?, userAgent?, proxyServer?, proxyBypassList?} declares a
+profile at run time, with the init scripts a test would otherwise install
+after the page exists. Its pages' browser context sends userAgent as the
+User-Agent of every request (navigator.userAgent reports it) and goes
+through proxyServer (proxyBypassList) instead of --proxy, in the syntax of
+Target.createBrowserContext, which takes userAgent too. Pyro.preparedPages
 lists what is waiting.
 
 --fork: one template process boots one page per prepared profile (--prepare,
@@ -142,6 +146,15 @@ test (Pyro.capabilities reports {fork: true}); registering a profile
 boots it in the template for the connections that follow. A profile's setup
 (Pyro.run steps, registerPreparedPage {setup}) runs once in the template after
 the page loads, so every connection starts from the state the steps left.
+registerPreparedPage replies {profileId, state}, and Pyro.preparedProfileStatus
+{profileId} -> {state, error?} says how far a profile is: booting until its
+page has loaded and its setup ran, then ready, or failed with why: the step
+that failed (\"setup step 2 (Click ...): timed out after 5000 ms: ...\"), a
+page that did not load within 30 s, or a base profile that failed. No page of
+a failed profile is handed out (Pyro.acquirePreparedPage fails with its
+error), profiles derived from it fail with it, and registering the same
+definition again tries again. A profile with a base has its base's userAgent
+and proxy.
 Each template keeps PYRO_FORK_SPARES (default 2) forks waiting, so a
 connection does not wait for its fork. Forks run without JavaScriptCore's
 DFG/FTL tiers (connections are too short for them to pay off) unless
@@ -150,13 +163,16 @@ JSC_useDFGJIT is set.
 Shared profiles (--fork): several clients (test workers in other processes)
 can use one server. registerPreparedPage {name, ...} registers a profile
 under a name every client of the server shares: the same definition under
-the same name finds the profile already booted, a different one is refused
-while another client holds it. Pyro.adoptPreparedPage {name} ->
-{profileId, url, initScripts, viewport, setup, base} holds a profile another
-client registered, unregisterPreparedPage {name} releases this connection's
-hold, and Pyro.preparedProfiles lists the names with their holders.
+the same name finds the profile already booted, a different one (another
+userAgent or proxy included) is refused while another client holds it.
+Pyro.adoptPreparedPage {name} -> {profileId, url, initScripts, viewport,
+setup, base, userAgent, proxyServer, proxyBypassList, state} holds a profile
+another client registered (one whose setup failed is refused with its error,
+and not held), unregisterPreparedPage {name} releases this connection's
+hold, and Pyro.preparedProfiles lists the names with their holders and state.
 A connection's holds end when it closes; a profile is retired once no
-connection holds it and no other profile is derived from it.
+connection holds it and no other profile is derived from it. A failed
+profile stays registered until then, so that its adopters learn why.
 ";
 
 /// How long a spare thread keeps booting prepared pages before it just waits.
@@ -549,6 +565,9 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
             refill_after_close: options.prepare_refill_after_close,
             setup: Vec::new(),
             base: None,
+            user_agent: None,
+            proxy_server: None,
+            proxy_bypass_list: None,
         });
     }
     Ok(profile)

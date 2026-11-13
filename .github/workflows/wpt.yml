@@ -11,6 +11,7 @@ name: WPT
 # The browser is the fork build (patched JavaScriptCore, as the npm package ships for arm64): with the system
 # framework, window named properties and import maps are missing and ~3,200 subtests on ~150 pages fail for that
 # reason alone. It is cached by its inputs, so a pull request that changes none of them skips both macOS builds.
+# The `client` job also tests the npm package's client (packages/pyro) against that browser.
 
 on:
   pull_request:
@@ -220,6 +221,47 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           overwrite: true
+
+  # The client against this run's browser: its type check, its own tests and the Playwright-compatible suite
+  # (`pyro run`), which no other pull request job runs. ffmpeg (Playwright's build) lets the video tests run.
+  client:
+    needs: [prepare, build]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: packages/pyro
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - uses: actions/download-artifact@v4
+        if: needs.build.result == 'success'
+        with:
+          name: wpt-browser
+          path: ${{ github.workspace }}
+      - uses: actions/cache/restore@v4
+        if: needs.build.result != 'success'
+        with:
+          path: browser.tgz
+          key: ${{ needs.prepare.outputs.browser-key }}
+          fail-on-cache-miss: true
+      - name: Unpack the browser
+        working-directory: ${{ github.workspace }}
+        run: tar -xzf browser.tgz && browser/pyro version
+      - name: Install and build the client
+        run: bun install --frozen-lockfile && bun run build
+      - name: ffmpeg for the video tests
+        continue-on-error: true
+        run: bun x playwright install ffmpeg
+      - name: Type check
+        run: bun run test:types
+      - name: Client tests
+        run: PYRO_BIN="$GITHUB_WORKSPACE/browser/pyro" bun test ./test
+      - name: Playwright-compatible suite (pyro run)
+        run: PYRO_BIN="$GITHUB_WORKSPACE/browser/pyro" bun run test:playwright
 
   gate:
     needs: [prepare, jsc, build, wpt]
