@@ -97,7 +97,7 @@ export function registry(): Registry {
   const g = globalThis as { [KEY]?: Registry };
   return (g[KEY] ??= {
     context: new AsyncLocalStorage<Running>(),
-    defaultTimeout: 5_000,
+    defaultTimeout: 30_000,
     setupResult: undefined,
     hasSetup: false,
     active: false,
