@@ -98,10 +98,13 @@ jobs:
   build:
     needs: [prepare, jsc]
     if: ${{ !cancelled() && !failure() && needs.prepare.outputs.browser-cached != 'true' }}
-    runs-on: macos-15
+    # The self-hosted Apple Silicon runner (label lp-m1), as the jsc job.
+    runs-on: lp-m1
     timeout-minutes: 45
     env:
       JSC_DIR: ${{ needs.prepare.outputs.jsc-dir }}
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     steps:
       - uses: actions/checkout@v6
       # The patched JavaScriptCore: the jsc job's artifact when it ran, otherwise the Actions cache.
