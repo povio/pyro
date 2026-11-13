@@ -155,6 +155,30 @@ fn local_storage_seed_applies_to_existing_and_new_contexts() {
     assert_eq!(other.get("http://app.test:3000", "x"), None);
 }
 
+/// What layouts load is kept per network identity: the contexts that go out
+/// as the browser does share it with the default context; one with a proxy or
+/// user agent of its own has its own (also apart from another alike), and no
+/// cross-context asset cache answers its requests.
+#[test]
+fn layout_bodies_and_shared_assets_follow_the_network_identity() {
+    let (mut t, _rec, _page) = setup();
+    let shared_assets = pyro_net::SharedAssetCache::new(1 << 20, 1 << 20);
+    t.enable_network(pyro_net::NetConfig { shared_asset_cache: Some(shared_assets), ..Default::default() }).unwrap();
+    let plain = t.browser.create_context().unwrap();
+    let agent = || ContextNet { proxy: None, user_agent: Some("Identity/1.0".into()) };
+    let (one, two) = (t.browser.create_context_with(agent()).unwrap(), t.browser.create_context_with(agent()).unwrap());
+    let proxy = pyro_net::ProxyConfig::parse("http://127.0.0.1:9", None).unwrap();
+    let proxied = t.browser.create_context_with(ContextNet { proxy: Some(proxy), user_agent: None }).unwrap();
+    let bodies = |id: ContextId| t.browser.contexts.iter().find(|c| c.id == id).unwrap().layout_bodies.clone();
+    assert!(std::sync::Arc::ptr_eq(&bodies(DEFAULT_CONTEXT), &bodies(plain)));
+    for own in [one, two, proxied] {
+        assert!(!std::sync::Arc::ptr_eq(&bodies(DEFAULT_CONTEXT), &bodies(own)), "{own:?}");
+        assert!(t.browser.context_net(own).unwrap().config().shared_asset_cache.is_none(), "{own:?}");
+    }
+    assert!(!std::sync::Arc::ptr_eq(&bodies(one), &bodies(two)), "two identities share nothing, even alike");
+    assert!(t.browser.context_net(plain).unwrap().config().shared_asset_cache.is_some());
+}
+
 #[test]
 fn static_files_load_on_the_browser_thread_with_network_events() {
     let dir = std::env::temp_dir().join(format!("pyro-browser-static-{}", std::process::id()));

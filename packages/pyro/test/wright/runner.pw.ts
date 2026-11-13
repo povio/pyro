@@ -90,6 +90,27 @@ test.describe('hooks', () => {
   });
 });
 
+test.describe('beforeAll with test fixtures', () => {
+  let counted: number | undefined;
+  let title: string | undefined;
+  // A test fixture in beforeAll is the hook's own instance (only `page` and `context` are refused).
+  test.beforeAll(async ({ counter, browser }) => {
+    counted = counter.n;
+    counter.n = 99;
+    // browser.newContext() starts from the `use` options in a beforeAll too.
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto('/simple');
+    title = await page.title();
+    await context.close();
+  });
+  test('the hook got its own instances and the use options', async ({ counter }) => {
+    expect(counted).toBe(0);
+    expect(counter.n).toBe(0);
+    expect(title).toBe('simple');
+  });
+});
+
 test.describe('annotations', () => {
   test('test.skip() inside a test stops it', async () => {
     test.skip(true, 'not here');
@@ -117,12 +138,87 @@ test.describe('annotations', () => {
     const v = await test.step('compute', async () => 42);
     expect(v).toBe(42);
   });
+  test("a step's skip() and test.step.skip skip that step only", async () => {
+    const log: string[] = [];
+    const skipped = await test.step('skipped inside', async (step) => {
+      step.skip();
+      log.push('after skip()');
+      return 1;
+    });
+    const notRun = await test.step.skip('skipped', async () => {
+      log.push('skipped body');
+      return 2;
+    });
+    const kept = await test.step('not skipped', async (step) => {
+      step.skip(false);
+      return 3;
+    });
+    log.push('the test goes on');
+    expect([skipped, notRun, kept, log]).toEqual([undefined, undefined, 3, ['the test goes on']]);
+  });
 });
 
 test.describe('retries', () => {
   test.describe.configure({ retries: 2 });
   test('a failing attempt is retried', async ({}, info) => {
     if (info.retry < 1) throw new Error('flaky');
+  });
+});
+
+test.describe('testInfo in afterEach', () => {
+  test.describe.configure({ mode: 'serial' });
+  const seen: string[] = [];
+  test.afterEach(async ({}, info) => {
+    seen.push(`${info.title}: ${info.status}/${info.expectedStatus}, ${info.errors.length} error(s), ${info.error === info.errors[0]}, ${info.duration >= 0}`);
+  });
+  test('fails, as expected', async () => {
+    test.fail();
+    expect(1).toBe(2);
+  });
+  test('skips in its body', async () => {
+    test.skip(true, 'not now');
+  });
+  test('soft errors fail the test at once', async ({}, info) => {
+    test.fail();
+    expect.soft(1).toBe(2);
+    expect([info.status, info.errors.length]).toEqual(['failed', 1]);
+  });
+  test('the hooks saw each status', async () => {
+    expect(seen).toEqual([
+      'fails, as expected: failed/failed, 1 error(s), true, true',
+      'skips in its body: skipped/skipped, 0 error(s), true, true',
+      'soft errors fail the test at once: failed/failed, 1 error(s), true, true',
+    ]);
+  });
+});
+
+test.describe('option defaults', () => {
+  test("boolean and other context options have Playwright's defaults", async ({ isMobile, hasTouch, javaScriptEnabled, offline, acceptDownloads, ignoreHTTPSErrors, bypassCSP, colorScheme, locale, serviceWorkers, viewport }) => {
+    expect({ isMobile, hasTouch, javaScriptEnabled, offline, acceptDownloads, ignoreHTTPSErrors, bypassCSP, colorScheme, locale, serviceWorkers, viewport }).toEqual({
+      isMobile: false,
+      hasTouch: false,
+      javaScriptEnabled: true,
+      offline: false,
+      acceptDownloads: true,
+      ignoreHTTPSErrors: false,
+      bypassCSP: false,
+      colorScheme: 'light',
+      locale: 'en-US',
+      serviceWorkers: 'allow',
+      viewport: { width: 1280, height: 720 },
+    });
+  });
+  test.describe('a describe skipped on mobile', () => {
+    test.skip(({ isMobile }) => isMobile, 'desktop only');
+    test('runs on desktop', async ({ isMobile }) => {
+      expect(isMobile).toBe(false);
+    });
+  });
+  test.describe('with contextOptions', () => {
+    test.use({ contextOptions: { isMobile: true, locale: 'de-DE' } });
+    test('the defaults come from contextOptions first', async ({ isMobile, locale, hasTouch }) => {
+      expect([isMobile, locale, hasTouch]).toEqual([true, 'de-DE', false]);
+    });
   });
 });
 

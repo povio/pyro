@@ -32,6 +32,7 @@ use crate::dom::Dom;
 use crate::geometry::{node_of, LayoutBox, LayoutResult, PaintChain, PaintEntry, TextResult, BOTTOM, LEFT, RIGHT, TOP};
 pub use crate::geometry::{
     ExternalBox, ExternalGeometry, ExternalQuads, ExternalSticky, ExternalWord, GeometrySource, HitProbe, HitVisit,
+    SubresourceBodies, SubresourceKind, SubresourceLoader,
 };
 /// Overflow clips an out-of-flow box escapes while walking up to its
 /// containing block (`Layout::clip_escape`).
@@ -517,6 +518,14 @@ impl Layout {
     pub fn set_base_url(&self, url: &str) {
         if let Some(source) = &self.external {
             source.set_base_url(url);
+        }
+    }
+
+    /// The document's network, for the geometry source's sub-resources
+    /// (see [`SubresourceLoader`]).
+    pub fn set_subresource_loader(&self, loader: std::sync::Arc<dyn SubresourceLoader>) {
+        if let Some(source) = &self.external {
+            source.set_subresource_loader(loader);
         }
     }
 

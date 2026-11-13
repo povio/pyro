@@ -110,6 +110,7 @@ use crate::target::{ContextKey, Host, PageCommand, PageKey, Sink};
 use crate::ws::OutFrame;
 
 pub use dialog::{DialogPump, PumpStep};
+pub(crate) use driver::RunningCommand;
 
 /// The longest jump virtual time makes at once. A run waiting on a page whose
 /// next timer is further off sleeps as usual (or times out).
@@ -477,6 +478,8 @@ pub struct EngineHost {
     pub(crate) popups: Vec<PopupRecord>,
     /// `Pyro.act` / `Pyro.expect` commands waiting for their page to change.
     waiters: driver::Waiters,
+    /// The command running now, for `Pyro.cancelRun` while its script runs.
+    running: Rc<driver::RunningCommand>,
     /// Emulation.setVirtualTimePolicy (none until a page sets one).
     virtual_time: Option<virtual_time::VirtualTime>,
     virtual_ticks_base: f64,
@@ -561,11 +564,10 @@ impl EngineHost {
         thread
             .enable_network(profile.net.clone())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
+        // Each document's layout loads through its own context
+        // (`pyro_browser` gives it its network).
         #[cfg(feature = "render")]
-        blitz_geometry::install(
-            profile.net.static_files.clone(),
-            thread.browser.context_net(pyro_browser::DEFAULT_CONTEXT).cloned(),
-        );
+        blitz_geometry::install(profile.net.static_files.clone());
         if !profile.local_storage.is_empty() {
             thread.set_local_storage_seed(profile.local_storage.clone());
         }
@@ -590,8 +592,9 @@ impl EngineHost {
     pub fn preboot(thread: &mut BrowserThread, profiles: &[crate::target::PreparedProfile]) -> Vec<Prebooted> {
         let mut out = Vec::new();
         for (index, profile) in profiles.iter().enumerate() {
+            let Ok(net) = context_net(crate::target::ContextOptions::of(profile)) else { continue };
             for _ in 0..profile.pool.clamp(1, crate::target::MAX_POOL) {
-                let Ok(context) = thread.browser.create_context() else { break };
+                let Ok(context) = thread.browser.create_context_with(net.clone()) else { break };
                 let Ok(page) = thread.browser.create_page_in(context) else {
                     thread.browser.close_context(context);
                     break;
@@ -701,6 +704,7 @@ impl EngineHost {
             prebooted: Vec::new(),
             popups: Vec::new(),
             waiters: driver::Waiters::default(),
+            running: Rc::default(),
             virtual_time: None,
             virtual_ticks_base: 0.0,
             coverage: coverage::Coverage::default(),
@@ -709,6 +713,12 @@ impl EngineHost {
 
     pub fn thread_mut(&mut self) -> &mut BrowserThread {
         &mut self.thread
+    }
+
+    /// The command running now, for the connection's watchdog check
+    /// (`Pyro.cancelRun` while a script runs, conn.rs `check_during_script`).
+    pub(crate) fn running_command(&self) -> Rc<RunningCommand> {
+        self.running.clone()
     }
 
     /// Runs engine tasks and timers until `wake()` is true or engine
@@ -1359,6 +1369,12 @@ impl EngineHost {
     }
 }
 
+/// The network settings of a browser context with `options` of its own.
+fn context_net(options: crate::target::ContextOptions<'_>) -> Result<pyro_browser::ContextNet, String> {
+    let proxy = options.proxy.map(|p| pyro_net::ProxyConfig::parse(p.server, p.bypass_list)).transpose()?;
+    Ok(pyro_browser::ContextNet { proxy, user_agent: options.user_agent.map(str::to_owned) })
+}
+
 impl EngineHost {
     /// Makes `id` the VM's time zone unless it already is: a change flushes
     /// JavaScriptCore's date caches and walks the heap's Date objects.
@@ -1405,9 +1421,9 @@ impl Host for EngineHost {
         Ok(key)
     }
 
-    fn create_proxied_context(&mut self, proxy: crate::target::ContextProxy<'_>) -> CdpResult<ContextKey> {
-        let config = pyro_net::ProxyConfig::parse(proxy.server, proxy.bypass_list).map_err(CdpError::server)?;
-        let id = self.thread.browser.create_context_with_proxy(config).map_err(|e| CdpError::server(e.to_string()))?;
+    fn create_context_with(&mut self, options: crate::target::ContextOptions<'_>) -> CdpResult<ContextKey> {
+        let net = context_net(options).map_err(CdpError::server)?;
+        let id = self.thread.browser.create_context_with(net).map_err(|e| CdpError::server(e.to_string()))?;
         let key = u64::from(id.0);
         self.contexts.insert(key, network::NetworkContext::new(id));
         Ok(key)
@@ -1655,6 +1671,9 @@ impl Host for EngineHost {
     }
 
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, _out: &mut dyn Sink) {
+        // A `Pyro.cancelRun` for this session stops a script it runs (or
+        // the microtasks after it) that does not return.
+        let _running = self.running.enter(cmd.session_id, cmd.command.id);
         let result = self.page_command_result(&cmd);
         // Synchronous inspector JS runs outside loop tasks. Release command
         // borrows before starting DOM resources and dispatching native events.
