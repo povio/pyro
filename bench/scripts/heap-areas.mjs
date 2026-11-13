@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // What the allocator holds, from a heap profile's `.areas` dump (one line per allocator page; written next
-// to each `.heap` by a `--features heap-profile` build, see crates/lightningpanda/src/heap_profile.rs):
+// to each `.heap` by a `--features heap-profile` build, see crates/pyro/src/heap_profile.rs):
 // committed and in-use bytes by page kind, by owning thread, and by block size. Older dumps with one line
 // per size class are read too:
 //   per size class: <block size> <pages> <reserved> <committed> <in use>

@@ -1,6 +1,6 @@
 # Persistent page identity
 
-`Browser::set_user_agent_override(PageId, Option<lp_webapi::UserAgentOverride>)`
+`Browser::set_user_agent_override(PageId, Option<pyro_webapi::UserAgentOverride>)`
 updates a page's current navigator state and its native request defaults. It
 returns `JsError::Type` for a missing page or invalid HTTP header value before
 changing state. `None` clears every field; an empty `user_agent` selects the

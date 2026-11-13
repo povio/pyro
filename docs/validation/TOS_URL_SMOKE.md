@@ -16,9 +16,9 @@ has no structuredClone binding. The previous missing URL exception is gone.
   backend test-token localStorage authentication, documented direct-lane version
   bypass and unchanged profile-settings.e2e.ts assertions.
 
-Artifacts: `/private/tmp/lp-tos-smoke-url-object`; exact browser worktree
-`/private/tmp/lp-tos-browser-url-object`; fixture
-`/private/tmp/lp-tos-f9f-url-object-smoke`. The built failing chunk is retained in
+Artifacts: `/private/tmp/pyro-tos-smoke-url-object`; exact browser worktree
+`/private/tmp/pyro-tos-browser-url-object`; fixture
+`/private/tmp/pyro-tos-f9f-url-object-smoke`. The built failing chunk is retained in
 its `.tmp/fe-e2e-portless/fe-dist/assets` directory. Both worktrees were clean
 before execution; the fixture afterward changed only its generated PDF model.
 The sole leftover template was removed after exact owner/prefix/preabsence

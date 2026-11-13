@@ -1,6 +1,6 @@
 # Benchmarks and CDP recording
 
-Reproducible harness for measuring any CDP browser binary (upstream Lightpanda or `lightningpanda`) with the
+Reproducible harness for measuring any CDP browser binary (upstream Lightpanda or `pyro`) with the
 same Playwright version TOS pins (`playwright-core@1.59.1`). Three result classes are kept strictly apart:
 
 1. **Upstream micro-smoke** (`results/upstream-2ad38773f/`): original Lightpanda on a local static site. It
@@ -59,7 +59,7 @@ not slow CDP down, and to see where time goes before optimizing.
 cargo build --release                                        # from the repository root (JIT-entitled linker)
 (cd bench && bun install && (cd rss-sampler && cargo build --release))
 bun bench/scripts/cdp-perf.mjs --list                        # scenarios
-bun bench/scripts/cdp-perf.mjs --bin $PWD/target/release/lightningpanda --out /tmp/cdp-perf/now.json
+bun bench/scripts/cdp-perf.mjs --bin $PWD/target/release/pyro --out /tmp/cdp-perf/now.json
 bench/scripts/cdp-perf-ab.sh origin/main                     # main vs. the working tree, interleaved (see below)
 node bench/scripts/cdp-perf-compare.mjs run.json --base base --head head
 node bench/scripts/cdp-perf-compare.mjs old.json new.json    # two separate runs (less reliable)
@@ -74,21 +74,21 @@ node bench/scripts/cdp-perf-compare.mjs old.json new.json    # two separate runs
   settings. It is not the shipped code, so compare its base with its head and never with release numbers.
   `--shipping-profile` builds the real release profile, in a target directory per SHA; use it for final sign-off.
 - **Reuse.** The `perf` profile has one reused checkout and target directory per side
-  (`$LP_PERF_WORK/slot-a`, `slot-b`). Finished binaries are kept in `$LP_PERF_WORK/bin-<profile>-<sha>/`, and a
+  (`$PYRO_PERF_WORK/slot-a`, `slot-b`). Finished binaries are kept in `$PYRO_PERF_WORK/bin-<profile>-<sha>/`, and a
   commit with a matching binary is not rebuilt.
 - **Provenance.** A shared target directory has silently produced identical binaries before
   (`results/build-provenance-audit`), so the checkout must be clean and at the SHA right before and after cargo, a
   crate whose sources changed since the slot's last build must not be reported fresh, the binary must carry
   `allow-jit`, and the run is refused when base and head are identical (SHA-256, or `__text` and both `__const`
   sections on macOS) although files the build reads differ. Integration tests and Markdown do not count as such files.
-- **`--auto-filter`** picks the scenarios from the changed paths, taking the union: `lp-render` and `screenshot.rs`
-  select `page`, `lp` and `pdf` (and remind you to run `bench/pdf/run.mjs`, since cdp-perf measures only paper-cut
+- **`--auto-filter`** picks the scenarios from the changed paths, taking the union: `pyro-render` and `screenshot.rs`
+  select `page`, `pyro` and `pdf` (and remind you to run `bench/pdf/run.mjs`, since cdp-perf measures only paper-cut
   printing);
-  `lp-webapi`, `lp-js` and `lp-jsc-sys` select `runtime`, `dom` and `lp`; `lp-net` selects `network` and
-  `throughput`; anything else, including the `lp-cdp` engine and `vendor/`, selects
-  `^(rtt|throughput|runtime|dom|page|target|network|lp|tos|pdf)\.`. Documentation and integration tests alone skip the run.
+  `pyro-webapi`, `pyro-js` and `pyro-jsc-sys` select `runtime`, `dom` and `pyro`; `pyro-net` selects `network` and
+  `throughput`; anything else, including the `pyro-cdp` engine and `vendor/`, selects
+  `^(rtt|throughput|runtime|dom|page|target|network|pyro|tos|pdf)\.`. Documentation and integration tests alone skip the run.
 - **Shared machine.** It refuses to start while any cargo build is running and lists each with its owner (this
-  repository or another project) and directory; `--force` overrides. It then waits for `/tmp/lp-bench.lock`, held
+  repository or another project) and directory; `--force` overrides. It then waits for `/tmp/pyro-bench.lock`, held
   until it exits. If a run was killed outright, `rmdir` the lock by hand.
 - **Output.** `stages.txt` in the results directory records the time and load average of each stage. A load average
   above the CPU count prints a warning: do not trust wall-clock verdicts from such a run.
@@ -104,16 +104,16 @@ load average differs between them, so read these as orders of magnitude:
 | first build, empty cache | 3:25-5:23 per side | not faster: 10:07, 8:28 (before `vendor/` became cacheable) | 270-160 |
 | cold build, warm sccache | | 4:24, 4:55 | 55-157 |
 | rebuild, 430345ba and d667459d swapped between slots | 2:59, 2:47 (`--shipping-profile`, release rebuild of the workspace crates) | 0:47, 0:49 | 105-160 |
-| rebuild, unused function added to `lp-cdp` | | 0:03 | 118 |
+| rebuild, unused function added to `pyro-cdp` | | 0:03 | 118 |
 | binary already built | | 0:00 | 108 |
 | dirty working tree, first build then next edit | | 9:40, 0:22 | 158-90 |
 
-In one interleaved 9-round run of `^(page\.|lp\.)` with all four binaries (load average 148 falling to 97):
+In one interleaved 9-round run of `^(page\.|pyro\.)` with all four binaries (load average 148 falling to 97):
 
 - **Absolute numbers:** `perf` against `release` was 0.91-1.34x in wall clock (mostly noise), and within 0.98-1.10x in
-  instructions. The largest gap is `page.navigate.about:blank` (+7-10%); the `lp.*` flows are within 1%.
+  instructions. The largest gap is `page.navigate.about:blank` (+7-10%); the `pyro.*` flows are within 1%.
 - **Instructions, head against base:** the two profiles agree that nothing changed: at most 2.1% on any scenario,
-  and the spread between rounds was 1-2% on most `lp.*` rows, up to 17% on `page.navigate.*`.
+  and the spread between rounds was 1-2% on most `pyro.*` rows, up to 17% on `page.navigate.*`.
 - **Wall-clock verdicts:** no regression on either profile, but they agreed on only 4 of 8 scenarios. Every
   disagreement is an `unclear` with p > 0.38, on different scenarios per profile. That is load, not the profile.
 
@@ -172,17 +172,17 @@ add `--perf-trace`. The browser then times each stage of every command (`io.ws_r
 `json.serialize`, `outbox.push`, `host.flush`, `io.outbound_queue` (time a frame waits for the socket) and `io.ws_write`), and the report
 lists every stage costing at least 10 ns per operation, with the timer floor measured on that host. Stages
 are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
-Normal builds compile the timers out (`crates/lp-cdp-protocol/src/perf.rs`).
+Normal builds compile the timers out (`crates/pyro-cdp-protocol/src/perf.rs`).
 
 `--fork` starts `serve --fork` and reads CPU from every descendant of `serve`, since connections run in forked
-children. Without it, setting `LIGHTNINGPANDA_FORK=1` still runs fork mode, but CPU reads as about zero.
+children. Without it, setting `PYRO_FORK=1` still runs fork mode, but CPU reads as about zero.
 
 Reading it for optimization: compare `rtt.Browser.getVersion` (protocol floor) with the other `rtt`/`runtime`
 rows to see the cost of the browser-thread hop and JS work; the navigation milestones show whether time goes
 to fetching/committing (navigate reply), parsing (DOMContentLoaded) or subresources (load); `target.lifecycle`
 laps show which step of page creation dominates. Running an upstream Lightpanda binary as a second `--bin`
 shows where the rewrite is behind. For in-process costs without sockets, see
-`cargo run --release -p lp-cdp --example cdp_microbench`.
+`cargo run --release -p pyro-cdp --example cdp_microbench`.
 
 ## Matched CPU and retained-memory workload (macOS)
 
@@ -236,15 +236,15 @@ three columns. `rss-sampler PID - --once` emits one snapshot and fails explicitl
 ## Web Platform Tests
 
 `bench/wpt/` runs a WPT subset over CDP with Playwright and reports passing subtests per directory. The same
-runner works for any binary with a `serve --host --port` command line (lightningpanda, upstream Lightpanda, or a
+runner works for any binary with a `serve --host --port` command line (pyro, upstream Lightpanda, or a
 shim around Chrome). Pull requests run it as a coverage gate against a committed baseline; see
 [`wpt/README.md`](wpt/README.md).
 
 ```sh
 (cd bench && bun install)
 bench/wpt/fetch-wpt.sh /abs/wpt   # a new directory: the pinned upstream revision, only the paths the runner needs
-bun bench/wpt/run.mjs --wpt /abs/wpt --bin lp=$PWD/target/release/lightningpanda --sample-encoding 10 --out /tmp/lp.json
-bun bench/wpt/aggregate.mjs /tmp/lp.json [/tmp/other.json ...]                 # markdown table
+bun bench/wpt/run.mjs --wpt /abs/wpt --bin pyro=$PWD/target/release/pyro --sample-encoding 10 --out /tmp/pyro.json
+bun bench/wpt/aggregate.mjs /tmp/pyro.json [/tmp/other.json ...]                 # markdown table
 ```
 
 `run.mjs` starts `serve.mjs` on a free port unless `--base` names a running one, and `serve.mjs` serves
@@ -266,8 +266,8 @@ fixture pages. It connects with `connectOverCDP`, so any binary with a `serve --
 
 ```bash
 cd bench/playwright-suite && bun install
-TARGET=lp BIN=$PWD/../../target/release/lightningpanda bunx playwright test
-LIGHTNINGPANDA_FORK=1 TARGET=lp BIN=... bunx playwright test    # fork template mode
+TARGET=pyro BIN=$PWD/../../target/release/pyro bunx playwright test
+PYRO_FORK=1 TARGET=pyro BIN=... bunx playwright test    # fork template mode
 TARGET=chrome bunx playwright test                              # Playwright's headless shell over CDP (macOS arm64 path, or set CHROME_BIN)
 ```
 
@@ -284,9 +284,9 @@ word count, a hash of its sorted words, first and last word, distinct y), no PDF
 cd bench/pdf/fixtures                                  # needs pdftotext and Chrome at its default path
 bun probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
 python3 compare.py chrome-156/fr.json out.json [-v]    # per group: words on the same pages, page counts, positions
-bun print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
-./run.sh /abs/lightningpanda /tmp/out [fr sub ...]     # every set (or those named), against chrome-156/
-bun geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
+bun print-72.mjs /abs/pyro                  # the 72: pages, lines and link rects, Chrome measured live
+./run.sh /abs/pyro /tmp/out [fr sub ...]     # every set (or those named), against chrome-156/
+bun geometry.mjs /abs/pyro out.json         # the 152 geometry matrix
 python3 compare.py --geometry chrome-156/geometry.json out.json
 ```
 
@@ -306,17 +306,17 @@ python3 compare.py --geometry chrome-156/geometry.json out.json
 Page placement and text x of whole PDFs against Chrome:
 
 ```sh
-bun page-placement.mjs <work dir> chrome-156/page-placement.json [/abs/lightningpanda]   # documents x papers x options, and the 300 dpi page size
-bun pdf-deltas.mjs <chrome pdf dir> <lp pdf dir> out.json        # per PDF of a run.mjs run: x and y delta of 30 pt tiles at 600 dpi, pixel diff at 150 dpi
-python3 page-stream-diff.py; python3 page-shift-check.py         # two lp-fixed runs (r-base, r-head): how each stream changed; pixels after undoing a page shift
-bun text-x.mjs <work dir> chrome; bun text-x.mjs <work dir> /abs/lightningpanda   # fractional text x: paper-cut and `.pz-page`, with screenshots
+bun page-placement.mjs <work dir> chrome-156/page-placement.json [/abs/pyro]   # documents x papers x options, and the 300 dpi page size
+bun pdf-deltas.mjs <chrome pdf dir> <pyro pdf dir> out.json        # per PDF of a run.mjs run: x and y delta of 30 pt tiles at 600 dpi, pixel diff at 150 dpi
+python3 page-stream-diff.py; python3 page-shift-check.py         # two pyro-fixed runs (r-base, r-head): how each stream changed; pixels after undoing a page shift
+bun text-x.mjs <work dir> chrome; bun text-x.mjs <work dir> /abs/pyro   # fractional text x: paper-cut and `.pz-page`, with screenshots
 python3 table-check.py chrome-156/tcell-x.json <probe of fx-tcell>   # auto tables with percentage, fixed, auto and empty cells: marker x and y
 python3 width-check.py chrome-156/width-x.json <probe of fx-width>   # what paper-cut print lays out in: marker x and link rects
 ```
 
 `pdf-resample.mjs` compares a page's error against Chrome at 150 dpi as poppler rasterizes it and box-averaged from a higher resolution, to tell a real move from a sampling effect.
 
-`bun table-collapse.mjs chrome|/abs/lightningpanda out.json` measures cell boxes of collapsed-border tables (`chrome-156/table-collapse.json`).
+`bun table-collapse.mjs chrome|/abs/pyro out.json` measures cell boxes of collapsed-border tables (`chrome-156/table-collapse.json`).
 
 `chrome-156/tos-deltas.json` holds the 44 ToS cases before and after (median, p95, max of per-tile deltas in pt; the search stops at 2.4 pt, and
 tiles match by ink profiles, so regular text can alias: read medians and p95 first). `text-x-before.json` and `text-x-after.json` hold the text-x set, `text-x-width.json` the same on the paper-cut layout width.

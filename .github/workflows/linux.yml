@@ -11,7 +11,7 @@ on:
       - scripts/linux/**
       - scripts/release/bundle-icu-linux.sh
       - scripts/jsc/**
-      - crates/lp-jsc-sys/**
+      - crates/pyro-jsc-sys/**
   workflow_dispatch:
 
 permissions:

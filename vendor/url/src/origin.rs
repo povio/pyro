@@ -18,7 +18,7 @@ pub fn url_origin(url: &Url) -> Origin {
     let scheme = url.scheme();
     match scheme {
         "blob" => {
-            // lightningpanda: only an http(s) inner URL gives a tuple origin, as the
+            // pyro: only an http(s) inner URL gives a tuple origin, as the
             // standard says (`blob:ws://h/`, `blob:blob:https://h/` are opaque).
             let result = Url::parse(url.path());
             match result {

@@ -1,0 +1,233 @@
+diff --git a/Source/JavaScriptCore/API/APICallbackFunction.h b/Source/JavaScriptCore/API/APICallbackFunction.h
+index 2eec0af..73c3972 100644
+--- a/Source/JavaScriptCore/API/APICallbackFunction.h
++++ b/Source/JavaScriptCore/API/APICallbackFunction.h
+@@ -66,7 +66,7 @@ EncodedJSValue APICallbackFunction::callImpl(JSGlobalObject* globalObject, CallF
+     JSValueRef exception = nullptr;
+     JSValueRef result;
+     {
+-        JSLock::DropAllLocks dropAllLocks(globalObject);
++        JSLock::APICallbackScope callbackScope(globalObject);
+         result = uncheckedDowncast<T>(toJS(functionRef))->functionCallback()(execRef, functionRef, thisObjRef, argumentsSpan.size(), argumentsSpanData, &exception);
+     }
+     if (exception) {
+@@ -117,7 +117,7 @@ EncodedJSValue APICallbackFunction::constructImpl(JSGlobalObject* globalObject,
+         JSValueRef exception = nullptr;
+         JSObjectRef result;
+         {
+-            JSLock::DropAllLocks dropAllLocks(globalObject);
++            JSLock::APICallbackScope callbackScope(globalObject);
+             result = callback(ctx, constructorRef, argumentsSpan.size(), argumentsSpanData, &exception);
+         }
+ 
+diff --git a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+index b34adb2..a7de7a7 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
++++ b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+@@ -134,7 +134,7 @@ void JSCallbackObject<Parent>::init(JSGlobalObject* globalObject)
+     
+     // initialize from base to derived
+     for (int i = static_cast<int>(initRoutines.size()) - 1; i >= 0; i--) {
+-        JSLock::DropAllLocks dropAllLocks(globalObject);
++        JSLock::APICallbackScope callbackScope(globalObject);
+         JSObjectInitializeCallback initialize = initRoutines[i];
+         initialize(toRef(globalObject), toRef(static_cast<JSObject*>(this)));
+     }
+@@ -160,7 +160,7 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
+             if (JSObjectHasPropertyCallback hasProperty = jsClass->hasProperty) {
+                 if (!propertyNameRef)
+                     propertyNameRef = OpaqueJSString::tryCreate(name);
+-                JSLock::DropAllLocks dropAllLocks(globalObject);
++                JSLock::APICallbackScope callbackScope(globalObject);
+                 if (hasProperty(ctx, thisRef, propertyNameRef.get())) {
+                     slot.setCustom(thisObject, attributes, getCallbackGetter());
+                     return true;
+@@ -171,7 +171,7 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
+                 JSValueRef exception = nullptr;
+                 JSValueRef value;
+                 {
+-                    JSLock::DropAllLocks dropAllLocks(globalObject);
++                    JSLock::APICallbackScope callbackScope(globalObject);
+                     value = getProperty(ctx, thisRef, propertyNameRef.get(), &exception);
+                 }
+                 if (exception) {
+@@ -285,7 +285,7 @@ bool JSCallbackObject<Parent>::put(JSCell* cell, JSGlobalObject* globalObject, P
+                 JSValueRef exception = nullptr;
+                 bool result;
+                 {
+-                    JSLock::DropAllLocks dropAllLocks(globalObject);
++                    JSLock::APICallbackScope callbackScope(globalObject);
+                     result = setProperty(ctx, thisRef, propertyNameRef.get(), valueRef, &exception);
+                 }
+                 if (exception)
+@@ -302,7 +302,7 @@ bool JSCallbackObject<Parent>::put(JSCell* cell, JSGlobalObject* globalObject, P
+                         JSValueRef exception = nullptr;
+                         bool result;
+                         {
+-                            JSLock::DropAllLocks dropAllLocks(globalObject);
++                            JSLock::APICallbackScope callbackScope(globalObject);
+                             result = setProperty(ctx, thisRef, entry->propertyNameRef.get(), valueRef, &exception);
+                         }
+                         if (exception)
+@@ -352,7 +352,7 @@ bool JSCallbackObject<Parent>::putByIndex(JSCell* cell, JSGlobalObject* globalOb
+             JSValueRef exception = nullptr;
+             bool result;
+             {
+-                JSLock::DropAllLocks dropAllLocks(globalObject);
++                JSLock::APICallbackScope callbackScope(globalObject);
+                 result = setProperty(ctx, thisRef, propertyNameRef.get(), valueRef, &exception);
+             }
+             if (exception)
+@@ -369,7 +369,7 @@ bool JSCallbackObject<Parent>::putByIndex(JSCell* cell, JSGlobalObject* globalOb
+                     JSValueRef exception = nullptr;
+                     bool result;
+                     {
+-                        JSLock::DropAllLocks dropAllLocks(globalObject);
++                        JSLock::APICallbackScope callbackScope(globalObject);
+                         result = setProperty(ctx, thisRef, entry->propertyNameRef.get(), valueRef, &exception);
+                     }
+                     if (exception)
+@@ -411,7 +411,7 @@ bool JSCallbackObject<Parent>::deleteProperty(JSCell* cell, JSGlobalObject* glob
+                 JSValueRef exception = nullptr;
+                 bool result;
+                 {
+-                    JSLock::DropAllLocks dropAllLocks(globalObject);
++                    JSLock::APICallbackScope callbackScope(globalObject);
+                     result = deleteProperty(ctx, thisRef, propertyNameRef.get(), &exception);
+                 }
+                 if (exception)
+@@ -496,7 +496,7 @@ EncodedJSValue JSCallbackObject<Parent>::constructImpl(JSGlobalObject* globalObj
+             JSValueRef exception = nullptr;
+             JSObject* result;
+             {
+-                JSLock::DropAllLocks dropAllLocks(globalObject);
++                JSLock::APICallbackScope callbackScope(globalObject);
+                 result = toJS(callAsConstructor(execRef, constructorRef, argumentsSpan.size(), argumentsSpanData, &exception));
+             }
+             if (exception) {
+@@ -527,7 +527,7 @@ bool JSCallbackObject<Parent>::customHasInstance(JSObject* object, JSGlobalObjec
+             JSValueRef exception = nullptr;
+             bool result;
+             {
+-                JSLock::DropAllLocks dropAllLocks(globalObject);
++                JSLock::APICallbackScope callbackScope(globalObject);
+                 result = hasInstance(execRef, thisRef, valueRef, &exception);
+             }
+             if (exception)
+@@ -583,7 +583,7 @@ EncodedJSValue JSCallbackObject<Parent>::callImpl(JSGlobalObject* globalObject,
+             JSValueRef exception = nullptr;
+             JSValue result;
+             {
+-                JSLock::DropAllLocks dropAllLocks(globalObject);
++                JSLock::APICallbackScope callbackScope(globalObject);
+                 result = toJS(globalObject, callAsFunction(execRef, functionRef, thisObjRef, argumentsSpan.size(), argumentsSpanData, &exception));
+             }
+             if (exception) {
+@@ -608,7 +608,7 @@ void JSCallbackObject<Parent>::getOwnSpecialPropertyNames(JSObject* object, JSGl
+     
+     for (JSClassRef jsClass = thisObject->classRef(); jsClass; jsClass = jsClass->parentClass) {
+         if (JSObjectGetPropertyNamesCallback getPropertyNames = jsClass->getPropertyNames) {
+-            JSLock::DropAllLocks dropAllLocks(globalObject);
++            JSLock::APICallbackScope callbackScope(globalObject);
+             getPropertyNames(execRef, thisRef, toRef(&propertyNames));
+         }
+         
+@@ -678,7 +678,7 @@ JSValue JSCallbackObject<Parent>::getStaticValue(JSGlobalObject* globalObject, P
+                         JSValueRef exception = nullptr;
+                         JSValueRef value;
+                         {
+-                            JSLock::DropAllLocks dropAllLocks(globalObject);
++                            JSLock::APICallbackScope callbackScope(globalObject);
+                             value = getProperty(toRef(globalObject), thisRef, entry->propertyNameRef.get(), &exception);
+                         }
+                         if (exception) {
+@@ -748,7 +748,7 @@ EncodedJSValue JSCallbackObject<Parent>::callbackGetterImpl(JSGlobalObject* glob
+                 JSValueRef exception = nullptr;
+                 JSValueRef value;
+                 {
+-                    JSLock::DropAllLocks dropAllLocks(globalObject);
++                    JSLock::APICallbackScope callbackScope(globalObject);
+                     value = getProperty(toRef(globalObject), thisRef, propertyNameRef.get(), &exception);
+                 }
+                 if (exception) {
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 8899a06..0eb2942 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -163,7 +163,7 @@ public:
+         JSValueRef exception = nullptr;
+         JSValueRef value;
+         {
+-            JSLock::DropAllLocks dropAllLocks(owner);
++            JSLock::APICallbackScope callbackScope(owner);
+             value = s_getter(ctx, toRef(object), nameRef.get(), &exception);
+         }
+         if (exception) {
+diff --git a/Source/JavaScriptCore/runtime/JSLock.cpp b/Source/JavaScriptCore/runtime/JSLock.cpp
+index 0fa9323..c2b37fc 100644
+--- a/Source/JavaScriptCore/runtime/JSLock.cpp
++++ b/Source/JavaScriptCore/runtime/JSLock.cpp
+@@ -25,6 +25,7 @@
+ #include "HeapInlines.h"
+ #include "JSGlobalObject.h"
+ #include "MachineStackMarker.h"
++#include "Options.h"
+ #include "SamplingProfiler.h"
+ #include "VMTrapsInlines.h"
+ #include <wtf/SpinBackoff.h>
+@@ -412,6 +413,19 @@ JSLock::DropAllLocks::DropAllLocks(VM& vm)
+ {
+ }
+ 
++JSLock::APICallbackScope::APICallbackScope(JSGlobalObject* globalObject)
++{
++    if (Options::dropLocksInAPICallbacks()) {
++        m_dropper.emplace(globalObject);
++        return;
++    }
++    if (!globalObject)
++        return;
++    // A callback must never run from the collector, with or without the lock.
++    VM& vm = globalObject->vm();
++    RELEASE_ASSERT(!vm.currentThreadIsHoldingAPILock() || !vm.isCollectorBusyOnCurrentThread(), vm.currentThreadIsHoldingAPILock(), vm.isCollectorBusyOnCurrentThread());
++}
++
+ JSLock::DropAllLocks::~DropAllLocks()
+ {
+     if (!m_vm)
+diff --git a/Source/JavaScriptCore/runtime/JSLock.h b/Source/JavaScriptCore/runtime/JSLock.h
+index ce17edb..7c2a5bb 100644
+--- a/Source/JavaScriptCore/runtime/JSLock.h
++++ b/Source/JavaScriptCore/runtime/JSLock.h
+@@ -123,6 +123,19 @@ public:
+         unsigned m_dropDepth;
+     };
+ 
++    // Wraps a call out of JSC into an embedder's C API callback. Stock JSC drops the lock here so
++    // the embedder may block or hand the VM to another thread. Pyro's VMs stay on one
++    // thread, so by default the lock stays held, which saves a full lock cycle per callback and per
++    // API call inside it. JSC_dropLocksInAPICallbacks=true restores the stock behavior.
++    class APICallbackScope {
++        WTF_MAKE_NONCOPYABLE(APICallbackScope);
++    public:
++        JS_EXPORT_PRIVATE APICallbackScope(JSGlobalObject*);
++
++    private:
++        std::optional<DropAllLocks> m_dropper;
++    };
++
+     void makeWebThreadAware()
+     {
+         m_isWebThreadAware = true;
+diff --git a/Source/JavaScriptCore/runtime/OptionsList.h b/Source/JavaScriptCore/runtime/OptionsList.h
+index 33f2ffd..c7387ff 100644
+--- a/Source/JavaScriptCore/runtime/OptionsList.h
++++ b/Source/JavaScriptCore/runtime/OptionsList.h
+@@ -207,6 +207,7 @@ bool hasCapacityToUseLargeGigacage();
+     v(Bool, verboseSanitizeStack, false, Normal, nullptr) \
+     v(Bool, useGenerationalGC, true, Normal, nullptr) \
+     v(Bool, useConcurrentGC, true, Normal, nullptr) \
++    v(Bool, dropLocksInAPICallbacks, false, Normal, "drop the JS lock around C API callbacks, as stock JSC does"_s) \
+     v(Bool, collectContinuously, false, Normal, nullptr) \
+     v(Double, collectContinuouslyPeriodMS, 1, Normal, nullptr) \
+     v(Unsigned, initialHeapVersion, 0, Restricted, "If nonzero, the version each heap's marking, newly allocated and Eden versions start at. A value near the maximum makes them wrap within a few collections."_s) \

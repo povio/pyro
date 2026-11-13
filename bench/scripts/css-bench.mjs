@@ -1,5 +1,5 @@
 // Synthetic style/layout benchmark page. Serve: node css-bench.mjs [port] (default 9445); load with
-// LIGHTNINGPANDA_GEOMETRY=flow lightningpanda fetch --dump none "http://127.0.0.1:9445/?n=2000&rules=1500&mode=style&loops=5"
+// PYRO_GEOMETRY=flow pyro fetch --dump none "http://127.0.0.1:9445/?n=2000&rules=1500&mode=style&loops=5"
 // Modes: style (full restyle per loop), memo (cached reads), offset, rects, matches, qsa, relayout, append.
 // Options: nonth=1 drops :nth-child rules, noattr=1 drops [data-k] rules. Results print via console.error.
 import http from 'node:http';

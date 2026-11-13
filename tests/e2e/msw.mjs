@@ -1,12 +1,12 @@
 // Real Playwright 1.59.1 (connectOverCDP) and real MSW 2.15.0 browser mode
-// against `lightningpanda serve`: the page loads msw's browser bundle and its
+// against `pyro serve`: the page loads msw's browser bundle and its
 // unmodified mockServiceWorker.js, `worker.start()` registers and activates
 // the service worker, and the page's fetch() and XHR get the handlers' mocked
 // responses; unhandled requests go to the network through the worker, where
 // Playwright's `page.route()` still sees them. `context.serviceWorkers()` lists
 // the worker (a `service_worker` CDP target).
 //
-// Usage: bun tests/e2e/msw.mjs /abs/path/to/lightningpanda
+// Usage: bun tests/e2e/msw.mjs /abs/path/to/pyro
 // Requires `bun install` in bench/ (pinned playwright-core and msw).
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -23,11 +23,11 @@ const { chromium } = require('playwright-core');
 const mswRoot = path.dirname(require.resolve('msw/package.json'));
 const MSW_BUNDLE = fs.readFileSync(path.join(mswRoot, 'lib', 'iife', 'index.js'));
 // The vendored copy the Rust tests serve; the same file as the package's.
-const WORKER = fs.readFileSync(path.join(here, '..', '..', 'crates', 'lp-browser', 'tests', 'fixtures', 'msw', 'mockServiceWorker.js'));
+const WORKER = fs.readFileSync(path.join(here, '..', '..', 'crates', 'pyro-browser', 'tests', 'fixtures', 'msw', 'mockServiceWorker.js'));
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: bun tests/e2e/msw.mjs /abs/path/to/lightningpanda');
+  console.error('usage: bun tests/e2e/msw.mjs /abs/path/to/pyro');
   process.exit(2);
 }
 
@@ -72,7 +72,7 @@ for (;;) {
     const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) });
     if (r.ok) break;
   } catch {}
-  if (child.exitCode !== null) { console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
+  if (child.exitCode !== null) { console.error(`pyro exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
   if (performance.now() - started > 10_000) { console.error(`startup timed out: ${stderr}`); process.exit(1); }
   await new Promise((r) => setTimeout(r, 10));
 }

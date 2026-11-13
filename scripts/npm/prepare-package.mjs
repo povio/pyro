@@ -2,10 +2,10 @@ import { chmodSync, copyFileSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = new URL('../../', import.meta.url);
-const pkg = new URL('packages/lightning-panda/', root);
+const pkg = new URL('packages/pyro/', root);
 // Prevent publishing a client-only or incomplete multi-architecture package.
 for (const arch of ['arm64', 'x64']) {
-  const binary = new URL(`native/darwin-${arch}/lightningpanda`, pkg);
+  const binary = new URL(`native/darwin-${arch}/pyro`, pkg);
   if (!statSync(binary, { throwIfNoEntry: false })?.isFile()) {
     throw new Error(`Missing ${fileURLToPath(binary)}. Build both macOS binaries before packing (see docs/NPM_PUBLISHING.md).`);
   }
@@ -33,7 +33,7 @@ for (const [arch, machine] of [['x64', 62], ['arm64', 183]]) {
   if (statSync(stale, { throwIfNoEntry: false })) {
     throw new Error(`Stale ${fileURLToPath(stale)}: the Linux browsers link JavaScriptCore statically (see docs/NPM_PUBLISHING.md).`);
   }
-  for (const rel of [`native/linux-${arch}/lightningpanda`]) {
+  for (const rel of [`native/linux-${arch}/pyro`]) {
     const file = new URL(rel, pkg);
     if (!statSync(file, { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`Missing ${fileURLToPath(file)}. Build both Linux browsers before packing (see docs/NPM_PUBLISHING.md).`);
@@ -44,7 +44,7 @@ for (const [arch, machine] of [['x64', 62], ['arm64', 183]]) {
       throw new Error(`Expected a Linux ${arch} ELF file: ${fileURLToPath(file)}`);
     }
   }
-  chmodSync(new URL(`native/linux-${arch}/lightningpanda`, pkg), 0o755);
+  chmodSync(new URL(`native/linux-${arch}/pyro`, pkg), 0o755);
 }
 for (const name of ['LICENSE', 'NOTICE']) copyFileSync(new URL(name, root), new URL(name, pkg));
 chmodSync(new URL('dist/cli.js', pkg), 0o755);

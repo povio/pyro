@@ -1,5 +1,5 @@
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-dom)
-   Compiling lp-webapi v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-webapi)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-dom)
+   Compiling pyro-webapi v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 1m 39s
      Running tests/dom_js.rs (target/release/deps/dom_js-e9d665e19a2148b5)
 

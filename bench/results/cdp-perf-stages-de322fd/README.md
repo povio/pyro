@@ -1,12 +1,12 @@
 # Inner CDP stages and profile at de322fd
 
 - Date: 2026-10-27, from 10:41Z. Host: Apple M1 Max, 10 CPUs, 64 GB, macOS 27.0.1 (26A434), Bun 1.4.3.
-- Source: f9baf98 (perf-trace timers) plus de322fd (compile fix: the `LP.*` arms returned `()`). The plain
+- Source: f9baf98 (perf-trace timers) plus de322fd (compile fix: the `Pyro.*` arms returned `()`). The plain
   binary (`target/`, sha256 `0c9413a63e236452…`) and the traced binary (`target-perf/`, `--features
   perf-trace`, sha256 `2a62c32ca3f66da0…`) were each built in their own target directory.
 - Load: busy host. 1-minute load average was 9.3 → 8.3 during the overhead run and 8.0 → 7.1 during the
   traced run, and it rose to 64 near the end of profiling (other jobs on the Mac).
-- Checks: `cargo test -p lp-cdp --features perf-trace --lib perf::` 2/2 passed, `cargo test -p lp-cdp
+- Checks: `cargo test -p pyro-cdp --features perf-trace --lib perf::` 2/2 passed, `cargo test -p pyro-cdp
   --test integration` 127/127 passed, and both release builds produced no warnings. Clippy is not installed
   for this toolchain, so it was not run.
 
@@ -30,15 +30,15 @@ the ~50 µs round trips, but it is visible in the stage numbers, so compare trac
 ## Commands
 
 ```sh
-cargo build --release -p lightningpanda
-CARGO_TARGET_DIR=$PWD/target-perf cargo build --release -p lightningpanda --features perf-trace
-bun bench/scripts/cdp-perf.mjs --bin plain=$PWD/target/release/lightningpanda \
-  --bin traced=$PWD/target-perf/release/lightningpanda --rounds 3 --out /tmp/cdp-perf/overhead.json
+cargo build --release -p pyro
+CARGO_TARGET_DIR=$PWD/target-perf cargo build --release -p pyro --features perf-trace
+bun bench/scripts/cdp-perf.mjs --bin plain=$PWD/target/release/pyro \
+  --bin traced=$PWD/target-perf/release/pyro --rounds 3 --out /tmp/cdp-perf/overhead.json
 bun bench/scripts/cdp-perf-compare.mjs /tmp/cdp-perf/overhead.json --base plain --head traced --no-fail --md overhead-compare.md
-bun bench/scripts/cdp-perf.mjs --bin traced=$PWD/target-perf/release/lightningpanda --perf-trace --rounds 3 \
+bun bench/scripts/cdp-perf.mjs --bin traced=$PWD/target-perf/release/pyro --perf-trace --rounds 3 \
   --out /tmp/cdp-perf/stages.json
 # profiles (Xcode's xctrace; DEVELOPER_DIR avoids changing xcode-select)
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ROOT=$PWD OUT=/tmp/lp-prof
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ROOT=$PWD OUT=/tmp/pyro-prof
 for w in getVersion evaluate cfo38 qsa mutate lifecycle navSimple; do
   PROF=xctrace bench/results/cdp-perf-stages-de322fd/tools/prof.sh $w 10
   xctrace export --input $OUT/prof/$w.trace \

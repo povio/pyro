@@ -1,10 +1,10 @@
 {
   "commit": "ccf3597146a76a7522af33616c195dfb56d926bd",
   "tree": "7526c839c71f8c6dff6539ad284188600cda9602",
-  "binary": "/private/tmp/lp-suite-20261019/lightningpanda-ccf3597",
+  "binary": "/private/tmp/pyro-suite-20261019/pyro-ccf3597",
   "sha256": "58e733e016c5ecf621e7ae8c9664cc1f892c872d56ba3b2441684730cdf0609d",
-  "build_cwd": "/private/tmp/lp-scroll-ancestors-fix",
-  "command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p lightningpanda",
+  "build_cwd": "/private/tmp/pyro-scroll-ancestors-fix",
+  "command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p pyro",
   "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
   "sdk": "26.5",
   "entitlements": {

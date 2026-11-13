@@ -102,7 +102,7 @@ pub(crate) struct StyleMetrics {
 /// style builders guarantee. `shaped_text` is the already shaped text of the layout, whose run
 /// metrics are reused where a style's first available font was also used for shaping.
 /// `first_fonts` holds, per style, the first available font the shaper's font selector found
-/// (lightningpanda; see `shape::FontSelector`); a style without one is queried here.
+/// (pyro; see `shape::FontSelector`); a style without one is queried here.
 pub(crate) fn resolve_style_metrics<B: Brush>(
     rcx: &ResolveContext,
     fcx: &mut FontContext,

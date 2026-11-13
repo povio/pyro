@@ -1,16 +1,16 @@
 {
   "files": {
-    "lp-js-90879-ThreadId(2).csv": {
+    "pyro-js-90879-ThreadId(2).csv": {
       "sha256": "ba342a717912a47b364895155b015916ba94213445f64755fa76334f9b02b2d6",
       "root_count": 78223
     },
-    "lp-runtime-90879-ThreadId(2).csv": {
+    "pyro-runtime-90879-ThreadId(2).csv": {
       "sha256": "9c3c11c5637968e974ae2d4a3f891cfb2d332b7d0aebf3b62135033bc9a3cfa1",
       "root_count": 2142
     }
   },
   "crates": {
-    "lp-js": {
+    "pyro-js": {
       "roots": 25968,
       "cpu_ms": 495.43751999998744,
       "wall_ms": 501.6109999995301,
@@ -323,13 +323,13 @@
         }
       }
     },
-    "lp-runtime": {
+    "pyro-runtime": {
       "roots": 662,
       "cpu_ms": 485.0274439999998,
       "wall_ms": 1302.4290000000003,
       "boundary_roots": [
         {
-          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "file": "pyro-runtime-90879-ThreadId(2).csv",
           "root": "810",
           "tag": "wait.remote",
           "start_ms": 1792344221151.957,
@@ -337,7 +337,7 @@
           "cpu_ms": 0.0155
         },
         {
-          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "file": "pyro-runtime-90879-ThreadId(2).csv",
           "root": "1473",
           "tag": "wait.remote",
           "start_ms": 1792344222764.332,
@@ -408,5 +408,5 @@
     1792344221336.2617,
     1792344222948.375
   ],
-  "limits": "Separate crate interval trees overlap: do not add lp-js to lp-runtime. Boundary roots excluded without prorating. Native categories may include unwrapped FFI/JS; diagnostics overhead is not a baseline speed measurement."
+  "limits": "Separate crate interval trees overlap: do not add pyro-js to pyro-runtime. Boundary roots excluded without prorating. Native categories may include unwrapped FFI/JS; diagnostics overhead is not a baseline speed measurement."
 }

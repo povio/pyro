@@ -168,8 +168,8 @@ impl DocumentMutator<'_> {
     }
 
     pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> NodeId {
-        // lightningpanda: the top layer is marked in lp-dom's state attribute.
-        let lp_state = attrs
+        // pyro: the top layer is marked in pyro-dom's state attribute.
+        let pyro_state = attrs
             .iter()
             .find(|a| is_lp_state(&a.name))
             .map(|a| a.value.clone());
@@ -185,7 +185,7 @@ impl DocumentMutator<'_> {
             ..Default::default()
         };
 
-        if let Some(state) = lp_state {
+        if let Some(state) = pyro_state {
             self.doc.note_lp_state(id, Some(&state));
         }
         id
@@ -329,7 +329,7 @@ impl DocumentMutator<'_> {
         }
     }
 
-    /// lightningpanda: `multiple` / `size` switch a select between a
+    /// pyro: `multiple` / `size` switch a select between a
     /// drop-down (no boxes for its options) and a list box (options laid
     /// out): its boxes are built again.
     fn rebuild_select_for_attribute(&mut self, node_id: NodeId, name: &QualName) {
@@ -347,7 +347,7 @@ impl DocumentMutator<'_> {
         if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
             self.doc.note_lp_state(node_id, Some(value));
         }
-        // lightningpanda: `:has()` anchors that can see the element follow
+        // pyro: `:has()` anchors that can see the element follow
         // the change (`has_invalidation`); `None` (one flag test) when no
         // `:has()` search visited it.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
@@ -483,7 +483,7 @@ impl DocumentMutator<'_> {
         if (tag, attr) == tag_and_attr!("input", "checked") {
             set_input_checked_state(element, value.to_string());
         } else if (tag, attr) == tag_and_attr!("img", "src")
-            // lightningpanda: an image button fetches its `src` like `<img>`;
+            // pyro: an image button fetches its `src` like `<img>`;
             // `type` becoming "image" starts the load (HTML "image button
             // state": the type changing to Image Button updates the image data).
             || (*tag == local_name!("input")
@@ -510,7 +510,7 @@ impl DocumentMutator<'_> {
         if is_lp_state(&name) {
             self.doc.note_lp_state(node_id, None);
         }
-        // lightningpanda: as in `set_attribute`.
+        // pyro: as in `set_attribute`.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
         self.clear_attribute_impl(node_id, name);
@@ -710,7 +710,7 @@ impl DocumentMutator<'_> {
         node_id: NodeId,
         on_drop: &mut dyn FnMut(NodeId),
     ) -> Option<Node> {
-        // lightningpanda: a dropped element inside a `:has()` argument
+        // pyro: a dropped element inside a `:has()` argument
         // changes its anchors, as in `remove_node`.
         self.doc.invalidate_relative_selectors_for_removal(node_id);
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
@@ -743,7 +743,7 @@ impl DocumentMutator<'_> {
     }
 
     pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
-        // lightningpanda: dropped elements inside a `:has()` argument change their anchors,
+        // pyro: dropped elements inside a `:has()` argument change their anchors,
         // as in `remove_node`; checked while they are still linked.
         for &child_id in &self.doc.nodes[node_id].children {
             self.doc.invalidate_relative_selectors_for_removal(child_id);
@@ -778,11 +778,11 @@ impl DocumentMutator<'_> {
     /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
     /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
     /// through the computed style (whose diff yields the damage); other attributes may not.
-    /// lightningpanda: restyles the siblings of `node_id` (and their subtrees) for an attribute
+    /// pyro: restyles the siblings of `node_id` (and their subtrees) for an attribute
     /// change Stylo's snapshot invalidation cannot follow to them: a selector list of
     /// `:nth-child(... of S)` (the parent carries `HAS_SLOW_SELECTOR_NTH_OF`), which Stylo
     /// leaves to the embedder, as Gecko's `RestyleSiblingsForNthOf` does. The pseudo-classes
-    /// lightningpanda's state attribute (`urn:x-lightningpanda:state`) carries are element
+    /// pyro's state attribute (`urn:x-pyro:state`) carries are element
     /// states ([`ElementData::sync_lp_attribute_state`]), so the snapshot sees them change and
     /// Stylo's state invalidation reaches the siblings and descendants (`.r:invalid + .l`)
     /// itself; only its `natural=W,H` token (an image's natural size), which layout reads, is
@@ -880,7 +880,7 @@ impl DocumentMutator<'_> {
     /// the traversal regardless; the element and its other children only need restyling where
     /// its selector flags record a selector that depends on them.
     ///
-    /// lightningpanda: a change of text (or other non-element) children alone moves no
+    /// pyro: a change of text (or other non-element) children alone moves no
     /// element's index or edge status, so the siblings are left alone (`:empty` still restyles
     /// the parent). Inserted children that already have a style were moved here from this same
     /// parent (`add_children_to_parent` skips their subtree restyle, their ancestors being
@@ -896,7 +896,7 @@ impl DocumentMutator<'_> {
         let parent = &self.doc.nodes[parent_id];
         let flags = parent.selector_flags().get();
         let mut hint = RestyleHint::empty();
-        // lightningpanda: a `:has()` anchor among the ancestors is restyled by Stylo's relative
+        // pyro: a `:has()` anchor among the ancestors is restyled by Stylo's relative
         // selector invalidator when an element it can match comes or goes
         // (`invalidate_relative_selectors_for_insertion`), not here; an argument's `:empty`
         // matches by the child list alone, so the parent is looked up for one.
@@ -921,7 +921,7 @@ impl DocumentMutator<'_> {
             )
         {
             hint |= RestyleHint::RESTYLE_DESCENDANTS;
-            // lightningpanda: every other child's position may have changed, and with it an
+            // pyro: every other child's position may have changed, and with it an
             // argument's `:nth-child()`, `:first-child` or `:last-child`
             // (`invalidate_relative_selectors_for_ts_state`); the inserted children are
             // covered by their own insertion.
@@ -977,7 +977,7 @@ impl DocumentMutator<'_> {
                 self.doc.nodes[*id].set_restyle_hint(RestyleHint::restyle_subtree());
             }
             self.doc.nodes[parent_id].children = children;
-            // lightningpanda: the arguments that match by position
+            // pyro: the arguments that match by position
             // (`invalidate_relative_selectors_for_ts_state`), once the child list is back for
             // the sibling walk: `:nth-child()` on the later siblings, `:first-child`/
             // `:last-child` on the children whose edge status flipped. The moved-in children
@@ -1068,7 +1068,7 @@ impl DocumentMutator<'_> {
         // would remove both the old and the newly-inserted entries from the
         // parent's child list, and anchor indices would be computed against a
         // child list that still contains the moved nodes.
-        // lightningpanda: children moved within this element parent keep their ancestors, so
+        // pyro: children moved within this element parent keep their ancestors, so
         // only their siblings changed, and `restyle_for_child_list_change` restyles them for
         // that; a move under a non-element parent keeps the subtree restyle.
         let parent_is_element = self.doc.nodes[parent_id].is_element();
@@ -1080,7 +1080,7 @@ impl DocumentMutator<'_> {
             {
                 same_parent_moves.push(child_id);
             }
-            // lightningpanda: a moved child leaves its old parent as
+            // pyro: a moved child leaves its old parent as
             // `remove_node` does (`:has()` anchors, `:empty`), checked while
             // it is still linked.
             if self.doc.nodes[child_id].parent.is_some() {
@@ -1126,9 +1126,9 @@ impl DocumentMutator<'_> {
             self.restyle_for_child_list_change(parent_id, index..index + child_ids.len(), false);
         }
 
-        // lightningpanda: whether the children land under a `display: none` element (see below).
+        // pyro: whether the children land under a `display: none` element (see below).
         // Any child may hold styled elements: a new element (no style data) may hold a moved
-        // one (lp-dom builds a new wrapper by moving children into it before inserting it).
+        // one (pyro-dom builds a new wrapper by moving children into it before inserting it).
         let under_display_none = self.is_under_display_none(parent_id);
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
@@ -1136,7 +1136,7 @@ impl DocumentMutator<'_> {
             child.parent = Some(parent_id);
             let child = &mut self.doc.nodes[child_id];
             // A moved or re-attached subtree keeps its styles, but everything above it changed.
-            // lightningpanda: a move within the same parent changed no ancestor (see
+            // pyro: a move within the same parent changed no ancestor (see
             // `same_parent_moves`).
             if new_parent_is_in_document
                 && child.primary_styles().is_some()
@@ -1156,7 +1156,7 @@ impl DocumentMutator<'_> {
                 );
             }
 
-            // lightningpanda: Stylo keeps no style data under a `display: none` element (it drops
+            // pyro: Stylo keeps no style data under a `display: none` element (it drops
             // it when an element becomes one, `clear_descendant_data`, and never visits the
             // children of one), but a moved element kept its own: styles, inline layout and the
             // flags built from them, which no pass would replace. Under a `display: none` element
@@ -1188,7 +1188,7 @@ impl DocumentMutator<'_> {
                 self.process_removed_subtree(child_id);
             }
         }
-        // lightningpanda: the `:has()` anchors that can see the new positions,
+        // pyro: the `:has()` anchors that can see the new positions,
         // once every child is linked (a sibling inserted with it counts).
         if new_parent_is_in_document {
             for &child_id in child_ids {
@@ -1226,7 +1226,7 @@ impl DocumentMutator<'_> {
         self.maybe_record_node(parent_id);
     }
 
-    /// lightningpanda: whether `node_id` is or is inside a `display: none` element: the nearest
+    /// pyro: whether `node_id` is or is inside a `display: none` element: the nearest
     /// styled element from it up says so (the elements below one have no styles; an element not
     /// styled yet below a shown one will be).
     fn is_under_display_none(&self, node_id: NodeId) -> bool {
@@ -1491,10 +1491,10 @@ impl<'doc> DocumentMutator<'doc> {
                 _ if has_custom_widget => {}
                 "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                 "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
-                // lightningpanda: a `<video>` paints its poster image (no
+                // pyro: a `<video>` paints its poster image (no
                 // video frame is ever decoded).
                 "video" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
-                // lightningpanda: an image button is replaced content showing
+                // pyro: an image button is replaced content showing
                 // its `src` image, so it loads like `<img>` (and is a form
                 // control like any other input).
                 "input" if crate::layout::replaced::is_image_input(element) => {
@@ -1706,7 +1706,7 @@ impl<'doc> DocumentMutator<'doc> {
 
     fn load_image(&mut self, target_id: NodeId) {
         let node = &self.doc.nodes[target_id];
-        // lightningpanda: a `<video>`'s image is its poster; without one it
+        // pyro: a `<video>`'s image is its poster; without one it
         // paints nothing.
         let is_video = node
             .element_data()
@@ -1882,18 +1882,18 @@ impl<'doc> DocumentMutator<'doc> {
     }
 }
 
-/// lightningpanda: attributes whose value is element state
-/// ([`ElementData::sync_lp_attribute_state`]): lp-dom's `state` tokens and an
+/// pyro: attributes whose value is element state
+/// ([`ElementData::sync_lp_attribute_state`]): pyro-dom's `state` tokens and an
 /// `<option>`'s `selected`.
 fn is_state_attribute(element: &QualName, name: &QualName) -> bool {
-    (&*name.ns == crate::LP_STATE_NS && &*name.local == "state")
+    (&*name.ns == crate::PYRO_STATE_NS && &*name.local == "state")
         || (element.local == local_name!("option") && name.local == local_name!("selected"))
 }
 
-/// lightningpanda: lp-dom's `urn:x-lightningpanda:state` `state` attribute.
+/// pyro: pyro-dom's `urn:x-pyro:state` `state` attribute.
 #[inline]
 fn is_lp_state(name: &QualName) -> bool {
-    &*name.local == "state" && &*name.ns == crate::LP_STATE_NS
+    &*name.local == "state" && &*name.ns == crate::PYRO_STATE_NS
 }
 
 /// Set 'checked' state on an input based on given attributevalue
@@ -2694,12 +2694,12 @@ mod test {
         }
     }
 
-    /// lightningpanda: the top layer follows `top-layer=N` state tokens by
+    /// pyro: the top layer follows `top-layer=N` state tokens by
     /// rank (re-ranking, leaving, many entries) and forgets dropped elements.
     #[test]
     fn top_layer_follows_state_tokens_and_drops() {
         use markup5ever::{LocalName, Namespace, QualName};
-        let state = || QualName::new(None, Namespace::from(crate::LP_STATE_NS), LocalName::from("state"));
+        let state = || QualName::new(None, Namespace::from(crate::PYRO_STATE_NS), LocalName::from("state"));
         let mut document = BaseDocument::new(DocumentConfig::default());
         let ids: Vec<_> = {
             let mut mutator = document.mutate();
@@ -3450,7 +3450,7 @@ mod test {
     }
 }
 
-/// lightningpanda: child-list restyle hints are narrowed to what selector
+/// pyro: child-list restyle hints are narrowed to what selector
 /// flags say can change (a move within one parent keeps its ancestors; only
 /// the neighbour whose edge status flipped is restyled for
 /// `:first-child`/`:last-child`; text children alone restyle nothing). The

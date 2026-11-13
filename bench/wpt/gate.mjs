@@ -65,8 +65,8 @@ function gitRevision(dir) {
 // ---------- run ----------
 function run() {
   const wpt = opt('--wpt', process.env.WPT_DIR);
-  const bin = opt('--bin', process.env.LIGHTNINGPANDA_BIN);
-  if (!wpt || !bin) throw new Error('run needs --wpt DIR (or WPT_DIR) and --bin PATH (or LIGHTNINGPANDA_BIN)');
+  const bin = opt('--bin', process.env.PYRO_BIN);
+  if (!wpt || !bin) throw new Error('run needs --wpt DIR (or WPT_DIR) and --bin PATH (or PYRO_BIN)');
   let baseline = readBaseline();
   const rev = gitRevision(wpt);
   if (baseline && rev && rev !== baseline.wpt.revision) {

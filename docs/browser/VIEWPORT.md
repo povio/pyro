@@ -1,6 +1,6 @@
 # Persistent viewport metrics
 
-`Browser::set_viewport(PageId, lp_dom::media::Viewport)` applies the full native
+`Browser::set_viewport(PageId, pyro_dom::media::Viewport)` applies the full native
 viewport to the current PageDom and keeps it for document replacements. New
 main and isolated worlds see these values before init scripts. Sibling pages
 are independent. `Page::viewport()` returns the persistent state so protocol

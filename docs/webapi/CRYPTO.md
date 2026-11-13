@@ -16,7 +16,7 @@ provides:
 ## SubtleCrypto
 
 `digest` runs natively (crypto.rs). The other operations run in
-`crates/lp-webapi/src/subtle.js` (WebIDL conversions, algorithm
+`crates/pyro-webapi/src/subtle.js` (WebIDL conversions, algorithm
 normalization and the per-algorithm steps of the Web Crypto API) over the
 byte primitives of `crypto_subtle.rs` (RustCrypto: `aes`, `ghash`, `aes-kw`,
 `hmac`, `pbkdf2`, `hkdf`, `p256`/`p384`/`p521`, `ed25519-dalek`,
@@ -61,7 +61,7 @@ no `alg`, Ed25519 JWKs carry `alg: "Ed25519"`.
 
 ## RSA implementation
 
-RSA is implemented in `crates/lp-webapi/src/crypto_subtle/rsa.rs` on
+RSA is implemented in `crates/pyro-webapi/src/crypto_subtle/rsa.rs` on
 `crypto-bigint` 0.7 (constant-time big integers) and `crypto-primes` 0.7
 (key generation), with the `pkcs1`/`pkcs8` crates for DER. We do not use the
 `rsa` crate: every release, including the 0.10 release candidates, carries

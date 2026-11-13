@@ -253,7 +253,7 @@ pub fn set_port(url: &mut Url, new_port: &str) -> Result<(), ()> {
         if !url.has_host() || url.host() == Some(Host::Domain("")) || scheme == "file" {
             return Err(());
         }
-        // lightningpanda: only the empty string clears the port. A value that is empty
+        // pyro: only the empty string clears the port. A value that is empty
         // once tabs and newlines are removed, or starts with a non-digit, changes nothing.
         if new_port.is_empty() {
             url.set_port_internal(None);
@@ -295,7 +295,7 @@ pub fn set_pathname(url: &mut Url, new_pathname: &str) {
         url.set_path(new_pathname)
     } else if SchemeType::from(url.scheme()).is_special()
         || !new_pathname.is_empty()
-        // lightningpanda: an empty path is kept only with a host, even an empty one
+        // pyro: an empty path is kept only with a host, even an empty one
         // (`foo://`); a null host means no authority.
         || !url.has_authority()
     {

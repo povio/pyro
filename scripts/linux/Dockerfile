@@ -1,4 +1,4 @@
-# Linux build environment for lightningpanda: patched JSCOnly (scripts/jsc/build.sh)
+# Linux build environment for pyro: patched JSCOnly (scripts/jsc/build.sh)
 # and the Rust workspace. Used by scripts/linux/build.sh; CI runs the same
 # scripts/linux/setup.sh on its Ubuntu runners.
 FROM ubuntu:24.04

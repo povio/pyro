@@ -3,8 +3,8 @@
 2026-10-27T10:26:40.310Z on Apple M1 Max (10 CPUs, darwin 27.0.0), 5 round(s), scale 1.
 Load average at start 14.62/14.60/18.52, at end 16.75/15.37/18.53.
 
-- **a**: `/Users/xban1x/Povio/lp-cdp-perf-wt/target/release/lightningpanda` sha256 `a26f6a1f0cc4748b`, startup median 6.820 ms
-- **b**: `/Users/xban1x/Povio/lp-cdp-perf-wt/target/release/lightningpanda` sha256 `a26f6a1f0cc4748b`, startup median 6.752 ms
+- **a**: `/Users/xban1x/Povio/pyro-cdp-perf-wt/target/release/pyro` sha256 `a26f6a1f0cc4748b`, startup median 6.820 ms
+- **b**: `/Users/xban1x/Povio/pyro-cdp-perf-wt/target/release/pyro` sha256 `a26f6a1f0cc4748b`, startup median 6.752 ms
 
 Times are milliseconds per sample (median, p90 over all rounds); `rsd` is the robust relative spread; `cpu/op` is browser CPU per operation.
 

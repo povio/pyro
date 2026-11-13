@@ -1,9 +1,9 @@
 name: PGO build (macOS arm64)
 description: >-
-  The release browser built by scripts/pgo/build.sh with LP_PGO_LLVM and LP_PGO_LTO=1:
+  The release browser built by scripts/pgo/build.sh with PYRO_PGO_LLVM and PYRO_PGO_LTO=1:
   Rust and JavaScriptCore optimized by one training run (bench/scripts/cdp-perf.mjs, serve and
   serve --fork), the JavaScriptCore archive as ThinLTO bitcode. Output:
-  target/aarch64-apple-darwin/release-pgo/lightningpanda.
+  target/aarch64-apple-darwin/release-pgo/pyro.
 
 inputs:
   cargo-args:
@@ -71,9 +71,9 @@ runs:
         CARGO_ARGS: ${{ inputs.cargo-args }}
         # 3 CPUs and 7 GB of memory; about 3 GB per JavaScriptCore compile job.
         JOBS: '2'
-        LP_PGO_LTO: '1'
+        PYRO_PGO_LTO: '1'
       run: |
-        export LP_PGO_LLVM="$HOME/llvm-pgo"
+        export PYRO_PGO_LLVM="$HOME/llvm-pgo"
         # shellcheck disable=SC2086
         scripts/pgo/build.sh $CARGO_ARGS
         df -h .

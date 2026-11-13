@@ -92,7 +92,7 @@ compatibility claim; no TOS fixture or assertion was changed for this work.
 
 ## Regression coverage
 
-`crates/lp-cdp/tests/engine_cdp/frames.rs` exercises real browser documents:
+`crates/pyro-cdp/tests/engine_cdp/frames.rs` exercises real browser documents:
 opaque sandbox srcdoc, native owner/DOM identity, stale handles, sibling-safe
 navigation/removal, late lifecycle replay, HTTP document/fetch response routing,
 per-frame body cleanup, Fetch fulfillment and detach cancellation, concurrent

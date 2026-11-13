@@ -1,0 +1,16 @@
+diff --git a/Source/JavaScriptCore/runtime/ScriptExecutable.cpp b/Source/JavaScriptCore/runtime/ScriptExecutable.cpp
+--- a/Source/JavaScriptCore/runtime/ScriptExecutable.cpp
++++ b/Source/JavaScriptCore/runtime/ScriptExecutable.cpp
+@@ -249,8 +249,12 @@
+     return false;
+ }
+ 
+ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunction* function, JSScope* scope)
+ {
++    // Pyro's bootstrap JS runs at realm setup, in every realm: tiering it up costs more
++    // than it can earn before the realm goes away. Baseline JIT and LLInt still run it.
++    if (source().provider() && source().provider()->sourceURL().startsWith("lightpanda://internal/"_s))
++        setNeverOptimize(true);
+     VM& vm = scope->vm();
+     auto throwScope = DECLARE_THROW_SCOPE(vm);
+ 

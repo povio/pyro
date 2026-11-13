@@ -2,8 +2,8 @@
 
 XPath 1.0 evaluation for `document.evaluate`, `document.createExpression`,
 `document.createNSResolver`, `XPathEvaluator`, `XPathExpression` and
-`XPathResult`. The engine is `lp_dom::xpath` (pure Rust over the `Dom`
-store); the bindings are in `crates/lp-webapi/src/xpath.rs`. Both are ported
+`XPathResult`. The engine is `pyro_dom::xpath` (pure Rust over the `Dom`
+store); the bindings are in `crates/pyro-webapi/src/xpath.rs`. Both are ported
 from upstream `src/browser/xpath/*.zig` and
 `src/browser/webapi/XPath{Result,Expression,Evaluator}.zig`.
 
@@ -89,12 +89,12 @@ Deviations:
   lowercasing, stubs `lang()`/`namespace-uri()`, never invalidates
   iterators, and throws `InvalidStateError` for type mismatches.
 
-Tests: engine tests in `crates/lp-dom/tests/xpath.rs` (the 91-case upstream
+Tests: engine tests in `crates/pyro-dom/tests/xpath.rs` (the 91-case upstream
 conformance battery, axes/document order, namespaces, functions, errors,
 20,000-deep trees, 100,000-term operator chains on a small stack,
 multi-context steps over 3,000 rows) and unit tests in
-`crates/lp-dom/src/xpath/`; JS-level tests `xpath_*` in
-`crates/lp-webapi/tests/dom_js.rs` (including iterators surviving
+`crates/pyro-dom/src/xpath/`; JS-level tests `xpath_*` in
+`crates/pyro-webapi/tests/dom_js.rs` (including iterators surviving
 checkbox clicks/focus), including the
 Playwright `xpath=` locator shape
 (`ancestor::div[contains(@class, 'h-[2.625rem]')][1]` with

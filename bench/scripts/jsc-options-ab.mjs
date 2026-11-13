@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-// A/B of process environments (JSC_* options, LIGHTNINGPANDA_* switches) on SPA page loads: what each costs in
+// A/B of process environments (JSC_* options, PYRO_* switches) on SPA page loads: what each costs in
 // instructions and CPU time (every thread of the process, JSC's helpers included) and what it holds in memory.
 //
-//   bun scripts/jsc-options-ab.mjs --bin /abs/lightningpanda --spa /abs/dist --sampler /abs/rss-sampler
+//   bun scripts/jsc-options-ab.mjs --bin /abs/pyro --spa /abs/dist --sampler /abs/rss-sampler
 //       [--fork] [--rounds 3] [--pages 5] [--out file.json] [--stderr dir] [--quiet-ms 800] [--hold-ms 0] [--no-sw]
 //       --variant base --variant nocjit:JSC_useConcurrentJIT=false --variant both:JSC_a=1,JSC_b=2 ...
 //       [--variant other@/abs/other-binary[:K=V,...]]
@@ -28,8 +28,8 @@
 // the page open (at once and after 1.2 s), after the closes, after the disconnect, and the peak RSS (20 ms
 // samples).
 //
-// --fork: one connection per page, so one forked process per page, as lightningpanda-test drives it. Per
-// page: the child's own account at its last step (LIGHTNINGPANDA_FORK_STATS: instructions, CPU, faults,
+// --fork: one connection per page, so one forked process per page, as pyro-test drives it. Per
+// page: the child's own account at its last step (PYRO_FORK_STATS: instructions, CPU, faults,
 // footprint) and the kernel's at its reaping (peak RSS, CPU with the exit). Tree RSS / footprint with the last
 // page open.
 import { spawn, execFileSync } from 'node:child_process';
@@ -114,7 +114,7 @@ async function loadSpa(browser) {
 async function round(variant, index) {
   const port = await freePort();
   const stats = FORK ? path.join(os.tmpdir(), `jsc-ab-${process.pid}-${Date.now()}.jsonl`) : null;
-  const env = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', ...variant.env, ...(stats ? { LIGHTNINGPANDA_FORK_STATS: stats } : {}) };
+  const env = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', ...variant.env, ...(stats ? { PYRO_FORK_STATS: stats } : {}) };
   const child = spawn(variant.bin, ['serve', '--host', '127.0.0.1', '--port', String(port), ...FLAGS, ...(FORK ? ['--fork'] : [])], { stdio: ['ignore', 'ignore', STDERR ? fs.openSync(path.join(STDERR, `${variant.label}-r${index + 1}.err`), 'w') : 'ignore'], detached: true, env });
   const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
   process.on('exit', kill);

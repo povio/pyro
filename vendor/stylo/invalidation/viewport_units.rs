@@ -33,7 +33,7 @@ where
         return false;
     }
 
-    // lightningpanda: an element not styled yet (Blitz gives every element its
+    // pyro: an element not styled yet (Blitz gives every element its
     // data up front) has nothing to invalidate: its first styling uses the
     // new viewport. `viewport_unit_usage` unwraps the primary style.
     if data.styles.get_primary().is_none() {

@@ -10,16 +10,16 @@
 # unoptimized.
 #
 # Every process writes a profile of its own: LLVM_PROFILE_FILE names the server's by pid (%p) and
-# a forked process names its own (crates/lp-cdp/src/pgo_training.rs). When a run's processes are
+# a forked process names its own (crates/pyro-cdp/src/pgo_training.rs). When a run's processes are
 # gone, its files are merged into a part, skipping any whose process was killed while it wrote
 # (cdp-perf SIGKILLs a server that outlives its SIGTERM by 3 s, fork mode a retired template
 # after 500 ms); the count is printed. One file shared by all processes (`%m`) would not survive
 # that: a single truncated write loses the whole profile.
 #
-# LP_PGO_EXTRA=<script>: one more workload, for an application's own (E2E suite, PDF templates):
-# it runs with LP_WS=ws://127.0.0.1:<LP_PGO_PORT, default 9333> (a plain `serve` of the
-# instrumented binary) and LP_BIN=<instrumented binary> for processes of its own.
-# LP_PGO_EXTRA_WEIGHT (default 1) multiplies its counts in the merge: one page load counts for
+# PYRO_PGO_EXTRA=<script>: one more workload, for an application's own (E2E suite, PDF templates):
+# it runs with PYRO_WS=ws://127.0.0.1:<PYRO_PGO_PORT, default 9333> (a plain `serve` of the
+# instrumented binary) and PYRO_BIN=<instrumented binary> for processes of its own.
+# PYRO_PGO_EXTRA_WEIGHT (default 1) multiplies its counts in the merge: one page load counts for
 # little against cdp-perf's loops (the ToS SPA measurement in Cargo.toml weighted it 10).
 #
 # Needs bun; bench/node_modules (playwright-core) is installed from bench/bun.lock if missing.
@@ -71,9 +71,9 @@ for mode in plain fork; do
 done
 
 inputs=("$PGO_DIR"/part-cdp-plain.profdata "$PGO_DIR"/part-cdp-fork.profdata)
-if [[ -n "${LP_PGO_EXTRA:-}" ]]; then
-    echo "== extra: $LP_PGO_EXTRA"
-    port="${LP_PGO_PORT:-9333}"
+if [[ -n "${PYRO_PGO_EXTRA:-}" ]]; then
+    echo "== extra: $PYRO_PGO_EXTRA"
+    port="${PYRO_PGO_PORT:-9333}"
     "$PGO_BIN" serve --host 127.0.0.1 --port "$port" --log-level error &
     serve=$!
     trap 'kill -TERM $serve 2>/dev/null || true' EXIT
@@ -82,12 +82,12 @@ if [[ -n "${LP_PGO_EXTRA:-}" ]]; then
         kill -0 $serve 2>/dev/null || { echo "serve exited" >&2; exit 1; }
         sleep 0.1
     done
-    LP_WS="ws://127.0.0.1:$port" LP_BIN="$PGO_BIN" "$LP_PGO_EXTRA"
+    PYRO_WS="ws://127.0.0.1:$port" PYRO_BIN="$PGO_BIN" "$PYRO_PGO_EXTRA"
     kill -TERM $serve
     wait $serve || true
     trap - EXIT
     part extra
-    inputs+=(--weighted-input="${LP_PGO_EXTRA_WEIGHT:-1},$PGO_DIR/part-extra.profdata")
+    inputs+=(--weighted-input="${PYRO_PGO_EXTRA_WEIGHT:-1},$PGO_DIR/part-extra.profdata")
 fi
 
 "$PROFDATA" merge -o "$MERGED" "${inputs[@]}"

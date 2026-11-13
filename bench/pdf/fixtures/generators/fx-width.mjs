@@ -33,7 +33,7 @@ for (const [pn, [w, h]] of Object.entries(PAPERS)) for (const m of [0, 0.4, 0.5]
   cases.push({ name: `vh100|${n}`, opts: o, html: `<!doctype html><body style="${base}"><div style="height:100vh"><a href="https://x.test/v" style="display:block;height:100%"></a></div>${line}` });
   cases.push({ name: `vw100|${n}`, opts: o, html: `<!doctype html><body style="${base}"><a href="https://x.test/w" style="display:block;width:100vw;height:10px"></a><a href="https://x.test/p" style="display:block;width:100%;height:10px"></a>${line}` });
 }
-// Link rects for lp-render's tests: a block at 50% of the content, and an absolute box at 50% of the initial containing block.
+// Link rects for pyro-render's tests: a block at 50% of the content, and an absolute box at 50% of the initial containing block.
 for (const [pn, [w, h], m, s] of [['A4', [8.27, 11.69], 0, 1], ['A4', [8.27, 11.69], 0.4, 1], ['Letter', [8.5, 11], 0.4, 1], ['Letter', [8.5, 11], 0.4, 0.8], ['A4', [8.27, 11.69], 0, 1.5]]) {
   const opts = { paperWidth: w, paperHeight: h, marginTop: m, marginBottom: m, marginLeft: m, marginRight: m, scale: s };
   const link = (st) => `<!doctype html><body style="margin:0"><a href="https://x.test/l" style="display:block;height:10px;${st}"></a>`;

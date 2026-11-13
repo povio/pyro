@@ -22,13 +22,13 @@ after duplicate blur commits".** The rewrite fails at the test's first
 `page.goBack()`:
 
 ```
-page.goBack: Protocol error (Page.getNavigationHistory): Page.getNavigationHistory is not supported by lightningpanda
+page.goBack: Protocol error (Page.getNavigationHistory): Page.getNavigationHistory is not supported by pyro
 ```
 
 - Upstream passes the case on the same fixture.
 - Playwright implements `goBack` and `goForward` with `Page.getNavigationHistory`
-  and `Page.navigateToHistoryEntry`. On `6e44bcd`, lp-cdp rejected both as
-  unsupported. lp-browser also fired no `popstate` on traversal.
+  and `Page.navigateToHistoryEntry`. On `6e44bcd`, pyro-cdp rejected both as
+  unsupported. pyro-browser also fired no `popstate` on traversal.
 - This failure is caused by a missing protocol method; it is not a timing or
   test problem.
 - The fix is in draft PR #82 (head `3f9b73d`). That PR is not in `6e44bcd`, so this
@@ -74,7 +74,7 @@ repeated, and main `6e44bcd` was run as a control on the same host.
     not run there, because the host lock stayed busy and the local setup became
     ready first.
 - **Fixture:** a fresh `git worktree add --detach` at the TOS commit
-  (`/private/tmp/lp-w3-lfix-1`), then `bun install --frozen-lockfile`. All four
+  (`/private/tmp/pyro-w3-lfix-1`), then `bun install --frozen-lockfile`. All four
   runs reused it. Before each run, the e2e tree was checked unchanged and the
   manifest hash was rechecked.
 - **Template preparation:** identical to W2's host. The baseline snapshot's
@@ -99,7 +99,7 @@ password. At the user's request, PostgreSQL runs in Docker:
 - The TOS source, tests, authentication, assertions and manifest are unchanged.
   `CI` is not set.
 - The full setup handoff is kept on the W3 host
-  (`~/.local/share/lp-w3-tos-setup/SETUP.md`).
+  (`~/.local/share/pyro-w3-tos-setup/SETUP.md`).
 
 Upstream was not re-run on the W3 host: no pinned upstream binary is available
 there yet. The upstream baseline for W3-01 and W3-02 remains the W2-host runs
@@ -142,15 +142,15 @@ their own and must not be added to another binary's results.
   - Signing: ad hoc, linker-signed, with no entitlements (no `allow-jit`).
     JIT behaviour was not measured separately.
 - **Fixture:** one fresh `git worktree add --detach` at the TOS commit
-  (`/private/tmp/lp-w3-fixture-1`), then `bun install --frozen-lockfile`.
+  (`/private/tmp/pyro-w3-fixture-1`), then `bun install --frozen-lockfile`.
   - W3-01 ran on it first.
   - W3-02 and both upstream runs reused it. This reuse is disclosed; the e2e
     tree and manifest were checked as above.
-- **Setup:** the same harness and conventions as W2's batches (`lp-tos-mkrun.sh`).
+- **Setup:** the same harness and conventions as W2's batches (`pyro-tos-mkrun.sh`).
   - `bun --no-orphans scripts/run-fe-e2e.mjs run --config playwright.routed.config.ts <files>`,
     with the documented direct-lane version-gate bypass.
   - One Playwright worker, `E2E_ROUTING_ENGINE=lightpanda`.
-  - Native PostgreSQL 17 with the `lp_bench` role and a per-run slug and
+  - Native PostgreSQL 17 with the `pyro_bench` role and a per-run slug and
     template database.
   - Backend test token into localStorage, not UI login. Authentication and
     assertions are unchanged.
@@ -173,7 +173,7 @@ their own and must not be added to another binary's results.
   | `w3b02` | 49.6 s | 17.8 s |
   | `w3b02u` | 37.6 s | 12.6 s |
 
-- **Artifacts:** on the TOS host in `/private/tmp/lp-w3-b01`, `-b01u`, `-b02`
+- **Artifacts:** on the TOS host in `/private/tmp/pyro-w3-b01`, `-b01u`, `-b02`
   and `-b02u`; copies are with worker 3. Each holds `coverage.log`, the
   Playwright JSON, metadata and the database lists.
 

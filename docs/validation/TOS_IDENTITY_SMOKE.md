@@ -20,10 +20,10 @@ or browser performance improvement is claimed.
   `scripts/run-fe-e2e.mjs` lane with `playwright.routed.config.ts` version gate bypass.
 
 Retained local artifacts on the baseline host:
-`/private/tmp/lp-tos-smoke-identity` (sanitized log/report, metadata, toolchain,
+`/private/tmp/pyro-tos-smoke-identity` (sanitized log/report, metadata, toolchain,
 pre/post statuses, exact command, DB ownership checks); exact browser checkout
-`/private/tmp/lp-tos-browser-identity`; TOS checkout
-`/private/tmp/lp-tos-f9f-identity-smoke`. Only the harness-generated PDF model
+`/private/tmp/pyro-tos-browser-identity`; TOS checkout
+`/private/tmp/pyro-tos-f9f-identity-smoke`. Only the harness-generated PDF model
 changed after execution. The sole leftover snapshot template was removed after
 checking its run prefix, owner and pre-run absence; the test role then owned zero
 DBs. Earlier a7dfe98 and 86ff4ee binaries/reports and the upstream baseline remain

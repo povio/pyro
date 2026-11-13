@@ -1,5 +1,5 @@
-// How Chrome (and optionally Lightningpanda) places page boxes on paper.
-//   bun placement.mjs <work dir> <out.json> [lightningpanda binary]
+// How Chrome (and optionally Pyro) places page boxes on paper.
+//   bun placement.mjs <work dir> <out.json> [pyro binary]
 // Prints every document on every paper: MediaBox, pages, Chrome's first transform and clip of page 1, and the
 // ink box (pt) of a 50 x 20 px black box at (100, 100) in the page. Also the 300 dpi page size of whole-point papers.
 import { execFileSync, spawn } from 'node:child_process';

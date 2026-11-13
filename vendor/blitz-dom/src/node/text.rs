@@ -45,18 +45,18 @@ pub struct TextLayout {
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
     pub content_box_subpixel_offset: taffy::Point<f32>,
-    /// lightningpanda: the min-content and max-content widths of the shaped text, part of the
+    /// pyro: the min-content and max-content widths of the shaped text, part of the
     /// build (`build_inline_layout_into`) when no in-flow inline box takes part in them (each
     /// layout sizes those). With no text indent they are the layout's content widths
     /// (`Layout::calculate_content_widths`, which walks every cluster): every width the text is
     /// measured or laid out at reads them instead.
     pub text_content_widths: Option<parley::layout::ContentWidths>,
-    /// lightningpanda: how far (device px) the content areas of the glyph runs
+    /// pyro: how far (device px) the content areas of the glyph runs
     /// reach outside their line boxes (see `BaseDocument::resolve_transforms`),
     /// measured by the first transform pass after the lines were last broken
     /// (or justified); `None` until then (breaking resets it).
     pub hit_reach: Option<f64>,
-    /// lightningpanda: the last alignment justified some lines.
+    /// pyro: the last alignment justified some lines.
     pub justified: bool,
 }
 

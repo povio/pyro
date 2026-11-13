@@ -1,13 +1,13 @@
 {
   "script_sha256": "be0f08614068f6493947d1aa800bdedc217fc61fc5e6404e93eb240dec7c695c",
-  "playwright": "/private/tmp/lp-tos-f9f-batch16-fx/node_modules/.bun/playwright@1.59.1/node_modules/playwright/package.json",
+  "playwright": "/private/tmp/pyro-tos-f9f-batch16-fx/node_modules/.bun/playwright@1.59.1/node_modules/playwright/package.json",
   "binaries": {
     "main-eabee486-r1": {
-      "path": "/private/tmp/lp-profile-main-eabee486/target/release/lightningpanda-jit",
+      "path": "/private/tmp/pyro-profile-main-eabee486/target/release/pyro-jit",
       "sha256": "66e7448e07666176e9650ba714cba04ecc570c65f6e6139ad5bd759f5b49ad88"
     },
     "candidate-9d33aa2": {
-      "path": "/private/tmp/lp-native-select-geometry/target/release/lightningpanda",
+      "path": "/private/tmp/pyro-native-select-geometry/target/release/pyro",
       "sha256": "72812cf38ef7e3b3aa476b67987e90d9f0b5875d27474163c020d0af436e166b"
     }
   },

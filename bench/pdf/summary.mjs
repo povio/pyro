@@ -17,14 +17,14 @@ const read = (f) => {
 };
 const tp = read('throughput.json') ?? {};
 const meta = read('meta.json') ?? {};
-const cmp = Object.fromEntries((read('compare-chrome-fixed-vs-lp-fixed.json') ?? []).map((r) => [r.case, r]));
+const cmp = Object.fromEntries((read('compare-chrome-fixed-vs-pyro-fixed.json') ?? []).map((r) => [r.case, r]));
 const ctl = Object.fromEntries((read('compare-chrome-base-vs-chrome-fixed.json') ?? []).map((r) => [r.case, r]));
 
 const med = (xs) => {
   const s = xs.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
   return s.length ? s[Math.floor((s.length - 1) / 2)] : NaN;
 };
-const engines = ['chrome-base', 'chrome-fixed', 'lp-fixed'];
+const engines = ['chrome-base', 'chrome-fixed', 'pyro-fixed'];
 const cases = [...new Set(rows.map((r) => r.case))];
 const get = (c, e) => rows.filter((r) => r.case === c && r.engine === e && !r.error);
 const f0 = (x) => (Number.isFinite(x) ? x.toFixed(0) : '–');
@@ -33,7 +33,7 @@ const pct = (x) => (x == null ? '–' : (100 * x).toFixed(1));
 
 const lines = [];
 lines.push(
-  '| case | pages C/L | paginate ms Cb/Cf/L | pdf ms Cb/Cf/L | total ms Cf/L | KB Cf/L | peak RSS MB Cf/L | pixel diff % mean/max | text overlap | LP overflow px |',
+  '| case | pages C/L | paginate ms Cb/Cf/L | pdf ms Cb/Cf/L | total ms Cf/L | KB Cf/L | peak RSS MB Cf/L | pixel diff % mean/max | text overlap | Pyro overflow px |',
 );
 lines.push('|---|---|---|---|---|---|---|---|---|---|');
 const agg = Object.fromEntries(engines.map((e) => [e, { paginate: [], pdf: [], total: [], bytes: [], rss: [] }]));
@@ -55,13 +55,13 @@ for (const c of cases) {
       return [e, v];
     }),
   );
-  const lp = m['lp-fixed'].lp;
+  const lp = m['pyro-fixed'].lp;
   const ov = lp?.pages?.length
     ? Math.max(...lp.pages.map((p) => Math.max(p.overflowRight, p.overflowBottom)))
     : NaN;
   const k = cmp[c];
   lines.push(
-    `| ${c}${m['lp-fixed'].err ? ' (LP error)' : ''} | ${m['chrome-fixed'].pages ?? '–'}/${m['lp-fixed'].pages ?? '–'} | ${f0(m['chrome-base'].paginate)}/${f0(m['chrome-fixed'].paginate)}/${f0(m['lp-fixed'].paginate)} | ${f0(m['chrome-base'].pdf)}/${f0(m['chrome-fixed'].pdf)}/${f0(m['lp-fixed'].pdf)} | ${f0(m['chrome-fixed'].total)}/${f0(m['lp-fixed'].total)} | ${f0(m['chrome-fixed'].bytes / 1024)}/${f0(m['lp-fixed'].bytes / 1024)} | ${mb(m['chrome-fixed'].rss)}/${mb(m['lp-fixed'].rss)} | ${pct(k?.meanRatio)}/${pct(k?.maxRatio)} | ${k?.textOverlap?.toFixed(3) ?? '–'} | ${f0(ov)} |`,
+    `| ${c}${m['pyro-fixed'].err ? ' (Pyro error)' : ''} | ${m['chrome-fixed'].pages ?? '–'}/${m['pyro-fixed'].pages ?? '–'} | ${f0(m['chrome-base'].paginate)}/${f0(m['chrome-fixed'].paginate)}/${f0(m['pyro-fixed'].paginate)} | ${f0(m['chrome-base'].pdf)}/${f0(m['chrome-fixed'].pdf)}/${f0(m['pyro-fixed'].pdf)} | ${f0(m['chrome-fixed'].total)}/${f0(m['pyro-fixed'].total)} | ${f0(m['chrome-fixed'].bytes / 1024)}/${f0(m['pyro-fixed'].bytes / 1024)} | ${mb(m['chrome-fixed'].rss)}/${mb(m['pyro-fixed'].rss)} | ${pct(k?.meanRatio)}/${pct(k?.maxRatio)} | ${k?.textOverlap?.toFixed(3) ?? '–'} | ${f0(ov)} |`,
   );
 }
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);

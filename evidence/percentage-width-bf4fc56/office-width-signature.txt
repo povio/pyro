@@ -1,5 +1,5 @@
-Executable=/private/tmp/lp-suite-20261019/lightningpanda-bf4fc56
-Identifier=lightningpanda-55e013dcba871a13-555549442dfcf07c727037cf89ced61929e38c75
+Executable=/private/tmp/pyro-suite-20261019/pyro-bf4fc56
+Identifier=pyro-55e013dcba871a13-555549442dfcf07c727037cf89ced61929e38c75
 Format=Mach-O thin (arm64)
 CodeDirectory v=20400 size=30689 flags=0x2(adhoc) hashes=947+7 location=embedded
 Hash type=sha256 size=32

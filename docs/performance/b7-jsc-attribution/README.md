@@ -9,14 +9,14 @@ function name does not identify a specific DOM receiver or Rust call site.
 ## Evidence and reproduction
 
 Input is the evidence-only commit
-[1a898d03bf533b9892bb7938e8f07900f38721ef](https://github.com/povio/lightningpanda/tree/1a898d03bf533b9892bb7938e8f07900f38721ef/evidence/b7-jsc-profile-lanes-2).
+[1a898d03bf533b9892bb7938e8f07900f38721ef](https://github.com/povio/pyro/tree/1a898d03bf533b9892bb7938e8f07900f38721ef/evidence/b7-jsc-profile-lanes-2).
 All 27 entries in its `SHA256SUMS` were verified before aggregation. The older
 `a1d841a` evidence has empty B/C profiles and is not an attribution input.
 
 Both B2 and C2 used the signed release diagnostic build
 `10571fe2b6efde29b417b9f0214e1fa63e82e89a`, SHA-256
 `d9bd2c8bcc1399323330946643dedc62cb8a46e4fc082989a26731451158dc96`,
-with `allow-jit`, `LP_DIAG_GRACEFUL_SIGTERM=1`, task/module tracing and the JSC
+with `allow-jit`, `PYRO_DIAG_GRACEFUL_SIGTERM=1`, task/module tracing and the JSC
 sampler enabled at a nominal 1 ms interval. The diagnostic code is not for merge.
 B2 disables the shared asset cache; C2 sets it to 64 MiB. Each completed the
 unchanged 13-case B7 selection on TOS `f9fde4aa0d` with 13/13 passing and zero

@@ -137,7 +137,7 @@ impl FontMetrics {
     }
 }
 
-/// lightningpanda: WebKit's and Chromium's (macOS) extra ascent for Times,
+/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 /// Helvetica and Courier, "to closely match the vertical metrics of their
 /// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
 /// (16px Helvetica: 2px, a 18px normal line instead of 16px). These are the
@@ -172,7 +172,7 @@ fn is_chromium_adjusted_family(font_ref: &skrifa::FontRef<'_>) -> bool {
         .any(|name| family.chars().eq(name.chars()))
 }
 
-/// lightningpanda: the font metrics of a shaped run, which depend on the font instance, the font
+/// pyro: the font metrics of a shaped run, which depend on the font instance, the font
 /// size and the variation location only. Computed once per such combination in a
 /// [`ShapedText`] (see [`ShapedText::push_run`]) and kept with the run's glyphs in the shaper's
 /// glyph cache, so a run shaped before costs no font parse.
@@ -240,7 +240,7 @@ pub struct ShapedText {
     glyphs: Vec<Glyph>,
     fonts: Vec<FontInstance>,
     normalized_coords: Vec<NormalizedCoord>,
-    /// lightningpanda: the metrics of the runs' fonts, one entry per font, size and variation
+    /// pyro: the metrics of the runs' fonts, one entry per font, size and variation
     /// location; a run of a combination seen before takes its entry.
     run_metrics: Vec<RunMetricsEntry>,
 }
@@ -395,7 +395,7 @@ impl ShapedText {
                 index
             });
 
-        // lightningpanda: the entry of this font, size and location in this text; the first run
+        // pyro: the entry of this font, size and location in this text; the first run
         // of a combination enters the metrics the caller shaped it with before, or computes them.
         // The table is the same whatever the caller had cached.
         let metrics = {

@@ -1878,22 +1878,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lightningpanda"
-version = "0.0.17"
-dependencies = [
- "libc",
- "lp-browser",
- "lp-cdp",
- "lp-js",
- "lp-media",
- "lp-net",
- "lp-render",
- "lp-runtime",
- "mimalloc",
- "serde_json",
-]
-
-[[package]]
 name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1925,267 +1909,6 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
-
-[[package]]
-name = "lp-browser"
-version = "0.0.17"
-dependencies = [
- "bytes",
- "http",
- "lp-dom",
- "lp-js",
- "lp-layout",
- "lp-media",
- "lp-net",
- "lp-render",
- "lp-runtime",
- "lp-webapi",
- "percent-encoding",
- "smallvec",
- "url",
-]
-
-[[package]]
-name = "lp-canvas"
-version = "0.0.17"
-dependencies = [
- "bytemuck",
- "image",
- "kurbo",
- "parley",
- "peniko",
- "png",
- "skrifa 0.44.0",
- "vello_cpu",
-]
-
-[[package]]
-name = "lp-cdp"
-version = "0.0.17"
-dependencies = [
- "bytes",
- "getrandom 0.3.4",
- "http",
- "libc",
- "lp-browser",
- "lp-cdp-protocol",
- "lp-dom",
- "lp-js",
- "lp-layout",
- "lp-net",
- "lp-render",
- "lp-runtime",
- "lp-webapi",
- "regress",
- "serde",
- "serde_json",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "lp-cdp-protocol"
-version = "0.0.17"
-dependencies = [
- "bytes",
- "http",
- "lp-net",
- "ryu-js",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "lp-dom"
-version = "0.0.17"
-dependencies = [
- "app_units",
- "cssparser",
- "encoding_rs",
- "euclid",
- "html5ever",
- "markup5ever",
- "precomputed-hash",
- "quick-xml",
- "regress",
- "rustc-hash 2.1.3",
- "selectors",
- "serde_json",
- "stylo",
- "stylo_dom",
- "stylo_static_prefs",
- "stylo_traits",
- "unicode-bidi",
- "url",
-]
-
-[[package]]
-name = "lp-js"
-version = "0.0.17"
-dependencies = [
- "libc",
- "lp-jsc-sys",
- "rustc-hash 2.1.3",
- "serde_json",
- "xxhash-rust",
-]
-
-[[package]]
-name = "lp-jsc-sys"
-version = "0.0.17"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "lp-layout"
-version = "0.0.17"
-dependencies = [
- "lp-dom",
- "lp-render",
- "rustc-hash 2.1.3",
- "serde_json",
- "stylo",
- "url",
-]
-
-[[package]]
-name = "lp-media"
-version = "0.0.17"
-dependencies = [
- "bytes",
- "libc",
- "openh264",
- "openh264-sys2",
- "opus-pure",
- "rav1d",
- "symphonia",
-]
-
-[[package]]
-name = "lp-net"
-version = "0.0.17"
-dependencies = [
- "base64 0.23.1",
- "brotli-decompressor 6.1.0",
- "bytes",
- "encoding_rs",
- "flate2",
- "getrandom 0.3.4",
- "h2",
- "http",
- "http-body-util",
- "httparse",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "lp-psl",
- "percent-encoding",
- "rustc-hash 2.1.3",
- "rustls",
- "sha1",
- "tokio",
- "tokio-rustls",
- "tower-service",
- "url",
- "webpki-roots",
- "zlib-rs",
-]
-
-[[package]]
-name = "lp-psl"
-version = "0.0.17"
-dependencies = [
- "psl",
-]
-
-[[package]]
-name = "lp-render"
-version = "0.0.17"
-dependencies = [
- "anyrender",
- "anyrender_vello",
- "anyrender_vello_cpu",
- "app_units",
- "blitz-dom",
- "blitz-html",
- "blitz-paint",
- "blitz-traits",
- "data-url",
- "image",
- "jpeg-encoder",
- "krilla",
- "kurbo",
- "lp-canvas",
- "lp-dom",
- "miniz_oxide 0.8.9",
- "parley",
- "peniko",
- "png",
- "roxmltree 0.20.0",
- "rustc-hash 2.1.3",
- "serde",
- "serde_json",
- "skrifa 0.42.1",
- "stylo",
- "stylo_dom",
- "stylo_taffy",
- "url",
- "xxhash-rust",
-]
-
-[[package]]
-name = "lp-runtime"
-version = "0.0.17"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "lp-webapi"
-version = "0.0.17"
-dependencies = [
- "aes",
- "aes-kw",
- "base64 0.23.1",
- "bytes",
- "crypto-bigint 0.7.10",
- "crypto-primes",
- "cssparser",
- "ed25519-dalek",
- "encoding_rs",
- "flate2",
- "getrandom 0.3.4",
- "ghash",
- "hkdf",
- "hmac",
- "kurbo",
- "lp-canvas",
- "lp-dom",
- "lp-js",
- "lp-layout",
- "lp-media",
- "lp-net",
- "lp-render",
- "lp-runtime",
- "markup5ever",
- "p256",
- "p384",
- "p521",
- "pbkdf2",
- "percent-encoding",
- "pkcs1",
- "pkcs8",
- "rand_core 0.6.4",
- "rustc-hash 2.1.3",
- "serde_json",
- "sha1",
- "sha2",
- "tokio",
- "url",
- "x25519-dalek",
-]
 
 [[package]]
 name = "malloc_size_of_derive"
@@ -2956,6 +2679,283 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "pyro"
+version = "0.0.17"
+dependencies = [
+ "libc",
+ "mimalloc",
+ "pyro-browser",
+ "pyro-cdp",
+ "pyro-js",
+ "pyro-media",
+ "pyro-net",
+ "pyro-render",
+ "pyro-runtime",
+ "serde_json",
+]
+
+[[package]]
+name = "pyro-browser"
+version = "0.0.17"
+dependencies = [
+ "bytes",
+ "http",
+ "percent-encoding",
+ "pyro-dom",
+ "pyro-js",
+ "pyro-layout",
+ "pyro-media",
+ "pyro-net",
+ "pyro-render",
+ "pyro-runtime",
+ "pyro-webapi",
+ "smallvec",
+ "url",
+]
+
+[[package]]
+name = "pyro-canvas"
+version = "0.0.17"
+dependencies = [
+ "bytemuck",
+ "image",
+ "kurbo",
+ "parley",
+ "peniko",
+ "png",
+ "skrifa 0.44.0",
+ "vello_cpu",
+]
+
+[[package]]
+name = "pyro-cdp"
+version = "0.0.17"
+dependencies = [
+ "bytes",
+ "getrandom 0.3.4",
+ "http",
+ "libc",
+ "pyro-browser",
+ "pyro-cdp-protocol",
+ "pyro-dom",
+ "pyro-js",
+ "pyro-layout",
+ "pyro-net",
+ "pyro-render",
+ "pyro-runtime",
+ "pyro-webapi",
+ "regress",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "pyro-cdp-protocol"
+version = "0.0.17"
+dependencies = [
+ "bytes",
+ "http",
+ "pyro-net",
+ "ryu-js",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pyro-dom"
+version = "0.0.17"
+dependencies = [
+ "app_units",
+ "cssparser",
+ "encoding_rs",
+ "euclid",
+ "html5ever",
+ "markup5ever",
+ "precomputed-hash",
+ "quick-xml",
+ "regress",
+ "rustc-hash 2.1.3",
+ "selectors",
+ "serde_json",
+ "stylo",
+ "stylo_dom",
+ "stylo_static_prefs",
+ "stylo_traits",
+ "unicode-bidi",
+ "url",
+]
+
+[[package]]
+name = "pyro-js"
+version = "0.0.17"
+dependencies = [
+ "libc",
+ "pyro-jsc-sys",
+ "rustc-hash 2.1.3",
+ "serde_json",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "pyro-jsc-sys"
+version = "0.0.17"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "pyro-layout"
+version = "0.0.17"
+dependencies = [
+ "pyro-dom",
+ "pyro-render",
+ "rustc-hash 2.1.3",
+ "serde_json",
+ "stylo",
+ "url",
+]
+
+[[package]]
+name = "pyro-media"
+version = "0.0.17"
+dependencies = [
+ "bytes",
+ "libc",
+ "openh264",
+ "openh264-sys2",
+ "opus-pure",
+ "rav1d",
+ "symphonia",
+]
+
+[[package]]
+name = "pyro-net"
+version = "0.0.17"
+dependencies = [
+ "base64 0.23.1",
+ "brotli-decompressor 6.1.0",
+ "bytes",
+ "encoding_rs",
+ "flate2",
+ "getrandom 0.3.4",
+ "h2",
+ "http",
+ "http-body-util",
+ "httparse",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "percent-encoding",
+ "pyro-psl",
+ "rustc-hash 2.1.3",
+ "rustls",
+ "sha1",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "url",
+ "webpki-roots",
+ "zlib-rs",
+]
+
+[[package]]
+name = "pyro-psl"
+version = "0.0.17"
+dependencies = [
+ "psl",
+]
+
+[[package]]
+name = "pyro-render"
+version = "0.0.17"
+dependencies = [
+ "anyrender",
+ "anyrender_vello",
+ "anyrender_vello_cpu",
+ "app_units",
+ "blitz-dom",
+ "blitz-html",
+ "blitz-paint",
+ "blitz-traits",
+ "data-url",
+ "image",
+ "jpeg-encoder",
+ "krilla",
+ "kurbo",
+ "miniz_oxide 0.8.9",
+ "parley",
+ "peniko",
+ "png",
+ "pyro-canvas",
+ "pyro-dom",
+ "roxmltree 0.20.0",
+ "rustc-hash 2.1.3",
+ "serde",
+ "serde_json",
+ "skrifa 0.42.1",
+ "stylo",
+ "stylo_dom",
+ "stylo_taffy",
+ "url",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "pyro-runtime"
+version = "0.0.17"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "pyro-webapi"
+version = "0.0.17"
+dependencies = [
+ "aes",
+ "aes-kw",
+ "base64 0.23.1",
+ "bytes",
+ "crypto-bigint 0.7.10",
+ "crypto-primes",
+ "cssparser",
+ "ed25519-dalek",
+ "encoding_rs",
+ "flate2",
+ "getrandom 0.3.4",
+ "ghash",
+ "hkdf",
+ "hmac",
+ "kurbo",
+ "markup5ever",
+ "p256",
+ "p384",
+ "p521",
+ "pbkdf2",
+ "percent-encoding",
+ "pkcs1",
+ "pkcs8",
+ "pyro-canvas",
+ "pyro-dom",
+ "pyro-js",
+ "pyro-layout",
+ "pyro-media",
+ "pyro-net",
+ "pyro-render",
+ "pyro-runtime",
+ "rand_core 0.6.4",
+ "rustc-hash 2.1.3",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "tokio",
+ "url",
+ "x25519-dalek",
+]
 
 [[package]]
 name = "quick-error"

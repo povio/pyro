@@ -3,10 +3,10 @@
     "sourceSha": "4168ac99eb68cab56fc9f733acde8cc8ecf9f218",
     "parentSha": null,
     "status": "",
-    "binary": "/private/tmp/lp-w3-lazy-baseline-4168ac9-bin/lightningpanda",
+    "binary": "/private/tmp/pyro-w3-lazy-baseline-4168ac9-bin/pyro",
     "sha256": "47eac6a5a20f832b8beef9cc2a60e5e846e71ff8af2b2e840f4cff8b364a86ef",
     "bytes": 12897840,
-    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/lp-w3-lazy-baseline-4168ac9-target /Users/povioserver/.cargo/bin/cargo build --locked --release -p lightningpanda (fresh, empty target dir)",
+    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/pyro-w3-lazy-baseline-4168ac9-target /Users/povioserver/.cargo/bin/cargo build --locked --release -p pyro (fresh, empty target dir)",
     "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
     "loadAverageBefore": [
       2.12841796875,
@@ -30,12 +30,12 @@
     "sourceSha": "0e52072bcb476469790d18a56c6e44fc2a70eae4",
     "parentSha": "4168ac99eb68cab56fc9f733acde8cc8ecf9f218",
     "status": "",
-    "binary": "/private/tmp/lp-w3-lazy-candidate-0e52072-bin/lightningpanda",
+    "binary": "/private/tmp/pyro-w3-lazy-candidate-0e52072-bin/pyro",
     "sha256": "773b253676e980bba9113d5ba8c1d49bba16ff0a0c61ff100344fdf8d0732083",
     "textSectionSha256": "960f5dea263e96b8381c5ca6c244b2b12d28290f2b0a1f6d9c94da306b94249b",
-    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/lp-w3-lazy-candidate-0e52072-target cargo build --locked --release -p lightningpanda (fresh, empty target dir; 131 crates)",
+    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/pyro-w3-lazy-candidate-0e52072-target cargo build --locked --release -p pyro (fresh, empty target dir; 131 crates)",
     "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
-    "focusedTest": "cargo test --locked --release -p lp-js --test lazy_interfaces: 7 passed",
+    "focusedTest": "cargo test --locked --release -p pyro-js --test lazy_interfaces: 7 passed",
     "loadAverageBefore": [
       2.4189453125,
       1.76171875,
@@ -46,7 +46,7 @@
       1.57568359375,
       1.66357421875
     ],
-    "rawResults": "/private/tmp/lp-w3-cpu-lazy-0e52072-3",
+    "rawResults": "/private/tmp/pyro-w3-cpu-lazy-0e52072-3",
     "sections": {
       "__TEXT,__text": "960f5dea263e96b8381c5ca6c244b2b12d28290f2b0a1f6d9c94da306b94249b",
       "__TEXT,__cstring": "52426ccd563d439591aa52d7c6651ce1bad5257c909684f0c662d96559381426",
@@ -57,8 +57,8 @@
   "harness": {
     "runnerSha256": "c70d5f2de867c5f39881a8606996a01c975eeaf377f9ee96391d686a8b550fc7",
     "samplerSha256": "7d31b30cab16622eda1333be012d1aa8fba2bbed6669b2e269c681725d198569",
-    "command": "NODE_PATH=<bench/node_modules> node bench/scripts/compare-resources.mjs --upstream <parent-bin> --upstream-sha 4168ac99eb68cab56fc9f733acde8cc8ecf9f218 --rewrite <candidate-bin> --rewrite-sha 0e52072bcb476469790d18a56c6e44fc2a70eae4 --sampler <rss-sampler> --out /private/tmp/lp-w3-cpu-lazy-0e52072-3 --samples 3 --navigations 50 --contexts 20 --idle-ms 10000 --retained-ms 2000",
+    "command": "NODE_PATH=<bench/node_modules> node bench/scripts/compare-resources.mjs --upstream <parent-bin> --upstream-sha 4168ac99eb68cab56fc9f733acde8cc8ecf9f218 --rewrite <candidate-bin> --rewrite-sha 0e52072bcb476469790d18a56c6e44fc2a70eae4 --sampler <rss-sampler> --out /private/tmp/pyro-w3-cpu-lazy-0e52072-3 --samples 3 --navigations 50 --contexts 20 --idle-ms 10000 --retained-ms 2000",
     "runnerExit": 0,
-    "rawResults": "/private/tmp/lp-w3-cpu-lazy-0e52072-3 (resources.json byte-identical copy here)"
+    "rawResults": "/private/tmp/pyro-w3-cpu-lazy-0e52072-3 (resources.json byte-identical copy here)"
   }
 }

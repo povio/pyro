@@ -18,10 +18,10 @@ TOS compatibility, an editing/autosave proof, or a performance comparison.
 - Native shared PostgreSQL with isolated run databases; unchanged direct-lane
   version gate bypass and backend test-token localStorage authentication.
 
-Sanitized artifacts are retained at `/private/tmp/lp-tos-smoke-clone`, including
+Sanitized artifacts are retained at `/private/tmp/pyro-tos-smoke-clone`, including
 metadata, exact command, binary hash/toolchain, report/log and database ownership
-checks. Binary checkout: `/private/tmp/lp-tos-browser-clone`. Fixture checkout:
-`/private/tmp/lp-tos-f9f-clone-smoke`. Both were clean before execution; afterward
+checks. Binary checkout: `/private/tmp/pyro-tos-browser-clone`. Fixture checkout:
+`/private/tmp/pyro-tos-f9f-clone-smoke`. Both were clean before execution; afterward
 only the fixture's generated PDF model changed. The sole leftover run template
 was removed after owner/prefix/preabsence verification; test-role database count
 was then zero. All prior pinned failures, including the [1/2 URL run](TOS_URL_SMOKE.md),

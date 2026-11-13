@@ -4,18 +4,18 @@
 # `cc` finds this file as `ld` through `-B scripts/macos/linker`. It links with
 # the toolchain's own ld, then re-signs linked executables ad hoc with
 # scripts/macos/jit.entitlements (com.apple.security.cs.allow-jit only), so
-# the system JavaScriptCore can use its JIT in `lightningpanda` and in test
+# the system JavaScriptCore can use its JIT in `pyro` and in test
 # binaries. Without the entitlement JSC silently runs interpreter-only.
 # The signature stays ad hoc, as the linker's own is; nothing else changes.
 # Dynamic libraries and bundles are left with the linker's signature.
 #
-# LP_LTO_LIBRARY=<LLVM release>/lib/libLTO.dylib (scripts/pgo, LP_PGO_LTO): ld
+# PYRO_LTO_LIBRARY=<LLVM release>/lib/libLTO.dylib (scripts/pgo, PYRO_PGO_LTO): ld
 # loads that libLTO instead of Xcode's, which cannot read a newer LLVM's
 # bitcode (the ThinLTO JavaScriptCore archive). Last on the line: cc passes
 # Xcode's with -lto_library too, and the last one counts.
 set -eu
-if [ -n "${LP_LTO_LIBRARY:-}" ]; then
-    xcrun ld "$@" -lto_library "$LP_LTO_LIBRARY"
+if [ -n "${PYRO_LTO_LIBRARY:-}" ]; then
+    xcrun ld "$@" -lto_library "$PYRO_LTO_LIBRARY"
 else
     xcrun ld "$@"
 fi

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "lightningpanda-playwright-suite",
+      "name": "pyro-playwright-suite",
       "dependencies": {
         "@playwright/test": "1.59.1",
       },

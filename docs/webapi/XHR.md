@@ -4,7 +4,7 @@ Each HTTP(S) request adds a Resource Timing entry (`xmlhttprequest`) to its
 document's timeline when it ends, a synchronous one too by the time `send()`
 returns (see `PERFORMANCE_TIMELINE.md`).
 
-`lp-webapi::register` registers `XMLHttpRequest`; installed realms expose the
+`pyro-webapi::register` registers `XMLHttpRequest`; installed realms expose the
 native EventTarget subclass. Request configuration and lifecycle state remain
 on the browser thread. Native network callbacks retain bounded byte buffers and
 queue page/request IDs to that thread. No browser/runtime source is changed by
@@ -13,7 +13,7 @@ this module.
 Use the same `page.net`, `PageHooks::remote_poster`, and exact
 `PageDom::set_request_context` frame/loader IDs as [fetch](FETCH.md).
 The destination is `Destination::Xhr`, with the native request ID preserved.
-Install browser `setTimeout` and `clearTimeout` **before** `lp_webapi::install`:
+Install browser `setTimeout` and `clearTimeout` **before** `pyro_webapi::install`:
 the binding captures those functions before page scripts can replace them.
 Nonzero timeouts require those timer functions. Changing `timeout` during a
 request reschedules it relative to the original `send` time; zero disables it.
@@ -98,16 +98,16 @@ Window-only checks do not apply: a synchronous request may carry a `timeout`
 ones with the worker's page.
 
 `blob:` URLs: `send()` and `fetch()` resolve the URL in the document's blob URL
-store (`URL.createObjectURL`) and hand the bytes to lp-net as
+store (`URL.createObjectURL`) and hand the bytes to pyro-net as
 `Request::blob`, which serves them per Fetch "scheme fetch": 200 with the
 blob's type and `Content-Length`, or for a single `Range` header 206 with
-`Content-Range` (`lp_net::range`); other methods, a revoked or another
+`Content-Range` (`pyro_net::range`); other methods, a revoked or another
 document's URL, and an unparsable or unsatisfiable range are network errors.
 HEAD of a `data:` URL has headers and no body.
 
 Document responses: `responseType = 'document'` and `responseXML` parse the
 final body once into an inert document. Any `*/xml` or `*+xml` MIME type (and a
-missing Content-Type) parses as XML with `lp_dom::xml` under its limits;
+missing Content-Type) parses as XML with `pyro_dom::xml` under its limits;
 malformed XML is null. `text/html` parses only for `responseType = 'document'`,
 with scripting disabled. Others are null.
 

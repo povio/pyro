@@ -203,7 +203,7 @@ impl BaseDocument {
         // Forced layouts (`getBoundingClientRect` and the like) never read
         // them, so a run of them builds the tree once, not once per resolve.
         self.paint_tree_dirty = true;
-        // lightningpanda: so are the hit bounds (`ensure_hit_overflow`).
+        // pyro: so are the hit bounds (`ensure_hit_overflow`).
         self.hit_overflow_dirty = true;
         timer.record_time("paint_tree");
         phase_profile::mark(6, &mut phase_t);
@@ -329,7 +329,7 @@ impl BaseDocument {
     /// The transforms and overflow of `node_id`'s subtree: what it adds to its
     /// parent's scrollable overflow, in the parent's coordinates.
     ///
-    /// lightningpanda: each box this pass computes again is flagged
+    /// pyro: each box this pass computes again is flagged
     /// `LayoutData::hit_stale`; the next hit test brings their hit bounds up
     /// to date (`ensure_hit_overflow`), so a run of forced layouts with no
     /// hit test in between pays nothing for them.
@@ -358,13 +358,13 @@ impl BaseDocument {
         let transform = self.nodes[node_id].set_transform(scale as f32);
         self.nodes[node_id].layout_data_mut().hit_stale = true;
 
-        // lightningpanda: the scrollable overflow starts at the padding box
+        // pyro: the scrollable overflow starts at the padding box
         // (CSS Overflow 3 2.2), not the border box.
         let mut overflow = padding_box(&layout, scale);
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 
-        // lightningpanda: a table's cells, transformed again only where its grid placed them or
+        // pyro: a table's cells, transformed again only where its grid placed them or
         // they changed since the last pass (`TableContext::placed`); the others' overflow stands.
         if let Some(cells_overflow) = self.table_cells_overflow(node_id, scale, resolve_all) {
             if let Some(cells_overflow) = cells_overflow {
@@ -389,7 +389,7 @@ impl BaseDocument {
                 continue;
             }
             let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all));
-            // lightningpanda: a box fixed to the viewport is not in the
+            // pyro: a box fixed to the viewport is not in the
             // document's scrollable overflow, whatever it reaches.
             if viewport_contains_fixed && self.is_fixed(child_id) {
                 continue;
@@ -406,7 +406,7 @@ impl BaseDocument {
             overflow = unite_overflow(overflow, child_rect_in_self);
         }
 
-        // lightningpanda: the lines of an inline formatting context are
+        // pyro: the lines of an inline formatting context are
         // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
         // a scroll container adds its end padding after them.
         if let Some((lines, true)) = self.line_bounds(node_id, &layout, scale) {
@@ -423,14 +423,14 @@ impl BaseDocument {
         placement((scaled_x, scaled_y), transform.as_ref())(contribution)
     }
 
-    /// lightningpanda: whether `node_id` is `position: fixed`.
+    /// pyro: whether `node_id` is `position: fixed`.
     fn is_fixed(&self, node_id: NodeId) -> bool {
         self.nodes[node_id]
             .primary_styles()
             .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed)
     }
 
-    /// lightningpanda: the box of the lines of `node_id`'s inline formatting
+    /// pyro: the box of the lines of `node_id`'s inline formatting
     /// context or text control (its own coordinates, device px; a scroll
     /// container's end padding added after them), and whether they reach
     /// anywhere (a width or a height). `None`: it lays out no lines.
@@ -485,7 +485,7 @@ impl BaseDocument {
         Some((lines, width > 0.0 || height > 0.0))
     }
 
-    /// lightningpanda: brings every box's hit bound (`LayoutData::hit_overflow`)
+    /// pyro: brings every box's hit bound (`LayoutData::hit_overflow`)
     /// up to date with the last resolve: the boxes the transform passes since
     /// the last call computed again (`LayoutData::hit_stale`) and their tables'
     /// per-row unions (`TableContext::row_hit_extents`). Hit testing calls
@@ -508,13 +508,13 @@ impl BaseDocument {
         }
     }
 
-    /// lightningpanda: whether a resolve ran since the hit bounds were last
+    /// pyro: whether a resolve ran since the hit bounds were last
     /// brought up to date (`ensure_hit_overflow`).
     pub fn hit_overflow_is_stale(&self) -> bool {
         self.hit_overflow_dirty
     }
 
-    /// lightningpanda: the hit bound of `node_id`'s subtree (see
+    /// pyro: the hit bound of `node_id`'s subtree (see
     /// `LayoutData::hit_overflow`), computed again for the boxes flagged
     /// `hit_stale`, and what it adds to its parent's, in the parent's
     /// coordinates. It walks the tree `resolve_transforms` walks: a box is
@@ -571,7 +571,7 @@ impl BaseDocument {
             hit = unite_hit(hit, child_hit);
         }
 
-        // lightningpanda: a glyph run's content area (whole-pixel ascent and
+        // pyro: a glyph run's content area (whole-pixel ascent and
         // descent around its baseline, its advance rounded up to a layout
         // unit) can reach outside the line boxes: a tight `line-height`,
         // hanging white space. Layout queries report an inline element's box
@@ -598,7 +598,7 @@ impl BaseDocument {
         placement((location.x, location.y), node.transform().as_deref())(hit)
     }
 
-    /// lightningpanda: what a box adds to its parent's scrollable overflow
+    /// pyro: what a box adds to its parent's scrollable overflow
     /// (its own coordinates): its border box, plus its own scrollable overflow
     /// on the axes it does not clip. A scroll container keeps its content's
     /// overflow to itself. (The same for its hit bound.)
@@ -620,7 +620,7 @@ impl BaseDocument {
         out
     }
 
-    /// lightningpanda: whether `node_id` is a `body` whose `overflow` applies
+    /// pyro: whether `node_id` is a `body` whose `overflow` applies
     /// to the viewport instead of to it (CSS Overflow 3 3.3): the root's is
     /// `visible`, and neither has containment.
     pub fn body_overflow_goes_to_viewport(&self, node_id: NodeId) -> bool {
@@ -645,7 +645,7 @@ impl BaseDocument {
 
     /// Ensure that the layout_children field is populated for all nodes
     pub fn resolve_layout_children(&mut self) {
-        // lightningpanda: the boxes that left a container's list this pass and that no container
+        // pyro: the boxes that left a container's list this pass and that no container
         // collected again are out of the layout tree, with what their subtrees built
         // (`BaseDocument::leave_layout_tree`).
         resolve_layout_children_recursive(self, self.root_node().id);
@@ -665,7 +665,7 @@ impl BaseDocument {
             let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
             let _flags = doc.nodes[node_id].flags;
 
-            // lightningpanda: a table whose rows or cells changed (their damage reaches it) updates
+            // pyro: a table whose rows or cells changed (their damage reaches it) updates
             // the rows that did and keeps its layout children; what it can't update is built again.
             let table_changed =
                 damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) || damage.contains(style::selector_parser::RestyleDamage::RELAYOUT);
@@ -719,7 +719,7 @@ impl BaseDocument {
                 collect_layout_children(doc, node_id, &mut collected);
                 let layout_children = collected.children;
 
-                // lightningpanda: the previous layout children leave the list
+                // pyro: the previous layout children leave the list
                 // (`Node::layout_child_of`); the new ones are entered below. A
                 // child already collected by another container this pass points
                 // there and is left alone. (Left after collecting: while it runs,
@@ -765,14 +765,14 @@ impl BaseDocument {
                 }
                 let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take();
                 if let Some(layout_children) = layout_children {
-                    // lightningpanda: a table whose cells it keeps visits the cells noted as changed
+                    // pyro: a table whose cells it keeps visits the cells noted as changed
                     // (`table::cells_to_visit`), not all of them.
                     let noted = crate::layout::table::cells_to_visit(doc, node_id);
                     for child_id in noted.as_deref().unwrap_or(&layout_children[..]).iter().copied() {
                         // Anonymous blocks and pseudo-elements can be removed from the
                         // slab between render passes; skip stale IDs.
                         let Some(child) = doc.nodes.get(child_id) else { continue };
-                        // lightningpanda: only the children on a damaged path are visited: a child
+                        // pyro: only the children on a damaged path are visited: a child
                         // whose subtree has no damage (and is still listed here) would return at
                         // the skip above without changing anything. A cell edit in a long table
                         // visits that cell, not its thousands of siblings.
@@ -794,7 +794,7 @@ impl BaseDocument {
         }
     }
 
-    /// lightningpanda: `clear_damage_and_dirty_flags` reached every node with damage: the walks
+    /// pyro: `clear_damage_and_dirty_flags` reached every node with damage: the walks
     /// that follow damage skip a subtree whose root's `damaged_descendants` flag is clear
     /// (`Node::has_no_damage_below`), so damage set without its flag would outlive the pass.
     #[cfg(debug_assertions)]
@@ -934,7 +934,7 @@ impl BaseDocument {
             None => initial_containing_block,
         };
 
-        // lightningpanda: same viewport and nothing damaged, so the last pass's layout stands.
+        // pyro: same viewport and nothing damaged, so the last pass's layout stands.
         let root = self.root_element();
         if self.last_layout_space == Some(available_space)
             && !root.has_damaged_descendants()
@@ -970,7 +970,7 @@ impl BaseDocument {
     }
 }
 
-/// lightningpanda: `overflow` with what a child adds to it. An empty rect (a
+/// pyro: `overflow` with what a child adds to it. An empty rect (a
 /// box of no width or no height, with nothing reaching out of it) adds nothing,
 /// wherever it is: a 2000 x 0 px box does not make a page scroll.
 impl BaseDocument {
@@ -996,7 +996,7 @@ impl BaseDocument {
         let again = placed
             .take_transform()
             .filter(|_| !resolve_all && placed.overflow.len() == cells && placed.overflow_scale == scale);
-        // lightningpanda: the next hit test brings these cells' hit contributions up to date
+        // pyro: the next hit test brings these cells' hit contributions up to date
         // (`table_cells_hit`).
         placed.transformed(again.as_deref(), cells);
         let mut overflow = std::mem::take(&mut placed.overflow);
@@ -1025,7 +1025,7 @@ impl BaseDocument {
         Some(united)
     }
 
-    /// lightningpanda: `table_cells_overflow` for the hit pass (`resolve_hit_overflow`): the union
+    /// pyro: `table_cells_overflow` for the hit pass (`resolve_hit_overflow`): the union
     /// of `table`'s cells' hit contributions (`unite_hit`), computed again for the cells the
     /// transform passes since the last hit pass visited, and the per-row unions
     /// (`TableContext::row_hit_extents`) of their rows.
@@ -1059,7 +1059,7 @@ impl BaseDocument {
             .filter(|cell| cell.width() > 0.0 || cell.height() > 0.0)
             .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))));
         let mut placed = ctx.placed.borrow_mut();
-        // lightningpanda: the union of the hit contributions per row (the
+        // pyro: the union of the hit contributions per row (the
         // cells originating in it: a hit-test bound of the row,
         // `TableContext::row_hit_extents`), for the rows of the cells
         // computed again only.
@@ -1100,7 +1100,7 @@ impl BaseDocument {
     }
 }
 
-/// lightningpanda: a box's padding box (its own coordinates, device px), where
+/// pyro: a box's padding box (its own coordinates, device px), where
 /// its scrollable overflow and hit bound start (CSS Overflow 3 2.2).
 fn padding_box(layout: &taffy::Layout, scale: f64) -> Rect {
     let w = layout.size.width as f64 * scale;
@@ -1114,7 +1114,7 @@ fn padding_box(layout: &taffy::Layout, scale: f64) -> Rect {
     )
 }
 
-/// lightningpanda: a box's rect in its parent: moved to `location`, through
+/// pyro: a box's rect in its parent: moved to `location`, through
 /// its `transform` (the bounding box), as `transform_rect_bbox` of the
 /// composed affine computes it (a translation alone adds the same values).
 fn placement(location: (f64, f64), transform: Option<&Affine>) -> impl Fn(Rect) -> Rect {
@@ -1125,7 +1125,7 @@ fn placement(location: (f64, f64), transform: Option<&Affine>) -> impl Fn(Rect) 
     }
 }
 
-/// lightningpanda: `hit` with what a child adds to it: as `unite_overflow`, but
+/// pyro: `hit` with what a child adds to it: as `unite_overflow`, but
 /// a rect of no area that has a width or a height counts (text overflowing
 /// sideways on lines of `line-height: 0`, a box of no width: hit testing finds
 /// what such a box holds, or the box itself).
@@ -1137,7 +1137,7 @@ fn unite_hit(hit: Rect, child: Rect) -> Rect {
     }
 }
 
-/// lightningpanda: how far (device px) the content areas of `layout`'s glyph
+/// pyro: how far (device px) the content areas of `layout`'s glyph
 /// runs (whole-pixel ascent and descent around the baseline) reach outside
 /// their line's box, in any direction: before the line's start, past its end
 /// less hanging white space, above and below its block extent. Aligning moves
@@ -1175,7 +1175,7 @@ fn unite_overflow(overflow: Rect, child: Rect) -> Rect {
     }
 }
 
-/// lightningpanda: cumulative time per `resolve` phase (style, damage,
+/// pyro: cumulative time per `resolve` phase (style, damage,
 /// construct, pconstruct, layout, transform, paint_tree, c_damage, subdocs),
 /// for profiling incremental relayout. The phases are timed only while
 /// [`set_timing`] has turned timing on; the counters below always count.

@@ -12,7 +12,7 @@ export function releaseInfo(tag) {
 /** Stamp the CI checkout; Cargo updates its own lockfile in the release job. */
 export function stampRelease(tag, root) {
   const info = releaseInfo(tag);
-  const packagePath = join(root, 'packages/lightning-panda/package.json');
+  const packagePath = join(root, 'packages/pyro/package.json');
   const cargoPath = join(root, 'Cargo.toml');
   const pkg = JSON.parse(readFileSync(packagePath, 'utf8'));
   const lines = readFileSync(cargoPath, 'utf8').split('\n');

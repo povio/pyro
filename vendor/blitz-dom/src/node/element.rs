@@ -143,7 +143,7 @@ pub struct LayoutData {
     pub final_layout: Layout,
     pub scroll_offset: crate::Point<f64>,
     pub scrollable_overflow: KurboRect,
-    /// lightningpanda: a bound of what hit testing finds in this box's subtree
+    /// pyro: a bound of what hit testing finds in this box's subtree
     /// (device px, its own coordinates, like `scrollable_overflow`): the
     /// scrollable overflow with the boxes and lines of no area that it drops
     /// (a `line-height: 0` line, a box of no width), and the glyph runs' content
@@ -151,16 +151,16 @@ pub struct LayoutData {
     /// Brought up to date by the first hit test after a resolve
     /// (`BaseDocument::ensure_hit_overflow`).
     pub hit_overflow: KurboRect,
-    /// lightningpanda: a transform pass computed this box again since its
+    /// pyro: a transform pass computed this box again since its
     /// `hit_overflow` was (`BaseDocument::resolve_transforms`).
     pub hit_stale: bool,
     /// The unrounded layout and the fractional part of the parent's absolute position the final
     /// layout was last rounded from (incremental rounding: `RoundTree::rounded_unchanged`).
     pub rounded_from: Option<(Layout, f32, f32)>,
-    /// lightningpanda: the half collapsed borders of a cell in a table without uniform ones (top,
+    /// pyro: the half collapsed borders of a cell in a table without uniform ones (top,
     /// right, bottom, left; see `CollapsedEdges`).
     pub collapsed_border: Option<[f32; 4]>,
-    /// lightningpanda: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
+    /// pyro: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
     pub table_cell_index: u32,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
@@ -494,9 +494,9 @@ impl ElementData {
         {
             data.element_state.insert(ElementState::CHECKED);
         }
-        // lightningpanda: a selected `<option>` is `:checked` (lp-dom's render
+        // pyro: a selected `<option>` is `:checked` (pyro-dom's render
         // tree writes `selected` for the current selectedness), and the form
-        // states lp-dom mirrors as `urn:x-lightningpanda:state` tokens are
+        // states pyro-dom mirrors as `urn:x-pyro:state` tokens are
         // element states, so Stylo's state invalidation (and `:has()`'s)
         // follows them.
         data.sync_lp_attribute_state();
@@ -678,17 +678,17 @@ impl ElementData {
         self.element_state.set(ElementState::CHECKED, checked);
     }
 
-    /// lightningpanda: brings the element states that mirror attributes
-    /// lp-dom's render tree writes up to the attributes: `:checked` of a
-    /// selected `<option>`, and the [`crate::LP_STATE_NS`] `state` tokens.
+    /// pyro: brings the element states that mirror attributes
+    /// pyro-dom's render tree writes up to the attributes: `:checked` of a
+    /// selected `<option>`, and the [`crate::PYRO_STATE_NS`] `state` tokens.
     pub(crate) fn sync_lp_attribute_state(&mut self) {
         let lp = self
             .attrs
             .iter()
-            .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "state")
+            .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state")
             .map(|a| a.value.as_str());
-        let bits = crate::has_invalidation::lp_state_bits(lp);
-        self.element_state.remove(crate::has_invalidation::LP_STATES);
+        let bits = crate::has_invalidation::pyro_state_bits(lp);
+        self.element_state.remove(crate::has_invalidation::PYRO_STATES);
         self.element_state.insert(bits);
         if self.name.local == local_name!("option") {
             let selected = self.has_attr(local_name!("selected"));

@@ -121,9 +121,9 @@ so the base-branch comparison catches accidental weakening of the baseline, not 
 
 ```sh
 (cd bench && bun install)
-bench/wpt/fetch-wpt.sh ~/wpt-lp                    # a new directory: the pinned revision, ~15 s
+bench/wpt/fetch-wpt.sh ~/wpt-pyro                    # a new directory: the pinned revision, ~15 s
 cargo build --profile release-fast                 # with the patched JavaScriptCore (scripts/jsc/build.sh)
-bun bench/wpt/gate.mjs run --wpt ~/wpt-lp --bin target/release-fast/lightningpanda --out /tmp/wpt.json
+bun bench/wpt/gate.mjs run --wpt ~/wpt-pyro --bin target/release-fast/pyro --out /tmp/wpt.json
 ```
 
 `fetch-wpt.sh` only touches a directory it made (it moves that one to a new pinned revision in place); a WPT checkout

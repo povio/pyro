@@ -141,7 +141,7 @@ impl BaseDocument {
         let mut damage_from_children = RestyleDamage::empty();
         let children = std::mem::take(&mut self.nodes[node_id].children);
         for child in children.iter() {
-            // lightningpanda: a child with no damage below it would return empty at the skip above
+            // pyro: a child with no damage below it would return empty at the skip above
             // (`Node::has_no_damage_below`); it is not entered.
             if self.nodes[*child].has_no_damage_below() {
                 continue;
@@ -256,7 +256,7 @@ impl BaseDocument {
         // Store damage for current node
         node.set_damage(damage);
 
-        // lightningpanda: a table cell whose subtree changed is measured and laid out again
+        // pyro: a table cell whose subtree changed is measured and laid out again
         // (`TableContext::changed_cells`); one whose paint alone changed is transformed and
         // visited in the paint tree again.
         if !damage.is_empty() {
@@ -497,7 +497,7 @@ impl BaseDocument {
         }
         if !is_anonymous {
             for child in children.iter() {
-                // lightningpanda: a child with no damage below it would return at the skip above
+                // pyro: a child with no damage below it would return at the skip above
                 // (`Node::has_no_damage_below`); it is not entered.
                 if self.nodes.get(*child).is_none_or(|child| child.has_no_damage_below()) {
                     continue;
@@ -730,7 +730,7 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
         false
     };
 
-    // lightningpanda: a table keeps the layout styles of its parts in its `TableContext`, built
+    // pyro: a table keeps the layout styles of its parts in its `TableContext`, built
     // with its box: a part's (or the table's) layout change builds it again, as a mutation does
     // (with the text in it shaped as it was: `BOX_DAMAGE`).
     let table_needs_rebuild = || {

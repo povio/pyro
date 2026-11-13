@@ -131,16 +131,16 @@ samples 7229, ~42 ns/op per sample
   0.0%       42 ns/op  work: network/fetch
   -- top self --
   9.9%    30110 ns/op  select::dom::Dom::matches_with
-  9.9%    30026 ns/op  lp_dom::select::ElemRef::e
-  6.0%    18377 ns/op  as_ref<lp_dom::node::Node>
-  4.8%    14676 ns/op  next<selectors::parser::Component<lp_dom::select::Impl>>
-  4.1%    12532 ns/op  matches_simple_selector<lp_dom::select::ElemRef>
+  9.9%    30026 ns/op  pyro_dom::select::ElemRef::e
+  6.0%    18377 ns/op  as_ref<pyro_dom::node::Node>
+  4.8%    14676 ns/op  next<selectors::parser::Component<pyro_dom::select::Impl>>
+  4.1%    12532 ns/op  matches_simple_selector<pyro_dom::select::ElemRef>
   3.9%    11985 ns/op  _tlv_get_addr
   2.9%     8873 ns/op  kevent
   2.7%     8200 ns/op  following_in
   2.7%     8074 ns/op  replace<core::option::Option<selectors::parser::Combinator>>
   2.4%     7359 ns/op  __sendto
-  2.3%     6897 ns/op  index<lp_dom::dom::Slot>
+  2.3%     6897 ns/op  index<pyro_dom::dom::Slot>
   2.2%     6771 ns/op  _platform_memcmp
   2.1%     6518 ns/op  selectors::tree::Element::has_class
   2.1%     6350 ns/op  __recvfrom
@@ -176,10 +176,10 @@ samples 8694, ~395 ns/op per sample
   2.1%    71035 ns/op  JSValueUnprotect
   2.1%    70641 ns/op  _xzm_free_main
   1.9%    63537 ns/op  operationValueAddProfiled
-  1.5%    52092 ns/op  lp_webapi::page::PageDom::flush_iframe_events
+  1.5%    52092 ns/op  pyro_webapi::page::PageDom::flush_iframe_events
   1.5%    50119 ns/op  operationGetByIdGaveUp
   1.4%    48146 ns/op  JSC::JSLock::unlock(long)
-  1.4%    46962 ns/op  ok<core::option::Option<lp_js::persistent::Persistent>, lp_js::error::JsError>
+  1.4%    46962 ns/op  ok<core::option::Option<pyro_js::persistent::Persistent>, pyro_js::error::JsError>
 ```
 
 ## lifecycle (scaled to 2939 µs browser CPU/op)

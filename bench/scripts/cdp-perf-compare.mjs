@@ -37,7 +37,7 @@ const usage = (msg) => {
 
 const load = (f) => {
   const r = JSON.parse(fs.readFileSync(f, 'utf8'));
-  if (r.schema !== 'lightningpanda-cdp-perf/1') usage(`${f}: not a cdp-perf result (schema ${r.schema})`);
+  if (r.schema !== 'pyro-cdp-perf/1') usage(`${f}: not a cdp-perf result (schema ${r.schema})`);
   return r;
 };
 const pickLabel = (report, wanted, file) => {

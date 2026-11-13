@@ -1,6 +1,6 @@
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-office-widths/crates/lp-dom)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-office-widths/crates/pyro-dom)
     Finished `release` profile [optimized] target(s) in 20.77s
-     Running unittests src/lib.rs (target/release/deps/lp_dom-2dc9c24daccde202)
+     Running unittests src/lib.rs (target/release/deps/pyro_dom-2dc9c24daccde202)
 
 running 14 tests
 test node::size_tests::node_header_is_compact ... ok
@@ -149,7 +149,7 @@ test long_operator_chains_do_not_recurse ... ok
 
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
 
-   Doc-tests lp_dom
+   Doc-tests pyro_dom
 
 running 0 tests
 

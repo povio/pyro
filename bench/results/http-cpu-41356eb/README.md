@@ -52,7 +52,7 @@ live heap size. CPU windows include snapshot-helper launch overhead.
   [build provenance](../upstream-2ad38773f/PROVENANCE.md).
 - Rewrite source **`41356ebf27909caf3039b8d6d2b2702122d629cd`**, clean checkout;
   binary SHA-256 **`2bbe638d5a31b40008b7458836d5aedc6347fd7789e386cca1868c97aff4f7bf`**.
-  Fresh `cargo build --locked --release -p lightningpanda`, rustc 1.99.1
+  Fresh `cargo build --locked --release -p pyro`, rustc 1.99.1
   (`58cf8f9c35b355199727627d07ae34a4e2846d67`), LLVM 23.1.1, thin LTO / one codegen unit;
   `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`.
   Exact dependencies are in that commit's Cargo.lock. Integrated heads include browser bindings `7551f073`,
@@ -81,14 +81,14 @@ Reproduction (substitute local executable/module paths; preserve the source and 
 NODE_PATH=/path/to/bench/node_modules node bench/scripts/compare-resources.mjs \
   --upstream /path/to/upstream/lightpanda \
   --upstream-sha 2ad38773fd674d3c9cea26a263b814ee46f6ba84 \
-  --rewrite /path/to/pinned/lightningpanda \
+  --rewrite /path/to/pinned/pyro \
   --rewrite-sha 41356ebf27909caf3039b8d6d2b2702122d629cd \
   --sampler /path/to/rss-sampler --out /path/to/new-run \
   --samples 3 --navigations 50 --contexts 20 --idle-ms 10000 --retained-ms 2000
 ```
 
-Raw native 20 ms traces and stderr remain at `/private/tmp/lp-w3-cpu-41356eb-3/` on the measurement host;
-the immutable rewrite binary and build provenance remain at `/private/tmp/lp-w3-bench-41356eb-bin/`.
+Raw native 20 ms traces and stderr remain at `/private/tmp/pyro-w3-cpu-41356eb-3/` on the measurement host;
+the immutable rewrite binary and build provenance remain at `/private/tmp/pyro-w3-bench-41356eb-bin/`.
 The earlier `d673567` result measured an earlier partial implementation. Its lower active CPU cannot be
 presented as the current integrated browser's performance or as equivalent full-browser behavior.
 
@@ -107,12 +107,12 @@ counts are not CPU percentages and do not establish the cause of the upstream/re
 | realm::install_classes (within realm creation) | 1,188 | 2,201 |
 
 Repeated native function creation and calls to setLength/accessor/makeInterface are visible within
-`install_classes` (`crates/lp-js/src/realm.rs:965-983`). During the navigation sample, the main transport
+`install_classes` (`crates/pyro-js/src/realm.rs:965-983`). During the navigation sample, the main transport
 thread was in kevent in 1,959 of 1,986 snapshots. This points to realm/class setup as a useful runtime-owner
 investigation, with no evidence here of transport spinning. It is not a demonstrated optimization or a
 reason to remove APIs/isolation. Runtime ownership received the findings; no runtime source was changed.
-Raw profiles and result are preserved at `/private/tmp/lp-w3-profile-41356eb/`; diagnostic driver is
-`/private/tmp/lp-w3-profile-41356eb.cjs`. Artifact hashes are in [profile.json](profile.json).
+Raw profiles and result are preserved at `/private/tmp/pyro-w3-profile-41356eb/`; diagnostic driver is
+`/private/tmp/pyro-w3-profile-41356eb.cjs`. Artifact hashes are in [profile.json](profile.json).
 
 The actual TOS baseline remains unmodified `f9fde4aa0d`, documented direct-lane version-gate bypass,
 backend-token localStorage authentication, and upstream profile-settings 2/2 on its own baseline host.

@@ -1,12 +1,12 @@
-// Real Playwright 1.59.1 (connectOverCDP) against `lightningpanda serve`:
+// Real Playwright 1.59.1 (connectOverCDP) against `pyro serve`:
 // Resource Timing and Navigation Timing as a page sees them. Subresources of
-// every kind get `PerformanceResourceTiming` entries with the phases lp-net
+// every kind get `PerformanceResourceTiming` entries with the phases pyro-net
 // measured; a cross-origin response without Timing-Allow-Origin hides its
 // details; the buffer fills, fires `resourcetimingbufferfull` and counts
 // dropped entries; `PerformanceObserver({type: 'resource', buffered: true})`
 // sees them; the navigation entry has its document fetch's phases.
 //
-// Usage: bun tests/e2e/resource-timing.mjs /abs/path/to/lightningpanda
+// Usage: bun tests/e2e/resource-timing.mjs /abs/path/to/pyro
 // Requires `bun install` in bench/ for the pinned playwright-core.
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -22,7 +22,7 @@ const { chromium } = require('playwright-core');
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: bun tests/e2e/resource-timing.mjs /abs/path/to/lightningpanda');
+  console.error('usage: bun tests/e2e/resource-timing.mjs /abs/path/to/pyro');
   process.exit(2);
 }
 
@@ -81,7 +81,7 @@ for (;;) {
     const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) });
     if (r.ok) break;
   } catch {}
-  if (child.exitCode !== null) { console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
+  if (child.exitCode !== null) { console.error(`pyro exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
   if (performance.now() - started > 10_000) { console.error(`startup timed out: ${stderr}`); process.exit(1); }
   await new Promise((r) => setTimeout(r, 10));
 }

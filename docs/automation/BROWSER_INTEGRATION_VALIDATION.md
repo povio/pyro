@@ -11,8 +11,8 @@ activity was uncontrolled. This is functional integration validation, not a benc
 | debug | 27/27 | 21/21 |
 | release | 27/27 | 21/21 |
 
-Commands used `cargo test --locked [--release] -p lp-browser -p lightningpanda`
-and `cargo build --locked [--release] -p lightningpanda` (the optional argument is
+Commands used `cargo test --locked [--release] -p pyro-browser -p pyro`
+and `cargo build --locked [--release] -p pyro` (the optional argument is
 `--release`). Each test/build/E2E process returned exit 0. No SIGSEGV or SIGTRAP
 was observed; these runs do not replace the earlier repeated loader stress suite.
 
@@ -39,6 +39,6 @@ protocol commands, HTTPS, broader resource loading or full TOS flows. No CPU/mem
 improvement is inferred. Historical measurements remain tied to `d673567`.
 
 Raw per-profile logs, Playwright JSON and binary hashes are retained on the worker
-host under `/private/tmp/lp-w3-browser-7551-{debug,release}-*`. The original published
+host under `/private/tmp/pyro-w3-browser-7551-{debug,release}-*`. The original published
 candidate and the protocol integration merge are separately preserved. No browser
 source was changed by the automation worker.

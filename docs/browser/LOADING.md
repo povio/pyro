@@ -39,13 +39,13 @@ remains unsupported. See [parity](../PARITY.md)
 and [runtime limits](../COMPATIBILITY.md). No TOS compatibility or matched TOS performance result is
 claimed by these local HTTP and synthetic-loader tests.
 
-`lightningpanda fetch` loads a URL, executes scripts and optionally dumps the resulting DOM. Its deadline
+`pyro fetch` loads a URL, executes scripts and optionally dumps the resulting DOM. Its deadline
 interrupts running JavaScript during parsing and post-load timers. `--wait-ms` runs pending work until
 idle or the requested interval/deadline; it is not a network-idle guarantee.
 
-Tests: `lp-browser` loading/bindings/fetch integration suites cover script order, lifecycle,
+Tests: `pyro-browser` loading/bindings/fetch integration suites cover script order, lifecycle,
 context/page storage partitions, shared-DOM isolated worlds, stale callbacks, fetch correlation and
-navigation cleanup. `lightningpanda` CLI tests check script-modified output and infinite-script timeout.
+navigation cleanup. `pyro` CLI tests check script-modified output and infinite-script timeout.
 The merged CDP host enables this loader and supplies Network/Fetch/cookie protocol routing. This
 increment changes no protocol source; DOM/Input protocol integration remains separate automation work.
 

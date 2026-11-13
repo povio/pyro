@@ -1,5 +1,5 @@
 //! Diagnostic-only external bundle evaluation with a bounded engine watchdog.
-use lp_browser::BrowserThread;
+use pyro_browser::BrowserThread;
 use std::time::{Duration, Instant};
 fn main() {
     let path = std::env::args().nth(1).expect("bundle path");

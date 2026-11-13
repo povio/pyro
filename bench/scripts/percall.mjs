@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Instructions per DOM call from page script, for one or more browser binaries.
 //
-//   bun scripts/percall.mjs --bin base=/abs/lightningpanda [--bin new=/abs/lightningpanda]
+//   bun scripts/percall.mjs --bin base=/abs/pyro [--bin new=/abs/pyro]
 //       --sampler /abs/rss-sampler [--rounds 5] [--calls 2000000] [--filter REGEX]
 //       [--profile] [--profile-secs 4] [--out x.json] [--md x.md]
 //
@@ -17,7 +17,7 @@
 // same function: `jit` (machine code JSC generated: the loop and the inline cache's call sequence),
 // `jsc-api` (JSC's C API and callback-object machinery: JSCallbackObject, JSObjectGetPrivate, JSValueMake*,
 // OpaqueJSString, the API lock), `jsc-core` (the rest of JSC/WTF/bmalloc: cell and string allocation,
-// structures, the collector), `ours` (Rust: lp-js dispatch, lp-webapi, lp-dom) and `sys` (libsystem under
+// structures, the collector), `ours` (Rust: pyro-js dispatch, pyro-webapi, pyro-dom) and `sys` (libsystem under
 // none of them). A sample is attributed to the nearest frame at or above its top that falls in one of those
 // classes, so a malloc called by Rust counts as ours and one called by JSC as JSC's. Shares are of time, not
 // instructions; the instruction columns apply them to the per-call count as an estimate.
@@ -226,7 +226,7 @@ function classify(symbol, image) {
   if (/JSCallbackObject|JSCallbackFunction|JSCustomGetter|JSCustomSetter|OpaqueJSClass|OpaqueJSString/.test(symbol)) return 'jsc-api';
   if (/^(JSC::|WTF::|bmalloc|pas_|bmalloc_|llint_|vmEntry|operation[A-Z]|Inspector::|jsc_|iso_|jit_|slow_path|g_jsc|ic[A-Z]|handleHostCall|wasm)/.test(symbol)) return 'jsc-core';
   if (/^(void |bool |int |unsigned |auto |std::|decltype|non-virtual thunk|JSC |WTF )/.test(symbol) || /JSC::|WTF::/.test(symbol)) return 'jsc-core';
-  if (/^(lp_|lightningpanda|<|core::|alloc::|std::|hashbrown|markup5ever|html5ever|string_cache|selectors|style::|stylo|servo|taffy|parley|tokio|serde|rustc_hash|smallvec|_R|__rust|__rdl|__rg_|rust_|tendril|cssparser|url::|idna|percent_encoding|encoding_rs|bytes::|futures|mio|parking_lot|indexmap|ahash|once_cell|memchr|unicode|regex|blitz|anyrender|peniko|kurbo|fontique|skrifa|read_fonts|swash|icu_|tungstenite|http|hyper|h2::|rustls|ring|webpki|log::|tracing|time::|chrono|rand|getrandom|crossbeam|rayon|dashmap|arc_swap|thin_vec|euclid|app_units|atomic_refcell|to_shmem|malloc_size_of|precomputed_hash|phf|fxhash|servo_arc|static_assertions|bitflags|itoa|ryu|new_debug_unreachable|mac::|utf8|xml5ever|web_atoms|stylo_atoms|dom::|derive_more|num_|byteorder|simd|base64|flate2|miniz|brotli|zstd|image::|png|jpeg|gif|webp|tiny_skia|resvg|usvg|krilla|pdf_writer|subsetter|ttf_parser|rustybuzz|harfrust|yoke|zerovec|zerofrom|tinystr|writeable|litemap|icu::)/.test(symbol)) return 'ours';
+  if (/^(lp_|pyro|<|core::|alloc::|std::|hashbrown|markup5ever|html5ever|string_cache|selectors|style::|stylo|servo|taffy|parley|tokio|serde|rustc_hash|smallvec|_R|__rust|__rdl|__rg_|rust_|tendril|cssparser|url::|idna|percent_encoding|encoding_rs|bytes::|futures|mio|parking_lot|indexmap|ahash|once_cell|memchr|unicode|regex|blitz|anyrender|peniko|kurbo|fontique|skrifa|read_fonts|swash|icu_|tungstenite|http|hyper|h2::|rustls|ring|webpki|log::|tracing|time::|chrono|rand|getrandom|crossbeam|rayon|dashmap|arc_swap|thin_vec|euclid|app_units|atomic_refcell|to_shmem|malloc_size_of|precomputed_hash|phf|fxhash|servo_arc|static_assertions|bitflags|itoa|ryu|new_debug_unreachable|mac::|utf8|xml5ever|web_atoms|stylo_atoms|dom::|derive_more|num_|byteorder|simd|base64|flate2|miniz|brotli|zstd|image::|png|jpeg|gif|webp|tiny_skia|resvg|usvg|krilla|pdf_writer|subsetter|ttf_parser|rustybuzz|harfrust|yoke|zerovec|zerofrom|tinystr|writeable|litemap|icu::)/.test(symbol)) return 'ours';
   return null; // libsystem and friends: attributed to the caller's class
 }
 // Returns { total, byClass, top: [[label, samples]...] } for the busiest thread of the sample report.

@@ -1,0 +1,47 @@
+[package]
+name = "pyro"
+description = "Headless browser for automation, a Rust + JavaScriptCore rewrite of Lightpanda."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pyro"
+path = "src/main.rs"
+
+[features]
+default = ["render", "av1", "h264"]
+# CDP stage timers (Pyro.perfStats); for profiling builds only.
+perf-trace = ["pyro-cdp/perf-trace"]
+# Sampling profile of the live Rust heap (src/heap_profile.rs,
+# bench/scripts/heap-profile.mjs); for memory attribution builds only.
+heap-profile = []
+# Blitz (pyro-render): layout geometry, screenshots and PDFs. Without it
+# nothing is laid out.
+render = ["pyro-cdp/render", "dep:pyro-render"]
+# Video decoders for <video> frames, drawImage(video) and
+# requestVideoFrameCallback (pyro-media); canPlayType follows them. AV1 is
+# rav1d (pure Rust). H.264 is OpenH264 built from source (a C++ compiler at
+# build time; see docs/webapi/MEDIA.md for its patent note).
+av1 = ["pyro-media/av1"]
+h264 = ["pyro-media/h264"]
+
+[dependencies]
+pyro-js.workspace = true
+pyro-runtime.workspace = true
+pyro-browser.workspace = true
+pyro-net.workspace = true
+pyro-cdp.workspace = true
+pyro-render = { workspace = true, optional = true }
+# Only for the codec features above.
+pyro-media.workspace = true
+mimalloc = { version = "0.1.52", default-features = false }
+# Only for the `pyro_pgo_training` signal handler (scripts/pgo) and the
+# `heap-profile` feature.
+libc = "0.2"
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

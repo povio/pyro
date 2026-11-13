@@ -1,13 +1,13 @@
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
 import http from 'node:http';import net from 'node:net';import fs from 'node:fs';
-import {activate} from '/private/tmp/lp-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/activation.ts';
-const require=createRequire('/private/tmp/lp-tos-f9f-batch16-fx/node_modules/.bun/playwright@1.59.1/node_modules/playwright/package.json');
+import {activate} from '/private/tmp/pyro-tos-f9f-batch16-fx/apps/fe/e2e/fixtures/activation.ts';
+const require=createRequire('/private/tmp/pyro-tos-f9f-batch16-fx/node_modules/.bun/playwright@1.59.1/node_modules/playwright/package.json');
 const {chromium}=require('playwright-core');const [binary,output]=process.argv.slice(2);if(fs.existsSync(output))throw Error('fresh evidence required');
 const server=http.createServer((q,r)=>{r.setHeader('Content-Type',q.url.startsWith('/main.js')?'text/javascript':'text/html');r.end(q.url.startsWith('/main.js')?fs.readFileSync(new URL('./dist/main.js',import.meta.url)):'<!doctype html><html><head><style>:root { --breakpoint-md: 48rem; }</style></head><body><div id="root"></div><script type="module" src="/main.js"></script></body></html>')});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const port=await new Promise(r=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>r(p))})});
-const child=binary==='chromium'?null:spawn(binary,['serve','--host','127.0.0.1','--port',String(port),'--log-level','error'],{cwd:'/private/tmp/lp-suite-current-5b46788',env:{...process.env,JSC_usePollingTraps:'true'},stdio:'ignore'});let browser;const rows=[];
+const child=binary==='chromium'?null:spawn(binary,['serve','--host','127.0.0.1','--port',String(port),'--log-level','error'],{cwd:'/private/tmp/pyro-suite-current-5b46788',env:{...process.env,JSC_usePollingTraps:'true'},stdio:'ignore'});let browser;const rows=[];
 const limit=setTimeout(()=>{child?.kill('SIGKILL');process.exit(2)},60000);
 try{
  if(binary==='chromium')browser=await chromium.launch();else{for(let i=0;i<200;i++){try{if((await fetch(`http://127.0.0.1:${port}/json/version`)).ok)break}catch{}await new Promise(r=>setTimeout(r,25))}browser=await chromium.connectOverCDP(`ws://127.0.0.1:${port}`)}

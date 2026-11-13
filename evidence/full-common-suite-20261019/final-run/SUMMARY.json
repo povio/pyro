@@ -18,5 +18,5 @@
   "retry_attempts": 0,
   "w3_evidence_commit": "a09d643bded2754b017510e513f0417392ab35b2",
   "artifact_limit": "W2 batches1/2 default error-context attachments were removed at next runner start; JSON assertions retained. Batch4 attachments copied; from batch5 outputs go outside runner-cleared directory. Batch3 passed. No rerun to replace evidence.",
-  "separate_validation_failure": "combined release workspace aborted at lp-net auth cancellation reply.is_closed assertion; retained outside TOS outcomes, isolated repair pending"
+  "separate_validation_failure": "combined release workspace aborted at pyro-net auth cancellation reply.is_closed assertion; retained outside TOS outcomes, isolated repair pending"
 }

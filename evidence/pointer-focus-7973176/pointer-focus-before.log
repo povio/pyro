@@ -56,7 +56,7 @@
    Compiling dtoa-short v0.3.5
    Compiling tracing-core v0.1.36
    Compiling tokio v1.53.3
-   Compiling lp-jsc-sys v0.1.0 (/private/tmp/lp-pointer-focus-scroll/crates/lp-jsc-sys)
+   Compiling pyro-jsc-sys v0.1.0 (/private/tmp/pyro-pointer-focus-scroll/crates/pyro-jsc-sys)
    Compiling synstructure v0.14.0
    Compiling crypto-common v0.1.7
    Compiling block-buffer v0.10.4
@@ -116,18 +116,18 @@
    Compiling quick-xml v0.42.0
    Compiling http-body-util v0.1.5
    Compiling base64 v0.23.1
-   Compiling lp-js v0.1.0 (/private/tmp/lp-pointer-focus-scroll/crates/lp-js)
+   Compiling pyro-js v0.1.0 (/private/tmp/pyro-pointer-focus-scroll/crates/pyro-js)
    Compiling sha1 v0.10.7
    Compiling sha2 v0.10.9
    Compiling icu_provider v2.3.1
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-pointer-focus-scroll/crates/lp-dom)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-pointer-focus-scroll/crates/pyro-dom)
    Compiling icu_normalizer v2.3.0
    Compiling icu_properties v2.3.0
    Compiling idna_adapter v1.2.2
    Compiling idna v1.1.0
    Compiling url v2.5.8
-   Compiling lp-net v0.1.0 (/private/tmp/lp-pointer-focus-scroll/crates/lp-net)
-   Compiling lp-webapi v0.1.0 (/private/tmp/lp-pointer-focus-scroll/crates/lp-webapi)
+   Compiling pyro-net v0.1.0 (/private/tmp/pyro-pointer-focus-scroll/crates/pyro-net)
+   Compiling pyro-webapi v0.1.0 (/private/tmp/pyro-pointer-focus-scroll/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 1m 51s
      Running tests/dom_js.rs (target/release/deps/dom_js-e9d665e19a2148b5)
 
@@ -138,7 +138,7 @@ failures:
 
 ---- pointer_focus_keeps_partly_clipped_button_at_the_press_point stdout ----
 
-thread 'pointer_focus_keeps_partly_clipped_button_at_the_press_point' (6511925) panicked at crates/lp-webapi/tests/dom_js.rs:4444:9:
+thread 'pointer_focus_keeps_partly_clipped_button_at_the_press_point' (6511925) panicked at crates/pyro-webapi/tests/dom_js.rs:4444:9:
 assertion `left == right` failed
   left: "true,1,false"
  right: "true,1,true"
@@ -150,4 +150,4 @@ failures:
 
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.02s
 
-error: test failed, to rerun pass `-p lp-webapi --test dom_js`
+error: test failed, to rerun pass `-p pyro-webapi --test dom_js`

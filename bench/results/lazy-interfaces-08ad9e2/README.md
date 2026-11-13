@@ -45,20 +45,20 @@ direction agrees; the magnitudes differ between hosts.
 - **Host:** Apple M1, 8 GiB, macOS 26.7.1, Node 26.12.0, Playwright 1.59.1. The load average was 2.13/2.13/1.65
   before the run and 1.39/1.88/1.60 after. No other Worker 3 build, test or profiler ran during timing. DVFS and
   OS caches were not controlled.
-- **Builds:** both SHAs were built with `cargo build --locked --release -p lightningpanda` (rustc 1.99.1,
+- **Builds:** both SHAs were built with `cargo build --locked --release -p pyro` (rustc 1.99.1,
   LLVM 23.1.1, `SDKROOT=…/MacOSX26.5.sdk`). Each SHA was built from its own clean worktree into a **fresh, empty
   per-SHA target directory**, and each build compiled all 131 crates.
   - Binary SHA-256: parent `47eac6a5a20f832b8beef9cc2a60e5e846e71ff8af2b2e840f4cff8b364a86ef`, candidate
     `0b714171604a25183832b95175add7b951a26b2eeb1fbc405b513dee3fb96ce6`.
   - The immutable copies are on the measurement host, with their build logs.
-- **Focused test:** before timing, the candidate ran `cargo test --locked --release -p lp-js --test lazy_interfaces`
+- **Focused test:** before timing, the candidate ran `cargo test --locked --release -p pyro-js --test lazy_interfaces`
   and passed 6/6.
 - **Harness:** runner `compare-resources.mjs` SHA-256 `c70d5f2d…` and sampler `7d31b30c…`, both unchanged from
   earlier measurements. Order AB/BA/AB, 50 navigations, 20 context cycles, 10 s idle, 2 s retention.
 - **Run outcome:** the runner exited 0, all 6 assertion runs passed and every browser exited on cleanup SIGTERM.
   No SIGSEGV or SIGTRAP occurred.
 - **Raw data:** `resources.json` here is a byte-identical copy of the raw output. Per-run samples and stderr are
-  at `/private/tmp/lp-w3-cpu-lazy-08ad9e2-3/` on the measurement host. Commands and hashes are in `provenance.json`.
+  at `/private/tmp/pyro-w3-cpu-lazy-08ad9e2-3/` on the measurement host. Commands and hashes are in `provenance.json`.
 
 ## Discarded first build (never timed)
 

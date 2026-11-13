@@ -52,7 +52,7 @@
    Compiling once_cell v1.21.4
    Compiling dtoa v1.0.11
    Compiling time-core v0.1.9
-   Compiling lp-jsc-sys v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-jsc-sys)
+   Compiling pyro-jsc-sys v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-jsc-sys)
    Compiling dtoa-short v0.3.5
    Compiling tokio v1.53.3
    Compiling tracing-core v0.1.36
@@ -119,15 +119,15 @@
    Compiling quick-xml v0.42.0
    Compiling http-body-util v0.1.5
    Compiling base64 v0.23.1
-   Compiling lp-js v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-js)
+   Compiling pyro-js v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-js)
    Compiling idna_adapter v1.2.2
    Compiling sha2 v0.10.9
    Compiling idna v1.1.0
-   Compiling lp-dom v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-dom)
+   Compiling pyro-dom v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-dom)
    Compiling url v2.5.8
    Compiling sha1 v0.10.7
-   Compiling lp-net v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-net)
-   Compiling lp-webapi v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-webapi)
+   Compiling pyro-net v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-net)
+   Compiling pyro-webapi v0.1.0 (/private/tmp/pyro-xhr-progress-contract/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 1m 52s
      Running tests/xhr_js.rs (target/release/deps/xhr_js-03c920fc6d255c25)
 

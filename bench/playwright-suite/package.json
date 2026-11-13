@@ -1,5 +1,5 @@
 {
-  "name": "lightningpanda-playwright-suite",
+  "name": "pyro-playwright-suite",
   "private": true,
   "type": "module",
   "description": "Common Playwright features, run against any CDP browser binary over connectOverCDP",

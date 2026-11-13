@@ -63,11 +63,11 @@ claimed for any of them. They are unresolved shared failures.
 ## W3-08 on the combined Escape and ArrowUp/ArrowDown candidate
 
 This section adds the TOS verification reported in PR #91 (merged), which
-[W3-05 to W3-08](TOS_COVERAGE_W3_05_08.md#w3-08-one-lightningpanda-regression-partly-fixed-in-pr-86)
+[W3-05 to W3-08](TOS_COVERAGE_W3_05_08.md#w3-08-one-pyro-regression-partly-fixed-in-pr-86)
 describes as not yet verified.
 
 The candidate was `78d67405e9071c7a0eb8437d571e47a7ae1e40b6`, tree `38c8f94c`:
-main `a398e2d`, which includes PR86, plus PR88 `98110d0` and the PR91 lp-cdp
+main `a398e2d`, which includes PR86, plus PR88 `98110d0` and the PR91 pyro-cdp
 entries. Its fresh in-clone signed build has SHA-256
 `d648896b381d85f25ae79cebae75689c2b10a15bb070b310c9f0ef916b85288f`, ad hoc
 signed with `allow-jit`.
@@ -102,7 +102,7 @@ own and must not be added to another binary's results.
 - **TOS:** unchanged `f9fde4aa0dce7d1d7a1ffebffe3306399973cd80`.
   - Manifest SHA-256 `542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19`.
   - Before every run, the manifest was rehashed and the e2e tree of fixture
-    `/private/tmp/lp-w3-lfix-1` (reused) was checked unchanged.
+    `/private/tmp/pyro-w3-lfix-1` (reused) was checked unchanged.
 - **Selections:**
 
   | Batch | SHA-256 |
@@ -162,7 +162,7 @@ own and must not be added to another binary's results.
   | `w3l18` | 114.8 s |
   | `w3l18u` | 88.8 s |
 
-- **Artifacts:** on the W3 host in `/private/tmp/lp-w3-l09` … `-l18u`, plus
+- **Artifacts:** on the W3 host in `/private/tmp/pyro-w3-l09` … `-l18u`, plus
   `-l08a` and `-l08ar`.
 
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and

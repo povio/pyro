@@ -1226,7 +1226,7 @@ impl Stylist {
         doc_author_rules_apply && f(&self.cascade_data.author)
     }
 
-    /// lightningpanda: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
+    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
     /// cascaded for `element`) generate a box matches `element`, so that the full match and
     /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
     /// rule that matches leaves `content` at `normal` (it is not inherited) and declares neither
@@ -2929,7 +2929,7 @@ impl PartElementAndPseudoRules {
     }
 }
 
-/// lightningpanda: the `::before` and `::after` rules (one pseudo-element level, in
+/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
 /// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
 /// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
 /// `var()` and the CSS-wide keywords count. Without one of them matching, `content` is `normal`
@@ -2939,7 +2939,7 @@ impl PartElementAndPseudoRules {
 /// A copy of the rules kept in `normal_rules`, filled by the same `add_styles` and cleared with
 /// it; a CSSOM declaration edit rebuilds both (`RuleChangeKind::StyleRuleDeclarations` is
 /// `DataValidity::FullyInvalid`).
-/// lightningpanda: whether a `::before`/`::after` rule with these declarations can make the
+/// pyro: whether a `::before`/`::after` rule with these declarations can make the
 /// pseudo-element generate a box (see `BoxGeneratingPseudoRules`).
 pub fn declarations_may_generate_pseudo_box(block: &PropertyDeclarationBlock) -> bool {
     BoxGeneratingPseudoRules::declarations_may_generate_box(block)
@@ -2956,7 +2956,7 @@ impl BoxGeneratingPseudoRules {
     /// `::before` or `::after` rule).
     ///
     /// `content: normal | none` and `animation-name: none` cannot make the box appear, so they
-    /// do not count: lightningpanda's UA `*::before, *::after { animation: none !important }`
+    /// do not count: pyro's UA `*::before, *::after { animation: none !important }`
     /// would otherwise put a rule matching every element in the index. Their CSS-wide keyword
     /// and `var()` forms still count.
     fn declarations_may_generate_box(block: &PropertyDeclarationBlock) -> bool {
@@ -3500,7 +3500,7 @@ pub struct CascadeData {
     /// cascade level.
     normal_rules: ElementAndPseudoRules,
 
-    /// lightningpanda: the rules of `normal_rules` that can make a `::before` or `::after`
+    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
     /// generate a box.
     box_generating_pseudo_rules: BoxGeneratingPseudoRules,
 
@@ -3876,14 +3876,14 @@ impl CascadeData {
         self.normal_rules.rules(pseudo_elements)
     }
 
-    /// lightningpanda: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
+    /// pyro: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
     /// or `::after`) generate a box. `None` for other pseudo-elements.
     #[inline]
     pub fn box_generating_pseudo_rules(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
         self.box_generating_pseudo_rules.map(pseudo)
     }
 
-    /// lightningpanda: whether any rule here is for `pseudo`, in any of the maps the rule
+    /// pyro: whether any rule here is for `pseudo`, in any of the maps the rule
     /// collector reads for it.
     fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
         let pseudos = std::slice::from_ref(pseudo);

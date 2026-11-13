@@ -22,9 +22,9 @@ if (!BIN || !RES) { console.error('usage: --bin <lightpanda> --results <dir>'); 
 fs.mkdirSync(RES, { recursive: true });
 
 // Exact flags used by TOS.
-const LP_FLAGS = ['--log-level', 'error', '--experimental-features', 'cors', '--load-resources', 'stylesheet', '--load-resources', 'iframe'];
+const PYRO_FLAGS = ['--log-level', 'error', '--experimental-features', 'cors', '--load-resources', 'stylesheet', '--load-resources', 'iframe'];
 // Same env as TOS fixture (apps/fe/e2e/fixtures/lightpanda.ts).
-const LP_ENV = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true' };
+const PYRO_ENV = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const freePort = () => new Promise((res, rej) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); s.on('error', rej); });
 const getJson = (url) => new Promise((res, rej) => {
@@ -59,7 +59,7 @@ async function startupRuns() {
   for (let i = 0; i < STARTUP_RUNS; i++) {
     const port = await freePort();
     const t = performance.now();
-    const cp = track(spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV, detached: true }));
+    const cp = track(spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...PYRO_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: PYRO_ENV, detached: true }));
     let err = ''; cp.stderr.on('data', (d) => { err += d; });
     try {
       const r = await waitReady(port);
@@ -78,7 +78,7 @@ async function smokeRun(tag, siteUrl, useProxy) {
   const lpLog = path.join(RES, `${tag}.lightpanda.stderr.log`);
   const timeOut = path.join(RES, `${tag}.time-l.txt`);
   // /usr/bin/time -l reports max RSS of the child at exit.
-  const tp = track(spawn('/usr/bin/time', ['-l', '-o', timeOut, BIN, 'serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', fs.openSync(lpLog, 'w')], env: LP_ENV, detached: true }));
+  const tp = track(spawn('/usr/bin/time', ['-l', '-o', timeOut, BIN, 'serve', '--host', '127.0.0.1', '--port', String(port), ...PYRO_FLAGS], { stdio: ['ignore', 'ignore', fs.openSync(lpLog, 'w')], env: PYRO_ENV, detached: true }));
   await waitReady(port);
   // find lightpanda pid (child of /usr/bin/time)
   const lpPid = await new Promise((res) => { const p = spawn('pgrep', ['-P', String(tp.pid)]); let o = ''; p.stdout.on('data', (d) => (o += d)); p.on('exit', () => res(Number(o.trim().split('\n')[0]))); });
@@ -168,7 +168,7 @@ const site = track(spawn(process.execPath, [path.join(HERE, 'testsite.mjs'), '0'
 const sitePort = Number((await waitLine(site, /LISTENING (\d+)/))[1]);
 const siteUrl = `http://127.0.0.1:${sitePort}`;
 
-const result = { startedAt: new Date().toISOString(), bin: BIN, flags: LP_FLAGS, siteUrl };
+const result = { startedAt: new Date().toISOString(), bin: BIN, flags: PYRO_FLAGS, siteUrl };
 result.startup = await startupRuns();
 console.error('startup', result.startup.median, result.startup.p95);
 result.smoke = [];

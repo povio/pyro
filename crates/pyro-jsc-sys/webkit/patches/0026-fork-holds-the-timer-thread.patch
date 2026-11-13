@@ -1,0 +1,197 @@
+Pyro patch 0026: fork() with the VMTraps queue thread held, and a child whose watchdog
+arms its own timer.
+
+Patch 0002 stops every JavaScriptCore helper thread before a fork except the one that fires
+watchdog timers, the VMTraps queue's. It kept running, and a lock it held at the instant of the
+fork stayed locked in the child, where that thread does not exist: a watchdog's lock (the child's
+timers never notify its VM), a VM's trap lock (the child hangs handling its next trap), a
+ParkingLot bucket (whoever parks there next hangs) or an allocator lock (os_unfair_lock aborts
+the child). JSPrepareForFork now parks that thread between two of its functions, where it holds
+none, until JSDidFork (VMTraps::holdQueueForFork, releaseQueueAfterFork).
+
+Watchdog::startTimer arms no timer while one that fires early enough is pending. A child
+inherited that state for a timer on the parent's queue, which never fires there: its first VM
+entry within the parent's remaining time ran without a watchdog. A watchdog now remembers the
+queue its pending timer is on (m_timerQueue); the child's queue is a new one.
+
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index e94ac2a59e..85cfdbb03a 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -66,7 +66,10 @@ bool JSPrepareForFork(JSContextGroupRef group, double timeoutSeconds)
+     bmalloc_prefault_supply_suspend();
+     pas_scavenger_suspend();
+ #endif
+-    return AutomaticThread::sleepAllForFork(Seconds(timeoutSeconds));
++    if (!AutomaticThread::sleepAllForFork(Seconds(timeoutSeconds)))
++        return false;
++    // Last: the timer thread is the one that stays, held where it has no lock.
++    return VMTraps::holdQueueForFork(Seconds(timeoutSeconds));
+ }
+ 
+ void JSDidFork(bool isChild)
+@@ -79,6 +82,7 @@ void JSDidFork(bool isChild)
+         cryptographicallyRandomNumberDidForkInChild();
+         VMTraps::recreateQueueAfterFork();
+     }
++    VMTraps::releaseQueueAfterFork();
+ #if BUSE(LIBPAS)
+     pas_scavenger_resume();
+     bmalloc_prefault_supply_resume();
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index cf53b55b71..27c078107a 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -6,7 +6,11 @@
+  * fork() keeps only the calling thread, so JavaScriptCore's helper threads (GC
+  * collector and markers, JIT compilers, the libpas scavenger) must not exist at
+  * that moment: they would be missing in the child while their owners still
+- * expect them, and could hold locks the child needs.
++ * expect them, and could hold locks the child needs. One thread stays, the one
++ * that fires watchdog timers (the VMTraps queue): it is held between two of its
++ * functions, where it has no lock, and the child gets a new one. A watchdog timer
++ * pending at the fork does not fire in the child, whose next VM entry arms its
++ * own: fork outside of a VM entry.
+  */
+ 
+ #ifndef JSForkPrivate_h
+@@ -22,8 +26,9 @@ extern "C" {
+ 
+ /* Finishes a garbage collection under way and the JIT compilations of `group`
+    (it starts no collection: collect first for a compact parent), then parks every
+-   JavaScriptCore helper thread in the process. Call on the thread that uses
+-   `group`, with no other thread running JavaScript, right before fork().
++   JavaScriptCore helper thread in the process and holds its timer thread. Call on
++   the thread that uses `group`, with no other thread running JavaScript, right
++   before fork().
+    Returns false (with threads possibly still running) when they did not stop
+    within `timeoutSeconds`; JSDidFork must still be called. */
+ JS_EXPORT bool JSPrepareForFork(JSContextGroupRef group, double timeoutSeconds);
+diff --git a/Source/JavaScriptCore/runtime/VMTraps.cpp b/Source/JavaScriptCore/runtime/VMTraps.cpp
+index 2605b52ffb..4df93b7cdf 100644
+--- a/Source/JavaScriptCore/runtime/VMTraps.cpp
++++ b/Source/JavaScriptCore/runtime/VMTraps.cpp
+@@ -42,6 +42,7 @@
+ #include "VMTrapsInlines.h"
+ #include "WaiterListManager.h"
+ #include "Watchdog.h"
++#include <thread>
+ #include <wtf/Condition.h>
+ #include <wtf/ProcessID.h>
+ #include <wtf/Scope.h>
+@@ -372,6 +373,48 @@ void VMTraps::recreateQueueAfterFork()
+         vmTrapsQueue.store(&WorkQueue::create("JSC VMTraps Signal Sender"_s).leakRef());
+ }
+ 
++// Pyro: the hold the forking thread asked for (0: none), and the one the
++// queue's thread is in.
++static std::atomic<uint64_t> vmTrapsQueueHoldRequested;
++static std::atomic<uint64_t> vmTrapsQueueHoldReached;
++static std::atomic<uint64_t> vmTrapsQueueHolds;
++
++bool VMTraps::holdQueueForFork(Seconds timeout)
++{
++    // fork() does not stop the queue's thread, and a lock it holds at that instant
++    // stays locked in the child for good: a watchdog's (its timers then never
++    // notify the VM), a VM's trap lock (the VM hangs handling its next trap), a
++    // ParkingLot bucket (whoever parks there next hangs) or one of the allocator's
++    // (the child aborts on it). Between two functions the thread holds none, so it
++    // waits there, and must take none to wait: no WTF::sleep, no Condition.
++    WorkQueue* queue = vmTrapsQueue.load();
++    if (!queue)
++        return true;
++    uint64_t hold = ++vmTrapsQueueHolds;
++    vmTrapsQueueHoldRequested.store(hold);
++    queue->dispatch([hold] {
++        vmTrapsQueueHoldReached.store(hold);
++        while (vmTrapsQueueHoldRequested.load() == hold)
++            std::this_thread::sleep_for(std::chrono::microseconds(50));
++    });
++    MonotonicTime deadline = MonotonicTime::now() + timeout;
++    while (vmTrapsQueueHoldReached.load() != hold) {
++        if (MonotonicTime::now() > deadline) {
++            vmTrapsQueueHoldRequested.store(0);
++            return false;
++        }
++        // Not Thread::yield(): on Darwin that depresses this thread for a millisecond,
++        // which is how long each call takes while other threads want the processor.
++        std::this_thread::sleep_for(std::chrono::microseconds(10));
++    }
++    return true;
++}
++
++void VMTraps::releaseQueueAfterFork()
++{
++    vmTrapsQueueHoldRequested.store(0);
++}
++
+ void VMTraps::initializeSignals()
+ {
+ #if ENABLE(SIGNAL_BASED_VM_TRAPS)
+diff --git a/Source/JavaScriptCore/runtime/VMTraps.h b/Source/JavaScriptCore/runtime/VMTraps.h
+index 4af04cf1f5..c3e8960912 100644
+--- a/Source/JavaScriptCore/runtime/VMTraps.h
++++ b/Source/JavaScriptCore/runtime/VMTraps.h
+@@ -262,6 +262,11 @@ public:
+     static WorkQueue& queue();
+     // Pyro: call in a fork() child (JSDidFork).
+     JS_EXPORT_PRIVATE static void recreateQueueAfterFork();
++    // Pyro: the queue's thread runs nothing, and holds no lock, from
++    // holdQueueForFork (false when it did not get there in time) until
++    // releaseQueueAfterFork (JSPrepareForFork, JSDidFork).
++    static bool holdQueueForFork(Seconds timeout);
++    static void releaseQueueAfterFork();
+ 
+ #if ENABLE(C_LOOP)
+     ALWAYS_INLINE CLoopStack& cloopStack() { return m_stack.cloopStack(); }
+diff --git a/Source/JavaScriptCore/runtime/Watchdog.cpp b/Source/JavaScriptCore/runtime/Watchdog.cpp
+index 85134796b5..5d226b0e96 100644
+--- a/Source/JavaScriptCore/runtime/Watchdog.cpp
++++ b/Source/JavaScriptCore/runtime/Watchdog.cpp
+@@ -137,17 +137,22 @@ void Watchdog::startTimer(Seconds timeLimit)
+     auto now = MonotonicTime::now();
+     auto deadline = now + timeLimit;
+ 
+-    if ((now < m_deadline) && (m_deadline <= deadline))
++    // Pyro: in a fork() child the active timer of the parent is on a queue
++    // whose thread the child does not have (VMTraps::recreateQueueAfterFork leaks that
++    // queue, so its address is not reused): it never fires there.
++    WorkQueue& queue = VMTraps::queue();
++    if ((now < m_deadline) && (m_deadline <= deadline) && m_timerQueue == &queue)
+         return; // Wait for the current active timer to expire before starting a new one.
+ 
+     // Else, the current active timer won't fire soon enough. So, start a new timer.
+     m_deadline = deadline;
++    m_timerQueue = &queue;
+ 
+     // We need to ensure that the Watchdog outlives the timer.
+     // For the same reason, the timer may also outlive the VM that the Watchdog operates on.
+     // So, we always need to null check m_vm before using it. The VM will notify the Watchdog
+     // via willDestroyVM() before it goes away.
+-    VMTraps::queue().dispatchAfter(timeLimit, [protectedThis = Ref { *this }] {
++    queue.dispatchAfter(timeLimit, [protectedThis = Ref { *this }] {
+         Locker locker { protectedThis->m_lock };
+         if (protectedThis->m_vm)
+             protectedThis->m_vm->notifyNeedWatchdogCheck();
+diff --git a/Source/JavaScriptCore/runtime/Watchdog.h b/Source/JavaScriptCore/runtime/Watchdog.h
+index 744bd2834e..863de6aa80 100644
+--- a/Source/JavaScriptCore/runtime/Watchdog.h
++++ b/Source/JavaScriptCore/runtime/Watchdog.h
+@@ -25,6 +25,7 @@
+ 
+ #pragma once
+ 
++#include <wtf/Forward.h>
+ #include <wtf/Lock.h>
+ #include <wtf/MonotonicTime.h>
+ #include <wtf/Ref.h>
+@@ -70,6 +71,9 @@ private:
+     Seconds m_timeLimit { noTimeLimit };
+     Seconds m_cpuDeadline { noTimeLimit };
+     MonotonicTime m_deadline { MonotonicTime::infinity() };
++    // Pyro: the queue the timer for m_deadline is on. Not the current one
++    // in a fork() child, where that timer does not exist.
++    WorkQueue* m_timerQueue { nullptr };
+ 
+     ShouldTerminateCallback m_callback { nullptr };
+     void* m_callbackData1 { nullptr };

@@ -1,9 +1,9 @@
-// Playwright (connectOverCDP) against `lightningpanda serve --prepare URL`:
+// Playwright (connectOverCDP) against `pyro serve --prepare URL`:
 // a page booted before the test exists is handed over by
-// Lightningpanda.acquirePreparedPage, replaced right away, and profiles can
+// Pyro.acquirePreparedPage, replaced right away, and profiles can
 // be registered at run time with init scripts and a viewport.
 //
-// Usage: node tests/e2e/prepared-page.mjs /abs/path/to/lightningpanda
+// Usage: node tests/e2e/prepared-page.mjs /abs/path/to/pyro
 // Requires `bun install` (or npm install) in bench/ for the pinned playwright-core.
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -20,7 +20,7 @@ const { chromium } = require('playwright-core');
 
 const bin = process.argv[2];
 if (!bin) {
-  console.error('usage: node tests/e2e/prepared-page.mjs /abs/path/to/lightningpanda');
+  console.error('usage: node tests/e2e/prepared-page.mjs /abs/path/to/pyro');
   process.exit(2);
 }
 const results = [];
@@ -37,7 +37,7 @@ const freePort = () => new Promise((resolve, reject) => {
 
 const appPort = await freePort();
 const origin = `http://127.0.0.1:${appPort}`;
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-prepared-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pyro-prepared-'));
 const dist = path.join(tmp, 'dist');
 fs.mkdirSync(path.join(dist, 'assets'), { recursive: true });
 fs.writeFileSync(path.join(dist, 'index.html'),
@@ -66,7 +66,7 @@ async function check(name, fn) {
 const started = performance.now();
 for (;;) {
   try { if ((await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) })).ok) break; } catch {}
-  if (child.exitCode !== null) { console.error(`lightningpanda exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
+  if (child.exitCode !== null) { console.error(`pyro exited early (${child.exitCode}): ${stderr}`); process.exit(1); }
   if (performance.now() - started > 10_000) { console.error(`startup timed out: ${stderr}`); process.exit(1); }
   await new Promise((r) => setTimeout(r, 10));
 }
@@ -78,7 +78,7 @@ const defaultContext = browser.contexts()[0];
 async function waitReady(url, timeoutMs = 5000) {
   const t = performance.now();
   for (;;) {
-    const { pages } = await cdp.send('Lightningpanda.preparedPages');
+    const { pages } = await cdp.send('Pyro.preparedPages');
     const mine = pages.filter((p) => p.url === url);
     if (mine.some((p) => p.ready)) return pages;
     if (performance.now() - t > timeoutMs) throw new Error(`not ready: ${JSON.stringify(pages)}`);
@@ -88,7 +88,7 @@ async function waitReady(url, timeoutMs = 5000) {
 async function acquire(params) {
   const [page, result] = await Promise.all([
     defaultContext.waitForEvent('page'),
-    cdp.send('Lightningpanda.acquirePreparedPage', params),
+    cdp.send('Pyro.acquirePreparedPage', params),
   ]);
   return { page, result };
 }
@@ -121,7 +121,7 @@ await check('the pool refills and the next page is independent', async () => {
   assert.equal(await first.evaluate(() => 1 + 1), 2, 'the first page still works');
 });
 await check('registerPreparedPage: init scripts and viewport apply before boot', async () => {
-  const { profileId } = await cdp.send('Lightningpanda.registerPreparedPage', {
+  const { profileId } = await cdp.send('Pyro.registerPreparedPage', {
     url: `${origin}/settings`, initScripts: ['globalThis.__features = ["a", "b"]'], viewport: { width: 1440, height: 900 },
   });
   assert.equal(profileId, 1);
@@ -134,18 +134,18 @@ await check('registerPreparedPage: init scripts and viewport apply before boot',
 });
 await check('refillAfterClose: no replacement until the acquired page closes', async () => {
   const url = `${origin}/after-close`;
-  const { profileId } = await cdp.send('Lightningpanda.registerPreparedPage', { url, refillAfterClose: true });
+  const { profileId } = await cdp.send('Pyro.registerPreparedPage', { url, refillAfterClose: true });
   await waitReady(url);
   const { page } = await acquire({ profileId });
   await page.waitForLoadState('load');
   await new Promise((r) => setTimeout(r, 80));
-  let { pages } = await cdp.send('Lightningpanda.preparedPages');
+  let { pages } = await cdp.send('Pyro.preparedPages');
   assert.equal(pages.filter((p) => p.url === url).length, 0, 'nothing boots while the page is in use');
   await page.close();
   await waitReady(url, 5000);
 });
 await check('unknown url is an error; ordinary pages still work', async () => {
-  await assert.rejects(cdp.send('Lightningpanda.acquirePreparedPage', { url: `${origin}/nope` }), /No prepared page/);
+  await assert.rejects(cdp.send('Pyro.acquirePreparedPage', { url: `${origin}/nope` }), /No prepared page/);
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto(`${origin}/plain`);

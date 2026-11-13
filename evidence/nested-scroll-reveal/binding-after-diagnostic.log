@@ -1,4 +1,4 @@
-   Compiling lp-webapi v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-webapi)
+   Compiling pyro-webapi v0.1.0 (/private/tmp/pyro-scroll-ancestors-fix/crates/pyro-webapi)
     Finished `release` profile [optimized] target(s) in 45.26s
      Running tests/dom_js.rs (target/release/deps/dom_js-e9d665e19a2148b5)
 
@@ -9,7 +9,7 @@ failures:
 
 ---- scroll_into_view_delivers_each_changed_ancestor_after_the_call stdout ----
 
-thread 'scroll_into_view_delivers_each_changed_ancestor_after_the_call' (6431600) panicked at crates/lp-webapi/tests/dom_js.rs:4400:9:
+thread 'scroll_into_view_delivers_each_changed_ancestor_after_the_call' (6431600) panicked at crates/pyro-webapi/tests/dom_js.rs:4400:9:
 unchanged scroll and visible focus queue no events: [[205,205,0,0,0,1020],[205,205,0,45,0,1020]]
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
@@ -19,4 +19,4 @@ failures:
 
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 146 filtered out; finished in 0.02s
 
-error: test failed, to rerun pass `-p lp-webapi --test dom_js`
+error: test failed, to rerun pass `-p pyro-webapi --test dom_js`

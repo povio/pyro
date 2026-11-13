@@ -98,7 +98,7 @@ pub(in super::super) struct GridItem {
     pub minimum_contribution_cache: Size<Option<f32>>,
     /// Cache for the max-content size
     pub max_content_contribution_cache: Size<Option<f32>>,
-    /// lightningpanda: whether a contribution of this item in the inline axis was computed that can depend on the
+    /// pyro: whether a contribution of this item in the inline axis was computed that can depend on the
     /// item's content or on the size of its grid area (a min-content or max-content contribution, or a minimum
     /// contribution that resolves a percentage or transfers a size through an aspect ratio). Set as the first
     /// column sizing pass reads the contributions. When it is false the column sizes from that pass do not depend
@@ -814,7 +814,7 @@ impl GridItem {
             })
     }
 
-    /// lightningpanda: whether the item's minimum contribution in `axis` can depend on the size of its grid area,
+    /// pyro: whether the item's minimum contribution in `axis` can depend on the size of its grid area,
     /// short of reading its min-content contribution: a percentage (or `calc()` with one) in its preferred, minimum
     /// or maximum size or in its padding or border, or an aspect ratio, which transfers a size from the other axis.
     #[inline(always)]

@@ -11,7 +11,7 @@ force=
 if [ "${1:-}" = --force ]; then force=1; shift; fi
 dir="${1:?usage: fetch-wpt.sh [--force] DIR}"
 rev="${WPT_REVISION:-$(tr -d '[:space:]' < "$here/wpt-revision.txt")}"
-marker="$dir/.git/lp-fetch-wpt"
+marker="$dir/.git/pyro-fetch-wpt"
 # Sparse-checkout patterns, anchored at the WPT root; comments and blank lines dropped (a bare "/" would match all).
 patterns() { grep -v -e '^#' -e '^[[:space:]]*$' "$here/wpt-paths.txt" | sed 's|^|/|'; }
 head_of() { git -C "$dir" rev-parse HEAD 2>/dev/null || true; }
