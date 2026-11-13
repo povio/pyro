@@ -157,7 +157,7 @@ test('fails', async ({ page }) => { await page.setContent('<h1>fail</h1>'); expe
       expect(retained.videos, retained.out).toEqual([join('x.pw.ts-fails', 'video.webm')]);
       expect(isWebm(join(project, 'test-results', retained.videos[0]))).toBe(true);
       // The report names it under the failure.
-      expect(retained.out).toContain('attachment: video (video/webm)');
+      expect(retained.out).toContain('attachment #1: video (video/webm)');
       expect(retained.out).toContain(join('test-results', 'x.pw.ts-fails', 'video.webm'));
       const all = run('on');
       expect(all.videos.sort(), all.out).toEqual([join('x.pw.ts-fails', 'video.webm'), join('x.pw.ts-passes', 'video.webm')]);
