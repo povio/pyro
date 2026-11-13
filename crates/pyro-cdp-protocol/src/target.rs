@@ -90,6 +90,12 @@ pub trait Host {
     fn create_proxied_context(&mut self, _proxy: ContextProxy<'_>) -> CdpResult<ContextKey> {
         Err(CdpError::unsupported("Target.createBrowserContext proxyServer"))
     }
+    /// Blocks service worker registration in context `key`
+    /// (`Target.createBrowserContext` `serviceWorkers: "block"`, pyro's own
+    /// parameter for Playwright's option).
+    fn block_service_workers(&mut self, _key: ContextKey) -> CdpResult<()> {
+        Err(CdpError::unsupported("Target.createBrowserContext serviceWorkers"))
+    }
     fn dispose_context(&mut self, context: ContextKey);
     /// Creates an `about:blank` page. Returns its key and target id; the target
     /// id is the main frame id, as in Chrome and upstream.
@@ -996,6 +1002,7 @@ impl<H: Host> Browser<H> {
                         | "Browser.grantPermissions"
                         | "Browser.resetPermissions"
                         | "Browser.setPermission"
+                        | "Browser.cancelDownload"
                 ) {
                     let params: ContextParam = cmd.params()?;
                     let id = match params.browser_context_id {
@@ -1348,8 +1355,19 @@ impl<H: Host> Browser<H> {
                 struct P {
                     proxy_server: Option<String>,
                     proxy_bypass_list: Option<String>,
+                    /// pyro's own: Playwright's `serviceWorkers` option.
+                    service_workers: Option<String>,
                 }
                 let params: P = cmd.params()?;
+                let block_service_workers = match params.service_workers.as_deref() {
+                    None | Some("allow") => false,
+                    Some("block") => true,
+                    Some(other) => {
+                        return Err(CdpError::invalid_params(format!(
+                            "serviceWorkers must be \"allow\" or \"block\", not {other:?}"
+                        )))
+                    }
+                };
                 let context_id = match &params.proxy_server {
                     Some(server) => {
                         let proxy = ContextProxy { server, bypass_list: params.proxy_bypass_list.as_deref() };
@@ -1357,6 +1375,13 @@ impl<H: Host> Browser<H> {
                     }
                     None => self.new_context(false)?,
                 };
+                if block_service_workers {
+                    let key = self.context(&context_id)?.key;
+                    if let Err(e) = self.host.block_service_workers(key) {
+                        self.dispose_context(&context_id, &mut Discard);
+                        return Err(e);
+                    }
+                }
                 out.send(msg::result_frame(
                     id,
                     &serde_json::json!({ "browserContextId": context_id }),
