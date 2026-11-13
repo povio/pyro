@@ -9,6 +9,9 @@
 //   bun bench/fidelity/shippy.ts --tos <ToS checkout> [--port 47300] [--bin target/release/pyro]
 //       [--out <dir>] [--screens positions,finances,...] [--stack <state file>] [--browsers chromium]
 //       [--chromium-channel chromium|headless-shell] [--settle 1000]
+//   --bin a,b,...    several pyro binaries in one run, each against the same Chromium capture and
+//                    data (fixture names differ between runs, so separate runs differ in text):
+//                    `<screen>/pyro-<name>.png` per binary (its file name, or `name=path`)
 //   bun bench/fidelity/shippy.ts --compare <run dir>      # metrics and images again from a run's captures
 //
 // Screens: `positions` (the positions list with its Financial Status pills),
@@ -43,7 +46,7 @@
 // the rest): which known gap costs how much.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { SQL } from 'bun';
 import { decodePng, diffHeatmap, downscale, downscaleImage, encodePng, luminance, meanAbsoluteDifference, sideBySide, ssim, type Image } from './image';
 import { startStack, type StackRuntime } from './tos-stack';
@@ -254,29 +257,32 @@ async function settle(page: AnyPage, ms: number) {
   await page.waitForTimeout(ms);
 }
 
+/** A pyro binary under test: `name` labels its captures (`pyro` when there is one). */
+type Bin = { name: string; path: string };
 type Browsers = {
   chromium: { browser: AnyPage; version: string; userAgent: string };
-  pyro?: { browser: AnyPage; version: string };
+  pyro: { bin: Bin; browser: AnyPage }[];
 };
 
-async function launch(tos: string, bin: string | undefined, channel: string): Promise<Browsers> {
+async function launch(tos: string, bins: Bin[], channel: string): Promise<Browsers> {
   const playwright = await import(join(tos, 'apps/fe/node_modules/playwright/index.mjs'));
   const chromium = await playwright.chromium.launch({ headless: true, ...(channel === 'headless-shell' ? {} : { channel }) });
   const probe = await chromium.newPage();
   const userAgent = (await probe.evaluate(() => navigator.userAgent)).replace('HeadlessChrome', 'Chrome');
   await probe.close();
-  if (!bin) return { chromium: { browser: chromium, version: chromium.version(), userAgent } };
-  const wright = await import(join(repo, 'packages/pyro/src/wright/index.ts'));
-  const pyro = await wright.chromium.launch({ bin });
-  return { chromium: { browser: chromium, version: chromium.version(), userAgent }, pyro: { browser: pyro, version: pyro.version?.() ?? '' } };
+  const wright = bins.length ? await import(join(repo, 'packages/pyro/src/wright/index.ts')) : undefined;
+  const pyro = [];
+  for (const bin of bins) pyro.push({ bin, browser: await wright.chromium.launch({ bin: bin.path }) });
+  return { chromium: { browser: chromium, version: chromium.version(), userAgent }, pyro };
 }
 
-async function capture(kind: 'chromium' | 'pyro', browsers: Browsers, screen: Screen, office: Office, app: string, file: string, settleMs: number) {
+async function capture(browser: 'chromium' | number, browsers: Browsers, screen: Screen, office: Office, app: string, file: string, settleMs: number) {
+  const kind = browser === 'chromium' ? 'chromium' : 'pyro';
   const userAgent = browsers.chromium.userAgent;
   const context =
-    kind === 'chromium'
+    browser === 'chromium'
       ? await browsers.chromium.browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: DSF, userAgent, timezoneId: TIME_ZONE, locale: 'en-US' })
-      : await browsers.pyro!.browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: DSF, userAgent });
+      : await browsers.pyro[browser].browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: DSF, userAgent });
   try {
     await context.addInitScript(signInScript(office));
     const page = await context.newPage();
@@ -391,10 +397,10 @@ type Row = {
   causes?: Record<string, { deficitShare: number; changedShare: number; count: number }>;
 };
 
-function compare(dir: string, screen: string, regions?: Record<string, number[][]>): Row {
+function compare(dir: string, screen: string, regions: Record<string, number[][]> | undefined, name = 'pyro'): Row {
   const read = (name: string): Image => decodePng(readFileSync(join(dir, screen, `${name}.png`)));
   const chromium = read('chromium');
-  const pyro = read('pyro');
+  const pyro = read(name);
   if (chromium.width !== pyro.width || chromium.height !== pyro.height)
     throw new Error(`${screen}: sizes differ, chromium ${chromium.width}x${chromium.height}, pyro ${pyro.width}x${pyro.height}`);
   const la = luminance(chromium);
@@ -408,7 +414,9 @@ function compare(dir: string, screen: string, regions?: Record<string, number[][
   const { mad, changedShare } = meanAbsoluteDifference(chromium, pyro);
   const diff = diffHeatmap(chromium, pyro);
   const side = sideBySide([chromium, pyro]);
-  const out = (name: string, image: Image) => writeFileSync(join(dir, screen, `${name}.png`), encodePng(image, 3));
+  // `pyro.png` gives diff.png ..., `pyro-<name>.png` diff-<name>.png ...
+  const suffix = name === 'pyro' ? '' : name.slice('pyro'.length);
+  const out = (kind: string, image: Image) => writeFileSync(join(dir, screen, `${kind}${suffix}.png`), encodePng(image, 3));
   out('diff', diff);
   out('side', side);
   out('diff-small', downscaleImage(diff, DSF));
@@ -416,8 +424,9 @@ function compare(dir: string, screen: string, regions?: Record<string, number[][
   return { screen, ssimFull: full, ssim100: view, mad, changedShare, size: `${chromium.width}x${chromium.height}`, causes };
 }
 
-function table(rows: Row[]) {
+function table(rows: Row[], title?: string) {
   const lines = [
+    ...(title ? [title] : []),
     'screen               SSIM full  SSIM 100%    MAD  changed>16  size',
     ...rows.map(
       (r) =>
@@ -440,9 +449,11 @@ async function main() {
   const compareOnly = opt('--compare');
   if (compareOnly) {
     const report = JSON.parse(readFileSync(join(compareOnly, 'report.json'), 'utf8'));
-    const rows = (report.screens as { name: string; chromium?: { regions?: Record<string, number[][]> } }[]).map((s) => compare(compareOnly, s.name, s.chromium?.regions));
-    writeFileSync(join(compareOnly, 'report.json'), JSON.stringify({ ...report, rows }, null, 2));
-    console.log(table(rows));
+    const files: string[] = report.meta.bins?.map((b: Bin) => b.name) ?? ['pyro'];
+    const screens = report.screens as { name: string; chromium?: { regions?: Record<string, number[][]> } }[];
+    const results = files.map((file) => ({ file, rows: screens.map((s) => compare(compareOnly, s.name, s.chromium?.regions, file)) }));
+    writeFileSync(join(compareOnly, 'report.json'), JSON.stringify({ ...report, rows: results[0].rows, results }, null, 2));
+    for (const r of results) console.log(table(r.rows, results.length > 1 ? r.file : undefined) + '\n');
     return;
   }
   const tos = opt('--tos');
@@ -450,8 +461,15 @@ async function main() {
   const port = Number(opt('--port', '47300'));
   // `--browsers chromium` captures Chromium alone (no comparison).
   const withPyro = opt('--browsers', 'chromium,pyro')!.split(',').includes('pyro');
-  const bin = resolve(opt('--bin', join(repo, 'target/release/pyro'))!);
-  if (withPyro && !existsSync(bin)) throw new Error(`no pyro binary at ${bin} (cargo build --release)`);
+  const binArgs = opt('--bin', join(repo, 'target/release/pyro'))!.split(',');
+  const bins: Bin[] = !withPyro
+    ? []
+    : binArgs.map((arg) => {
+        const [name, path] = arg.includes('=') ? arg.split('=', 2) : [basename(arg), arg];
+        return { name: binArgs.length === 1 ? 'pyro' : `pyro-${name}`, path: resolve(path) };
+      });
+  for (const bin of bins) if (!existsSync(bin.path)) throw new Error(`no pyro binary at ${bin.path} (cargo build --release)`);
+  if (new Set(bins.map((b) => b.name)).size !== bins.length) throw new Error('two binaries with one name: use name=path');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const out = resolve(opt('--out', join(homedir(), 'Library/Caches/lightningpanda/fidelity', stamp))!);
   const only = opt('--screens')?.split(',');
@@ -474,34 +492,41 @@ async function main() {
     const db = await runDatabase(stack, offices.positions.officeId);
     await adjustData(db, offices);
     await db.close();
-    browsers = await launch(tos, withPyro ? bin : undefined, opt('--chromium-channel', 'chromium')!);
+    browsers = await launch(tos, bins, opt('--chromium-channel', 'chromium')!);
     const captured: Record<string, unknown>[] = [];
     for (const screen of screens) {
       mkdirSync(join(out, screen.name), { recursive: true });
       const office = offices[screen.office];
       // Back to back per screen, so relative times on the screen ("Last saved: Now") read the same.
       const c = await capture('chromium', browsers, screen, office, stack.app, join(out, screen.name, 'chromium.png'), settleMs);
-      const p = withPyro ? await capture('pyro', browsers, screen, office, stack.app, join(out, screen.name, 'pyro.png'), settleMs) : undefined;
-      captured.push({ name: screen.name, chromium: c, pyro: p });
-      console.log(`captured ${screen.name}: chromium ${c.innerWidth}x${c.innerHeight}@${c.devicePixelRatio}${p ? `, pyro ${p.innerWidth}x${p.innerHeight}@${p.devicePixelRatio}` : ''}${c.scrollTop !== undefined ? `, scrollTop ${c.scrollTop} / ${p?.scrollTop}` : ''}`);
+      const ps = [];
+      for (const [i, { bin }] of browsers.pyro.entries())
+        ps.push(await capture(i, browsers, screen, office, stack.app, join(out, screen.name, `${bin.name}.png`), settleMs));
+      const p = ps[0];
+      captured.push({ name: screen.name, chromium: c, pyro: p, ...(ps.length > 1 ? { pyros: ps } : {}) });
+      console.log(`captured ${screen.name}: chromium ${c.innerWidth}x${c.innerHeight}@${c.devicePixelRatio}${ps.map((p, i) => `, ${browsers!.pyro[i].bin.name} ${p.innerWidth}x${p.innerHeight}@${p.devicePixelRatio}`).join('')}${c.scrollTop !== undefined ? `, scrollTop ${c.scrollTop} / ${ps.map((p) => p.scrollTop).join(' / ')}` : ''}`);
     }
     const tosCommit = Bun.spawnSync(['git', '-C', tos, 'rev-parse', 'HEAD']).stdout.toString().trim();
     const pyroCommit = Bun.spawnSync(['git', '-C', repo, 'rev-parse', 'HEAD']).stdout.toString().trim();
-    const meta = { date: new Date().toISOString(), chromium: browsers.chromium.version, userAgent: browsers.chromium.userAgent, pyroBin: bin, pyroCommit, tosCommit, viewport: VIEWPORT, deviceScaleFactor: DSF };
+    const meta = {
+      date: new Date().toISOString(), chromium: browsers.chromium.version, userAgent: browsers.chromium.userAgent,
+      pyroBin: bins[0]?.path, ...(bins.length > 1 ? { bins } : {}), pyroCommit, tosCommit, viewport: VIEWPORT, deviceScaleFactor: DSF,
+    };
     writeFileSync(join(out, 'report.json'), JSON.stringify({ meta, screens: captured }, null, 2));
     await browsers.chromium.browser.close();
-    await browsers.pyro?.browser.close();
+    for (const p of browsers.pyro) await p.browser.close();
     browsers = undefined;
     await stop?.();
     stop = undefined;
     if (!withPyro) return console.log(out);
-    const rows = screens.map((s, i) => compare(out, s.name, (captured[i].chromium as { regions?: Record<string, number[][]> }).regions));
-    writeFileSync(join(out, 'report.json'), JSON.stringify({ meta, screens: captured, rows }, null, 2));
-    console.log(table(rows));
-    console.log(`\n${out}`);
+    const regions = (i: number) => (captured[i].chromium as { regions?: Record<string, number[][]> }).regions;
+    const results = bins.map((bin) => ({ file: bin.name, rows: screens.map((s, i) => compare(out, s.name, regions(i), bin.name)) }));
+    writeFileSync(join(out, 'report.json'), JSON.stringify({ meta, screens: captured, rows: results[0].rows, ...(results.length > 1 ? { results } : {}) }, null, 2));
+    for (const r of results) console.log(table(r.rows, results.length > 1 ? `${r.file} (${bins.find((b) => b.name === r.file)!.path})` : undefined) + '\n');
+    console.log(out);
   } finally {
     await browsers?.chromium.browser.close().catch(() => {});
-    await browsers?.pyro?.browser.close().catch(() => {});
+    for (const p of browsers?.pyro ?? []) await p.browser.close().catch(() => {});
     await stop?.();
   }
 }
