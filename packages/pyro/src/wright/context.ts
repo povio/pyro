@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join, basename, relative } from 'node:path';
 import { anonymousName, snapshotPath, type SnapshotKind } from './snapshot.js';
+import type { FullConfig, FullProject } from './types.js';
 
 export type Annotation = { type: string; description?: string };
 export type Attachment = { name: string; contentType: string; path?: string; body?: Buffer };
@@ -11,6 +12,7 @@ export type Attachment = { name: string; contentType: string; path?: string; bod
 export class TestInfo {
   annotations: Annotation[] = [];
   attachments: Attachment[] = [];
+  /** 'failed' or 'timedOut' from the first error on (afterEach hooks and fixture teardown see it). */
   status: 'passed' | 'failed' | 'timedOut' | 'skipped' | 'interrupted' = 'passed';
   expectedStatus: 'passed' | 'failed' | 'skipped' = 'passed';
   error?: Error;
@@ -23,23 +25,38 @@ export class TestInfo {
   readonly line = 0;
   /** `{snapshotSuffix}` in the snapshot template: the platform, as Playwright's page fixture sets it; '' drops it. */
   snapshotSuffix: string = process.platform;
+  /** Failed soft assertions: each also fails the test at once (`status`, `errors`), as in Playwright. */
   _softErrors: Error[] = [];
   /** A missing snapshot was written ("missing" mode): the test fails and is not retried. */
   _hasNonRetriableError = false;
   /** Set by `test.skip()` / `test.fixme()` in the body: the run stops there. */
   _skipped?: string;
   _onTimeout?: (ms: number) => void;
+  /** Set for a beforeAll/afterAll hook's info: the `context` and `page` fixtures refuse it. */
+  _hook?: 'beforeAll' | 'afterAll';
   private startedAt = Date.now();
 
   constructor(
     readonly title: string,
     readonly titlePath: string[],
     readonly file: string,
-    readonly project: { name: string; use: Record<string, unknown>; outputDir: string; testDir: string; timeout: number; retries: number; metadata: Record<string, unknown>; snapshotDir?: string; configDir?: string },
-    readonly config: Record<string, any>,
+    readonly project: FullProject & { snapshotDir?: string; configDir?: string },
+    readonly config: FullConfig,
     public timeout: number,
     readonly retry: number,
-  ) {}
+  ) {
+    const push = this._softErrors.push.bind(this._softErrors);
+    this._softErrors.push = (...errors: Error[]) => {
+      for (const e of errors) this._failWithError(e);
+      return push(...errors);
+    };
+  }
+  /** Records an error of the test: the first one sets `status` (Playwright's `_failWithError`). */
+  _failWithError(error: Error, timedOut = false): void {
+    if (this.status === 'passed' || this.status === 'skipped') this.status = timedOut ? 'timedOut' : 'failed';
+    if (!this.errors.includes(error)) this.errors.push(error);
+    this.error ??= error;
+  }
   get testId(): string {
     return `${basename(this.file)}:${this.titlePath.join(' > ')}`;
   }

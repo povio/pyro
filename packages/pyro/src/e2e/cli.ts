@@ -13,7 +13,8 @@ not a file, directory or glob filters the spec paths, as with bun test.
 
   -j, --concurrency <n>           tests at a time across all files (default: the CPU count)
       --max-concurrency <n>       tests of one file at a time (as bun test's; default: no limit)
-      --timeout <ms>              default timeout of tests and hooks (default 5000)
+      --timeout <ms>              default timeout of tests and hooks (default 30000, so a
+                                  step's own 5000 ms timeout reports its reason first)
   -t, --test-name-pattern <re>    only tests whose name (describes and test,
                                   joined by spaces) matches
       --only                      only tests and describes marked .only
@@ -38,7 +39,7 @@ export async function main(argv: string[]): Promise<number> {
     cwd: process.cwd(),
     paths: [],
     concurrency: availableParallelism(),
-    timeout: 5_000,
+    timeout: 30_000,
     only: false,
     updateTimings: false,
     preload: [],
