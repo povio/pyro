@@ -7,7 +7,7 @@ workspace `Cargo.toml`. License: Apache-2.0 OR MIT, as upstream. `.cargo_vcs_inf
 
 ## The change
 
-`UPSTREAM.patch` is the whole diff: two changes.
+`UPSTREAM.patch` is the whole diff: three changes.
 
 ## `unicode-range`
 
@@ -47,8 +47,21 @@ instead of a `stat` each), up to four threads read them (`scan::scan_file`), and
 the calling thread in the order the walk found the files, each family built once: 4 ms, with the same
 families, faces and face order (a dump of both was compared). The threads are joined before the call returns.
 
+## Synthetic bold from weight 600
+
+`FontInfo::synthesis` asked for emboldening only when the requested weight was more than 200 above the face's
+(and the face has no `wght` axis), so `font-weight: 600` on a family with only a regular face (ToS's Lato
+headings) was drawn thin. Chromium synthesizes bold when the request is at or above 600 and the face is below
+it (measured with a web font declared at 300-700 and with single-face system families: 600, 700 and 900 are
+emboldened on a 400 face, 500 is not, and 900 on a 700 face is not). `SYNTHETIC_BOLD_WEIGHT` in `font.rs` is that
+rule. The amount drawn is blitz-paint's (`synthetic_bold`). One case differs: on macOS Chromium does not
+embolden Impact (Core Text reports its only face as bold, though its `OS/2` weight is 400); pyro does, as
+Chromium does on other platforms. Covered by `static_weight_synthesis_is_for_a_bold_request_on_a_lighter_face`
+here and pyro-render's `a_missing_bold_face_is_synthesized`.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/fontique-<version>` and re-apply `UPSTREAM.patch`
 (`git apply` from the crate root), or delete this directory and the `[patch.crates-io]` entry when upstream
-matches fonts by `unicode-range` itself (the scan change is speed only).
+matches fonts by `unicode-range` itself (the scan change is speed only; the bold rule is one condition in
+`FontInfo::synthesis`).

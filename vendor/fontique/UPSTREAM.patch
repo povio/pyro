@@ -292,7 +292,7 @@ index edfcc08..98a8963 100644
              if let Entry::Ok(font) = status {
                  Some(font)
 diff --git a/src/font.rs b/src/font.rs
-index 33d6669..166a43b 100644
+index 33d6669..5e18770 100644
 --- a/src/font.rs
 +++ b/src/font.rs
 @@ -7,7 +7,7 @@ use crate::CharmapIndex;
@@ -313,7 +313,18 @@ index 33d6669..166a43b 100644
  }
  
  impl FontInfo {
-@@ -210,6 +212,19 @@ impl FontInfo {
+@@ -108,7 +110,9 @@ impl FontInfo {
+                 synth.vars[len] = (Tag::new(b"wght"), weight.value());
+                 len += 1;
+             }
+-        } else if weight.value() > self.weight.value() + 200.0 {
++        } else if weight.value() >= SYNTHETIC_BOLD_WEIGHT && self.weight.value() < SYNTHETIC_BOLD_WEIGHT {
++            // pyro: as Chromium does (upstream: a requested weight more than 200 above the
++            // font's, which left 600 on a regular face thin). See README.pyro.md.
+             synth.embolden = true;
+         }
+         if self.style != style {
+@@ -210,6 +214,19 @@ impl FontInfo {
      pub fn charmap_index(&self) -> CharmapIndex {
          self.charmap_index
      }
@@ -333,7 +344,7 @@ index 33d6669..166a43b 100644
  }
  
  impl FontInfo {
-@@ -255,6 +270,8 @@ impl FontInfo {
+@@ -255,6 +272,8 @@ impl FontInfo {
              axes,
              attr_axes,
              charmap_index,
@@ -342,7 +353,7 @@ index 33d6669..166a43b 100644
          })
      }
  
-@@ -295,6 +312,12 @@ impl FontInfo {
+@@ -295,9 +314,20 @@ impl FontInfo {
                  }
              }
          }
@@ -355,7 +366,15 @@ index 33d6669..166a43b 100644
      }
  }
  
-@@ -486,6 +509,19 @@ pub struct FontInfoOverride<'a> {
++/// pyro: the weight from which a request counts as bold and a face as having it. Bold is
++/// synthesized for a request at or above it on a face (without a `wght` axis) below it, which
++/// is Chromium's rule (`FontSelectionAlgorithm`'s bold threshold, 600).
++const SYNTHETIC_BOLD_WEIGHT: f32 = 600.0;
++
+ const WEIGHT_AXIS: u8 = 0x01;
+ const WIDTH_AXIS: u8 = 0x02;
+ const SLANT_AXIS: u8 = 0x04;
+@@ -486,6 +516,19 @@ pub struct FontInfoOverride<'a> {
      /// Default values for the font's variation axes. Axes not included within
      /// the font will be ignored.
      pub axes: Option<&'a [(Tag, f32)]>,
@@ -375,6 +394,40 @@ index 33d6669..166a43b 100644
  }
  
  #[cfg(test)]
+@@ -541,22 +584,18 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn static_weight_synthesis_requires_more_than_200_weight_increase() {
++    fn static_weight_synthesis_is_for_a_bold_request_on_a_lighter_face() {
+         let font = font_info(ROBOTO);
++        assert!(font.weight().value() < SYNTHETIC_BOLD_WEIGHT);
+ 
+-        let synthesis = font.synthesis(
+-            font.width(),
+-            font.style(),
+-            FontWeight::new(font.weight().value() + 1.0),
+-        );
+-        assert!(!synthesis.any());
+-
+-        let synthesis = font.synthesis(
+-            font.width(),
+-            font.style(),
+-            FontWeight::new(font.weight().value() + 201.0),
+-        );
+-        assert!(synthesis.embolden());
+-        assert!(synthesis.variation_settings().is_empty());
++        for weight in [font.weight().value() + 1.0, 500.0, 599.0] {
++            let synthesis = font.synthesis(font.width(), font.style(), FontWeight::new(weight));
++            assert!(!synthesis.any(), "{weight}");
++        }
++        for weight in [600.0, 700.0, 900.0] {
++            let synthesis = font.synthesis(font.width(), font.style(), FontWeight::new(weight));
++            assert!(synthesis.embolden(), "{weight}");
++            assert!(synthesis.variation_settings().is_empty());
++        }
+     }
+ }
 diff --git a/src/lib.rs b/src/lib.rs
 index 9d41c42..e87ae8e 100644
 --- a/src/lib.rs
