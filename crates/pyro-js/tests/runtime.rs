@@ -173,6 +173,31 @@ fn to_locale_string_with_options_reads_options_each_call_and_formats_like_number
     assert_eq!(eval_str(&r, "(1234.5).toLocaleString('de-DE', { minimumFractionDigits: 2 })"), "1.234,50");
 }
 
+/// A medium or short date and a time are joined as ICU 77 (and so Chromium) joins them, also
+/// with ICU 78, whose CLDR 48 joins them with an "atTime" pattern that carries a word in some
+/// locales (JSC patch 0032): "Oct 1, 13:05", not "Oct 1 at 13:05". Long dates keep "at", and
+/// Finnish keeps "klo", as in Chromium; Portuguese keeps its comma.
+#[test]
+fn a_medium_date_and_a_time_join_as_in_chromium() {
+    let e = engine();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let out = eval_str(
+        &r,
+        "const d = new Date(Date.UTC(2026, 9, 1, 13, 5));
+         const f = (l, o) => new Intl.DateTimeFormat(l, { ...o, timeZone: 'UTC' }).format(d);
+         const md = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+         [f('en-US', md), f('en-US', { dateStyle: 'medium', timeStyle: 'short' }), f('en-GB', md),
+          f('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }), f('pl-PL', md),
+          f('en-US', { dateStyle: 'long', timeStyle: 'short' }), f('fi-FI', { dateStyle: 'medium', timeStyle: 'short' }),
+          f('pt-BR', { dateStyle: 'medium', timeStyle: 'short' }), f('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' })].join('|')",
+    );
+    assert_eq!(
+        out,
+        "Oct 1, 13:05|Oct 1, 2026, 1:05 PM|1 Oct, 13:05|1 oct. 2026, 13:05|1 paź, 13:05|\
+         October 1, 2026 at 1:05 PM|1.10.2026 klo 13.05|1 de out. de 2026, 13:05|10/1/2026, 1:05 PM"
+    );
+}
+
 #[test]
 fn only_one_engine_per_thread() {
     let _e = engine();
