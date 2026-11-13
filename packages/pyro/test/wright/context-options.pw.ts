@@ -289,7 +289,8 @@ test('deviceScaleFactor, isMobile, hasTouch and screen', async ({ browser }) => 
   const phone = await browser.newContext({ viewport: { width: 300, height: 400 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const page = await phone.newPage();
   await page.goto(`${SITE}/phone`);
-  expect(await page.evaluate(device)).toEqual([2, 300, 400, 300, 400, 'portrait-primary', 1, true]);
+  // The page has no `<meta name="viewport">`: a 980 px layout viewport, as in Chromium.
+  expect(await page.evaluate(device)).toEqual([2, 980, 1307, 300, 400, 'portrait-primary', 1, true]);
   // Screenshots are in device pixels (Playwright's default `scale: 'device'`).
   const png = await page.screenshot();
   expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([600, 800]);
