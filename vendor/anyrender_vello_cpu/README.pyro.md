@@ -7,7 +7,7 @@ workspace `Cargo.toml`. License: MIT OR Apache-2.0, as upstream. `.cargo_vcs_inf
 
 ## The change
 
-`UPSTREAM.patch` is the whole diff: three changes.
+`UPSTREAM.patch` is the whole diff: four changes.
 
 ## A raster thread count per renderer
 
@@ -33,14 +33,14 @@ scale for a hinted one, by the conditions glifo hints under. glifo's main branch
 itself (`embolden_in_cache_units`); drop this when the workspace moves to a glifo with it. Covered by
 pyro-render's `a_missing_bold_face_is_synthesized`.
 
-## Filter layers (`blur()`, `drop-shadow()`)
+## Filter layers (`blur()`, `drop-shadow()`, the colour functions)
 
 vello_cpu 0.3 filters a layer only when it renders on one thread (its multi-threaded dispatcher panics on a
 filter layer, and pyro rasterizes frames of 4 M device px or more on threads), takes a single primitive per
 layer and panics on most of them (colour matrices). So the `filters` feature, which passed a layer's filter to
 vello_cpu, is not used (it does nothing now), and `VelloCpuScenePainter::append_scene` replays a recorded scene
-itself: a layer whose filter has a `blur()` or a `drop-shadow()` (`src/filters.rs`, `FilterPlan`; a chain of
-them is applied in order, other effects are left out as before) is rendered into a single-threaded context of
+itself: a layer whose filter has a `blur()`, a `drop-shadow()` or a colour function (`src/filters.rs`, `FilterPlan`;
+a chain of them is applied in order) is rendered into a single-threaded context of
 its own over the pixels the filter reads to produce what the layer's clip shows of the frame, filtered, and
 drawn into the frame as images inside a layer with its clip, blend mode and opacity; a drop shadow's content is
 then drawn as it is, over its shadow. An opaque layer of the normal blend mode whose clip is a rectangle of whole
@@ -55,8 +55,34 @@ the content at a resolution reduced by a power of two that leaves 4 to 8 there (
 blurs with boxes of fractional widths (Gwosdek et al.) of the full resolution's variance less what the reduction
 and the bilinear scaling back up spread, and lets the frame's raster scale the result up: within two levels of
 the full-resolution blur, at a cost that does not grow with the deviation (a 4K title card's 60 px shadow:
-0.5 ms). A blur of content in one solid colour (a text shadow's glyphs) blurs the alpha alone. Covered by the
+0.5 ms). A blur of glyph runs in one solid colour (a text shadow's) blurs the alpha alone, as the blur mask filter
+Chromium draws text shadows with does; other content is blurred in all four channels, as Chromium's blur filter does
+(a box blurred beside an invisible command in another colour came out a level off the box blurred alone). Covered by the
 unit tests in `src/filters.rs` and by pyro-render's `filter_drop_shadow.rs` and `text_shadow.rs`.
+
+The colour functions (`grayscale()`, `sepia()`, `saturate()`, `hue-rotate()`, `invert()`, `opacity()`,
+`brightness()`, `contrast()`) arrive as `feColorMatrix` matrices (blitz-paint builds Chromium's) and are applied as
+Skia's matrix colour filter applies them, which Chromium builds them into: to each pixel's unpremultiplied sRGB
+values (not linearRGB), each matrix's result clamped to 0..1, functions in a row without rounding to bytes between
+them, premultiplied and rounded at the end (`color_matrices`; a run of equal pixels is computed once). A matrix that
+changes no byte (a neutral amount) is left out, trailing `opacity()` becomes the layer's opacity (`opacity()` alone
+is a faded layer with no pixels of its own), and when the functions keep the alpha and the layer's content is in one
+solid colour (a box, a run of text), that content is drawn in the mapped colour (`map_color`) instead of being
+rendered apart. Covered by the unit tests in `src/filters.rs` and `src/scene.rs` and by pyro-render's
+`filter_color.rs`.
+
+## Clips that a blend mode blends through
+
+`push_clip_layer` pushes a vello_cpu clip layer, an isolated group: a `mix-blend-mode` inside an
+`overflow: hidden` box blended with nothing (the layer starts transparent), where CSS clips make no group and
+Chromium's (Skia's) clips are no layers either. In a replayed scene that has a layer with a blend mode,
+`replay` makes a clip whose content has such a layer (in it or in clips in it, not in another layer) a clip
+path (vello_cpu's non-isolated clipping, `push_clip_path`/`pop_clip`; the painter keeps which kind each push
+was for `pop_layer`). Every other clip stays a clip layer: a clip path clips each fill on its own, and where
+fills overlap under an antialiased edge their coverage adds up (`clip-path` circles over a box and its border
+came out up to 97 levels off with clip paths everywhere). What is a group in CSS (a stacking context with
+blending descendants, a mask, a text clip) pushes a layer in blitz-paint. Covered by the unit tests in
+`src/scene.rs`.
 
 Regenerate the patch from a pristine copy of the published crate:
 `git diff --no-index --no-prefix a b` with the published crate in `a` and this directory, without this file

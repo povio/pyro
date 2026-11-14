@@ -1,7 +1,10 @@
 use anyrender::{Filter, PaintScene};
+use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Shape};
 use peniko::{BlendMode, Fill};
-use std::{cell::Cell, sync::Arc};
+use std::{cell::Cell, collections::HashSet, sync::Arc};
+use style::computed_values::mix_blend_mode::T as MixBlendMode;
+use style::values::specified::box_::DisplayInside;
 
 const LAYER_LIMIT: u32 = 1024;
 
@@ -99,6 +102,45 @@ impl LayerManager {
             self.layer_depth.update(|x| x - 1);
         }
     }
+}
+
+/// pyro: the stacking contexts that an element with a `mix-blend-mode` blends in (its nearest
+/// ancestor that is one: the root element's at the latest). Each is painted as an isolated group,
+/// as Chromium isolates a stacking context with blending descendants: the element blends with what
+/// that context painted, never with what lies under it (the canvas under the root element's).
+/// Without one, a `difference` box over its parent's box blended with the page behind too. One pass
+/// over the nodes' styles; usually empty.
+pub(crate) fn blend_isolation(dom: &BaseDocument) -> HashSet<NodeId> {
+    let tree = dom.tree();
+    let mut contexts = HashSet::new();
+    for (_, node) in tree.iter() {
+        let blends = node
+            .primary_styles()
+            .is_some_and(|style| style.get_effects().mix_blend_mode != MixBlendMode::Normal);
+        if !blends {
+            continue;
+        }
+        let mut ancestor = node.parent;
+        while let Some(id) = ancestor {
+            let candidate = &tree[id];
+            let flex_or_grid_item = candidate
+                .parent
+                .and_then(|parent| tree[parent].primary_styles())
+                .is_some_and(|style| {
+                    matches!(
+                        style.get_box().display.inside(),
+                        DisplayInside::Flex | DisplayInside::Grid
+                    )
+                });
+            if candidate.is_root_element() || candidate.is_stacking_context_root(flex_or_grid_item)
+            {
+                contexts.insert(id);
+                break;
+            }
+            ancestor = candidate.parent;
+        }
+    }
+    contexts
 }
 
 #[cfg(test)]

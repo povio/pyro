@@ -7,7 +7,7 @@ mod mask;
 
 use blitz_dom::CopyStyleGetters;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::kurbo_css::CssBox;
@@ -137,6 +137,8 @@ pub struct BlitzDomPainter<'dom, 'a> {
     #[cfg(feature = "scrollbars")]
     pub(crate) scrollbar_drag_target: Option<blitz_dom::node::ScrollbarRef>,
     pub(crate) layer_manager: LayerManager,
+    /// pyro: the stacking contexts painted as isolated groups for a `mix-blend-mode` in them.
+    pub(crate) blend_isolated: HashSet<NodeId>,
     /// Reusable scratch allocations shared by all text layouts painted for this document.
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
@@ -190,6 +192,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             #[cfg(feature = "scrollbars")]
             scrollbar_drag_target: dom.scrollbar_drag_target(),
             layer_manager,
+            blend_isolated: crate::layers::blend_isolation(dom),
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
             backgrounds: true,
@@ -736,7 +739,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Use the viewport in scene coordinates so outlines, shadows and overflowing
         // descendants are not clipped to the element's border box.
         let blend = convert_blend_mode(effects.mix_blend_mode);
-        let isolate = styles.get_box().isolation == Isolation::Isolate;
+        let isolate = styles.get_box().isolation == Isolation::Isolate
+            || self.blend_isolated.contains(&node_id);
         let blend_layer_pushed = self.layer_manager.maybe_push_layer(
             scene,
             isolate || blend != BlendMode::default(),

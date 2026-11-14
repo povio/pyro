@@ -203,9 +203,12 @@ diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/sr
 diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filters.rs
 --- a/packages/blitz-paint/src/filters.rs
 +++ b/packages/blitz-paint/src/filters.rs
-@@ -4,19 +4,30 @@
+@@ -2,39 +2,202 @@
+ use style::color::AbsoluteColor;
+ pub(crate) use style::computed_values::filter::single_value::T as StyloFilter;
  
- use anyrender::filters::{Filter, FilterEffect};
+-use anyrender::filters::{Filter, FilterEffect};
++use anyrender::filters::{Filter, FilterEffect, color_transformation::ColorMatrix};
  
 -pub(crate) fn convert_filters(filters: &[StyloFilter]) -> Option<Filter> {
 +/// pyro: the filter in device pixels: lengths are CSS px, and the layers the filter is applied
@@ -236,14 +239,23 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
 +) -> Option<FilterEffect> {
      Some(match filter {
 -        StyloFilter::Blur(radius) => FilterEffect::blur(radius.px()),
+-        StyloFilter::Brightness(amount) => FilterEffect::brightness(amount.0),
+-        StyloFilter::Contrast(amount) => FilterEffect::contrast(amount.0),
+-        StyloFilter::Grayscale(amount) => FilterEffect::grayscale(amount.0),
+-        StyloFilter::HueRotate(angle) => FilterEffect::hue_rotate(angle.radians()),
+-        StyloFilter::Invert(amount) => FilterEffect::invert(amount.0),
+-        StyloFilter::Opacity(amount) => FilterEffect::opacity(amount.0),
+-        StyloFilter::Saturate(amount) => FilterEffect::saturate(amount.0),
+-        StyloFilter::Sepia(amount) => FilterEffect::sepia(amount.0),
 +        StyloFilter::Blur(radius) => FilterEffect::blur(radius.px() * scale),
-         StyloFilter::Brightness(amount) => FilterEffect::brightness(amount.0),
-         StyloFilter::Contrast(amount) => FilterEffect::contrast(amount.0),
-         StyloFilter::Grayscale(amount) => FilterEffect::grayscale(amount.0),
-@@ -25,14 +36,16 @@
-         StyloFilter::Opacity(amount) => FilterEffect::opacity(amount.0),
-         StyloFilter::Saturate(amount) => FilterEffect::saturate(amount.0),
-         StyloFilter::Sepia(amount) => FilterEffect::sepia(amount.0),
++        StyloFilter::Brightness(amount) => color_matrix(brightness(amount.0)),
++        StyloFilter::Contrast(amount) => color_matrix(contrast(amount.0)),
++        StyloFilter::Grayscale(amount) => color_matrix(grayscale(1.0 - amount.0)),
++        StyloFilter::HueRotate(angle) => color_matrix(hue_rotate(angle.degrees())),
++        StyloFilter::Invert(amount) => color_matrix(invert(amount.0)),
++        StyloFilter::Opacity(amount) => color_matrix(opacity(amount.0)),
++        StyloFilter::Saturate(amount) => color_matrix(saturate(amount.0)),
++        StyloFilter::Sepia(amount) => color_matrix(sepia(1.0 - amount.0)),
 +        // pyro: Chromium takes the third length as the blur's standard deviation (measured: the
 +        // edge of `drop-shadow(0 0 20px)` falls off as a Gaussian of 20px), where `text-shadow`
 +        // and `box-shadow` take half of it.
@@ -262,6 +274,158 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
                  .as_color_color(),
          ),
          StyloFilter::Url(_) => return None,
+     })
+ }
++
++// pyro: the colour functions' matrices as Chromium builds them (`cc/paint/render_surface_filters.cc`),
++// f32 for f32: the filter effects spec's `feColorMatrix` equivalents, with grayscale's and
++// saturate's last column of each row what the row leaves of 1, and grayscale and sepia given
++// 1 - amount. Rows R, G, B, A; the fifth column is an offset in 0..1. They apply to sRGB values,
++// as Chromium applies them (`color-interpolation-filters` is for SVG filter primitives).
++
++fn color_matrix(matrix: [f32; 20]) -> FilterEffect {
++    FilterEffect::ColorMatrix(ColorMatrix(matrix))
++}
++
++fn brightness(amount: f32) -> [f32; 20] {
++    let mut m = [0.0; 20];
++    (m[0], m[6], m[12], m[18]) = (amount, amount, amount, 1.0);
++    m
++}
++
++fn contrast(amount: f32) -> [f32; 20] {
++    let mut m = brightness(amount);
++    let intercept = -0.5 * amount + 0.5;
++    (m[4], m[9], m[14]) = (intercept, intercept, intercept);
++    m
++}
++
++/// `amount` is 1 - the function's.
++fn grayscale(amount: f32) -> [f32; 20] {
++    let mut m = [0.0; 20];
++    m[0] = 0.2126 + 0.7874 * amount;
++    m[1] = 0.7152 - 0.7152 * amount;
++    m[2] = 1.0 - (m[0] + m[1]);
++    m[5] = 0.2126 - 0.2126 * amount;
++    m[6] = 0.7152 + 0.2848 * amount;
++    m[7] = 1.0 - (m[5] + m[6]);
++    m[10] = 0.2126 - 0.2126 * amount;
++    m[11] = 0.7152 - 0.7152 * amount;
++    m[12] = 1.0 - (m[10] + m[11]);
++    m[18] = 1.0;
++    m
++}
++
++/// `amount` is 1 - the function's.
++fn sepia(amount: f32) -> [f32; 20] {
++    let mut m = [0.0; 20];
++    m[0] = 0.393 + 0.607 * amount;
++    m[1] = 0.769 - 0.769 * amount;
++    m[2] = 0.189 - 0.189 * amount;
++    m[5] = 0.349 - 0.349 * amount;
++    m[6] = 0.686 + 0.314 * amount;
++    m[7] = 0.168 - 0.168 * amount;
++    m[10] = 0.272 - 0.272 * amount;
++    m[11] = 0.534 - 0.534 * amount;
++    m[12] = 0.131 + 0.869 * amount;
++    m[18] = 1.0;
++    m
++}
++
++fn saturate(amount: f32) -> [f32; 20] {
++    let mut m = [0.0; 20];
++    m[0] = 0.213 + 0.787 * amount;
++    m[1] = 0.715 - 0.715 * amount;
++    m[2] = 1.0 - (m[0] + m[1]);
++    m[5] = 0.213 - 0.213 * amount;
++    m[6] = 0.715 + 0.285 * amount;
++    m[7] = 1.0 - (m[5] + m[6]);
++    m[10] = 0.213 - 0.213 * amount;
++    m[11] = 0.715 - 0.715 * amount;
++    m[12] = 1.0 - (m[10] + m[11]);
++    m[18] = 1.0;
++    m
++}
++
++fn hue_rotate(degrees: f32) -> [f32; 20] {
++    let radians = degrees * std::f32::consts::PI / 180.0;
++    let (sin, cos) = (radians.sin(), radians.cos());
++    let mut m = [0.0; 20];
++    m[0] = 0.213 + cos * 0.787 - sin * 0.213;
++    m[1] = 0.715 - cos * 0.715 - sin * 0.715;
++    m[2] = 0.072 - cos * 0.072 + sin * 0.928;
++    m[5] = 0.213 - cos * 0.213 + sin * 0.143;
++    m[6] = 0.715 + cos * 0.285 + sin * 0.140;
++    m[7] = 0.072 - cos * 0.072 - sin * 0.283;
++    m[10] = 0.213 - cos * 0.213 - sin * 0.787;
++    m[11] = 0.715 - cos * 0.715 + sin * 0.715;
++    m[12] = 0.072 + cos * 0.928 + sin * 0.072;
++    m[18] = 1.0;
++    m
++}
++
++fn invert(amount: f32) -> [f32; 20] {
++    let mut m = brightness(1.0 - 2.0 * amount);
++    (m[4], m[9], m[14]) = (amount, amount, amount);
++    m
++}
++
++fn opacity(amount: f32) -> [f32; 20] {
++    let mut m = brightness(1.0);
++    m[18] = amount;
++    m
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// A colour (bytes) through a matrix, as Chromium rounds it.
++    fn through(m: [f32; 20], [r, g, b]: [u8; 3]) -> [u8; 3] {
++        let c = [r, g, b].map(|v| f32::from(v) / 255.0);
++        std::array::from_fn(|row| {
++            let m = &m[row * 5..row * 5 + 5];
++            let v = (m[0] * c[0] + m[1] * c[1] + m[2] * c[2] + m[3] + m[4]).clamp(0.0, 1.0);
++            (v * 255.0 + 0.5) as u8
++        })
++    }
++
++    /// The colours WPT's references give (their values are Chromium's).
++    #[test]
++    fn the_colour_functions_give_the_colours_wpt_expects() {
++        // filter-grayscale-001: blue at grayscale(100%) is #121212.
++        assert_eq!(through(grayscale(0.0), [0, 0, 255]), [0x12; 3]);
++        // filter-contrast-002: red at contrast(0%) is #808080.
++        assert_eq!(through(contrast(0.0), [255, 0, 0]), [0x80; 3]);
++        // filter-hue_rotate-002: red at hue-rotate(120deg) is #007100.
++        assert_eq!(through(hue_rotate(120.0), [255, 0, 0]), [0, 0x71, 0]);
++        // filter-saturate-001: yellow at saturate(0%) is #EDEDED.
++        assert_eq!(through(saturate(0.0), [255, 255, 0]), [0xED; 3]);
++        // composited-filters-under-opacity: yellow at invert(100%) is blue.
++        assert_eq!(through(invert(1.0), [255, 255, 0]), [0, 0, 255]);
++    }
++
++    /// At the amounts that change nothing, the matrices are the identity to f32 rounding (which the
++    /// renderer skips: no byte changes).
++    #[test]
++    fn neutral_amounts_are_the_identity() {
++        let identity = opacity(1.0);
++        for m in [
++            brightness(1.0),
++            contrast(1.0),
++            grayscale(1.0),
++            sepia(1.0),
++            saturate(1.0),
++            invert(0.0),
++            hue_rotate(0.0),
++        ] {
++            assert!(
++                m.iter().zip(identity).all(|(a, b)| (a - b).abs() <= 1e-6),
++                "{m:?}"
++            );
++        }
++    }
++}
 diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-paint/src/kurbo_css/css_box.rs
 --- a/packages/blitz-paint/src/kurbo_css/css_box.rs
 +++ b/packages/blitz-paint/src/kurbo_css/css_box.rs
@@ -300,6 +464,67 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
      /// Construct a bezpath drawing the frame border
      pub fn border_box_path(&self) -> BezPath {
          let mut path = BezPath::new();
+diff --git a/packages/blitz-paint/src/layers.rs b/packages/blitz-paint/src/layers.rs
+--- a/packages/blitz-paint/src/layers.rs
++++ b/packages/blitz-paint/src/layers.rs
+@@ -1,7 +1,10 @@
+ use anyrender::{Filter, PaintScene};
++use blitz_dom::{BaseDocument, NodeId};
+ use kurbo::{Affine, Shape};
+ use peniko::{BlendMode, Fill};
+-use std::{cell::Cell, sync::Arc};
++use std::{cell::Cell, collections::HashSet, sync::Arc};
++use style::computed_values::mix_blend_mode::T as MixBlendMode;
++use style::values::specified::box_::DisplayInside;
+ 
+ const LAYER_LIMIT: u32 = 1024;
+ 
+@@ -101,6 +104,45 @@
+     }
+ }
+ 
++/// pyro: the stacking contexts that an element with a `mix-blend-mode` blends in (its nearest
++/// ancestor that is one: the root element's at the latest). Each is painted as an isolated group,
++/// as Chromium isolates a stacking context with blending descendants: the element blends with what
++/// that context painted, never with what lies under it (the canvas under the root element's).
++/// Without one, a `difference` box over its parent's box blended with the page behind too. One pass
++/// over the nodes' styles; usually empty.
++pub(crate) fn blend_isolation(dom: &BaseDocument) -> HashSet<NodeId> {
++    let tree = dom.tree();
++    let mut contexts = HashSet::new();
++    for (_, node) in tree.iter() {
++        let blends = node
++            .primary_styles()
++            .is_some_and(|style| style.get_effects().mix_blend_mode != MixBlendMode::Normal);
++        if !blends {
++            continue;
++        }
++        let mut ancestor = node.parent;
++        while let Some(id) = ancestor {
++            let candidate = &tree[id];
++            let flex_or_grid_item = candidate
++                .parent
++                .and_then(|parent| tree[parent].primary_styles())
++                .is_some_and(|style| {
++                    matches!(
++                        style.get_box().display.inside(),
++                        DisplayInside::Flex | DisplayInside::Grid
++                    )
++                });
++            if candidate.is_root_element() || candidate.is_stacking_context_root(flex_or_grid_item)
++            {
++                contexts.insert(id);
++                break;
++            }
++            ancestor = candidate.parent;
++        }
++    }
++    contexts
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
 diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 --- a/packages/blitz-paint/src/lib.rs
 +++ b/packages/blitz-paint/src/lib.rs
@@ -549,6 +774,15 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/render.rs
 --- a/packages/blitz-paint/src/render.rs
 +++ b/packages/blitz-paint/src/render.rs
+@@ -7,7 +7,7 @@
+ 
+ use blitz_dom::CopyStyleGetters;
+ use std::cell::RefCell;
+-use std::collections::HashMap;
++use std::collections::{HashMap, HashSet};
+ use std::sync::Arc;
+ 
+ use super::kurbo_css::CssBox;
 @@ -28,6 +28,7 @@
  use blitz_dom::{BaseDocument, ElementData, Node, NodeId, local_name};
  use blitz_traits::devtools::DevtoolSettings;
@@ -557,7 +791,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  use style::values::computed::{BorderCornerRadius, ColorOrAuto};
  use style::{
      dom::TElement,
-@@ -124,6 +125,12 @@
+@@ -124,16 +125,29 @@
      pub(crate) initial_y: f64,
      /// The id of the document's root element (cached to avoid re-resolving it for every element)
      pub(crate) root_element_id: Option<NodeId>,
@@ -570,7 +804,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Scrollbar hover/drag state, resolved once per scene like the root element
      #[cfg(feature = "scrollbars")]
      pub(crate) hovered_scrollbar: Option<blitz_dom::node::ScrollbarRef>,
-@@ -134,6 +141,11 @@
+     #[cfg(feature = "scrollbars")]
+     pub(crate) scrollbar_drag_target: Option<blitz_dom::node::ScrollbarRef>,
+     pub(crate) layer_manager: LayerManager,
++    /// pyro: the stacking contexts painted as isolated groups for a `mix-blend-mode` in them.
++    pub(crate) blend_isolated: HashSet<NodeId>,
+     /// Reusable scratch allocations shared by all text layouts painted for this document.
      pub(crate) draw_text_context: RefCell<DrawTextContext>,
      /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
      pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
@@ -582,7 +821,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
      // Pre-computed `Scene`s for each CustomWidget
      pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
-@@ -167,6 +179,12 @@
+@@ -167,13 +181,22 @@
              initial_x,
              initial_y,
              root_element_id,
@@ -595,8 +834,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              #[cfg(feature = "scrollbars")]
              hovered_scrollbar: dom.hovered_scrollbar(),
              #[cfg(feature = "scrollbars")]
-@@ -174,6 +192,8 @@
+             scrollbar_drag_target: dom.scrollbar_drag_target(),
              layer_manager,
++            blend_isolated: crate::layers::blend_isolation(dom),
              draw_text_context: RefCell::new(DrawTextContext::default()),
              selection_ranges,
 +            backgrounds: true,
@@ -604,7 +844,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              custom_widget_scenes,
          }
      }
-@@ -231,7 +251,7 @@
+@@ -231,7 +254,7 @@
              }
          };
  
@@ -613,7 +853,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let bg_color = bg_color.as_srgb_color();
              let rect = Rect::from_origin_size(
                  (self.initial_x, self.initial_y),
-@@ -255,6 +275,10 @@
+@@ -255,6 +278,10 @@
              viewport_clip_rect,
          );
  
@@ -624,14 +864,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -284,10 +308,141 @@
-                     self.initial_x,
-                     self.initial_y,
-                 );
-+            }
-+        }
-+    }
-+
+@@ -288,6 +315,137 @@
+         }
+     }
+ 
 +    /// pyro: paints the top layer above the document, bottom
 +    /// first: each element's `::backdrop` (a viewport-sized box: its
 +    /// background color, `opacity` and `backdrop-filter`), then the element
@@ -702,12 +938,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    Some(_) => {}
 +                    None => return false,
 +                }
-             }
++            }
 +            cur = node.parent.and_then(|p| self.dom.get_node(p));
-         }
++        }
 +        true
-     }
- 
++    }
++
 +    /// The `::backdrop` of top-layer element `id`: a box filling the painted
 +    /// area below the element (UA style: `position: fixed; inset: 0`).
 +    fn paint_backdrop(&self, scene: &mut impl PaintScene, id: NodeId) {
@@ -766,7 +1002,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
          let location = node.final_layout().location;
          parent
-@@ -317,8 +472,10 @@
+@@ -317,8 +475,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
                  || contain_paint
@@ -779,7 +1015,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -376,9 +533,13 @@
+@@ -376,9 +536,13 @@
                      TextPaintOptions {
                          scale: self.scale,
                          brush_override: Some(Color::BLACK),
@@ -793,7 +1029,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  );
              }
          }
-@@ -419,6 +580,15 @@
+@@ -419,6 +583,15 @@
              return;
          }
  
@@ -809,7 +1045,17 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -585,12 +755,27 @@
+@@ -566,7 +739,8 @@
+         // Use the viewport in scene coordinates so outlines, shadows and overflowing
+         // descendants are not clipped to the element's border box.
+         let blend = convert_blend_mode(effects.mix_blend_mode);
+-        let isolate = styles.get_box().isolation == Isolation::Isolate;
++        let isolate = styles.get_box().isolation == Isolation::Isolate
++            || self.blend_isolated.contains(&node_id);
+         let blend_layer_pushed = self.layer_manager.maybe_push_layer(
+             scene,
+             isolate || blend != BlendMode::default(),
+@@ -585,12 +759,27 @@
  
          let paints_own_box = !node.is_inline_with_only_block_children();
  
@@ -842,11 +1088,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          self.layer_manager.maybe_with_layer(
              scene,
              has_clip_path,
-@@ -607,100 +792,25 @@
-                 // `cx.transform` is mutated to apply scroll offsets while drawing content.
+@@ -608,100 +797,25 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
--
+ 
 -                let filter = convert_filters(&effects.filter.0).map(Arc::new);
 -                let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
 -
@@ -862,7 +1107,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                    .as_ref()
 -                    .map(|f| f.expansion_rect())
 -                    .unwrap_or(Rect::ZERO);
- 
+-
 -                let mut effect_layer_clip = cx.frame.border_box_path().bounding_box();
 -                effect_layer_clip.x0 += filter_expansion_area.x0;
 -                effect_layer_clip.y0 += filter_expansion_area.y0;
@@ -930,16 +1175,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                                cx.draw_children(scene, cx.transform, child_clip_rect);
 -                            },
 -                        );
--
--                        // Overlay scrollbars, drawn unscrolled above the
--                        // clipped content.
--                        #[cfg(feature = "scrollbars")]
--                        {
--                            cx.transform = unscrolled_transform;
--                            cx.draw_scrollbars(scene);
--                        }
--                    },
--                );
 +                if has_effect_layer {
 +                    let mut group = Scene::new();
 +                    self.paint_element(&mut cx, &mut group, &element);
@@ -959,9 +1194,20 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    self.paint_element(&mut cx, scene, &element);
 +                }
  
+-                        // Overlay scrollbars, drawn unscrolled above the
+-                        // clipped content.
+-                        #[cfg(feature = "scrollbars")]
+-                        {
+-                            cx.transform = unscrolled_transform;
+-                            cx.draw_scrollbars(scene);
+-                        }
+-                    },
+-                );
+-
                  // Apply the CSS `mask` (if any) to the content drawn above
                  cx.transform = unscrolled_transform;
-@@ -714,6 +824,151 @@
+                 cx.maybe_pop_css_mask_layer(scene, mask_layer_pushed);
+@@ -714,6 +828,151 @@
              .maybe_pop_layer(scene, css_clip_layer_pushed);
      }
  
@@ -1113,7 +1359,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn render_node(
          &self,
          scene: &mut impl PaintScene,
-@@ -724,9 +979,11 @@
+@@ -724,9 +983,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
          match &node.data {
@@ -1127,7 +1373,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -837,6 +1094,45 @@
+@@ -837,6 +1098,45 @@
  }
  
  /// Converts parley BoundingBox into peniko Rect
@@ -1173,7 +1419,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,6 +1263,257 @@
+@@ -967,6 +1267,257 @@
          }
      }
  
@@ -1431,7 +1677,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
              let text_layout = self.element
-@@ -976,6 +1523,11 @@
+@@ -976,6 +1527,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -1443,7 +1689,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +1536,22 @@
+@@ -984,23 +1540,22 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -1475,7 +1721,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,17 +1559,185 @@
+@@ -1008,17 +1563,185 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1663,7 +1909,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,9 +1749,15 @@
+@@ -1030,9 +1753,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -1681,7 +1927,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +1772,64 @@
+@@ -1047,7 +1776,64 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -1746,7 +1992,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +1860,7 @@
+@@ -1078,6 +1864,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1754,7 +2000,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +1869,14 @@
+@@ -1086,10 +1873,14 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -1769,7 +2015,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1114,14 +1901,25 @@
+@@ -1114,14 +1905,25 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -1798,7 +2044,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1145,13 +1943,93 @@
+@@ -1145,10 +1947,90 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -1809,9 +2055,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  &mut draw_text_context,
 +                None,
              );
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -1886,13 +2132,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
-+        }
-+    }
-+
-     fn draw_children(
-         &self,
-         scene: &mut impl PaintScene,
-@@ -1232,6 +2110,9 @@
+         }
+     }
+ 
+@@ -1232,6 +2114,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -1902,7 +2145,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1465,4 +2346,28 @@
+@@ -1465,4 +2350,28 @@
      };
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)

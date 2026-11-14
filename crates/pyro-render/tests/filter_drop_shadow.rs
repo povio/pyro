@@ -134,3 +134,32 @@ fn a_drop_shadow_is_painted_on_a_frame_rendered_on_threads() {
     }
     assert!(red(&large, 2.0, 210, 150) < 0x88 - 10);
 }
+
+/// A blurred box is blurred in all four channels, as Chromium's blur filter does, whatever else the
+/// layer holds: WPT's filtered-inline-applies-to-block (a link's `blur()` over a block holding a
+/// green inline-block) renders as its reference (the inline-block blurred itself). The link's
+/// layer also held an invisible command in the link's colour, so its box was blurred as content of
+/// several colours and the reference's as content of one, a level apart on 808 pixels.
+#[test]
+fn a_blurred_box_is_blurred_alike_beside_other_commands() {
+    let page = |body: &str| {
+        let html = format!("<!doctype html><style>.box{{display:inline-block;width:100px;height:100px;background:green}}</style>{body}");
+        let fetcher: Arc<dyn Fetcher> = Arc::new(WhitePng);
+        let snapshot = Snapshot {
+            html,
+            base_url: "http://test/".into(),
+            width: 300,
+            height: 200,
+            device_scale_factor: 1.0,
+            ..Default::default()
+        };
+        Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0
+    };
+    let test = page("<a href='https://example.com/' style='filter:blur(2px)'><div><span class=box></span></div></a>");
+    let reference = page("<div><span class=box style='filter:blur(2px)'></span></div>");
+    let differ = test.data.chunks_exact(4).zip(reference.data.chunks_exact(4)).filter(|(a, b)| a != b).count();
+    assert_eq!(differ, 0, "{differ} pixels differ");
+    // Blurred: the box's edge is soft.
+    let green = |img: &RgbaImage, x: usize| img.data[(50 * img.width as usize + x) * 4 + 1];
+    assert!(green(&test, 8) > 128 && green(&test, 8) < 255, "{}", green(&test, 8));
+}
