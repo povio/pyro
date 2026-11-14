@@ -397,3 +397,22 @@ fn a_changed_container_delta_carries_the_node_alone_as_the_fresh_tree_has_it() {
     want.sort_unstable();
     assert_eq!(keys, want);
 }
+
+#[test]
+fn render_tree_keeps_event_handler_attributes_markup_drops() {
+    // `content: attr(onclick)` reads them in the renderer; markup for another engine leaves them out.
+    use pyro_dom::snapshot::{render_key, RenderNodeKind};
+    let (dom, d) = doc("<p id=p onclick=\"PASS();\" title=t>x</p>");
+    let p = find(&dom.borrow(), d, "#p");
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
+    let tree = dom.borrow().render_tree(d, &opts).unwrap();
+    let node = tree.nodes.iter().find(|n| n.key == render_key(p)).unwrap();
+    match &node.kind {
+        RenderNodeKind::Element { attrs, .. } => assert_eq!(
+            attrs.iter().map(|(n, v)| (&*n.local, v.as_str())).collect::<Vec<_>>(),
+            [("id", "p"), ("onclick", "PASS();"), ("title", "t")]
+        ),
+        k => panic!("{k:?}"),
+    }
+    assert!(render(&dom.borrow(), d).contains("<p id=\"p\" title=\"t\">x</p>"));
+}

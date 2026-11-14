@@ -191,6 +191,7 @@ impl crate::document::BaseDocument {
             // Style the elements, resolving their data
             let mut traverser = RecalcStyle::new(context);
             traverser.track_style_changes = self.track_style_changes;
+            traverser.track_counters = self.generated_counters && !self.counters_dirty;
             // `Sequential` bypasses Stylo's global pool. See `StyleThreading`.
             let parallel = matches!(self.style_threading, StyleThreading::Parallel);
             let _traversal_lock = parallel.then(|| {
@@ -211,6 +212,19 @@ impl crate::document::BaseDocument {
             if traverser.generated_before_after.into_inner() {
                 self.generated_before_after = true;
             }
+            // pyro: sticky as well (`layout::first_letter`, `layout::counters`).
+            if traverser.first_letter_styles.into_inner() {
+                self.first_letter_styles = true;
+            }
+            if traverser.generated_counters.into_inner() && !self.generated_counters {
+                self.generated_counters = true;
+                self.counters_dirty = true;
+            }
+            if traverser.counters_changed.into_inner() {
+                self.counters_dirty = true;
+            }
+            self.first_letter_changed
+                .extend(std::mem::take(traverser.first_letter_changed.get_mut().unwrap()));
         }
         // pyro: restyled nodes that stopped being sticky, and
         // removed ones, leave the set (only nodes that were sticky are in it).
@@ -1750,6 +1764,15 @@ impl Node {
                 }
             }
 
+            // pyro: `<body text>` colours the document's text (HTML rendering, "phrasing
+            // content"), a legacy colour value (named colours included).
+            if *name == local_name!("text") && *tag == local_name!("body") {
+                use style::values::specified::{Color, ColorPropertyValue};
+                if let Ok(color) = style::servo::attr::parse_legacy_color(value) {
+                    push_style(PropertyDeclaration::Color(ColorPropertyValue(Color::from_absolute_color(color))));
+                }
+            }
+
             if *name == local_name!("bgcolor") {
                 use style::values::specified::Color;
                 if let Some((r, g, b, a)) = parse_color_attr(value) {
@@ -1840,6 +1863,18 @@ pub struct RecalcStyle<'a> {
     /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
     style_changes: Mutex<Vec<crate::StyleChange>>,
     track_style_changes: bool,
+    /// pyro: an element styled in this traversal kept a `::first-letter` style.
+    first_letter_styles: std::sync::atomic::AtomicBool,
+    /// pyro: the elements whose `::first-letter` style this traversal changed
+    /// (`layout::first_letter::style_changed`).
+    first_letter_changed: Mutex<Vec<NodeId>>,
+    /// pyro: an element styled in this traversal has a `::before` / `::after` whose content
+    /// reads counters or quotes (`layout::counters`).
+    generated_counters: std::sync::atomic::AtomicBool,
+    /// pyro: the document evaluates counters and quotes: restyles note whether they changed
+    /// any (`counters_changed`).
+    track_counters: bool,
+    counters_changed: std::sync::atomic::AtomicBool,
 }
 
 impl<'a> RecalcStyle<'a> {
@@ -1851,6 +1886,11 @@ impl<'a> RecalcStyle<'a> {
             sticky_nodes: Mutex::new(Vec::new()),
             style_changes: Mutex::new(Vec::new()),
             track_style_changes: false,
+            first_letter_styles: std::sync::atomic::AtomicBool::new(false),
+            first_letter_changed: Mutex::new(Vec::new()),
+            generated_counters: std::sync::atomic::AtomicBool::new(false),
+            track_counters: false,
+            counters_changed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -2030,7 +2070,20 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             let before = context.thread_local.statistics.clone();
             // Held (not just its address) so that a replacement cannot reuse the allocation.
             let old_primary = data.styles.get_primary().cloned();
+            // pyro: the `::first-letter` style before the restyle (`layout::first_letter`).
+            let old_first_letter = match data.styles.pseudos.is_empty() {
+                true => None,
+                false => data.styles.pseudos.get(&style::selector_parser::PseudoElement::FirstLetter).cloned(),
+            };
+            // pyro: what counters and quotes read of the element before the restyle.
+            let old_generated = (self.track_counters && !self.counters_changed.load(std::sync::atomic::Ordering::Relaxed))
+                .then(|| crate::layout::counters::CounterInputs::of(&data.styles));
             recalc_style_at(self, context, el, &mut data, note_child);
+            if let Some(old) = old_generated {
+                if old != crate::layout::counters::CounterInputs::of(&data.styles) {
+                    self.counters_changed.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
             // pyro: a replaced primary style rewrites what layout reads of it.
             let new_primary = data.styles.get_primary();
             let replaced = match (&old_primary, new_primary) {
@@ -2117,11 +2170,40 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             // One empty check for an element without eager pseudo styles.
             if !data.styles.pseudos.is_empty() {
                 use style::selector_parser::PseudoElement;
-                if data.styles.pseudos.get(&PseudoElement::Before).is_some()
-                    || data.styles.pseudos.get(&PseudoElement::After).is_some()
-                {
+                let before = data.styles.pseudos.get(&PseudoElement::Before);
+                let after = data.styles.pseudos.get(&PseudoElement::After);
+                if before.is_some() || after.is_some() {
                     self.generated_before_after
                         .store(true, std::sync::atomic::Ordering::Relaxed);
+                    if before.into_iter().chain(after).any(|style| crate::layout::counters::reads_counters(style)) {
+                        self.generated_counters.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
+            // pyro: a `::first-letter` style that came, went or changed restyles the inline
+            // layout holding the letter (`layout::first_letter::style_changed`).
+            {
+                use style::selector_parser::PseudoElement;
+                let new_first_letter = match data.styles.pseudos.is_empty() {
+                    true => None,
+                    false => data.styles.pseudos.get(&PseudoElement::FirstLetter),
+                };
+                if new_first_letter.is_some() {
+                    self.first_letter_styles.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                let changed = match (&old_first_letter, new_first_letter) {
+                    (None, None) => false,
+                    (Some(old), Some(new)) => {
+                        !Arc::ptr_eq(old, new)
+                            && matches!(
+                                RestyleDamage::compute_style_difference::<&Node>(old, new).change,
+                                style::matching::StyleChange::Changed { .. }
+                            )
+                    }
+                    _ => true,
+                };
+                if changed {
+                    self.first_letter_changed.lock().unwrap().push(el.id);
                 }
             }
 
