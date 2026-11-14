@@ -42,9 +42,9 @@ on:
         options: [all, testharness, reftest]
         default: all
       reftest-runner:
-        description: Where the reftest shards run (default lp-m1; see the reftest job). A baseline holds for one runner only
+        description: Where the reftest shards run (default macos-15; see the reftest job)
         type: choice
-        options: [default, lp-m1, macos-15]
+        options: [default, macos-15, lp-m1]
         default: default
       reftest-args:
         description: Extra gate.mjs run arguments for every reftest shard (e.g. --dirs css/CSS2 to measure a directory, --jobs 2)
@@ -109,8 +109,10 @@ jobs:
             echo "browser-key=$browser_key"
             echo "browser-cached=$(cached "$browser_key")"
           } | tee -a "$GITHUB_OUTPUT"
-      # The reftest shards: one on the self-hosted runner, which runs one job at a time (more shards would only add
-      # their setup to its queue), three on GitHub's macos-15 runners (3 CPUs each). None for `suites: testharness`.
+      # The reftest shards run on GitHub's macos-15 runners (5 CPUs), two side by side, off the self-hosted runner's
+      # queue: two passes over every reftest there agreed on every page, and with lp-m1's but for one animation page's
+      # timing (bench/wpt/README.md, "Reftests"). On lp-m1, which runs one job at a time, one shard (more would only add
+      # their setup to its queue). None for `suites: testharness`.
       - name: Reftest shards
         id: reftest
         env:
@@ -118,9 +120,9 @@ jobs:
           SUITES: ${{ inputs.suites }}
         run: |
           runner="${RUNNER:-default}"
-          if [ "$runner" = default ]; then runner=lp-m1; fi
+          if [ "$runner" = default ]; then runner=macos-15; fi
           if [ "$SUITES" = testharness ]; then shards='[]'
-          elif [ "$runner" = macos-15 ]; then shards='[0, 1, 2]'
+          elif [ "$runner" = macos-15 ]; then shards='[0, 1]'
           else shards='[0]'; fi
           { echo "runner=$runner"; echo "shards=$shards"; } | tee -a "$GITHUB_OUTPUT"
 

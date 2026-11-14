@@ -85,13 +85,15 @@ async function summary(run) {
 }
 
 // ---------- features ----------
-// What a reftest is about, from its path: the first rule that matches, else its subdirectory or name stem.
+// What a reftest is about, from its path: the first rule that matches, else its directory. CSS2's subdirectories that
+// are about layout rather than paint are features of their own ("CSS2 tables").
 const FEATURES = [
-  [/box-shadow|inset-box-shadow/, 'box-shadow'],
+  [/\/animations?\/|-animation|-transition|interpolation/, 'animations, transitions'],
+  [/box-shadow/, 'box-shadow'],
   [/text-shadow/, 'text-shadow'],
   [/drop-shadow/, 'filter: drop-shadow()'],
   [/backdrop-filter/, 'backdrop-filter'],
-  [/filter-effects\/.*(blur)/, 'filter: blur()'],
+  [/filter-effects\/.*blur/, 'filter: blur()'],
   [/filter-effects\/.*(fe[A-Z]\w+|feimage|feflood|tainting|svg-|effect-reference|filter-region|filter-in-|url)/i, 'SVG filters (url(), fe*)'],
   [/filter-effects\/.*(grayscale|sepia|saturate|hue-rotate|invert|brightness|contrast|opacity|filter-function|filters-test)/, 'filter functions'],
   [/filter-effects\//, 'filter (other)'],
@@ -99,16 +101,17 @@ const FEATURES = [
   [/background-blend|background-blending/, 'background-blend-mode'],
   [/isolation/, 'isolation'],
   [/compositing\//, 'compositing (other)'],
-  [/clip-path/, 'clip-path'],
+  [/clip-path|clip-rule/, 'clip-path'],
   [/mask/, 'mask'],
   [/css-masking\/clip\/|visufx\/clip/, 'clip'],
   [/css-masking\//, 'masking (other)'],
+  [/(^|[/-])3d|preserve-?3d|perspective|backface|transform3d|rotate[XYZ3]|translate[Z3]|scale[Z3]|matrix3d/i, 'transforms: 3D'],
+  [/background-clip|background-origin|clip-border-area/, 'background-clip, background-origin'],
   [/border-image/, 'border-image'],
   [/border-radius|rounded/, 'border-radius'],
   [/outline/, 'outline'],
   [/border/, 'borders'],
   [/background-size/, 'background-size'],
-  [/background-clip|background-origin|clip-border-area/, 'background-clip, background-origin'],
   [/background-attachment|local-attachment/, 'background-attachment'],
   [/background-position|background-repeat|subpixel-repeat/, 'background-position, background-repeat'],
   [/gradient/, 'gradients'],
@@ -119,7 +122,6 @@ const FEATURES = [
   [/text-decoration|line-through|text-underline|decorating-box/, 'text-decoration'],
   [/text-emphasis|ruby/, 'text-emphasis'],
   [/css-text-decor\//, 'text decoration (other)'],
-  [/preserve-?3d|perspective|backface|transform3d|rotate[XYZ3]|translate[Z3]|scale[Z3]|matrix3d|-3d/i, 'transforms: 3D'],
   [/transform-origin|transform-box/, 'transform-origin, transform-box'],
   [/css-transforms\/(individual-transform|translate|rotate|scale)/, 'transforms: individual properties'],
   [/css-transforms\//, 'transforms: 2D'],
@@ -129,7 +131,13 @@ const FEATURES = [
   [/hsl|hwb|rgb|t4\d\d/, 'colors: rgb(), hsl(), hwb()'],
   [/css-color\/|CSS2\/colors/, 'colors (other)'],
 ];
-const featureOf = (url) => FEATURES.find(([re]) => re.test(url))?.[1] ?? url.split('/').slice(-2, -1)[0];
+const CSS2_PAINT = new Set(['backgrounds', 'borders', 'colors', 'visufx', 'ui', 'zindex', 'zorder', 'stacking-context']);
+function featureOf(url) {
+  const p = url.split('/');
+  if (p[1] === 'CSS2' && !CSS2_PAINT.has(p[2])) return `CSS2 ${p.length > 3 ? p[2] : '(top level)'}`;
+  return FEATURES.find(([re]) => re.test(url))?.[1] ?? p.slice(-2, -1)[0];
+}
+const isPaint = (feature) => !feature.startsWith('CSS2 ');
 
 // ---------- report ----------
 const pct = (n, d) => (d ? `${((100 * n) / d).toFixed(1)}%` : '–');
@@ -191,8 +199,12 @@ async function main() {
   const byFeature = new Map();
   for (const q of queue) byFeature.set(q.feature, [...(byFeature.get(q.feature) ?? []), q]);
   const features = [...byFeature].sort((a, b) => b[1].length - a[1].length);
-  md += `\n### Reftests Chrome passes and pyro fails, by feature (${queue.length})\n\n| feature | reftests | examples |\n|---|---:|---|\n`;
-  for (const [feat, list] of features) md += `| ${feat} | ${list.length} | ${list.slice(0, 3).map((q) => `\`${q.url.split('/').pop()}\``).join(', ')} |\n`;
+  const paint = features.filter(([feat]) => isPaint(feat)), layout = features.filter(([feat]) => !isPaint(feat));
+  const count = (list) => list.reduce((n, [, l]) => n + l.length, 0);
+  md += `\n### Reftests Chrome passes and pyro fails, by feature (${queue.length})\n\nPaint (the paint directories and CSS2's backgrounds, borders, colors, visufx, ui, zindex, zorder, stacking-context): ${count(paint)}.\n\n| feature | reftests | examples |\n|---|---:|---|\n`;
+  for (const [feat, list] of paint) md += `| ${feat} | ${list.length} | ${list.slice(0, 3).map((q) => `\`${q.url.split('/').pop()}\``).join(', ')} |\n`;
+  md += `\nCSS2's other subdirectories (layout, selectors, generated content): ${count(layout)}.\n\n| feature | reftests | examples |\n|---|---:|---|\n`;
+  for (const [feat, list] of layout) md += `| ${feat} | ${list.length} | ${list.slice(0, 3).map((q) => `\`${q.url.split('/').pop()}\``).join(', ')} |\n`;
   md += `\n<details><summary>Every one of them</summary>\n\n`;
   for (const [feat, list] of features) {
     md += `**${feat}** (${list.length})\n\n`;

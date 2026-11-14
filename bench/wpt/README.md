@@ -2,7 +2,8 @@
 
 `.github/workflows/wpt.yml` runs our WPT subset (the directories in `lib.mjs` `DEFAULT_DIRS`, ~2,800 pages) on every
 pull request and fails when coverage goes down. `baseline.json` records, per page, which subtests pass, whether the
-page completed, and how long it took.
+page completed, and how long it took. The same gate runs over WPT's reftests in the paint directories (9,341 pages,
+`reftest-baseline.json`): see [Reftests](#reftests), which also compares pyro's results with Chrome's.
 
 ## How a run works
 
@@ -171,3 +172,95 @@ The slowest pages are slow by design or by a known engine gap, not by the runner
   pages running beside the page that hung (above), before the runner ran them again; whether all of them were that
   is not known. The gate's 10 s bound and the reruns absorb the rest, since a page fails only if no run completes.
   If CI shows otherwise, an `allowIncomplete` pattern entry covers them.
+
+## Reftests
+
+WPT tests painting with reftests: a test page and one or more references that must render the same (`<link
+rel=match>`) or differently (`rel=mismatch`). `run.mjs --kind reftest` runs them and `gate.mjs ... --kind reftest`
+gates them exactly as above: each reftest is reported as one subtest, `reftest`, so a reftest that passed in
+`reftest-baseline.json` must still pass, a page that completed must still complete, an unrecorded pass fails as
+stale, and `reftest-flaky.json` (the format of `flaky.json`) lists what is not checked. Adding or widening one of its
+entries, or dropping a baseline pass, needs the `wpt-accept-loss` label. The refreshed baseline is the
+`wpt-reftest-baseline` artifact:
+
+```sh
+gh run download <run-id> -n wpt-reftest-baseline -D bench/wpt     # writes bench/wpt/reftest-baseline.json
+```
+
+### What runs
+
+`lib.mjs` `discoverReftests()` classifies files as WPT's manifest does (`tools/manifest/sourcefile.py`): a markup file
+(`.html`, `.htm`, `.xht`, `.xhtml`, `.xml`, `.svg`) with a `match` or `mismatch` link is a reftest, unless it is a
+manual, visual, crash or print test, a testharness page, or under a `resources`, `support` or `tools` directory. The
+directories are `REFTEST_DIRS`: the paint directories and all of CSS2 (it costs about 50 s of the run). At the pinned
+revision they hold 9,341 reftests. wpt.fyi lists 9,352 in them: the same 9,341, and the 11 left out below for wptserve
+or testdriver.
+
+| directory | reftests | reference files | no reference | crash tests | manual | print | wptserve | testdriver |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| css/css-backgrounds | 732 | 406 | 104 | 14 | 0 | 0 | 1 | 0 |
+| css/css-text-decor | 337 | 251 | 13 | 9 | 65 | 0 | 0 | 1 |
+| css/filter-effects | 372 | 241 | 0 | 23 | 0 | 0 | 0 | 0 |
+| css/compositing | 60 | 56 | 11 | 6 | 0 | 0 | 0 | 0 |
+| css/css-masking | 494 | 238 | 4 | 6 | 0 | 0 | 8 | 0 |
+| css/css-color | 308 | 148 | 0 | 3 | 0 | 0 | 0 | 0 |
+| css/css-transforms | 797 | 311 | 4 | 28 | 1 | 0 | 0 | 0 |
+| css/CSS2 | 6,241 | 2,099 | 2,314 | 32 | 4 | 43 | 1 | 0 |
+| **all** | **9,341** | 3,750 | 2,450 | 121 | 70 | 43 | 10 | 1 |
+
+Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
+markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
+such as `interact`), print reftests, pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions,
+`pipe=`, Python handlers), and testdriver. Testharness pages in these directories (parsing, computed values) are not
+reftests and are not run here. A reference that has references of its own (155 tests) is compared one level deep, as
+wptrunner does at this revision (`ReftestTest.from_manifest`); it is a test of its own as well, so the chain is covered
+link by link. `about:blank` references are supported.
+
+### How a reftest is judged
+
+As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
+
+- Test and references render in an 800x600 CSS px viewport at device scale factor 1 (a `<meta name=viewport-size>`
+  sets another size), each in the browser under test.
+- The screenshot is taken after the load event, `document.fonts.ready` (after a forced layout: pyro requests a web font
+  when layout first needs it) and two animation frames. With `class="reftest-wait"` on the root element, the runner
+  fires `TestRendered` at it and waits for the class to go, two frames after each change of the root's attributes, up
+  to the page's timeout (`timeout` with the message `reftest-wait was not removed`).
+- Two renders are equal when no pixel differs in R, G or B. `<meta name=fuzzy content="[ref:]maxDifference=a-b;
+  totalPixels=c-d">` (names optional; a single value n means n-n) allows renders whose largest channel difference
+  and number of differing pixels fall in the inclusive ranges, or that do not differ at all when a range starts at 0.
+- A test passes when it equals at least one of its `match` references (if it has any) and none of its `mismatch`
+  references. The subtest's message gives each comparison: `== ref.html: 1234 px differ, max 255`.
+- References are cached by URL and viewport (48 renders per runner), as wptrunner caches screenshots.
+- pyro answers `Page.captureScreenshot` with `format: "rgba"` (no encoding); another browser's PNG is decoded.
+- A page whose browser died under it runs again alone. If it loses the browser again it is recorded as `crash` (at
+  the pinned revision `css/css-masking/clip-path-svg-content/clip-path-recursion-001.svg` crashes pyro); the pages that
+  ran beside it get their own results.
+
+`REFTEST_SHOTS=DIR` writes the renders of every failing test and its references to DIR as PNG.
+
+### CI
+
+The `reftest` job runs `gate.mjs run --kind reftest` on the self-hosted runner (`lp-m1`, an 8-CPU M1) in one shard at
+`--jobs 8`, and `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build`
+jobs (the browser) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support files;
+171 MB). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out), `reftest-runner`
+(`lp-m1` or GitHub's `macos-15`, three shards there) and `reftest-args` (for example `--dirs css/CSS2 --no-rerun` to
+time a directory). A baseline holds for one runner only: results differ between machines (fonts, macOS versions).
+
+⟨runner timings⟩
+
+### pyro vs Chrome
+
+`chrome-compare.mjs` compares pyro's reftest results (the committed baseline, or a run's shard files) with Chrome's on
+[wpt.fyi](https://wpt.fyi), per directory, and lists the reftests Chrome passes and pyro fails by feature: the work
+queue for paint fixes. wpt.fyi has no Chrome stable run at the pinned revision; the script takes the stable run
+nearest to it in WPT's history (GitHub's compare API: `GH_TOKEN` raises the rate limit), with Firefox and Safari stable
+at that run's revision. `--canary` uses Chrome's experimental run at the exact revision instead, `--run ID` any run.
+
+```sh
+GH_TOKEN=$(gh auth token) bun bench/wpt/chrome-compare.mjs [shard files] [--md out.md] [--json out.json]
+```
+
+⟨chrome table⟩
+

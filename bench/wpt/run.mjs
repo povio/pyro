@@ -140,6 +140,8 @@ function waitForReport(ms) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function openPage(slot) {
+  // A connection to a browser that was replaced since (another slot's page crashed or hung it) is dead: drop it.
+  if (slot.browser && slot.gen !== generation) await resetSlot(slot);
   if (slot.ctx && !REUSE) {
     const ctx = slot.ctx;
     slot.ctx = slot.page = null;
@@ -147,7 +149,7 @@ async function openPage(slot) {
     await Promise.race([ctx.close().then(() => { closed = true; }, () => {}), sleep(5000)]);
     if (!closed) await resetSlot(slot);
   }
-  if (!slot.browser) slot.browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 });
+  if (!slot.browser) { slot.gen = generation; slot.browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 }); }
   if (!slot.page) {
     slot.ctx = await slot.browser.newContext(KIND === 'reftest' ? REFTEST_CONTEXT : undefined);
     slot.page = await slot.ctx.newPage();
@@ -232,6 +234,13 @@ async function enter(t) {
   return () => { solo = null; release(); leave(); };
 }
 
+// Whether the browser process has exited, waiting up to 1 s for its exit to be reported.
+async function exited(proc) {
+  if (proc.exitCode != null || proc.signalCode) return true;
+  await Promise.race([new Promise((r) => proc.once('exit', r)), sleep(1000)]);
+  return proc.exitCode != null || !!proc.signalCode;
+}
+
 const PLAN = tests.map((t) => t.url);
 await startBrowser();
 const results = [];
@@ -250,13 +259,15 @@ async function worker() {
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
       await resetSlot(slot);
+      const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
+      // Whether this page's browser died (or was replaced): a lost connection can arrive before its exit does.
+      const died = gen !== generation || (lost ? await exited(child) : child.exitCode != null || !!child.signalCode);
       // This page's browser died and no slot has replaced it yet. (After a replacement `child` may still be the
       // browser that was killed for it, until the new one is spawned.)
-      if (gen === generation && (child.exitCode != null || child.signalCode)) { restarts++; await restartBrowser(gen); }
-      const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
+      if (gen === generation && died) { restarts++; await restartBrowser(gen); }
       if (KIND === 'reftest' && lost) {
         if (!t.solo) { t.solo = true; tests.push(t); continue; }
-        r.status = 'crash';
+        if (died) r.status = 'crash';
       }
       // The browser was replaced under this page (another slot's page hung it): run the page again.
       else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }

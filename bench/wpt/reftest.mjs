@@ -143,7 +143,8 @@ export async function runReftest(page, t, base, limit) {
   const t0 = Date.now();
   const deadline = t0 + limit;
   const viewport = t.viewport ?? VIEWPORT;
-  if (t.viewport) await page.setViewportSize(viewport);
+  const now = page.viewportSize();
+  if (now?.width !== viewport.width || now?.height !== viewport.height) await page.setViewportSize(viewport);
   const cdp = await page.context().newCDPSession(page);
   try {
     const test = await render(page, cdp, base, t.url, deadline);
