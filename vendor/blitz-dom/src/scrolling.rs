@@ -327,6 +327,8 @@ impl BaseDocument {
                 if offset == initial {
                     return false;
                 }
+                // pyro: the transforms under a perspective depend on the scroll offset.
+                node.scroll_offset_changed();
 
                 let scroll_width = node.scroll_width();
                 let scroll_height = node.scroll_height();

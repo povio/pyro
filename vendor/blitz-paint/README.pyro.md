@@ -166,6 +166,11 @@ from the root of an upstream checkout at that commit) is the whole diff.
     glyph run to the text run recorded for it by its glyphs, which a shadow has too), nor in vertical writing modes
     (a shadow's offset is physical, and the lines are turned). Covered by `crates/pyro-render/tests/text_shadow.rs`.
 
+- `src/render.rs` (`render_element`): an element whose 3D transform hides it (blitz-dom's
+  `NodeFlags::TRANSFORM_HIDES`: its back face shows with `backface-visibility: hidden`, it lies behind the
+  viewer, or its matrix has no inverse) is not painted, nor is its content. Covered by
+  `crates/pyro-render/tests/transform_3d.rs`.
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/pyro-render/tests/mirror.rs`.

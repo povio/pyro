@@ -196,6 +196,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  
  [caption-side]
+@@ -2117,7 +2132,6 @@
+ type = "TransformBox"
+ initial = "computed::TransformBox::ViewBox"
+ struct = "box"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-transforms/#transform-box"
+ animation_type = "discrete"
+ affects = "overflow"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-11 20:10:18
@@ -723,3 +731,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
+diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
+--- a/values/specified/transform.rs	2026-11-11 19:55:57
++++ b/values/specified/transform.rs	2026-11-14 12:00:00
+@@ -44,7 +44,7 @@
+ 
+ #[cfg(feature = "servo")]
+ fn all_transform_boxes_are_enabled(_context: &ParserContext) -> bool {
+-    false
++    true
+ }
+ 
+ /// The specified value of `transform-box`.

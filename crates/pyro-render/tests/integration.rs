@@ -34,4 +34,5 @@ mod table_flex_intrinsic_height;
 mod text_line_tops;
 mod text_shadow;
 mod text_overflow_ellipsis;
+mod transform_3d;
 mod vertical_writing_mode;

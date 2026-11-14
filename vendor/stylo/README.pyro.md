@@ -27,6 +27,11 @@ crate (`diff -ruN`).
   `avoid-column`, as the spec has them (upstream has only `avoid`, and drops the declaration).
   `page-break-*` still rejects them.
 
+- `properties/longhands.toml`, `values/specified/transform.rs`: `transform-box` is parsed and computed for servo
+  too, with all five values (upstream: gecko only; servo parsed none, and its `content-box` and `stroke-box`
+  were off). blitz-dom resolves a CSS box's transform, `transform-origin` and `perspective-origin` against the
+  box it names (`Node::transform_reference_box`); `getComputedStyle` reports it.
+
 - `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
   are added (upstream has neither; both were counted unknown properties), inherited, in
   `inherited_text`. pyro-render's PDF output reads them to place page cuts of paper-cut documents.

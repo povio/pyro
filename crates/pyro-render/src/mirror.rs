@@ -238,16 +238,24 @@ impl Mirror {
         }
         let now: Vec<(NodeId, (f64, f64))> =
             offsets.iter().filter_map(|&(key, o)| Some((self.node(key)?, o))).collect();
+        // Each scroll offset that changes is told to Blitz: a scrolled box with a `perspective`
+        // has the transforms under it resolved again.
+        let set = |node: &mut blitz_dom::Node, offset: blitz_dom::Point<f64>| {
+            if *node.scroll_offset() != offset {
+                *node.scroll_offset_mut() = offset;
+                node.scroll_offset_changed();
+            }
+        };
         for id in std::mem::take(&mut self.scrolled) {
             if !now.iter().any(|(n, _)| *n == id) {
                 if let Some(node) = self.doc.get_node_mut(id) {
-                    *node.scroll_offset_mut() = blitz_dom::Point { x: 0.0, y: 0.0 };
+                    set(node, blitz_dom::Point { x: 0.0, y: 0.0 });
                 }
             }
         }
         for (id, (x, y)) in now {
             if let Some(node) = self.doc.get_node_mut(id) {
-                *node.scroll_offset_mut() = blitz_dom::Point { x, y };
+                set(node, blitz_dom::Point { x, y });
                 self.scrolled.push(id);
             }
         }

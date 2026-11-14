@@ -492,15 +492,36 @@ impl BaseDocument {
                     // out of tree order into the enclosing stacking context's
                     // z-sorted list (CSS 2.1 Appendix E).
                     let child = &self.nodes[child_id];
-                    let z_index = child.z_index();
+                    // pyro: `z-index` applies to positioned boxes and to flex and grid items
+                    // only (CSS 2 9.9.1): an in-flow stacking context that is neither (a
+                    // transform, an opacity) keeps its place in tree order whatever its value.
+                    let positioned = child
+                        .primary_styles()
+                        .is_some_and(|style| style.clone_position() != Position::Static);
+                    let z_index = if is_flex_or_grid || positioned {
+                        child.z_index()
+                    } else {
+                        0
+                    };
                     let paint_order = node_to_paint_order(child, is_flex_or_grid);
+                    // pyro: a stacking context that is not positioned (a transform, an opacity,
+                    // a filter) paints as a positioned box with `z-index: 0` does (CSS 2.1
+                    // Appendix E step 8; CSS Transforms 1, CSS Color 4 `opacity`): above the
+                    // in-flow content and floats, in tree order with the positioned boxes.
+                    let static_stacking_context = is_sc_root && !positioned;
                     if is_sc_root && z_index != 0 {
                         entries.push(HoistedPaintChild::new(child_id, z_index))
-                    } else if !is_layer_root && child.is_in_flow_positioned() {
+                    } else if !is_layer_root
+                        && (child.is_in_flow_positioned() || static_stacking_context)
+                    {
                         // Positioned boxes paint above all in-flow content of
                         // the nearest positioned (or clipping) ancestor, not just
                         // of their parent: lift them out of this static box.
                         entries.push(HoistedPaintChild::new(child_id, 0))
+                    } else if static_stacking_context {
+                        self.scratch
+                            .keyed_children
+                            .push(((2, paint_order.1), child_id));
                     } else {
                         self.scratch.keyed_children.push((paint_order, child_id));
                     }

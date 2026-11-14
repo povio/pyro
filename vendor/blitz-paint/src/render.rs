@@ -605,6 +605,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
+        // pyro: a 3D transform hides the element and its content: its back face shows with
+        // `backface-visibility: hidden`, or it lies behind the viewer (`Node::set_transform`).
+        if node
+            .flags
+            .contains(blitz_dom::node::NodeFlags::TRANSFORM_HIDES)
+        {
+            return;
+        }
+
         let effects = styles.get_effects();
         let opacity = effects.opacity;
         if opacity == 0.0 {
