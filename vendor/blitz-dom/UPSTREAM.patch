@@ -14285,7 +14285,54 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
      /// The intrinsic width in CSS px, present only when the root `<svg>`
      /// declared an absolute (non-percentage) `width`.
      pub fn intrinsic_width(&self) -> Option<f32> {
-@@ -263,3 +282,64 @@
+@@ -230,6 +249,46 @@
+     }
+ }
+ 
++impl crate::BaseDocument {
++    /// pyro: an element of an inline `<svg>` that the page's CSS references by `url(#id)` from a
++    /// box (`clip-path: url(#c)` naming a `<clipPath>`, `mask-image: url(#m)` a `<mask>`), as an
++    /// SVG document of its own for usvg: the outermost `<svg>` around the element, serialized as
++    /// inline SVG is for usvg, in `<defs>` (so none of it is drawn and all of it can be
++    /// referenced), then `content`, which references the element, in a viewport `width` x
++    /// `height` (user units: percentages in the element's content resolve against it). Parsed as
++    /// inline SVG is. `None` when the element is in no `<svg>`, or the document does not parse.
++    pub fn svg_reference_document(
++        &self,
++        element: blitz_traits::node_id::NodeId,
++        content: &str,
++        width: f32,
++        height: f32,
++    ) -> Option<SvgImageData> {
++        use markup5ever::{local_name, ns};
++        let mut root = None;
++        let mut next = Some(element);
++        while let Some(id) = next {
++            let node = self.get_node(id)?;
++            let Some(data) = node.element_data() else {
++                break;
++            };
++            if data.name.ns != ns!(svg) {
++                break;
++            }
++            if data.name.local == local_name!("svg") {
++                root = Some(node);
++            }
++            next = node.parent;
++        }
++        let source = self.with_svg_sprites(root?.svg_source());
++        let document = format!(
++            "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
++             width=\"{width}\" height=\"{height}\"><defs>{source}</defs>{content}</svg>"
++        );
++        crate::util::parse_svg_image(document.as_bytes()).ok()
++    }
++}
++
+ /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
+ fn view_box_transform(
+     view_box: usvg::NonZeroRect,
+@@ -263,3 +322,64 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }

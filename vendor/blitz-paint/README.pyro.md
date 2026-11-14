@@ -244,6 +244,23 @@ from the root of an upstream checkout at that commit) is the whole diff.
     `mask-origin` take the SVG boxes (`fill-box` is the content box, `stroke-box` and `view-box` the border box) and
     `no-clip` (`BoxModelBox::NoClip`, the visible area): Stylo parses them for servo now (see
     `vendor/stylo/README.pyro.md`).
+  - `src/render/clip_path.rs` (`svg_clip`, `svg_reference`), `src/render/mask.rs` (`draw_svg_mask`): `url()`
+    references from a box to an SVG `<clipPath>` or `<mask>` of the page (`url(#id)`, or the page's own URL with a
+    fragment: a `<base>` does not make one external). The element's outermost `<svg>` is serialized as inline SVG is
+    for usvg (blitz-dom `BaseDocument::svg_reference_document`), in `<defs>`, with a box-sized rectangle that
+    references the element: user space is the border box's (the element's zoom applied), `objectBoundingBox` units
+    are of the border box, percentages of the viewport. A clip path of one shape (with no clip path of its own) is a
+    clip layer of that shape with its clip rule; any other is drawn into a `DestIn` layer over the element, as a
+    `<mask>` always is (anyrender_svg draws them). A reference to anything else clips nothing; clip paths and masks
+    whose references form a cycle (`svg_reference::reference_cycle`, a depth-first walk of `clip-path`, `mask` and
+    `style` references) clip and mask everything, without asking usvg, which follows a long cycle without end.
+  - `src/render/clip_path.rs` (`draw_inline_effects`), `src/render.rs` (`draw_inline_layout`): an inline box (not
+    atomic) with a `clip-path` or a mask is clipped and masked (both were ignored). As in Chromium it is a stacking
+    context painted after the rest of its inline formatting context: the layout is painted without the areas of
+    such boxes (their border boxes line by line, as tall as the line box, grown by their outline and shadows), then
+    into each box's areas under its clip path, whose reference box is its first fragment (as Blink's and Gecko's
+    are), and its mask, laid over its fragments side by side (`box-decoration-break: slice`). Inline boxes inside
+    one are painted with it. An inline box's margin box has its style's margins on every side.
 
 - Text decorations, emphasis marks and ruby (WPT reftest lane G):
   - `src/text.rs` (`flush_line_decorations`, `decoration_thickness`, `whole_css_px`, `StrutGeometry`): decoration
