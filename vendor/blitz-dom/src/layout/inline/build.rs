@@ -66,9 +66,19 @@ pub(crate) fn build_inline_layout_into(
     // 10.8.1): the root's font and line height. Parley makes no line height
     // without text, so a line of empty inline-blocks was 0px tall. A
     // word joiner (zero-width, no break opportunity) provides the strut.
-    if text_layout.layout.inline_boxes().len() > 0 && text_layout.text.chars().all(|c| c.is_whitespace() && c != '\n') {
+    // pyro: so has the line of a list item's outside marker in an item without in-flow content.
+    if (text_layout.layout.inline_boxes().len() > 0 || outside_marker(&nodes[inline_context_root_node_id]))
+        && text_layout.text.chars().all(|c| c.is_whitespace() && c != '\n')
+    {
         build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[]);
     }
+}
+
+/// pyro: whether the inline root is a list item with an outside marker (`layout::list`).
+fn outside_marker(root: &crate::Node) -> bool {
+    root.element_data()
+        .and_then(|element| element.list_item_data.as_deref())
+        .is_some_and(|item| matches!(item.position, ListItemLayoutPosition::Outside(_)))
 }
 
 fn build_inline_layout_with(
@@ -142,6 +152,8 @@ fn build_inline_layout_with(
                 builder.pop_style_span();
             }
             Marker::String(str) => builder.push_text(str),
+            // (Image markers are outside only: `layout::list`.)
+            Marker::Image { .. } => {}
         }
     };
     // The marker is a separate box, so words in the content don't continue from it.
@@ -161,7 +173,14 @@ fn build_inline_layout_with(
     // space after it still hangs, leading white space before it still
     // collapses.
     let strut_build = strut;
-    let strut = &mut { strut };
+    // pyro: without one, it starts the line of the list item's outside marker.
+    let marker_line = strut
+        && outside_marker(root_node)
+        && text_layout.layout.inline_boxes().all(|inline_box| inline_box.kind != InlineBoxKind::InFlow);
+    if marker_line {
+        builder.push_text("\u{2060}");
+    }
+    let strut = &mut { strut && !marker_line };
     // pyro: the first letter the root's `::first-letter` styles (`layout::first_letter`).
     let first_letter_split = text_layout.first_letter.clone();
     let first_letter = first_letter_split.as_ref();

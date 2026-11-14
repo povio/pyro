@@ -979,6 +979,28 @@ its reference-cycle breaking). See blitz-paint's README.
 
 Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit tests here.
 
+## List markers (WPT reftests)
+
+- `src/layout/list.rs` (`image_marker`), `src/node/element.rs` (`ElementData::list_style_images`, `Marker::Image`),
+  `src/util.rs`, `src/layout/damage.rs`, `src/stylo.rs`, `src/document.rs`: `list-style-image` is loaded, as an image
+  layer of its own flushed with the background, mask and border images, and an outside item whose image loaded has
+  an image marker at the image's natural size (an SVG's own size), which blitz-paint draws (`draw_marker_image`). Until
+  the image loads, or when it fails, the item keeps its `list-style-type` marker; the load builds the item again. An
+  inside item keeps its type marker (no inline image marker is made).
+- `src/layout/construct.rs` (`place_inside_marker`): the inside marker of an item of blocks is on the first line of its
+  first box, as in Chromium: the anonymous block of its first inline content takes it, and before a first block it is
+  the line of an anonymous block of its own. An empty item gets none (as the bullet above about
+  `list-style-position-applies-to-015`).
+- `src/layout/construct.rs`, `src/layout/inline/build.rs` (`outside_marker`): an item with an outside marker and no
+  in-flow content (empty, white space, out-of-flow boxes) is an inline root whose one line is its strut (a word joiner
+  at its start): the line the marker sits on. Chromium gives the marker's box to the item (its height and baseline),
+  so an empty item in an inline-block or a table cell lines up as one with text (WPT
+  `list-style-*-applies-to-012`, `-014`); it was 0px tall, with the marker a line lower.
+
+Tests: `an_image_marker_ends_7px_before_the_item_on_its_first_baseline`,
+`an_inside_marker_is_a_line_before_block_content`, `an_empty_item_has_the_line_of_its_outside_marker` and
+`an_outside_marker_goes_with_the_line_a_float_moves` in `crates/pyro-render/tests/generated_content.rs`.
+
 ## Ruby annotations and emphasis marks
 
 - `src/node/text.rs` (`TextAnnotation`, `TextAnnotationKind`, `can_take_emphasis_mark`), `src/layout/inline/build.rs`

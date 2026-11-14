@@ -1691,6 +1691,16 @@ impl BaseDocument {
             Err(err) => {
                 if let Some(url) = res.resolved_url.as_ref() {
                     let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
+                    // pyro: a list item whose image fails keeps its `list-style-type` marker.
+                    for (node_id, image_type) in &waiting_nodes {
+                        if let (ImageType::ListStyle(idx), Some(node)) = (image_type, self.nodes.get_mut(*node_id)) {
+                            if let Some(Some(image)) =
+                                node.element_data_mut().and_then(|el| el.list_style_images.get_mut(*idx))
+                            {
+                                image.status = Status::Error;
+                            }
+                        }
+                    }
                     #[cfg(feature = "tracing")]
                     tracing::warn!(
                         url = url.as_str(),
@@ -1841,12 +1851,16 @@ impl BaseDocument {
                     node.clear_layout_cache();
                     node.insert_damage(ALL_DAMAGE);
                 }
-                ImageType::Background(idx) | ImageType::Mask(idx) | ImageType::BorderImage(idx) => {
+                ImageType::Background(idx)
+                | ImageType::Mask(idx)
+                | ImageType::BorderImage(idx)
+                | ImageType::ListStyle(idx) => {
                     let layer_image = node.element_data_mut().and_then(|el| {
                         let images = match image_type {
                             ImageType::Background(_) => &mut el.background_images,
                             ImageType::Mask(_) => &mut el.mask_images,
                             ImageType::BorderImage(_) => &mut el.border_images,
+                            ImageType::ListStyle(_) => &mut el.list_style_images,
                             ImageType::Image => unreachable!(),
                         };
                         images.get_mut(idx)
@@ -1854,6 +1868,11 @@ impl BaseDocument {
                     if let Some(Some(layer_image)) = layer_image {
                         layer_image.status = Status::Ok;
                         layer_image.image = image.clone();
+                    }
+                    // pyro: a list item's image is its marker: the list builds it again.
+                    if matches!(image_type, ImageType::ListStyle(_)) {
+                        node.clear_layout_cache();
+                        node.insert_damage(ALL_DAMAGE);
                     }
                 }
             }

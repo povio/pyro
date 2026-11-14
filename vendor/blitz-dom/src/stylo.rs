@@ -2410,6 +2410,7 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
                 std::slice::from_ref(&style.get_border().border_image_source),
                 &el.border_images,
             )
+            || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
     })
 }
 

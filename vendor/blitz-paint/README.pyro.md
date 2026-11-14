@@ -139,6 +139,16 @@ from the root of an upstream checkout at that commit) is the whole diff.
     text and 4px for 24px, and of another size. Other marker types and inside markers stay text. Covered by
     `a_list_markers_symbol_is_a_shape_sized_from_the_font_at_whole_css_pixels` in
     `crates/pyro-render/tests/text_line_tops.rs`.
+  - `src/render.rs` (`draw_marker_image`, `marker_baseline`): an outside `list-style-image` marker (blitz-dom's
+    `Marker::Image`), as Chromium places it (`ListMarker::InlineMarginsForOutside`): the image at its natural size
+    ends 7px before the item's border box, its bottom on the baseline of the item's first line (its own or the first
+    box's in it, else the marker's line), at whole device pixels; a raster image is scaled to that size, an SVG drawn
+    at its own. Covered by `an_image_marker_ends_7px_before_the_item_on_its_first_baseline` in
+    `crates/pyro-render/tests/generated_content.rs`.
+  - `src/render.rs` (`draw_marker`, `draw_marker_symbol`, `marker_baseline`): an outside marker moves with the first
+    line when floats move that line's start (parley's `inline_min_coord`), as Chromium places it at the line's start:
+    beside a float an item's marker was drawn under the float, or off the page (WPT `list-style-*-applies-to-017`).
+    Covered by `an_outside_marker_goes_with_the_line_a_float_moves` there.
 
 - Paint gaps from the ToS feature videos (Chromium 147):
   - `src/render.rs` (`render_element`, `paint_element`, `paint_effect_group`), `src/bounds.rs`: `opacity`, `filter`

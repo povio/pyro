@@ -2110,7 +2110,7 @@ impl ElementCx<'_, '_> {
             // Right align and pad the bullet when rendering outside
             let x_padding = match marker {
                 Marker::Char(_) => 8.0,
-                Marker::String(_) => 0.0,
+                Marker::String(_) | Marker::Image { .. } => 0.0,
             };
             // Outside markers are placed outside the list item's border box
             // (`pos` is the origin of its content box)
@@ -2125,11 +2125,19 @@ impl ElementCx<'_, '_> {
                 self.draw_marker_symbol(scene, pos, *symbol, layout);
                 return;
             }
+            if let Marker::Image { width, height } = marker {
+                self.draw_marker_image(scene, pos, *width, *height, layout);
+                return;
+            }
             let first_line = self
                 .element
                 .inline_layout_data
                 .as_ref()
                 .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
+            // pyro: the marker goes with the line, which floats beside the item move.
+            let line_x = first_line.as_ref().map_or(0.0, |(text_layout, line)| {
+                line.metrics().inline_min_coord / text_layout.layout.scale()
+            });
             let y_offset = if let Some((text_layout, first_text_line)) = &first_line
             {
                 // pyro: with the line, where it is painted (`LineTops`).
@@ -2147,7 +2155,7 @@ impl ElementCx<'_, '_> {
             };
 
             let pos = Point {
-                x: pos.x + (content_box_subpixel_offset.x + x_offset) as f64,
+                x: pos.x + (content_box_subpixel_offset.x + x_offset + line_x) as f64,
                 y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
             };
 
@@ -2197,6 +2205,33 @@ impl ElementCx<'_, '_> {
         let Some(marker_line) = marker_layout.lines().next() else { return };
         let layout_scale = marker_layout.scale();
         let item_layout = self.node.final_layout();
+        let (baseline, line_x) = self.marker_baseline(marker_layout);
+        let ascent = (font_ascent(&marker_line).unwrap_or(0.0) / layout_scale).round() as i32;
+        let offset = ascent * 2 / 3;
+        let size = ((offset + 1) / 2) as f64;
+        let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
+        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
+            - (offset + 7) as f64;
+        let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
+        let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
+        let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
+        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, self.node.id));
+        match symbol {
+            '•' => scene.fill(Fill::NonZero, self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect)),
+            '◦' => {
+                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
+            }
+            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
+        }
+    }
+
+    /// pyro: the baseline an outside marker sits on, in CSS px from the top of the list item's
+    /// content box: that of the item's first line, the first line of the first box in it that has
+    /// one, or, when there is none, that of the marker's own line (a line of the item's font).
+    /// With it, how far floats move that line's start (the marker goes with the line).
+    fn marker_baseline(&self, marker_layout: &parley::Layout<blitz_dom::node::TextBrush>) -> (f32, f32) {
+        let layout_scale = marker_layout.scale();
+        let item_layout = self.node.final_layout();
         // The first line, and its box's border box top from the item's.
         let (mut node, mut top) = (self.node, 0.0);
         let mut first_line = None;
@@ -2217,8 +2252,7 @@ impl ElementCx<'_, '_> {
             top += child.final_layout().location.y;
             node = child;
         }
-        // The baseline from the item's content box top, in CSS px.
-        let baseline = match &first_line {
+        match &first_line {
             Some((node, text, line)) => {
                 let shift = self
                     .text_placement_of(node, text.block_offset as f64)
@@ -2228,25 +2262,50 @@ impl ElementCx<'_, '_> {
                 let content_top = top + layout.border.top + layout.padding.top
                     - item_layout.border.top
                     - item_layout.padding.top;
-                content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset
+                let line_scale = text.layout.scale();
+                (
+                    content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset,
+                    line.metrics().inline_min_coord / line_scale,
+                )
             }
-            None => marker_line.metrics().baseline / layout_scale,
-        };
-        let ascent = (font_ascent(&marker_line).unwrap_or(0.0) / layout_scale).round() as i32;
-        let offset = ascent * 2 / 3;
-        let size = ((offset + 1) / 2) as f64;
+            None => (marker_layout.lines().next().map_or(0.0, |line| line.metrics().baseline / layout_scale), 0.0),
+        }
+    }
+
+    /// pyro: an outside `list-style-image` marker, as Chromium places one
+    /// (`ListMarker::InlineMarginsForOutside`): the image at its natural size, ending 7px before
+    /// the item's border box, its bottom on the baseline of the item's first line (an inline
+    /// replaced box on the marker's line), at whole device pixels.
+    fn draw_marker_image(
+        &self,
+        scene: &mut impl PaintScene,
+        pos: Point,
+        width: f32,
+        height: f32,
+        marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
+    ) {
+        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
+        let (baseline, line_x) = self.marker_baseline(marker_layout);
+        let item_layout = self.node.final_layout();
         let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
-        let x = pos.x + (subpixel.x - item_layout.padding.left - item_layout.border.left) as f64 - (offset + 7) as f64;
-        let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
-        let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
-        let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
-        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, self.node.id));
-        match symbol {
-            '•' => scene.fill(Fill::NonZero, self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect)),
-            '◦' => {
-                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
+        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
+            - f64::from(width + 7.0);
+        let y = pos.y + f64::from(subpixel.y + baseline - height);
+        let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
+        match &image.image {
+            blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
+                let quality = to_image_quality(self.style.clone_image_rendering());
+                let size = Affine::scale_non_uniform(
+                    f64::from(width) * self.scale / f64::from(raster.width),
+                    f64::from(height) * self.scale / f64::from(raster.height),
+                );
+                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
             }
-            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
+            #[cfg(feature = "svg")]
+            blitz_dom::node::ImageData::Svg(svg) => {
+                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
+            }
+            _ => {}
         }
     }
 

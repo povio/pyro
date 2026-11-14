@@ -409,7 +409,44 @@ pub(crate) fn collect_layout_children(
     container_node_id: NodeId,
     out: &mut LayoutChildren,
 ) {
-    collect_layout_children_with_wrap(doc, container_node_id, out, None)
+    collect_layout_children_with_wrap(doc, container_node_id, out, None);
+    place_inside_marker(doc, container_node_id, out);
+}
+
+/// pyro: the inside marker of a list item that is no inline root of its own (it holds blocks) goes
+/// on the first line of its first box (CSS Lists 3, Chromium): an anonymous block of its first
+/// inline content takes it, else (a block first) the marker is an anonymous block's line before it.
+fn place_inside_marker(doc: &mut BaseDocument, item: NodeId, out: &mut LayoutChildren) {
+    use crate::node::ListItemLayoutPosition;
+    let node = &doc.nodes[item];
+    if node.flags.is_inline_root() || node.is_anonymous() {
+        return;
+    }
+    let Some(marker) = node
+        .element_data()
+        .and_then(|element| element.list_item_data.as_deref())
+        .filter(|data| matches!(data.position, ListItemLayoutPosition::Inside))
+        .cloned()
+    else {
+        return;
+    };
+    // (An empty item's inside symbol marker stays unpainted, as below.)
+    if out.children.is_empty() {
+        return;
+    }
+    let block = match out.children.first() {
+        Some(&first) if out.anonymous_blocks.contains(&first) => first,
+        _ => {
+            out.create_anonymous_block(item, doc);
+            let block = out.children.pop().unwrap();
+            out.children.insert(0, block);
+            out.anonymous_block_id = None;
+            block
+        }
+    };
+    if let Some(element) = doc.nodes[block].element_data_mut() {
+        element.list_item_data = Some(Box::new(marker));
+    }
 }
 
 fn collect_layout_children_with_wrap(
@@ -559,15 +596,21 @@ fn collect_layout_children_with_wrap(
 
     // pyro: a list item's inside marker that is text (a number, or a symbol the page styles
     // through `::marker`) is inline content of its own: an item without any other has a line with
-    // the marker. (An empty item's bundled-font symbol marker stays unpainted: painting it exposes
-    // WPT `list-style-position-applies-to-015`, an empty item in a table caption, until table
-    // captions render.)
+    // the marker, and so has the anonymous block an item of blocks puts its marker in
+    // (`place_inside_marker`). (An empty item's bundled-font symbol marker stays unpainted: painting
+    // it exposes WPT `list-style-position-applies-to-015`, an empty item in a table caption, until
+    // table captions render.) An item with an outside marker and no in-flow content has the line
+    // the marker sits on (Chromium: the marker's box sets the item's height and baseline), a line
+    // of the item's strut (`inline::build`).
     let inside_marker = doc.nodes[container_node_id]
         .element_data()
         .and_then(|element| element.list_item_data.as_deref())
-        .is_some_and(|item| {
-            matches!(item.position, crate::node::ListItemLayoutPosition::Inside)
-                && matches!(item.marker, crate::node::Marker::String(_))
+        .is_some_and(|item| match item.position {
+            crate::node::ListItemLayoutPosition::Inside => {
+                matches!(item.marker, crate::node::Marker::String(_))
+                    || doc.nodes[container_node_id].is_anonymous()
+            }
+            crate::node::ListItemLayoutPosition::Outside(_) => true,
         });
 
     // Skip further construction if the node has no children or psuedo-children

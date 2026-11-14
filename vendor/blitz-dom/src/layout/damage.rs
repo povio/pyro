@@ -862,6 +862,7 @@ impl BaseDocument {
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
+            self.flush_image_layers_from_style(node_id, ImageLayerKind::ListStyle);
         }
     }
 
@@ -896,6 +897,10 @@ impl BaseDocument {
             ImageLayerKind::BorderImage => (
                 std::slice::from_ref(&style.get_border().border_image_source),
                 &mut elem.border_images,
+            ),
+            ImageLayerKind::ListStyle => (
+                std::slice::from_ref(&style.get_list().list_style_image),
+                &mut elem.list_style_images,
             ),
         };
 
