@@ -76,6 +76,8 @@ pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
 pub enum ImageLayerKind {
     Background,
     Mask,
+    /// pyro: `border-image-source`, a list of one image.
+    BorderImage,
 }
 
 impl ImageLayerKind {
@@ -83,6 +85,7 @@ impl ImageLayerKind {
         match self {
             Self::Background => ImageType::Background(idx),
             Self::Mask => ImageType::Mask(idx),
+            Self::BorderImage => ImageType::BorderImage(idx),
         }
     }
 }
@@ -92,6 +95,8 @@ pub enum ImageType {
     Image,
     Background(usize),
     Mask(usize),
+    /// pyro: `border-image-source`.
+    BorderImage(usize),
 }
 
 /// A point

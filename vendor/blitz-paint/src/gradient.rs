@@ -2,7 +2,8 @@ use crate::color::{Color, ToColorColor};
 use color::DynamicColor;
 use kurbo::{self, Affine, Point, Rect, Vec2};
 use peniko::{self, ColorStop, Gradient, LinearGradientPosition, SweepGradientPosition};
-use style::color::AbsoluteColor;
+use style::color::mix::HueInterpolationMethod;
+use style::color::{AbsoluteColor, ColorSpace as StyloColorSpace};
 use style::{
     OwnedSlice,
     values::{
@@ -46,6 +47,66 @@ type ConicGradient<'a> = (
 );
 
 pub(crate) fn to_peniko_gradient(
+    gradient: &StyloGradient,
+    origin_rect: Rect,
+    bounding_box: Rect,
+    scale: f64,
+    current_color: &AbsoluteColor,
+) -> (peniko::Gradient, Option<Affine>) {
+    let (mut peniko_gradient, transform) =
+        to_peniko_gradient_srgb(gradient, origin_rect, bounding_box, scale, current_color);
+    // pyro: the gradient's colour interpolation method (`in hsl`, `in oklch longer hue`; Stylo
+    // makes Oklab the default when a stop uses a modern colour syntax). Stops were interpolated in
+    // sRGB whatever it said.
+    let method = match gradient {
+        GenericGradient::Linear {
+            color_interpolation_method,
+            ..
+        }
+        | GenericGradient::Radial {
+            color_interpolation_method,
+            ..
+        }
+        | GenericGradient::Conic {
+            color_interpolation_method,
+            ..
+        } => color_interpolation_method,
+    };
+    peniko_gradient.interpolation_cs = interpolation_space(method.space);
+    peniko_gradient.hue_direction = match method.hue {
+        HueInterpolationMethod::Longer => color::HueDirection::Longer,
+        HueInterpolationMethod::Increasing => color::HueDirection::Increasing,
+        HueInterpolationMethod::Decreasing => color::HueDirection::Decreasing,
+        HueInterpolationMethod::Shorter | HueInterpolationMethod::Specified => {
+            color::HueDirection::Shorter
+        }
+    };
+    (peniko_gradient, transform)
+}
+
+/// pyro: the colour space of `color`'s crate for a CSS one.
+fn interpolation_space(space: StyloColorSpace) -> color::ColorSpaceTag {
+    use color::ColorSpaceTag as Tag;
+    match space {
+        StyloColorSpace::Srgb => Tag::Srgb,
+        StyloColorSpace::Hsl => Tag::Hsl,
+        StyloColorSpace::Hwb => Tag::Hwb,
+        StyloColorSpace::Lab => Tag::Lab,
+        StyloColorSpace::Lch => Tag::Lch,
+        StyloColorSpace::Oklab => Tag::Oklab,
+        StyloColorSpace::Oklch => Tag::Oklch,
+        StyloColorSpace::SrgbLinear => Tag::LinearSrgb,
+        // `color` has no linear Display P3: the gamma-encoded one is the nearest.
+        StyloColorSpace::DisplayP3 | StyloColorSpace::DisplayP3Linear => Tag::DisplayP3,
+        StyloColorSpace::A98Rgb => Tag::A98Rgb,
+        StyloColorSpace::ProphotoRgb => Tag::ProphotoRgb,
+        StyloColorSpace::Rec2020 => Tag::Rec2020,
+        StyloColorSpace::XyzD50 => Tag::XyzD50,
+        StyloColorSpace::XyzD65 => Tag::XyzD65,
+    }
+}
+
+fn to_peniko_gradient_srgb(
     gradient: &StyloGradient,
     origin_rect: Rect,
     bounding_box: Rect,
