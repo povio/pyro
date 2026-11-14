@@ -10918,7 +10918,28 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1559,7 +1821,7 @@
+@@ -1369,6 +1631,20 @@
+         if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
+             return true;
+         }
++        // pyro: `will-change` of a property that would make a stacking context makes one (its
++        // positioned descendants paint inside it, its backdrop-root group among them), as in
++        // Gecko: the unconditional ones, `opacity`, the transforms and `perspective`.
++        {
++            use style::values::specified::box_::WillChangeBits;
++            if box_style.will_change.bits.intersects(
++                WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL
++                    | WillChangeBits::OPACITY
++                    | WillChangeBits::TRANSFORM
++                    | WillChangeBits::PERSPECTIVE,
++            ) {
++                return true;
++            }
++        }
+         // TODO: contain
+ 
+         false
+@@ -1559,7 +1835,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -10927,7 +10948,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1579,7 +1841,7 @@
+@@ -1579,7 +1855,7 @@
                  // against the viewport and do not scroll with it. (A fixed box
                  // whose containing block is a transformed ancestor scrolls with
                  // that ancestor like any other out-of-flow box.)
@@ -10936,7 +10957,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +1852,7 @@
+@@ -1590,7 +1866,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -10945,7 +10966,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +1867,7 @@
+@@ -1605,7 +1881,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -10954,7 +10975,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1818,8 +2080,21 @@
+@@ -1818,8 +2094,21 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -10978,7 +10999,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +2152,28 @@
+@@ -1877,11 +2166,28 @@
                  }
              }
  

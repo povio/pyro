@@ -7,7 +7,7 @@ workspace `Cargo.toml`. License: MIT OR Apache-2.0, as upstream. `.cargo_vcs_inf
 
 ## The change
 
-`UPSTREAM.patch` is the whole diff: four changes.
+`UPSTREAM.patch` is the whole diff: five changes.
 
 ## A raster thread count per renderer
 
@@ -61,7 +61,8 @@ Chromium draws text shadows with does; other content is blurred in all four chan
 unit tests in `src/filters.rs` and by pyro-render's `filter_drop_shadow.rs` and `text_shadow.rs`.
 
 The colour functions (`grayscale()`, `sepia()`, `saturate()`, `hue-rotate()`, `invert()`, `opacity()`,
-`brightness()`, `contrast()`) arrive as `feColorMatrix` matrices (blitz-paint builds Chromium's) and are applied as
+`brightness()`, `contrast()`) arrive as `feColorMatrix` matrices (and `url()` filters' `feComponentTransfer`
+functions, with linearRGB as conversion tables around them) (blitz-paint builds Chromium's) and are applied as
 Skia's matrix colour filter applies them, which Chromium builds them into: to each pixel's unpremultiplied sRGB
 values (not linearRGB), each matrix's result clamped to 0..1, functions in a row without rounding to bytes between
 them, premultiplied and rounded at the end (`color_matrices`; a run of equal pixels is computed once). A matrix that
@@ -70,6 +71,23 @@ is a faded layer with no pixels of its own), and when the functions keep the alp
 solid colour (a box, a run of text), that content is drawn in the mapped colour (`map_color`) instead of being
 rendered apart. Covered by the unit tests in `src/filters.rs` and `src/scene.rs` and by pyro-render's
 `filter_color.rs`.
+
+## `backdrop-filter`
+
+`src/backdrop.rs`. blitz-paint records two markers for an element with a backdrop filter, each an empty layer with
+the filter and the element's border box (radii included) as the clip: a capture (opacity 0) where the element starts
+to paint and a draw (opacity 1) first in its effect group. The capture renders what the element's backdrop root
+painted before it (the commands since the innermost open layer that is a backdrop root: a filter, an opacity, a
+blend mode, a backdrop filter's group, blitz-paint's empty-filter mark; else since the start of the scene or of the
+filter layer replayed) into a context of its own, cut to the box (and to the context for the scene's root, as
+Chromium's root surface is the viewport), filters it with the box mirrored past its edges (Chromium's edge mode: a
+blur takes in no colour from outside the box) and keeps the images, keyed by the filter (one per element), the
+element's transform and its box. The draw draws them in the box. An opaque, unfiltered group's backdrop is drawn
+before the group in place of what lies there (Chromium draws it with a source copy: where the root painted nothing,
+the page beneath shows, not the content under the box twice), and the group pushes nothing; a backdrop of one
+colour is a fill of that colour, and a box on whole pixels needs no clip (each rounded a level apart under clips in
+vello_cpu's u8 compositing). Scenes without a backdrop filter skip all of it. Covered by the unit tests in
+`src/backdrop.rs` and pyro-render's `backdrop_filter.rs`.
 
 ## Clips that a blend mode blends through
 

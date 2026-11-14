@@ -7,6 +7,7 @@ mod image_renderer;
 mod scene;
 mod window_renderer;
 
+mod backdrop;
 mod filters;
 
 pub use image_cache::ImageCacheConfig;

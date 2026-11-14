@@ -161,6 +161,18 @@ from the root of an upstream checkout at that commit) is the whole diff.
     f32: the filter effects spec's `feColorMatrix` equivalents with grayscale's and saturate's last column of each
     row what the row leaves of 1, on sRGB values. They were anyrender's, which pyro's renderer did not apply.
     Covered by `crates/pyro-render/tests/filter_color.rs`.
+  - `src/render.rs` (`render_element`, `paint_effect_group`), `src/layers.rs` (`document_effects`,
+    `backdrop_root`): `backdrop-filter`. An element with one records two markers for anyrender_vello_cpu (see its
+    README): a capture where it starts to paint, before its own layers (its clip-path, mask and blend mode are no
+    backdrop root for it), and a draw first in its effect group, so that its opacity and filter apply to the
+    backdrop it shows; both clip to its border box with its radii. A backdrop root that none of its layers marks
+    (a `clip-path`, a mask, `will-change` of a property that makes one) is painted in a layer with an empty filter,
+    for elements with a backdrop filter below them only (the layer costs a composite). An opaque group without a
+    filter around a backdrop filter is a clip layer. Covered by `crates/pyro-render/tests/backdrop_filter.rs`.
+  - `src/filters.rs` (`reference_filter`): a `url(#id)` filter (stylo parses it now) is the document's SVG
+    `<filter>` with that id when that is a chain of `feColorMatrix` (every type) and `feComponentTransfer`, each in
+    its `color-interpolation-filters` space (linearRGB unless an ancestor's attribute says sRGB; sRGB for a filter
+    in a `display: none` subtree, as in Chromium). Anything else is left out, as before.
   - `src/layers.rs` (`blend_isolation`), `src/render.rs` (`render_element`): a stacking context that holds an element
     with a `mix-blend-mode` (its nearest ancestor that is one, the root element's at the latest) is painted as an
     isolated group, as Chromium isolates one: the element blends with what the context painted, not with what lies

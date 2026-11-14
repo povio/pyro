@@ -65,6 +65,10 @@ crate (`diff -ruN`).
   lets a paint-only restyle of a table cell run no layout (`vendor/blitz-dom/README.pyro.md`, "Paint-only
   restyles run no layout and shape no text").
 
+- `values/specified/effects.rs`, `values/computed/effects.rs`, `values/animated/effects.rs`: `filter` and
+  `backdrop-filter` take `url()` for servo too (upstream: gecko only; servo's value type was `Impossible`, so a
+  `filter: url(#f)` declaration was dropped). blitz-paint resolves it to an SVG `<filter>` of the document.
+
 ## Container queries, typed values
 
 - `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules

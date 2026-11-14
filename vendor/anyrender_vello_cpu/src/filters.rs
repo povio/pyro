@@ -16,6 +16,7 @@
 use std::f64::consts::PI;
 
 use anyrender::Filter;
+use anyrender::filters::component_transfer::TransferFunction;
 use anyrender::filters::{FilterEffect, FilterInput};
 use kurbo::{Affine, Rect};
 use peniko::color::{AlphaColor, Srgb};
@@ -103,10 +104,19 @@ enum Step {
     Blur { sigma: f64 },
     /// `drop-shadow()`: the layer over its alpha, blurred, moved and coloured.
     DropShadow { dx: f64, dy: f64, sigma: f64, color: AlphaColor<Srgb> },
-    /// Colour functions in a row (`feColorMatrix` matrices: rows R, G, B, A of the unpremultiplied
-    /// values and an offset, in 0..1), applied in order to each pixel without rounding between
-    /// them, each result clamped: [`color_matrices`].
-    Color(Vec<[f32; 20]>),
+    /// Colour functions in a row (`feColorMatrix` matrices and `feComponentTransfer` functions of
+    /// the unpremultiplied values), applied in order to each pixel without rounding between them,
+    /// each result clamped: [`color_ops`].
+    Color(Vec<ColorOp>),
+}
+
+/// One colour function of a [`Step::Color`].
+#[derive(Clone, Debug)]
+pub(crate) enum ColorOp {
+    /// `feColorMatrix`: rows R, G, B, A of the unpremultiplied values and an offset, in 0..1.
+    Matrix([f32; 20]),
+    /// `feComponentTransfer`: a function of each channel (R, G, B, A).
+    Transfer(Box<[TransferFunction; 4]>),
 }
 
 /// The steps of a layer's filter this backend does, in order.
@@ -116,6 +126,8 @@ pub(crate) struct FilterPlan {
     /// the factor, which the layer's opacity takes over (Chromium's matrix rounds the same pixels
     /// within a level), so that no step is left to do for a filter of `opacity()` alone.
     alpha: f32,
+    /// Whether a large blur may be computed at a reduced resolution ([`Self::factor`]).
+    reduce: bool,
 }
 
 impl FilterPlan {
@@ -151,26 +163,46 @@ impl FilterPlan {
                         color: shadow.color,
                     });
                 }
-                FilterEffect::ColorMatrix(matrix) if !near_identity(&matrix.0) => match steps.last_mut() {
-                    Some(Step::Color(matrices)) => matrices.push(matrix.0),
-                    _ => steps.push(Step::Color(vec![matrix.0])),
-                },
+                FilterEffect::ColorMatrix(matrix) if !near_identity(&matrix.0) => {
+                    push_color(&mut steps, ColorOp::Matrix(matrix.0))
+                }
+                FilterEffect::ComponentTransfer(transfer) => {
+                    let functions = [
+                        transfer.red_function.clone(),
+                        transfer.green_function.clone(),
+                        transfer.blue_function.clone(),
+                        transfer.alpha_function.clone(),
+                    ];
+                    if !functions.iter().all(|f| matches!(f, TransferFunction::Identity)) {
+                        push_color(&mut steps, ColorOp::Transfer(Box::new(functions)));
+                    }
+                }
                 _ => {}
             }
         }
         // Trailing alpha scales become the layer's opacity.
         let mut alpha = 1.0f32;
-        while let Some(Step::Color(matrices)) = steps.last_mut() {
-            let Some(factor) = matrices.last().and_then(alpha_scale) else {
+        while let Some(Step::Color(ops)) = steps.last_mut() {
+            let Some(factor) = ops.last().and_then(|op| match op {
+                ColorOp::Matrix(m) => alpha_scale(m),
+                ColorOp::Transfer(_) => None,
+            }) else {
                 break;
             };
             alpha *= factor;
-            matrices.pop();
-            if matrices.is_empty() {
+            ops.pop();
+            if ops.is_empty() {
                 steps.pop();
             }
         }
-        (!steps.is_empty() || alpha != 1.0).then_some(Self { steps, alpha })
+        (!steps.is_empty() || alpha != 1.0).then_some(Self { steps, alpha, reduce: true })
+    }
+
+    /// The plan computed at full resolution ([`Self::factor`] 1): a backdrop is read at the size
+    /// of the box it shows through.
+    pub(crate) fn at_full_resolution(mut self) -> Self {
+        self.reduce = false;
+        self
     }
 
     /// The factor the layer's opacity is multiplied by (see [`Self::alpha`](#structfield.alpha)).
@@ -186,9 +218,9 @@ impl FilterPlan {
     /// The colour functions of a filter of nothing else, when they keep the alpha and map each
     /// colour without reading its alpha: the content of a layer in one colour is then drawn in
     /// that colour's image instead ([`map_color`]), without rendering it apart.
-    pub(crate) fn recolors(&self) -> Option<&[[f32; 20]]> {
+    pub(crate) fn recolors(&self) -> Option<&[ColorOp]> {
         match &self.steps[..] {
-            [Step::Color(matrices)] if matrices.iter().all(keeps_alpha) => Some(matrices),
+            [Step::Color(ops)] if ops.iter().all(keeps_alpha) => Some(ops),
             _ => None,
         }
     }
@@ -218,7 +250,7 @@ impl FilterPlan {
     /// bilinearly, within two levels of the full-resolution blur.
     pub(crate) fn factor(&self) -> usize {
         match self.steps[..] {
-            [Step::Blur { sigma }] | [Step::DropShadow { sigma, .. }] => reduction(sigma),
+            [Step::Blur { sigma }] | [Step::DropShadow { sigma, .. }] if self.reduce => reduction(sigma),
             _ => 1,
         }
     }
@@ -280,7 +312,7 @@ impl FilterPlan {
                         Step::DropShadow { dx, dy, sigma, color } => {
                             drop_shadow(data, &mut scratch, w, h, dx, dy, sigma, color)
                         }
-                        Step::Color(ref matrices) => color_matrices(data, matrices),
+                        Step::Color(ref ops) => color_ops(data, ops),
                     }
                 }
                 vec![FilteredImage::scaled(pixels, origin, 1)]
@@ -310,32 +342,69 @@ fn alpha_scale(m: &[f32; 20]) -> Option<f32> {
     (identity == IDENTITY && m[18] >= 0.0).then_some(m[18])
 }
 
-/// Whether a matrix keeps each pixel's alpha and makes its colour from the colour alone.
-fn keeps_alpha(m: &[f32; 20]) -> bool {
-    m[3] == 0.0 && m[8] == 0.0 && m[13] == 0.0 && m[15..] == [0.0, 0.0, 0.0, 1.0, 0.0]
+/// A colour step joins the colour functions before it.
+fn push_color(steps: &mut Vec<Step>, op: ColorOp) {
+    match steps.last_mut() {
+        Some(Step::Color(ops)) => ops.push(op),
+        _ => steps.push(Step::Color(vec![op])),
+    }
 }
 
-/// One colour (unpremultiplied) through `matrices` that [`keeps_alpha`]: what
-/// [`color_matrices`] makes of each pixel of it.
-pub(crate) fn map_color(color: AlphaColor<Srgb>, matrices: &[[f32; 20]]) -> AlphaColor<Srgb> {
+/// Whether a colour function keeps each pixel's alpha and makes its colour from the colour alone.
+fn keeps_alpha(op: &ColorOp) -> bool {
+    match op {
+        ColorOp::Matrix(m) => m[3] == 0.0 && m[8] == 0.0 && m[13] == 0.0 && m[15..] == [0.0, 0.0, 0.0, 1.0, 0.0],
+        ColorOp::Transfer(functions) => matches!(functions[3], TransferFunction::Identity),
+    }
+}
+
+/// One colour (unpremultiplied) through `ops` that [`keeps_alpha`]: what [`color_ops`] makes of
+/// each pixel of it.
+pub(crate) fn map_color(color: AlphaColor<Srgb>, ops: &[ColorOp]) -> AlphaColor<Srgb> {
     let [r, g, b, alpha] = color.components;
-    let [r, g, b, _] = matrices.iter().fold([r, g, b, alpha], |c, m| apply(m, c));
+    let [r, g, b, _] = ops.iter().fold([r, g, b, alpha], |c, op| apply(op, c));
     AlphaColor::new([r, g, b, alpha])
 }
 
-/// `m` times `c` (unpremultiplied RGBA), clamped to 0..1, as Skia's `matrix_4x5` and `clamp_01`
-/// stages compute it.
-fn apply(m: &[f32; 20], [r, g, b, a]: [f32; 4]) -> [f32; 4] {
-    std::array::from_fn(|row| {
-        let m = &m[row * 5..row * 5 + 5];
-        (m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0)
-    })
+/// A colour function on `c` (unpremultiplied RGBA), clamped to 0..1: a matrix as Skia's
+/// `matrix_4x5` and `clamp_01` stages compute it, transfer functions as `feComponentTransfer`
+/// defines them.
+fn apply(op: &ColorOp, [r, g, b, a]: [f32; 4]) -> [f32; 4] {
+    match op {
+        ColorOp::Matrix(m) => std::array::from_fn(|row| {
+            let m = &m[row * 5..row * 5 + 5];
+            (m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0)
+        }),
+        ColorOp::Transfer(functions) => {
+            let c = [r, g, b, a];
+            std::array::from_fn(|i| transfer(&functions[i], c[i]).clamp(0.0, 1.0))
+        }
+    }
 }
 
-/// The colour functions `matrices` on premultiplied RGBA `data`, as Chromium's matrix colour
-/// filters (Skia's raster pipeline) do them: each pixel unpremultiplied (none when transparent),
-/// each matrix applied and its result clamped, premultiplied, rounded to bytes at the end.
-fn color_matrices(data: &mut [u8], matrices: &[[f32; 20]]) {
+/// `feComponentTransfer`'s function of a channel value `c` in 0..1.
+fn transfer(function: &TransferFunction, c: f32) -> f32 {
+    match function {
+        TransferFunction::Identity => c,
+        TransferFunction::Table(values) if values.len() >= 2 => {
+            let n = values.len() - 1;
+            let k = ((c * n as f32).floor() as usize).min(n - 1);
+            values[k] + (c * n as f32 - k as f32) * (values[k + 1] - values[k])
+        }
+        TransferFunction::Discrete(values) if !values.is_empty() => {
+            let n = values.len();
+            values[((c * n as f32).floor() as usize).min(n - 1)]
+        }
+        TransferFunction::Table(_) | TransferFunction::Discrete(_) => c,
+        TransferFunction::Linear(f) => f.slope * c + f.intercept,
+        TransferFunction::Gamma(f) => f.amplitude * c.powf(f.exponent) + f.offset,
+    }
+}
+
+/// The colour functions `ops` on premultiplied RGBA `data`, as Chromium's colour filters (Skia's
+/// raster pipeline) do them: each pixel unpremultiplied (none when transparent), each function
+/// applied and its result clamped, premultiplied, rounded to bytes at the end.
+fn color_ops(data: &mut [u8], ops: &[ColorOp]) {
     // Runs of one colour (boxes, the transparent pixels around them) are the common case: a run's
     // first pixel is computed, the rest copied.
     let mut last: Option<([u8; 4], [u8; 4])> = None;
@@ -344,7 +413,7 @@ fn color_matrices(data: &mut [u8], matrices: &[[f32; 20]]) {
         let output = match last {
             Some((seen, output)) if seen == input => output,
             _ => {
-                let output = color_pixel(input, matrices);
+                let output = color_pixel(input, ops);
                 last = Some((input, output));
                 output
             }
@@ -353,7 +422,7 @@ fn color_matrices(data: &mut [u8], matrices: &[[f32; 20]]) {
     }
 }
 
-fn color_pixel([r, g, b, a]: [u8; 4], matrices: &[[f32; 20]]) -> [u8; 4] {
+fn color_pixel([r, g, b, a]: [u8; 4], ops: &[ColorOp]) -> [u8; 4] {
     const BYTE: f32 = 1.0 / 255.0;
     let alpha = f32::from(a) * BYTE;
     // Skia's `unpremul`: times 1 / alpha, 0 where that is not finite.
@@ -364,10 +433,38 @@ fn color_pixel([r, g, b, a]: [u8; 4], matrices: &[[f32; 20]]) -> [u8; 4] {
         f32::from(b) * BYTE * unpremul,
         alpha,
     ];
-    let [r, g, b, a] = matrices.iter().fold(rgba, |c, m| apply(m, c));
+    let [r, g, b, a] = ops.iter().fold(rgba, |c, op| apply(op, c));
     // `premul`, then `store_8888`: v * 255 rounded.
     let byte = |v: f32| (v * 255.0 + 0.5) as u8;
     [byte(r * a), byte(g * a), byte(b * a), byte(a)]
+}
+
+/// pyro: `pixels` (premultiplied RGBA over `out`) extended to `region` (which holds `out`) by
+/// mirroring at `out`'s edges, the edge pixel repeated (Skia's `SkTileMode::kMirror`, which
+/// Chromium reads a backdrop through for `backdrop-filter`: a blur takes in no colour from beyond
+/// the box and no transparency either). Farther than a box away it keeps mirroring.
+pub(crate) fn mirrored(pixels: &Pixmap, out: PixelRect, region: PixelRect) -> Pixmap {
+    let (w, h) = (i64::from(out.width()), i64::from(out.height()));
+    let (rw, rh) = (region.width() as usize, region.height() as usize);
+    let mut extended = Pixmap::new(rw as u16, rh as u16);
+    if w <= 0 || h <= 0 {
+        return extended;
+    }
+    let reflect = |v: i64, n: i64| {
+        let m = v.rem_euclid(2 * n);
+        (if m < n { m } else { 2 * n - 1 - m }) as usize
+    };
+    let columns: Vec<usize> = (0..rw as i64).map(|x| reflect(x + i64::from(region.x0 - out.x0), w)).collect();
+    let src = pixels.data_as_u8_slice();
+    let dst = extended.data_as_u8_slice_mut();
+    for (y, row) in dst.chunks_exact_mut(rw * 4).enumerate() {
+        let sy = reflect(y as i64 + i64::from(region.y0 - out.y0), h);
+        let line = &src[sy * w as usize * 4..(sy + 1) * w as usize * 4];
+        for (px, &sx) in row.chunks_exact_mut(4).zip(&columns) {
+            px.copy_from_slice(&line[sx * 4..sx * 4 + 4]);
+        }
+    }
+    extended
 }
 
 /// The factor a blur of `sigma` (device px) is computed smaller by: see [`FilterPlan::factor`].

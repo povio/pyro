@@ -1,23 +1,30 @@
 use blitz_dom::util::ToColorColor as _;
+use blitz_dom::{BaseDocument, Node};
 use style::color::AbsoluteColor;
 pub(crate) use style::computed_values::filter::single_value::T as StyloFilter;
 
+use anyrender::filters::component_transfer::{
+    ComponentTransferFilter, GammaTransferFunction, LinearTransferFunction, TransferFunction,
+};
 use anyrender::filters::{Filter, FilterEffect, color_transformation::ColorMatrix};
 
 /// pyro: the filter in device pixels: lengths are CSS px, and the layers the filter is applied
 /// to are drawn in device pixels (`scale` of them per CSS px) without a scale in their transform.
-/// `current_color` is the element's `color`, which a `drop-shadow()` without one has.
+/// `current_color` is the element's `color`, which a `drop-shadow()` without one has. A `url()`
+/// names an SVG `<filter>` of `dom` ([`reference_filter`]).
 pub(crate) fn convert_filters(
     filters: &[StyloFilter],
     scale: f64,
     current_color: &AbsoluteColor,
+    dom: &BaseDocument,
 ) -> Option<Filter> {
     if filters.is_empty() {
         return None;
     }
 
-    Some(Filter::linear_list(filters.iter().filter_map(|filter| {
-        convert_single_filter(filter, scale as f32, current_color)
+    Some(Filter::linear_list(filters.iter().flat_map(|filter| match filter {
+        StyloFilter::Url(url) => reference_filter(dom, url).unwrap_or_default(),
+        filter => convert_single_filter(filter, scale as f32, current_color).into_iter().collect(),
     })))
 }
 
@@ -49,6 +56,179 @@ pub(crate) fn convert_single_filter(
                 .as_color_color(),
         ),
         StyloFilter::Url(_) => return None,
+    })
+}
+
+/// pyro: a `url(#id)` filter: the SVG `<filter>` of `dom` it names, when that is a chain of colour
+/// primitives (`feColorMatrix`, `feComponentTransfer`; each one's input the one before it). Each
+/// primitive works in its `color-interpolation-filters` space: linearRGB unless an ancestor's
+/// attribute says sRGB, and sRGB for a filter in a `display: none` subtree, as in Chromium (a
+/// `backdrop-filter: url()` matches `backdrop-filter: invert(1)` there). `None` for anything else.
+fn reference_filter(dom: &BaseDocument, url: &style::url::ComputedUrl) -> Option<Vec<FilterEffect>> {
+    let id = url.url()?.fragment()?;
+    let filter = &dom.tree()[dom.get_element_by_id(id)?];
+    if local_name(filter) != Some("filter") {
+        return None;
+    }
+    // Stylo styles nothing in a `display: none` subtree.
+    let unstyled = filter.primary_styles().is_none();
+    let mut effects = Vec::new();
+    let mut previous: Option<&str> = None;
+    let primitives = filter.children.iter().map(|&id| &dom.tree()[id]).filter(|node| node.is_element());
+    for (index, primitive) in primitives.enumerate() {
+        match attr(primitive, "in") {
+            None => {}
+            Some("SourceGraphic") if index == 0 => {}
+            Some(input) if Some(input) == previous => {}
+            Some(_) => return None,
+        }
+        let effect = match local_name(primitive)? {
+            "feColorMatrix" => color_matrix_primitive(primitive)?,
+            "feComponentTransfer" => component_transfer_primitive(dom, primitive)?,
+            _ => return None,
+        };
+        let linear = match interpolation(dom, primitive) {
+            Some(space) => space.eq_ignore_ascii_case("linearRGB"),
+            None => !unstyled,
+        };
+        if linear {
+            effects.extend([to_linear(), effect, to_srgb()]);
+        } else {
+            effects.push(effect);
+        }
+        previous = attr(primitive, "result");
+    }
+    Some(effects)
+}
+
+fn local_name(node: &Node) -> Option<&str> {
+    node.element_data().map(|element| &*element.name.local)
+}
+
+fn attr<'a>(node: &'a Node, name: &str) -> Option<&'a str> {
+    node.attrs()?.iter().find(|attr| &*attr.name.local == name).map(|attr| attr.value.as_str())
+}
+
+/// The `color-interpolation-filters` of a primitive: its attribute, or the nearest ancestor's
+/// (`auto` is sRGB).
+fn interpolation<'a>(dom: &'a BaseDocument, node: &'a Node) -> Option<&'a str> {
+    let mut at = Some(node);
+    while let Some(node) = at {
+        match attr(node, "color-interpolation-filters").map(str::trim) {
+            Some("inherit") | None => {}
+            Some("auto") => return Some("sRGB"),
+            Some(space) => return Some(space),
+        }
+        at = node.parent.map(|parent| &dom.tree()[parent]);
+    }
+    None
+}
+
+fn numbers(value: &str) -> Vec<f32> {
+    value
+        .split(|c: char| c.is_ascii_whitespace() || c == ',')
+        .filter(|n| !n.is_empty())
+        .map_while(|n| n.parse().ok())
+        .collect()
+}
+
+fn number(node: &Node, name: &str, default: f32) -> f32 {
+    attr(node, name).and_then(|value| value.trim().parse().ok()).unwrap_or(default)
+}
+
+/// `feColorMatrix`, as the filter effects spec defines each `type` (a missing or malformed
+/// `values` is the identity).
+fn color_matrix_primitive(node: &Node) -> Option<FilterEffect> {
+    let values = attr(node, "values").map(numbers);
+    Some(color_matrix(match attr(node, "type").unwrap_or("matrix").trim() {
+        "matrix" => match values {
+            Some(values) if values.len() == 20 => values.try_into().ok()?,
+            _ => opacity(1.0),
+        },
+        "saturate" => saturate_spec(values.and_then(|v| v.first().copied()).unwrap_or(1.0)),
+        "hueRotate" => hue_rotate(values.and_then(|v| v.first().copied()).unwrap_or(0.0)),
+        "luminanceToAlpha" => {
+            let mut m = [0.0; 20];
+            (m[15], m[16], m[17]) = (0.2125, 0.7154, 0.0721);
+            m
+        }
+        _ => return None,
+    }))
+}
+
+/// `feColorMatrix type="saturate"`: the spec's matrix (the blue column as written, not what the
+/// row leaves of 1 as Chromium builds CSS `saturate()`).
+fn saturate_spec(s: f32) -> [f32; 20] {
+    let mut m = [0.0; 20];
+    m[0] = 0.213 + 0.787 * s;
+    m[1] = 0.715 - 0.715 * s;
+    m[2] = 0.072 - 0.072 * s;
+    m[5] = 0.213 - 0.213 * s;
+    m[6] = 0.715 + 0.285 * s;
+    m[7] = 0.072 - 0.072 * s;
+    m[10] = 0.213 - 0.213 * s;
+    m[11] = 0.715 - 0.715 * s;
+    m[12] = 0.072 + 0.928 * s;
+    m[18] = 1.0;
+    m
+}
+
+/// `feComponentTransfer`: its `feFuncR`, `feFuncG`, `feFuncB` and `feFuncA` (the last of each).
+fn component_transfer_primitive(dom: &BaseDocument, node: &Node) -> Option<FilterEffect> {
+    let mut functions = [const { TransferFunction::Identity }; 4];
+    for child in node.children.iter().map(|&id| &dom.tree()[id]) {
+        let channel = match local_name(child) {
+            Some("feFuncR") => 0,
+            Some("feFuncG") => 1,
+            Some("feFuncB") => 2,
+            Some("feFuncA") => 3,
+            _ => continue,
+        };
+        let values = attr(child, "tableValues").map(numbers).unwrap_or_default();
+        functions[channel] = match attr(child, "type").unwrap_or("identity").trim() {
+            "table" if !values.is_empty() => {
+                TransferFunction::Table(if values.len() == 1 { vec![values[0]; 2] } else { values }.into())
+            }
+            "discrete" if !values.is_empty() => TransferFunction::Discrete(values),
+            "linear" => TransferFunction::Linear(LinearTransferFunction {
+                slope: number(child, "slope", 1.0),
+                intercept: number(child, "intercept", 0.0),
+            }),
+            "gamma" => TransferFunction::Gamma(GammaTransferFunction {
+                amplitude: number(child, "amplitude", 1.0),
+                exponent: number(child, "exponent", 1.0),
+                offset: number(child, "offset", 0.0),
+            }),
+            _ => TransferFunction::Identity,
+        };
+    }
+    let [red_function, green_function, blue_function, alpha_function] = functions;
+    Some(FilterEffect::ComponentTransfer(ComponentTransferFilter {
+        red_function,
+        green_function,
+        blue_function,
+        alpha_function,
+    }))
+}
+
+/// sRGB values to linearRGB (the colour channels, as a table of 256 for the values of bytes).
+pub(crate) fn to_linear() -> FilterEffect {
+    srgb_table(256, |c| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) })
+}
+
+/// linearRGB values back to sRGB (a table of 1024: the curve is steep near black).
+pub(crate) fn to_srgb() -> FilterEffect {
+    srgb_table(1024, |c| if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 })
+}
+
+fn srgb_table(len: usize, curve: impl Fn(f32) -> f32) -> FilterEffect {
+    let table: Vec<f32> = (0..len).map(|i| curve(i as f32 / (len - 1) as f32)).collect();
+    let function = TransferFunction::Table(table.into());
+    FilterEffect::ComponentTransfer(ComponentTransferFilter {
+        red_function: function.clone(),
+        green_function: function.clone(),
+        blue_function: function,
+        alpha_function: TransferFunction::Identity,
     })
 }
 

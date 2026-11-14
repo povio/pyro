@@ -203,21 +203,28 @@ diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/sr
 diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filters.rs
 --- a/packages/blitz-paint/src/filters.rs
 +++ b/packages/blitz-paint/src/filters.rs
-@@ -2,39 +2,202 @@
+@@ -1,40 +1,383 @@
+ use blitz_dom::util::ToColorColor as _;
++use blitz_dom::{BaseDocument, Node};
  use style::color::AbsoluteColor;
  pub(crate) use style::computed_values::filter::single_value::T as StyloFilter;
  
 -use anyrender::filters::{Filter, FilterEffect};
++use anyrender::filters::component_transfer::{
++    ComponentTransferFilter, GammaTransferFunction, LinearTransferFunction, TransferFunction,
++};
 +use anyrender::filters::{Filter, FilterEffect, color_transformation::ColorMatrix};
  
 -pub(crate) fn convert_filters(filters: &[StyloFilter]) -> Option<Filter> {
 +/// pyro: the filter in device pixels: lengths are CSS px, and the layers the filter is applied
 +/// to are drawn in device pixels (`scale` of them per CSS px) without a scale in their transform.
-+/// `current_color` is the element's `color`, which a `drop-shadow()` without one has.
++/// `current_color` is the element's `color`, which a `drop-shadow()` without one has. A `url()`
++/// names an SVG `<filter>` of `dom` ([`reference_filter`]).
 +pub(crate) fn convert_filters(
 +    filters: &[StyloFilter],
 +    scale: f64,
 +    current_color: &AbsoluteColor,
++    dom: &BaseDocument,
 +) -> Option<Filter> {
      if filters.is_empty() {
          return None;
@@ -226,8 +233,9 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
 -    Some(Filter::linear_list(
 -        filters.iter().filter_map(convert_single_filter),
 -    ))
-+    Some(Filter::linear_list(filters.iter().filter_map(|filter| {
-+        convert_single_filter(filter, scale as f32, current_color)
++    Some(Filter::linear_list(filters.iter().flat_map(|filter| match filter {
++        StyloFilter::Url(url) => reference_filter(dom, url).unwrap_or_default(),
++        filter => convert_single_filter(filter, scale as f32, current_color).into_iter().collect(),
 +    })))
  }
  
@@ -276,6 +284,179 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
          StyloFilter::Url(_) => return None,
      })
  }
++
++/// pyro: a `url(#id)` filter: the SVG `<filter>` of `dom` it names, when that is a chain of colour
++/// primitives (`feColorMatrix`, `feComponentTransfer`; each one's input the one before it). Each
++/// primitive works in its `color-interpolation-filters` space: linearRGB unless an ancestor's
++/// attribute says sRGB, and sRGB for a filter in a `display: none` subtree, as in Chromium (a
++/// `backdrop-filter: url()` matches `backdrop-filter: invert(1)` there). `None` for anything else.
++fn reference_filter(dom: &BaseDocument, url: &style::url::ComputedUrl) -> Option<Vec<FilterEffect>> {
++    let id = url.url()?.fragment()?;
++    let filter = &dom.tree()[dom.get_element_by_id(id)?];
++    if local_name(filter) != Some("filter") {
++        return None;
++    }
++    // Stylo styles nothing in a `display: none` subtree.
++    let unstyled = filter.primary_styles().is_none();
++    let mut effects = Vec::new();
++    let mut previous: Option<&str> = None;
++    let primitives = filter.children.iter().map(|&id| &dom.tree()[id]).filter(|node| node.is_element());
++    for (index, primitive) in primitives.enumerate() {
++        match attr(primitive, "in") {
++            None => {}
++            Some("SourceGraphic") if index == 0 => {}
++            Some(input) if Some(input) == previous => {}
++            Some(_) => return None,
++        }
++        let effect = match local_name(primitive)? {
++            "feColorMatrix" => color_matrix_primitive(primitive)?,
++            "feComponentTransfer" => component_transfer_primitive(dom, primitive)?,
++            _ => return None,
++        };
++        let linear = match interpolation(dom, primitive) {
++            Some(space) => space.eq_ignore_ascii_case("linearRGB"),
++            None => !unstyled,
++        };
++        if linear {
++            effects.extend([to_linear(), effect, to_srgb()]);
++        } else {
++            effects.push(effect);
++        }
++        previous = attr(primitive, "result");
++    }
++    Some(effects)
++}
++
++fn local_name(node: &Node) -> Option<&str> {
++    node.element_data().map(|element| &*element.name.local)
++}
++
++fn attr<'a>(node: &'a Node, name: &str) -> Option<&'a str> {
++    node.attrs()?.iter().find(|attr| &*attr.name.local == name).map(|attr| attr.value.as_str())
++}
++
++/// The `color-interpolation-filters` of a primitive: its attribute, or the nearest ancestor's
++/// (`auto` is sRGB).
++fn interpolation<'a>(dom: &'a BaseDocument, node: &'a Node) -> Option<&'a str> {
++    let mut at = Some(node);
++    while let Some(node) = at {
++        match attr(node, "color-interpolation-filters").map(str::trim) {
++            Some("inherit") | None => {}
++            Some("auto") => return Some("sRGB"),
++            Some(space) => return Some(space),
++        }
++        at = node.parent.map(|parent| &dom.tree()[parent]);
++    }
++    None
++}
++
++fn numbers(value: &str) -> Vec<f32> {
++    value
++        .split(|c: char| c.is_ascii_whitespace() || c == ',')
++        .filter(|n| !n.is_empty())
++        .map_while(|n| n.parse().ok())
++        .collect()
++}
++
++fn number(node: &Node, name: &str, default: f32) -> f32 {
++    attr(node, name).and_then(|value| value.trim().parse().ok()).unwrap_or(default)
++}
++
++/// `feColorMatrix`, as the filter effects spec defines each `type` (a missing or malformed
++/// `values` is the identity).
++fn color_matrix_primitive(node: &Node) -> Option<FilterEffect> {
++    let values = attr(node, "values").map(numbers);
++    Some(color_matrix(match attr(node, "type").unwrap_or("matrix").trim() {
++        "matrix" => match values {
++            Some(values) if values.len() == 20 => values.try_into().ok()?,
++            _ => opacity(1.0),
++        },
++        "saturate" => saturate_spec(values.and_then(|v| v.first().copied()).unwrap_or(1.0)),
++        "hueRotate" => hue_rotate(values.and_then(|v| v.first().copied()).unwrap_or(0.0)),
++        "luminanceToAlpha" => {
++            let mut m = [0.0; 20];
++            (m[15], m[16], m[17]) = (0.2125, 0.7154, 0.0721);
++            m
++        }
++        _ => return None,
++    }))
++}
++
++/// `feColorMatrix type="saturate"`: the spec's matrix (the blue column as written, not what the
++/// row leaves of 1 as Chromium builds CSS `saturate()`).
++fn saturate_spec(s: f32) -> [f32; 20] {
++    let mut m = [0.0; 20];
++    m[0] = 0.213 + 0.787 * s;
++    m[1] = 0.715 - 0.715 * s;
++    m[2] = 0.072 - 0.072 * s;
++    m[5] = 0.213 - 0.213 * s;
++    m[6] = 0.715 + 0.285 * s;
++    m[7] = 0.072 - 0.072 * s;
++    m[10] = 0.213 - 0.213 * s;
++    m[11] = 0.715 - 0.715 * s;
++    m[12] = 0.072 + 0.928 * s;
++    m[18] = 1.0;
++    m
++}
++
++/// `feComponentTransfer`: its `feFuncR`, `feFuncG`, `feFuncB` and `feFuncA` (the last of each).
++fn component_transfer_primitive(dom: &BaseDocument, node: &Node) -> Option<FilterEffect> {
++    let mut functions = [const { TransferFunction::Identity }; 4];
++    for child in node.children.iter().map(|&id| &dom.tree()[id]) {
++        let channel = match local_name(child) {
++            Some("feFuncR") => 0,
++            Some("feFuncG") => 1,
++            Some("feFuncB") => 2,
++            Some("feFuncA") => 3,
++            _ => continue,
++        };
++        let values = attr(child, "tableValues").map(numbers).unwrap_or_default();
++        functions[channel] = match attr(child, "type").unwrap_or("identity").trim() {
++            "table" if !values.is_empty() => {
++                TransferFunction::Table(if values.len() == 1 { vec![values[0]; 2] } else { values }.into())
++            }
++            "discrete" if !values.is_empty() => TransferFunction::Discrete(values),
++            "linear" => TransferFunction::Linear(LinearTransferFunction {
++                slope: number(child, "slope", 1.0),
++                intercept: number(child, "intercept", 0.0),
++            }),
++            "gamma" => TransferFunction::Gamma(GammaTransferFunction {
++                amplitude: number(child, "amplitude", 1.0),
++                exponent: number(child, "exponent", 1.0),
++                offset: number(child, "offset", 0.0),
++            }),
++            _ => TransferFunction::Identity,
++        };
++    }
++    let [red_function, green_function, blue_function, alpha_function] = functions;
++    Some(FilterEffect::ComponentTransfer(ComponentTransferFilter {
++        red_function,
++        green_function,
++        blue_function,
++        alpha_function,
++    }))
++}
++
++/// sRGB values to linearRGB (the colour channels, as a table of 256 for the values of bytes).
++pub(crate) fn to_linear() -> FilterEffect {
++    srgb_table(256, |c| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) })
++}
++
++/// linearRGB values back to sRGB (a table of 1024: the curve is steep near black).
++pub(crate) fn to_srgb() -> FilterEffect {
++    srgb_table(1024, |c| if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 })
++}
++
++fn srgb_table(len: usize, curve: impl Fn(f32) -> f32) -> FilterEffect {
++    let table: Vec<f32> = (0..len).map(|i| curve(i as f32 / (len - 1) as f32)).collect();
++    let function = TransferFunction::Table(table.into());
++    FilterEffect::ComponentTransfer(ComponentTransferFilter {
++        red_function: function.clone(),
++        green_function: function.clone(),
++        blue_function: function,
++        alpha_function: TransferFunction::Identity,
++    })
++}
 +
 +// pyro: the colour functions' matrices as Chromium builds them (`cc/paint/render_surface_filters.cc`),
 +// f32 for f32: the filter effects spec's `feColorMatrix` equivalents, with grayscale's and
@@ -475,28 +656,48 @@ diff --git a/packages/blitz-paint/src/layers.rs b/packages/blitz-paint/src/layer
 -use std::{cell::Cell, sync::Arc};
 +use std::{cell::Cell, collections::HashSet, sync::Arc};
 +use style::computed_values::mix_blend_mode::T as MixBlendMode;
-+use style::values::specified::box_::DisplayInside;
++use style::values::specified::box_::{DisplayInside, WillChange};
  
  const LAYER_LIMIT: u32 = 1024;
  
-@@ -101,6 +104,45 @@
+@@ -101,6 +104,85 @@
      }
  }
  
-+/// pyro: the stacking contexts that an element with a `mix-blend-mode` blends in (its nearest
-+/// ancestor that is one: the root element's at the latest). Each is painted as an isolated group,
-+/// as Chromium isolates a stacking context with blending descendants: the element blends with what
-+/// that context painted, never with what lies under it (the canvas under the root element's).
-+/// Without one, a `difference` box over its parent's box blended with the page behind too. One pass
-+/// over the nodes' styles; usually empty.
-+pub(crate) fn blend_isolation(dom: &BaseDocument) -> HashSet<NodeId> {
++/// pyro: what painting a document needs to know before it starts, from one pass over its nodes'
++/// styles (usually nothing).
++pub(crate) struct DocumentEffects {
++    /// The stacking contexts that an element with a `mix-blend-mode` blends in (its nearest
++    /// ancestor that is one: the root element's at the latest). Each is painted as an isolated
++    /// group, as Chromium isolates a stacking context with blending descendants: the element
++    /// blends with what that context painted, never with what lies under it (the canvas under the
++    /// root element's). Without one, a `difference` box over its parent's box blended with the
++    /// page behind too.
++    pub(crate) blend_isolated: HashSet<NodeId>,
++    /// The ancestors of elements with a `backdrop-filter`: only these can be a backdrop root that
++    /// matters, and are marked as one ([`backdrop_root`]; the layer that marks one costs a
++    /// composite, which vello_cpu's u8 math rounds).
++    pub(crate) backdrop_ancestors: HashSet<NodeId>,
++}
++
++pub(crate) fn document_effects(dom: &BaseDocument) -> DocumentEffects {
 +    let tree = dom.tree();
 +    let mut contexts = HashSet::new();
++    let mut backdrop_ancestors = HashSet::new();
 +    for (_, node) in tree.iter() {
-+        let blends = node
-+            .primary_styles()
-+            .is_some_and(|style| style.get_effects().mix_blend_mode != MixBlendMode::Normal);
-+        if !blends {
++        let Some(style) = node.primary_styles() else {
++            continue;
++        };
++        let effects = style.get_effects();
++        if !effects.backdrop_filter.0.is_empty() {
++            let mut ancestor = node.parent;
++            while let Some(id) = ancestor
++                && backdrop_ancestors.insert(id)
++            {
++                ancestor = tree[id].parent;
++            }
++        }
++        if effects.mix_blend_mode == MixBlendMode::Normal {
 +            continue;
 +        }
 +        let mut ancestor = node.parent;
@@ -519,7 +720,27 @@ diff --git a/packages/blitz-paint/src/layers.rs b/packages/blitz-paint/src/layer
 +            ancestor = candidate.parent;
 +        }
 +    }
-+    contexts
++    DocumentEffects { blend_isolated: contexts, backdrop_ancestors }
++}
++
++/// pyro: whether an element is a backdrop root (Filter Effects 2) that none of its own layers marks
++/// as one for anyrender_vello_cpu's `backdrop` (its opacity, filter, blend mode and backdrop filter
++/// push layers it tells apart): a `clip-path`, a mask, or `will-change` of a property that makes
++/// one. Such an element is painted in a layer with an empty filter, which marks it.
++pub(crate) fn backdrop_root(has_clip_path: bool, has_mask: bool, will_change: &WillChange) -> bool {
++    use style::values::specified::box_::WillChangeBits;
++    has_clip_path
++        || has_mask
++        || will_change.bits.contains(WillChangeBits::BACKDROP_ROOT)
++        // stylo leaves masks out of `BACKDROP_ROOT`, and the property names are private (their
++        // debug form has them).
++        || (will_change.bits.contains(WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL)
++            && format!("{will_change:?}").contains("mask"))
++}
++
++/// pyro: the filter that marks a backdrop root's layer ([`backdrop_root`]): it filters nothing.
++pub(crate) fn backdrop_root_marker() -> Arc<Filter> {
++    Arc::new(Filter::empty())
 +}
 +
  #[cfg(test)]
@@ -791,7 +1012,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  use style::values::computed::{BorderCornerRadius, ColorOrAuto};
  use style::{
      dom::TElement,
-@@ -124,16 +125,29 @@
+@@ -124,16 +125,31 @@
      pub(crate) initial_y: f64,
      /// The id of the document's root element (cached to avoid re-resolving it for every element)
      pub(crate) root_element_id: Option<NodeId>,
@@ -809,6 +1030,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      pub(crate) layer_manager: LayerManager,
 +    /// pyro: the stacking contexts painted as isolated groups for a `mix-blend-mode` in them.
 +    pub(crate) blend_isolated: HashSet<NodeId>,
++    /// pyro: the ancestors of elements with a `backdrop-filter` (`layers::DocumentEffects`).
++    pub(crate) backdrop_ancestors: HashSet<NodeId>,
      /// Reusable scratch allocations shared by all text layouts painted for this document.
      pub(crate) draw_text_context: RefCell<DrawTextContext>,
      /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
@@ -821,7 +1044,15 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
      // Pre-computed `Scene`s for each CustomWidget
      pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
-@@ -167,13 +181,22 @@
+@@ -157,6 +173,7 @@
+             .collect();
+ 
+         let layer_manager = LayerManager::default();
++        let effects = crate::layers::document_effects(dom);
+         let root_element_id = dom.try_root_element().map(|el| el.id);
+ 
+         Self {
+@@ -167,13 +184,23 @@
              initial_x,
              initial_y,
              root_element_id,
@@ -836,7 +1067,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              #[cfg(feature = "scrollbars")]
              scrollbar_drag_target: dom.scrollbar_drag_target(),
              layer_manager,
-+            blend_isolated: crate::layers::blend_isolation(dom),
++            blend_isolated: effects.blend_isolated,
++            backdrop_ancestors: effects.backdrop_ancestors,
              draw_text_context: RefCell::new(DrawTextContext::default()),
              selection_ranges,
 +            backgrounds: true,
@@ -844,7 +1076,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              custom_widget_scenes,
          }
      }
-@@ -231,7 +254,7 @@
+@@ -231,7 +258,7 @@
              }
          };
  
@@ -853,7 +1085,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let bg_color = bg_color.as_srgb_color();
              let rect = Rect::from_origin_size(
                  (self.initial_x, self.initial_y),
-@@ -255,6 +278,10 @@
+@@ -255,6 +282,10 @@
              viewport_clip_rect,
          );
  
@@ -864,7 +1096,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -288,6 +315,137 @@
+@@ -288,6 +319,137 @@
          }
      }
  
@@ -965,7 +1197,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            .slow_clone_background_color()
 +            .resolve_to_absolute(&style.clone_color());
 +        let backdrop_filter =
-+            convert_filters(&effects.backdrop_filter.0, self.scale, &style.clone_color()).map(Arc::new);
++            convert_filters(&effects.backdrop_filter.0, self.scale, &style.clone_color(), self.dom).map(Arc::new);
 +        let visible_color = color.alpha > 0.0 && self.backgrounds;
 +        if opacity <= 0.0 || (!visible_color && backdrop_filter.is_none()) {
 +            return;
@@ -1002,7 +1234,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
          let location = node.final_layout().location;
          parent
-@@ -317,8 +475,10 @@
+@@ -317,8 +479,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
                  || contain_paint
@@ -1015,7 +1247,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -376,9 +536,13 @@
+@@ -376,9 +540,13 @@
                      TextPaintOptions {
                          scale: self.scale,
                          brush_override: Some(Color::BLACK),
@@ -1029,7 +1261,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  );
              }
          }
-@@ -419,6 +583,15 @@
+@@ -419,6 +587,15 @@
              return;
          }
  
@@ -1045,17 +1277,67 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -566,7 +739,8 @@
+@@ -552,6 +729,19 @@
+         if css_clip_rect.is_some_and(|rect| rect.is_zero_area()) {
+             return;
+         }
++
++        let current_color = styles.clone_color();
++        let filter = convert_filters(&effects.filter.0, self.scale, &current_color, self.dom).map(Arc::new);
++        let backdrop_filter =
++            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new);
++        // pyro: `backdrop-filter`: the backdrop is captured here, before the element's own layers
++        // (its clip-path, mask and blend mode are no backdrop root for it), and drawn first in its
++        // effect group (`paint_effect_group`). See anyrender_vello_cpu's `backdrop`.
++        let backdrop_clip = backdrop_filter.as_ref().map(|_| cx.frame.border_box_path());
++        if let (Some(backdrop), Some(clip)) = (&backdrop_filter, &backdrop_clip) {
++            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform, clip, None, Some(backdrop.clone()));
++            scene.pop_layer();
++        }
+         let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
+             scene,
+             css_clip_rect.is_some(),
+@@ -566,31 +756,56 @@
          // Use the viewport in scene coordinates so outlines, shadows and overflowing
          // descendants are not clipped to the element's border box.
          let blend = convert_blend_mode(effects.mix_blend_mode);
 -        let isolate = styles.get_box().isolation == Isolation::Isolate;
 +        let isolate = styles.get_box().isolation == Isolation::Isolate
 +            || self.blend_isolated.contains(&node_id);
++        let viewport = Rect::new(
++            self.initial_x,
++            self.initial_y,
++            self.initial_x + self.width as f64,
++            self.initial_y + self.height as f64,
++        );
          let blend_layer_pushed = self.layer_manager.maybe_push_layer(
              scene,
              isolate || blend != BlendMode::default(),
-@@ -585,12 +759,27 @@
+             blend,
+             if isolate { 1.0 - f32::EPSILON } else { 1.0 },
+             Affine::IDENTITY,
+-            &Rect::new(
+-                self.initial_x,
+-                self.initial_y,
+-                self.initial_x + self.width as f64,
+-                self.initial_y + self.height as f64,
+-            ),
++            &viewport,
+             None,
+             None,
+         );
++        // pyro: a backdrop root none of the element's layers marks (`layers::backdrop_root`).
++        let backdrop_root_pushed = self.layer_manager.maybe_push_layer(
++            scene,
++            self.backdrop_ancestors.contains(&node_id)
++                && crate::layers::backdrop_root(has_clip_path, cx.has_css_mask(), &styles.get_box().will_change),
++            BlendMode::default(),
++            1.0,
++            Affine::IDENTITY,
++            &viewport,
++            Some(crate::layers::backdrop_root_marker()),
++            None,
++        );
  
          let paints_own_box = !node.is_inline_with_only_block_children();
  
@@ -1069,10 +1351,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // group is recorded first, and its layer covers what it painted (its ink, plus what the
 +        // filter reaches), where the layer was the border box (descendants and the outline outside
 +        // it were cut off, the shadow was drawn at full strength outside the layer).
-+        let current_color = styles.clone_color();
-+        let filter = convert_filters(&effects.filter.0, self.scale, &current_color).map(Arc::new);
-+        let backdrop_filter =
-+            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color).map(Arc::new);
 +        let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some();
 +        let element = ElementPaint {
 +            node,
@@ -1088,7 +1366,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          self.layer_manager.maybe_with_layer(
              scene,
              has_clip_path,
-@@ -608,100 +797,25 @@
+@@ -608,100 +823,26 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -1160,7 +1438,26 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                                    x: content_position.x - node.scroll_offset().x,
 -                                    y: content_position.y - node.scroll_offset().y,
 -                                };
--
++                if has_effect_layer {
++                    let mut group = Scene::new();
++                    self.paint_element(&mut cx, &mut group, &element);
++                    self.paint_effect_group(
++                        scene,
++                        group,
++                        EffectLayer {
++                            transform: unscrolled_transform,
++                            visible: clip_rect,
++                            border_box: cx.frame.border_box,
++                            opacity,
++                            filter,
++                            backdrop_filter,
++                            backdrop_clip,
++                        },
++                    );
++                } else {
++                    self.paint_element(&mut cx, scene, &element);
++                }
+ 
 -                                cx.transform = self.scrolled_transform(node, cx.transform);
 -                                cx.draw_image(scene);
 -                                #[cfg(feature = "svg")]
@@ -1175,25 +1472,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                                cx.draw_children(scene, cx.transform, child_clip_rect);
 -                            },
 -                        );
-+                if has_effect_layer {
-+                    let mut group = Scene::new();
-+                    self.paint_element(&mut cx, &mut group, &element);
-+                    self.paint_effect_group(
-+                        scene,
-+                        group,
-+                        EffectLayer {
-+                            transform: unscrolled_transform,
-+                            visible: clip_rect,
-+                            border_box: cx.frame.border_box,
-+                            opacity,
-+                            filter,
-+                            backdrop_filter,
-+                        },
-+                    );
-+                } else {
-+                    self.paint_element(&mut cx, scene, &element);
-+                }
- 
+-
 -                        // Overlay scrollbars, drawn unscrolled above the
 -                        // clipped content.
 -                        #[cfg(feature = "scrollbars")]
@@ -1207,10 +1486,17 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  // Apply the CSS `mask` (if any) to the content drawn above
                  cx.transform = unscrolled_transform;
                  cx.maybe_pop_css_mask_layer(scene, mask_layer_pushed);
-@@ -714,6 +828,151 @@
-             .maybe_pop_layer(scene, css_clip_layer_pushed);
-     }
+@@ -709,9 +850,167 @@
+         );
  
+         self.layer_manager
++            .maybe_pop_layer(scene, backdrop_root_pushed);
++        self.layer_manager
+             .maybe_pop_layer(scene, blend_layer_pushed);
+         self.layer_manager
+             .maybe_pop_layer(scene, css_clip_layer_pushed);
++    }
++
 +    /// Paints an element and its descendants, in Chromium's order: outset box-shadow,
 +    /// background, inset box-shadow, border, the content clipped to the padding box (when the
 +    /// element clips), scrollbars, outline. Leaves `cx.transform` as it found it.
@@ -1308,6 +1594,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            opacity,
 +            filter,
 +            backdrop_filter,
++            backdrop_clip,
 +        } = layer;
 +        // A group of one shape in one colour needs no layer: its opacity is that colour's.
 +        if filter.is_none() && backdrop_filter.is_none() && crate::bounds::fold_opacity(&mut group.commands, opacity) {
@@ -1342,6 +1629,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        if !(bounds.width() > 0.0 && bounds.height() > 0.0) {
 +            return;
 +        }
++        // pyro: an opaque group without a filter around a backdrop filter is a clip layer (the same
++        // pixels; vello_cpu's u8 compositing of a full layer rounded a level apart by where clips
++        // around it end).
++        let group_backdrop = backdrop_filter.as_ref().filter(|_| opacity < 1.0 || filter.is_some()).cloned();
 +        let pushed = self.layer_manager.maybe_push_layer(
 +            scene,
 +            true,
@@ -1350,16 +1641,20 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            transform,
 +            &bounds,
 +            filter,
-+            backdrop_filter,
++            group_backdrop,
 +        );
++        // pyro: the backdrop filter's draw, first in the group: under the element's content, and
++        // inside its opacity and filter (see `render_element`).
++        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
++            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
++            scene.pop_layer();
++        }
 +        scene.append_scene(group, Affine::IDENTITY);
 +        self.layer_manager.maybe_pop_layer(scene, pushed);
-+    }
-+
+     }
+ 
      fn render_node(
-         &self,
-         scene: &mut impl PaintScene,
-@@ -724,9 +983,11 @@
+@@ -724,9 +1023,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
          match &node.data {
@@ -1373,7 +1668,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -837,6 +1098,45 @@
+@@ -837,6 +1138,45 @@
  }
  
  /// Converts parley BoundingBox into peniko Rect
@@ -1419,7 +1714,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,6 +1267,257 @@
+@@ -967,6 +1307,257 @@
          }
      }
  
@@ -1677,7 +1972,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
              let text_layout = self.element
-@@ -976,6 +1527,11 @@
+@@ -976,6 +1567,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -1689,7 +1984,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +1540,22 @@
+@@ -984,23 +1580,22 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -1721,7 +2016,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,17 +1563,185 @@
+@@ -1008,17 +1603,185 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1909,7 +2204,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,9 +1753,15 @@
+@@ -1030,9 +1793,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -1927,7 +2222,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +1776,64 @@
+@@ -1047,6 +1816,63 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -1942,7 +2237,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
 +                None => (transform, tops),
 +            };
- 
++
 +            // pyro: an empty input shows its placeholder, its lines placed as the
 +            // value's (a single line centred in the content box), under the caret.
 +            if let Some(placeholder) = input_data.shown_placeholder() {
@@ -1988,11 +2283,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +                draw_text_context.line_tops = None;
 +            }
-+
+ 
              if self.node.is_focussed() {
                  // Render selection/caret
-                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +1864,7 @@
+@@ -1078,6 +1904,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -2000,7 +2294,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +1873,14 @@
+@@ -1086,10 +1913,14 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -2015,7 +2309,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1114,14 +1905,25 @@
+@@ -1114,14 +1945,25 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -2044,7 +2338,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1145,10 +1947,90 @@
+@@ -1145,11 +1987,91 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -2101,7 +2395,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let Some(child) = child else { break };
 +            top += child.final_layout().location.y;
 +            node = child;
-+        }
+         }
 +        // The baseline from the item's content box top, in CSS px.
 +        let baseline = match &first_line {
 +            Some((node, text, line)) => {
@@ -2132,10 +2426,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
-         }
++        }
      }
  
-@@ -1232,6 +2114,9 @@
+     fn draw_children(
+@@ -1232,6 +2154,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -2145,7 +2440,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1465,4 +2350,28 @@
+@@ -1465,4 +2390,30 @@
      };
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
@@ -2173,6 +2468,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    opacity: f32,
 +    filter: Option<Arc<anyrender::Filter>>,
 +    backdrop_filter: Option<Arc<anyrender::Filter>>,
++    /// pyro: the element's border box with its radii, in its space: what its backdrop shows in.
++    backdrop_clip: Option<kurbo::BezPath>,
 +}
 diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/src/render/border.rs
 --- a/packages/blitz-paint/src/render/border.rs

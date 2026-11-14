@@ -100,6 +100,14 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   `a_rows_height_in_a_collapsed_table_covers_half_of_the_borders_around_it` in
   `crates/pyro-render/tests/table_cell_height.rs`.
 
+## Stacking contexts from `will-change`
+
+- `node/node.rs` (`is_stacking_context_root`): `will-change` of a property that would make a stacking context
+  makes one, as the spec asks and Gecko does (stylo's `STACKING_CONTEXT_UNCONDITIONAL` properties: `filter`,
+  `backdrop-filter`, `mix-blend-mode`, `clip-path`, `isolation`, `mask-image`, `position`; and `opacity`, the
+  transform properties and `perspective`): its positioned descendants paint inside it (WPT
+  backdrop-filter-image-size-filter-size-mismatch: an absolutely positioned box's backdrop root).
+
 ## `<br>` as inline text
 
 - `node/node.rs` (`is_line_break`), `layout/construct.rs`: a `<br>` is a piece of inline text in every container, as

@@ -1,8 +1,299 @@
+diff --git b/src/backdrop.rs b/src/backdrop.rs
+new file mode 100644
+index 0000000..d72d1a9
+--- /dev/null
++++ b/src/backdrop.rs
+@@ -0,0 +1,285 @@
++//! pyro: `backdrop-filter`.
++//!
++//! blitz-paint records two markers for an element with a backdrop filter, each an empty layer with
++//! the filter and the element's border box (its radii too) as the clip:
++//!
++//! - a **capture** (opacity 0) where the element starts to paint, before its own layers (its
++//!   `clip-path`, mask and blend mode are no backdrop root for it);
++//! - a **draw** (opacity 1), first in the element's effect group, so that the element's opacity and
++//!   `filter` apply to the backdrop it shows, as in Chromium.
++//!
++//! The capture renders what the element's backdrop root painted before it (the commands since the
++//! innermost open layer that is a backdrop root: a filter, opacity, blend mode or backdrop filter,
++//! or blitz-paint's empty filter for `clip-path`, a mask and `will-change`; else since the start
++//! of the scene or of the filter layer replayed), cut to the border box, into a context of its own;
++//! filters it as Chromium does, reading past the box's edges the box mirrored (a blur takes in no
++//! colour from outside the box, and no transparency); and keeps the images. The draw draws them
++//! inside the border box. Scenes without a backdrop filter skip all of it.
++
++use std::sync::Arc;
++
++use anyrender::recording::{LayerCommand, RenderCommand};
++use anyrender::{Filter, PaintScene as _};
++use kurbo::{Affine, Rect, Shape};
++use peniko::{BlendMode, ImageBrush, ImageQuality, ImageSampler};
++use vello_common::paint::ImageSource;
++use vello_cpu::{PaintType, Pixmap};
++
++use crate::VelloCpuScenePainter;
++use crate::filters::{FilterPlan, PixelRect, mirrored};
++
++/// The opacity of the isolation layers blitz-paint pushes (`isolation: isolate`, the groups of a
++/// `mix-blend-mode`, masks, text clips), which are no backdrop root.
++const ISOLATION_ALPHA: f32 = 1.0 - f32::EPSILON;
++
++pub(crate) enum Marker {
++    Capture,
++    Draw,
++}
++
++/// The backdrop marker pushed at `i`, if one is: an empty layer with a backdrop filter.
++pub(crate) fn marker(commands: &[RenderCommand], i: usize) -> Option<(Marker, &LayerCommand, &Filter)> {
++    let RenderCommand::PushLayer(layer) = commands.get(i)? else {
++        return None;
++    };
++    let filter = layer.backdrop_filter.as_deref()?;
++    if !matches!(commands.get(i + 1), Some(RenderCommand::PopLayer)) {
++        return None;
++    }
++    Some((if layer.alpha == 0.0 { Marker::Capture } else { Marker::Draw }, layer, filter))
++}
++
++/// Whether the layer pushed at `i` is a backdrop root (Filter Effects 2): a filter, an opacity
++/// below 1, a blend mode, or an element with a backdrop filter (its group starts with the draw).
++pub(crate) fn is_root(commands: &[RenderCommand], i: usize) -> bool {
++    // An element with a backdrop filter: its group (a clip layer when opaque) starts with the draw.
++    if matches!(marker(commands, i + 1), Some((Marker::Draw, ..))) {
++        return true;
++    }
++    let RenderCommand::PushLayer(layer) = &commands[i] else {
++        return false;
++    };
++    layer.filter.is_some()
++        || layer.blend != BlendMode::default()
++        || (layer.alpha < 1.0 && layer.alpha != ISOLATION_ALPHA)
++}
++
++/// A captured, filtered backdrop.
++pub(crate) struct Captured {
++    key: Key,
++    /// The filter's images, placed in the frame's device pixels.
++    images: Vec<(Arc<Pixmap>, Affine)>,
++    /// The one colour of all of the filter's image, if it has one.
++    solid: Option<peniko::Color>,
++    /// Whether the images cover all they cover opaquely (then drawing them over what lies
++    /// beneath is drawing them in its place).
++    opaque: bool,
++    alpha: f32,
++}
++
++/// The one colour of all of `pixels` (premultiplied), unpremultiplied, if they have one.
++fn uniform(pixels: &Pixmap) -> Option<peniko::Color> {
++    let data = pixels.data();
++    let first = *data.first()?;
++    data.iter().all(|&p| p == first).then(|| {
++        let a = f32::from(first.a) / 255.0;
++        let channel = |c: u8| if first.a == 0 { 0.0 } else { (f32::from(c) / 255.0 / a).min(1.0) };
++        peniko::Color::new([channel(first.r), channel(first.g), channel(first.b), a])
++    })
++}
++
++/// What ties a capture to its draw: the filter both markers hold (one per element), the element's
++/// transform and border box.
++type Key = (usize, [f64; 6], Rect);
++
++fn key(layer: &LayerCommand) -> Key {
++    let filter = layer.backdrop_filter.as_ref().map_or(0, |filter| std::sync::Arc::as_ptr(filter) as usize);
++    (filter, layer.transform.as_coeffs(), layer.clip.bounding_box())
++}
++
++impl VelloCpuScenePainter {
++    /// The capture at `i` of `commands` (replayed under `transform`, with the layers `open` that
++    /// are pushed and not popped there, and whether each is a backdrop root).
++    pub(crate) fn capture_backdrop(
++        &mut self,
++        commands: &[RenderCommand],
++        i: usize,
++        open: &[(usize, bool)],
++        transform: Affine,
++        layer: &LayerCommand,
++        filter: &Filter,
++    ) {
++        let key = key(layer);
++        if self.backdrops.iter().any(|captured| captured.key == key) {
++            return;
++        }
++        let layer_transform = transform * layer.transform;
++        // A filter that changes nothing (`invert(0)`) draws nothing over the backdrop.
++        let Some(plan) = FilterPlan::new(filter, layer_transform) else {
++            return;
++        };
++        let plan = plan.at_full_resolution();
++        // The box's pixels the filter reads to make what shows of it, and around them what it reads
++        // past the box's edges, mirrored. The backdrop root's image is cut to the root's surface:
++        // the context drawn into for the scene's root (Chromium's root surface is the viewport) or
++        // a filter layer; a root layer's holds all of the box (a box reaching past the frame
++        // mirrors at its own edge).
++        let root = open.iter().rev().find(|&&(_, root)| root);
++        let start = root.map_or(0, |&(at, _)| at + 1);
++        let mut boxed = PixelRect::around(layer_transform.transform_rect_bbox(layer.clip.bounding_box()));
++        if root.is_none() {
++            boxed = boxed.intersect(self.bounds());
++        }
++        let shown = boxed.intersect(self.bounds());
++        if shown.is_empty() {
++            return;
++        }
++        let region = plan.source_region(shown);
++        let out = boxed.intersect(region);
++        let backdrop = self.render_commands(&commands[start..i], out, transform);
++        let input = if region == out { backdrop.clone() } else { mirrored(&backdrop, out, region) };
++        let ctx_to_frame = self.frame_to_ctx.inverse();
++        let mut images: Vec<(Arc<Pixmap>, Affine)> = plan
++            .render(input, region, None)
++            .into_iter()
++            .map(|image| (Arc::new(image.pixels), ctx_to_frame * image.transform))
++            .collect();
++        // A backdrop of one colour (a flat background, filtered) is drawn as that colour: a fill of
++        // one colour costs less than an image, and vello_cpu's u8 compositing rounds an image under
++        // a clip a level apart from one without (a masked backdrop in an `overflow: hidden` box).
++        let solid = match &images[..] {
++            [(pixels, _)] if !plan.draws_content() => uniform(pixels),
++            _ => None,
++        };
++        let opaque = images.iter().all(|(pixels, _)| pixels.data().iter().all(|p| p.a == 255));
++        if plan.draws_content() {
++            let origin = Affine::translate((f64::from(out.x0), f64::from(out.y0)));
++            images.push((Arc::new(backdrop), ctx_to_frame * origin));
++        }
++        self.backdrops.push(Captured { key, images, solid, opaque, alpha: plan.alpha() });
++    }
++
++    /// The draw of a captured backdrop: its images inside the marker's clip (the border box). With
++    /// `replace` they take the place of what lies there (Chromium draws a backdrop filter's output
++    /// with a source copy: where the backdrop root painted nothing, the filtered image is
++    /// transparent, and what the element's ancestors painted beneath must not show through); else
++    /// they go over it (inside the element's group, which starts transparent).
++    pub(crate) fn draw_backdrop(&mut self, layer: &LayerCommand, transform: Affine, replace: bool) {
++        let key = key(layer);
++        let Some(captured) = self.backdrops.iter().rev().find(|captured| captured.key == key) else {
++            return;
++        };
++        let (images, solid, alpha) = (captured.images.clone(), captured.solid, captured.alpha);
++        let replace = replace && !captured.opaque;
++        let opaque = captured.opaque;
++        // A border box that is a rectangle of whole device pixels needs no clip: the images are
++        // drawn inside it (a clip path rounded what it clipped a level apart from a plain fill).
++        let rect = crate::scene::pixel_rect(&layer.clip, transform * layer.transform).filter(|_| !replace || opaque);
++        let bounds = rect.map_or(self.bounds(), |rect| rect.intersect(self.bounds()));
++        self.render_ctx.set_transform(transform * layer.transform);
++        self.render_ctx.set_fill_rule(layer.fill);
++        if replace {
++            let copy = BlendMode::new(peniko::Mix::Normal, peniko::Compose::Copy);
++            self.render_ctx.push_layer(Some(&layer.clip), Some(copy), None, None, None);
++        } else if rect.is_none() {
++            self.render_ctx.push_clip_path(&layer.clip);
++        }
++        if alpha < 1.0 {
++            self.render_ctx.push_layer(None, None, Some(alpha), None, None);
++        }
++        for (pixels, placement) in images {
++            let image_transform = self.frame_to_ctx * placement;
++            let size = Rect::new(0.0, 0.0, f64::from(pixels.width()), f64::from(pixels.height()));
++            let area = PixelRect::around(image_transform.transform_rect_bbox(size)).intersect(bounds);
++            if area.is_empty() {
++                continue;
++            }
++            if let Some(color) = solid {
++                self.render_ctx.set_transform(Affine::IDENTITY);
++                self.render_ctx.set_paint(PaintType::Solid(color));
++                self.render_ctx.fill_rect(&area.to_rect());
++                continue;
++            }
++            let [a, b, c, d, e, f] = image_transform.as_coeffs();
++            let whole = a == 1.0 && d == 1.0 && b == 0.0 && c == 0.0 && e.fract() == 0.0 && f.fract() == 0.0;
++            self.render_ctx.set_transform(Affine::IDENTITY);
++            self.render_ctx.set_paint(PaintType::Image(ImageBrush {
++                image: ImageSource::Pixmap(pixels),
++                sampler: ImageSampler::new().with_quality(if whole { ImageQuality::Low } else { ImageQuality::Medium }),
++            }));
++            self.render_ctx.set_paint_transform(image_transform);
++            self.render_ctx.fill_rect(&area.to_rect());
++            self.render_ctx.reset_paint_transform();
++        }
++        if alpha < 1.0 {
++            self.render_ctx.pop_layer();
++        }
++        if replace {
++            self.render_ctx.pop_layer();
++        } else if rect.is_none() {
++            self.render_ctx.pop_clip();
++        }
++    }
++
++    /// Whether the group pushed at `i` (an element's, its draw first in it) is opaque and
++    /// unfiltered and its backdrop keeps its alpha (no `opacity()`): the backdrop is then drawn
++    /// before the group, in place of what lies there.
++    pub(crate) fn replaces_backdrop(&self, commands: &[RenderCommand], i: usize) -> bool {
++        let Some((Marker::Draw, marker, _)) = marker(commands, i + 1) else {
++            return false;
++        };
++        let key = key(marker);
++        self.backdrops.iter().rev().find(|captured| captured.key == key).is_some_and(|captured| captured.alpha == 1.0)
++            && match &commands[i] {
++                RenderCommand::PushClipLayer(_) => true,
++                RenderCommand::PushLayer(group) => {
++                    group.alpha == 1.0 && group.filter.is_none() && group.blend == BlendMode::default()
++                }
++                _ => false,
++            }
++    }
++
++    /// `commands` (replayed under `transform`) rendered over `out` of the current context into a
++    /// pixmap of their own, the layers they leave open closed.
++    fn render_commands(&mut self, commands: &[RenderCommand], out: PixelRect, transform: Affine) -> Pixmap {
++        let (width, height) = (out.width() as u16, out.height() as u16);
++        let mut ctx = self.offscreen_context(width, height);
++        std::mem::swap(&mut self.render_ctx, &mut ctx);
++        let shift = Affine::translate((-f64::from(out.x0), -f64::from(out.y0)));
++        let frame_to_ctx = self.frame_to_ctx;
++        self.frame_to_ctx = shift * frame_to_ctx;
++        let depth = self.clip_paths.len();
++        self.replay(commands, shift * transform);
++        while self.clip_paths.len() > depth {
++            self.pop_layer();
++        }
++        self.frame_to_ctx = frame_to_ctx;
++        std::mem::swap(&mut self.render_ctx, &mut ctx);
++        let mut pixels = Pixmap::new(width, height);
++        ctx.flush();
++        ctx.render(&mut pixels, &mut self.resources);
++        self.filter_contexts.push(ctx);
++        pixels
++    }
++
++    /// The pixels of the context drawn into.
++    pub(crate) fn bounds(&self) -> PixelRect {
++        PixelRect { x0: 0, y0: 0, x1: i32::from(self.render_ctx.width()), y1: i32::from(self.render_ctx.height()) }
++    }
++
++    /// A single-threaded context of `width` by `height` (one kept from an earlier frame if there is
++    /// one): filter layers and backdrops render apart in one.
++    pub(crate) fn offscreen_context(&mut self, width: u16, height: u16) -> vello_cpu::RenderContext {
++        match self.filter_contexts.pop() {
++            Some(mut ctx) => {
++                ctx.reset_and_resize(width, height);
++                ctx
++            }
++            None => vello_cpu::RenderContext::new_with(
++                width,
++                height,
++                vello_cpu::RenderSettings { num_threads: 0, ..*self.render_ctx.render_settings() },
++            ),
++        }
++    }
++}
 diff --git a/src/filters.rs b/src/filters.rs
-index fd573d2..4d42289 100644
+index fd573d2..8af6050 100644
 --- a/src/filters.rs
 +++ b/src/filters.rs
-@@ -1,63 +1,1025 @@
+@@ -1,63 +1,1122 @@
 -use std::sync::Arc;
 -
 -use anyrender::{
@@ -55,6 +346,15 @@ index fd573d2..4d42289 100644
 -        FilterEffect::Tile => return None,
 -        FilterEffect::DiffuseLighting(_diffuse_lighting_filter) => return None,
 -        FilterEffect::SpecularLighting(_specular_lighting_filter) => return None,
+-    })
+-}
+-
+-fn convert_edge_mode(edge_mode: EdgeMode) -> vello_common::filter_effects::EdgeMode {
+-    match edge_mode {
+-        EdgeMode::Duplicate => vello_common::filter_effects::EdgeMode::Duplicate,
+-        EdgeMode::Wrap => vello_common::filter_effects::EdgeMode::Wrap,
+-        EdgeMode::Mirror => vello_common::filter_effects::EdgeMode::Mirror,
+-        EdgeMode::None => vello_common::filter_effects::EdgeMode::None,
 +//! pyro: the CSS filter functions on layers: `blur()`, `drop-shadow()` and the colour functions.
 +//!
 +//! vello_cpu 0.3 filters a layer only when it renders on one thread (its multi-threaded dispatcher
@@ -73,6 +373,7 @@ index fd573d2..4d42289 100644
 +use std::f64::consts::PI;
 +
 +use anyrender::Filter;
++use anyrender::filters::component_transfer::TransferFunction;
 +use anyrender::filters::{FilterEffect, FilterInput};
 +use kurbo::{Affine, Rect};
 +use peniko::color::{AlphaColor, Srgb};
@@ -160,10 +461,19 @@ index fd573d2..4d42289 100644
 +    Blur { sigma: f64 },
 +    /// `drop-shadow()`: the layer over its alpha, blurred, moved and coloured.
 +    DropShadow { dx: f64, dy: f64, sigma: f64, color: AlphaColor<Srgb> },
-+    /// Colour functions in a row (`feColorMatrix` matrices: rows R, G, B, A of the unpremultiplied
-+    /// values and an offset, in 0..1), applied in order to each pixel without rounding between
-+    /// them, each result clamped: [`color_matrices`].
-+    Color(Vec<[f32; 20]>),
++    /// Colour functions in a row (`feColorMatrix` matrices and `feComponentTransfer` functions of
++    /// the unpremultiplied values), applied in order to each pixel without rounding between them,
++    /// each result clamped: [`color_ops`].
++    Color(Vec<ColorOp>),
++}
++
++/// One colour function of a [`Step::Color`].
++#[derive(Clone, Debug)]
++pub(crate) enum ColorOp {
++    /// `feColorMatrix`: rows R, G, B, A of the unpremultiplied values and an offset, in 0..1.
++    Matrix([f32; 20]),
++    /// `feComponentTransfer`: a function of each channel (R, G, B, A).
++    Transfer(Box<[TransferFunction; 4]>),
 +}
 +
 +/// The steps of a layer's filter this backend does, in order.
@@ -173,6 +483,8 @@ index fd573d2..4d42289 100644
 +    /// the factor, which the layer's opacity takes over (Chromium's matrix rounds the same pixels
 +    /// within a level), so that no step is left to do for a filter of `opacity()` alone.
 +    alpha: f32,
++    /// Whether a large blur may be computed at a reduced resolution ([`Self::factor`]).
++    reduce: bool,
 +}
 +
 +impl FilterPlan {
@@ -208,26 +520,46 @@ index fd573d2..4d42289 100644
 +                        color: shadow.color,
 +                    });
 +                }
-+                FilterEffect::ColorMatrix(matrix) if !near_identity(&matrix.0) => match steps.last_mut() {
-+                    Some(Step::Color(matrices)) => matrices.push(matrix.0),
-+                    _ => steps.push(Step::Color(vec![matrix.0])),
-+                },
++                FilterEffect::ColorMatrix(matrix) if !near_identity(&matrix.0) => {
++                    push_color(&mut steps, ColorOp::Matrix(matrix.0))
++                }
++                FilterEffect::ComponentTransfer(transfer) => {
++                    let functions = [
++                        transfer.red_function.clone(),
++                        transfer.green_function.clone(),
++                        transfer.blue_function.clone(),
++                        transfer.alpha_function.clone(),
++                    ];
++                    if !functions.iter().all(|f| matches!(f, TransferFunction::Identity)) {
++                        push_color(&mut steps, ColorOp::Transfer(Box::new(functions)));
++                    }
++                }
 +                _ => {}
 +            }
 +        }
 +        // Trailing alpha scales become the layer's opacity.
 +        let mut alpha = 1.0f32;
-+        while let Some(Step::Color(matrices)) = steps.last_mut() {
-+            let Some(factor) = matrices.last().and_then(alpha_scale) else {
++        while let Some(Step::Color(ops)) = steps.last_mut() {
++            let Some(factor) = ops.last().and_then(|op| match op {
++                ColorOp::Matrix(m) => alpha_scale(m),
++                ColorOp::Transfer(_) => None,
++            }) else {
 +                break;
 +            };
 +            alpha *= factor;
-+            matrices.pop();
-+            if matrices.is_empty() {
++            ops.pop();
++            if ops.is_empty() {
 +                steps.pop();
 +            }
 +        }
-+        (!steps.is_empty() || alpha != 1.0).then_some(Self { steps, alpha })
++        (!steps.is_empty() || alpha != 1.0).then_some(Self { steps, alpha, reduce: true })
++    }
++
++    /// The plan computed at full resolution ([`Self::factor`] 1): a backdrop is read at the size
++    /// of the box it shows through.
++    pub(crate) fn at_full_resolution(mut self) -> Self {
++        self.reduce = false;
++        self
 +    }
 +
 +    /// The factor the layer's opacity is multiplied by (see [`Self::alpha`](#structfield.alpha)).
@@ -243,9 +575,9 @@ index fd573d2..4d42289 100644
 +    /// The colour functions of a filter of nothing else, when they keep the alpha and map each
 +    /// colour without reading its alpha: the content of a layer in one colour is then drawn in
 +    /// that colour's image instead ([`map_color`]), without rendering it apart.
-+    pub(crate) fn recolors(&self) -> Option<&[[f32; 20]]> {
++    pub(crate) fn recolors(&self) -> Option<&[ColorOp]> {
 +        match &self.steps[..] {
-+            [Step::Color(matrices)] if matrices.iter().all(keeps_alpha) => Some(matrices),
++            [Step::Color(ops)] if ops.iter().all(keeps_alpha) => Some(ops),
 +            _ => None,
 +        }
 +    }
@@ -275,7 +607,7 @@ index fd573d2..4d42289 100644
 +    /// bilinearly, within two levels of the full-resolution blur.
 +    pub(crate) fn factor(&self) -> usize {
 +        match self.steps[..] {
-+            [Step::Blur { sigma }] | [Step::DropShadow { sigma, .. }] => reduction(sigma),
++            [Step::Blur { sigma }] | [Step::DropShadow { sigma, .. }] if self.reduce => reduction(sigma),
 +            _ => 1,
 +        }
 +    }
@@ -337,7 +669,7 @@ index fd573d2..4d42289 100644
 +                        Step::DropShadow { dx, dy, sigma, color } => {
 +                            drop_shadow(data, &mut scratch, w, h, dx, dy, sigma, color)
 +                        }
-+                        Step::Color(ref matrices) => color_matrices(data, matrices),
++                        Step::Color(ref ops) => color_ops(data, ops),
 +                    }
 +                }
 +                vec![FilteredImage::scaled(pixels, origin, 1)]
@@ -367,38 +699,69 @@ index fd573d2..4d42289 100644
 +    (identity == IDENTITY && m[18] >= 0.0).then_some(m[18])
 +}
 +
-+/// Whether a matrix keeps each pixel's alpha and makes its colour from the colour alone.
-+fn keeps_alpha(m: &[f32; 20]) -> bool {
-+    m[3] == 0.0 && m[8] == 0.0 && m[13] == 0.0 && m[15..] == [0.0, 0.0, 0.0, 1.0, 0.0]
++/// A colour step joins the colour functions before it.
++fn push_color(steps: &mut Vec<Step>, op: ColorOp) {
++    match steps.last_mut() {
++        Some(Step::Color(ops)) => ops.push(op),
++        _ => steps.push(Step::Color(vec![op])),
++    }
 +}
 +
-+/// One colour (unpremultiplied) through `matrices` that [`keeps_alpha`]: what
-+/// [`color_matrices`] makes of each pixel of it.
-+pub(crate) fn map_color(color: AlphaColor<Srgb>, matrices: &[[f32; 20]]) -> AlphaColor<Srgb> {
++/// Whether a colour function keeps each pixel's alpha and makes its colour from the colour alone.
++fn keeps_alpha(op: &ColorOp) -> bool {
++    match op {
++        ColorOp::Matrix(m) => m[3] == 0.0 && m[8] == 0.0 && m[13] == 0.0 && m[15..] == [0.0, 0.0, 0.0, 1.0, 0.0],
++        ColorOp::Transfer(functions) => matches!(functions[3], TransferFunction::Identity),
++    }
++}
++
++/// One colour (unpremultiplied) through `ops` that [`keeps_alpha`]: what [`color_ops`] makes of
++/// each pixel of it.
++pub(crate) fn map_color(color: AlphaColor<Srgb>, ops: &[ColorOp]) -> AlphaColor<Srgb> {
 +    let [r, g, b, alpha] = color.components;
-+    let [r, g, b, _] = matrices.iter().fold([r, g, b, alpha], |c, m| apply(m, c));
++    let [r, g, b, _] = ops.iter().fold([r, g, b, alpha], |c, op| apply(op, c));
 +    AlphaColor::new([r, g, b, alpha])
 +}
 +
-+/// `m` times `c` (unpremultiplied RGBA), clamped to 0..1, as Skia's `matrix_4x5` and `clamp_01`
-+/// stages compute it.
-+fn apply(m: &[f32; 20], [r, g, b, a]: [f32; 4]) -> [f32; 4] {
-+    std::array::from_fn(|row| {
-+        let m = &m[row * 5..row * 5 + 5];
-+        (m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0)
-     })
- }
- 
--fn convert_edge_mode(edge_mode: EdgeMode) -> vello_common::filter_effects::EdgeMode {
--    match edge_mode {
--        EdgeMode::Duplicate => vello_common::filter_effects::EdgeMode::Duplicate,
--        EdgeMode::Wrap => vello_common::filter_effects::EdgeMode::Wrap,
--        EdgeMode::Mirror => vello_common::filter_effects::EdgeMode::Mirror,
--        EdgeMode::None => vello_common::filter_effects::EdgeMode::None,
-+/// The colour functions `matrices` on premultiplied RGBA `data`, as Chromium's matrix colour
-+/// filters (Skia's raster pipeline) do them: each pixel unpremultiplied (none when transparent),
-+/// each matrix applied and its result clamped, premultiplied, rounded to bytes at the end.
-+fn color_matrices(data: &mut [u8], matrices: &[[f32; 20]]) {
++/// A colour function on `c` (unpremultiplied RGBA), clamped to 0..1: a matrix as Skia's
++/// `matrix_4x5` and `clamp_01` stages compute it, transfer functions as `feComponentTransfer`
++/// defines them.
++fn apply(op: &ColorOp, [r, g, b, a]: [f32; 4]) -> [f32; 4] {
++    match op {
++        ColorOp::Matrix(m) => std::array::from_fn(|row| {
++            let m = &m[row * 5..row * 5 + 5];
++            (m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0)
++        }),
++        ColorOp::Transfer(functions) => {
++            let c = [r, g, b, a];
++            std::array::from_fn(|i| transfer(&functions[i], c[i]).clamp(0.0, 1.0))
++        }
++    }
++}
++
++/// `feComponentTransfer`'s function of a channel value `c` in 0..1.
++fn transfer(function: &TransferFunction, c: f32) -> f32 {
++    match function {
++        TransferFunction::Identity => c,
++        TransferFunction::Table(values) if values.len() >= 2 => {
++            let n = values.len() - 1;
++            let k = ((c * n as f32).floor() as usize).min(n - 1);
++            values[k] + (c * n as f32 - k as f32) * (values[k + 1] - values[k])
++        }
++        TransferFunction::Discrete(values) if !values.is_empty() => {
++            let n = values.len();
++            values[((c * n as f32).floor() as usize).min(n - 1)]
++        }
++        TransferFunction::Table(_) | TransferFunction::Discrete(_) => c,
++        TransferFunction::Linear(f) => f.slope * c + f.intercept,
++        TransferFunction::Gamma(f) => f.amplitude * c.powf(f.exponent) + f.offset,
++    }
++}
++
++/// The colour functions `ops` on premultiplied RGBA `data`, as Chromium's colour filters (Skia's
++/// raster pipeline) do them: each pixel unpremultiplied (none when transparent), each function
++/// applied and its result clamped, premultiplied, rounded to bytes at the end.
++fn color_ops(data: &mut [u8], ops: &[ColorOp]) {
 +    // Runs of one colour (boxes, the transparent pixels around them) are the common case: a run's
 +    // first pixel is computed, the rest copied.
 +    let mut last: Option<([u8; 4], [u8; 4])> = None;
@@ -407,7 +770,7 @@ index fd573d2..4d42289 100644
 +        let output = match last {
 +            Some((seen, output)) if seen == input => output,
 +            _ => {
-+                let output = color_pixel(input, matrices);
++                let output = color_pixel(input, ops);
 +                last = Some((input, output));
 +                output
 +            }
@@ -416,7 +779,7 @@ index fd573d2..4d42289 100644
 +    }
 +}
 +
-+fn color_pixel([r, g, b, a]: [u8; 4], matrices: &[[f32; 20]]) -> [u8; 4] {
++fn color_pixel([r, g, b, a]: [u8; 4], ops: &[ColorOp]) -> [u8; 4] {
 +    const BYTE: f32 = 1.0 / 255.0;
 +    let alpha = f32::from(a) * BYTE;
 +    // Skia's `unpremul`: times 1 / alpha, 0 where that is not finite.
@@ -427,10 +790,38 @@ index fd573d2..4d42289 100644
 +        f32::from(b) * BYTE * unpremul,
 +        alpha,
 +    ];
-+    let [r, g, b, a] = matrices.iter().fold(rgba, |c, m| apply(m, c));
++    let [r, g, b, a] = ops.iter().fold(rgba, |c, op| apply(op, c));
 +    // `premul`, then `store_8888`: v * 255 rounded.
 +    let byte = |v: f32| (v * 255.0 + 0.5) as u8;
 +    [byte(r * a), byte(g * a), byte(b * a), byte(a)]
++}
++
++/// pyro: `pixels` (premultiplied RGBA over `out`) extended to `region` (which holds `out`) by
++/// mirroring at `out`'s edges, the edge pixel repeated (Skia's `SkTileMode::kMirror`, which
++/// Chromium reads a backdrop through for `backdrop-filter`: a blur takes in no colour from beyond
++/// the box and no transparency either). Farther than a box away it keeps mirroring.
++pub(crate) fn mirrored(pixels: &Pixmap, out: PixelRect, region: PixelRect) -> Pixmap {
++    let (w, h) = (i64::from(out.width()), i64::from(out.height()));
++    let (rw, rh) = (region.width() as usize, region.height() as usize);
++    let mut extended = Pixmap::new(rw as u16, rh as u16);
++    if w <= 0 || h <= 0 {
++        return extended;
++    }
++    let reflect = |v: i64, n: i64| {
++        let m = v.rem_euclid(2 * n);
++        (if m < n { m } else { 2 * n - 1 - m }) as usize
++    };
++    let columns: Vec<usize> = (0..rw as i64).map(|x| reflect(x + i64::from(region.x0 - out.x0), w)).collect();
++    let src = pixels.data_as_u8_slice();
++    let dst = extended.data_as_u8_slice_mut();
++    for (y, row) in dst.chunks_exact_mut(rw * 4).enumerate() {
++        let sy = reflect(y as i64 + i64::from(region.y0 - out.y0), h);
++        let line = &src[sy * w as usize * 4..(sy + 1) * w as usize * 4];
++        for (px, &sx) in row.chunks_exact_mut(4).zip(&columns) {
++            px.copy_from_slice(&line[sx * 4..sx * 4 + 4]);
++        }
++    }
++    extended
 +}
 +
 +/// The factor a blur of `sigma` (device px) is computed smaller by: see [`FilterPlan::factor`].
@@ -1136,19 +1527,20 @@ index 619d5d4..96cd8c5 100644
  
      fn reset(&mut self) {
 diff --git a/src/lib.rs b/src/lib.rs
-index 5bc2e2c..836f92d 100644
+index 5bc2e2c..18ed67b 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -7,7 +7,6 @@ mod image_renderer;
+@@ -7,7 +7,7 @@ mod image_renderer;
  mod scene;
  mod window_renderer;
  
 -#[cfg(feature = "filters")]
++mod backdrop;
  mod filters;
  
  pub use image_cache::ImageCacheConfig;
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..4916edc 100644
+index 1b09a33..4cf757e 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,11 +1,14 @@
@@ -1168,21 +1560,28 @@ index 1b09a33..4916edc 100644
  use crate::image_cache::{ImageCache, ImageCacheConfig};
  
  const DEFAULT_TOLERANCE: f64 = 0.1;
-@@ -14,6 +17,13 @@ pub struct VelloCpuScenePainter {
+@@ -14,6 +17,20 @@ pub struct VelloCpuScenePainter {
      pub(crate) render_ctx: vello_cpu::RenderContext,
      pub(crate) resources: vello_cpu::Resources,
      pub(crate) image_cache: ImageCache,
 +    /// pyro: single-threaded contexts that filter layers are rendered in (one per level of
 +    /// nesting), kept from frame to frame. See [`crate::filters`].
 +    pub(crate) filter_contexts: Vec<vello_cpu::RenderContext>,
-+    /// pyro: what each push not popped yet was, a clip path or a layer (see [`Self::replay`]).
-+    pub(crate) clip_paths: Vec<bool>,
++    /// pyro: what each push not popped yet was (see [`Self::replay`]).
++    pub(crate) clip_paths: Vec<Pushed>,
 +    /// pyro: whether the scene being replayed has a layer with a blend mode.
 +    pub(crate) blending: bool,
++    /// pyro: whether the scene being replayed has a backdrop filter (see [`crate::backdrop`]).
++    pub(crate) backdrop_filters: bool,
++    /// pyro: the backdrops captured in the scene being replayed.
++    pub(crate) backdrops: Vec<crate::backdrop::Captured>,
++    /// pyro: from the frame's device pixels to those of the context drawn into (a filter layer's
++    /// or a backdrop's, offscreen).
++    pub(crate) frame_to_ctx: Affine,
  }
  
  impl VelloCpuScenePainter {
-@@ -22,10 +32,23 @@ impl VelloCpuScenePainter {
+@@ -22,10 +39,26 @@ impl VelloCpuScenePainter {
      }
  
      pub fn with_image_cache_config(width: u16, height: u16, config: ImageCacheConfig) -> Self {
@@ -1204,10 +1603,28 @@ index 1b09a33..4916edc 100644
 +            filter_contexts: Vec::new(),
 +            clip_paths: Vec::new(),
 +            blending: false,
++            backdrop_filters: false,
++            backdrops: Vec::new(),
++            frame_to_ctx: Affine::IDENTITY,
          }
      }
  
-@@ -68,6 +91,7 @@ impl RenderContext for VelloCpuScenePainter {}
+@@ -64,10 +97,22 @@ impl VelloCpuScenePainter {
+     }
+ }
+ 
++/// pyro: what a push of the painter pushed onto vello_cpu's context, for its pop.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Pushed {
++    /// A layer (`push_layer`, `push_clip_layer`).
++    Layer,
++    /// A clip path (non-isolated: see [`VelloCpuScenePainter::replay`]).
++    ClipPath,
++    /// Nothing (an opaque backdrop filter's group: see [`crate::backdrop`]).
++    Nothing,
++}
++
+ impl RenderContext for VelloCpuScenePainter {}
  impl PaintScene for VelloCpuScenePainter {
      fn reset(&mut self) {
          self.render_ctx.reset();
@@ -1215,7 +1632,7 @@ index 1b09a33..4916edc 100644
      }
  
      fn push_layer(
-@@ -77,20 +101,11 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -77,20 +122,11 @@ impl PaintScene for VelloCpuScenePainter {
          alpha: f32,
          transform: Affine,
          clip: &impl Shape,
@@ -1239,34 +1656,35 @@ index 1b09a33..4916edc 100644
          self.render_ctx.set_transform(transform);
          self.render_ctx.set_fill_rule(fill);
          self.render_ctx.push_layer(
-@@ -98,8 +113,9 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -98,8 +134,9 @@ impl PaintScene for VelloCpuScenePainter {
              Some(blend.into()),
              Some(alpha),
              None,
 -            filter,
 +            None,
          );
-+        self.clip_paths.push(false);
++        self.clip_paths.push(Pushed::Layer);
      }
  
      fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
-@@ -107,10 +123,14 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -107,10 +144,15 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx.set_fill_rule(fill);
          self.render_ctx
              .push_clip_layer(&clip.into_path(DEFAULT_TOLERANCE));
-+        self.clip_paths.push(false);
++        self.clip_paths.push(Pushed::Layer);
      }
  
      fn pop_layer(&mut self) {
 -        self.render_ctx.pop_layer();
 +        match self.clip_paths.pop() {
-+            Some(true) => self.render_ctx.pop_clip(),
-+            _ => self.render_ctx.pop_layer(),
++            Some(Pushed::ClipPath) => self.render_ctx.pop_clip(),
++            Some(Pushed::Nothing) => {}
++            Some(Pushed::Layer) | None => self.render_ctx.pop_layer(),
 +        }
      }
  
      fn stroke<'a>(
-@@ -177,7 +197,13 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -177,7 +219,13 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -1281,7 +1699,7 @@ index 1b09a33..4916edc 100644
                      .glyph_transform(glyph_transform.unwrap_or_default())
                      .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
                          id: g.id,
-@@ -216,6 +242,457 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +264,497 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -1290,7 +1708,13 @@ index 1b09a33..4916edc 100644
 +    /// does (`blur()`, `drop-shadow()`, the colour functions) is filtered: see [`Self::replay`].
 +    fn append_scene(&mut self, scene: anyrender::recording::Scene, scene_transform: Affine) {
 +        self.blending = scene.commands.iter().any(blends);
++        self.backdrop_filters = scene.commands.iter().any(
++            |command| matches!(command, RenderCommand::PushLayer(layer) if layer.backdrop_filter.is_some()),
++        );
++        self.backdrops.clear();
++        self.frame_to_ctx = Affine::IDENTITY;
 +        self.replay(&scene.commands, scene_transform);
++        self.backdrops.clear();
 +    }
 +}
 +
@@ -1307,9 +1731,26 @@ index 1b09a33..4916edc 100644
 +    /// clip layers, which draw what they clip as one: a clip path clips each fill on its own, and
 +    /// where fills overlap under an antialiased edge their coverage adds up (`clip-path` circles
 +    /// over a box and its border came out up to 97 levels off).
-+    fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
++    ///
++    /// A backdrop filter's markers capture and draw the element's backdrop: see
++    /// [`crate::backdrop`]. The layers pushed and not popped yet are kept for it (`open`), each
++    /// with whether it is a backdrop root.
++    pub(crate) fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
++        let mut open: Vec<(usize, bool)> = Vec::new();
 +        let mut i = 0;
 +        while i < commands.len() {
++            if self.backdrop_filters
++                && let Some((kind, layer, filter)) = crate::backdrop::marker(commands, i)
++            {
++                match kind {
++                    crate::backdrop::Marker::Capture => {
++                        self.capture_backdrop(commands, i, &open, transform, layer, filter)
++                    }
++                    crate::backdrop::Marker::Draw => self.draw_backdrop(layer, transform, false),
++                }
++                i += 2;
++                continue;
++            }
 +            if let RenderCommand::PushClipLayer(clip) = &commands[i]
 +                && self.blending
 +                && blends_inside(commands, i)
@@ -1317,7 +1758,8 @@ index 1b09a33..4916edc 100644
 +                self.render_ctx.set_transform(transform * clip.transform);
 +                self.render_ctx.set_fill_rule(clip.fill);
 +                self.render_ctx.push_clip_path(&clip.clip);
-+                self.clip_paths.push(true);
++                self.clip_paths.push(Pushed::ClipPath);
++                open.push((i, false));
 +                i += 1;
 +                continue;
 +            }
@@ -1351,6 +1793,35 @@ index 1b09a33..4916edc 100644
 +                }
 +                i = end + 1;
 +                continue;
++            }
++            // An opaque group whose backdrop replaces what lies beneath: the backdrop is drawn
++            // first, outside the group, and the group's draw is skipped.
++            if self.backdrop_filters
++                && self.replaces_backdrop(commands, i)
++                && let Some((_, marker, _)) = crate::backdrop::marker(commands, i + 1)
++            {
++                self.draw_backdrop(marker, transform, true);
++                open.push((i, true));
++                // The group's clip layer (an opaque group) pushes nothing: it would only round
++                // what it holds a second time.
++                match &commands[i] {
++                    RenderCommand::PushClipLayer(_) => self.clip_paths.push(Pushed::Nothing),
++                    command => self.replay_command(command, transform, None),
++                }
++                i += 3;
++                continue;
++            }
++            match &commands[i] {
++                RenderCommand::PushLayer(_) => {
++                    open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
++                }
++                RenderCommand::PushClipLayer(_) => {
++                    open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
++                }
++                RenderCommand::PopLayer => {
++                    open.pop();
++                }
++                _ => {}
 +            }
 +            self.replay_command(&commands[i], transform, None);
 +            i += 1;
@@ -1443,27 +1914,14 @@ index 1b09a33..4916edc 100644
 +        ) else {
 +            return;
 +        };
-+        let mut ctx = match self.filter_contexts.pop() {
-+            Some(mut ctx) => {
-+                ctx.reset_and_resize(width, height);
-+                ctx
-+            }
-+            None => vello_cpu::RenderContext::new_with(
-+                width,
-+                height,
-+                vello_cpu::RenderSettings {
-+                    num_threads: 0,
-+                    ..*self.render_ctx.render_settings()
-+                },
-+            ),
-+        };
++        let mut ctx = self.offscreen_context(width, height);
 +        std::mem::swap(&mut self.render_ctx, &mut ctx);
-+        self.replay(
-+            inner,
-+            Affine::scale(1.0 / f64::from(factor))
-+                * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)))
-+                * transform,
-+        );
++        let to_offscreen = Affine::scale(1.0 / f64::from(factor))
++            * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)));
++        let frame_to_ctx = self.frame_to_ctx;
++        self.frame_to_ctx = to_offscreen * frame_to_ctx;
++        self.replay(inner, to_offscreen * transform);
++        self.frame_to_ctx = frame_to_ctx;
 +        std::mem::swap(&mut self.render_ctx, &mut ctx);
 +        let mut pixels = Pixmap::new(width, height);
 +        ctx.flush();
@@ -1520,7 +1978,7 @@ index 1b09a33..4916edc 100644
 +/// pyro: `clip` under `transform` as a rectangle of whole device pixels, if it is one: a
 +/// rectangle path (four axis-aligned sides) under a transform without rotation or skew, its
 +/// edges on whole pixels.
-+fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
++pub(crate) fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
 +    let [_, b, c, _, _, _] = transform.as_coeffs();
 +    if b != 0.0 || c != 0.0 {
 +        return None;
@@ -1739,7 +2197,7 @@ index 1b09a33..4916edc 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +769,148 @@ mod clip_rule_tests {
+@@ -292,4 +831,148 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

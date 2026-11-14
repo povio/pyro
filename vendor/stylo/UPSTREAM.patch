@@ -680,6 +680,63 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut slotted_rules) = self.slotted_rules {
              slotted_rules.clear();
          }
+diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
+--- a/values/animated/effects.rs	2026-11-11 19:55:57
++++ b/values/animated/effects.rs	2026-11-14 14:43:55
+@@ -4,11 +4,8 @@
+ 
+ //! Animated types for CSS values related to effects.
+ 
+-#[cfg(not(feature = "gecko"))]
+-use crate::values::Impossible;
+ use crate::values::animated::color::Color;
+ use crate::values::computed::length::Length;
+-#[cfg(feature = "gecko")]
+ use crate::values::computed::url::ComputedUrl;
+ use crate::values::computed::{Angle, NonNegativeLength, Number};
+ use crate::values::generics::effects::Filter as GenericFilter;
+@@ -17,10 +14,5 @@
+ /// An animated value for the `drop-shadow()` filter.
+ pub type AnimatedSimpleShadow = GenericSimpleShadow<Color, Length, NonNegativeLength>;
+ 
+-/// An animated value for a single `filter`.
+-#[cfg(feature = "gecko")]
++/// An animated value for a single `filter`. (pyro: a `url()` in servo too.)
+ pub type AnimatedFilter = GenericFilter<Angle, Number, Length, AnimatedSimpleShadow, ComputedUrl>;
+-
+-/// An animated value for a single `filter`.
+-#[cfg(not(feature = "gecko"))]
+-pub type AnimatedFilter = GenericFilter<Angle, Number, Length, AnimatedSimpleShadow, Impossible>;
+diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
+--- a/values/computed/effects.rs	2026-11-11 19:55:57
++++ b/values/computed/effects.rs	2026-11-14 14:43:55
+@@ -4,11 +4,8 @@
+ 
+ //! Computed types for CSS values related to effects.
+ 
+-#[cfg(not(feature = "gecko"))]
+-use crate::values::Impossible;
+ use crate::values::computed::color::Color;
+ use crate::values::computed::length::{Length, NonNegativeLength};
+-#[cfg(feature = "gecko")]
+ use crate::values::computed::url::ComputedUrl;
+ use crate::values::computed::{Angle, Number};
+ use crate::values::generics::effects::BoxShadow as GenericBoxShadow;
+@@ -19,13 +16,8 @@
+ /// A computed value for a single shadow of the `box-shadow` property.
+ pub type BoxShadow = GenericBoxShadow<Color, Length, NonNegativeLength, Length>;
+ 
+-/// A computed value for a single `filter`.
+-#[cfg(feature = "gecko")]
++/// A computed value for a single `filter`. (pyro: a `url()` in servo too.)
+ pub type Filter = GenericFilter<Angle, Number, Length, SimpleShadow, ComputedUrl>;
+ 
+-/// A computed value for a single `filter`.
+-#[cfg(feature = "servo")]
+-pub type Filter = GenericFilter<Angle, Number, Length, SimpleShadow, Impossible>;
+-
+ /// A computed value for the `drop-shadow()` filter.
+ pub type SimpleShadow = GenericSimpleShadow<Color, Length, NonNegativeLength>;
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
 --- a/values/generics/mod.rs	2026-11-11 19:55:57
 +++ b/values/generics/mod.rs	2026-11-11 19:55:57
@@ -723,3 +780,53 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
+diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
+--- a/values/specified/effects.rs	2026-11-11 19:55:57
++++ b/values/specified/effects.rs	2026-11-14 14:43:55
+@@ -7,8 +7,6 @@
+ use crate::Zero;
+ use crate::derives::*;
+ use crate::parser::{Parse, ParserContext};
+-#[cfg(feature = "servo")]
+-use crate::values::Impossible;
+ use crate::values::computed::Angle as ComputedAngle;
+ use crate::values::computed::CSSPixelLength as ComputedCSSPixelLength;
+ use crate::values::computed::Filter as ComputedFilter;
+@@ -28,7 +26,6 @@
+ use crate::values::generics::{NonNegative, ZeroToOne};
+ use crate::values::specified::color::Color;
+ use crate::values::specified::length::{Length, NonNegativeLength};
+-#[cfg(feature = "gecko")]
+ use crate::values::specified::url::SpecifiedUrl;
+ use crate::values::specified::{Angle, NonNegativeNumberOrPercentage, Number, NumberOrPercentage};
+ use cssparser::{Parser, match_ignore_ascii_case};
+@@ -38,14 +35,9 @@
+ pub type BoxShadow =
+     GenericBoxShadow<Option<Color>, Length, Option<NonNegativeLength>, Option<Length>>;
+ 
+-/// A specified value for a single `filter`.
+-#[cfg(feature = "gecko")]
++/// A specified value for a single `filter`. (pyro: servo parses `url()` too.)
+ pub type SpecifiedFilter = GenericFilter<Angle, FilterFactor, Length, SimpleShadow, SpecifiedUrl>;
+ 
+-/// A specified value for a single `filter`.
+-#[cfg(feature = "servo")]
+-pub type SpecifiedFilter = GenericFilter<Angle, FilterFactor, Length, SimpleShadow, Impossible>;
+-
+ pub use self::SpecifiedFilter as Filter;
+ 
+ /// The factor for a filter function.
+@@ -288,11 +280,8 @@
+ impl Parse for Filter {
+     #[inline]
+     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+-        #[cfg(feature = "gecko")]
+-        {
+-            if let Ok(url) = input.try_parse(|i| SpecifiedUrl::parse(context, i)) {
+-                return Ok(GenericFilter::Url(url));
+-            }
++        if let Ok(url) = input.try_parse(|i| SpecifiedUrl::parse(context, i)) {
++            return Ok(GenericFilter::Url(url));
+         }
+         let function = {
+             let f = input.expect_function()?;

@@ -20,10 +20,17 @@ pub struct VelloCpuScenePainter {
     /// pyro: single-threaded contexts that filter layers are rendered in (one per level of
     /// nesting), kept from frame to frame. See [`crate::filters`].
     pub(crate) filter_contexts: Vec<vello_cpu::RenderContext>,
-    /// pyro: what each push not popped yet was, a clip path or a layer (see [`Self::replay`]).
-    pub(crate) clip_paths: Vec<bool>,
+    /// pyro: what each push not popped yet was (see [`Self::replay`]).
+    pub(crate) clip_paths: Vec<Pushed>,
     /// pyro: whether the scene being replayed has a layer with a blend mode.
     pub(crate) blending: bool,
+    /// pyro: whether the scene being replayed has a backdrop filter (see [`crate::backdrop`]).
+    pub(crate) backdrop_filters: bool,
+    /// pyro: the backdrops captured in the scene being replayed.
+    pub(crate) backdrops: Vec<crate::backdrop::Captured>,
+    /// pyro: from the frame's device pixels to those of the context drawn into (a filter layer's
+    /// or a backdrop's, offscreen).
+    pub(crate) frame_to_ctx: Affine,
 }
 
 impl VelloCpuScenePainter {
@@ -49,6 +56,9 @@ impl VelloCpuScenePainter {
             filter_contexts: Vec::new(),
             clip_paths: Vec::new(),
             blending: false,
+            backdrop_filters: false,
+            backdrops: Vec::new(),
+            frame_to_ctx: Affine::IDENTITY,
         }
     }
 
@@ -87,6 +97,17 @@ impl VelloCpuScenePainter {
     }
 }
 
+/// pyro: what a push of the painter pushed onto vello_cpu's context, for its pop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pushed {
+    /// A layer (`push_layer`, `push_clip_layer`).
+    Layer,
+    /// A clip path (non-isolated: see [`VelloCpuScenePainter::replay`]).
+    ClipPath,
+    /// Nothing (an opaque backdrop filter's group: see [`crate::backdrop`]).
+    Nothing,
+}
+
 impl RenderContext for VelloCpuScenePainter {}
 impl PaintScene for VelloCpuScenePainter {
     fn reset(&mut self) {
@@ -115,7 +136,7 @@ impl PaintScene for VelloCpuScenePainter {
             None,
             None,
         );
-        self.clip_paths.push(false);
+        self.clip_paths.push(Pushed::Layer);
     }
 
     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
@@ -123,13 +144,14 @@ impl PaintScene for VelloCpuScenePainter {
         self.render_ctx.set_fill_rule(fill);
         self.render_ctx
             .push_clip_layer(&clip.into_path(DEFAULT_TOLERANCE));
-        self.clip_paths.push(false);
+        self.clip_paths.push(Pushed::Layer);
     }
 
     fn pop_layer(&mut self) {
         match self.clip_paths.pop() {
-            Some(true) => self.render_ctx.pop_clip(),
-            _ => self.render_ctx.pop_layer(),
+            Some(Pushed::ClipPath) => self.render_ctx.pop_clip(),
+            Some(Pushed::Nothing) => {}
+            Some(Pushed::Layer) | None => self.render_ctx.pop_layer(),
         }
     }
 
@@ -247,7 +269,13 @@ impl PaintScene for VelloCpuScenePainter {
     /// does (`blur()`, `drop-shadow()`, the colour functions) is filtered: see [`Self::replay`].
     fn append_scene(&mut self, scene: anyrender::recording::Scene, scene_transform: Affine) {
         self.blending = scene.commands.iter().any(blends);
+        self.backdrop_filters = scene.commands.iter().any(
+            |command| matches!(command, RenderCommand::PushLayer(layer) if layer.backdrop_filter.is_some()),
+        );
+        self.backdrops.clear();
+        self.frame_to_ctx = Affine::IDENTITY;
         self.replay(&scene.commands, scene_transform);
+        self.backdrops.clear();
     }
 }
 
@@ -264,9 +292,26 @@ impl VelloCpuScenePainter {
     /// clip layers, which draw what they clip as one: a clip path clips each fill on its own, and
     /// where fills overlap under an antialiased edge their coverage adds up (`clip-path` circles
     /// over a box and its border came out up to 97 levels off).
-    fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
+    ///
+    /// A backdrop filter's markers capture and draw the element's backdrop: see
+    /// [`crate::backdrop`]. The layers pushed and not popped yet are kept for it (`open`), each
+    /// with whether it is a backdrop root.
+    pub(crate) fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
+        let mut open: Vec<(usize, bool)> = Vec::new();
         let mut i = 0;
         while i < commands.len() {
+            if self.backdrop_filters
+                && let Some((kind, layer, filter)) = crate::backdrop::marker(commands, i)
+            {
+                match kind {
+                    crate::backdrop::Marker::Capture => {
+                        self.capture_backdrop(commands, i, &open, transform, layer, filter)
+                    }
+                    crate::backdrop::Marker::Draw => self.draw_backdrop(layer, transform, false),
+                }
+                i += 2;
+                continue;
+            }
             if let RenderCommand::PushClipLayer(clip) = &commands[i]
                 && self.blending
                 && blends_inside(commands, i)
@@ -274,7 +319,8 @@ impl VelloCpuScenePainter {
                 self.render_ctx.set_transform(transform * clip.transform);
                 self.render_ctx.set_fill_rule(clip.fill);
                 self.render_ctx.push_clip_path(&clip.clip);
-                self.clip_paths.push(true);
+                self.clip_paths.push(Pushed::ClipPath);
+                open.push((i, false));
                 i += 1;
                 continue;
             }
@@ -308,6 +354,35 @@ impl VelloCpuScenePainter {
                 }
                 i = end + 1;
                 continue;
+            }
+            // An opaque group whose backdrop replaces what lies beneath: the backdrop is drawn
+            // first, outside the group, and the group's draw is skipped.
+            if self.backdrop_filters
+                && self.replaces_backdrop(commands, i)
+                && let Some((_, marker, _)) = crate::backdrop::marker(commands, i + 1)
+            {
+                self.draw_backdrop(marker, transform, true);
+                open.push((i, true));
+                // The group's clip layer (an opaque group) pushes nothing: it would only round
+                // what it holds a second time.
+                match &commands[i] {
+                    RenderCommand::PushClipLayer(_) => self.clip_paths.push(Pushed::Nothing),
+                    command => self.replay_command(command, transform, None),
+                }
+                i += 3;
+                continue;
+            }
+            match &commands[i] {
+                RenderCommand::PushLayer(_) => {
+                    open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
+                }
+                RenderCommand::PushClipLayer(_) => {
+                    open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
+                }
+                RenderCommand::PopLayer => {
+                    open.pop();
+                }
+                _ => {}
             }
             self.replay_command(&commands[i], transform, None);
             i += 1;
@@ -400,27 +475,14 @@ impl VelloCpuScenePainter {
         ) else {
             return;
         };
-        let mut ctx = match self.filter_contexts.pop() {
-            Some(mut ctx) => {
-                ctx.reset_and_resize(width, height);
-                ctx
-            }
-            None => vello_cpu::RenderContext::new_with(
-                width,
-                height,
-                vello_cpu::RenderSettings {
-                    num_threads: 0,
-                    ..*self.render_ctx.render_settings()
-                },
-            ),
-        };
+        let mut ctx = self.offscreen_context(width, height);
         std::mem::swap(&mut self.render_ctx, &mut ctx);
-        self.replay(
-            inner,
-            Affine::scale(1.0 / f64::from(factor))
-                * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)))
-                * transform,
-        );
+        let to_offscreen = Affine::scale(1.0 / f64::from(factor))
+            * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)));
+        let frame_to_ctx = self.frame_to_ctx;
+        self.frame_to_ctx = to_offscreen * frame_to_ctx;
+        self.replay(inner, to_offscreen * transform);
+        self.frame_to_ctx = frame_to_ctx;
         std::mem::swap(&mut self.render_ctx, &mut ctx);
         let mut pixels = Pixmap::new(width, height);
         ctx.flush();
@@ -477,7 +539,7 @@ impl VelloCpuScenePainter {
 /// pyro: `clip` under `transform` as a rectangle of whole device pixels, if it is one: a
 /// rectangle path (four axis-aligned sides) under a transform without rotation or skew, its
 /// edges on whole pixels.
-fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
+pub(crate) fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
     let [_, b, c, _, _, _] = transform.as_coeffs();
     if b != 0.0 || c != 0.0 {
         return None;
