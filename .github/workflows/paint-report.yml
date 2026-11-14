@@ -109,7 +109,7 @@ jobs:
           PATH: /usr/bin:/bin:/usr/sbin:/sbin
         with:
           path: ~/Library/Caches/pyro/wpt-paint-*
-          key: wpt-paint-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/fidelity/paint-wpt-sample.txt') }}
+          key: wpt-paint-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/fidelity/paint-wpt-sample.txt', 'bench/fidelity/paint.ts') }}
       - name: Report
         env:
           SETS: ${{ inputs.sets || 'wpt,repros,matrix' }}

@@ -41,14 +41,21 @@ type Result = Page & { ssim?: number; mad?: number; changed?: number; probes?: s
 
 // ---------- the WPT sample ----------
 const SAMPLE = readFileSync(join(import.meta.dir, 'paint-wpt-sample.txt'), 'utf8').split('\n').map((s) => s.trim()).filter((s) => s && !s.startsWith('#'));
-const SUPPORT = ['resources/', 'common/', 'fonts/', 'images/', 'css/support/', 'css/reference/', 'css/CSS2/support/', 'css/css-images/support/', 'media/1x1-green.png'];
+// What the sample's pages load from outside their directories (as bench/wpt/wpt-paths.txt lists for the reftests).
+const SUPPORT = [
+  'resources/', 'common/', 'fonts/', 'images/', 'css/support/', 'css/reference/', 'css/CSS2/support/', 'css/css-images/support/',
+  'css/css-images/image-orientation/', 'web-animations/testcommon.js', 'web-animations/resources/', 'media/1x1-green.png', 'media/test.webm',
+];
 function ensureWpt(): string {
   if (opt('--wpt')) return resolve(opt('--wpt')!);
   const dir = join(homedir(), 'Library/Caches/pyro', `wpt-paint-${revision.slice(0, 12)}`);
-  if (SAMPLE.every((u) => existsSync(join(dir, u)))) return dir;
   const dirs = [...new Set(SAMPLE.map((u) => u.split('/').slice(0, u.startsWith('css/CSS2/') ? 3 : 2).join('/') + '/'))];
+  const patterns = [...dirs, ...SUPPORT].map((p) => `/${p}`).join('\n');
+  // What the checkout holds: the revision and the sparse patterns it was made with.
+  const marker = join(dir, '.git', 'paint-report');
+  if (existsSync(marker) && readFileSync(marker, 'utf8') === `${revision}\n${patterns}`) return dir;
   const git = (...a: string[]) => {
-    const r = spawnSync('git', ['-C', dir, ...a], { stdio: ['pipe', 'inherit', 'inherit'], input: a[0] === 'sparse-checkout' ? [...dirs, ...SUPPORT].map((p) => `/${p}`).join('\n') : undefined });
+    const r = spawnSync('git', ['-C', dir, ...a], { stdio: ['pipe', 'inherit', 'inherit'], input: a[0] === 'sparse-checkout' ? patterns : undefined });
     if (r.status !== 0) throw new Error(`git ${a.join(' ')} failed`);
   };
   mkdirSync(dir, { recursive: true });
@@ -59,6 +66,7 @@ function ensureWpt(): string {
   git('sparse-checkout', 'set', '--no-cone', '--stdin');
   git('fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin', revision);
   git('-c', 'advice.detachedHead=false', 'checkout', '-q', 'FETCH_HEAD');
+  writeFileSync(marker, `${revision}\n${patterns}`);
   return dir;
 }
 
