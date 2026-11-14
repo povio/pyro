@@ -55,15 +55,15 @@ const MAX_ITERATIONS: usize = 1024;
 type Stamp = (u64, u64, u32, u32);
 
 /// An animation or transition whose events are (or were) scheduled.
-struct Timeline {
+pub(crate) struct Timeline {
     /// Its identity for `getAnimations()`.
     id: u64,
     /// The page clock when it started (its style change), in ms.
     start_ms: f64,
-    delay_ms: f64,
-    duration_ms: f64,
+    pub(crate) delay_ms: f64,
+    pub(crate) duration_ms: f64,
     /// 1 for a transition.
-    iterations: f64,
+    pub(crate) iterations: f64,
     el: NodeId,
     /// The animation's name, or the transitioning longhand.
     name: String,
@@ -75,6 +75,47 @@ struct Timeline {
     /// is another run (a finished `spin 2ms` restyled to `spin 1s infinite`
     /// starts again). `None` for transitions.
     timing: Option<pyro_dom::timing::AnimationTiming>,
+    /// An animation held by `animation-play-state: paused`: the local time
+    /// it holds (ms).
+    paused_at: Option<f64>,
+    /// A transition: its easing (`None`: `ease`) and the keyframes it runs
+    /// between (the property's value before and after the style change).
+    easing: Option<String>,
+    keyframes: Option<std::sync::Arc<pyro_dom::animation::TextKeyframes>>,
+}
+
+impl Timeline {
+    /// The local time now: the time since it started, or the time it holds.
+    pub(crate) fn local_ms(&self, now_ms: f64) -> f64 {
+        self.paused_at.unwrap_or(now_ms - self.start_ms)
+    }
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+    pub(crate) fn el(&self) -> NodeId {
+        self.el
+    }
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+    pub(crate) fn start_ms(&self) -> f64 {
+        self.start_ms
+    }
+    pub(crate) fn is_live(&self) -> bool {
+        self.live.get()
+    }
+    pub(crate) fn is_paused(&self) -> bool {
+        self.paused_at.is_some()
+    }
+    pub(crate) fn timing(&self) -> Option<&pyro_dom::timing::AnimationTiming> {
+        self.timing.as_ref()
+    }
+    pub(crate) fn easing(&self) -> Option<&str> {
+        self.easing.as_deref()
+    }
+    pub(crate) fn keyframes(&self) -> Option<std::sync::Arc<pyro_dom::animation::TextKeyframes>> {
+        self.keyframes.clone()
+    }
 }
 
 /// Per-document state (`PageDom::animation_events`).
@@ -97,6 +138,21 @@ pub(crate) struct State {
     /// `content-visibility: hidden` (see [`hides_content`]): their content
     /// keeps a before-change style while hidden.
     hidden_roots: RefCell<FxHashSet<NodeId>>,
+    /// Bumped whenever the timelines, their play state or the script
+    /// animations change (the animated values' stamp,
+    /// `animation_frame::stamp`).
+    pub(crate) generation: Cell<u64>,
+    /// The animations of `Animation` objects (Web Animations, and CSS
+    /// animations and transitions script controls), as script reported them
+    /// (`animation_frame::report`).
+    pub(crate) scripted: RefCell<FxHashMap<u64, crate::animation_frame::Scripted>>,
+    /// The layout engine samples the page's animated values
+    /// (`StyleEngine::set_animation_source` was called).
+    source_installed: Cell<bool>,
+    /// The last [`State::next_report_key`].
+    report_keys: Cell<u64>,
+    /// The document's SMIL `<animate>` elements (`smil.rs`).
+    pub(crate) smil: crate::smil::Cache,
     /// The before-change styles of the elements under such a root that may
     /// transition, by element, with their root: the engine styles none of
     /// them while the root is hidden, and styles them afresh once shown.
@@ -119,20 +175,45 @@ pub(crate) struct Run {
     pub delay_ms: f64,
     pub duration_ms: f64,
     pub iterations: f64,
+    pub direction: String,
+    pub fill: String,
+    /// The effect's easing (a transition's; `linear` for an animation, whose
+    /// timing function applies per keyframe).
+    pub easing: String,
+    /// The local time an animation paused by its style holds.
+    pub paused_at: Option<f64>,
 }
 
 impl State {
-    /// Whether timelines are kept: a listener could observe their events, or
-    /// `getAnimations()` lists them.
-    fn tracking(&self, dom: &pyro_dom::Dom) -> bool {
-        dom.has_animation_listeners() || self.listed.get()
+    /// Whether timelines are kept: the sheets animate or transition (their
+    /// values are sampled into the layout engine's cascade), a listener could
+    /// observe their events, or `getAnimations()` lists them.
+    fn tracking(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> bool {
+        dom.has_animation_listeners() || self.listed.get() || dom.smil_seen() || self.rules(dom, style).animates()
     }
-    fn transitions_tracked(&self, dom: &pyro_dom::Dom) -> bool {
-        dom.has_transition_listeners() || self.listed.get()
+    fn transitions_tracked(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> bool {
+        dom.has_transition_listeners() || self.listed.get() || self.rules(dom, style).animates()
+    }
+    fn bump(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+    }
+    pub(crate) fn animations(&self) -> std::cell::Ref<'_, Vec<Timeline>> {
+        self.animations.borrow()
+    }
+    pub(crate) fn try_timelines(
+        &self,
+    ) -> Option<(std::cell::Ref<'_, Vec<Timeline>>, std::cell::Ref<'_, Vec<Timeline>>)> {
+        Some((self.animations.try_borrow().ok()?, self.transitions.try_borrow().ok()?))
     }
     fn next_id(&self) -> u64 {
         self.ids.set(self.ids.get() + 1);
         self.ids.get()
+    }
+    /// A key for an `Animation` object's reports (`animation_frame::report`),
+    /// in creation order.
+    pub(crate) fn next_report_key(&self) -> u64 {
+        self.report_keys.set(self.report_keys.get() + 1);
+        self.report_keys.get()
     }
 
     pub(crate) fn clear(&self) {
@@ -142,6 +223,18 @@ impl State {
         self.rules.borrow_mut().take();
         self.hidden_roots.borrow_mut().clear();
         self.hidden_content.borrow_mut().clear();
+        self.scripted.borrow_mut().clear();
+        self.smil.clear();
+        self.bump();
+    }
+
+    /// Makes the layout engine sample the page's animated values at each
+    /// sync, once the page has any.
+    pub(crate) fn install_source(&self, page: &Rc<PageDom>, style: &pyro_dom::style::StyleEngine) {
+        if self.source_installed.replace(true) {
+            return;
+        }
+        style.set_animation_source(Some(crate::animation_frame::source(page)));
     }
 
     /// The rules of the document's sheets, read again only when the sheets changed.
@@ -192,10 +285,13 @@ pub(crate) fn after_task(page: &Rc<PageDom>) {
     }
     {
         let Ok(dom) = page.dom.try_borrow() else { return };
-        if !state.tracking(&dom) {
+        let Some(layout) = page.try_layout() else { return };
+        if !state.tracking(&dom, layout.style()) {
             return;
         }
-        let Some(layout) = page.try_layout() else { return };
+        // The syncs before that update record their style changes too: a
+        // read that asks for no style flush (`innerText`) does not lose them.
+        track_style_changes(state, &dom, layout.style());
         if state.stamp.get() == Some(layout.style().observation_stamp(&dom)) {
             return;
         }
@@ -238,9 +334,14 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             }
         }
         let now_ms = crate::event::page_now_ms(page);
+        if !wanted.is_empty() || crate::smil::present(page, &dom) {
+            state.install_source(page, style);
+        }
         let mut animations = state.animations.borrow_mut();
+        let before = animations.len();
         animations.retain(|known| {
-            let keep = wanted.iter().any(|(el, a)| *el == known.el && known.timing.as_ref() == Some(a));
+            let keep =
+                wanted.iter().any(|(el, a)| *el == known.el && known.timing.as_ref().is_some_and(|t| t.same_run(a)));
             if !keep {
                 known.live.set(false);
                 if !known.ended.get() && dom.is_alive(known.el) && dom.is_connected(known.el).unwrap_or(false) {
@@ -258,10 +359,31 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             }
             keep
         });
+        let mut changed = animations.len() != before;
         for (el, animation) in wanted {
-            if animations.iter().any(|known| known.el == el && known.timing.as_ref() == Some(&animation)) {
+            if let Some(known) = animations
+                .iter_mut()
+                .find(|known| known.el == el && known.timing.as_ref().is_some_and(|t| t.same_run(&animation)))
+            {
+                // A change of how it plays: paused holds its local time,
+                // running again goes on from there.
+                let timing = known.timing.as_mut().unwrap();
+                if timing.style != animation.style {
+                    match (known.paused_at, animation.style.paused) {
+                        (None, true) => known.paused_at = Some(now_ms - known.start_ms),
+                        (Some(held), false) => {
+                            known.start_ms = now_ms - held;
+                            known.paused_at = None;
+                        }
+                        _ => {}
+                    }
+                    timing.style = animation.style.clone();
+                    changed = true;
+                }
                 continue;
             }
+            changed = true;
+            let paused = animation.style.paused;
             let timeline = Timeline {
                 id: state.next_id(),
                 start_ms: now_ms,
@@ -273,6 +395,10 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 live: Rc::new(Cell::new(true)),
                 ended: Rc::new(Cell::new(false)),
                 timing: Some(animation.clone()),
+                // Paused from the start: held at its beginning.
+                paused_at: paused.then_some(0.0),
+                easing: None,
+                keyframes: None,
             };
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, ends: bool| Planned {
                 el,
@@ -285,6 +411,15 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 ends: ends.then(|| timeline.ended.clone()),
             };
             let (delay, duration) = (animation.delay_ms, animation.duration_ms);
+            if paused {
+                // Held: it starts only where a negative delay put it in its
+                // active phase already, and goes no further.
+                if delay <= 0.0 {
+                    planned.push(event("animationstart", 0.0, -delay, false));
+                }
+                animations.push(timeline);
+                continue;
+            }
             planned.push(event("animationstart", delay, (-delay).max(0.0), false));
             if animation.iterations.is_finite() {
                 if duration > 0.0 {
@@ -300,13 +435,56 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             animations.push(timeline);
         }
         drop(animations);
+        if changed {
+            state.bump();
+        }
         // Style change events of the elements whose style changed.
-        if state.transitions_tracked(&dom) {
+        if state.transitions_tracked(&dom, style) {
             transitions_from_changes(state, &dom, style, now_ms, &mut planned);
         }
-        state.transitions.borrow_mut().retain(|t| t.live.get() && !t.ended.get() && dom.is_alive(t.el));
+        let mut transitions = state.transitions.borrow_mut();
+        let count = transitions.len();
+        // Ended: its `transitionend` fired, or (nobody listening) its end passed.
+        let over = |t: &Timeline| t.ended.get() || now_ms > t.start_ms + t.delay_ms + t.duration_ms;
+        transitions.retain(|t| t.live.get() && !over(t) && dom.is_alive(t.el));
+        if transitions.len() != count {
+            state.bump();
+        }
+        // The states script reported for CSS animations and transitions that
+        // are gone.
+        if let Ok(mut scripted) = state.scripted.try_borrow_mut() {
+            if scripted.values().any(|s| s.css_id().is_some()) {
+                let animations = state.animations.borrow();
+                let live: FxHashSet<u64> =
+                    animations.iter().chain(transitions.iter()).filter(|t| t.live.get()).map(|t| t.id).collect();
+                scripted.retain(|_, s| s.css_id().is_none_or(|id| live.contains(&id)));
+            }
+        }
+        if !transitions.is_empty() {
+            state.install_source(page, style);
+        }
     }
     schedule(page, planned, defer);
+}
+
+/// A rendering opportunity (a screenshot or screencast frame): the style
+/// changes since the last frame start their transitions and animations now,
+/// as a frame would (events due now fire in a task of their own). One flag
+/// and stamp check when nothing changed.
+pub(crate) fn before_render(page: &Rc<PageDom>) {
+    let state = &page.animation_events;
+    if page.is_disposed() || page.scripting_disabled() {
+        return;
+    }
+    {
+        let Ok(dom) = page.dom.try_borrow() else { return };
+        let Some(layout) = page.try_layout() else { return };
+        let style = layout.style();
+        if !state.tracking(&dom, style) || state.stamp.get() == Some(style.observation_stamp(&dom)) {
+            return;
+        }
+    }
+    update(page, true);
 }
 
 /// `getAnimations()`: the CSS animations and transitions of the document,
@@ -337,15 +515,28 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
         .map(|t| (t, true))
         .chain(animations.iter().map(|t| (t, false)))
         .filter(|(t, _)| t.live.get() && dom.is_alive(t.el) && dom.is_connected(t.el).unwrap_or(false))
-        .map(|(t, transition)| Run {
-            id: t.id,
-            el: t.el,
-            transition,
-            name: t.name.clone(),
-            start_ms: t.start_ms,
-            delay_ms: t.delay_ms,
-            duration_ms: t.duration_ms,
-            iterations: t.iterations,
+        .map(|(t, transition)| {
+            let style = t.timing.as_ref().map(|t| &t.style);
+            Run {
+                id: t.id,
+                el: t.el,
+                transition,
+                name: t.name.clone(),
+                start_ms: t.start_ms,
+                delay_ms: t.delay_ms,
+                duration_ms: t.duration_ms,
+                iterations: t.iterations,
+                direction: style.map_or("normal", |s| s.direction.as_str()).to_owned(),
+                fill: match style {
+                    Some(s) => s.fill.clone(),
+                    None => "backwards".to_owned(),
+                },
+                easing: match transition {
+                    true => t.easing.clone().unwrap_or_else(|| "ease".to_owned()),
+                    false => "linear".to_owned(),
+                },
+                paused_at: t.paused_at,
+            }
         })
         .collect()
 }
@@ -361,14 +552,31 @@ pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
 /// the style is unchanged.
 pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
     let state = &page.animation_events;
+    // A style flush after a change is a style change event for animations
+    // too: the animations the styles ask for now start now (their values are
+    // in the styles this flush reads), as at a frame.
+    let pending = {
+        let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return };
+        let style = layout.style();
+        !page.is_disposed()
+            && !page.scripting_disabled()
+            && (dom.smil_seen() || state.rules(&dom, style).animates())
+            && state.stamp.get() != Some(style.observation_stamp(&dom))
+    };
+    if pending {
+        update(page, true);
+    }
     let mut planned = Vec::new();
     {
         let Ok(dom) = page.dom.try_borrow() else { return };
-        if !state.transitions_tracked(&dom) || page.is_disposed() || page.scripting_disabled() {
+        if page.is_disposed() || page.scripting_disabled() {
             return;
         }
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
+        if !state.transitions_tracked(&dom, style) {
+            return;
+        }
         track_style_changes(state, &dom, style);
         // The flush itself: syncing styles registers new `<style>` sheets.
         style.engine_styled(&dom);
@@ -401,7 +609,7 @@ pub(crate) fn layout_flush(page: &Rc<PageDom>, el: NodeId) {
 /// Set before every style sync, so that the first sync after a transition
 /// listener appeared records its changes.
 fn track_style_changes(state: &State, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) {
-    if state.transitions_tracked(dom) {
+    if state.transitions_tracked(dom, style) {
         style.set_track_style_changes(true);
     }
 }
@@ -422,6 +630,7 @@ fn transitions_from_changes(
         return;
     }
     let rules = state.rules(dom, style);
+    let mut starting = Starting::default();
     for (el, before, now) in changes {
         // The document's own tree only: the rules are the document's (a
         // document rule does not style a shadow tree's elements).
@@ -430,7 +639,7 @@ fn transitions_from_changes(
         }
         let (was_none, is_none) = (displays_none(&before), displays_none(&now));
         if !was_none && !is_none {
-            start_transitions(state, dom, &rules, el, &before, &now, now_ms, planned);
+            start_transitions(state, dom, &rules, el, &before, &now, now_ms, &mut starting);
             continue;
         }
         // `display: none` at either style change event: not rendered then, so
@@ -446,12 +655,13 @@ fn transitions_from_changes(
             drop_hidden_content(state, dom, el);
         }
         if was_content {
-            reveal_hidden_content(state, dom, style, &rules, el, now_ms, planned);
+            reveal_hidden_content(state, dom, style, &rules, el, now_ms, &mut starting);
         }
         if (content || !is_none) && (was_content || content || !was_none) {
-            start_transitions(state, dom, &rules, el, &before, &now, now_ms, planned);
+            start_transitions(state, dom, &rules, el, &before, &now, now_ms, &mut starting);
         }
     }
+    starting.commit(state, planned);
 }
 
 /// Whether the engine's `display: none` of `el` is where Chrome has
@@ -597,7 +807,7 @@ fn reveal_hidden_content(
     rules: &TimingRules,
     root: NodeId,
     now_ms: f64,
-    planned: &mut Vec<Planned>,
+    starting: &mut Starting,
 ) {
     let revealed: Vec<(NodeId, StyleSnapshot)> = {
         let mut kept = state.hidden_content.borrow_mut();
@@ -625,7 +835,7 @@ fn reveal_hidden_content(
             continue;
         }
         if let Some(now) = style.stylo_style(dom, d).filter(|now| !displays_none(now)) {
-            start_transitions(state, dom, rules, d, &before, &now, now_ms, planned);
+            start_transitions(state, dom, rules, d, &before, &now, now_ms, starting);
         }
     }
 }
@@ -642,6 +852,56 @@ fn is_ancestor(dom: &pyro_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
     false
 }
 
+/// The transitions one style change event starts. The ones of an element
+/// and property under way are replaced in one pass over the running
+/// transitions ([`Starting::commit`]): a page whose rules transition starts
+/// hundreds per frame, and a pass per start cost more than the restyle.
+#[derive(Default)]
+struct Starting {
+    timelines: Vec<Timeline>,
+    /// The properties started, by element, with their index in `timelines`.
+    keys: FxHashMap<NodeId, Vec<(&'static str, usize)>>,
+    /// Their events, planned after the cancel events of the transitions
+    /// they replace.
+    events: Vec<Planned>,
+}
+
+fn cancel_event(el: NodeId, name: &str) -> Planned {
+    Planned {
+        el,
+        ty: "transitioncancel",
+        transition: true,
+        name: name.to_owned(),
+        elapsed_s: 0.0,
+        after: Duration::ZERO,
+        live: Rc::new(Cell::new(true)),
+        ends: None,
+    }
+}
+
+impl Starting {
+    /// Replaces the running transitions of the elements and properties that
+    /// start again, and starts the new ones.
+    fn commit(self, state: &State, planned: &mut Vec<Planned>) {
+        if self.timelines.is_empty() {
+            return;
+        }
+        let mut running = state.transitions.borrow_mut();
+        running.retain(|known| {
+            let same =
+                self.keys.get(&known.el).is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
+            if same && known.live.get() && !known.ended.get() {
+                known.live.set(false);
+                planned.push(cancel_event(known.el, &known.name));
+            }
+            !same
+        });
+        planned.extend(self.events);
+        running.extend(self.timelines);
+        state.bump();
+    }
+}
+
 /// The transitions a style change of `el` from `before` to `now` starts: the
 /// properties of its transition list whose computed value differs. A
 /// transition of the property still under way is replaced.
@@ -654,7 +914,7 @@ fn start_transitions(
     before: &StyleSnapshot,
     now: &StyleSnapshot,
     now_ms: f64,
-    planned: &mut Vec<Planned>,
+    starting: &mut Starting,
 ) {
     if StyleSnapshot::ptr_eq(before, now) {
         return;
@@ -662,30 +922,30 @@ fn start_transitions(
     let ElementTiming { transitions, .. } = rules.element(dom, el);
     let mut started: Vec<&'static str> = Vec::new();
     for transition in &transitions {
-        for longhand in pyro_dom::timing::changed_longhands(before, now, &transition.property) {
+        let changed =
+            pyro_dom::timing::changed_longhands_with(before, now, &transition.property, transition.allow_discrete);
+        for longhand in changed {
             if started.contains(&longhand) {
                 continue;
             }
             started.push(longhand);
-            let mut running = state.transitions.borrow_mut();
-            // A transition of the property still under way is replaced.
-            running.retain(|known| {
-                let same = known.el == el && known.name == longhand;
-                if same && known.live.get() && !known.ended.get() {
-                    known.live.set(false);
-                    planned.push(Planned {
-                        el,
-                        ty: "transitioncancel",
-                        transition: true,
-                        name: longhand.to_owned(),
-                        elapsed_s: 0.0,
-                        after: Duration::ZERO,
-                        live: Rc::new(Cell::new(true)),
-                        ends: None,
-                    });
+            // A property a CSS or script animation drives does not
+            // transition: its value changes with the animation's.
+            if crate::animation_frame::animates(state, rules, el, longhand) {
+                continue;
+            }
+            // Started already in this style change event (an element of a
+            // revealed root that changed too): that one is replaced.
+            let index = starting.timelines.len();
+            let keys = starting.keys.entry(el).or_default();
+            match keys.iter_mut().find(|(name, _)| *name == longhand) {
+                Some((_, first)) => {
+                    starting.timelines[*first].live.set(false);
+                    starting.events.push(cancel_event(el, longhand));
+                    *first = index;
                 }
-                !same
-            });
+                None => keys.push((longhand, index)),
+            }
             let timeline = Timeline {
                 id: state.next_id(),
                 start_ms: now_ms,
@@ -697,6 +957,9 @@ fn start_transitions(
                 live: Rc::new(Cell::new(true)),
                 ended: Rc::new(Cell::new(false)),
                 timing: None,
+                paused_at: None,
+                easing: transition.easing.clone(),
+                keyframes: pyro_dom::timing::transition_keyframes(before, now, longhand).map(std::sync::Arc::new),
             };
             let (delay, duration) = (transition.delay_ms, transition.duration_ms);
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, ends: bool| Planned {
@@ -709,10 +972,10 @@ fn start_transitions(
                 live: timeline.live.clone(),
                 ends: ends.then(|| timeline.ended.clone()),
             };
-            planned.push(event("transitionrun", 0.0, 0.0, false));
-            planned.push(event("transitionstart", delay, (-delay).max(0.0), false));
-            planned.push(event("transitionend", delay + duration, duration, true));
-            running.push(timeline);
+            starting.events.push(event("transitionrun", 0.0, 0.0, false));
+            starting.events.push(event("transitionstart", delay, (-delay).max(0.0), false));
+            starting.events.push(event("transitionend", delay + duration, duration, true));
+            starting.timelines.push(timeline);
         }
     }
 }
@@ -720,7 +983,17 @@ fn start_transitions(
 /// Fires the events due now (as a task of their own when `defer`) and sets a
 /// timer for each later one; equal delays keep their order.
 fn schedule(page: &Rc<PageDom>, planned: Vec<Planned>, defer: bool) {
+    // Nobody can observe an event without a listener for its kind: the
+    // timelines run for the values they sample, not for events nobody hears
+    // (a page whose rules transition starts dozens per frame).
+    let (animation_heard, transition_heard) = match page.dom.try_borrow() {
+        Ok(dom) => (dom.has_animation_listeners(), dom.has_transition_listeners()),
+        Err(_) => (true, true),
+    };
     for event in planned {
+        if !(if event.transition { transition_heard } else { animation_heard }) {
+            continue;
+        }
         let delay = event.after;
         if delay.is_zero() && !defer {
             fire(page, &event);

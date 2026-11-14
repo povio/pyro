@@ -591,6 +591,12 @@ export type ScreenshotOptions = {
   clip?: { x: number; y: number; width: number; height: number };
   /** The whole document, not only the viewport. */
   fullPage?: boolean;
+  /**
+   * As Playwright's screenshot assertions: `disabled` (the default) renders finite CSS animations, transitions and
+   * Web Animations finished and infinite ones canceled, so the pixels do not depend on when the step runs; `allow`
+   * renders them where they are.
+   */
+  animations?: 'disabled' | 'allow';
   /** Where baselines live (default: `__screenshots__` beside the test file). */
   dir?: string;
   timeout?: number;

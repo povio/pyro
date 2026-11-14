@@ -31,6 +31,7 @@ mod pdf_fidelity;
 mod pdf_variable_fonts;
 mod profiling_timers;
 mod render;
+mod sampled_animations;
 mod style_sheet_charset;
 mod svg_reference_cycles;
 mod table_cell_height;

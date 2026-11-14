@@ -530,12 +530,13 @@ impl Layout {
     pub fn synced_geometry_source(&self, dom: &Dom) -> Option<&Rc<dyn GeometrySource>> {
         let source = self.external.as_ref().filter(|s| s.active())?;
         let key = self.sync_key(dom);
-        if self.external_synced.get() != Some(key) || source.stale() {
+        if self.external_synced.get() != Some(key) || source.stale() || self.style.animations_changed_for_layout() {
             self.style.before_recalc(dom);
             source.sync(dom, self);
             self.external_synced.set(Some(key));
             self.syncs.set(self.syncs.get() + 1);
             self.style.engine_synced(dom);
+            self.style.animations_laid_out();
             if self.mobile.is_some() {
                 // Blink's contents size is whole px (`LayoutView::DocumentRect`).
                 self.contents_width.set(source.document_size().map(|(w, _)| w.round() as f32));

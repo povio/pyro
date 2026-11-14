@@ -353,6 +353,8 @@ impl EngineHost {
                 })
                 .collect(),
             element_scroll: Some(s.element_scroll),
+            // CSS animations, transitions and Web Animations as they are now.
+            animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
         })
     }
 
@@ -768,7 +770,14 @@ impl EngineHost {
             }
         };
         let t = Instant::now();
-        let snapshot = self.snapshot(pid, element)?;
+        let mut snapshot = self.snapshot(pid, element)?;
+        if spec.settle_animations {
+            // A screenshot assertion compares stable pixels: no animation mid-flight.
+            let dom = self.thread.browser.page(pid).and_then(|p| p.main_frame.page_dom.clone());
+            if let Some(dom) = dom {
+                snapshot.animations = Some(Arc::new(pyro_layout::animation_frame(&dom.settled_animation_frame())));
+            }
+        }
         let snapshot_ms = ms(t.elapsed());
         let fetcher = self.fetcher(pid);
         let token = self.renders.token();

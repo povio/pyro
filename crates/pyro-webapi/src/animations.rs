@@ -7,9 +7,10 @@
 //! animation_events.rs from the first `getAnimations()` on).
 //!
 //! The script gets the page clock (`now`, which follows CDP virtual time),
-//! one-shot timers on the page's event loop (`schedule`) and Stylo's
-//! property names (`cssName`). Nothing runs per frame: a playing animation
-//! has one timer, at its end.
+//! one-shot timers on the page's event loop (`schedule`), Stylo's property
+//! names (`cssName`) and the engine's record of each animation's state
+//! (`report`, which animation_frame.rs samples into the cascade). Nothing
+//! runs per frame: a playing animation has one timer, at its end.
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -143,7 +144,90 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(if pyro_dom::stylo::is_property(&name) { s.string(&name) } else { s.null() })
     })?;
     natives.set_atom("cssName", css_name.value())?;
+    // `report(key, state)`: an Animation object's state after a change, for
+    // the values sampled into the cascade (animation_frame.rs); `state` null
+    // once it has no effect.
+    let report = s.function("report", |s, _this, a| {
+        // A page going away has nothing left to sample.
+        let Ok(page) = page_of(s) else { return Ok(s.undefined()) };
+        let key = a.get(0).to_number()? as u64;
+        let state = match a.get(1).as_object() {
+            Some(o) => Some(reported(s, o)?),
+            None => None,
+        };
+        crate::animation_frame::report(&page, key, state);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("report", report.value())?;
+    // A page-wide key for `report` (realms of one page share the engine).
+    let report_key = s.function("reportKey", |s, _this, _a| {
+        let key = page_of(s).map_or(0, |page| page.animation_events.next_report_key());
+        Ok(s.number(key as f64))
+    })?;
+    natives.set_atom("reportKey", report_key.value())?;
     Ok(natives)
+}
+
+/// `report`'s state: `[target, cssId (-1: none), keyframes, startTime,
+/// holdTime, playbackRate, timeline origin, delay, endDelay, fill,
+/// iterationStart, iterations, duration, direction, easing, composite, gone
+/// (1: shows nothing)]`, keyframes as `[offset, easing, composite,
+/// declarations]` each.
+fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::ReportedState> {
+    let at = |i: u32| o.get_index(i);
+    let num = |i: u32| -> JsResult<f64> { at(i)?.to_number() };
+    let opt = |i: u32| -> JsResult<Option<f64>> {
+        let v = at(i)?;
+        if v.is_nullish() {
+            Ok(None)
+        } else {
+            v.to_number().map(Some)
+        }
+    };
+    let text = |v: Value<'_>| -> JsResult<Option<String>> {
+        if v.is_nullish() {
+            Ok(None)
+        } else {
+            v.to_string().map(Some)
+        }
+    };
+    let el = crate::node::opt_node_arg(s, at(0)?, "report")?;
+    let css = num(1)?;
+    let mut frames = Vec::new();
+    if let Some(list) = at(2)?.as_object() {
+        let len = list.get("length")?.to_number()? as u32;
+        for i in 0..len {
+            let Some(f) = list.get_index(i)?.as_object() else { continue };
+            frames.push((
+                f.get_index(0)?.to_number()?,
+                text(f.get_index(1)?)?,
+                text(f.get_index(2)?)?,
+                f.get_index(3)?.to_string()?,
+            ));
+        }
+    }
+    let timing = crate::animation_frame::ReportedState::timing(
+        num(7)?,
+        num(8)?,
+        &at(9)?.to_string()?,
+        num(10)?,
+        num(11)?,
+        num(12)?,
+        &at(13)?.to_string()?,
+    );
+    Ok(crate::animation_frame::ReportedState {
+        el,
+        css: (css >= 0.0).then_some(css as u64),
+        keyframes: crate::animation_frame::keyframes(frames),
+        start: opt(3)?,
+        hold: opt(4)?,
+        rate: num(5)?,
+        origin: opt(6)?,
+        timing,
+        easing: text(at(14)?)?.map(|e| std::sync::Arc::from(e.as_str())),
+        composite: pyro_dom::animation::Composite::parse(&at(15)?.to_string()?).unwrap_or_default(),
+        gone: num(16)? != 0.0,
+    })
 }
 
 /// `Element.animate(keyframes, options)`.
@@ -174,6 +258,10 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                 s.number(run.delay_ms),
                 s.number(run.duration_ms),
                 s.number(run.iterations),
+                s.string(&run.direction),
+                s.string(&run.fill),
+                s.string(&run.easing),
+                run.paused_at.map_or_else(|| s.null(), |t| s.number(t)),
             ])?
             .value(),
         );

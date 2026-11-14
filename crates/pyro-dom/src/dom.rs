@@ -223,6 +223,9 @@ pub struct Dom {
     /// A `<canvas>` element was created: loaded images keep their bytes
     /// for canvas drawing (`Dom::canvas_seen`).
     pub(crate) canvas_seen: bool,
+    /// An SVG `<animate>` element was created: until then the page has no
+    /// SMIL animations to look for (`Dom::smil_seen`).
+    pub(crate) smil_seen: bool,
     pub(crate) media: crate::media_element::MediaQueue,
     live: u32,
     /// Bumped whenever a node is removed from its parent.
@@ -325,6 +328,7 @@ impl Dom {
             viewport_meta_version: 0,
             media_seen: false,
             canvas_seen: false,
+            smil_seen: false,
             media: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
@@ -423,6 +427,10 @@ impl Dom {
     /// Whether a `<canvas>` element was ever created in this DOM.
     pub fn canvas_seen(&self) -> bool {
         self.canvas_seen
+    }
+    /// Whether an SVG `<animate>` element was ever created in this DOM.
+    pub fn smil_seen(&self) -> bool {
+        self.smil_seen
     }
     /// Natural (intrinsic) size of a loaded image element, in CSS px.
     pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
@@ -1039,6 +1047,7 @@ impl Dom {
         match name.local {
             local_name!("audio") | local_name!("video") => self.media_seen = true,
             local_name!("canvas") => self.canvas_seen = true,
+            local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
             _ => {}
         }
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);

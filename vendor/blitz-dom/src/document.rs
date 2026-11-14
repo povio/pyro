@@ -437,6 +437,8 @@ pub struct BaseDocument {
     // TODO: collapse animating state into a bitflags
     /// Whether there are active CSS animations/transitions (so we should re-render every frame)
     pub(crate) has_active_animations: bool,
+    /// pyro: the embedder's sampled animations (`animation.rs`).
+    pub(crate) sampled_animations: crate::animation::SampledAnimations,
     /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
     pub(crate) has_canvas: bool,
     /// Whether there are subdocuments that are animating (so we should re-render every frame)
@@ -708,6 +710,7 @@ impl BaseDocument {
             focus_ring: false,
             mousedown_node_id: None,
             has_active_animations: false,
+            sampled_animations: Default::default(),
             subdoc_is_animating: false,
             has_canvas: false,
             sub_document_nodes: HashSet::new(),

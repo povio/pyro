@@ -792,6 +792,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             element_clip.as_ref(),
             cx.transform,
             self.scale,
+            element_clip.as_ref().map_or(Rect::ZERO, |_| cx.visible_area()),
             |scene| {
                 // If the element has a CSS `mask`, then push an isolation layer for the
                 // masked content. The mask is applied when the layer is popped below.
@@ -1592,6 +1593,10 @@ impl ElementCx<'_, '_> {
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
         if self.node.flags.is_inline_root() {
+            // pyro: inline elements with a clip path or a mask (clip_path.rs).
+            if self.draw_inline_effects(scene, pos) {
+                return;
+            }
             let text_layout = self.element
                 .inline_layout_data
                 .as_ref()
