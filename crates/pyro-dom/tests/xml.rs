@@ -93,32 +93,6 @@ fn doctype_becomes_a_document_type_node() {
     }
     assert_eq!(dom.tag_name(dom.document_element(doc).unwrap().unwrap()).unwrap(), "r");
 }
-/// HTML's XML parser: the XHTML and MathML public identifiers define HTML's named
-/// character references (WPT's CSS 2.1 tests use `&nbsp;` under the XHTML 1.0 Strict and
-/// 1.1 doctypes); without such a doctype they stay a fatal error.
-#[test]
-fn xhtml_doctypes_define_html_named_character_references() {
-    const STRICT: &str = r#"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">"#;
-    const XHTML11: &str =
-        r#"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">"#;
-    for doctype in [STRICT, XHTML11] {
-        let (dom, doc) = parse(&format!(
-            r#"{doctype}<html xmlns="http://www.w3.org/1999/xhtml" title="a&ndash;b&amp;"><body>x&nbsp;y&amp;&Eacute;&NotEqualTilde;&#65;</body></html>"#
-        ));
-        let root = dom.document_element(doc).unwrap().unwrap();
-        assert_eq!(dom.tag_name(root).unwrap(), "html", "{doctype}");
-        assert_eq!(dom.get_attribute(root, "title").unwrap(), Some("a\u{2013}b&"));
-        // Two code points for one reference: U+2242 U+0338.
-        assert_eq!(dom.text_content(root).unwrap().as_deref(), Some("x\u{a0}y&\u{c9}\u{2242}\u{338}A"));
-    }
-    error(&format!("{STRICT}<html>&notanentity;</html>"));
-    error("<!DOCTYPE html><html>&nbsp;</html>");
-    error(
-        r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg>&nbsp;</svg>"#,
-    );
-    error("<r>&nbsp;</r>");
-    error("<r a='&nbsp;'/>");
-}
 #[test]
 fn limits_reject_before_building_partial_dom_trees() {
     error(&format!("{}{}", "<r>".repeat(xml::MAX_DEPTH + 1), "</r>".repeat(xml::MAX_DEPTH + 1)));

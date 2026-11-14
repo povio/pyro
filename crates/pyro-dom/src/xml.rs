@@ -1,14 +1,9 @@
 //! Bounded XML 1.0 parsing for DOMParser, XHR and navigations. DOCTYPEs become nodes;
-//! no DTD processing (internal subsets are ignored) and no external entities, except
-//! that the XHTML and MathML public identifiers define HTML's named character
-//! references, as the HTML spec's XML parser has it.
-use std::sync::LazyLock;
-
-use quick_xml::escape::resolve_predefined_entity;
+//! no DTD processing (internal subsets are ignored) and no external entities.
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Namespace as XmlNamespace, NamespaceResolver, PrefixDeclaration, ResolveResult};
 use quick_xml::{Reader, XmlVersion};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use crate::dom::validate_name;
 use crate::node::{element_flags, DoctypeData, ElementData, FragmentData, PiData, NIL};
@@ -21,44 +16,6 @@ const MAX_ATTRIBUTES: usize = 256;
 const XMLNS: &str = "http://www.w3.org/2000/xmlns/";
 const PARSERERROR: &str = "http://www.mozilla.org/newlayout/xml/parsererror.xml";
 type Result<T> = std::result::Result<T, &'static str>;
-
-/// The DOCTYPE public identifiers for which the XML parser acts as if the document's DTD
-/// defined HTML's named character references (HTML, "Parsing XML documents"; Chromium and
-/// Firefox do the same): with one of them, `&nbsp;` is a no-break space instead of a fatal
-/// error. Many XHTML documents use them (most of WPT's CSS 2.1 tests).
-const HTML_ENTITY_PUBLIC_IDS: [&str; 9] = [
-    "-//W3C//DTD XHTML 1.0 Transitional//EN",
-    "-//W3C//DTD XHTML 1.1//EN",
-    "-//W3C//DTD XHTML 1.0 Strict//EN",
-    "-//W3C//DTD XHTML 1.0 Frameset//EN",
-    "-//W3C//DTD XHTML Basic 1.0//EN",
-    "-//W3C//DTD XHTML 1.1 plus MathML 2.0//EN",
-    "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN",
-    "-//W3C//DTD MathML 2.0//EN",
-    "-//WAPFORUM//DTD XHTML Mobile 1.0//EN",
-];
-
-/// The text HTML's named character reference `&name;` stands for, one or two characters
-/// (the entities with a semicolon of HTML's table: XML references always end with one).
-fn html_entity(name: &str) -> Option<&'static str> {
-    static ENTITIES: LazyLock<FxHashMap<&'static str, Box<str>>> = LazyLock::new(|| {
-        markup5ever::data::NAMED_ENTITIES
-            .entries()
-            .filter_map(|(key, &(first, second))| {
-                let name = key.strip_suffix(';')?;
-                let text: String = [first, second].into_iter().filter(|&c| c != 0).filter_map(char::from_u32).collect();
-                Some((name, text.into_boxed_str()))
-            })
-            .collect()
-    });
-    ENTITIES.get(name).map(|text| &**text)
-}
-
-/// The text of the entity reference `&name;`: a predefined XML entity, or with
-/// `html_entities` (an [`HTML_ENTITY_PUBLIC_IDS`] doctype) one of HTML's.
-fn entity(name: &str, html_entities: bool) -> Option<&'static str> {
-    resolve_predefined_entity(name).or_else(|| html_entities.then(|| html_entity(name)).flatten())
-}
 
 struct Prepared {
     parent: Option<usize>,
@@ -173,8 +130,6 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
     let mut stack = Vec::new();
     let mut roots = 0;
     let mut first = true;
-    // The doctype names a public identifier that defines HTML's entities.
-    let mut html_entities = false;
     loop {
         let event = reader.read_event().map_err(|_| "Malformed XML")?;
         let parent = stack.last().copied();
@@ -203,7 +158,7 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                         return Err("Literal '<' in XML attribute");
                     }
                     let value = attr
-                        .normalized_value_with(XmlVersion::Implicit1_0, 1, |name| entity(name, html_entities))
+                        .normalized_value(XmlVersion::Implicit1_0)
                         .map_err(|_| "Invalid XML attribute value")?
                         .into_owned();
                     if !value.chars().all(xml_char) {
@@ -264,7 +219,8 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                     }
                     text(&mut nodes, parent, c.encode_utf8(&mut [0; 4]))?;
                 } else {
-                    let value = entity(value.as_ref(), html_entities).ok_or("Unknown XML entity")?;
+                    let value =
+                        quick_xml::escape::resolve_predefined_entity(value.as_ref()).ok_or("Unknown XML entity")?;
                     text(&mut nodes, parent, value)?;
                 }
             }
@@ -332,9 +288,8 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                 if roots > 0 || parent.is_some() || nodes.iter().any(|n| matches!(n.kind, NodeKind::Doctype(_))) {
                     return Err("Misplaced XML doctype");
                 }
-                let doctype = doctype(&value.xml10_content())?;
-                html_entities = HTML_ENTITY_PUBLIC_IDS.contains(&&*doctype.public_id);
-                push(&mut nodes, None, NodeKind::Doctype(Box::new(doctype)))?;
+                let text = value.xml10_content();
+                push(&mut nodes, None, NodeKind::Doctype(Box::new(doctype(&text)?)))?;
             }
             Event::Eof => break,
         }
@@ -411,9 +366,9 @@ struct Open {
 /// document, where the builder stops until that script has run (HTML
 /// "parsing XML documents"; SVG 2 runs a parser-inserted script there too, as
 /// the HTML parser runs one in inline SVG). So a script does not find the
-/// content after it, and nothing
-/// after it loads or fires events before it has run: an `<iframe onload>`
-/// further down cannot call a function the scripts above have yet to define.
+/// content after it, and nothing after it loads or fires events before it has
+/// run: an `<iframe onload>` further down cannot call a function the scripts
+/// above have yet to define.
 pub(crate) struct Load {
     document: NodeId,
     /// The nodes not attached yet, in document order.
