@@ -63,6 +63,27 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
 /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`].
 ///
 /// This will draw a red box over (some) unsupported elements.
+/// pyro: whether a group of `svg` (or of an SVG image in it) blends with what is under it
+/// (`mix-blend-mode`, `plus-lighter` included): an SVG image is an isolated group, which its
+/// painter draws it in then.
+pub fn has_blend_modes(svg: &usvg::Tree) -> bool {
+    fn group(g: &usvg::Group) -> bool {
+        g.children().iter().any(|node| match node {
+            usvg::Node::Group(child) => {
+                child.blend_mode() != usvg::BlendMode::Normal
+                    || render::compose_marker(child.id()).is_some()
+                    || group(child)
+            }
+            usvg::Node::Image(image) => match image.kind() {
+                usvg::ImageKind::SVG(tree) => group(tree.root()),
+                _ => false,
+            },
+            _ => false,
+        })
+    }
+    group(svg.root())
+}
+
 pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform: Affine) {
     render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
 }
@@ -81,6 +102,7 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     let viewport = kurbo::Rect::new(0.0, 0.0, size.width() as f64, size.height() as f64);
     let ctx = render::Ctx {
         cull: transform.transform_rect_bbox(viewport),
+        box_reference: false,
     };
     render::render_group(
         scene,

@@ -1,0 +1,236 @@
+//! Effects and references in inline SVG content as Chromium draws them (WPT `css/filter-effects`
+//! `svg-*`, `css/css-masking/mask-image` on SVG elements, `clip-path-svg-content`,
+//! `mask-svg-content`, `css/compositing` in SVG): CSS filter functions without a filter region,
+//! the page's `filter` reaching usvg, masks of opaque shapes at their shapes' coverage, references
+//! to the wrong kind of element, invalid transform lists, `text-shadow` on SVG text, CSS mask
+//! layers (images, gradients, `mask-composite`), `plus-lighter`, isolated SVG images, `zoom` and
+//! the root's `perspective`.
+use std::sync::Arc;
+
+use pyro_render::*;
+
+const WHITE: [u8; 3] = [255, 255, 255];
+const BLUE: [u8; 3] = [0, 0, 255];
+const GREEN: [u8; 3] = [0, 128, 0];
+
+/// A 20x20 SVG image whose top-left 10x10 quarter is opaque (`m.svg`), and one whose green
+/// rectangle blends `difference` with what is under it (`blend.svg`).
+struct Resources;
+impl Fetcher for Resources {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let name = url.rsplit('/').next().unwrap_or_default().to_string();
+        std::thread::spawn(move || {
+            done(match name.as_str() {
+                "m.svg" => Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="10" height="10"/></svg>"#.to_vec()),
+                "blend.svg" => Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><rect width="50" height="50" style="fill:rgb(0,255,0);mix-blend-mode:difference"/></svg>"#.to_vec()),
+                _ => Err("404".into()),
+            })
+        });
+    }
+}
+
+fn render(body: &str) -> RgbaImage {
+    let s = Snapshot {
+        html: format!("<!doctype html><style>body{{margin:0;background:white}}svg{{display:block}}</style>{body}"),
+        base_url: "http://test/".into(),
+        width: 200,
+        height: 200,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Resources);
+    Renderer::new().render(&s, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0
+}
+
+fn px(img: &RgbaImage, x: u32, y: u32) -> [u8; 3] {
+    let i = (y as usize * img.width as usize + x as usize) * 4;
+    [img.data[i], img.data[i + 1], img.data[i + 2]]
+}
+
+/// The largest channel difference between two renders in the rectangle `x0..x1`, `y0..y1`.
+fn max_difference(a: &RgbaImage, b: &RgbaImage, (x0, y0, x1, y1): (u32, u32, u32, u32)) -> u8 {
+    let mut max = 0;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let (p, q) = (px(a, x, y), px(b, x, y));
+            for c in 0..3 {
+                max = max.max(p[c].abs_diff(q[c]));
+            }
+        }
+    }
+    max
+}
+
+#[test]
+fn a_drop_shadow_function_reaches_past_half_the_elements_box() {
+    // usvg gives a filter function the bounding box widened by half as its region, which cut
+    // this shadow off at x = 75 (WPT svg-shorthand-drop-shadow-001).
+    let img = render(
+        r##"<svg width="200" height="100"><rect width="50" height="100" fill="#0000ff"
+            filter="drop-shadow(50px 0 #0000ff)"/></svg>"##,
+    );
+    assert_eq!(px(&img, 90, 50), BLUE, "the far half of the shadow");
+    assert_eq!(px(&img, 110, 50), WHITE);
+}
+
+#[test]
+fn the_pages_drop_shadow_with_a_colour_function_reaches_usvg() {
+    // Written in the `style` attribute, `drop-shadow(rgb(0, 0, 255) 30px 0px 0px)` was cut at
+    // its first `)` by usvg's tokenizer and the element drawn unfiltered; `color-mix()` and
+    // `currentcolor` are resolved for it.
+    let img = render(
+        r##"<style>#a { filter: drop-shadow(30px 0 0 rgb(0, 0, 255)) }
+          #b { color: blue; filter: drop-shadow(30px 0 0 color-mix(in srgb, currentcolor 100%, black)) }</style>
+        <svg width="200" height="100"><rect id="a" width="20" height="20" fill="#0000ff"/>
+          <rect id="b" y="50" width="20" height="20" fill="#0000ff"/></svg>"##,
+    );
+    assert_eq!(px(&img, 40, 10), BLUE);
+    assert_eq!(px(&img, 40, 60), BLUE);
+}
+
+#[test]
+fn a_drop_shadow_layer_keeps_its_contents_anti_aliased_edges() {
+    // The shadow's layer reaches two device pixels past the content: clipped at the circle's
+    // stroke it lightened every anti-aliased pixel of its edge (by up to 55 levels).
+    let shadowed = render(
+        r##"<svg width="200" height="200"><circle cx="40.3" cy="40.3" r="20" stroke="black" stroke-width="4"
+            filter="drop-shadow(100px 100px 0 red)"/></svg>"##,
+    );
+    let plain = render(
+        r##"<svg width="200" height="200"><circle cx="40.3" cy="40.3" r="20" stroke="black" stroke-width="4"/></svg>"##,
+    );
+    assert!(max_difference(&shadowed, &plain, (0, 0, 100, 100)) <= 1);
+}
+
+#[test]
+fn a_boxs_mask_of_one_opaque_shape_has_that_shapes_coverage() {
+    // A box's `mask-image: url(#m)` of a circle is drawn as the circle rather than rasterized at
+    // twice the resolution: a reference drawing the circle has the same edge (WPT
+    // mask-image-3a..e were 52 levels apart).
+    let masked = render(
+        r##"<svg height="0" style="position: absolute"><mask id="m"><circle cx="50" cy="50" r="25" fill="white"/></mask></svg>
+        <div style="width: 100px; height: 100px; background: #800080; mask-image: url(#m)"></div>"##,
+    );
+    let drawn = render(r##"<svg width="200" height="200"><circle cx="50" cy="50" r="25" fill="#800080"/></svg>"##);
+    assert!(max_difference(&masked, &drawn, (0, 0, 100, 100)) <= 1);
+}
+
+#[test]
+fn references_to_the_wrong_kind_of_element_are_ignored() {
+    // A clip path or mask naming a gradient is no clip path or mask (usvg left the element out).
+    let img = render(
+        r##"<svg width="200" height="100"><linearGradient id="g"/>
+            <rect width="40" height="40" fill="#0000ff" clip-path="url(#g)"/>
+            <rect x="50" width="40" height="40" fill="#0000ff" mask="url(#g)"/></svg>"##,
+    );
+    assert_eq!(px(&img, 20, 20), BLUE);
+    assert_eq!(px(&img, 70, 20), BLUE);
+}
+
+#[test]
+fn a_transform_attribute_that_is_no_transform_list_is_ignored() {
+    // `rotate(90,)`, which usvg read as `rotate(90)` (WPT svg-external-styles-014).
+    let img = render(
+        r##"<svg width="200" height="100"><rect x="10" y="10" width="20" height="20" fill="#0000ff"
+            transform="rotate(90,)"/></svg>"##,
+    );
+    assert_eq!(px(&img, 20, 20), BLUE);
+}
+
+#[test]
+fn svg_text_draws_its_text_shadow() {
+    let img = render(
+        r##"<svg width="200" height="100" style="font: bold 48px sans-serif; text-shadow: #0000ff 0 30px">
+            <text x="10" y="45">HH</text></svg>"##,
+    );
+    let blue = img.data.chunks_exact(4).filter(|p| p[..3] == BLUE).count();
+    assert!(blue > 50, "the shadow is drawn: {blue} blue pixels");
+}
+
+#[test]
+fn a_css_mask_gradient_masks_an_svg_element() {
+    let img = render(
+        r##"<svg width="200" height="100"><rect width="100" height="100" fill="#0000ff"
+            style="mask-image: linear-gradient(black 50%, transparent 50%)"/></svg>"##,
+    );
+    assert_eq!(px(&img, 50, 25), BLUE);
+    assert_eq!(px(&img, 50, 75), WHITE);
+}
+
+#[test]
+fn a_css_mask_svg_image_is_tiled_over_an_svg_element() {
+    // The image (loaded after the `<svg>` was first built) repeats every 20 px; its opaque
+    // quarter shows the rect.
+    let img = render(
+        r##"<svg width="200" height="100"><rect width="60" height="60" fill="#0000ff"
+            style="mask-image: url(m.svg)"/></svg>"##,
+    );
+    assert_eq!(px(&img, 5, 5), BLUE);
+    assert_eq!(px(&img, 15, 15), WHITE);
+    assert_eq!(px(&img, 25, 25), BLUE, "the next tile");
+    assert_eq!(px(&img, 45, 5), BLUE);
+}
+
+#[test]
+fn css_mask_layers_on_an_svg_element_composite() {
+    // `intersect`: the left half and the top half leave the top-left quarter.
+    let img = render(
+        r##"<svg width="200" height="100"><rect width="100" height="100" fill="#0000ff"
+            style="mask-image: linear-gradient(to right, black 50%, transparent 50%), linear-gradient(black 50%, transparent 50%);
+                   mask-composite: intersect"/></svg>"##,
+    );
+    assert_eq!(px(&img, 25, 25), BLUE);
+    assert_eq!(px(&img, 75, 25), WHITE);
+    assert_eq!(px(&img, 25, 75), WHITE);
+}
+
+#[test]
+fn plus_lighter_adds_svg_colours() {
+    let img = render(
+        r##"<style>rect { mix-blend-mode: plus-lighter }</style>
+        <svg width="200" height="100"><g style="isolation: isolate">
+            <rect width="60" height="60" fill="#ff0000"/><rect x="30" width="60" height="60" fill="#00ff00"/></g></svg>"##,
+    );
+    assert_eq!(px(&img, 45, 30), [255, 255, 0]);
+}
+
+#[test]
+fn an_svg_images_blend_modes_stay_inside_the_image() {
+    // The image is an isolated group: its `difference` blends with nothing under it, not with
+    // the white page (which made it magenta).
+    let img = render(r##"<img src="blend.svg">"##);
+    assert_eq!(px(&img, 25, 25), [0, 255, 0]);
+}
+
+#[test]
+fn zoom_scales_inline_svg_content() {
+    let img =
+        render(r##"<svg width="50" height="50" style="zoom: 2"><rect width="10" height="10" fill="#0000ff"/></svg>"##);
+    assert_eq!(px(&img, 15, 15), BLUE);
+    assert_eq!(px(&img, 25, 25), WHITE);
+}
+
+#[test]
+fn the_roots_perspective_flattens_a_childs_depth() {
+    // translateZ(-200px) under a 200px perspective about (100, 100): half the size (WPT
+    // perspective-svg-child-001).
+    let img = render(
+        r##"<svg width="200" height="200" style="perspective: 200px"><rect x="40" y="40" width="120" height="120"
+            fill="#008000" style="transform: translateZ(-200px)"/></svg>"##,
+    );
+    assert_eq!(px(&img, 75, 75), GREEN);
+    assert_eq!(px(&img, 50, 50), WHITE);
+}
+
+#[test]
+fn a_shape_in_an_unreferenced_mask_gets_its_box() {
+    // The `<mask>` is referenced from a box only; its rect's `circle()` clip needs the rect's
+    // box, which usvg's tree of the `<svg>` alone did not have (WPT mask-image-3h).
+    let img = render(
+        r##"<svg height="0" style="position: absolute"><mask id="m" x="0" y="0" width="1" height="1">
+            <rect width="50" height="50" fill="white" clip-path="circle(50% at 50% 50%)"/></mask></svg>
+        <div style="width: 100px; height: 100px; background: blue; mask-image: url(#m)"></div>"##,
+    );
+    assert_eq!(px(&img, 25, 25), BLUE);
+    assert_eq!(px(&img, 2, 2), WHITE);
+}
