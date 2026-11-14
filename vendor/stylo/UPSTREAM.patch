@@ -104,6 +104,14 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-user-modify",
      "-webkit-margin-before",
      "-webkit-margin-after",
+@@ -86,7 +84,6 @@
+     "-webkit-mask-repeat-y",
+     "user-zoom",
+     "min-zoom",
+-    "-webkit-box-decoration-break",
+     "orientation",
+     "max-zoom",
+     "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
 +++ b/properties/data.py	2026-11-11 20:10:18
@@ -168,7 +176,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +489,26 @@
+@@ -491,11 +489,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -182,20 +190,22 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -2117,7 +2132,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -220,6 +230,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
+@@ -3694,6 +3708,7 @@
+ [box-decoration-break]
+ struct = "border"
+ spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
++extra_prefixes = ["webkit"]
+ animation_type = "discrete"
+ affects = "layout"
+ type = "BoxDecorationBreak"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-14 13:56:06
