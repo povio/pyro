@@ -533,6 +533,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     TextPaintOptions {
                         scale: self.scale,
                         brush_override: Some(Color::BLACK),
+                        // A `background-clip: text` mask is the glyphs alone.
+                        shadows: false,
                     },
                     node.id,
                     None,
@@ -1562,6 +1564,7 @@ impl ElementCx<'_, '_> {
             let options = TextPaintOptions {
                 scale: self.scale,
                 brush_override: None,
+                shadows: true,
             };
             match text_layout.ellipsis.as_deref() {
                 None => crate::text::stroke_text(
@@ -1729,6 +1732,7 @@ impl ElementCx<'_, '_> {
                 TextPaintOptions {
                     scale: self.scale,
                     brush_override: None,
+                    shadows: true,
                 },
                 self.node.id,
                 Some(&text_layout.text),
@@ -1815,6 +1819,7 @@ impl ElementCx<'_, '_> {
                         TextPaintOptions {
                             scale: self.scale,
                             brush_override: Some(placeholder.color.as_srgb_color()),
+                            shadows: true,
                         },
                         self.node.id,
                         Some(&placeholder.text),
@@ -1864,6 +1869,7 @@ impl ElementCx<'_, '_> {
                 TextPaintOptions {
                     scale: self.scale,
                     brush_override: None,
+                    shadows: true,
                 },
                 self.node.id,
                 None,
@@ -1937,6 +1943,7 @@ impl ElementCx<'_, '_> {
                 TextPaintOptions {
                     scale: self.scale,
                     brush_override: None,
+                    shadows: true,
                 },
                 self.node.id,
                 None,

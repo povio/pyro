@@ -157,6 +157,14 @@ from the root of an upstream checkout at that commit) is the whole diff.
     Chromium takes drop-shadow's third length as the blur's standard deviation (measured), where `text-shadow` and
     `box-shadow` take half of it. anyrender_vello_cpu applies `blur()` and `drop-shadow()` (see its README).
     Covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
+  - `src/text.rs` (`TextShadow`, `draw_shadows`, `stroke_text`, `flush_line_decorations`): `text-shadow`. Each glyph
+    run draws its shadows, the last first, right before its glyphs (Chromium paints a text fragment's shadows right
+    before it): the glyphs in the shadow's colour moved by its offset (the text's own colour does not matter:
+    transparent text casts one), and a shadow with a blur radius inside a layer with a `blur()` of half the radius
+    (Chromium's `BlurRadiusToStdDev`). A line's decorations cast the shadows of the first run they cover, each line
+    right after its shadows. Not drawn in a `background-clip: text` mask, in a recording paint (the PDF matches each
+    glyph run to the text run recorded for it by its glyphs, which a shadow has too), nor in vertical writing modes
+    (a shadow's offset is physical, and the lines are turned). Covered by `crates/pyro-render/tests/text_shadow.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

@@ -1,10 +1,12 @@
 use anyrender::PaintScene;
+use anyrender::filters::{Filter, FilterEffect};
 use blitz_dom::CopyStyleGetters;
 use blitz_dom::{BaseDocument, NodeId, node::TextBrush, util::ToColorColor};
-use kurbo::{Affine, BezPath, Cap, Circle, Rect, Stroke};
+use kurbo::{Affine, BezPath, Cap, Circle, Rect, Stroke, Vec2};
 use parley::{Affinity, Cursor, Layout, Line, PositionedLayoutItem, Selection};
-use peniko::Fill;
+use peniko::{Fill, Mix};
 use std::collections::HashMap;
+use std::sync::Arc;
 use style::properties::generated::longhands::text_decoration_style::computed_value::T as TextDecorationStyle;
 use style::values::computed::{
     Length, LengthPercentage, TextDecorationLength, TextDecorationLine, TextUnderlinePosition,
@@ -272,6 +274,58 @@ struct DecorationStackEntry {
     fill_color: Color,
     /// The decoration this node introduces as a decorating box, if any.
     decoration: Option<ResolvedDecoration>,
+    /// pyro: this node's (inherited) `text-shadow`, for runs whose innermost node is this one.
+    shadows: Vec<TextShadow>,
+}
+
+/// pyro: one `text-shadow`, resolved: its colour (`currentColor` is the text's `color`) and its
+/// offset and blur radius in CSS px.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TextShadow {
+    color: Color,
+    x: f64,
+    y: f64,
+    blur: f64,
+}
+
+/// pyro: draws `shadows` of what `draw` draws (with the colour and transform it is given), the
+/// last first so that the first is on top, each moved by its offset and in its colour, from the
+/// shapes alone (Chromium's text shadow ignores the text's own alpha: transparent text casts
+/// one). A shadow with a blur radius is drawn in a layer that blurs it by a Gaussian of half the
+/// radius (Chromium's `BlurRadiusToStdDev`), clipped to `ink` (where `draw` paints, in the space
+/// of `transform`) moved and grown by the blur's reach.
+fn draw_shadows<S: PaintScene>(
+    scene: &mut S,
+    shadows: &[TextShadow],
+    scale: f64,
+    transform: Affine,
+    ink: Rect,
+    mut draw: impl FnMut(&mut S, Color, Affine),
+) {
+    for shadow in shadows.iter().rev() {
+        if shadow.color.components[3] <= 0.0 {
+            continue;
+        }
+        let offset = Vec2::new(shadow.x * scale, shadow.y * scale);
+        let moved = transform * Affine::translate(offset);
+        let sigma = shadow.blur * scale / 2.0;
+        if sigma > 0.0 {
+            let reach = (3.0 * sigma).ceil() + 1.0;
+            let mut clip = (ink + offset).inflate(reach, reach);
+            // On whole device pixels where the text is only moved (the backend then needs no
+            // layer of its own for it).
+            let [a, b, c, d, e, f] = transform.as_coeffs();
+            if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) {
+                clip = (clip + Vec2::new(e, f)).expand() - Vec2::new(e, f);
+            }
+            let blur = Filter::single(FilterEffect::blur(sigma as f32));
+            scene.push_layer(Fill::NonZero, Mix::Normal, 1.0, transform, &clip, Some(Arc::new(blur)), None);
+            draw(scene, shadow.color, moved);
+            scene.pop_layer();
+        } else {
+            draw(scene, shadow.color, moved);
+        }
+    }
 }
 
 /// pyro: the colour a node's text is filled with.
@@ -286,6 +340,7 @@ fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationSt
             node_id,
             fill_color: Color::BLACK,
             decoration: None,
+            shadows: Vec::new(),
         };
     };
 
@@ -329,10 +384,23 @@ fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationSt
         }
     });
 
+    let shadows = itext
+        .text_shadow
+        .0
+        .iter()
+        .map(|shadow| TextShadow {
+            color: shadow.color.resolve_to_absolute(&itext.color).as_srgb_color(),
+            x: f64::from(shadow.horizontal.px()),
+            y: f64::from(shadow.vertical.px()),
+            blur: f64::from(shadow.blur.px()),
+        })
+        .collect();
+
     DecorationStackEntry {
         node_id,
         fill_color,
         decoration,
+        shadows,
     }
 }
 
@@ -363,6 +431,9 @@ struct DecorationRunGeometry {
 struct LineDecoration {
     node_id: NodeId,
     deco: ResolvedDecoration,
+    /// pyro: the `text-shadow` of the first run the box covers on the line (Chromium draws a
+    /// decoration with the shadows of the text it decorates).
+    shadows: Vec<TextShadow>,
     min_x: f64,
     max_x: f64,
     /// Geometry from a run whose innermost node is the decorating box itself.
@@ -596,11 +667,14 @@ fn draw_decoration_line(
 pub(crate) struct TextPaintOptions {
     pub scale: f64,
     pub brush_override: Option<Color>,
+    /// pyro: draw `text-shadow` (not in a `background-clip: text` mask, nor in a recording
+    /// paint: the PDF matches each glyph run drawn to the text run recorded for it).
+    pub shadows: bool,
 }
 
 /// Paint the decorations accumulated for one line, one line per decorating box.
-fn flush_line_decorations(
-    scene: &mut impl PaintScene,
+fn flush_line_decorations<S: PaintScene>(
+    scene: &mut S,
     transform: Affine,
     options: TextPaintOptions,
     deco_boxes: &[LineDecoration],
@@ -611,6 +685,7 @@ fn flush_line_decorations(
     let TextPaintOptions {
         scale,
         brush_override,
+        shadows: paint_shadows,
     } = options;
     // Draw innermost boxes first so ancestors' decorations paint on top, matching the
     // per-run drawing order this replaced (`stack.iter().rev()`).
@@ -653,6 +728,46 @@ fn flush_line_decorations(
             }
             GenericTextDecorationInset::Auto => (0.0, 0.0),
         };
+        let shadows: &[TextShadow] = if paint_shadows { &acc.shadows } else { &[] };
+        // pyro: a decoration line with its text shadows under it. `offset` and `size` place the
+        // line as `draw_decoration_line` does; a wavy or double line reaches a few sizes further.
+        let draw_line = |scene: &mut S, offset: f32, size: f32, double_dir: f64| {
+            let y = f64::from(geom.baseline - offset + size / 2.0);
+            let reach = f64::from(size) * 4.0 + scale;
+            let ink = Rect::new(acc.min_x - reach, y - reach, acc.max_x + reach, y + reach);
+            draw_shadows(scene, shadows, scale, transform, ink, |scene, color, transform| {
+                draw_decoration_line(
+                    scene,
+                    transform,
+                    scale,
+                    acc.min_x,
+                    width,
+                    geom.baseline,
+                    offset,
+                    size,
+                    &anyrender::Paint::from(color),
+                    double_dir,
+                    deco.style,
+                    inset_start,
+                    inset_end,
+                )
+            });
+            draw_decoration_line(
+                scene,
+                transform,
+                scale,
+                acc.min_x,
+                width,
+                geom.baseline,
+                offset,
+                size,
+                &brush,
+                double_dir,
+                deco.style,
+                inset_start,
+                inset_end,
+            );
+        };
 
         if deco.line.contains(TextDecorationLine::UNDERLINE) {
             let size = decoration_size(
@@ -687,21 +802,7 @@ fn flush_line_decorations(
             let offset = base_offset - extra_underline_offset as f32;
 
             // A `double` underline extends downward, away from the text.
-            draw_decoration_line(
-                scene,
-                transform,
-                scale,
-                acc.min_x,
-                width,
-                geom.baseline,
-                offset,
-                size,
-                &brush,
-                1.0,
-                deco.style,
-                inset_start,
-                inset_end,
-            );
+            draw_line(scene, offset, size, 1.0);
         }
         if deco.line.contains(TextDecorationLine::OVERLINE) {
             // Fonts don't provide a dedicated overline metric, so reuse the underline
@@ -723,21 +824,7 @@ fn flush_line_decorations(
             let offset = ascent + size;
 
             // A `double` overline extends upward, away from the text.
-            draw_decoration_line(
-                scene,
-                transform,
-                scale,
-                acc.min_x,
-                width,
-                geom.baseline,
-                offset,
-                size,
-                &brush,
-                -1.0,
-                deco.style,
-                inset_start,
-                inset_end,
-            );
+            draw_line(scene, offset, size, -1.0);
         }
         if deco.line.contains(TextDecorationLine::LINE_THROUGH) {
             let size = decoration_size(
@@ -755,21 +842,7 @@ fn flush_line_decorations(
                 win_ascent(win_ascent_ratios, &geom.font, geom.font_size).unwrap_or(geom.ascent);
             let offset = ascent / 3.0 + size / 2.0;
 
-            draw_decoration_line(
-                scene,
-                transform,
-                scale,
-                acc.min_x,
-                width,
-                geom.baseline,
-                offset,
-                size,
-                &brush,
-                1.0,
-                deco.style,
-                inset_start,
-                inset_end,
-            );
+            draw_line(scene, offset, size, 1.0);
         }
     }
 }
@@ -783,8 +856,8 @@ fn shifted(transform: Affine, shift: f64) -> Affine {
     }
 }
 
-pub(crate) fn stroke_text<'a>(
-    scene: &mut impl PaintScene,
+pub(crate) fn stroke_text<'a, S: PaintScene>(
+    scene: &mut S,
     lines: impl Iterator<Item = Line<'a, TextBrush>>,
     doc: &BaseDocument,
     transform: Affine,
@@ -797,7 +870,12 @@ pub(crate) fn stroke_text<'a>(
     let TextPaintOptions {
         scale,
         brush_override,
+        shadows: paint_shadows,
     } = options;
+    // pyro: text shadows are drawn in screenshots only (see `TextPaintOptions::shadows`), and not
+    // in vertical writing modes, whose lines are turned (a shadow's offset is physical).
+    let paint_shadows = paint_shadows && context.runs.is_none() && vertical.is_none();
+    let options = TextPaintOptions { shadows: paint_shadows, ..options };
     let DrawTextContext {
         stack,
         path_scratch,
@@ -916,12 +994,22 @@ pub(crate) fn stroke_text<'a>(
                 // Zero-size text is invisible, but hinting can give its glyphs ink. Fully
                 // transparent text is skipped too: backends draw color (emoji) glyphs opaque.
                 // pyro: a recording paint (the PDF's) keeps it, as invisible text.
-                if font_size > 0.0 && (fill_color.components[3] > 0.0 || runs.is_some()) && !kept.is_empty() {
-                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
-                    // next recorded one, so a run recorded but not drawn would stop the matching.
-                    if let Some(runs) = runs.as_mut() {
-                        runs.push(crate::TextRun::new(&glyph_run, source, unshifted, kept.clone(), kept_extent));
-                    }
+                let glyphs = || {
+                    glyph_run
+                        .positioned_glyphs()
+                        .skip(kept.start)
+                        .take(kept.len())
+                        .map(|glyph| anyrender::Glyph {
+                            id: glyph.id as _,
+                            x: if quarter_x {
+                                (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
+                            } else {
+                                glyph.x
+                            },
+                            y: glyph.y,
+                        })
+                };
+                let draw = |scene: &mut S, color: Color, transform: Affine| {
                     scene.draw_glyphs(
                         font,
                         font_size,
@@ -929,24 +1017,38 @@ pub(crate) fn stroke_text<'a>(
                         normalized_coords,
                         embolden,
                         Fill::NonZero,
-                        &anyrender::Paint::from(fill_color),
+                        &anyrender::Paint::from(color),
                         1.0, // alpha
                         transform,
                         glyph_xform,
-                        glyph_run
-                            .positioned_glyphs()
-                            .skip(kept.start)
-                            .take(kept.len())
-                            .map(|glyph| anyrender::Glyph {
-                                id: glyph.id as _,
-                                x: if quarter_x {
-                                    (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
-                                } else {
-                                    glyph.x
-                                },
-                                y: glyph.y,
-                            }),
+                        glyphs(),
+                    )
+                };
+                let shadows: &[TextShadow] = match stack.last() {
+                    Some(entry) if paint_shadows => &entry.shadows,
+                    _ => &[],
+                };
+                // pyro: the run's text shadows, under its glyphs (Chromium paints each text
+                // fragment's shadows right before its text).
+                if font_size > 0.0 && !kept.is_empty() && !shadows.is_empty() {
+                    let run_extent = (glyph_run.offset(), glyph_run.offset() + glyph_run.advance());
+                    let (x0, x1) = kept_extent.unwrap_or(run_extent);
+                    let (baseline, em) = (f64::from(glyph_run.baseline()), f64::from(font_size));
+                    let ink = Rect::new(
+                        f64::from(x0) - em,
+                        baseline - f64::from(metrics.ascent) - em * 0.5,
+                        f64::from(x1) + em,
+                        baseline + f64::from(metrics.descent) + em * 0.5,
                     );
+                    draw_shadows(scene, shadows, scale, transform, ink, draw);
+                }
+                if font_size > 0.0 && (fill_color.components[3] > 0.0 || runs.is_some()) && !kept.is_empty() {
+                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
+                    // next recorded one, so a run recorded but not drawn would stop the matching.
+                    if let Some(runs) = runs.as_mut() {
+                        runs.push(crate::TextRun::new(&glyph_run, source, unshifted, kept.clone(), kept_extent));
+                    }
+                    draw(scene, fill_color, transform);
                 }
 
                 // Accumulate this run's contribution to each decorating box on its ancestor
@@ -979,6 +1081,7 @@ pub(crate) fn stroke_text<'a>(
                             deco_boxes.push(LineDecoration {
                                 node_id: entry.node_id,
                                 deco: entry.decoration.clone().unwrap(),
+                                shadows: shadows.to_vec(),
                                 min_x: f64::INFINITY,
                                 max_x: f64::NEG_INFINITY,
                                 own: None,
