@@ -408,7 +408,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let color = style
             .slow_clone_background_color()
             .resolve_to_absolute(&style.clone_color());
-        let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
+        let backdrop_filter =
+            convert_filters(&effects.backdrop_filter.0, self.scale, &style.clone_color()).map(Arc::new);
         let visible_color = color.alpha > 0.0 && self.backgrounds;
         if opacity <= 0.0 || (!visible_color && backdrop_filter.is_none()) {
             return;
@@ -758,8 +759,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // group is recorded first, and its layer covers what it painted (its ink, plus what the
         // filter reaches), where the layer was the border box (descendants and the outline outside
         // it were cut off, the shadow was drawn at full strength outside the layer).
-        let filter = convert_filters(&effects.filter.0).map(Arc::new);
-        let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
+        let current_color = styles.clone_color();
+        let filter = convert_filters(&effects.filter.0, self.scale, &current_color).map(Arc::new);
+        let backdrop_filter =
+            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color).map(Arc::new);
         let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some();
         let element = ElementPaint {
             node,

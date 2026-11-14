@@ -152,6 +152,11 @@ from the root of an upstream checkout at that commit) is the whole diff.
     (a spotlight ring) takes the opacity into its colour and gets no layer (`fold_opacity`), as Skia folds a
     layer's alpha into its single draw. The outline has no layer of its own any more. Covered by
     `crates/pyro-render/tests/opacity_group.rs`.
+  - `src/filters.rs`, `src/render.rs`: filter lengths are converted to device pixels (the layers are drawn without
+    the device scale in their transform), and a `drop-shadow()` without a colour has the element's `color`.
+    Chromium takes drop-shadow's third length as the blur's standard deviation (measured), where `text-shadow` and
+    `box-shadow` take half of it. anyrender_vello_cpu applies `blur()` and `drop-shadow()` (see its README).
+    Covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

@@ -182,6 +182,68 @@ diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/sr
          let taffy::Point { x, y } = node.final_layout().location;
          abs_x += x;
          abs_y += y;
+diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filters.rs
+--- a/packages/blitz-paint/src/filters.rs
++++ b/packages/blitz-paint/src/filters.rs
+@@ -4,19 +4,30 @@
+ 
+ use anyrender::filters::{Filter, FilterEffect};
+ 
+-pub(crate) fn convert_filters(filters: &[StyloFilter]) -> Option<Filter> {
++/// pyro: the filter in device pixels: lengths are CSS px, and the layers the filter is applied
++/// to are drawn in device pixels (`scale` of them per CSS px) without a scale in their transform.
++/// `current_color` is the element's `color`, which a `drop-shadow()` without one has.
++pub(crate) fn convert_filters(
++    filters: &[StyloFilter],
++    scale: f64,
++    current_color: &AbsoluteColor,
++) -> Option<Filter> {
+     if filters.is_empty() {
+         return None;
+     }
+ 
+-    Some(Filter::linear_list(
+-        filters.iter().filter_map(convert_single_filter),
+-    ))
++    Some(Filter::linear_list(filters.iter().filter_map(|filter| {
++        convert_single_filter(filter, scale as f32, current_color)
++    })))
+ }
+ 
+-pub(crate) fn convert_single_filter(filter: &StyloFilter) -> Option<FilterEffect> {
++pub(crate) fn convert_single_filter(
++    filter: &StyloFilter,
++    scale: f32,
++    current_color: &AbsoluteColor,
++) -> Option<FilterEffect> {
+     Some(match filter {
+-        StyloFilter::Blur(radius) => FilterEffect::blur(radius.px()),
++        StyloFilter::Blur(radius) => FilterEffect::blur(radius.px() * scale),
+         StyloFilter::Brightness(amount) => FilterEffect::brightness(amount.0),
+         StyloFilter::Contrast(amount) => FilterEffect::contrast(amount.0),
+         StyloFilter::Grayscale(amount) => FilterEffect::grayscale(amount.0),
+@@ -25,14 +36,16 @@
+         StyloFilter::Opacity(amount) => FilterEffect::opacity(amount.0),
+         StyloFilter::Saturate(amount) => FilterEffect::saturate(amount.0),
+         StyloFilter::Sepia(amount) => FilterEffect::sepia(amount.0),
++        // pyro: Chromium takes the third length as the blur's standard deviation (measured: the
++        // edge of `drop-shadow(0 0 20px)` falls off as a Gaussian of 20px), where `text-shadow`
++        // and `box-shadow` take half of it.
+         StyloFilter::DropShadow(shadow) => FilterEffect::drop_shadow(
+-            shadow.horizontal.px(),
+-            shadow.vertical.px(),
+-            shadow.blur.px(),
+-            // TODO: pass in correct currentColor
++            shadow.horizontal.px() * scale,
++            shadow.vertical.px() * scale,
++            shadow.blur.px() * scale,
+             shadow
+                 .color
+-                .resolve_to_absolute(&AbsoluteColor::BLACK)
++                .resolve_to_absolute(current_color)
+                 .as_color_color(),
+         ),
+         StyloFilter::Url(_) => return None,
 diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-paint/src/kurbo_css/css_box.rs
 --- a/packages/blitz-paint/src/kurbo_css/css_box.rs
 +++ b/packages/blitz-paint/src/kurbo_css/css_box.rs
@@ -544,10 +606,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -288,6 +312,136 @@
-         }
-     }
- 
+@@ -284,8 +308,139 @@
+                     self.initial_x,
+                     self.initial_y,
+                 );
++            }
++        }
++    }
++
 +    /// pyro: paints the top layer above the document, bottom
 +    /// first: each element's `::backdrop` (a viewport-sized box: its
 +    /// background color, `opacity` and `backdrop-filter`), then the element
@@ -618,9 +684,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    Some(_) => {}
 +                    None => return false,
 +                }
-+            }
+             }
 +            cur = node.parent.and_then(|p| self.dom.get_node(p));
-+        }
+         }
 +        true
 +    }
 +
@@ -644,7 +710,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let color = style
 +            .slow_clone_background_color()
 +            .resolve_to_absolute(&style.clone_color());
-+        let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
++        let backdrop_filter =
++            convert_filters(&effects.backdrop_filter.0, self.scale, &style.clone_color()).map(Arc::new);
 +        let visible_color = color.alpha > 0.0 && self.backgrounds;
 +        if opacity <= 0.0 || (!visible_color && backdrop_filter.is_none()) {
 +            return;
@@ -676,12 +743,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            },
 +        );
-+    }
-+
+     }
+ 
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
-         let location = node.final_layout().location;
-         parent
-@@ -317,8 +471,10 @@
+@@ -317,8 +472,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
                  || contain_paint
@@ -694,7 +759,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -378,7 +534,9 @@
+@@ -378,7 +535,9 @@
                          brush_override: Some(Color::BLACK),
                      },
                      node.id,
@@ -704,7 +769,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  );
              }
          }
-@@ -419,6 +577,15 @@
+@@ -419,6 +578,15 @@
              return;
          }
  
@@ -720,7 +785,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -585,12 +752,25 @@
+@@ -585,12 +753,27 @@
  
          let paints_own_box = !node.is_inline_with_only_block_children();
  
@@ -734,8 +799,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // group is recorded first, and its layer covers what it painted (its ink, plus what the
 +        // filter reaches), where the layer was the border box (descendants and the outline outside
 +        // it were cut off, the shadow was drawn at full strength outside the layer).
-+        let filter = convert_filters(&effects.filter.0).map(Arc::new);
-+        let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
++        let current_color = styles.clone_color();
++        let filter = convert_filters(&effects.filter.0, self.scale, &current_color).map(Arc::new);
++        let backdrop_filter =
++            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color).map(Arc::new);
 +        let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some();
 +        let element = ElementPaint {
 +            node,
@@ -751,7 +818,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          self.layer_manager.maybe_with_layer(
              scene,
              has_clip_path,
-@@ -608,99 +788,24 @@
+@@ -608,99 +791,24 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -869,12 +936,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
                  // Apply the CSS `mask` (if any) to the content drawn above
                  cx.transform = unscrolled_transform;
-@@ -712,6 +817,151 @@
-             .maybe_pop_layer(scene, blend_layer_pushed);
-         self.layer_manager
+@@ -714,6 +822,151 @@
              .maybe_pop_layer(scene, css_clip_layer_pushed);
-+    }
-+
+     }
+ 
 +    /// Paints an element and its descendants, in Chromium's order: outset box-shadow,
 +    /// background, inset box-shadow, border, the content clipped to the padding box (when the
 +    /// element clips), scrollbars, outline. Leaves `cx.transform` as it found it.
@@ -1018,10 +1083,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        );
 +        scene.append_scene(group, Affine::IDENTITY);
 +        self.layer_manager.maybe_pop_layer(scene, pushed);
-     }
- 
++    }
++
      fn render_node(
-@@ -724,9 +974,11 @@
+         &self,
+         scene: &mut impl PaintScene,
+@@ -724,9 +977,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
          match &node.data {
@@ -1035,7 +1102,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -837,6 +1089,45 @@
+@@ -837,6 +1092,45 @@
  }
  
  /// Converts parley BoundingBox into peniko Rect
@@ -1081,10 +1148,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,6 +1258,257 @@
-         }
-     }
- 
+@@ -963,8 +1257,259 @@
+                     None,
+                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
+                 );
++            }
++        }
++    }
++
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -1172,7 +1243,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    break;
 +                }
 +                style_index = layout.style_parent(style_index);
-+            }
+             }
 +        };
 +
 +        let mut fragments: Vec<Fragment> = Vec::new();
@@ -1243,7 +1314,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    }
 +                }
 +            }
-+        }
+         }
 +        if fragments.is_empty() {
 +            return;
 +        }
@@ -1334,12 +1405,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
 +        }
-+    }
-+
+     }
+ 
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
-         if self.node.flags.is_inline_root() {
-             let text_layout = self.element
-@@ -976,6 +1518,11 @@
+@@ -976,6 +1521,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -1351,7 +1420,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +1531,22 @@
+@@ -984,23 +1534,22 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -1383,7 +1452,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,17 +1554,183 @@
+@@ -1008,17 +1557,183 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1569,7 +1638,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,9 +1742,15 @@
+@@ -1030,9 +1745,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -1587,7 +1656,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,6 +1765,62 @@
+@@ -1047,7 +1768,63 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -1602,7 +1671,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
 +                None => (transform, tops),
 +            };
-+
+ 
 +            // pyro: an empty input shows its placeholder, its lines placed as the
 +            // value's (a single line centred in the content box), under the caret.
 +            if let Some(placeholder) = input_data.shown_placeholder() {
@@ -1647,10 +1716,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +                draw_text_context.line_tops = None;
 +            }
- 
++
              if self.node.is_focussed() {
                  // Render selection/caret
-@@ -1078,6 +1852,7 @@
+                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
+@@ -1078,6 +1855,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1658,7 +1728,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1088,8 +1863,11 @@
+@@ -1088,8 +1866,11 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -1670,7 +1740,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1114,14 +1892,25 @@
+@@ -1114,14 +1895,25 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -1699,7 +1769,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1147,11 +1936,90 @@
+@@ -1147,9 +1939,88 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -1707,9 +1777,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  &mut draw_text_context,
 +                None,
              );
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -1753,7 +1823,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let Some(child) = child else { break };
 +            top += child.final_layout().location.y;
 +            node = child;
-+        }
+         }
 +        // The baseline from the item's content box top, in CSS px.
 +        let baseline = match &first_line {
 +            Some((node, text, line)) => {
@@ -1785,12 +1855,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
 +        }
-+    }
-+
+     }
+ 
      fn draw_children(
-         &self,
-         scene: &mut impl PaintScene,
-@@ -1232,6 +2100,9 @@
+@@ -1232,6 +2103,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -1800,7 +1868,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1465,4 +2336,28 @@
+@@ -1465,4 +2339,28 @@
      };
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
