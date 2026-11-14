@@ -247,6 +247,20 @@ fn the_positioned_boxes_of_a_filtered_inline_paint_above_later_blocks() {
     }
 }
 
+/// A fixed box whose containing block is a `backdrop-filter` box (a containing block that is no
+/// stacking context in Blitz) is lifted into the root element's paint list and placed by its
+/// offset there, not against the viewport (WPT `backdrop-filter-containing-block`).
+#[test]
+fn a_fixed_box_lifted_from_its_containing_block_keeps_its_place() {
+    let img = render(
+        "<div style='height:50px'></div><div style='width:200px;backdrop-filter:invert(1)'>\
+         <div style='position:fixed;top:0;left:0;width:100px;height:100px;background:green'></div></div>",
+        1.0,
+    );
+    assert_eq!(pixel(&img, 1.0, 50.0, 100.0), GREEN);
+    assert_eq!(pixel(&img, 1.0, 50.0, 25.0), WHITE);
+}
+
 /// Only an element's children in the DOM take its perspective: an absolutely positioned
 /// grandchild it contains does not (WPT `perspective-children-only-abspos`).
 #[test]

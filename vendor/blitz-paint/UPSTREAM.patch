@@ -1331,17 +1331,17 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
  
          // The root clip rectangle is the viewport (in screen coordinates, with the
-@@ -255,6 +263,10 @@
+@@ -254,6 +262,10 @@
+             }),
              viewport_clip_rect,
          );
- 
++
 +        if !self.top_layer.is_empty() {
 +            self.paint_top_layer(scene, root_id, viewport_scroll, viewport_clip_rect);
 +        }
-+
+ 
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
-             if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
 @@ -285,7 +297,150 @@
                      self.initial_y,
                  );
@@ -1553,22 +1553,22 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -432,6 +618,15 @@
+@@ -435,6 +621,15 @@
+             return;
+         }
  
-         // Hide elements with a visibility style other than visible
-         if styles.get_inherited_box().visibility != StyloVisibility::Visible {
-+            return;
-+        }
-+
 +        // pyro: a 3D transform hides the element and its content: its back face shows with
 +        // `backface-visibility: hidden`, or it lies behind the viewer (`Node::set_transform`).
 +        if node
 +            .flags
 +            .contains(blitz_dom::node::NodeFlags::TRANSFORM_HIDES)
 +        {
-             return;
-         }
- 
++            return;
++        }
++
+         let effects = styles.get_effects();
+         let opacity = effects.opacity;
+         if opacity == 0.0 {
 @@ -482,10 +677,16 @@
          // Cull elements that fall entirely outside the current clip rectangle. In addition to
          // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
@@ -1654,36 +1654,26 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              None,
              None,
          );
--
--        let paints_own_box = !node.is_inline_with_only_block_children();
--
++        // pyro: a backdrop root none of the element's layers marks (`layers::backdrop_root`).
++        let backdrop_root_pushed = self.layer_manager.maybe_push_layer(
++            scene,
++            self.backdrop_ancestors.contains(&node_id)
++                && (crate::layers::backdrop_root(has_clip_path, cx.has_css_mask(), &styles.get_box().will_change)
++                    || self.dom.animates_backdrop_root(node_id)),
++            BlendMode::default(),
++            1.0,
++            Affine::IDENTITY,
++            &viewport,
++            Some(crate::layers::backdrop_root_marker()),
++            None,
++        );
+ 
+         let paints_own_box = !node.is_inline_with_only_block_children();
+ 
 -        cx.draw_outline(scene);
 -        if paints_own_box {
 -            cx.draw_outset_box_shadow(scene);
 -        }
--
--        // clip-path clip ayer
--        self.layer_manager.maybe_with_layer(
-+        // pyro: a backdrop root none of the element's layers marks (`layers::backdrop_root`).
-+        let backdrop_root_pushed = self.layer_manager.maybe_push_layer(
-             scene,
--            has_clip_path,
-+            self.backdrop_ancestors.contains(&node_id)
-+                && (crate::layers::backdrop_root(has_clip_path, cx.has_css_mask(), &styles.get_box().will_change)
-+                    || self.dom.animates_backdrop_root(node_id)),
-             BlendMode::default(),
-             1.0,
--            cx.transform,
--            &clip_path_for_layer,
-+            Affine::IDENTITY,
-+            &viewport,
-+            Some(crate::layers::backdrop_root_marker()),
-             None,
--            None,
-+        );
-+
-+        let paints_own_box = !node.is_inline_with_only_block_children();
-+
 +        // pyro: `opacity` and `filter` apply to everything the element paints, as one group
 +        // (Chromium's effect node): its outset box-shadow, its box, its content and descendants
 +        // (positioned ones too: the element is their stacking context) and its outline. The
@@ -1699,12 +1689,20 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            content_position,
 +            child_clip_rect,
 +        };
-+
+ 
+-        // clip-path clip ayer
+-        self.layer_manager.maybe_with_layer(
 +        // clip-path clip layer (it clips the shadow and the outline too, as in Chromium)
 +        clip_path::with_element_clip(
-+            scene,
+             scene,
+-            has_clip_path,
+-            BlendMode::default(),
+-            1.0,
 +            element_clip.as_ref(),
-+            cx.transform,
+             cx.transform,
+-            &clip_path_for_layer,
+-            None,
+-            None,
 +            self.scale,
 +            element_clip.as_ref().map_or(Rect::ZERO, |_| cx.visible_area()),
              |scene| {
@@ -1839,8 +1837,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              .maybe_pop_layer(scene, blend_layer_pushed);
          self.layer_manager
              .maybe_pop_layer(scene, css_clip_layer_pushed);
-     }
- 
++    }
++
 +    /// Paints an element and its descendants, in Chromium's order: outset box-shadow,
 +    /// background, inset box-shadow, border, the content clipped to the padding box (when the
 +    /// element clips), scrollbars, outline. Leaves `cx.transform` as it found it.
@@ -1944,8 +1942,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // in a phase of its own after the foreground): one with a negative
 +        // `outline-offset` lies inside the box, over its background.
 +        cx.draw_outline(scene);
-+    }
-+
+     }
+ 
 +    /// pyro: the layer of an element's opacity and filters around the `group` it painted. The
 +    /// layer is the group's ink (what its commands can touch, [`crate::bounds::scene_bounds`]),
 +    /// grown by what the filter reaches and cut to the visible area, in the element's space (the
@@ -2136,14 +2134,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -963,12 +1392,267 @@
-                     None,
-                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
-                 );
-+            }
-+        }
-+    }
-+
+@@ -967,8 +1396,263 @@
+         }
+     }
+ 
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -2301,8 +2295,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        }
 +                    }
 +                }
-             }
-         }
++            }
++        }
 +        if fragments.is_empty() {
 +            return;
 +        }
@@ -2393,8 +2387,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
 +        }
-     }
- 
++    }
++
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
 +            // pyro: inline elements with a clip path or a mask (clip_path.rs).
@@ -2813,7 +2807,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1145,13 +2121,93 @@
+@@ -1145,11 +2121,91 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -2824,9 +2818,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  &mut draw_text_context,
 +                None,
              );
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -2870,7 +2864,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let Some(child) = child else { break };
 +            top += child.final_layout().location.y;
 +            node = child;
-+        }
+         }
 +        // The baseline from the item's content box top, in CSS px.
 +        let baseline = match &first_line {
 +            Some((node, text, line)) => {
@@ -2902,12 +2896,32 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
 +        }
-+    }
-+
+     }
+ 
      fn draw_children(
-         &self,
-         scene: &mut impl PaintScene,
-@@ -1232,6 +2288,9 @@
+@@ -1183,16 +2239,20 @@
+                 // the viewport and do not scroll with it, so cancel out the viewport
+                 // scroll (applied in `paint_scene`). A fixed box contained by a
+                 // transformed ancestor scrolls with it like any out-of-flow box.
++                // pyro: so does one lifted here from a containing block that is no
++                // layer root (a `backdrop-filter` box): it is placed by its offset.
+                 let child = &self.context.dom.as_ref().tree()[*child_id];
++                let lifted = child.lifted_paint_offset(self.node.id);
+                 let child_transform = if child.taffy_position() == taffy::Position::Fixed
+                     && Some(self.node.id) == self.context.root_element_id
++                    && lifted.is_none()
+                 {
+                     let scroll = self.context.dom.as_ref().viewport_scroll();
+                     parent_style_transform.pre_translate(kurbo::Vec2 {
+                         x: scroll.x * self.scale,
+                         y: scroll.y * self.scale,
+                     })
+-                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
++                } else if let Some(offset) = lifted {
+                     parent_style_transform.pre_translate(kurbo::Vec2 {
+                         x: offset.x as f64 * self.scale,
+                         y: offset.y as f64 * self.scale,
+@@ -1232,6 +2292,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -2917,7 +2931,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1465,4 +2524,30 @@
+@@ -1465,4 +2528,30 @@
      };
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)

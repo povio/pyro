@@ -2239,16 +2239,20 @@ impl ElementCx<'_, '_> {
                 // the viewport and do not scroll with it, so cancel out the viewport
                 // scroll (applied in `paint_scene`). A fixed box contained by a
                 // transformed ancestor scrolls with it like any out-of-flow box.
+                // pyro: so does one lifted here from a containing block that is no
+                // layer root (a `backdrop-filter` box): it is placed by its offset.
                 let child = &self.context.dom.as_ref().tree()[*child_id];
+                let lifted = child.lifted_paint_offset(self.node.id);
                 let child_transform = if child.taffy_position() == taffy::Position::Fixed
                     && Some(self.node.id) == self.context.root_element_id
+                    && lifted.is_none()
                 {
                     let scroll = self.context.dom.as_ref().viewport_scroll();
                     parent_style_transform.pre_translate(kurbo::Vec2 {
                         x: scroll.x * self.scale,
                         y: scroll.y * self.scale,
                     })
-                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
+                } else if let Some(offset) = lifted {
                     parent_style_transform.pre_translate(kurbo::Vec2 {
                         x: offset.x as f64 * self.scale,
                         y: offset.y as f64 * self.scale,

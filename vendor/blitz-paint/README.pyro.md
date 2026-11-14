@@ -324,6 +324,9 @@ from the root of an upstream checkout at that commit) is the whole diff.
   `NodeFlags::TRANSFORM_HIDES`: its back face shows with `backface-visibility: hidden`, it lies behind the
   viewer, or its matrix has no inverse) is not painted, nor is its content. Covered by
   `crates/pyro-render/tests/transform_3d.rs`.
+- `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
+  containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
+  (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
