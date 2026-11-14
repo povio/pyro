@@ -33,7 +33,9 @@ fn layer_bounds(commands: &[RenderCommand], at: &mut usize) -> Option<Rect> {
                 // paints the whole clip.
                 let inner = match (&layer.filter, inner) {
                     (Some(filter), Some(inner)) => {
-                        let reach = filter.bounds_expansion(&layer.transform);
+                        // The filter's reach in scene units: the layer transform's linear part (its
+                        // translation would move the reach off the content).
+                        let reach = filter.linear_bounds_expansion(&layer.transform);
                         Some(Rect::new(
                             inner.x0 + reach.x0,
                             inner.y0 + reach.y0,
@@ -138,6 +140,22 @@ mod tests {
         scene.push_layer(Fill::NonZero, Mix::Normal, 0.5, Affine::IDENTITY, &Rect::new(0.0, 0.0, 9.0, 9.0), None, None);
         scene.pop_layer();
         assert_eq!(scene_bounds(&scene.commands), Some(Rect::new(10.0, 0.0, 100.0, 100.0)));
+    }
+
+    /// A filter layer's reach grows its content's bounds where the content is, however far the
+    /// layer is moved.
+    #[test]
+    fn a_moved_filter_layer_bounds_its_content_and_the_reach() {
+        use anyrender::filters::{Filter, FilterEffect};
+        let mut scene = Scene::new();
+        let moved = Affine::translate((110.0, 90.0));
+        let shadow = FilterEffect::drop_shadow(10.0, 10.0, 0.0, BLACK);
+        let filter = Some(std::sync::Arc::new(Filter::single(shadow)));
+        let clip = Rect::new(-50.0, -50.0, 200.0, 200.0);
+        scene.push_layer(Fill::NonZero, Mix::Normal, 1.0, moved, &clip, filter, None);
+        scene.fill(Fill::NonZero, moved, BLACK, None, &Rect::new(0.0, 0.0, 100.0, 60.0));
+        scene.pop_layer();
+        assert_eq!(scene_bounds(&scene.commands), Some(Rect::new(110.0, 90.0, 220.0, 160.0)));
     }
 
     #[test]
