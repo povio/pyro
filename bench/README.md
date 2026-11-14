@@ -238,7 +238,10 @@ three columns. `rss-sampler PID - --once` emits one snapshot and fails explicitl
 `bench/wpt/` runs a WPT subset over CDP with Playwright and reports passing subtests per directory. The same
 runner works for any binary with a `serve --host --port` command line (pyro, upstream Lightpanda, or a
 shim around Chrome). Pull requests run it as a coverage gate against a committed baseline; see
-[`wpt/README.md`](wpt/README.md).
+[`wpt/README.md`](wpt/README.md). `run.mjs --kind reftest` runs WPT's reftests in the paint directories and CSS2
+(9,341 pages: test and references rendered and compared as wptrunner does), gated the same way against
+`reftest-baseline.json`, and `wpt/chrome-compare.mjs` sets pyro's reftest results beside Chrome's on wpt.fyi
+([Reftests](wpt/README.md#reftests)).
 
 ```sh
 (cd bench && bun install)

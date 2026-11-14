@@ -248,7 +248,32 @@ jobs (the browser) and the WPT checkout (`wpt-paths.txt` now lists the reftest d
 (`lp-m1` or GitHub's `macos-15`, three shards there) and `reftest-args` (for example `--dirs css/CSS2 --no-rerun` to
 time a directory). A baseline holds for one runner only: results differ between machines (fonts, macOS versions).
 
-⟨runner timings⟩
+Measured on this pull request's runs (all 9,341 reftests; a run without a baseline runs every page twice):
+
+| runner | shards x jobs | one pass | job, with setup | two passes agreed |
+|---|---|---:|---:|---|
+| `macos-15` (GitHub: M2 Pro, 5 vCPUs, 14 GB, macOS 15.8) | 2 x 5 | 53 s, 65 s | 2:04, 2:22 | every page |
+| `macos-15` | 3 x 5 | 34-37 s (70 s with the crash) | 1:28-2:35 | every page |
+| `lp-m1` (M1, 8 CPUs, 8 GB, macOS 26.7) | 1 x 8 | 72 s (9,300 pages), 115-131 s with the timeouts' tail | 4:55 | all but 5 pages, which a runner bug (since fixed) recorded as crashes |
+
+The 11 pages that time out (15 s each) and the crash run last in a run without a baseline; a pull request's run skips
+them (nothing to protect), so its pass costs about what the first 9,300 pages do. The reftests run on `macos-15`:
+within each run there the two passes agreed on every page, two runs differed on one page
+(`css/css-color/animation/opacity-animation-ending-correctly-001.html`, a transition's timing; below), and `lp-m1`'s
+results matched theirs on every other page but the two that runner bug recorded as crashes. So `macos-15` is as
+deterministic as the self-hosted runner. On `lp-m1`, which runs one job at a time and already queues the four
+testharness shards and the client job of every pull request, the reftests would add 2 to 5 minutes to each run's turn
+on it; on `macos-15` they run beside them, two jobs of about 2 minutes (about 4 runner minutes per run, billed as
+macOS minutes). `reftest-runner: lp-m1` runs them there (a run's result does not depend on the runner it ran on, but
+compare a baseline only with runs from the same runner).
+
+`lp-m1` has no `zstd`, so its Actions cache entries are gzip archives; a runner with `zstd` looks for another cache
+version and misses them. The reftest job restores the WPT checkout and the browser with a `PATH` that hides `zstd`,
+so both runners share the entries `lp-m1` saves.
+
+Flaky: `css/css-color/animation/opacity-animation-ending-correctly-001.html` passed in two runs and timed out in both
+passes of a third (its `reftest-wait` waits on a 50 ms transition's end); it is not in `reftest-flaky.json` (that needs
+the `wpt-accept-loss` label), so a run in which it times out three times fails the gate.
 
 ### pyro vs Chrome
 
@@ -262,5 +287,51 @@ at that run's revision. `--canary` uses Chrome's experimental run at the exact r
 GH_TOKEN=$(gh auth token) bun bench/wpt/chrome-compare.mjs [shard files] [--md out.md] [--json out.json]
 ```
 
-⟨chrome table⟩
+At the pinned revision (pyro: `reftest-baseline.json`; Chrome 157.0.8103.38 stable, wpt.fyi run 5478394868006912 at
+WPT 1eecaa0c30, 10 commits before the pin; Firefox 159.0.1 and Safari 27.2 stable at the same revision):
+
+| directory | reftests | pyro | Chrome | Firefox | Safari | Chrome passes, pyro fails | pyro passes, Chrome fails |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| css/css-backgrounds | 732 | 485 (66.3%) | 630 (86.1%) | 665 (90.8%) | 624 (85.2%) | 237 | 92 |
+| css/css-text-decor | 337 | 115 (34.1%) | 256 (76.0%) | 288 (85.5%) | 148 (43.9%) | 146 | 5 |
+| css/filter-effects | 372 | 175 (47.0%) | 340 (91.4%) | 319 (85.8%) | 262 (70.4%) | 173 | 8 |
+| css/compositing | 60 | 28 (46.7%) | 55 (91.7%) | 49 (81.7%) | 41 (68.3%) | 30 | 3 |
+| css/css-masking | 494 | 212 (42.9%) | 460 (93.1%) | 468 (94.7%) | 421 (85.2%) | 253 | 5 |
+| css/css-color | 308 | 272 (88.3%) | 300 (97.4%) | 298 (96.8%) | 284 (92.2%) | 29 | 1 |
+| css/css-transforms | 797 | 439 (55.1%) | 791 (99.2%) | 789 (99.0%) | 772 (96.9%) | 354 | 2 |
+| css/CSS2 | 6241 | 4694 (75.2%) | 6114 (98.0%) | 6103 (97.8%) | 5972 (95.7%) | 1470 | 50 |
+| **all** | 9341 | 6420 (68.7%) | 8946 (95.8%) | 8979 (96.1%) | 8524 (91.3%) | 2692 | 166 |
+
+A reftest passes in pyro when pyro renders the test like its reference; it can pass while pyro paints both wrong (a
+reference drawn with the same feature), which `bench/fidelity/paint.ts` checks against Chromium instead. The work
+queue, reftests Chrome passes and pyro fails, by feature (`chrome-compare.mjs` lists every one):
+
+Paint (the paint directories and CSS2's backgrounds, borders, colors, visufx, ui, zindex, zorder, stacking-context): 1334.
+
+| feature | reftests | examples |
+|---|---:|---|
+| clip-path | 158 | `clip-path-clip-nested-twice.svg`, `clip-path-clip-rule-003.svg`, `clip-path-clip-rule-004.svg` |
+| transforms: 2D | 117 | `css-transform-animate-translate-implied-y.html`, `css-transforms-transformlist.html`, `svg-document-styles-001.html` |
+| transforms: 3D | 114 | `3d-rendering-context-and-inline.html`, `3d-scene-with-iframe-001.html`, `3dtransform-and-filter-no-perspective-001.html` |
+| SVG filters (url(), fe*) | 86 | `effect-reference-add-hw-001.html`, `effect-reference-displacement-negative-scale-001.html`, `effect-reference-feimage-001.html` |
+| transform-origin, transform-box | 81 | `content-box-mutation-001.html`, `cssbox-content-box-001.html`, `cssbox-content-box-002.html` |
+| animations, transitions | 79 | `background-color-animation-custom-property.html`, `background-color-animation-custom-timing-function-reverse.html`, `background-color-animation-custom-timing-function.html` |
+| text-decoration | 68 | `ruby-text-decoration-01.html`, `text-decoration-inset-002.html`, `text-decoration-inset-003.html` |
+| border-image | 64 | `border-image-002.html`, `border-image-003.html`, `border-image-004.html` |
+| text-emphasis | 63 | `text-emphasis-color-property-001.html`, `text-emphasis-color-property-001a.html`, `text-emphasis-color-property-001b.html` |
+| mask | 62 | `clip-fixed-pos-transform-descendant-001.html`, `bad-mask-image-svg.html`, `mask-clip-1.html` |
+| borders | 54 | `background-position-subpixel-at-border.tentative.html`, `gradient-repeat-spaced-with-borders.html`, `ttwf-reftest-borderRadius.html` |
+| backgrounds (other) | 45 | `background-color-body-propagation-004.html`, `background-color-body-propagation-007.html`, `background-color-body-propagation-008.html` |
+| backdrop-filter | 40 | `backdrop-filter-3d-transform-perspective.html`, `backdrop-filter-backdrop-root-backdrop-filter.html`, `backdrop-filter-backdrop-root-clip-path-2.html` |
+| background-clip, background-origin | 36 | `background-clip-border-area-and-blend-mode.html`, `background-clip-content-box-with-border-radius-002.html`, `background-clip-content-box-with-border-radius-003.html` |
+| box-shadow | 35 | `box-shadow-041.html`, `box-shadow-042.html`, `box-shadow-border-radius-001.html` |
+| background-attachment | 29 | `background-attachment-350.html`, `background-attachment-353.html`, `background-attachment-local-hidden.html` |
+| background-position, background-repeat | 24 | `background-position-right-in-body.html`, `subpixel-position-center.tentative.html`, `background-repeat-round-2.html` |
+| mix-blend-mode | 23 | `mix-blend-mode-blended-element-overflow-scroll.html`, `mix-blend-mode-blended-element-with-transparent-pixels.html`, `mix-blend-mode-blended-with-3D-transform.html` |
+| colors (other) | 20 | `color-svg-visited.html`, `deprecated-sameas-018.html`, `deprecated-sameas-019.html` |
+| border-radius | 17 | `background-attachment-fixed-border-radius-offset.html`, `background-image-centered-with-border-radius.html`, `border-radius-001.xht` |
+
+17 more paint features have 119 between them. CSS2's other subdirectories account for the other 1,358: selectors 380
+(339 of them `first-letter-punctuation-*`), tables 199, normal-flow 127, lists 120 (counters and the `*-applies-to`
+pages), generated-content 105, text 101, bidi-text 55, positioning 48 and fewer elsewhere.
 
