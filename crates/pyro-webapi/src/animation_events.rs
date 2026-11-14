@@ -859,7 +859,9 @@ fn start_transitions(
     let ElementTiming { transitions, .. } = rules.element(dom, el);
     let mut started: Vec<&'static str> = Vec::new();
     for transition in &transitions {
-        for longhand in pyro_dom::timing::changed_longhands(before, now, &transition.property) {
+        let changed =
+            pyro_dom::timing::changed_longhands_with(before, now, &transition.property, transition.allow_discrete);
+        for longhand in changed {
             if started.contains(&longhand) {
                 continue;
             }

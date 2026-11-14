@@ -7861,6 +7861,46 @@ mod screenshot {
         near(at(250), [0, 0, 0], "the script animation canceled");
     }
 
+    /// A `matchScreenshot` step leaves animations as Playwright's screenshot
+    /// assertions do (`animations: "disabled"`, the default): a finite one
+    /// finished (filled forwards at its end), an infinite one canceled, the
+    /// same pixels whenever the step runs; `allow` shows them where they are.
+    #[test]
+    fn match_screenshot_settles_animations_unless_allowed() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 200, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><style>body{margin:0;background:#fff}\
+             @keyframes grow{from{width:10px}to{width:100px}} @keyframes tint{to{background-color:rgb(255,0,0)}}\
+             #a{height:50px;background:rgb(0,0,255);animation:grow 10s linear forwards}\
+             #b{height:50px;width:50px;background-color:rgb(0,128,0);animation:tint 1s linear infinite}</style>\
+             <div id=a></div><div id=b></div>",
+        );
+        h.run_for(50);
+        let shot = |h: &mut Harness, name: &str, animations: Option<&str>| {
+            let mut step = json!({"name": name, "as": "s"});
+            if let Some(a) = animations {
+                step["animations"] = json!(a);
+            }
+            let r = h.page("Pyro.run", json!({"steps": [{"matchScreenshot": step}]}));
+            png_of(&r["result"]["reads"]["s"]["actual"])
+        };
+        let settled = shot(&mut h, "settled", None);
+        assert_eq!(pixel(&settled, 90, 25), [0, 0, 255, 255], "finished: filled forwards at 100px");
+        assert_eq!(pixel(&settled, 25, 75), [0, 128, 0, 255], "the infinite one canceled");
+        h.run_for(150);
+        let again = shot(&mut h, "settled-again", Some("disabled"));
+        assert!(settled.data == again.data, "the same pixels whenever it is taken");
+        let live = shot(&mut h, "live", Some("allow"));
+        assert_eq!(pixel(&live, 90, 25), [255, 255, 255, 255], "allowed: a few percent grown");
+        let r = h.page("Pyro.run", json!({"steps": [{"matchScreenshot": {"name": "x", "animations": "paused"}}]}));
+        assert!(r["error"]["message"].as_str().unwrap_or_default().contains("animations"), "{r}");
+    }
+
     /// A screencast follows a running animation: frames keep coming while it
     /// moves although the DOM does not change, and stop once it is still.
     #[test]

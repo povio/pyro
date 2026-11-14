@@ -278,6 +278,9 @@ rebuilds, tables, rounding) read by pyro-render's profiling. The phase timers ru
   after each traversal, where the elements styled anew get their values and one more traversal
   (`resolve_sampled_animations`). Pseudo-elements are not animated. Tests:
   `crates/pyro-render/tests/sampled_animations.rs`.
+- `stylo_to_kurbo.rs`, `lib.rs`: `resolve_2d_transform_without_box`, an element's 2D transform with a zero
+  reference box at the origin, for blitz-paint's `clip-path: url(#id)` (an SVG `<clipPath>` and its shapes have no
+  box).
 
 ## Inline layouts in vertical writing modes
 

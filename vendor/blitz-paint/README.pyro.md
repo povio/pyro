@@ -170,6 +170,17 @@ The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressio
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/pyro-render/tests/mirror.rs`.
 
+- `src/render/clip_path.rs`, `src/render.rs`, `src/layers.rs` (`maybe_with_clip_layer`): `clip-path` keeps its
+  fill rule (`polygon(evenodd, ...)`, `path(evenodd, ...)`, `shape(evenodd ...)`; upstream filled every clip
+  `nonzero`), and `clip-path: url(#id)` naming an SVG `<clipPath>` of the same document clips an HTML box by
+  the union of its shape children (`path`, `rect`, `circle`, `ellipse`, `polygon`, `polyline`, with their CSS
+  `transform` or `transform` attribute and the `<clipPath>`'s), in user units from the border box's origin
+  (`clipPathUnits="objectBoundingBox"`: fractions of the border box), filled by the first shape's `clip-rule`;
+  a `<clipPath>` without shapes clips the box away, a reference to anything else (another document's, a missing
+  element) clips nothing. Not done: text, `<use>` and nested `clip-path` inside the `<clipPath>`, mixed
+  `clip-rule`s. The animated clip paths of CSS animations exposed reference pages that clip this way
+  (`clip-path-path-interpolation-*`, `clip-path-shape-interpolation-*`).
+
 ## Moving from 0.3.0-beta.4 to main
 
 - `src/render.rs`: main computes clipping in `should_clip_node`; `overflow` on `body` that is the

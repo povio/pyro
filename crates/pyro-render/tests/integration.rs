@@ -3,6 +3,7 @@
 //! mostly link time. Add new test files as modules here.
 
 mod br_flex_item;
+mod clip_path_reference;
 mod container_queries;
 mod containing_block_chain;
 mod dotted_dashed_lines;

@@ -347,17 +347,60 @@ impl Builder {
     }
 }
 
+/// When the effects are sampled.
+#[derive(Clone, Copy)]
+enum Clock {
+    /// At this page time.
+    At(f64),
+    /// As Playwright's `animations: "disabled"` leaves them for a screenshot:
+    /// finite animations finished (at their end, where they fill forwards),
+    /// infinite ones and transitions canceled.
+    Settled,
+}
+
+impl Clock {
+    /// The local time to sample an effect with `timing` at, from its local
+    /// time `now`; `None`: canceled.
+    fn local(self, timing: &Timing, now: f64, rate: f64) -> Option<f64> {
+        match self {
+            Clock::At(_) => Some(now),
+            Clock::Settled if timing.iterations.is_finite() && timing.duration.is_finite() => {
+                let active = if timing.duration == 0.0 || timing.iterations == 0.0 {
+                    0.0
+                } else {
+                    timing.duration * timing.iterations
+                };
+                Some(if rate < 0.0 { 0.0 } else { (timing.delay + active + timing.end_delay).max(0.0) })
+            }
+            Clock::Settled => None,
+        }
+    }
+
+    fn now(self) -> f64 {
+        match self {
+            Clock::At(now) => now,
+            Clock::Settled => 0.0,
+        }
+    }
+}
+
 /// Every effect in effect at `now`, in composite order per level: `visit(el,
 /// transition, effect)`. Returns whether a value moves with time.
 fn walk(page: &PageDom, now: f64, transitions: bool, visit: &mut dyn FnMut(NodeId, bool, Effect)) -> bool {
+    walk_at(page, Clock::At(now), transitions, visit)
+}
+
+fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMut(NodeId, bool, Effect)) -> bool {
+    let now = clock.now();
+    let settled = matches!(clock, Clock::Settled);
     let state = &page.animation_events;
     let Ok(scripted) = state.scripted.try_borrow() else { return false };
     let Some((animations, transition_list)) = state.try_timelines() else { return false };
     let overrides: FxHashMap<u64, &Scripted> =
         scripted.values().filter_map(|s| Some((s.css?, s))).collect();
     let mut moving = false;
-    // Transitions, in the order they started.
-    for t in transition_list.iter().filter(|t| t.is_live()) {
+    // Transitions, in the order they started (none when settled: finished).
+    for t in transition_list.iter().filter(|t| t.is_live() && !settled) {
         let Some(keyframes) = t.keyframes() else { continue };
         let (local, rate, timing, easing) = match overrides.get(&t.id()) {
             Some(s) => match s.current(now) {
@@ -394,6 +437,7 @@ fn walk(page: &PageDom, now: f64, transitions: bool, visit: &mut dyn FnMut(NodeI
             },
             None => (t.local_ms(now), 1.0, own_timing, t.is_paused()),
         };
+        let Some(local) = clock.local(&timing, local, rate) else { continue };
         let Some(p) = progress(&timing, local, rate) else { continue };
         moving |= p.moving && !held;
         let effect = match overrides.get(&t.id()) {
@@ -427,6 +471,7 @@ fn walk(page: &PageDom, now: f64, transitions: bool, visit: &mut dyn FnMut(NodeI
     for s in script {
         let Some(el) = s.el else { continue };
         let Some(local) = s.current(now) else { continue };
+        let Some(local) = clock.local(&s.timing, local, s.rate) else { continue };
         let Some(p) = progress(&s.timing, local, s.rate) else { continue };
         moving |= p.moving && s.hold.is_none() && s.rate != 0.0;
         let effect = Effect {
@@ -523,6 +568,29 @@ impl PageDom {
     pub fn animation_frame(self: &Rc<Self>) -> AnimationFrame {
         crate::animation_events::before_render(self);
         frame(self, crate::event::page_now_ms(self), true)
+    }
+
+    /// [`PageDom::animation_frame`] as Playwright's `animations: "disabled"`
+    /// leaves the page for a screenshot assertion (`matchScreenshot` steps):
+    /// finite CSS and script animations at their end (their last values where
+    /// they fill forwards), infinite ones and transitions canceled; the same
+    /// whenever it is taken.
+    pub fn settled_animation_frame(self: &Rc<Self>) -> AnimationFrame {
+        crate::animation_events::before_render(self);
+        let mut out = Builder::default();
+        walk_at(self, Clock::Settled, true, &mut |el, transition, effect| out.push(el, transition, effect));
+        let Ok(dom) = self.dom.try_borrow() else { return AnimationFrame::default() };
+        AnimationFrame {
+            elements: out
+                .elements
+                .into_iter()
+                .filter(|(el, _)| dom.is_alive(*el) && dom.is_connected(*el).unwrap_or(false))
+                .map(|(el, mut e)| {
+                    e.key = pyro_dom::snapshot::render_key(el);
+                    e
+                })
+                .collect(),
+        }
     }
 
     /// Changes whenever [`PageDom::animation_frame`] could show something

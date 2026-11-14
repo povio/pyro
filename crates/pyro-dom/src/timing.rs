@@ -37,6 +37,7 @@ enum Longhand {
     TransitionDuration,
     TransitionDelay,
     TransitionTimingFunction,
+    TransitionBehavior,
 }
 
 /// One declaration: the longhand's comma-separated list, lowercased except
@@ -96,6 +97,9 @@ pub struct TransitionTiming {
     pub delay_ms: f64,
     /// `transition-timing-function` as written (lowercased; `None`: `ease`).
     pub easing: Option<String>,
+    /// `transition-behavior: allow-discrete`: values that do not interpolate
+    /// transition too (flipping halfway).
+    pub allow_discrete: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -282,6 +286,7 @@ impl TimingRules {
             let properties = cascaded(Longhand::TransitionProperty).unwrap_or(&all);
             let delays = cascaded(Longhand::TransitionDelay);
             let easings = cascaded(Longhand::TransitionTimingFunction);
+            let behaviors = cascaded(Longhand::TransitionBehavior);
             for (i, property) in properties.iter().enumerate() {
                 let duration_ms = nth(durations, i).and_then(time_ms).unwrap_or(0.0).max(0.0);
                 let delay_ms = nth(delays, i).and_then(time_ms).unwrap_or(0.0);
@@ -289,7 +294,14 @@ impl TimingRules {
                     continue;
                 }
                 let easing = nth(easings, i).filter(|e| *e != "ease").map(str::to_owned);
-                out.transitions.push(TransitionTiming { property: property.clone(), duration_ms, delay_ms, easing });
+                let allow_discrete = nth(behaviors, i) == Some("allow-discrete");
+                out.transitions.push(TransitionTiming {
+                    property: property.clone(),
+                    duration_ms,
+                    delay_ms,
+                    easing,
+                    allow_discrete,
+                });
             }
         }
         out
@@ -309,6 +321,17 @@ pub fn displays_none(style: &StyleSnapshot) -> bool {
 /// computed value differs between `before` and `after`: the ones a
 /// transition of `property` starts for.
 pub fn changed_longhands(before: &StyleSnapshot, after: &StyleSnapshot, property: &str) -> Vec<&'static str> {
+    changed_longhands_with(before, after, property, false)
+}
+
+/// [`changed_longhands`]; with `allow_discrete` (`transition-behavior:
+/// allow-discrete`), values Stylo does not interpolate between count too.
+pub fn changed_longhands_with(
+    before: &StyleSnapshot,
+    after: &StyleSnapshot,
+    property: &str,
+    allow_discrete: bool,
+) -> Vec<&'static str> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::{PropertyDeclarationId, ShorthandId};
     use style::values::animated::{Animate, Procedure};
@@ -325,7 +348,7 @@ pub fn changed_longhands(before: &StyleSnapshot, after: &StyleSnapshot, property
                 AnimationValue::from_computed_values(physical, before),
                 AnimationValue::from_computed_values(physical, after),
             ) {
-                (Some(a), Some(b)) => a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok(),
+                (Some(a), Some(b)) => allow_discrete || a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok(),
                 _ => false,
             }
     };
@@ -529,19 +552,21 @@ fn declarations(body: &str) -> Vec<Declared> {
                 out.push((Longhand::AnimationPlayState, plays, d.important));
             }
             "transition" => {
-                let (mut properties, mut durations, mut delays, mut easings) =
-                    (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                let (mut properties, mut durations, mut delays, mut easings, mut behaviors) =
+                    (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
                 for item in split_commas(value) {
                     let item = transition_item(item);
                     properties.push(item.name);
                     durations.push(item.duration);
                     delays.push(item.delay);
                     easings.push(item.easing);
+                    behaviors.push(item.play);
                 }
                 out.push((Longhand::TransitionProperty, properties, d.important));
                 out.push((Longhand::TransitionDuration, durations, d.important));
                 out.push((Longhand::TransitionDelay, delays, d.important));
                 out.push((Longhand::TransitionTimingFunction, easings, d.important));
+                out.push((Longhand::TransitionBehavior, behaviors, d.important));
             }
             "animation-name" => out.push((Longhand::AnimationName, list(true), d.important)),
             "animation-duration" => out.push((Longhand::AnimationDuration, list(false), d.important)),
@@ -556,6 +581,7 @@ fn declarations(body: &str) -> Vec<Declared> {
             "transition-duration" => out.push((Longhand::TransitionDuration, list(false), d.important)),
             "transition-delay" => out.push((Longhand::TransitionDelay, list(false), d.important)),
             "transition-timing-function" => out.push((Longhand::TransitionTimingFunction, list(false), d.important)),
+            "transition-behavior" => out.push((Longhand::TransitionBehavior, list(false), d.important)),
             _ => {}
         }
     }
@@ -703,10 +729,11 @@ fn animation_item(item: &str) -> ShorthandItem {
     out
 }
 
-/// `<single-transition>`: times as in an animation, an easing keyword, a
-/// behavior keyword, any other word is the property.
+/// `<single-transition>`: times as in an animation, an easing, a behavior
+/// keyword (kept in `play`), any other word is the property.
 fn transition_item(item: &str) -> ShorthandItem {
     let mut out = ShorthandItem::new("all");
+    out.play = "normal".into();
     let (mut times, mut easing) = (0, false);
     for (text, kind) in item_tokens(item) {
         let lower = text.to_ascii_lowercase();
@@ -723,7 +750,7 @@ fn transition_item(item: &str) -> ShorthandItem {
                     out.easing = lower;
                     easing = true;
                 }
-                "allow-discrete" | "normal" => {}
+                "allow-discrete" | "normal" => out.play = lower,
                 _ => out.name = lower,
             },
             3 if !easing && EASING_FUNCTIONS.iter().any(|f| lower.starts_with(f)) => {
@@ -771,6 +798,9 @@ mod tests {
         );
         let item = animation_item("spin 1s");
         assert_eq!((item.easing.as_str(), item.fill.as_str(), item.play.as_str()), ("ease", "none", "running"));
+        // A transition's behavior keyword is kept where an animation's play state is.
+        assert_eq!(transition_item("clip-path 20s allow-discrete").play, "allow-discrete");
+        assert_eq!(transition_item("clip-path 20s").play, "normal");
         assert_eq!(transition_item(".3s").name, "all");
         assert_eq!(split_commas("a 1s, b steps(2, end) 2s"), ["a 1s", " b steps(2, end) 2s"]);
         assert_eq!(time_ms("-99.9s"), Some(-99900.0));
