@@ -1,6 +1,7 @@
 use super::{ALMOST_OPAQUE, ElementCx, to_image_quality, to_peniko_image};
 use crate::color::{Color, ToColorColor};
 use crate::gradient::to_peniko_gradient;
+use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
 use anyrender::PaintScene;
 use blitz_dom::CopyStyleGetters;
 use blitz_dom::NodeId;
@@ -10,6 +11,7 @@ use peniko::{self, BlendMode, Compose, Fill, Mix};
 use style::{
     computed_values::border_collapse::T as BorderCollapse,
     properties::{
+        ComputedValues,
         generated::longhands::{
             background_attachment::single_value::computed_value::T as StyloBackgroundAttachment,
             background_clip::single_value::computed_value::T as StyloBackgroundClip,
@@ -20,7 +22,7 @@ use style::{
     values::{
         computed::{
             BackgroundRepeat, Gradient as StyloGradient, Image as ComputedImage, LengthPercentage,
-            background::BackgroundSize,
+            Overflow, background::BackgroundSize,
         },
         generics::image::GenericImage,
         specified::background::BackgroundRepeatKeyword,
@@ -82,6 +84,8 @@ pub(super) struct ImageLayerStyles<'a> {
     pub size: &'a BackgroundSize,
     pub clip: BoxModelBox,
     pub text_clip: bool,
+    /// pyro: `background-clip: border-area`: the area the border paints.
+    pub border_area: bool,
     pub origin: BoxModelBox,
     pub attachment: StyloBackgroundAttachment,
 }
@@ -101,6 +105,8 @@ impl<'a> ImageLayerStyles<'a> {
             size: get_cyclic(&bg_styles.background_size.0, idx),
             clip: (*get_cyclic(&bg_styles.background_clip.0, idx)).into(),
             text_clip: *get_cyclic(&bg_styles.background_clip.0, idx) == StyloBackgroundClip::Text,
+            border_area: *get_cyclic(&bg_styles.background_clip.0, idx)
+                == StyloBackgroundClip::BorderArea,
             origin: (*get_cyclic(&bg_styles.background_origin.0, idx)).into(),
             attachment: *get_cyclic(&bg_styles.background_attachment.0, idx),
         }
@@ -120,6 +126,7 @@ impl<'a> ImageLayerStyles<'a> {
             size: get_cyclic(&svg_styles.mask_size.0, idx),
             clip: (*get_cyclic(&svg_styles.mask_clip.0, idx)).into(),
             text_clip: false,
+            border_area: false,
             origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
             // There is no `mask-attachment` property
             attachment: StyloBackgroundAttachment::Scroll,
@@ -129,37 +136,141 @@ impl<'a> ImageLayerStyles<'a> {
 
 impl ElementCx<'_, '_> {
     pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
-        let bg_styles = &self.style.get_background();
-        let image_data = &self.element.background_images;
+        let style = self.style.clone();
+        self.draw_background_layers(scene, &style, &self.element.background_images, None);
+    }
+
+    /// pyro: the canvas background (CSS Backgrounds 3 §2.11.2), drawn by the root element in place
+    /// of its own background: the background of `source` (the root element, or the body whose
+    /// background propagates to it) over the whole of `canvas` (scene space). Its images are
+    /// positioned against the root element's boxes, as if painted for it alone. Drawn in the root
+    /// element's effect group (its opacity, filters and blend mode apply), not under its transform.
+    pub(super) fn draw_canvas_background(
+        &self,
+        scene: &mut impl PaintScene,
+        source: NodeId,
+        canvas: Rect,
+    ) {
+        let Some(node) = self.context.dom.get_node(source) else {
+            return;
+        };
+        let (Some(style), Some(element)) = (node.primary_styles(), node.element_data()) else {
+            return;
+        };
+        if self.transform.determinant().abs() < 1e-12 {
+            return;
+        }
+        let canvas = self.transform.inverse().transform_rect_bbox(canvas);
+        let style = (*style).clone();
+        self.draw_background_layers(scene, &style, &element.background_images, Some(canvas));
+    }
+
+    /// The background of `style` with the images `image_data`, over this element's background
+    /// painting area, or over `canvas` (this element's space) for the canvas background.
+    fn draw_background_layers(
+        &self,
+        scene: &mut impl PaintScene,
+        style: &ComputedValues,
+        image_data: &[Option<ImageResourceData>],
+        canvas: Option<Rect>,
+    ) {
+        let bg_styles = &style.get_background();
         let layer_count = bg_styles.background_image.0.len();
+
+        // pyro: `background-attachment: local` layers of a scroll container see the boxes of its
+        // scrolled content, cut to its padding box.
+        let local = canvas
+            .is_none()
+            .then(|| self.local_frame())
+            .flatten()
+            .map(|frame| ElementCx {
+                frame,
+                style: self.style.clone(),
+                ..*self
+            });
+        let local_cx = |attachment: StyloBackgroundAttachment| {
+            local
+                .as_ref()
+                .filter(|_| attachment == StyloBackgroundAttachment::Local)
+        };
 
         // The background color is clipped by the clip of the last layer in the list
         let last_clip = *get_cyclic(&bg_styles.background_clip.0, layer_count - 1);
+        let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
         let background_clip: BoxModelBox = last_clip.into();
-        let background_clip_path = self.box_path(background_clip);
+        let clip_path = |clip: BoxModelBox,
+                         border_area: bool,
+                         attachment: StyloBackgroundAttachment| {
+            match (canvas, local_cx(attachment)) {
+                (Some(canvas), _) => canvas.to_path(0.1),
+                (None, Some(local)) => local.box_path(clip),
+                (None, None) if border_area => self.border_area_path(),
+                (None, None) => self.box_path(clip),
+            }
+        };
+        let background_clip_path = clip_path(
+            background_clip,
+            last_clip == StyloBackgroundClip::BorderArea,
+            last_attachment,
+        );
 
         // Draw background color (if any)
-        let mut text_run = last_clip == StyloBackgroundClip::Text;
+        let mut text_run = last_clip == StyloBackgroundClip::Text && canvas.is_none();
         if text_run {
             self.begin_text_clip_group(scene);
         }
-        self.draw_solid_bg(scene, &background_clip_path);
+        let current_color = style.clone_color();
+        let bg_color = bg_styles
+            .background_color
+            .resolve_to_absolute(&current_color)
+            .as_srgb_color();
+        if bg_color != Color::TRANSPARENT {
+            let local_color = local_cx(last_attachment).is_some();
+            if local_color {
+                scene.push_clip_layer(
+                    Fill::NonZero,
+                    self.transform,
+                    &self.frame.padding_box_path(),
+                );
+            }
+            scene.fill(
+                Fill::NonZero,
+                self.transform,
+                bg_color,
+                None,
+                &background_clip_path,
+            );
+            if local_color {
+                scene.pop_layer();
+            }
+        }
 
         for idx in (0..layer_count).rev() {
             let layer = ImageLayerStyles::from_background(bg_styles, image_data, idx);
-            if layer.text_clip != text_run {
+            let layer_text_clip = layer.text_clip && canvas.is_none();
+            if layer_text_clip != text_run {
                 if text_run {
                     self.end_text_clip_group(scene);
                 } else {
                     self.begin_text_clip_group(scene);
                 }
-                text_run = layer.text_clip;
+                text_run = layer_text_clip;
             }
             if layer_paints_nothing(&layer) {
                 continue;
             }
-            let background_clip_path = self.box_path(layer.clip);
+            let background_clip_path = clip_path(layer.clip, layer.border_area, layer.attachment);
+            let local = local_cx(layer.attachment);
+            let cx = local.unwrap_or(self);
+            let area = canvas.unwrap_or_else(|| cx.box_rect(layer.clip));
 
+            if local.is_some() {
+                scene.push_clip_layer(
+                    Fill::NonZero,
+                    self.transform,
+                    &self.frame.padding_box_path(),
+                );
+            }
             self.context.layer_manager.maybe_with_layer(
                 scene,
                 true,
@@ -170,13 +281,60 @@ impl ElementCx<'_, '_> {
                 None,
                 None,
                 |scene| {
-                    self.draw_image_layer(scene, &layer);
+                    cx.draw_image_layer_in(scene, &layer, area, &current_color);
                 },
             );
+            if local.is_some() {
+                scene.pop_layer();
+            }
         }
         if text_run {
             self.end_text_clip_group(scene);
         }
+    }
+
+    /// pyro: this element's boxes as a `background-attachment: local` layer sees them on a scroll
+    /// container: those of its scrolled content, the padding box grown to the scrollable overflow
+    /// and moved by the scroll offset, without corner radii (the padding box, which clips the
+    /// layer, has them). `None` for an element that does not scroll: `local` is then `scroll`.
+    fn local_frame(&self) -> Option<CssBox> {
+        let box_style = self.style.get_box();
+        let scrolls = |overflow: Overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
+        if !(scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y)) {
+            return None;
+        }
+        let scale = self.scale;
+        let padding_box = self.frame.padding_box;
+        // The scrollable overflow, relative to the padding box's top left (CSS px), with the
+        // padding box itself: the area the content scrolls in.
+        let overflow = self.node.final_layout().scrollable_overflow_rect.rect();
+        let area = Rect::new(
+            0.0,
+            0.0,
+            padding_box.width() / scale,
+            padding_box.height() / scale,
+        )
+        .union(Rect::new(
+            overflow.left as f64,
+            overflow.top as f64,
+            overflow.right as f64,
+            overflow.bottom as f64,
+        ));
+        let scroll = self.node.scroll_offset();
+        let area = area - Vec2::new(scroll.x, scroll.y);
+        let scrolled_padding_box = Rect::new(
+            padding_box.x0 + area.x0 * scale,
+            padding_box.y0 + area.y0 * scale,
+            padding_box.x0 + area.x1 * scale,
+            padding_box.y0 + area.y1 * scale,
+        );
+        Some(CssBox::new(
+            scrolled_padding_box + self.frame.border_width,
+            self.frame.border_width,
+            self.frame.padding_width,
+            0.0,
+            NonUniformRoundedRectRadii::default(),
+        ))
     }
 
     /// Starts an isolated group for `background-clip: text` layers; layers drawn
@@ -231,15 +389,30 @@ impl ElementCx<'_, '_> {
 
     /// Draw a single layer of a CSS image layer list (`background-image` or `mask-image`)
     pub(super) fn draw_image_layer(&self, scene: &mut impl PaintScene, layer: &ImageLayerStyles) {
+        let current_color = self.style.clone_color();
+        self.draw_image_layer_in(scene, layer, self.box_rect(layer.clip), &current_color);
+    }
+
+    /// Draw a single layer over `area`, its background painting area (this element's space, device
+    /// px): the clip box, or the canvas. `current_color` resolves `currentcolor` in gradients.
+    fn draw_image_layer_in(
+        &self,
+        scene: &mut impl PaintScene,
+        layer: &ImageLayerStyles,
+        area: Rect,
+        current_color: &style::color::AbsoluteColor,
+    ) {
         match layer.stylo_image {
             GenericImage::None => {
                 // Do nothing
             }
-            GenericImage::Gradient(gradient) => self.draw_gradient_layer(scene, gradient, layer),
+            GenericImage::Gradient(gradient) => {
+                self.draw_gradient_layer(scene, gradient, layer, area, current_color)
+            }
             GenericImage::Url(_) => {
-                self.draw_raster_image_layer(scene, layer);
+                self.draw_raster_image_layer(scene, layer, area);
                 #[cfg(feature = "svg")]
-                self.draw_svg_image_layer(scene, layer);
+                self.draw_svg_image_layer(scene, layer, area);
             }
             GenericImage::LightDark(_) => {
                 #[cfg(feature = "tracing")]
@@ -373,19 +546,6 @@ impl ElementCx<'_, '_> {
         }
     }
 
-    fn draw_solid_bg(&self, scene: &mut impl PaintScene, shape: &BezPath) {
-        let current_color = self.style.clone_color();
-        let background_color = &self.style.get_background().background_color;
-        let bg_color = background_color
-            .resolve_to_absolute(&current_color)
-            .as_srgb_color();
-
-        if bg_color != Color::TRANSPARENT {
-            // Fill the color
-            scene.fill(Fill::NonZero, self.transform, bg_color, None, shape);
-        }
-    }
-
     /// Whether the layer is positioned against the viewport
     /// (`background-attachment: fixed`) rather than the element's origin box.
     /// `fixed` behaves as `scroll` on elements affected by a CSS transform
@@ -410,15 +570,30 @@ impl ElementCx<'_, '_> {
 
     /// Whether this element or any of its ancestors has a CSS transform
     ///
-    /// TODO: this misses transformed elements whose resolved transform is the
-    /// identity (e.g. `transform: translate(0)`), and elements with
-    /// `will-change: transform`, both of which should also degrade `fixed`
-    /// to `scroll` (see WPT css/css-transforms/transform-fixed-bg-005/008)
+    /// pyro: a transform that resolves to the identity (`transform: translate(0)`), an
+    /// individual transform property and `will-change: transform` count too: each degrades
+    /// `fixed` to `scroll`, as in Chromium (WPT css/css-transforms/transform-fixed-bg-005/008).
     fn is_transformed(&self) -> bool {
+        use style::values::generics::transform::{GenericRotate, GenericScale, GenericTranslate};
+        use style::values::specified::box_::WillChangeBits;
         let mut current = Some(self.node.id);
         while let Some(node) = current.and_then(|id| self.context.dom.get_node(id)) {
             if node.transform().is_some() {
                 return true;
+            }
+            if let Some(style) = node.primary_styles() {
+                let box_style = style.get_box();
+                if !box_style.transform.0.is_empty()
+                    || !matches!(box_style.rotate, GenericRotate::None)
+                    || !matches!(box_style.translate, GenericTranslate::None)
+                    || !matches!(box_style.scale, GenericScale::None)
+                    || box_style
+                        .will_change
+                        .bits
+                        .contains(WillChangeBits::TRANSFORM)
+                {
+                    return true;
+                }
             }
             current = node.parent;
         }
@@ -426,7 +601,12 @@ impl ElementCx<'_, '_> {
     }
 
     #[cfg(feature = "svg")]
-    fn draw_svg_image_layer(&self, scene: &mut impl PaintScene, layer: &ImageLayerStyles) {
+    fn draw_svg_image_layer(
+        &self,
+        scene: &mut impl PaintScene,
+        layer: &ImageLayerStyles,
+        area: Rect,
+    ) {
         let Some(bg_image) = layer.image_data else {
             return;
         };
@@ -439,14 +619,10 @@ impl ElementCx<'_, '_> {
             return;
         }
 
-        let (origin_rect, base_transform) = if self.layer_is_fixed(layer) {
-            self.fixed_positioning_area()
-        } else {
-            (self.box_rect(layer.origin), self.transform)
-        };
+        let (origin_rect, base_transform, area) = self.positioning_area(layer, area);
 
-        let frame_w = (origin_rect.width() / self.scale) as f32;
-        let frame_h = (origin_rect.height() / self.scale) as f32;
+        let frame_w = origin_rect.width() / self.scale;
+        let frame_h = origin_rect.height() / self.scale;
 
         // Size the SVG per the CSS default sizing algorithm
         // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
@@ -461,7 +637,7 @@ impl ElementCx<'_, '_> {
         }
         .filter(|r| r.is_finite() && *r > 0.0);
 
-        let bg_size = compute_layer_size(
+        let (bg_pos, bg_size) = compute_layer_position_and_size(
             layer,
             frame_w,
             frame_h,
@@ -482,23 +658,50 @@ impl ElementCx<'_, '_> {
             (bg_size.height * self.scale) as f32,
         );
 
-        let bg_pos = compute_layer_position(
-            layer,
-            frame_w - bg_size.width as f32,
-            frame_h - bg_size.height as f32,
+        // pyro: the image repeats as a raster one does, over the painting area (it was drawn
+        // once, at its position).
+        let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
+        let bg_size = bg_size * self.scale;
+        let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
+        let x = raster_axis_tiles(
+            *repeat_x,
+            origin_rect.x0,
+            origin_rect.width(),
+            area.x0,
+            area.x1,
+            bg_pos.x,
+            bg_size.width,
         );
-
-        let transform = base_transform
-            * kurbo::Affine::translate((
-                origin_rect.x0 + bg_pos.x * self.scale,
-                origin_rect.y0 + bg_pos.y * self.scale,
-            ))
-            * viewport;
-
-        anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+        let y = raster_axis_tiles(
+            *repeat_y,
+            origin_rect.y0,
+            origin_rect.height(),
+            area.y0,
+            area.y1,
+            bg_pos.y,
+            bg_size.height,
+        );
+        if x.count as u64 * y.count as u64 > 2_000 {
+            return;
+        }
+        for hc in 0..y.count {
+            for wc in 0..x.count {
+                let origin = Vec2::new(
+                    x.start + wc as f64 * x.stride,
+                    y.start + hc as f64 * y.stride,
+                );
+                let transform = base_transform * kurbo::Affine::translate(origin) * viewport;
+                anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+            }
+        }
     }
 
-    fn draw_raster_image_layer(&self, scene: &mut impl PaintScene, layer: &ImageLayerStyles) {
+    fn draw_raster_image_layer(
+        &self,
+        scene: &mut impl PaintScene,
+        layer: &ImageLayerStyles,
+        area: Rect,
+    ) {
         let Some(bg_image) = layer.image_data else {
             return;
         };
@@ -509,11 +712,7 @@ impl ElementCx<'_, '_> {
         let image_rendering = self.style.clone_image_rendering();
         let quality = to_image_quality(image_rendering);
 
-        let (origin_rect, base_transform) = if self.layer_is_fixed(layer) {
-            self.fixed_positioning_area()
-        } else {
-            (self.box_rect(layer.origin), self.transform)
-        };
+        let (origin_rect, base_transform, area) = self.positioning_area(layer, area);
 
         let image_width = image_data.width as f64;
         let image_height = image_data.height as f64;
@@ -527,54 +726,111 @@ impl ElementCx<'_, '_> {
 
         let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
         let bg_size = bg_size * self.scale;
-
-        let x_ratio = bg_size.width / image_width;
-        let y_ratio = bg_size.height / image_height;
+        if !(bg_size.width > 0.0 && bg_size.height > 0.0) {
+            return;
+        }
 
         let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
-
-        let x = raster_axis_tiling(
+        // pyro: the tiles cover the whole painting area (the clip box, or the canvas), not just
+        // the positioning area: a repeating image fills the border area of a `border-box` clip
+        // and, for the root element, the canvas.
+        let x = raster_axis_tiles(
             *repeat_x,
             origin_rect.x0,
             origin_rect.width(),
+            area.x0,
+            area.x1,
             bg_pos.x,
             bg_size.width,
-            image_width,
-            x_ratio,
         );
-        let y = raster_axis_tiling(
+        let y = raster_axis_tiles(
             *repeat_y,
             origin_rect.y0,
             origin_rect.height(),
+            area.y0,
+            area.y1,
             bg_pos.y,
             bg_size.height,
-            image_height,
-            y_ratio,
         );
+        if x.count == 0 || y.count == 0 {
+            return;
+        }
 
-        let transform = base_transform
-            .pre_scale_non_uniform(x_ratio, y_ratio)
-            .then_translate(Vec2 {
-                x: x.translate,
-                y: y.translate,
-            });
-        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
-
+        let mut brush = to_peniko_image(image_data, quality);
+        // pyro: an axis that does not repeat stops at the image's edge, as in Chromium: sampling
+        // past it (a scaled image's edge pixels) wrapped the opposite edge's pixels in. `repeat`
+        // and `round` tiles are one repeating fill, their seams sampled across (Chromium's image
+        // shader).
+        let extend = |repeat: BackgroundRepeatKeyword| match repeat {
+            BackgroundRepeatKeyword::Repeat | BackgroundRepeatKeyword::Round => {
+                peniko::Extend::Repeat
+            }
+            BackgroundRepeatKeyword::Space | BackgroundRepeatKeyword::NoRepeat => {
+                peniko::Extend::Pad
+            }
+        };
+        brush.sampler.x_extend = extend(*repeat_x);
+        brush.sampler.y_extend = extend(*repeat_y);
+        let scale =
+            Affine::scale_non_uniform(bg_size.width / image_width, bg_size.height / image_height);
+        // Tiles that touch are one fill with the image repeating in it.
+        let contiguous = |t: &AxisTiles, extend: peniko::Extend| {
+            t.count == 1 || (t.stride == t.len && extend == peniko::Extend::Repeat)
+        };
+        if contiguous(&x, brush.sampler.x_extend) && contiguous(&y, brush.sampler.y_extend) {
+            let rect = Rect::new(
+                x.start,
+                y.start,
+                x.start + x.len + (x.count - 1) as f64 * x.stride,
+                y.start + y.len + (y.count - 1) as f64 * y.stride,
+            );
+            let brush_transform = Affine::translate((x.start, y.start)) * scale;
+            scene.fill(
+                peniko::Fill::NonZero,
+                base_transform,
+                brush.as_ref(),
+                Some(brush_transform),
+                &rect,
+            );
+            return;
+        }
+        if x.count as u64 * y.count as u64 > 10_000 {
+            return;
+        }
+        // Spaced tiles are each the image on its own, clamped in both axes (Chromium draws them
+        // through a picture shader of one image per cell): a row of `round` tiles with spaced
+        // rows matches no-repeat copies laid side by side (WPT `background-repeat-space-6`/`-7`).
+        brush.sampler.x_extend = peniko::Extend::Pad;
+        brush.sampler.y_extend = peniko::Extend::Pad;
         for hc in 0..y.count {
             for wc in 0..x.count {
-                let transform = transform.then_translate(Vec2 {
-                    x: wc as f64 * x.stride,
-                    y: hc as f64 * y.stride,
-                });
-
+                let origin = Point::new(
+                    x.start + wc as f64 * x.stride,
+                    y.start + hc as f64 * y.stride,
+                );
+                let rect = Rect::from_origin_size(origin, (x.len, y.len));
+                let brush_transform = Affine::translate(origin.to_vec2()) * scale;
                 scene.fill(
                     peniko::Fill::NonZero,
-                    transform,
-                    to_peniko_image(image_data, quality).as_ref(),
-                    None,
-                    &tile_rect,
+                    base_transform,
+                    brush.as_ref(),
+                    Some(brush_transform),
+                    &rect,
                 );
             }
+        }
+    }
+
+    /// The background positioning area of `layer` and the transform from its space to the scene,
+    /// with `area` (this element's space) taken to that space: the viewport for a fixed layer,
+    /// else the origin box in this element's space.
+    fn positioning_area(&self, layer: &ImageLayerStyles, area: Rect) -> (Rect, Affine, Rect) {
+        if self.layer_is_fixed(layer) {
+            let (viewport_rect, transform) = self.fixed_positioning_area();
+            let area = (transform.inverse() * self.transform).transform_rect_bbox(area);
+            (viewport_rect, transform, area)
+        } else {
+            (self.box_rect(layer.origin), self.transform, area)
         }
     }
 
@@ -583,20 +839,12 @@ impl ElementCx<'_, '_> {
         scene: &mut impl PaintScene,
         gradient: &StyloGradient,
         layer: &ImageLayerStyles,
+        area: Rect,
+        current_color: &style::color::AbsoluteColor,
     ) {
-        // For a fixed layer the positioning area (the viewport) already covers
-        // everything visible, so it also serves as the clip rect (no extension
-        // towards the clip box is needed).
-        let (origin_rect, base_transform, clip_rect) = if self.layer_is_fixed(layer) {
-            let (viewport_rect, transform) = self.fixed_positioning_area();
-            (viewport_rect, transform, viewport_rect)
-        } else {
-            (
-                self.box_rect(layer.origin),
-                self.transform,
-                self.box_rect(layer.clip),
-            )
-        };
+        // The tiles cover the painting area (`area`: the clip box, or the canvas), in the
+        // positioning area's space.
+        let (origin_rect, base_transform, clip_rect) = self.positioning_area(layer, area);
 
         let (bg_pos, bg_size) = compute_layer_position_and_size(
             layer,
@@ -629,23 +877,50 @@ impl ElementCx<'_, '_> {
             bg_size.height,
         );
 
+        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
+        let bounding_box = self.frame.border_box.bounding_box();
+
+        let (gradient, gradient_transform) =
+            to_peniko_gradient(gradient, tile_rect, bounding_box, self.scale, current_color);
+        // pyro: a gradient of one colour is that colour (`linear-gradient(white, white)`): the
+        // ramp came out a level short of it in places. Repeating in both axes, its tiles cover
+        // the painting area: one fill, however small they are (`background-size: 0.2px`).
+        let solid = uniform_gradient_color(&gradient);
+        let repeats = |repeat: &BackgroundRepeatKeyword| {
+            matches!(
+                repeat,
+                BackgroundRepeatKeyword::Repeat | BackgroundRepeatKeyword::Round
+            )
+        };
+        if let Some(color) = solid
+            && repeats(repeat_x)
+            && repeats(repeat_y)
+            && bg_size.width > 0.0
+            && bg_size.height > 0.0
+        {
+            scene.fill(
+                peniko::Fill::NonZero,
+                base_transform,
+                color,
+                None,
+                &clip_rect,
+            );
+            return;
+        }
+
         // FIXME: https://wpt.live/css/css-backgrounds/background-size/background-size-near-zero-gradient.html
         if x.count as u64 * y.count as u64 > 500 {
             return;
         }
-
-        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
-        let bounding_box = self.frame.border_box.bounding_box();
-        let current_color = self.style.clone_color();
-
-        let (gradient, gradient_transform) = to_peniko_gradient(
-            gradient,
-            tile_rect,
-            bounding_box,
-            self.scale,
-            &current_color,
-        );
-        let brush = anyrender::Paint::Gradient(&gradient);
+        let brush = match &solid {
+            Some(color) => anyrender::Paint::Solid(*color),
+            None => anyrender::Paint::Gradient(&gradient),
+        };
+        let gradient_transform = if solid.is_some() {
+            None
+        } else {
+            gradient_transform
+        };
 
         let transform = base_transform.then_translate(Vec2 {
             x: x.translate,
@@ -875,48 +1150,64 @@ struct AxisTiling {
     stride: f64,
 }
 
-/// Per-axis placement and tiling for a raster image layer. `Repeat`/`Round`
-/// produce a single fill covering the whole positioning area (relying on the
-/// image brush repeating), while `Space` produces `count` explicit tiles
-/// spaced `stride` apart.
-///
-/// The fill rect is in image pixel coordinates (the drawing transform is
-/// pre-scaled by `ratio`), while translations are in device pixels.
-fn raster_axis_tiling(
+/// The tiles of a raster image layer along one axis: where the first starts, their length and
+/// the distance between their starts, in device px.
+struct AxisTiles {
+    start: f64,
+    len: f64,
+    stride: f64,
+    count: u32,
+}
+
+/// pyro: the tiles of a raster image layer along one axis that cover the painting area
+/// `area_start..area_end`, for a positioning area at `origin_start` (`origin_len` long), the image
+/// at `bg_pos` in it and `tile_len` long. `repeat` and `round` (already sized to fit) tile the
+/// whole painting area; `space` spaces the copies that fit in the positioning area so that the
+/// first and last touch its edges and repeats that pattern over the painting area, or places one
+/// copy at `bg_pos` when two do not fit; `no-repeat` places one copy.
+fn raster_axis_tiles(
     repeat: BackgroundRepeatKeyword,
     origin_start: f64,
     origin_len: f64,
+    area_start: f64,
+    area_end: f64,
     bg_pos: f64,
     tile_len: f64,
-    image_len: f64,
-    ratio: f64,
-) -> AxisTiling {
+) -> AxisTiles {
     use BackgroundRepeatKeyword::*;
 
-    match repeat {
-        Repeat | Round => {
-            let extend_len = extend(bg_pos, tile_len);
-            AxisTiling {
-                translate: origin_start - extend_len,
-                rect_len: (origin_len + extend_len) / ratio,
-                count: 1,
-                stride: 0.0,
-            }
+    let cover = |anchor: f64, stride: f64| {
+        let first = anchor + ((area_start - anchor) / stride).floor() * stride;
+        let count = ((area_end - first) / stride)
+            .ceil()
+            .clamp(0.0, u32::MAX as f64) as u32;
+        AxisTiles {
+            start: first,
+            len: tile_len,
+            stride,
+            count,
         }
+    };
+    match repeat {
+        Repeat | Round => cover(origin_start + bg_pos, tile_len),
         Space => {
             let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
-            AxisTiling {
-                translate: origin_start + if count == 1 { bg_pos } else { 0.0 },
-                rect_len: image_len,
-                count,
-                stride,
+            if count > 1 {
+                cover(origin_start, stride)
+            } else {
+                AxisTiles {
+                    start: origin_start + bg_pos,
+                    len: tile_len,
+                    stride: 0.0,
+                    count: 1,
+                }
             }
         }
-        NoRepeat => AxisTiling {
-            translate: origin_start + bg_pos,
-            rect_len: image_len,
-            count: 1,
+        NoRepeat => AxisTiles {
+            start: origin_start + bg_pos,
+            len: tile_len,
             stride: 0.0,
+            count: 1,
         },
     }
 }
@@ -958,11 +1249,24 @@ fn gradient_axis_tiling(
         }
         Space => {
             let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
-            AxisTiling {
-                translate: origin_start + if count == 1 { bg_pos } else { 0.0 },
-                rect_len: tile_len,
-                count,
-                stride,
+            if count > 1 {
+                // pyro: the spaced pattern repeats over the painting area (a `border-box` clip
+                // shows it in the border too), as a raster image's does.
+                let first = origin_start + ((clip_start - origin_start) / stride).floor() * stride;
+                let count = ((clip_start + clip_len - first) / stride).ceil().max(0.0) as u32;
+                AxisTiling {
+                    translate: first,
+                    rect_len: tile_len,
+                    count,
+                    stride,
+                }
+            } else {
+                AxisTiling {
+                    translate: origin_start + bg_pos,
+                    rect_len: tile_len,
+                    count,
+                    stride,
+                }
             }
         }
         NoRepeat => AxisTiling {
@@ -984,6 +1288,16 @@ fn compute_space_count_and_stride(bg_size: f64, size: f64) -> (u32, f64) {
     } + size;
 
     (count, stride)
+}
+
+/// pyro: the colour of a gradient whose stops all have one colour, which paints as that colour.
+pub(super) fn uniform_gradient_color(gradient: &peniko::Gradient) -> Option<Color> {
+    let first = gradient.stops.first()?;
+    gradient
+        .stops
+        .iter()
+        .all(|stop| stop.color == first.color)
+        .then(|| first.color.to_alpha_color::<peniko::color::Srgb>())
 }
 
 /// Whether drawing the layer is guaranteed to paint nothing, making its clip

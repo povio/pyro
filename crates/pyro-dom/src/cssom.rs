@@ -150,6 +150,50 @@ fn parse_namespace(prelude: &str) -> Option<(String, String)> {
     Some((prefix.map_or_else(String::new, |n| n.to_string()), url.to_string()))
 }
 
+/// CSS Syntax's decode of a style sheet's bytes: a byte order mark decides;
+/// else the protocol encoding (`protocol`, the `Content-Type` charset); else
+/// an `@charset "label";` the bytes start with (UTF-16 meaning UTF-8); else
+/// the environment encoding, the first of `environment` that names one (the
+/// referrer's: a `<link charset>`, then its document's encoding; for an
+/// imported sheet the importing one's); else UTF-8. Encodings are labels, and
+/// one that names none counts as absent. Returns the text, without the mark,
+/// and the name of the encoding it was decoded with (the environment of the
+/// sheets it imports).
+pub fn decode_stylesheet<'a>(
+    bytes: &'a [u8],
+    protocol: Option<&str>,
+    environment: &[&str],
+) -> (std::borrow::Cow<'a, str>, &'static str) {
+    struct EncodingRs;
+    impl cssparser::EncodingSupport for EncodingRs {
+        type Encoding = &'static encoding_rs::Encoding;
+        fn from_label(label: &[u8]) -> Option<Self::Encoding> {
+            encoding_rs::Encoding::for_label(label)
+        }
+        fn utf8() -> Self::Encoding {
+            encoding_rs::UTF_8
+        }
+        fn is_utf16_be_or_le(encoding: &Self::Encoding) -> bool {
+            *encoding == encoding_rs::UTF_16BE || *encoding == encoding_rs::UTF_16LE
+        }
+    }
+    let environment = environment.iter().find_map(|label| encoding_rs::Encoding::for_label(label.trim().as_bytes()));
+    let fallback = cssparser::stylesheet_encoding::<EncodingRs>(bytes, protocol.map(str::as_bytes), environment);
+    // Decoding sniffs the mark first.
+    let (text, used, _) = fallback.decode(bytes);
+    (text, used.name())
+}
+
+/// [`decode_stylesheet`] as bytes a style sheet parser decodes as they are:
+/// UTF-8 behind a byte order mark, which outranks every other source of the
+/// encoding (an `@charset` the text still starts with included).
+pub fn stylesheet_utf8_bytes(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(text.len() + 3);
+    bytes.extend_from_slice(b"\xEF\xBB\xBF");
+    bytes.extend_from_slice(text.as_bytes());
+    bytes
+}
+
 /// The URLs of the `@import` rules a style sheet starts with, as written
 /// (to resolve against the sheet's URL), in order: what a browser fetches
 /// for the sheet. As in CSS Cascade, an `@import` counts only before every
@@ -227,6 +271,47 @@ mod tests {
 
     fn style(selector: &str, block: &str) -> ParsedRule {
         ParsedRule::Style { selector: selector.into(), block: block.into() }
+    }
+
+    /// CSS Syntax's order (WPT css/CSS2/syntax/at-charset-*): byte order mark, protocol
+    /// encoding, `@charset`, environment encoding, UTF-8.
+    #[test]
+    fn style_sheets_decode_by_mark_protocol_charset_rule_and_environment() {
+        const SHIFT_JIS: &str = "Shift_JIS";
+        const UTF_8: &str = "UTF-8";
+        const WINDOWS_1252: &str = "windows-1252";
+        // `.平和` in Shift_JIS.
+        let sjis = b".\x95\xbd\x98\x61{}";
+        let with_rule = |label: &str, body: &[u8]| [format!("@charset \"{label}\";").as_bytes(), body].concat();
+        let decode = |bytes: &[u8], protocol, environment: Option<&str>| {
+            let (text, used) = decode_stylesheet(bytes, protocol, environment.as_slice());
+            (text.into_owned(), used)
+        };
+        // The protocol encoding wins over `@charset` and the environment.
+        let (text, used) = decode(&with_rule("windows-1252", sjis), Some("shift_jis"), Some(WINDOWS_1252));
+        assert_eq!((text.ends_with(".平和{}"), used), (true, SHIFT_JIS));
+        // `@charset` over the environment (a `<link charset>`).
+        let (text, used) = decode(&with_rule("shift-JIS", sjis), None, Some(WINDOWS_1252));
+        assert_eq!((text.ends_with(".平和{}"), used), (true, SHIFT_JIS));
+        // ISO-8859-1 is windows-1252: `.t\xE9st`.
+        let (text, _) = decode(&with_rule("iso-8859-1", b".t\xe9st{}"), Some(""), None);
+        assert!(text.ends_with(".tést{}"), "{text}");
+        // The environment, then UTF-8.
+        assert_eq!(decode(sjis, None, Some(SHIFT_JIS)), (".平和{}".into(), SHIFT_JIS));
+        assert_eq!(decode(".平和{}".as_bytes(), None, None), (".平和{}".into(), UTF_8));
+        // `@charset "UTF-16..."` means UTF-8; a UTF-16 environment decodes as UTF-16.
+        assert_eq!(decode(&with_rule("utf-16be", "a{}".as_bytes()), None, None).1, UTF_8);
+        let utf16: Vec<u8> = "b{}".encode_utf16().flat_map(u16::to_be_bytes).collect();
+        assert_eq!(decode(&utf16, None, Some("UTF-16BE")).0, "b{}");
+        // A label that names no encoding is no environment: the next one is.
+        assert_eq!(decode(".é{}".as_bytes(), None, Some("no-such-encoding")).1, UTF_8);
+        assert_eq!(decode_stylesheet(sjis, None, &["", "x-unknown", "shift-jis"]).1, SHIFT_JIS);
+        // A byte order mark outranks all of them, and goes.
+        let marked = [b"\xEF\xBB\xBF".as_slice(), &with_rule("shift-JIS", ".é{}".as_bytes())].concat();
+        let (text, used) = decode(&marked, Some("Shift_JIS"), Some(SHIFT_JIS));
+        assert_eq!((text.as_str(), used), ("@charset \"shift-JIS\";.é{}", UTF_8));
+        // As bytes for a parser that decodes them itself: UTF-8 behind a mark.
+        assert_eq!(stylesheet_utf8_bytes("é"), b"\xEF\xBB\xBF\xC3\xA9");
     }
 
     #[test]

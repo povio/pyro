@@ -83,6 +83,9 @@ crate (`diff -ruN`).
 - `stylist.rs`: `Stylist::has_container_queries` tells blitz-dom whether a restyle has container
   conditions to evaluate.
 - `values/generics/mod.rs`: `GreaterThanOrEqualToOne` derives `ToTyped` (for `orphans`/`widows`).
+- `values/specified/background.rs`: `background-attachment: local` is parsed and computed for servo too
+  (upstream: gecko only, so the declaration was dropped). blitz-paint positions and clips such a layer against a
+  scroll container's scrolled content.
 
 ## Moving from 0.22 to 0.23
 

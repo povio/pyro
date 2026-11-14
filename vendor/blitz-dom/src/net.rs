@@ -656,15 +656,26 @@ impl ImageHandler {
         {
             return Ok(Resource::Image(self.kind, w, h, data));
         }
-        let image_err = match image::ImageReader::new(Cursor::new(&bytes))
+        // pyro: `ImageReader::decode`, keeping the image's ICC profile.
+        let decoded = image::ImageReader::new(Cursor::new(&bytes))
             .with_guessed_format()
             .expect("IO errors impossible with Cursor")
-            .decode()
-        {
-            Ok(image) => {
+            .into_decoder()
+            .and_then(|mut decoder| {
+                image::Limits::default().reserve(image::ImageDecoder::total_bytes(&decoder))?;
+                let icc = image::ImageDecoder::icc_profile(&mut decoder).ok().flatten();
+                image::DynamicImage::from_decoder(decoder).map(|image| (image, icc))
+            });
+        let image_err = match decoded {
+            Ok((image, icc)) => {
                 let width = image.width();
                 let height = image.height();
-                let raw_rgba8_data = Arc::new(image.into_rgba8().into_raw());
+                let mut rgba = image.into_rgba8().into_raw();
+                // pyro: a tagged image's pixels in sRGB.
+                if let Some(icc) = icc {
+                    crate::icc::to_srgb(&icc, &mut rgba);
+                }
+                let raw_rgba8_data = Arc::new(rgba);
                 {
                     const MAX_IMAGES: usize = 64;
                     const MAX_BYTES: usize = 64 << 20;

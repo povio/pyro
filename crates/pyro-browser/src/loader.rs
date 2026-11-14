@@ -155,6 +155,21 @@ impl Resource {
     pub fn text(&self) -> String {
         pyro_net::decode_text(&self.body, self.charset.as_deref()).into_owned()
     }
+
+    /// The body as a renderer takes it: a style sheet (`text/css`) decoded as
+    /// CSS Syntax decodes one (byte order mark, the response's charset,
+    /// `@charset`, then `environment`, the importing sheet's or document's
+    /// encoding, which the renderer cannot know) and handed over as UTF-8
+    /// behind a byte order mark, which its parser takes over all of those;
+    /// any other body as it came.
+    pub fn render_body(self, environment: &[impl AsRef<str>]) -> Vec<u8> {
+        if !self.mime.eq_ignore_ascii_case("text/css") {
+            return self.body;
+        }
+        let environment: Vec<&str> = environment.iter().map(AsRef::as_ref).collect();
+        let (text, _) = pyro_dom::cssom::decode_stylesheet(&self.body, self.charset.as_deref(), &environment);
+        pyro_dom::cssom::stylesheet_utf8_bytes(&text)
+    }
 }
 
 /// Completion of a fetch, run as a task on the browser thread.
