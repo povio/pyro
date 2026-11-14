@@ -674,6 +674,37 @@ pub fn hyphen_digit_breaks() -> bool {
     HYPHEN_DIGIT_BREAKS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+static TEXT_ANTIALIASING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Sets the [`Renderer::text_antialiasing`] of every renderer made from now on,
+/// in this process (`serve --text-antialiasing off`). On by default.
+pub fn set_text_antialiasing(on: bool) {
+    TEXT_ANTIALIASING.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The default [`set_text_antialiasing`] set.
+pub fn text_antialiasing() -> bool {
+    TEXT_ANTIALIASING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Adds the font file at `path` (TTF/OTF/TTC) to the fonts of every page and
+/// inline SVG in this process, as if it were installed (`serve --font`; WPT's
+/// runner installs Ahem). Reads the file now and loads nothing else: call it
+/// at startup, before any font use (a fork template may be made afterwards).
+pub fn add_font_file(path: &std::path::Path) -> std::io::Result<()> {
+    let bytes = Arc::new(std::fs::read(path)?);
+    if skrifa::raw::FileRef::new(&bytes).is_err() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "not a TrueType or OpenType font"));
+    }
+    pyro_canvas::fonts::add_startup_font(Blob::new(bytes.clone() as _));
+    blitz_dom::util::add_svg_font(bytes);
+    Ok(())
+}
+
+/// The coverage (out of 255) from which a pixel of aliased text is painted: half
+/// of the pixel, as Skia paints a pixel whose centre the outline covers.
+const TEXT_ALIASING_THRESHOLD: u8 = 128;
+
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
     font_ctx: FontContext,
@@ -712,6 +743,12 @@ pub struct Renderer {
     /// Read when a document is created: a page's persistent document keeps the
     /// value it was built with. Defaults to [`hyphen_digit_breaks`].
     pub hyphen_digit_breaks: bool,
+    /// Glyphs rasterized antialiased (the default), or aliased: each pixel
+    /// painted fully or not at all, as Chromium draws text when WPT's runner
+    /// starts it without font antialiasing (`NoFontAntialiasing`), which the
+    /// WPT reftests are judged with. Other drawing is antialiased either way,
+    /// and PDFs are not rasterized. Defaults to [`text_antialiasing`].
+    pub text_antialiasing: bool,
 }
 
 impl Default for Renderer {
@@ -738,6 +775,7 @@ impl Renderer {
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
             hyphen_digit_breaks: hyphen_digit_breaks(),
+            text_antialiasing: text_antialiasing(),
         }
     }
 
@@ -1574,6 +1612,7 @@ impl Renderer {
                     if width as usize * height as usize >= THREADED_RASTER_PIXELS { raster_threads() } else { 0 };
                 let slot = if threads > 0 { &mut self.cpu_threaded } else { &mut self.cpu };
                 let r = ensure_cpu(slot, width, height, threads);
+                r.set_text_aliasing_threshold((!self.text_antialiasing).then_some(TEXT_ALIASING_THRESHOLD));
                 r.render(
                     |p| {
                         p.reset();

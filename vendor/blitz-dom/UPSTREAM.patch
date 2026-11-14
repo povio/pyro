@@ -1469,6 +1469,100 @@ new file mode 100644
 +        );
 +    }
 +}
+diff --git a/packages/blitz-dom/src/icc.rs b/packages/blitz-dom/src/icc.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/icc.rs
+@@ -0,0 +1,89 @@
++//! pyro: tagged images are drawn in their colour space (CSS Color 4, "Color spaces of tagged
++//! images"): a raster image's embedded ICC profile converts its pixels to sRGB when it is
++//! decoded, as Chromium does for an sRGB display. An untagged image is sRGB already.
++
++use std::collections::HashMap;
++use std::sync::{Arc, LazyLock, Mutex};
++
++use moxcms::{ColorProfile, DataColorSpace, Layout, TransformExecutor, TransformOptions};
++
++type Transform = Arc<dyn TransformExecutor<u8> + Send + Sync>;
++
++/// The transform to sRGB of each profile seen, by its bytes: `None` for a profile that is sRGB
++/// already (or not an RGB one moxcms reads), whose pixels stay as they are.
++static TRANSFORMS: LazyLock<Mutex<HashMap<Vec<u8>, Option<Transform>>>> =
++    LazyLock::new(Default::default);
++
++/// Converts `rgba` (RGBA8, unpremultiplied) from the colour space of the ICC profile `icc` to sRGB.
++pub(crate) fn to_srgb(icc: &[u8], rgba: &mut [u8]) {
++    const MAX_PROFILES: usize = 32;
++    let transform = {
++        let mut transforms = TRANSFORMS.lock().unwrap_or_else(|e| e.into_inner());
++        if let Some(transform) = transforms.get(icc) {
++            transform.clone()
++        } else {
++            if transforms.len() >= MAX_PROFILES {
++                transforms.clear();
++            }
++            let transform = transform_to_srgb(icc);
++            transforms.insert(icc.to_vec(), transform.clone());
++            transform
++        }
++    };
++    if let Some(transform) = transform {
++        let source = rgba.to_vec();
++        let _ = transform.transform(&source, rgba);
++    }
++}
++
++/// The transform from `icc`'s colour space to sRGB, `None` when there is nothing to convert:
++/// the profile is not an RGB one moxcms reads, or it maps every probe colour to itself within a
++/// level (an sRGB profile, which Skia also leaves alone), so that its images stay exact.
++fn transform_to_srgb(icc: &[u8]) -> Option<Transform> {
++    let profile = ColorProfile::new_from_slice(icc).ok()?;
++    if profile.color_space != DataColorSpace::Rgb {
++        return None;
++    }
++    let srgb = ColorProfile::new_srgb();
++    let transform = profile
++        .create_transform_8bit(Layout::Rgba, &srgb, Layout::Rgba, TransformOptions::default())
++        .ok()?;
++    // Ramps of each primary and of gray.
++    let probe: Vec<u8> = (0..=255u8)
++        .step_by(5)
++        .flat_map(|v| [[v, 0, 0, 255], [0, v, 0, 255], [0, 0, v, 255], [v, v, v, 255]])
++        .flatten()
++        .collect();
++    let mut mapped = vec![0; probe.len()];
++    transform.transform(&probe, &mut mapped).ok()?;
++    let identity = probe.iter().zip(&mapped).all(|(a, b)| a.abs_diff(*b) <= 1);
++    (!identity).then_some(transform)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// An sRGB profile changes nothing; one with red and green swapped swaps them.
++    #[test]
++    fn profiles_convert_to_srgb() {
++        let srgb = ColorProfile::new_srgb().encode().unwrap();
++        let mut pixels = vec![0x99, 0, 0, 255, 10, 200, 30, 128];
++        let original = pixels.clone();
++        to_srgb(&srgb, &mut pixels);
++        assert_eq!(pixels, original);
++
++        let mut swapped = ColorProfile::new_srgb();
++        std::mem::swap(&mut swapped.red_colorant, &mut swapped.green_colorant);
++        let swapped = swapped.encode().unwrap();
++        let mut pixels = vec![0x99, 0, 0, 255];
++        to_srgb(&swapped, &mut pixels);
++        assert!(pixels[0] <= 1 && pixels[1].abs_diff(0x99) <= 1 && pixels[2] <= 1, "{pixels:?}");
++        assert_eq!(pixels[3], 255, "alpha stays");
++
++        // Not a profile: the pixels stay.
++        let mut pixels = original.clone();
++        to_srgb(b"not a profile", &mut pixels);
++        assert_eq!(pixels, original);
++    }
++}
 diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
 --- a/packages/blitz-dom/src/iframe.rs
 +++ b/packages/blitz-dom/src/iframe.rs
@@ -1480,6 +1574,138 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
              // A sub-document is a separate devtools target with its own provider
              #[cfg(feature = "devtools")]
              devtools_provider: None,
+diff --git a/packages/blitz-dom/src/lang.rs b/packages/blitz-dom/src/lang.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/lang.rs
+@@ -0,0 +1,127 @@
++//! pyro: the language of an element, for `:lang()` (HTML, "The lang and xml:lang attributes"):
++//! the nearest inclusive ancestor's `xml:lang`, or `lang` on an HTML, SVG or MathML element, else
++//! the document's default language, which a `<meta http-equiv="content-language">` sets. A range
++//! matches by RFC 4647 extended filtering, ASCII case-insensitively, as in Chromium.
++
++use markup5ever::{LocalName, local_name, ns};
++
++use crate::node::Node;
++
++/// The `xml:lang`, else `lang`, attribute of `node` itself.
++pub(crate) fn own_lang(node: &Node) -> Option<&str> {
++    let elem = node.element_data()?;
++    let accepts_lang =
++        elem.name.ns == ns!(html) || elem.name.ns == ns!(svg) || elem.name.ns == ns!(mathml);
++    let mut lang = None;
++    for attr in elem.attrs() {
++        if attr.name.local == local_name!("lang") {
++            if attr.name.ns == ns!(xml) {
++                return Some(attr.value.as_str());
++            }
++            if attr.name.ns == ns!() && accepts_lang {
++                lang = lang.or(Some(attr.value.as_str()));
++            }
++        }
++    }
++    lang
++}
++
++/// The language of element `node` (`None`: unknown).
++pub(crate) fn language(node: &Node) -> Option<&str> {
++    let mut current = node;
++    loop {
++        if let Some(lang) = own_lang(current) {
++            return Some(lang);
++        }
++        match current.parent {
++            Some(parent) => current = current.with(parent),
++            // `current` is the document.
++            None => return default_language(current),
++        }
++    }
++}
++
++/// The pragma-set default language of `document`: the `content` of the last
++/// `<meta http-equiv="content-language">` of its `<head>`, up to the first space,
++/// unless it lists several (a comma).
++fn default_language(document: &Node) -> Option<&str> {
++    fn child<'a>(node: &'a Node, name: &LocalName) -> Option<&'a Node> {
++        node.children
++            .iter()
++            .map(|&id| node.with(id))
++            .find(|n| n.data.is_element_with_tag_name(name))
++    }
++    let head = child(child(document, &local_name!("html"))?, &local_name!("head"))?;
++    head.children.iter().rev().map(|&id| head.with(id)).find_map(|meta| {
++        let elem = meta.element_data().filter(|e| e.name.local == local_name!("meta"))?;
++        elem.attr(local_name!("http-equiv"))
++            .filter(|v| v.trim().eq_ignore_ascii_case("content-language"))?;
++        let content = elem.attr(local_name!("content")).filter(|c| !c.contains(','))?;
++        content.split_ascii_whitespace().next()
++    })
++}
++
++/// RFC 4647 §3.3.2 extended filtering of language tag `tag` by `range`, ASCII
++/// case-insensitively, with the implicit wildcard of Selectors 4 (`:lang(en)`
++/// matches `en-US`).
++pub(crate) fn range_matches(tag: &str, range: &str) -> bool {
++    if range.is_empty() || tag.is_empty() {
++        return false;
++    }
++    let mut tags = tag.split('-');
++    let mut ranges = range.split('-');
++    let (Some(t0), Some(r0)) = (tags.next(), ranges.next()) else { return false };
++    if r0 != "*" && !t0.eq_ignore_ascii_case(r0) {
++        return false;
++    }
++    for r in ranges {
++        if r == "*" {
++            continue;
++        }
++        loop {
++            let Some(t) = tags.next() else { return false };
++            if t.eq_ignore_ascii_case(r) {
++                break;
++            }
++            // A singleton ends the subtags a range may skip.
++            if t.len() == 1 {
++                return false;
++            }
++        }
++    }
++    true
++}
++
++#[cfg(test)]
++mod tests {
++    use super::range_matches;
++
++    #[test]
++    fn ranges_match_by_extended_filtering_ascii_case_insensitively() {
++        for (tag, range) in [
++            ("es", "es"),
++            ("es-MX", "es"),
++            ("ES", "es"),
++            ("en-GB-scouse", "en-GB"),
++            ("en-us", "en"),
++            ("En", "en"),
++            ("de-Latn-DE", "de-DE"),
++            ("de-DE", "*-DE"),
++        ] {
++            assert!(range_matches(tag, range), "{tag} {range}");
++        }
++        for (tag, range) in [
++            ("MX-es", "es"),
++            ("en-US", "en-GB"),
++            ("en", "en-GB"),
++            ("fi", "fİ"),
++            ("fi", "Fı"),
++            ("kl", "\u{212a}l"),
++            ("de-x-DE", "de-DE"),
++            ("", "en"),
++            ("en", ""),
++        ] {
++            assert!(!range_matches(tag, range), "{tag} {range}");
++        }
++    }
++}
 diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src/layout/construct.rs
 --- a/packages/blitz-dom/src/layout/construct.rs
 +++ b/packages/blitz-dom/src/layout/construct.rs
@@ -9024,7 +9250,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 --- a/packages/blitz-dom/src/lib.rs
 +++ b/packages/blitz-dom/src/lib.rs
-@@ -46,14 +46,18 @@
+@@ -46,19 +46,30 @@
  mod events;
  mod font_metrics;
  mod form;
@@ -9043,7 +9269,19 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  /// Computation of resolved CSS property values (`getComputedStyle()`)
  mod resolved_style;
  /// Scrolling of nodes and the viewport, and scroll animations.
-@@ -95,6 +99,7 @@
+ mod scrolling;
+ mod selection;
++/// pyro: the colour space of tagged images.
++mod icc;
++/// pyro: the language of an element, for `:lang()`.
++mod lang;
++/// pyro: SVG reference cycles usvg does not break.
++#[cfg(feature = "svg")]
++mod svg_refs;
+ /// Implementations that interact with servo's style engine
+ mod stylo;
+ mod stylo_device;
+@@ -95,6 +106,7 @@
  // `Node::final_layout`)
  pub use config::{DocumentConfig, StyleThreading};
  pub use document::{
@@ -10119,7 +10357,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -599,8 +630,32 @@
+@@ -599,23 +630,73 @@
      }
  }
  
@@ -10140,6 +10378,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +
  impl ImageHandler {
      fn parse(&self, bytes: Bytes) -> Result<Resource, String> {
+-        let image_err = match image::ImageReader::new(Cursor::new(&bytes))
 +        let key = decoded_key(&bytes);
 +        if let Some((_, w, h, data)) = DECODED
 +            .lock()
@@ -10149,11 +10388,21 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +        {
 +            return Ok(Resource::Image(self.kind, w, h, data));
 +        }
-         let image_err = match image::ImageReader::new(Cursor::new(&bytes))
++        // pyro: `ImageReader::decode`, keeping the image's ICC profile.
++        let decoded = image::ImageReader::new(Cursor::new(&bytes))
              .with_guessed_format()
              .expect("IO errors impossible with Cursor")
-@@ -609,13 +664,28 @@
-             Ok(image) => {
+-            .decode()
+-        {
+-            Ok(image) => {
++            .into_decoder()
++            .and_then(|mut decoder| {
++                image::Limits::default().reserve(image::ImageDecoder::total_bytes(&decoder))?;
++                let icc = image::ImageDecoder::icc_profile(&mut decoder).ok().flatten();
++                image::DynamicImage::from_decoder(decoder).map(|image| (image, icc))
++            });
++        let image_err = match decoded {
++            Ok((image, icc)) => {
                  let width = image.width();
                  let height = image.height();
 -                let raw_rgba8_data = image.into_rgba8().into_raw();
@@ -10163,7 +10412,12 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 -                    height,
 -                    Arc::new(raw_rgba8_data),
 -                ));
-+                let raw_rgba8_data = Arc::new(image.into_rgba8().into_raw());
++                let mut rgba = image.into_rgba8().into_raw();
++                // pyro: a tagged image's pixels in sRGB.
++                if let Some(icc) = icc {
++                    crate::icc::to_srgb(&icc, &mut rgba);
++                }
++                let raw_rgba8_data = Arc::new(rgba);
 +                {
 +                    const MAX_IMAGES: usize = 64;
 +                    const MAX_BYTES: usize = 64 << 20;
@@ -10188,7 +10442,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -649,6 +719,62 @@
+@@ -649,6 +730,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -13282,10 +13536,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        pseudo: &style::selector_parser::PseudoElement,
 +        generated_only: bool,
 +    ) -> Option<Arc<ComputedValues>> {
-         let node = self.nodes.get(node_id)?;
-         if !node.is_element() || !node.flags.is_in_document() {
-             return None;
-         }
++        let node = self.nodes.get(node_id)?;
++        if !node.is_element() || !node.flags.is_in_document() {
++            return None;
++        }
 +        let stored = node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| {
 +            let primary = d.styles.get_primary()?.clone();
 +            let eager = if pseudo.is_eager() { d.styles.pseudos.get(pseudo).cloned() } else { None };
@@ -13388,16 +13642,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            .build(),
 +        )
 +    }
- 
--        style::thread_state::enter(ThreadState::LAYOUT);
++
 +    /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
 +    /// cascaded pseudo-elements included.
 +    fn resolve_undisplayed_styles(&self, node_id: NodeId) -> Option<style::data::ElementStyles> {
-+        let node = self.nodes.get(node_id)?;
-+        if !node.is_element() || !node.flags.is_in_document() {
-+            return None;
-+        }
-+
+         let node = self.nodes.get(node_id)?;
+         if !node.is_element() || !node.flags.is_in_document() {
+             return None;
+         }
+ 
+-        style::thread_state::enter(ThreadState::LAYOUT);
 +        let _layout_thread_scope = LayoutThreadScope::enter();
  
          let guard = &self.guard;
@@ -13434,11 +13688,12 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              NonTSPseudoClass::Fullscreen => false,
              NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
 -            NonTSPseudoClass::Indeterminate => false,
+-            NonTSPseudoClass::Lang(_) => false,
+-            NonTSPseudoClass::CustomState(_) => false,
 +            NonTSPseudoClass::Indeterminate => {
 +                self.element_state().contains(ElementState::INDETERMINATE)
 +            }
-             NonTSPseudoClass::Lang(_) => false,
--            NonTSPseudoClass::CustomState(_) => false,
++            NonTSPseudoClass::Lang(ref lang) => self.match_element_lang(None, lang),
 +            NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
              NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
 -            NonTSPseudoClass::PlaceholderShown => false,
@@ -13502,7 +13757,33 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -917,27 +1123,168 @@
+@@ -889,15 +1095,21 @@
+     }
+ 
+     fn lang_attr(&self) -> Option<style::selector_parser::AttrValue> {
+-        None
++        // pyro
++        crate::lang::own_lang(self).map(AtomString::from)
+     }
+ 
+     fn match_element_lang(
+         &self,
+-        _override_lang: Option<Option<style::selector_parser::AttrValue>>,
+-        _value: &style::selector_parser::Lang,
++        override_lang: Option<Option<style::selector_parser::AttrValue>>,
++        value: &style::selector_parser::Lang,
+     ) -> bool {
+-        false
++        // pyro: the element's language (`crate::lang`), or the attribute a snapshot had.
++        match override_lang {
++            Some(Some(lang)) => crate::lang::range_matches(lang.as_ref(), value),
++            Some(None) => false,
++            None => crate::lang::language(self).is_some_and(|lang| crate::lang::range_matches(lang, value)),
++        }
+     }
+ 
+     fn is_html_document_body_element(&self) -> bool {
+@@ -917,27 +1129,168 @@
          root_element.children.contains(&self.id)
      }
  
@@ -13541,7 +13822,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            }
 +        }
 +    }
-+
+ 
 +    fn local_name(&self) -> &LocalName {
 +        &self.element_data().expect("Not an element").name.local
 +    }
@@ -13583,7 +13864,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
 +        self.selector_flags().get().contains(flags)
 +    }
- 
++
 +    fn relative_selector_search_direction(&self) -> ElementSelectorFlags {
 +        let flags = self.selector_flags().get();
 +        if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING)
@@ -13681,7 +13962,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              ));
          };
  
-@@ -1373,148 +1720,59 @@
+@@ -1373,148 +1726,59 @@
              }
          }
  
@@ -13869,7 +14150,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +1785,16 @@
+@@ -1527,6 +1791,16 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -13886,7 +14167,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +1802,175 @@
+@@ -1534,11 +1808,175 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -14062,7 +14343,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,16 +1978,108 @@
+@@ -1546,16 +1984,108 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -14171,7 +14452,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if !data.damage.is_empty() {
                  // Mark the ancestor chain so that the damage propagation pass
                  // visits this element.
-@@ -1597,6 +2121,12 @@
+@@ -1597,6 +2127,12 @@
      }
  }
  
@@ -14184,7 +14465,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2199,41 @@
+@@ -1669,12 +2205,41 @@
                      .push(pe_node_id);
              }
          }
@@ -14226,7 +14507,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1737,3 +2296,688 @@
+@@ -1737,3 +2302,688 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -14939,6 +15220,214 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
          MediaData {
              media_type,
              viewport_size,
+diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/stylo_to_kurbo.rs
+--- a/packages/blitz-dom/src/stylo_to_kurbo.rs
++++ b/packages/blitz-dom/src/stylo_to_kurbo.rs
+@@ -119,6 +119,14 @@
+         resolved *= transform;
+     }
+ 
++    // pyro: coefficients a hair from whole numbers are whole, as Chromium's rotations by multiples
++    // of 90 degrees are exact (`SinCosDegrees`): `rotate(360deg)` is the identity, so its text is
++    // placed and snapped as untransformed text is (WPT css-transforms/transform-input-*).
++    resolved = Affine::new(resolved.as_coeffs().map(|v| {
++        let whole = v.round();
++        if (v - whole).abs() < 1e-9 { whole } else { v }
++    }));
++
+     resolved = origin_translation * resolved * origin_translation.inverse();
+ 
+     if resolved != Affine::IDENTITY {
+diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_refs.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/svg_refs.rs
+@@ -0,0 +1,185 @@
++//! pyro: SVG sources whose clip path, mask or filter references form a cycle longer than usvg
++//! breaks. usvg sets a reference that closes a cycle of one or two elements to `none`
++//! (`fix_recursive_links`), but follows a longer one without end and overflows the stack
++//! (WPT css/css-masking/clip-path-svg-content/clip-path-recursion-001.svg: clip0, clip, clip2),
++//! which ended the browser. The source is rewritten first as usvg would treat it: every
++//! reference that closes a cycle becomes `none`.
++
++use std::borrow::Cow;
++use std::collections::HashMap;
++use std::ops::Range;
++
++use usvg::roxmltree;
++
++const SVG_NS: &str = "http://www.w3.org/2000/svg";
++
++/// `source` with the references that close a cycle among clip paths, masks or filters set to
++/// `none`; borrowed when there is none (or it is not XML usvg would read).
++pub(crate) fn break_reference_cycles(source: &[u8]) -> Cow<'_, [u8]> {
++    let Ok(text) = std::str::from_utf8(source) else { return Cow::Borrowed(source) };
++    if !text.contains("url(") || !["clip-path", "mask", "filter"].iter().any(|p| text.contains(p)) {
++        return Cow::Borrowed(source);
++    }
++    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
++    let Ok(doc) = roxmltree::Document::parse_with_options(text, options) else {
++        return Cow::Borrowed(source);
++    };
++    let mut cuts = Vec::new();
++    for (tag, property) in [("clipPath", "clip-path"), ("mask", "mask"), ("filter", "filter")] {
++        cuts.extend(cycle_closing_references(&doc, tag, property));
++    }
++    if cuts.is_empty() {
++        return Cow::Borrowed(source);
++    }
++    cuts.sort_by_key(|range| range.start);
++    cuts.dedup();
++    let mut out = String::with_capacity(text.len());
++    let mut at = 0;
++    for cut in cuts {
++        if cut.start < at {
++            continue;
++        }
++        out.push_str(&text[at..cut.start]);
++        out.push_str("none");
++        at = cut.end;
++    }
++    out.push_str(&text[at..]);
++    Cow::Owned(out.into_bytes())
++}
++
++/// The source ranges of the `property` references (attribute values, or values in a `style`
++/// attribute) that close a cycle among the `tag` elements: a depth-first search from each,
++/// whose back edges they are. Without them the references form no cycle.
++fn cycle_closing_references(
++    doc: &roxmltree::Document<'_>,
++    tag: &str,
++    property: &str,
++) -> Vec<Range<usize>> {
++    let elements: Vec<roxmltree::Node<'_, '_>> = doc
++        .descendants()
++        .filter(|n| {
++            // As usvg reads them: in the SVG namespace or none (blitz serializes an inline
++            // `<svg>` without `xmlns`).
++            n.is_element()
++                && n.tag_name().name() == tag
++                && matches!(n.tag_name().namespace(), None | Some(SVG_NS))
++        })
++        .collect();
++    if elements.is_empty() {
++        return Vec::new();
++    }
++    let index: HashMap<&str, usize> =
++        elements.iter().enumerate().filter_map(|(i, n)| Some((n.attribute("id")?, i))).collect();
++    // The references each element's content (itself included) makes: (target, source range).
++    let edges: Vec<Vec<(usize, Range<usize>)>> = elements
++        .iter()
++        .map(|element| {
++            element
++                .descendants()
++                .filter(|n| n.is_element())
++                .flat_map(|n| references(n, property))
++                .filter_map(|(id, range)| Some((*index.get(id)?, range)))
++                .collect()
++        })
++        .collect();
++    // 0: unvisited, 1: on the search's path, 2: done.
++    let mut state = vec![0u8; elements.len()];
++    let mut cuts = Vec::new();
++    for start in 0..elements.len() {
++        if state[start] != 0 {
++            continue;
++        }
++        // (element, next edge to follow)
++        let mut stack = vec![(start, 0)];
++        state[start] = 1;
++        while let Some((node, next)) = stack.pop() {
++            let Some((target, range)) = edges[node].get(next) else {
++                state[node] = 2;
++                continue;
++            };
++            stack.push((node, next + 1));
++            match state[*target] {
++                0 => {
++                    state[*target] = 1;
++                    stack.push((*target, 0));
++                }
++                1 => cuts.push(range.clone()),
++                _ => {}
++            }
++        }
++    }
++    cuts
++}
++
++/// The `url(#id)` references `node` makes with `property`, as an attribute or a declaration of
++/// its `style` attribute: the id and the source range of the value.
++fn references<'a>(node: roxmltree::Node<'a, '_>, property: &str) -> Vec<(&'a str, Range<usize>)> {
++    let mut found = Vec::new();
++    for attr in node.attributes() {
++        if attr.namespace().is_some() {
++            continue;
++        }
++        if attr.name() == property {
++            let range = attr.range_value();
++            let raw = &node.document().input_text()[range.clone()];
++            if let Some(id) = url_id(raw) {
++                found.push((id, range));
++            }
++        } else if attr.name() == "style" {
++            let range = attr.range_value();
++            let raw = &node.document().input_text()[range.clone()];
++            let mut offset = range.start;
++            for declaration in raw.split_inclusive(';') {
++                let body = declaration.trim_end_matches(';');
++                if let Some((name, value)) = body.split_once(':') {
++                    if name.trim() == property {
++                        if let Some(id) = url_id(value) {
++                            let start = offset + name.len() + 1;
++                            found.push((id, start..start + value.len()));
++                        }
++                    }
++                }
++                offset += declaration.len();
++            }
++        }
++    }
++    found
++}
++
++/// The id of a `url(#id)` value (quoted or not).
++fn url_id(value: &str) -> Option<&str> {
++    let inner = value.trim().strip_prefix("url(")?.strip_suffix(')')?.trim();
++    let inner = inner.trim_matches(|c| c == '"' || c == '\'');
++    inner.strip_prefix('#').filter(|id| !id.is_empty())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::break_reference_cycles;
++
++    fn broken(svg: &str) -> String {
++        String::from_utf8(break_reference_cycles(svg.as_bytes()).into_owned()).unwrap()
++    }
++
++    #[test]
++    fn a_cycle_of_three_clip_paths_loses_the_reference_that_closes_it() {
++        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg">
++<clipPath id="a"><rect clip-path="url(#b)"/></clipPath>
++<clipPath id="b"><rect style="fill:red; clip-path: url('#c')"/></clipPath>
++<clipPath id="c"><rect clip-path="url(#a)"/></clipPath>
++<rect clip-path="url(#a)"/></svg>"#;
++        let out = broken(svg);
++        assert_eq!(out.matches("none").count(), 1, "{out}");
++        assert!(out.contains(r#"<clipPath id="c"><rect clip-path="none"/>"#), "{out}");
++        assert!(out.ends_with(r#"<rect clip-path="url(#a)"/></svg>"#));
++        usvg::Tree::from_str(&out, &usvg::Options::default()).unwrap();
++    }
++
++    #[test]
++    fn sources_without_a_cycle_are_kept() {
++        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><clipPath id="a"><rect/></clipPath>
++<mask id="m"><rect clip-path="url(#a)"/></mask><rect mask="url(#m)" clip-path="url(#a)"/></svg>"#;
++        assert!(matches!(break_reference_cycles(svg.as_bytes()), std::borrow::Cow::Borrowed(_)));
++        assert!(matches!(break_reference_cycles(b"not xml url("), std::borrow::Cow::Borrowed(_)));
++    }
++}
 diff --git a/packages/blitz-dom/src/traversal.rs b/packages/blitz-dom/src/traversal.rs
 --- a/packages/blitz-dom/src/traversal.rs
 +++ b/packages/blitz-dom/src/traversal.rs
@@ -15042,7 +15531,32 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  /// Decode raw font bytes, decompressing WOFF/WOFF2 if the `woff` feature is enabled.
  /// Returns the original slice unchanged for TTF/OTF input, and also on decompression
  /// failure. With the `woff` feature disabled, all input passes through unchanged.
-@@ -156,11 +176,31 @@
+@@ -47,9 +67,24 @@
+ pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
+     let mut db = fontdb::Database::new();
+     db.load_system_fonts();
++    // pyro: and the fonts `add_svg_font` gave.
++    for font in SVG_FONTS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
++        db.load_font_source(fontdb::Source::Binary(font.clone()));
++    }
+     Arc::new(db)
+ });
+ 
++/// pyro: fonts added to usvg's font database when it is made.
++#[cfg(feature = "svg")]
++static SVG_FONTS: std::sync::Mutex<Vec<Arc<dyn AsRef<[u8]> + Send + Sync>>> = std::sync::Mutex::new(Vec::new());
++
++/// pyro: adds `font` (TTF/OTF/TTC bytes) to the fonts SVG text is drawn with, beside the system
++/// fonts, as if it were installed. Call before the first SVG is parsed: the database is made then.
++#[cfg(feature = "svg")]
++pub fn add_svg_font(font: Arc<dyn AsRef<[u8]> + Send + Sync>) {
++    SVG_FONTS.lock().unwrap_or_else(|e| e.into_inner()).push(font);
++}
++
+ /// Which kind of CSS image layer list (`background-image` or `mask-image`) to
+ /// flush from style to dedicated storage on the node.
+ #[derive(Clone, Copy, Debug)]
+@@ -156,11 +191,33 @@
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
  pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
@@ -15063,7 +15577,9 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
          ..Default::default()
      };
 -    crate::node::SvgImageData::from_data(source, &options)
-+    let svg = crate::node::SvgImageData::from_data(source, &options)?;
++    // pyro: a reference cycle usvg would follow without end (`crate::svg_refs`).
++    let checked = crate::svg_refs::break_reference_cycles(source);
++    let svg = crate::node::SvgImageData::from_data(&checked, &options)?;
 +    PARSED.with(|p| {
 +        let mut p = p.borrow_mut();
 +        if p.len() >= MAX_ENTRIES {
@@ -15075,7 +15591,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +294,82 @@
+@@ -254,3 +311,82 @@
          }
      };
  }

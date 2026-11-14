@@ -126,6 +126,14 @@ pub fn resolve_2d_transform(
         resolved *= transform;
     }
 
+    // pyro: coefficients a hair from whole numbers are whole, as Chromium's rotations by multiples
+    // of 90 degrees are exact (`SinCosDegrees`): `rotate(360deg)` is the identity, so its text is
+    // placed and snapped as untransformed text is (WPT css-transforms/transform-input-*).
+    resolved = Affine::new(resolved.as_coeffs().map(|v| {
+        let whole = v.round();
+        if (v - whole).abs() < 1e-9 { whole } else { v }
+    }));
+
     resolved = origin_translation * resolved * origin_translation.inverse();
 
     if resolved != Affine::IDENTITY {

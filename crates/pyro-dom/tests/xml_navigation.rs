@@ -1,5 +1,5 @@
 //! The tree builder of a navigated XML document (`DocumentParser::new_xml`):
-//! it stops at the end tag of each XHTML `<script>` until that script has run
+//! it stops at the end tag of each XHTML or SVG `<script>` until that script has run
 //! (HTML "parsing XML documents"), so what follows a script is not in the
 //! document, loads nothing and fires nothing before the script has run.
 
@@ -137,6 +137,26 @@ fn the_part_before_the_first_script_gets_its_insertion_steps_at_that_script() {
     }
     assert!(!dom.has_pending_inline_handlers(), "it has no handler, and those above are not queued twice");
     assert_eq!(images(&mut dom), 0);
+}
+
+/// An SVG `<script>` stops the parser as an XHTML one does (an SVG document's scripts run, as
+/// the HTML parser runs those of inline SVG; WPT css/css-masking/clip-path-svg-content/
+/// clip-path-dom-*.svg change the document from one); other elements named `script` do not.
+#[test]
+fn svg_scripts_stop_the_parser_too() {
+    let source = "<svg xmlns='http://www.w3.org/2000/svg' xmlns:x='urn:x'><rect id='r'/>\
+                  <x:script id='other'>0</x:script><script id='s'>1</script><circle id='c'/></svg>";
+    let (dom, doc, mut parser, step) = load(source);
+    let svg_script = script(step);
+    {
+        let dom = dom.borrow();
+        assert_eq!(svg_script, by_id(&dom, doc, "s"));
+        assert_eq!(local_names(&dom, dom.document_element(doc).unwrap().unwrap()), ["rect", "script", "script"]);
+    }
+    assert_eq!(parser.resume(), ParseStep::NeedInput);
+    parser.end();
+    let dom = dom.borrow();
+    assert_eq!(local_names(&dom, dom.document_element(doc).unwrap().unwrap()), ["rect", "script", "script", "circle"]);
 }
 
 #[test]
