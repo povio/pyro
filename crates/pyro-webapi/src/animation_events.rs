@@ -198,7 +198,9 @@ impl State {
     pub(crate) fn animations(&self) -> std::cell::Ref<'_, Vec<Timeline>> {
         self.animations.borrow()
     }
-    pub(crate) fn try_timelines(&self) -> Option<(std::cell::Ref<'_, Vec<Timeline>>, std::cell::Ref<'_, Vec<Timeline>>)> {
+    pub(crate) fn try_timelines(
+        &self,
+    ) -> Option<(std::cell::Ref<'_, Vec<Timeline>>, std::cell::Ref<'_, Vec<Timeline>>)> {
         Some((self.animations.try_borrow().ok()?, self.transitions.try_borrow().ok()?))
     }
     fn next_id(&self) -> u64 {
@@ -332,7 +334,8 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         let mut animations = state.animations.borrow_mut();
         let before = animations.len();
         animations.retain(|known| {
-            let keep = wanted.iter().any(|(el, a)| *el == known.el && known.timing.as_ref().is_some_and(|t| t.same_run(a)));
+            let keep =
+                wanted.iter().any(|(el, a)| *el == known.el && known.timing.as_ref().is_some_and(|t| t.same_run(a)));
             if !keep {
                 known.live.set(false);
                 if !known.ended.get() && dom.is_alive(known.el) && dom.is_connected(known.el).unwrap_or(false) {
@@ -444,9 +447,8 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         if let Ok(mut scripted) = state.scripted.try_borrow_mut() {
             let animations = state.animations.borrow();
             scripted.retain(|_, s| {
-                s.css_id().is_none_or(|id| {
-                    animations.iter().chain(transitions.iter()).any(|t| t.id == id && t.live.get())
-                })
+                s.css_id()
+                    .is_none_or(|id| animations.iter().chain(transitions.iter()).any(|t| t.id == id && t.live.get()))
             });
         }
         if !transitions.is_empty() {

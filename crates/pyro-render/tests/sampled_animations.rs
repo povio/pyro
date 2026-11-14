@@ -161,7 +161,8 @@ fn text_keyframes_with_effect_easing_and_the_transitions_level() {
     let stepped = Effect { easing: Some(Arc::from("steps(1, start)")), ..fade.clone() };
     let img = render(&mut r, &snap, frame(key, vec![], vec![stepped]));
     assert_near(pixel(&img, 50, 50), [200, 0, 0], "effect easing");
-    let transition = text(&[(0.0, "background-color: rgb(0, 0, 0)"), (1.0, "background-color: rgb(200, 200, 200)")], 0.5, None);
+    let transition =
+        text(&[(0.0, "background-color: rgb(0, 0, 0)"), (1.0, "background-color: rgb(200, 200, 200)")], 0.5, None);
     let img = render(&mut r, &snap, frame(key, vec![transition], vec![fade]));
     assert_near(pixel(&img, 50, 50), [100, 100, 100], "transition over animation");
 }

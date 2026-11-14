@@ -178,10 +178,18 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
     let num = |i: u32| -> JsResult<f64> { at(i)?.to_number() };
     let opt = |i: u32| -> JsResult<Option<f64>> {
         let v = at(i)?;
-        if v.is_nullish() { Ok(None) } else { v.to_number().map(Some) }
+        if v.is_nullish() {
+            Ok(None)
+        } else {
+            v.to_number().map(Some)
+        }
     };
     let text = |v: Value<'_>| -> JsResult<Option<String>> {
-        if v.is_nullish() { Ok(None) } else { v.to_string().map(Some) }
+        if v.is_nullish() {
+            Ok(None)
+        } else {
+            v.to_string().map(Some)
+        }
     };
     let el = crate::node::opt_node_arg(s, at(0)?, "report")?;
     let css = num(1)?;

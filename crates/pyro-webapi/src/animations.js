@@ -1289,8 +1289,8 @@
     a.cssId = id;
     // As the engine's timeline: started then, or held by
     // `animation-play-state: paused`. One the style started this frame
-    // waits for the frame to start it (play-pending, its time held where
-    // it is), as a CSS animation or transition that starts does: listed by
+    // waits for the frame to start it (play-pending, its time held at 0),
+    // as a CSS animation or transition that starts does: listed by
     // getAnimations() however short it is, `ready` once it runs.
     const age = now() - start;
     if (held !== null) {
@@ -1298,7 +1298,7 @@
       a.holdTime = held;
     } else if (age < FRAME_MS) {
       a.startTime = null;
-      a.holdTime = Math.max(age, 0);
+      a.holdTime = 0;
       a.ready = deferred();
       schedulePending(a, 'play');
     } else {

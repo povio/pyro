@@ -1022,7 +1022,6 @@ fn review_misc2_fragment_navigation_reveals_until_found_with_beforematch() {
     assert_eq!(quiet(&mut t, &root, 150), format!("beforematch:p {MISC2_RAN}"));
 }
 
-
 /// Animated values are in the cascade: computed styles read a CSS
 /// animation (paused, a negative delay putting it halfway) and a script
 /// animation where they are, and the base value once they are gone.
@@ -1052,7 +1051,13 @@ fn computed_styles_read_css_and_script_animations() {
         ),
         "0.5,0.3"
     );
-    assert_eq!(eval(&root, "anim.cancel(); a.className = ''; [getComputedStyle(a).opacity, getComputedStyle(b).opacity].join()"), "1,1");
+    assert_eq!(
+        eval(
+            &root,
+            "anim.cancel(); a.className = ''; [getComputedStyle(a).opacity, getComputedStyle(b).opacity].join()"
+        ),
+        "1,1"
+    );
 }
 
 /// A transition whose element was never read before its style changed is
@@ -1107,4 +1112,22 @@ fn css_animation_objects_follow_play_state_and_script_control() {
         "paused,0,both,125px"
     );
     assert_eq!(eval(&root, "anim.currentTime = 500; getComputedStyle(box).width"), "175px");
+}
+
+/// A style read after a seek restyles without laying out: the box read after
+/// it still lays out with the new values.
+#[test]
+fn a_box_read_after_a_style_read_sees_a_seek() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "globalThis.box = document.body.appendChild(document.createElement('div'));
+         box.style.cssText = 'width: 100px; height: 20px';
+         globalThis.anim = box.animate([{ width: '100px', opacity: 0 }, { width: '300px', opacity: 1 }], 1000);
+         anim.pause(); anim.currentTime = 500; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    let read = "[getComputedStyle(box).opacity, box.getBoundingClientRect().width].join()";
+    assert_eq!(eval(&root, read), "0.5,200");
+    assert_eq!(eval(&root, &format!("anim.currentTime = 250; {read}")), "0.25,150");
 }

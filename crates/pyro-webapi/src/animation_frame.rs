@@ -28,7 +28,9 @@
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use pyro_dom::animation::{AnimationFrame, Composite, Effect, ElementAnimations, Keyframes, TextKeyframe, TextKeyframes};
+use pyro_dom::animation::{
+    AnimationFrame, Composite, Effect, ElementAnimations, Keyframes, TextKeyframe, TextKeyframes,
+};
 use pyro_dom::NodeId;
 use rustc_hash::FxHashMap;
 
@@ -128,7 +130,11 @@ pub(crate) fn progress(timing: &Timing, local: f64, rate: f64) -> Option<Progres
         }
     };
     let overall = if duration == 0.0 {
-        if phase_before { timing.iteration_start } else { timing.iteration_start + timing.iterations }
+        if phase_before {
+            timing.iteration_start
+        } else {
+            timing.iteration_start + timing.iterations
+        }
     } else {
         active_time / duration + timing.iteration_start
     };
@@ -261,7 +267,15 @@ impl ReportedState {
         duration: f64,
         direction: &str,
     ) -> Timing {
-        Timing { delay, end_delay, fill: Fill::parse(fill), iteration_start, iterations, duration, direction: Direction::parse(direction) }
+        Timing {
+            delay,
+            end_delay,
+            fill: Fill::parse(fill),
+            iteration_start,
+            iterations,
+            duration,
+            direction: Direction::parse(direction),
+        }
     }
 }
 
@@ -343,7 +357,11 @@ impl Builder {
             self.elements.len() - 1
         });
         let e = &mut self.elements[i].1;
-        if transition { e.transitions.push(effect) } else { e.animations.push(effect) }
+        if transition {
+            e.transitions.push(effect)
+        } else {
+            e.animations.push(effect)
+        }
     }
 }
 
@@ -396,8 +414,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
     let state = &page.animation_events;
     let Ok(scripted) = state.scripted.try_borrow() else { return false };
     let Some((animations, transition_list)) = state.try_timelines() else { return false };
-    let overrides: FxHashMap<u64, &Scripted> =
-        scripted.values().filter_map(|s| Some((s.css?, s))).collect();
+    let overrides: FxHashMap<u64, &Scripted> = scripted.values().filter_map(|s| Some((s.css?, s))).collect();
     let mut moving = false;
     // Transitions, in the order they started (none when settled: finished).
     for t in transition_list.iter().filter(|t| t.is_live() && !settled) {
@@ -508,10 +525,8 @@ pub(crate) fn animates(
     el: NodeId,
     longhand: &str,
 ) -> bool {
-    let css = state
-        .animations()
-        .iter()
-        .any(|t| t.is_live() && t.el() == el && rules.keyframes_declare(t.name(), longhand));
+    let css =
+        state.animations().iter().any(|t| t.is_live() && t.el() == el && rules.keyframes_declare(t.name(), longhand));
     if css {
         return true;
     }
@@ -519,9 +534,10 @@ pub(crate) fn animates(
     scripted.values().any(|s| {
         s.css.is_none()
             && s.el == Some(el)
-            && s.keyframes.frames.iter().any(|f| {
-                f.declarations.split(';').any(|d| d.split(':').next().is_some_and(|p| p.trim() == longhand))
-            })
+            && s.keyframes
+                .frames
+                .iter()
+                .any(|f| f.declarations.split(';').any(|d| d.split(':').next().is_some_and(|p| p.trim() == longhand)))
     })
 }
 

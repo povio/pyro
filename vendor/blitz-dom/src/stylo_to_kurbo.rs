@@ -26,7 +26,13 @@ use style::{
 /// `<clipPath>` and its shapes): a zero reference box at the origin.
 pub fn resolve_2d_transform_without_box(box_styles: &BoxStyleStruct) -> Option<Affine> {
     let zero = CSSPixelLength::new(0.0);
-    resolve_2d_transform(box_styles, Rect::new(euclid::default::Point2D::new(zero, zero), euclid::default::Size2D::new(zero, zero)))
+    resolve_2d_transform(
+        box_styles,
+        Rect::new(
+            euclid::default::Point2D::new(zero, zero),
+            euclid::default::Size2D::new(zero, zero),
+        ),
+    )
 }
 
 pub fn resolve_2d_transform(

@@ -7843,7 +7843,9 @@ mod screenshot {
         let shot = |h: &mut Harness| {
             let r = h.page("Page.captureScreenshot", json!({"format": "rgba"}));
             let data = pyro_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap()).unwrap();
-            move |x: usize| -> [u8; 3] { [data[(50 * 300 + x) * 4], data[(50 * 300 + x) * 4 + 1], data[(50 * 300 + x) * 4 + 2]] }
+            move |x: usize| -> [u8; 3] {
+                [data[(50 * 300 + x) * 4], data[(50 * 300 + x) * 4 + 1], data[(50 * 300 + x) * 4 + 2]]
+            }
         };
         let near = |got: [u8; 3], want: [u8; 3], what: &str| {
             assert!(got.iter().zip(want).all(|(&g, w)| g.abs_diff(w) <= 2), "{what}: {got:?}, want {want:?}");
@@ -7929,7 +7931,10 @@ mod screenshot {
         assert!(shades.len() >= 4, "a frame per interval while it runs: {shades:?}");
         assert!(shades.windows(2).all(|w| w[0] <= w[1]), "lighter frame by frame: {shades:?}");
         assert_eq!(*shades.last().unwrap(), 250, "it ends filled forwards: {shades:?}");
-        assert!(frames_after(&mut h, "Page.screencastFrameAck", json!({"sessionId": id}), 200).is_empty(), "still: no frame");
+        assert!(
+            frames_after(&mut h, "Page.screencastFrameAck", json!({"sessionId": id}), 200).is_empty(),
+            "still: no frame"
+        );
     }
 
     /// pyro's raw capture formats (frames for ffmpeg, nothing encoded): `rgba` is the render

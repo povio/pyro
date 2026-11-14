@@ -28,12 +28,10 @@
 //! change, so a paused or finished-and-filling animation costs nothing per
 //! frame.
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use blitz_traits::node_id::NodeId;
-use style::FxHashMap;
-use style::Atom;
 use style::context::{CascadeInputs, SharedStyleContext, StyleContext, ThreadLocalStyleContext};
 use style::dom::{TElement, TNode};
 use style::global_style_data::GLOBAL_STYLE_DATA;
@@ -46,18 +44,20 @@ use style::properties::{
 use style::rule_tree::{CascadeLevel, CascadeOrigin, RuleCascadeFlags, StrongRuleNode};
 use style::servo_arc::Arc as ServoArc;
 use style::shared_lock::{Locked, StylesheetGuards};
-use style::stylesheets::CssRuleType;
+use style::style_resolver::{PseudoElementResolution, StyleResolverForElement};
 use style::stylesheets::keyframes_rule::KeyframesStepValue;
 use style::stylesheets::layer_rule::LayerOrder;
+use style::stylesheets::CssRuleType;
 use style::stylist::RuleInclusion;
-use style::style_resolver::{PseudoElementResolution, StyleResolverForElement};
 use style::traversal_flags::TraversalFlags;
 use style::values::animated::{Animate, Procedure};
 use style::values::computed::TimingFunction;
 use style::values::generics::easing::BeforeFlag;
+use style::Atom;
+use style::FxHashMap;
 
-use crate::BaseDocument;
 use crate::node::Node;
+use crate::BaseDocument;
 
 /// How a keyframe's value combines with the value underneath it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -75,7 +75,11 @@ pub enum Keyframes {
     /// animation). `easing` is the animation's `animation-timing-function`
     /// (each keyframe's unless it declares its own; `None`: `ease`) and
     /// `composite` its `animation-composition`.
-    Css { name: Atom, easing: Option<Arc<str>>, composite: Composite },
+    Css {
+        name: Atom,
+        easing: Option<Arc<str>>,
+        composite: Composite,
+    },
     /// Keyframes written as CSS text (Web Animations, CSS transitions).
     Text(Arc<TextKeyframes>),
 }
@@ -196,13 +200,23 @@ impl BaseDocument {
         let mut state = std::mem::take(&mut self.sampled_animations);
         let mut next: FxHashMap<NodeId, ElementState> = FxHashMap::default();
         for (id, effects) in effects {
-            if effects.is_empty() || !self.nodes.get(id).is_some_and(|n| n.is_element() && n.flags.is_in_document()) {
+            if effects.is_empty()
+                || !self
+                    .nodes
+                    .get(id)
+                    .is_some_and(|n| n.is_element() && n.flags.is_in_document())
+            {
                 continue;
             }
             let mut element = state.elements.remove(&id).unwrap_or_default();
             element.effects = effects;
             element.resolved.retain(|(k, _)| {
-                element.effects.animations.iter().chain(&element.effects.transitions).any(|e| e.keyframes == *k)
+                element
+                    .effects
+                    .animations
+                    .iter()
+                    .chain(&element.effects.transitions)
+                    .any(|e| e.keyframes == *k)
             });
             next.insert(id, element);
         }
@@ -261,7 +275,10 @@ impl BaseDocument {
         {
             let _layout_thread_scope = crate::stylo::LayoutThreadScope::enter();
             let guard = &self.guard;
-            let guards = StylesheetGuards { author: &guard.read(), ua_or_user: &guard.read() };
+            let guards = StylesheetGuards {
+                author: &guard.read(),
+                ua_or_user: &guard.read(),
+            };
             let shared = SharedStyleContext {
                 traversal_flags: TraversalFlags::empty(),
                 stylist: &self.stylist,
@@ -274,24 +291,41 @@ impl BaseDocument {
                 registered_speculative_painters: &crate::stylo::RegisteredPaintersImpl,
             };
             let mut thread_local = ThreadLocalStyleContext::new();
-            let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
+            let mut context = StyleContext {
+                shared: &shared,
+                thread_local: &mut thread_local,
+            };
             state.elements.retain(|id, element| {
-                let Some(node) = self.nodes.get(*id) else { return false };
+                let Some(node) = self.nodes.get(*id) else {
+                    return false;
+                };
                 if !node.is_element() || !node.flags.is_in_document() {
                     return false;
                 }
                 // Not styled (inside `display: none`): nothing to sample into.
-                let Some(style) = node.primary_styles().map(|s| (*s).clone()) else { return true };
-                let rules = shared.stylist.rule_tree().remove_animation_rules(style.rules());
+                let Some(style) = node.primary_styles().map(|s| (*s).clone()) else {
+                    return true;
+                };
+                let rules = shared
+                    .stylist
+                    .rule_tree()
+                    .remove_animation_rules(style.rules());
                 let parent = parent_style_address(node);
-                let same_base = element.base.as_ref().is_some_and(|b| b.rules == rules && b.parent == parent);
+                let same_base = element
+                    .base
+                    .as_ref()
+                    .is_some_and(|b| b.rules == rules && b.parent == parent);
                 if !same_base {
                     let base_style = if rules == *style.rules() {
                         style.clone()
                     } else {
                         cascade(node, &mut context, rules.clone(), &style)
                     };
-                    element.base = Some(BaseKey { rules, parent, base_style });
+                    element.base = Some(BaseKey {
+                        rules,
+                        parent,
+                        base_style,
+                    });
                     element.resolved.clear();
                 }
                 let base = element.base.clone().unwrap();
@@ -306,7 +340,14 @@ impl BaseDocument {
                     if element.resolved.iter().any(|(k, _)| *k == keyframes) {
                         continue;
                     }
-                    let resolved = resolve(self, node, &base, &keyframes, &mut context, &mut state.easings);
+                    let resolved = resolve(
+                        self,
+                        node,
+                        &base,
+                        &keyframes,
+                        &mut context,
+                        &mut state.easings,
+                    );
                     element.resolved.push((keyframes, resolved));
                 }
                 let sampled = sample(element, &mut state.easings);
@@ -332,14 +373,21 @@ impl BaseDocument {
     /// Puts `sampled` on the element's data (the blocks `animation_rule` and
     /// `transition_rule` answer) and marks it for restyle.
     fn apply_sampled(&mut self, id: NodeId, sampled: Sampled) {
-        let Some(node) = self.nodes.get_mut(id) else { return };
-        let Some(guard) = node.element_data().and_then(|d| d.guard.clone()) else { return };
+        let Some(node) = self.nodes.get_mut(id) else {
+            return;
+        };
+        let Some(guard) = node.element_data().and_then(|d| d.guard.clone()) else {
+            return;
+        };
         let block = |map: Option<AnimationValueMap>| {
-            map.filter(|m| !m.is_empty())
-                .map(|m| ServoArc::new(guard.wrap(PropertyDeclarationBlock::from_animation_value_map(&m))))
+            map.filter(|m| !m.is_empty()).map(|m| {
+                ServoArc::new(guard.wrap(PropertyDeclarationBlock::from_animation_value_map(&m)))
+            })
         };
         let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
-        let Some(data) = node.element_data_mut() else { return };
+        let Some(data) = node.element_data_mut() else {
+            return;
+        };
         let had = data.sampled_animations.is_some() || data.sampled_transitions.is_some();
         let has = animations.is_some() || transitions.is_some();
         if !had && !has {
@@ -358,7 +406,10 @@ impl BaseDocument {
 fn parent_style_address(node: &Node) -> usize {
     let element: &Node = node;
     TElement::inheritance_parent(&element)
-        .and_then(|p| p.borrow_data().map(|d| &**d.styles.primary() as *const ComputedValues as usize))
+        .and_then(|p| {
+            p.borrow_data()
+                .map(|d| &**d.styles.primary() as *const ComputedValues as usize)
+        })
         .unwrap_or(0)
 }
 
@@ -370,26 +421,37 @@ fn cascade<'a>(
     style: &ComputedValues,
 ) -> ServoArc<ComputedValues> {
     context.thread_local.current_dom_depth = TNode::depth(&node);
-    let mut resolver =
-        StyleResolverForElement::new(node, context, RuleInclusion::All, PseudoElementResolution::IfApplicable);
+    let mut resolver = StyleResolverForElement::new(
+        node,
+        context,
+        RuleInclusion::All,
+        PseudoElementResolution::IfApplicable,
+    );
     let inputs = CascadeInputs {
         rules: Some(rules),
         visited_rules: None,
         flags: style.flags.for_cascade_inputs(),
         included_cascade_flags: RuleCascadeFlags::empty(),
     };
-    resolver.cascade_style_and_visited_with_default_parents(inputs).0
+    resolver
+        .cascade_style_and_visited_with_default_parents(inputs)
+        .0
 }
 
 /// A computed easing from CSS text (cached); `None`: not one.
-fn easing(easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>, text: &Arc<str>) -> Option<TimingFunction> {
+fn easing(
+    easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>,
+    text: &Arc<str>,
+) -> Option<TimingFunction> {
     if let Some(e) = easings.get(text) {
         return e.clone();
     }
     let block = parse_declarations(&format!("animation-timing-function: {text}"));
     let parsed = block.declarations().iter().find_map(|d| match d {
         PropertyDeclaration::AnimationTimingFunction(v) => {
-            v.0.iter().next().map(|f| f.to_computed_value_without_context())
+            v.0.iter()
+                .next()
+                .map(|f| f.to_computed_value_without_context())
         }
         _ => None,
     });
@@ -402,7 +464,10 @@ fn parse_declarations(text: &str) -> PropertyDeclarationBlock {
 }
 
 /// Declarations as in a `style` attribute; relative URLs against `url`.
-fn parse_declarations_at(text: &str, url: &style::stylesheets::UrlExtraData) -> PropertyDeclarationBlock {
+fn parse_declarations_at(
+    text: &str,
+    url: &style::stylesheets::UrlExtraData,
+) -> PropertyDeclarationBlock {
     style::properties::declaration_block::parse_style_attribute(
         text,
         url,
@@ -414,7 +479,10 @@ fn parse_declarations_at(text: &str, url: &style::stylesheets::UrlExtraData) -> 
 
 /// One keyframe's declarations: animatable longhands (not `display`), physical
 /// for the base style's writing mode.
-fn keyframe_block(block: &PropertyDeclarationBlock, base: &ComputedValues) -> PropertyDeclarationBlock {
+fn keyframe_block(
+    block: &PropertyDeclarationBlock,
+    base: &ComputedValues,
+) -> PropertyDeclarationBlock {
     let mut out = PropertyDeclarationBlock::new();
     for declaration in block.normal_declaration_iter() {
         if let PropertyDeclarationId::Longhand(id) = declaration.id() {
@@ -422,7 +490,10 @@ fn keyframe_block(block: &PropertyDeclarationBlock, base: &ComputedValues) -> Pr
                 continue;
             }
         }
-        out.push(declaration.to_physical(base.writing_mode), Importance::Normal);
+        out.push(
+            declaration.to_physical(base.writing_mode),
+            Importance::Normal,
+        );
     }
     out
 }
@@ -438,10 +509,19 @@ fn resolve<'a>(
 ) -> Resolved {
     let shared = context.shared;
     // (offset, easing, composite, declarations) per keyframe.
-    let mut frames: Vec<(f64, Option<TimingFunction>, Option<Composite>, PropertyDeclarationBlock)> = Vec::new();
+    let mut frames: Vec<(
+        f64,
+        Option<TimingFunction>,
+        Option<Composite>,
+        PropertyDeclarationBlock,
+    )> = Vec::new();
     let implicit_easing;
     match keyframes {
-        Keyframes::Css { name, easing: default, composite } => {
+        Keyframes::Css {
+            name,
+            easing: default,
+            composite,
+        } => {
             let default_easing = match default {
                 Some(text) => easing(easings, text),
                 None => Some(TimingFunction::ease()),
@@ -453,11 +533,14 @@ fn resolve<'a>(
             let guard = &shared.guards.author;
             for step in &animation.steps {
                 let offset = step.start_offset.percentage.0 as f64;
-                let easing =
-                    step.get_animation_timing_function(guard).map(|f| f.to_computed_value_without_context());
+                let easing = step
+                    .get_animation_timing_function(guard)
+                    .map(|f| f.to_computed_value_without_context());
                 let own_composite = step.get_animation_composition(guard).map(composite_of);
                 let block = match &step.value {
-                    KeyframesStepValue::Declarations { block } => keyframe_block(&block.read_with(guard), &base.base_style),
+                    KeyframesStepValue::Declarations { block } => {
+                        keyframe_block(&block.read_with(guard), &base.base_style)
+                    }
                     KeyframesStepValue::ComputedValues => PropertyDeclarationBlock::new(),
                 };
                 // Keyframes at one offset merge, later declarations winning.
@@ -486,8 +569,14 @@ fn resolve<'a>(
             implicit_easing = None;
             let url = doc.url.url_extra_data();
             for frame in &text.frames {
-                let block = keyframe_block(&parse_declarations_at(&frame.declarations, &url), &base.base_style);
-                let easing = frame.easing.as_deref().and_then(|e| easing(easings, &Arc::from(e)));
+                let block = keyframe_block(
+                    &parse_declarations_at(&frame.declarations, &url),
+                    &base.base_style,
+                );
+                let easing = frame
+                    .easing
+                    .as_deref()
+                    .and_then(|e| easing(easings, &Arc::from(e)));
                 frames.push((frame.offset, easing, frame.composite, block));
             }
         }
@@ -512,9 +601,14 @@ fn resolve<'a>(
             if block.any_normal() {
                 let ids: Vec<usize> = block
                     .normal_declaration_iter()
-                    .filter_map(|d| properties.iter().position(|(p, _)| p.as_borrowed() == d.id()))
+                    .filter_map(|d| {
+                        properties
+                            .iter()
+                            .position(|(p, _)| p.as_borrowed() == d.id())
+                    })
                     .collect();
-                let locked: ServoArc<Locked<PropertyDeclarationBlock>> = ServoArc::new(doc.guard.wrap(block));
+                let locked: ServoArc<Locked<PropertyDeclarationBlock>> =
+                    ServoArc::new(doc.guard.wrap(block));
                 let mut important_rules_changed = false;
                 let rules = rule_tree
                     .update_rule_at_level(
@@ -528,13 +622,23 @@ fn resolve<'a>(
                     .unwrap_or_else(|| base.rules.clone());
                 let style = cascade(node, context, rules, &base.base_style);
                 for i in ids {
-                    values[i] = AnimationValue::from_computed_values(properties[i].0.as_borrowed(), &style);
+                    values[i] =
+                        AnimationValue::from_computed_values(properties[i].0.as_borrowed(), &style);
                 }
             }
-            ResolvedFrame { offset, easing, composite, values }
+            ResolvedFrame {
+                offset,
+                easing,
+                composite,
+                values,
+            }
         })
         .collect();
-    Resolved { frames: resolved_frames, properties, implicit_easing }
+    Resolved {
+        frames: resolved_frames,
+        properties,
+        implicit_easing,
+    }
 }
 
 fn composite_of(c: style::values::specified::animation::AnimationComposition) -> Composite {
@@ -547,14 +651,23 @@ fn composite_of(c: style::values::specified::animation::AnimationComposition) ->
 }
 
 /// The element's values now: its effects sampled with their resolved keyframes.
-fn sample(element: &ElementState, easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>) -> Sampled {
+fn sample(
+    element: &ElementState,
+    easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>,
+) -> Sampled {
     let level = |effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
         if effects.is_empty() {
             return None;
         }
         let mut map = AnimationValueMap::default();
         for effect in effects {
-            let Some((_, resolved)) = element.resolved.iter().find(|(k, _)| *k == effect.keyframes) else { continue };
+            let Some((_, resolved)) = element
+                .resolved
+                .iter()
+                .find(|(k, _)| *k == effect.keyframes)
+            else {
+                continue;
+            };
             let progress = match &effect.easing {
                 Some(text) => match easing(easings, text) {
                     Some(f) => calculate(&f, effect.progress, effect.before),
@@ -564,18 +677,27 @@ fn sample(element: &ElementState, easings: &mut FxHashMap<Arc<str>, Option<Timin
             };
             for (i, (property, base)) in resolved.properties.iter().enumerate() {
                 let underlying = map.get(property).cloned().or_else(|| base.clone());
-                if let Some(value) = sample_property(resolved, i, progress, underlying.as_ref(), effect.composite) {
+                if let Some(value) =
+                    sample_property(resolved, i, progress, underlying.as_ref(), effect.composite)
+                {
                     map.insert(property.clone(), value);
                 }
             }
         }
         Some(map)
     };
-    Sampled { animations: level(&element.effects.animations, easings), transitions: level(&element.effects.transitions, easings) }
+    Sampled {
+        animations: level(&element.effects.animations, easings),
+        transitions: level(&element.effects.transitions, easings),
+    }
 }
 
 fn calculate(f: &TimingFunction, progress: f64, before: bool) -> f64 {
-    let flag = if before { BeforeFlag::Set } else { BeforeFlag::Unset };
+    let flag = if before {
+        BeforeFlag::Set
+    } else {
+        BeforeFlag::Unset
+    };
     f.calculate_output(progress, flag, 1e-7)
 }
 
@@ -600,7 +722,9 @@ fn sample_property(
             Composite::Accumulate => Procedure::Accumulate { count: 1 },
         };
         match underlying {
-            Some(u) => u.animate(value, procedure).unwrap_or_else(|_| value.clone()),
+            Some(u) => u
+                .animate(value, procedure)
+                .unwrap_or_else(|_| value.clone()),
             None => value.clone(),
         }
     };
@@ -622,11 +746,22 @@ fn sample_property(
     // Neutral keyframes: the underlying value.
     if frames[0].offset != 0.0 {
         let value = underlying?.clone();
-        frames.insert(0, Frame { offset: 0.0, easing: resolved.implicit_easing.as_ref(), value });
+        frames.insert(
+            0,
+            Frame {
+                offset: 0.0,
+                easing: resolved.implicit_easing.as_ref(),
+                value,
+            },
+        );
     }
     if frames[frames.len() - 1].offset != 1.0 {
         let value = underlying?.clone();
-        frames.push(Frame { offset: 1.0, easing: resolved.implicit_easing.as_ref(), value });
+        frames.push(Frame {
+            offset: 1.0,
+            easing: resolved.implicit_easing.as_ref(),
+            value,
+        });
     }
     let at = |offset: f64| frames.iter().filter(|f| f.offset == offset).count();
     if progress < 0.0 && at(0.0) > 1 {
@@ -645,7 +780,11 @@ fn sample_property(
     };
     let start = &frames[start];
     let span = end.offset - start.offset;
-    let distance = if span == 0.0 { 0.0 } else { (progress - start.offset) / span };
+    let distance = if span == 0.0 {
+        0.0
+    } else {
+        (progress - start.offset) / span
+    };
     let transformed = match start.easing {
         Some(f) => calculate(f, distance, false),
         None => distance,
@@ -653,8 +792,19 @@ fn sample_property(
     Some(
         start
             .value
-            .animate(&end.value, Procedure::Interpolate { progress: transformed })
-            .unwrap_or_else(|_| if transformed < 0.5 { start.value.clone() } else { end.value.clone() }),
+            .animate(
+                &end.value,
+                Procedure::Interpolate {
+                    progress: transformed,
+                },
+            )
+            .unwrap_or_else(|_| {
+                if transformed < 0.5 {
+                    start.value.clone()
+                } else {
+                    end.value.clone()
+                }
+            }),
     )
 }
 
@@ -665,10 +815,15 @@ pub(crate) fn sampled_rule(
     transitions: bool,
 ) -> Option<ServoArc<Locked<PropertyDeclarationBlock>>> {
     let data = node.element_data()?;
-    if transitions { data.sampled_transitions.clone() } else { data.sampled_animations.clone() }
+    if transitions {
+        data.sampled_transitions.clone()
+    } else {
+        data.sampled_animations.clone()
+    }
 }
 
 /// Whether the element has sampled values (no style sharing).
 pub(crate) fn has_sampled(node: &Node) -> bool {
-    node.element_data().is_some_and(|d| d.sampled_animations.is_some() || d.sampled_transitions.is_some())
+    node.element_data()
+        .is_some_and(|d| d.sampled_animations.is_some() || d.sampled_transitions.is_some())
 }
