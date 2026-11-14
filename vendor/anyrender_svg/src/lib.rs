@@ -26,6 +26,8 @@ mod render;
 mod util;
 
 pub use error::Error;
+/// pyro: SVG filters as anyrender filter graphs (see `filter`).
+pub use filter::{FilterGraph, FilterNotes, PrimitiveNotes};
 pub use usvg;
 
 use anyrender::PaintScene;
@@ -65,6 +67,17 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
 /// This will draw a red box over (some) unsupported elements.
 pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform: Affine) {
     render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
+}
+
+/// pyro: [`render_svg_tree`], with what the document knows of the tree's filter primitives that
+/// usvg does not keep (which are tainted: see [`PrimitiveNotes`]).
+pub fn render_svg_tree_with_notes<S: PaintScene>(
+    scene: &mut S,
+    svg: &usvg::Tree,
+    transform: Affine,
+    notes: FilterNotes,
+) {
+    filter::with_notes(notes, || render_svg_tree(scene, svg, transform));
 }
 
 /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).

@@ -173,7 +173,24 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/filters.rs` (`reference_filter`): a `url(#id)` filter (stylo parses it now) is the document's SVG
     `<filter>` with that id when that is a chain of `feColorMatrix` (every type) and `feComponentTransfer`, each in
     its `color-interpolation-filters` space (linearRGB unless an ancestor's attribute says sRGB; sRGB for a filter
-    in a `display: none` subtree, as in Chromium). Anything else is left out, as before.
+    in a `display: none` subtree, as in Chromium), when its functions keep transparent pixels transparent.
+  - `src/filters.rs` (`filter_steps`, `reference_graph`), `src/render.rs` (`render_element`,
+    `paint_filter_steps`): any other `url(#id)` filter is the `<filter>`'s graph (anyrender_svg's `FilterGraph`, see
+    its README): usvg parses the filter for a stand-in of the element's border box (the object bounding box, and the
+    viewport its percentages resolve against) in `svg_reference_document`'s document, and the graph applies in the
+    element's user space (CSS px from its border box's corner) within its filter region. The list then paints as a
+    layer per step around the element's group (filter functions in a row stay one CSS chain), the first innermost,
+    the opacity around them. A graph fills its region whatever the element paints: an empty element's filter
+    region is painted, and so is a `visibility: hidden` element's (its content not), as in Chromium (WPT
+    css/filter-effects/empty-element-with-filter-*, visibility-hidden-element-with-filter-001,
+    effect-reference-obb-dimensions). A `drop-shadow()` coloured from `currentcolor` before it taints the graph's
+    source (see anyrender_svg's README).
+  - `src/filters.rs` (`svg_filter_notes`, `primitive_notes`), `src/render.rs` (`draw_svg`): an inline `<svg>`'s
+    tree is rendered with what the document knows of its filters' primitives that usvg does not keep: which
+    `flood-color` or `lighting-color` is computed from `currentcolor` (tainted) and which lighting primitive has no
+    light source. What its filters make past its box is cut off at the content box (an `<svg>`'s
+    `overflow: hidden`), at least 300 x 150 CSS px from its corner when it declares no size (its box here is its
+    content's, where Chromium's is that). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
   - `src/layers.rs` (`blend_isolation`), `src/render.rs` (`render_element`): a stacking context that holds an element
     with a `mix-blend-mode` (its nearest ancestor that is one, the root element's at the latest) is painted as an
     isolated group, as Chromium isolates one: the element blends with what the context painted, not with what lies

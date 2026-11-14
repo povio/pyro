@@ -28,6 +28,219 @@ pub(crate) fn convert_filters(
     })))
 }
 
+/// pyro: one layer of an element's `filter` list when an SVG filter in it is no chain of colour
+/// functions ([`filter_steps`]).
+#[cfg(feature = "svg")]
+pub(crate) enum FilterStep {
+    /// Filter functions (and `url()` colour chains) applied as CSS applies them: to the content,
+    /// reading it past the layer's clip.
+    Chain(std::sync::Arc<Filter>),
+    /// An SVG `<filter>`'s graph, in the element's user space (CSS px from its border box's
+    /// corner), applied within its filter region.
+    Graph(anyrender_svg::FilterGraph),
+}
+
+/// pyro: the element's `filter` list as layers, the first applied first, when a `url()` in it names
+/// an SVG `<filter>` that is no chain of colour functions which keep transparent pixels transparent
+/// (those stay CSS chains, as [`convert_filters`] makes them): its primitives apply within its
+/// filter region, which they may fill whatever the element paints. `size` is the border box in
+/// CSS px. `None` when there is no such `url()` (the list is [`convert_filters`]'s).
+#[cfg(feature = "svg")]
+pub(crate) fn filter_steps(
+    filters: &[StyloFilter],
+    scale: f64,
+    current_color: &AbsoluteColor,
+    dom: &BaseDocument,
+    size: (f32, f32),
+) -> Option<Vec<FilterStep>> {
+    if !filters.iter().any(|f| matches!(f, StyloFilter::Url(_))) {
+        return None;
+    }
+    let mut steps = Vec::new();
+    let mut chain: Vec<FilterEffect> = Vec::new();
+    let mut any_graph = false;
+    // Whether the source of what follows is tainted: a `drop-shadow()` coloured from
+    // `currentcolor` (which a `:visited` link's colour can be) taints it.
+    let mut tainted = false;
+    for filter in filters {
+        match filter {
+            StyloFilter::Url(url) => {
+                if let Some(effects) = reference_filter(dom, url).filter(|effects| keeps_transparent(effects)) {
+                    chain.extend(effects);
+                    continue;
+                }
+                let Some(graph) = reference_graph(dom, url, size, tainted) else { continue };
+                if !chain.is_empty() {
+                    steps.push(FilterStep::Chain(std::sync::Arc::new(Filter::linear_list(chain.drain(..)))));
+                }
+                tainted = graph.tainted;
+                steps.push(FilterStep::Graph(graph));
+                any_graph = true;
+            }
+            filter => {
+                if let StyloFilter::DropShadow(shadow) = filter {
+                    // Its colour as computed keeps `currentcolor` (in a function too) unresolved.
+                    tainted |= format!("{:?}", shadow.color).contains("CurrentColor");
+                }
+                chain.extend(convert_single_filter(filter, scale as f32, current_color));
+            }
+        }
+    }
+    if !any_graph {
+        return None;
+    }
+    if !chain.is_empty() {
+        steps.push(FilterStep::Chain(std::sync::Arc::new(Filter::linear_list(chain.into_iter()))));
+    }
+    Some(steps)
+}
+
+/// Whether colour functions keep transparent black transparent (a matrix whose alpha row adds
+/// nothing, a transfer of the alpha that maps 0 to 0): applied as a chain, they change nothing
+/// where the content is not, as they would over their filter region.
+#[cfg(feature = "svg")]
+fn keeps_transparent(effects: &[FilterEffect]) -> bool {
+    effects.iter().all(|effect| match effect {
+        FilterEffect::ColorMatrix(m) => m.0[19] <= 0.0,
+        FilterEffect::ComponentTransfer(t) => match &t.alpha_function {
+            TransferFunction::Identity => true,
+            TransferFunction::Table(values) => values.first().is_none_or(|v| *v <= 0.0),
+            TransferFunction::Discrete(values) => values.first().is_none_or(|v| *v <= 0.0),
+            TransferFunction::Linear(f) => f.intercept <= 0.0,
+            TransferFunction::Gamma(f) => f.offset <= 0.0,
+        },
+        _ => true,
+    })
+}
+
+/// pyro: the SVG `<filter>` a `url(#id)` names as a graph for an element of `size` (CSS px): the
+/// filter parsed by usvg for a stand-in of the element's border box (the object bounding box, and
+/// the viewport its percentages resolve against), in the document of the `<svg>` around it.
+#[cfg(feature = "svg")]
+fn reference_graph(
+    dom: &BaseDocument,
+    url: &style::url::ComputedUrl,
+    (width, height): (f32, f32),
+    source_tainted: bool,
+) -> Option<anyrender_svg::FilterGraph> {
+    let id = url.url()?.fragment()?;
+    let node_id = dom.get_element_by_id(id)?;
+    if local_name(&dom.tree()[node_id]) != Some("filter") {
+        return None;
+    }
+    // The stand-in: a box with no paint (an empty group where the box has no area).
+    let escaped: String = id
+        .chars()
+        .flat_map(|c| match c {
+            '"' => "&quot;".chars().collect::<Vec<_>>(),
+            '&' => "&amp;".chars().collect(),
+            '<' => "&lt;".chars().collect(),
+            c => vec![c],
+        })
+        .collect();
+    let content = if width > 0.0 && height > 0.0 {
+        format!("<rect width=\"{width}\" height=\"{height}\" fill=\"none\" filter=\"url(#{escaped})\"/>")
+    } else {
+        format!("<g filter=\"url(#{escaped})\"/>")
+    };
+    let svg = dom.svg_reference_document(node_id, &content, width.max(1e-3), height.max(1e-3))?;
+    fn first_filter(group: &anyrender_svg::usvg::Group) -> Option<std::sync::Arc<anyrender_svg::usvg::filter::Filter>> {
+        group.filters().first().cloned().or_else(|| {
+            group.children().iter().find_map(|node| match node {
+                anyrender_svg::usvg::Node::Group(g) => first_filter(g),
+                _ => None,
+            })
+        })
+    }
+    let filter = first_filter(svg.tree.root())?;
+    let notes = primitive_notes(dom, &dom.tree()[node_id]);
+    anyrender_svg::FilterGraph::new(&filter, &|index| notes.get(index).copied().unwrap_or_default(), source_tainted)
+}
+
+/// pyro: what the document knows of the filters of an inline `<svg>`'s tree that usvg does not
+/// keep (see [`anyrender_svg::PrimitiveNotes`]), by filter id; `None` for another element or a tree
+/// without filters.
+#[cfg(feature = "svg")]
+pub(crate) fn svg_filter_notes(
+    dom: &BaseDocument,
+    node: &Node,
+    tree: &anyrender_svg::usvg::Tree,
+) -> Option<anyrender_svg::FilterNotes> {
+    if tree.filters().is_empty() || local_name(node) != Some("svg") {
+        return None;
+    }
+    let mut notes = anyrender_svg::FilterNotes::new();
+    for filter in tree.filters() {
+        let Some(id) = dom.get_element_by_id(filter.id()) else { continue };
+        let element = &dom.tree()[id];
+        if local_name(element) == Some("filter") {
+            notes.insert(filter.id().to_owned(), primitive_notes(dom, element));
+        }
+    }
+    Some(notes)
+}
+
+/// The filter primitives usvg reads, by element name.
+#[cfg(feature = "svg")]
+const PRIMITIVES: &[&str] = &[
+    "feBlend",
+    "feColorMatrix",
+    "feComponentTransfer",
+    "feComposite",
+    "feConvolveMatrix",
+    "feDiffuseLighting",
+    "feDisplacementMap",
+    "feDropShadow",
+    "feFlood",
+    "feGaussianBlur",
+    "feImage",
+    "feMerge",
+    "feMorphology",
+    "feOffset",
+    "feSpecularLighting",
+    "feTile",
+    "feTurbulence",
+];
+
+/// The notes of a `<filter>`'s primitives, in order: which colour (`flood-color` or
+/// `lighting-color`, as an attribute or a declaration of the `style` attribute) is computed from
+/// `currentcolor` and which lighting primitive has no light source.
+#[cfg(feature = "svg")]
+fn primitive_notes(dom: &BaseDocument, filter: &Node) -> Vec<anyrender_svg::PrimitiveNotes> {
+    let children = |node: &Node| -> Vec<&Node> {
+        node.children.iter().map(|&id| &dom.tree()[id]).filter(|n| n.is_element()).collect::<Vec<_>>()
+    };
+    children(filter)
+        .into_iter()
+        .filter_map(|primitive| {
+            let name = local_name(primitive)?;
+            if !PRIMITIVES.contains(&name) {
+                return None;
+            }
+            let property = match name {
+                "feFlood" | "feDropShadow" => Some("flood-color"),
+                "feDiffuseLighting" | "feSpecularLighting" => Some("lighting-color"),
+                _ => None,
+            };
+            let tainted = property.is_some_and(|property| {
+                let current = |value: &str| value.to_ascii_lowercase().contains("currentcolor");
+                attr(primitive, property).is_some_and(current)
+                    || attr(primitive, "style").is_some_and(|style| {
+                        style
+                            .split(';')
+                            .filter_map(|d| d.split_once(':'))
+                            .any(|(name, value)| name.trim().eq_ignore_ascii_case(property) && current(value))
+                    })
+            });
+            let no_light = matches!(name, "feDiffuseLighting" | "feSpecularLighting")
+                && !children(primitive)
+                    .iter()
+                    .any(|n| matches!(local_name(n), Some("feDistantLight" | "fePointLight" | "feSpotLight")));
+            Some(anyrender_svg::PrimitiveNotes { tainted, no_light })
+        })
+        .collect()
+}
+
 pub(crate) fn convert_single_filter(
     filter: &StyloFilter,
     scale: f32,

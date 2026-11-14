@@ -9,7 +9,8 @@ out of the copy.
 ## The change
 
 `UPSTREAM.patch` is the whole diff: `src/render.rs` is rewritten around the same structure, `src/filter.rs` is
-new, `src/lib.rs` passes the tree's viewport, and `Cargo.toml` depends on `anyrender_vello_cpu` (the vendored one)
+new, `src/lib.rs` passes the tree's viewport (and exports the filter graphs and `render_svg_tree_with_notes`), and
+`Cargo.toml` depends on `anyrender_vello_cpu` (the vendored one)
 for offscreen rasters and its filter conventions. Upstream draws a translucent red box for a pattern, clips with the first shape of a `<clipPath>` only
 (and only when it is a path), and ignores masks; pyro paints SVG content as Chromium does (WPT
 `css/css-transforms/matrix`, `css/css-masking/clip-path-svg-content`, `css/css-masking/mask-svg-content`):
@@ -41,14 +42,29 @@ for offscreen rasters and its filter conventions. Upstream draws a translucent r
 - **Filters** (`filter`, a `<filter>`'s primitives or filter functions; `src/filter.rs`): each of a group's
   filters is a layer around its children (the first innermost), clipped to its filter region, its filter usvg's
   converted into an anyrender filter graph, which anyrender_vello_cpu applies when it replays the scene (its
-  `graph` module): `feFlood`, `feOffset`, `feGaussianBlur` and `feDropShadow` of one deviation, `feColorMatrix`
-  (every type, Chromium's constants), `feComponentTransfer`, `feMerge`, `feComposite` and `feBlend` (separable
-  modes), with subregions as crops. Each primitive works in its `color-interpolation-filters` space: an input in the
-  other space is read through a `feComponentTransfer` of conversion tables, a value converted back is the value it
-  came from, a flood is drawn in its reader's space, and the output is sRGB. Children that reach past the first
-  filter's region are clipped to it (SVG's source graphic stops there). A filter with any other primitive, or with
-  the transparent black flood usvg stands in for a primitive it could not read (`feConvolveMatrix` of a zero divisor),
-  is left out: the group is drawn unfiltered, as before. Mask and pattern rasters are recorded and replayed
+  `graph` module): `feFlood`, `feOffset`, `feGaussianBlur` (one deviation or two), `feDropShadow` of one deviation,
+  `feColorMatrix` (every type, Chromium's constants), `feComponentTransfer`, `feMerge`, `feComposite`, `feBlend`
+  (every mode), `feDisplacementMap`, `feTile`, `feMorphology`, `feConvolveMatrix`, `feTurbulence`,
+  `feDiffuseLighting` and `feSpecularLighting` (distant, point and spot lights) and `feImage`, with subregions as
+  crops; what anyrender's filter types cannot say follows anyrender_vello_cpu's conventions (see its README). Each
+  primitive works in its `color-interpolation-filters` space: an input in the other space is read through a
+  `feComponentTransfer` of conversion tables, a value converted back is the value it came from, a flood (and a
+  lighting colour) is drawn in its reader's space, and the output is sRGB; `feOffset`, `feTile` and the input
+  `feDisplacementMap` moves are taken as they are, `feImage` is sRGB. `feTile` tiles its input's subregion.
+  `feImage` content (an element, or an image usvg loaded) is drawn in the filter layer, before the content, in a
+  layer of opacity 0 that only the graph reads, at the subregion's corner (as Blink places it; an image usvg laid
+  out in the subregion). Children that reach past the first filter's region are clipped to it (SVG's source
+  graphic stops there). A filter with a primitive anyrender_vello_cpu does not do (`feDropShadow` of two
+  deviations), or with the transparent black flood usvg stands in for a primitive it could not read (an `feImage`
+  it could not load), is left out: the group is drawn unfiltered, as before.
+- **Tainted filter primitives** (`src/filter.rs`, `PrimitiveNotes`, `render_svg_tree_with_notes`): a flood, drop
+  shadow or lighting colour computed from `currentcolor` (which a `:visited` link's colour can be) is tainted, and so
+  is everything made from it; an `feDisplacementMap` whose map is tainted passes its input on unmoved, as Chromium's
+  does (WPT css/filter-effects/tainting-*). usvg resolves `currentcolor`, so the caller passes what the document
+  knows (blitz-paint reads the `<filter>` elements); a filter in a list after a tainted one reads a tainted source.
+  The caller also says which lighting primitive has no light source: its result is transparent black (Chromium),
+  where usvg's stand-in would leave the filter out. `FilterGraph` is public for blitz-paint, which applies SVG
+  filters to HTML elements with it. Mask and pattern rasters are recorded and replayed
   (`append_scene`) as the page is, so that filters apply in them too (WPT `svg-mutation-filter-used-by-mask`).
   Covered by the unit tests in `src/filter.rs` and pyro-render's `svg_filters.rs`.
 - Groups keep the order resvg applies: children, filters, clip path, mask, then opacity and blend mode.
