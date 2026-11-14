@@ -55,59 +55,6 @@ impl LayerManager {
         filter: Option<Arc<Filter>>,
         backdrop_filter: Option<Arc<Filter>>,
     ) -> bool {
-        self.maybe_push_filled_layer(
-            scene,
-            condition,
-            Fill::NonZero,
-            blend_mode,
-            opacity,
-            transform,
-            shape,
-            filter,
-            backdrop_filter,
-        )
-    }
-
-    /// pyro: [`Self::maybe_with_layer`] for a clip whose shape has its own fill rule
-    /// (`clip-path` with `evenodd`).
-    pub(crate) fn maybe_with_clip_layer<S: PaintScene, F: FnOnce(&mut S)>(
-        &self,
-        scene: &mut S,
-        condition: bool,
-        fill: Fill,
-        transform: Affine,
-        shape: &impl Shape,
-        paint_layer: F,
-    ) {
-        let layer_used = self.maybe_push_filled_layer(
-            scene,
-            condition,
-            fill,
-            BlendMode::default(),
-            1.0,
-            transform,
-            shape,
-            None,
-            None,
-        );
-        paint_layer(scene);
-        self.maybe_pop_layer(scene, layer_used);
-    }
-
-    /// [`Self::maybe_push_layer`] whose clip shape fills by `fill`.
-    #[allow(clippy::too_many_arguments)]
-    fn maybe_push_filled_layer(
-        &self,
-        scene: &mut impl PaintScene,
-        condition: bool,
-        fill: Fill,
-        blend_mode: BlendMode,
-        opacity: f32,
-        transform: Affine,
-        shape: &impl Shape,
-        filter: Option<Arc<Filter>>,
-        backdrop_filter: Option<Arc<Filter>>,
-    ) -> bool {
         if !condition {
             return false;
         }
@@ -125,10 +72,10 @@ impl LayerManager {
             && filter.is_none()
             && backdrop_filter.is_none()
         {
-            scene.push_clip_layer(fill, transform, shape);
+            scene.push_clip_layer(Fill::NonZero, transform, shape);
         } else {
             scene.push_layer(
-                fill,
+                Fill::NonZero,
                 blend_mode,
                 opacity,
                 transform,

@@ -706,9 +706,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip_path_shape = cx.clip_path_shape();
         let has_clip_path = clip_path_shape.is_some();
         let default_clip = cx.frame.border_box_path();
-        // pyro: with its fill rule (`evenodd` paths, polygons and `<clipPath>`s).
-        let (mut clip_path_for_layer, clip_path_fill) =
-            clip_path_shape.unwrap_or((default_clip, peniko::Fill::NonZero));
+        let mut clip_path_for_layer = clip_path_shape.unwrap_or(default_clip);
         clip_path_for_layer.apply_affine(Affine::scale(self.scale));
 
         // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
@@ -771,12 +769,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         };
 
         // clip-path clip layer (it clips the shadow and the outline too, as in Chromium)
-        self.layer_manager.maybe_with_clip_layer(
+        self.layer_manager.maybe_with_layer(
             scene,
             has_clip_path,
-            clip_path_fill,
+            BlendMode::default(),
+            1.0,
             cx.transform,
             &clip_path_for_layer,
+            None,
+            None,
             |scene| {
                 // If the element has a CSS `mask`, then push an isolation layer for the
                 // masked content. The mask is applied when the layer is popped below.

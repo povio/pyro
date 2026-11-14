@@ -1,10 +1,9 @@
 use super::ElementCx;
 use kurbo::{BezPath, Circle, Ellipse, Point, Rect, Shape, SvgArc, Vec2};
-use peniko::Fill;
 use style::values::computed::basic_shape::{BasicShape, ClipPath};
 use style::values::computed::{Angle, CSSPixelLength, LengthPercentage};
 use style::values::generics::basic_shape::{
-    ArcSize, ArcSweep, AxisEndPoint, CommandEndPoint, ControlPoint, ControlReference, FillRule,
+    ArcSize, ArcSweep, AxisEndPoint, CommandEndPoint, ControlPoint, ControlReference,
     GenericBasicShape, GenericPathOrShapeFunction, GenericShapeCommand, GenericShapeRadius,
     ShapeBox, ShapeGeometryBox,
 };
@@ -42,110 +41,24 @@ impl ElementCx<'_, '_> {
         Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
     }
 
-    /// Compute the clip-path BezPath (if any) for this element, with its fill rule.
+    /// Compute the clip-path BezPath (if any) for this element.
     /// Returns `None` if clip-path is `none` or unsupported.
-    pub(super) fn clip_path_shape(&self) -> Option<(BezPath, Fill)> {
+    pub(super) fn clip_path_shape(&self) -> Option<BezPath> {
         match self.style.get_clip_path() {
             ClipPath::None => None,
-            // pyro: a `<clipPath>` of the document (`url_clip_path`).
-            ClipPath::Url(url) => self.url_clip_path(url),
+            ClipPath::Url(_) => {
+                // URL references (e.g. `clip-path: url(#myClip)`) are not yet supported
+                None
+            }
             ClipPath::Shape(basic_shape, geometry_box) => {
                 let reference_box = self.resolve_geometry_box(geometry_box);
-                let fill = match &**basic_shape {
-                    GenericBasicShape::Polygon(polygon) => polygon.fill,
-                    GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) => {
-                        path.fill
-                    }
-                    GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Shape(shape)) => {
-                        shape.fill
-                    }
-                    _ => FillRule::Nonzero,
-                };
                 self.basic_shape_to_path(basic_shape, reference_box)
-                    .map(|p| (p, fill_of(fill)))
             }
             ClipPath::Box(geometry_box) => {
                 let reference_box = self.resolve_geometry_box(geometry_box);
-                Some((Rect::from(reference_box).into_path(0.1), Fill::NonZero))
+                Some(Rect::from(reference_box).into_path(0.1))
             }
         }
-    }
-
-    /// pyro: `clip-path: url(#id)` naming an SVG `<clipPath>` of the document: the union of its
-    /// shape children (`path`, `rect`, `circle`, `ellipse`, `polygon`, `polyline`, with their and
-    /// its `transform`), in user space units from the border box's origin (`clipPathUnits`
-    /// `objectBoundingBox`: fractions of the border box), filled by the first shape's
-    /// `clip-rule`. A `<clipPath>` without shapes clips everything away; a reference to anything
-    /// else clips nothing (the property is as if not given).
-    fn url_clip_path(
-        &self,
-        url: &style::values::computed::url::ComputedUrl,
-    ) -> Option<(BezPath, Fill)> {
-        use blitz_dom::local_name;
-        const SVG: &str = "http://www.w3.org/2000/svg";
-        let url = url.url()?;
-        let dom = self.context.dom;
-        // Only a reference into this document (`url(#id)`): another document's is not loaded.
-        let without_fragment = |u: &str| u.split('#').next().unwrap_or(u).to_owned();
-        if without_fragment(url.as_str()) != without_fragment(dom.url().as_str()) {
-            return None;
-        }
-        let id = url.fragment()?;
-        let node = dom.get_node(dom.get_element_by_id(id)?)?;
-        let clip = node.element_data()?;
-        if &*clip.name.ns != SVG || &*clip.name.local != "clipPath" {
-            return None;
-        }
-        let mut path = BezPath::new();
-        let mut fill = None;
-        // An element's transform: its CSS `transform` (set by script or a sheet), else its
-        // attribute.
-        let transform_of = |n: &blitz_dom::Node, el: &blitz_dom::ElementData| {
-            let css = n
-                .primary_styles()
-                .and_then(|s| blitz_dom::resolve_2d_transform_without_box(s.get_box()));
-            css.or_else(|| el.attr(local_name!("transform")).and_then(svg_transform))
-        };
-        for &child in &node.children {
-            let Some((n, el)) = dom
-                .get_node(child)
-                .and_then(|c| Some((c, c.element_data()?)))
-            else {
-                continue;
-            };
-            if &*el.name.ns != SVG {
-                continue;
-            }
-            let Some(mut shape) = svg_shape(el) else {
-                continue;
-            };
-            if let Some(t) = transform_of(n, el) {
-                shape.apply_affine(t);
-            }
-            let rule = el.attr(local_name!("clip-rule")).map(str::trim);
-            fill.get_or_insert(if rule == Some("evenodd") {
-                Fill::EvenOdd
-            } else {
-                Fill::NonZero
-            });
-            path.extend(shape);
-        }
-        if let Some(t) = transform_of(node, clip) {
-            path.apply_affine(t);
-        }
-        let border = self.resolve_geometry_box(&ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox));
-        let units = clip
-            .attrs()
-            .iter()
-            .find(|a| &*a.name.local == "clipPathUnits")
-            .map(|a| a.value.trim());
-        let to_box = if units == Some("objectBoundingBox") {
-            kurbo::Affine::new([border.width, 0.0, 0.0, border.height, border.x, border.y])
-        } else {
-            kurbo::Affine::translate((border.x, border.y))
-        };
-        path.apply_affine(to_box);
-        Some((path, fill.unwrap_or(Fill::NonZero)))
     }
 
     /// Resolve a ShapeGeometryBox to a concrete rectangle (x, y, width, height) in scaled pixels
@@ -281,123 +194,6 @@ impl ElementCx<'_, '_> {
             },
         }
     }
-}
-
-fn fill_of(rule: FillRule) -> Fill {
-    match rule {
-        FillRule::Nonzero => Fill::NonZero,
-        FillRule::Evenodd => Fill::EvenOdd,
-    }
-}
-
-/// pyro: an SVG basic shape element as a path (user units); `None` for anything else, or a
-/// shape without area.
-fn svg_shape(el: &blitz_dom::ElementData) -> Option<BezPath> {
-    let attr = |name: &str| {
-        el.attrs()
-            .iter()
-            .find(|a| &*a.name.local == name)
-            .map(|a| a.value.trim())
-    };
-    let num = |name: &str| {
-        attr(name)
-            .and_then(|v| v.trim_end_matches("px").parse::<f64>().ok())
-            .unwrap_or(0.0)
-    };
-    let points = || {
-        let text = attr("points").unwrap_or("");
-        let nums: Vec<f64> = text
-            .split(|c: char| c == ',' || c.is_ascii_whitespace())
-            .filter_map(|n| n.parse().ok())
-            .collect();
-        nums.chunks_exact(2)
-            .map(|p| Point::new(p[0], p[1]))
-            .collect::<Vec<_>>()
-    };
-    match &*el.name.local {
-        "path" => BezPath::from_svg(attr("d")?).ok(),
-        "rect" => {
-            let (w, h) = (num("width"), num("height"));
-            if w <= 0.0 || h <= 0.0 {
-                return None;
-            }
-            let rect = Rect::new(num("x"), num("y"), num("x") + w, num("y") + h);
-            let (rx, ry) = match (attr("rx").is_some(), attr("ry").is_some()) {
-                (false, false) => (0.0, 0.0),
-                (true, false) => (num("rx"), num("rx")),
-                (false, true) => (num("ry"), num("ry")),
-                (true, true) => (num("rx"), num("ry")),
-            };
-            Some(if rx > 0.0 || ry > 0.0 {
-                kurbo::RoundedRect::from_rect(rect, rx.min(w / 2.0).max(ry.min(h / 2.0)))
-                    .into_path(0.1)
-            } else {
-                rect.into_path(0.1)
-            })
-        }
-        "circle" => (num("r") > 0.0)
-            .then(|| Circle::new(Point::new(num("cx"), num("cy")), num("r")).into_path(0.1)),
-        "ellipse" => (num("rx") > 0.0 && num("ry") > 0.0).then(|| {
-            Ellipse::new(
-                Point::new(num("cx"), num("cy")),
-                (num("rx"), num("ry")),
-                0.0,
-            )
-            .into_path(0.1)
-        }),
-        "polygon" | "polyline" => {
-            let pts = points();
-            let (first, rest) = pts.split_first()?;
-            let mut path = BezPath::new();
-            path.move_to(*first);
-            for p in rest {
-                path.line_to(*p);
-            }
-            path.close_path();
-            Some(path)
-        }
-        _ => None,
-    }
-}
-
-/// pyro: an SVG `transform` attribute (`matrix`, `translate`, `scale`, `rotate`, `skewX`,
-/// `skewY`, in order); `None` when it does not parse.
-fn svg_transform(text: &str) -> Option<kurbo::Affine> {
-    let mut out = kurbo::Affine::IDENTITY;
-    let mut rest = text.trim();
-    while !rest.is_empty() {
-        let open = rest.find('(')?;
-        let close = rest.find(')')?;
-        let name = rest[..open].trim().trim_start_matches(',').trim();
-        let args: Vec<f64> = rest[open + 1..close]
-            .split(|c: char| c == ',' || c.is_ascii_whitespace())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.parse().ok())
-            .collect::<Option<_>>()?;
-        let arg = |i: usize, d: f64| args.get(i).copied().unwrap_or(d);
-        let t = match name {
-            "matrix" if args.len() == 6 => {
-                kurbo::Affine::new([args[0], args[1], args[2], args[3], args[4], args[5]])
-            }
-            "translate" => kurbo::Affine::translate((arg(0, 0.0), arg(1, 0.0))),
-            "scale" => kurbo::Affine::scale_non_uniform(arg(0, 1.0), arg(1, arg(0, 1.0))),
-            "rotate" => {
-                let (c, r) = (
-                    Point::new(arg(1, 0.0), arg(2, 0.0)),
-                    arg(0, 0.0).to_radians(),
-                );
-                kurbo::Affine::translate(c.to_vec2())
-                    * kurbo::Affine::rotate(r)
-                    * kurbo::Affine::translate(-c.to_vec2())
-            }
-            "skewX" => kurbo::Affine::skew(arg(0, 0.0).to_radians().tan(), 0.0),
-            "skewY" => kurbo::Affine::skew(0.0, arg(0, 0.0).to_radians().tan()),
-            _ => return None,
-        };
-        out *= t;
-        rest = rest[close + 1..].trim_start();
-    }
-    Some(out)
 }
 
 /// A resolved reference box in scaled pixel coordinates

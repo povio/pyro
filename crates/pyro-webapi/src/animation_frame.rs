@@ -416,8 +416,9 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
     let Some((animations, transition_list)) = state.try_timelines() else { return false };
     let overrides: FxHashMap<u64, &Scripted> = scripted.values().filter_map(|s| Some((s.css?, s))).collect();
     let mut moving = false;
-    // Transitions, in the order they started (none when settled: finished).
-    for t in transition_list.iter().filter(|t| t.is_live() && !settled) {
+    // Transitions, in the order they started (none when settled: finished;
+    // none for the layout engine, which samples no transitions).
+    for t in transition_list.iter().filter(|t| transitions && !settled && t.is_live()) {
         let Some(keyframes) = t.keyframes() else { continue };
         let (local, rate, timing, easing) = match overrides.get(&t.id()) {
             Some(s) => match s.current(now) {
@@ -427,22 +428,20 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             None => (now - t.start_ms(), 1.0, transition_timing(t), Some(Arc::from(t.easing().unwrap_or("ease")))),
         };
         let Some(p) = progress(&timing, local, rate) else { continue };
-        if transitions {
-            moving |= p.moving && overrides.get(&t.id()).is_none_or(|s| s.hold.is_none() && s.rate != 0.0);
-            // An effect script gave the object replaces the transition's.
-            let (el, keyframes) = match overrides.get(&t.id()) {
-                Some(s) if !s.keyframes.frames.is_empty() => (s.el.unwrap_or(t.el()), s.keyframes.clone()),
-                _ => (t.el(), keyframes),
-            };
-            let effect = Effect {
-                keyframes: Keyframes::Text(keyframes),
-                progress: p.progress,
-                before: p.before,
-                easing,
-                composite: Composite::Replace,
-            };
-            visit(el, true, effect);
-        }
+        moving |= p.moving && overrides.get(&t.id()).is_none_or(|s| s.hold.is_none() && s.rate != 0.0);
+        // An effect script gave the object replaces the transition's.
+        let (el, keyframes) = match overrides.get(&t.id()) {
+            Some(s) if !s.keyframes.frames.is_empty() => (s.el.unwrap_or(t.el()), s.keyframes.clone()),
+            _ => (t.el(), keyframes),
+        };
+        let effect = Effect {
+            keyframes: Keyframes::Text(keyframes),
+            progress: p.progress,
+            before: p.before,
+            easing,
+            composite: Composite::Replace,
+        };
+        visit(el, true, effect);
     }
     // CSS animations, in each element's `animation-name` order.
     for t in animations.iter().filter(|t| t.is_live()) {
@@ -568,13 +567,13 @@ impl pyro_dom::animation::AnimationSource for Source {
 }
 
 impl PageDom {
-    /// The style update of a rendering opportunity (the end of an animation
-    /// frame, after its callbacks): the style changes since the last one start
-    /// their transitions and animations now, as in a browser's frame. One
-    /// flag and stamp check for a document that neither animates nor
-    /// transitions, or did not change.
+    /// The style update at the end of an animation frame (after its
+    /// callbacks): the style changes since the last one start their
+    /// transitions and animations now, as in a browser's frame, at most once
+    /// per [`FRAME_MS`]. One flag and stamp check for a document that neither
+    /// animates nor transitions, or did not change.
     pub fn update_animations(self: &Rc<Self>) {
-        crate::animation_events::before_render(self);
+        crate::animation_events::frame_end(self);
     }
 
     /// The animated values now, transitions included: what a screenshot or
