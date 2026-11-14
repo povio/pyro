@@ -17,7 +17,10 @@ use crate::{
     layout::list::BULLET_FONT_FAMILY,
     layout::replaced::is_inline_box_element,
     layout::text_transform::{CaseTransform, TextTransformer},
-    node::{FirstLetterSplit, ListItemLayout, ListItemLayoutPosition, Marker, TextBrush, TextLayout},
+    node::{
+        FirstLetterSplit, ListItemLayout, ListItemLayoutPosition, Marker, TextAnnotation, TextAnnotationKind, TextBrush,
+        TextLayout,
+    },
     stylo_to_parley,
 };
 
@@ -58,13 +61,13 @@ pub(crate) fn build_inline_layout_into(
     scale: f32,
     inline_context_root_node_id: NodeId,
 ) {
-    build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false);
+    build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false, &[]);
     // A line holding atomic inlines but no text still has its strut (CSS 2.1
     // 10.8.1): the root's font and line height. Parley makes no line height
     // without text, so a line of empty inline-blocks was 0px tall. A
     // word joiner (zero-width, no break opportunity) provides the strut.
     if text_layout.layout.inline_boxes().len() > 0 && text_layout.text.chars().all(|c| c.is_whitespace() && c != '\n') {
-        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true);
+        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[]);
     }
 }
 
@@ -76,6 +79,9 @@ fn build_inline_layout_with(
     scale: f32,
     inline_context_root_node_id: NodeId,
     strut: bool,
+    // pyro: the room annotations take beyond the content area of the spans that hold them (see
+    // `TextAnnotation`), measured by a first build.
+    annotation_space: &[(NodeId, parley::AnnotationSpace)],
 ) {
     // Get the inline context's root node's text styles
     let root_node = &nodes[inline_context_root_node_id];
@@ -98,6 +104,7 @@ fn build_inline_layout_with(
     // not shift that box's own line strut or inherited direct text. Descendant
     // spans and atomic inline boxes retain their separately collected styles.
     parley_style.vertical_align = parley::VerticalAlign::BASELINE;
+    parley_style.annotation_space = space_of(annotation_space, inline_context_root_node_id);
 
     // Create a parley tree builder
     let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
@@ -141,6 +148,15 @@ fn build_inline_layout_with(
     let mut text_transformer = TextTransformer::default();
     text_transformer.word_break(&builder);
     let text_nodes = &mut Vec::new();
+    // pyro: ruby annotations and emphasis marks found on the way (see `TextAnnotation`).
+    let annotations = &mut FoundAnnotations { space: annotation_space.to_vec(), ..Default::default() };
+    if let Some(style) = root_node.primary_styles() {
+        annotations.enter(inline_context_root_node_id, &style);
+    }
+    if root_node.data.is_element_with_tag_name(&local_name!("ruby")) {
+        annotations.ruby_base_start = Some(builder.text().len());
+        annotations.ruby = Some(inline_context_root_node_id);
+    }
     // The strut goes before the first in-flow inline box: trailing white
     // space after it still hangs, leading white space before it still
     // collapses.
@@ -160,6 +176,7 @@ fn build_inline_layout_with(
             text_nodes,
             strut,
             first_letter,
+            annotations,
         );
     }
     for child_id in root_node.children.iter().copied() {
@@ -172,6 +189,7 @@ fn build_inline_layout_with(
             text_nodes,
             strut,
             first_letter,
+            annotations,
         );
     }
     if let Some(after_id) = root_node.after() {
@@ -184,6 +202,7 @@ fn build_inline_layout_with(
             text_nodes,
             strut,
             first_letter,
+            annotations,
         );
     }
 
@@ -195,6 +214,20 @@ fn build_inline_layout_with(
         builder.build_into_keeping_lines(&mut text_layout.layout)
     };
     text_layout.text_nodes = std::mem::take(text_nodes);
+    // pyro: the annotations' own layouts, now that the builder has let go of the contexts. They
+    // take room in their lines: the spans that hold them are built again with it.
+    let built: Vec<(TextAnnotation, NodeId)> = std::mem::take(&mut annotations.found)
+        .into_iter()
+        .filter_map(|(node_id, kind, holder)| {
+            Some((build_annotation(nodes, layout_ctx, font_ctx, scale, node_id, kind)?, holder))
+        })
+        .collect();
+    let space = annotation_room(&built, scale);
+    text_layout.annotations = built.into_iter().map(|(annotation, _)| annotation).collect();
+    if annotation_space.is_empty() && !space.is_empty() {
+        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, strut_build, &space);
+        return;
+    }
     // pyro: the "…" that `text-overflow: ellipsis` ends an overflowing line with, in the root's
     // own style (its first available font, as in Chromium).
     text_layout.ellipsis = root_node_style
@@ -238,6 +271,72 @@ fn build_inline_layout_with(
         matches!(end, TextOverflowSide::Ellipsis)
     }
 
+    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
+    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
+    fn build_annotation(
+        nodes: &crate::NodeTree,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        font_ctx: &mut FontContext,
+        scale: f32,
+        node_id: NodeId,
+        kind: TextAnnotationKind,
+    ) -> Option<TextAnnotation> {
+        use style::values::computed::text::TextEmphasisPosition;
+        use style::values::specified::text::RubyPosition;
+        let node = &nodes[node_id];
+        let style = node.primary_styles()?;
+        let itext = style.get_inherited_text();
+        let mut parley_style = stylo_to_parley::style(node_id, &style);
+        let (mut layout, under) = match kind {
+            TextAnnotationKind::Ruby { .. } => {
+                let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
+                let text_transform = CaseTransform::from_style(&style);
+                let mut text_transformer = TextTransformer::default();
+                let mut nested = FoundAnnotations::default();
+                let children = node.before().into_iter().chain(node.children.iter().copied()).chain(node.after());
+                for child_id in children {
+                    build_inline_layout_recursive(
+                        &mut builder,
+                        &mut text_transformer,
+                        nodes,
+                        child_id,
+                        &text_transform,
+                        &mut Vec::new(),
+                        &mut false,
+                        None,
+                        &mut nested,
+                    );
+                }
+                let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
+                (builder.build().0, under)
+            }
+            TextAnnotationKind::Emphasis => {
+                let mark = emphasis_mark(&itext.text_emphasis_style)?;
+                parley_style.font_size *= 0.5;
+                parley_style.line_height = parley::LineHeight::FontSizeRelative(1.0);
+                parley_style.letter_spacing = 0.0;
+                parley_style.word_spacing = 0.0;
+                let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
+                builder.push_text(mark);
+                // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
+                // mode the right side is over the line.
+                let position = itext.text_emphasis_position;
+                let under = if style.writing_mode.is_vertical() {
+                    position.contains(TextEmphasisPosition::LEFT)
+                } else if position.contains(TextEmphasisPosition::AUTO) {
+                    let lang: &str = &style.get_font()._x_lang.0;
+                    let lang = lang.to_ascii_lowercase();
+                    lang == "zh" || lang.starts_with("zh-")
+                } else {
+                    position.contains(TextEmphasisPosition::UNDER)
+                };
+                (builder.build().0, under)
+            }
+        };
+        layout.break_all_lines(None);
+        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
+    }
+
     fn build_inline_layout_recursive(
         builder: &mut TreeBuilder<TextBrush>,
         text_transformer: &mut TextTransformer,
@@ -247,6 +346,7 @@ fn build_inline_layout_with(
         text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
         strut: &mut bool,
         first_letter: Option<&FirstLetterSplit>,
+        annotations: &mut FoundAnnotations,
     ) {
         let node = &nodes[node_id];
 
@@ -324,6 +424,7 @@ fn build_inline_layout_with(
                                 text_nodes,
                                 strut,
                                 first_letter,
+                                annotations,
                             ));
                         }
                         builder.pop_style_span();
@@ -352,17 +453,33 @@ fn build_inline_layout_with(
                                     .map(|s| stylo_to_parley::vertical_align(&s))
                                     .unwrap_or_default(),
                             });
+                        } else if annotations.is_ruby_annotation(tag_name) {
+                            // pyro: a ruby annotation of the text since its base started, drawn
+                            // over that text rather than in the line (`TextAnnotation`).
+                            annotations.annotate_ruby_base(node_id, builder.text().len());
                         } else {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-                            let style = node
+                            let mut style = node
                                 .primary_styles()
                                 .map(|s| stylo_to_parley::style(node.id, &s))
                                 .unwrap_or_else(|| parley::TextStyle {
                                     white_space_collapse: WhiteSpaceCollapse::Collapse,
                                     ..Default::default()
                                 });
+                            style.annotation_space = space_of(&annotations.space, node_id);
 
                             builder.push_style_span(style);
+                            // pyro: emphasis marks over the span's own text; a `<ruby>`'s first
+                            // base starts here.
+                            if let Some(style) = node.primary_styles() {
+                                annotations.enter(node_id, &style);
+                            }
+                            let is_ruby = *tag_name == local_name!("ruby");
+                            let outer_ruby = (annotations.ruby_base_start, annotations.ruby);
+                            if is_ruby {
+                                annotations.ruby_base_start = Some(builder.text().len());
+                                annotations.ruby = Some(node_id);
+                            }
 
                             // pyro: the span's inline-axis margin, border and padding take space
                             // at its start and its end (CSS 2.1 9.4.2): an edge box at each, inside
@@ -397,6 +514,7 @@ fn build_inline_layout_with(
                                     text_nodes,
                                     strut,
                                     first_letter,
+                                    annotations,
                                 ));
                             }
 
@@ -410,6 +528,7 @@ fn build_inline_layout_with(
                                     text_nodes,
                                     strut,
                                     first_letter,
+                                    annotations,
                                 ));
                             }
                             if let Some(after_id) = node.after() {
@@ -422,9 +541,13 @@ fn build_inline_layout_with(
                                     text_nodes,
                                     strut,
                                     first_letter,
+                                    annotations,
                                 ));
                             }
 
+                            if is_ruby {
+                                (annotations.ruby_base_start, annotations.ruby) = outer_ruby;
+                            }
                             if end_edge != 0.0 {
                                 builder.push_inline_box(edge(InlineBoxKind::SpanEnd, end_edge));
                             }
@@ -493,5 +616,122 @@ fn build_inline_layout_with(
             }
             NodeData::Document(_) => unreachable!(),
         }
+    }
+}
+
+/// pyro: the ruby annotations and emphasis marks an inline root's build finds (see
+/// [`TextAnnotation`]), laid out once the root's own text is built.
+#[derive(Default)]
+struct FoundAnnotations {
+    /// Inside a `<ruby>`: where in the text the base of its next annotation starts.
+    ruby_base_start: Option<usize>,
+    /// The innermost `<ruby>` the build is in.
+    ruby: Option<NodeId>,
+    /// `<rt>`s with the bases they annotate, and elements with `text-emphasis`, in tree order,
+    /// each with the span whose box holds it: the `<ruby>`, or the emphasized element.
+    found: Vec<(NodeId, TextAnnotationKind, NodeId)>,
+    /// The room the annotations of each span take, from the build before.
+    space: Vec<(NodeId, parley::AnnotationSpace)>,
+}
+
+impl FoundAnnotations {
+    /// An element whose text is in the root: it has emphasis marks over its own text when its
+    /// `text-emphasis-style` (inherited) is not `none`.
+    fn enter(&mut self, node_id: NodeId, style: &style::properties::ComputedValues) {
+        use style::values::computed::text::TextEmphasisStyle;
+        if !matches!(style.get_inherited_text().text_emphasis_style, TextEmphasisStyle::None) {
+            self.found.push((node_id, TextAnnotationKind::Emphasis, node_id));
+        }
+    }
+
+    /// Whether an element of this name is a ruby annotation here: an `<rt>` (or an `<rtc>` of
+    /// them) inside a `<ruby>`.
+    fn is_ruby_annotation(&self, tag_name: &markup5ever::LocalName) -> bool {
+        self.ruby_base_start.is_some() && (*tag_name == local_name!("rt") || *tag_name == local_name!("rtc"))
+    }
+
+    /// The annotation `node_id` of the text since the base started, up to `end`; the next base
+    /// starts there.
+    fn annotate_ruby_base(&mut self, node_id: NodeId, end: usize) {
+        let start = self.ruby_base_start.replace(end).unwrap_or(end);
+        let holder = self.ruby.unwrap_or(node_id);
+        self.found.push((node_id, TextAnnotationKind::Ruby { base: start..end }, holder));
+    }
+}
+
+/// pyro: the mark `text-emphasis-style` draws (CSS Text Decoration 3, 3.1.1), if any.
+fn emphasis_mark(style: &style::values::computed::text::TextEmphasisStyle) -> Option<&str> {
+    use style::values::computed::text::TextEmphasisStyle;
+    use style::values::specified::text::TextEmphasisShapeKeyword as Shape;
+    match style {
+        TextEmphasisStyle::None => None,
+        TextEmphasisStyle::String(mark) => Some(mark.as_ref()).filter(|mark: &&str| !mark.is_empty()),
+        TextEmphasisStyle::Keyword { fill, shape } => Some(match (shape, fill.is_filled()) {
+            (Shape::Dot, true) => "\u{2022}",
+            (Shape::Dot, false) => "\u{25E6}",
+            (Shape::Circle, true) => "\u{25CF}",
+            (Shape::Circle, false) => "\u{25CB}",
+            (Shape::DoubleCircle, true) => "\u{25C9}",
+            (Shape::DoubleCircle, false) => "\u{25CE}",
+            (Shape::Triangle, true) => "\u{25B2}",
+            (Shape::Triangle, false) => "\u{25B3}",
+            (Shape::Sesame, true) => "\u{FE45}",
+            (Shape::Sesame, false) => "\u{FE46}",
+        }),
+    }
+}
+
+/// pyro: the room the annotations a span holds take beyond its content area (none without any).
+fn space_of(space: &[(NodeId, parley::AnnotationSpace)], node_id: NodeId) -> parley::AnnotationSpace {
+    space.iter().find(|(id, _)| *id == node_id).map(|(_, space)| *space).unwrap_or_default()
+}
+
+/// pyro: the room the annotations each span holds take beyond its content area (CSS px): the
+/// content area of each annotation (laid out at `scale`), over or under the text as it is drawn, on
+/// top of those of the annotations before it whose bases overlap its own on the same side (nested
+/// ruby: an annotation of a base that has one goes outside it).
+fn annotation_room(built: &[(TextAnnotation, NodeId)], scale: f32) -> Vec<(NodeId, parley::AnnotationSpace)> {
+    let mut space: Vec<(NodeId, parley::AnnotationSpace)> = Vec::new();
+    let mut stacked: Vec<f32> = Vec::with_capacity(built.len());
+    for (index, (annotation, holder)) in built.iter().enumerate() {
+        let height = annotation.layout.lines().next().map_or(0.0, |line| {
+            let metrics = line.metrics();
+            (metrics.content_block_max_coord - metrics.content_block_min_coord) / scale
+        });
+        let inside = built[..index]
+            .iter()
+            .zip(&stacked)
+            .filter(|((other, _), _)| other.under == annotation.under && bases_overlap(&other.kind, &annotation.kind))
+            .map(|(_, height)| *height)
+            .fold(0.0, f32::max);
+        let height = height.max(0.0) + inside;
+        stacked.push(height);
+        if height <= 0.0 {
+            continue;
+        }
+        let index = match space.iter().position(|(id, _)| id == holder) {
+            Some(index) => index,
+            None => {
+                space.push((*holder, parley::AnnotationSpace::default()));
+                space.len() - 1
+            }
+        };
+        let room = &mut space[index].1;
+        if annotation.under {
+            room.under = room.under.max(height);
+        } else {
+            room.over = room.over.max(height);
+        }
+    }
+    space
+}
+
+/// pyro: whether two ruby annotations annotate overlapping text.
+fn bases_overlap(a: &TextAnnotationKind, b: &TextAnnotationKind) -> bool {
+    match (a, b) {
+        (TextAnnotationKind::Ruby { base: a }, TextAnnotationKind::Ruby { base: b }) => {
+            a.start < b.end && b.start < a.end
+        }
+        _ => false,
     }
 }

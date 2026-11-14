@@ -40,6 +40,8 @@ mod table_collapsed_borders;
 mod table_flex_intrinsic_height;
 mod tagged_images;
 mod text_aliasing;
+mod text_decoration_lines;
+mod text_emphasis_ruby;
 mod text_line_tops;
 mod text_shadow;
 mod text_overflow_ellipsis;

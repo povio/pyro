@@ -15,7 +15,7 @@ use super::style::{
     FontVariations, FontWeight, FontWidth, StyleProperty,
 };
 use crate::font::FontContext;
-use crate::style::TextStyle;
+use crate::style::{AnnotationSpace, TextStyle};
 use crate::util::nearly_eq;
 use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
 use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
@@ -210,6 +210,7 @@ impl ResolveContext {
             overflow_wrap: raw_style.overflow_wrap,
             text_wrap_mode: raw_style.text_wrap_mode,
             white_space_collapse: raw_style.white_space_collapse,
+            annotation_space: raw_style.annotation_space.scale(scale),
         }
     }
 
@@ -448,6 +449,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) text_wrap_mode: TextWrapMode,
     /// Whitespace collapsing and hanging behavior.
     pub(crate) white_space_collapse: WhiteSpaceCollapse,
+    /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
+    pub(crate) annotation_space: AnnotationSpace,
 }
 
 impl<B: Brush> ResolvedStyle<B> {

@@ -1140,9 +1140,14 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
          style_config::set_pref!("layout.css.columns.enabled", true);
          style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
-@@ -120,10 +122,22 @@
+@@ -119,11 +121,27 @@
+         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
          style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
          style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
++        style_config::set_pref!("layout.css.text-decoration-inset-percentage.enabled", true);
++        // pyro: ruby annotations and emphasis marks (`TextAnnotation`).
++        style_config::set_pref!("layout.css.text-emphasis.enabled", true);
++        style_config::set_pref!("layout.css.ruby.enabled", true);
          style_config::set_pref!("layout.css.text-overflow.enabled", true);
 -        style_config::set_pref!("layout.css.text-underline.enabled", true);
 +        style_config::set_pref!("layout.css.text-underline-position.enabled", true);
@@ -1164,7 +1169,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          style_config::set_pref!("layout.threads", -1);
      });
  }
-@@ -277,6 +291,34 @@
+@@ -277,6 +295,34 @@
      },
  }
  
@@ -1199,7 +1204,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  pub struct BaseDocument {
      /// ID of the document
      id: usize,
-@@ -290,10 +332,20 @@
+@@ -290,10 +336,20 @@
      pub(crate) viewport: Viewport,
      /// CSS media type used to evaluate `@media` rules.
      pub(crate) media_type: MediaType,
@@ -1220,7 +1225,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Document-wide work for the next [`resolve`](Self::resolve).
      pub(crate) flags: DocumentFlags,
      /// Strategy for Stylo's style traversal during `resolve`.
-@@ -354,6 +406,9 @@
+@@ -354,6 +410,9 @@
      pub(crate) focus_node_id: Option<NodeId>,
      /// The node which is currently active (if any)
      pub(crate) active_node_id: Option<NodeId>,
@@ -1230,7 +1235,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// The node which recieved a mousedown event (if any)
      pub(crate) mousedown_node_id: Option<NodeId>,
      /// The last time a mousedown was made (for double-click detection)
-@@ -378,6 +433,8 @@
+@@ -378,6 +437,8 @@
      // TODO: collapse animating state into a bitflags
      /// Whether there are active CSS animations/transitions (so we should re-render every frame)
      pub(crate) has_active_animations: bool,
@@ -1239,7 +1244,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
      pub(crate) has_canvas: bool,
      /// Whether there are subdocuments that are animating (so we should re-render every frame)
-@@ -389,6 +446,9 @@
+@@ -389,6 +450,9 @@
      pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
      /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
      pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
@@ -1249,7 +1254,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
      /// added, replaced or removed), so that CSSOM wrappers can detect that
      /// their cached rule data is stale.
-@@ -404,6 +464,34 @@
+@@ -404,6 +468,34 @@
      pub(crate) has_changes: bool,
      /// Set of changed nodes for updating the accessibility tree
      pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
@@ -1284,7 +1289,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// Nodes that contain custom widgets
      #[cfg(feature = "custom-widget")]
-@@ -426,6 +514,35 @@
+@@ -426,6 +518,35 @@
      /// the style traversal and by pseudo-element box construction).
      pub(crate) pending_style_image_nodes: Vec<NodeId>,
  
@@ -1320,7 +1325,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
      // keyed by request id
      pub(crate) pending_critical_resources: HashSet<usize>,
-@@ -514,11 +631,13 @@
+@@ -514,11 +635,13 @@
  
          let viewport = config.viewport.unwrap_or_default();
          let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -1336,7 +1341,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let nodes_to_id = HashMap::new();
  
          let base_url = config
-@@ -555,7 +674,11 @@
+@@ -555,7 +678,11 @@
              nodes_to_id,
              viewport,
              media_type,
@@ -1348,7 +1353,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              flags: DocumentFlags::empty(),
              style_threading: config.style_threading,
              incremental_layout: config.incremental.unwrap_or(true),
-@@ -563,11 +686,16 @@
+@@ -563,11 +690,16 @@
              devtool_settings: DevtoolSettings::default(),
              url: base_url,
              nodes_to_stylesheet: BTreeMap::new(),
@@ -1366,7 +1371,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
              hover_node_id: None,
              hover_hit_node_id: None,
-@@ -575,8 +703,10 @@
+@@ -575,8 +707,10 @@
              last_client_pointer_position: None,
              focus_node_id: None,
              active_node_id: None,
@@ -1377,7 +1382,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              subdoc_is_animating: false,
              has_canvas: false,
              sub_document_nodes: HashSet::new(),
-@@ -589,9 +719,24 @@
+@@ -589,9 +723,24 @@
  
              has_changes: false,
              deferred_construction_nodes: Vec::new(),
@@ -1402,7 +1407,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              pending_critical_resources: HashSet::new(),
              controls_to_form: HashMap::new(),
              net_provider,
-@@ -741,6 +886,12 @@
+@@ -741,6 +890,12 @@
              .or(self.try_root_element().map(|el| el.id))
      }
  
@@ -1415,7 +1420,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn mutate<'doc>(&'doc mut self) -> DocumentMutator<'doc> {
          DocumentMutator::new(self)
      }
-@@ -991,6 +1142,10 @@
+@@ -991,6 +1146,10 @@
      /// it so that stale NodeIds are never dereferenced after the slot is freed.
      pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
          self.clear_interaction_state_for_removed_node(node_id);
@@ -1426,7 +1431,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.nodes.remove(node_id)
      }
  
-@@ -1105,14 +1260,18 @@
+@@ -1105,14 +1264,18 @@
          if let Some(node) = &mut node {
              on_drop(node_id);
              if let Some(before) = node.before() {
@@ -1448,7 +1453,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
  
              // Anonymous blocks live only in the slab, so deallocate the ones this
-@@ -1136,12 +1295,36 @@
+@@ -1136,12 +1299,36 @@
          // Free any anonymous blocks that this block owns before removing it.
          let nested = std::mem::take(&mut self.nodes[anon_id].anonymous_blocks);
          for nested_id in nested {
@@ -1486,7 +1491,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the DOM or focus changed since the last [`Self::clear_changes`]
      /// (i.e. whether the accessibility tree is out of date)
      pub fn has_changes(&self) -> bool {
-@@ -1198,7 +1381,7 @@
+@@ -1198,7 +1385,7 @@
              let mut node = doc.remove_node_from_tree(node_id);
              if let Some(node) = &mut node {
                  for &child in &node.children {
@@ -1495,7 +1500,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
                  for &anon_id in &node.anonymous_blocks {
                      doc.deallocate_anonymous_block(anon_id);
-@@ -1305,6 +1488,32 @@
+@@ -1305,6 +1492,32 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
@@ -1528,7 +1533,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let data = Stylesheet::from_str(
              css.as_ref(),
              self.url.url_extra_data(),
-@@ -1396,6 +1605,75 @@
+@@ -1396,6 +1609,75 @@
          }
      }
  
@@ -1604,7 +1609,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1429,9 +1707,17 @@
+@@ -1429,9 +1711,17 @@
          };
  
          match resource {
@@ -1623,7 +1628,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1469,18 +1755,22 @@
+@@ -1469,18 +1759,22 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -1647,7 +1652,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      ..Default::default()
                  };
  
-@@ -1547,11 +1837,12 @@
+@@ -1547,11 +1841,12 @@
                      node.clear_layout_cache();
                      node.insert_damage(ALL_DAMAGE);
                  }
@@ -1661,7 +1666,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                              ImageType::Image => unreachable!(),
                          };
                          images.get_mut(idx)
-@@ -1580,7 +1871,75 @@
+@@ -1580,7 +1875,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -1737,7 +1742,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1700,14 +2059,24 @@
+@@ -1700,14 +2063,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -1765,7 +1770,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1718,7 +2087,7 @@
+@@ -1718,7 +2091,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -1774,7 +1779,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1753,7 +2122,7 @@
+@@ -1753,7 +2126,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -1783,7 +1788,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1859,10 +2228,16 @@
+@@ -1859,10 +2232,16 @@
          }
  
          // Focus the new node
@@ -1801,7 +1806,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          );
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
-@@ -1895,6 +2270,38 @@
+@@ -1895,6 +2274,38 @@
          true
      }
  
@@ -1840,7 +1845,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1991,10 +2398,12 @@
+@@ -1991,10 +2402,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -1854,7 +1859,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2078,6 +2487,28 @@
+@@ -2078,6 +2491,28 @@
          true
      }
  
@@ -1883,7 +1888,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +2578,46 @@
+@@ -2147,12 +2582,46 @@
          self.mousedown_node_id
      }
  
@@ -1930,7 +1935,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +2653,12 @@
+@@ -2188,6 +2657,12 @@
          self.viewport.clone()
      }
  
@@ -1943,7 +1948,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2266,6 +2737,7 @@
+@@ -2266,6 +2741,7 @@
  
          self.set_stylist_device(make_device(
              &self.viewport,
@@ -1951,7 +1956,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.media_type.clone(),
              self.font_ctx.clone(),
          ));
-@@ -2317,6 +2789,15 @@
+@@ -2317,6 +2793,15 @@
          let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
          let styles_use_viewport_units = old_device.used_viewport_size();
  
@@ -1967,7 +1972,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2464,6 +2945,11 @@
+@@ -2464,6 +2949,11 @@
          (pos, *self.nodes[node_id].unrounded_layout())
      }
  
@@ -1979,7 +1984,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2677,7 +3163,7 @@
+@@ -2677,7 +3167,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -1988,7 +1993,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -3782,6 +4268,7 @@
+@@ -3782,6 +4272,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -1996,7 +2001,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +4291,52 @@
+@@ -3804,6 +4295,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4655,7 +4660,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      let text_shaping_needs_recollect = || {
          if old.clone_direction() != new.clone_direction()
              || old.clone_unicode_bidi() != new.clone_unicode_bidi()
-@@ -426,6 +711,7 @@
+@@ -426,13 +711,40 @@
          let new_text = new.get_inherited_text();
          if !std::ptr::eq(old_text, new_text)
              && (old_text.white_space_collapse != new_text.white_space_collapse
@@ -4663,10 +4668,19 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  || old_text.text_transform != new_text.text_transform
                  || old_text.word_break != new_text.word_break
                  || old_text.line_break != new_text.line_break
-@@ -437,25 +723,37 @@
-             return true;
-         }
- 
+                 || old_text.overflow_wrap != new_text.overflow_wrap
+                 || old_text.letter_spacing != new_text.letter_spacing
+                 || old_text.word_spacing != new_text.word_spacing
+-                || old_text.text_rendering != new_text.text_rendering)
++                || old_text.text_rendering != new_text.text_rendering
++                // pyro: ruby annotations and emphasis marks are laid out with the text.
++                || old_text.text_emphasis_style != new_text.text_emphasis_style
++                || old_text.text_emphasis_position != new_text.text_emphasis_position
++                || old_text.ruby_position != new_text.ruby_position)
++        {
++            return true;
++        }
++
 +        // `vertical-align` (its longhands) is a span's vertical alignment in parley.
 +        let old_box = old.get_box();
 +        let new_box = new.get_box();
@@ -4685,10 +4699,10 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +            && display.inside() == DisplayInside::Flow
 +            && crate::layout::inline::span_edge_widths(old)
 +                != crate::layout::inline::span_edge_widths(new)
-+        {
-+            return true;
-+        }
-+
+         {
+             return true;
+         }
+@@ -440,22 +752,12 @@
          false
      };
  
@@ -4716,7 +4730,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      };
  
      #[allow(
-@@ -467,7 +765,7 @@
+@@ -467,7 +769,7 @@
      } else if text_shaping_needs_recollect() {
          ALL_DAMAGE
      } else if table_needs_rebuild() {
@@ -4725,7 +4739,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      } else if old.get_position().order != new.get_position().order
          // `position` is unchanged here (else the box tree would be rebuilt), so
          // checking the new style suffices. Out-of-flow children are not flex/grid
-@@ -502,6 +800,8 @@
+@@ -502,6 +804,8 @@
  impl BaseDocument {
      pub(crate) fn invalidate_inline_contexts(&mut self) {
          let scale = self.viewport.scale();
@@ -4734,7 +4748,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  
          let font_ctx = &self.font_ctx;
          let layout_ctx = &mut self.layout_ctx;
-@@ -527,6 +827,11 @@
+@@ -527,6 +831,11 @@
                  input.editor.set_scale(scale);
                  let mut font_ctx = font_ctx.lock().unwrap();
                  input.editor.refresh_layout(&mut font_ctx, layout_ctx);
@@ -4746,7 +4760,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  node.insert_damage(ONLY_RELAYOUT);
              }
          }
-@@ -552,6 +857,7 @@
+@@ -552,6 +861,7 @@
              }
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
@@ -4754,7 +4768,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          }
      }
  
-@@ -577,12 +883,16 @@
+@@ -577,12 +887,16 @@
              return;
          };
  
@@ -5162,12 +5176,15 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  };
  use style::{
      computed_values::position::T as PositionProperty,
-@@ -17,10 +17,39 @@
+@@ -17,10 +17,42 @@
      layout::list::BULLET_FONT_FAMILY,
      layout::replaced::is_inline_box_element,
      layout::text_transform::{CaseTransform, TextTransformer},
 -    node::{ListItemLayout, ListItemLayoutPosition, Marker, TextBrush, TextLayout},
-+    node::{FirstLetterSplit, ListItemLayout, ListItemLayoutPosition, Marker, TextBrush, TextLayout},
++    node::{
++        FirstLetterSplit, ListItemLayout, ListItemLayoutPosition, Marker, TextAnnotation, TextAnnotationKind, TextBrush,
++        TextLayout,
++    },
      stylo_to_parley,
  };
  
@@ -5203,18 +5220,18 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  pub(crate) fn build_inline_layout_into(
      nodes: &crate::NodeTree,
      layout_ctx: &mut LayoutContext<TextBrush>,
-@@ -28,6 +57,25 @@
+@@ -28,6 +60,28 @@
      text_layout: &mut TextLayout,
      scale: f32,
      inline_context_root_node_id: NodeId,
 +) {
-+    build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false);
++    build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false, &[]);
 +    // A line holding atomic inlines but no text still has its strut (CSS 2.1
 +    // 10.8.1): the root's font and line height. Parley makes no line height
 +    // without text, so a line of empty inline-blocks was 0px tall. A
 +    // word joiner (zero-width, no break opportunity) provides the strut.
 +    if text_layout.layout.inline_boxes().len() > 0 && text_layout.text.chars().all(|c| c.is_whitespace() && c != '\n') {
-+        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true);
++        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[]);
 +    }
 +}
 +
@@ -5226,10 +5243,13 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    scale: f32,
 +    inline_context_root_node_id: NodeId,
 +    strut: bool,
++    // pyro: the room annotations take beyond the content area of the spans that hold them (see
++    // `TextAnnotation`), measured by a first build.
++    annotation_space: &[(NodeId, parley::AnnotationSpace)],
  ) {
      // Get the inline context's root node's text styles
      let root_node = &nodes[inline_context_root_node_id];
-@@ -37,7 +85,7 @@
+@@ -37,7 +91,7 @@
              .and_then(|parent_id| nodes[parent_id].primary_styles())
      });
  
@@ -5238,7 +5258,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          .as_ref()
          .map(|s| stylo_to_parley::style(inline_context_root_node_id, s))
          .unwrap_or_else(|| parley::TextStyle {
-@@ -45,6 +93,12 @@
+@@ -45,6 +99,13 @@
              ..Default::default()
          });
  
@@ -5247,15 +5267,25 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    // not shift that box's own line strut or inherited direct text. Descendant
 +    // spans and atomic inline boxes retain their separately collected styles.
 +    parley_style.vertical_align = parley::VerticalAlign::BASELINE;
++    parley_style.annotation_space = space_of(annotation_space, inline_context_root_node_id);
 +
      // Create a parley tree builder
      let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
      if let Some(style) = root_node_style.as_deref() {
-@@ -86,6 +140,15 @@
+@@ -86,6 +147,24 @@
      // The marker is a separate box, so words in the content don't continue from it.
      let mut text_transformer = TextTransformer::default();
      text_transformer.word_break(&builder);
 +    let text_nodes = &mut Vec::new();
++    // pyro: ruby annotations and emphasis marks found on the way (see `TextAnnotation`).
++    let annotations = &mut FoundAnnotations { space: annotation_space.to_vec(), ..Default::default() };
++    if let Some(style) = root_node.primary_styles() {
++        annotations.enter(inline_context_root_node_id, &style);
++    }
++    if root_node.data.is_element_with_tag_name(&local_name!("ruby")) {
++        annotations.ruby_base_start = Some(builder.text().len());
++        annotations.ruby = Some(inline_context_root_node_id);
++    }
 +    // The strut goes before the first in-flow inline box: trailing white
 +    // space after it still hangs, leading white space before it still
 +    // collapses.
@@ -5267,33 +5297,36 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  
      if let Some(before_id) = root_node.before() {
          build_inline_layout_recursive(
-@@ -94,6 +157,9 @@
+@@ -94,6 +173,10 @@
              nodes,
              before_id,
              &text_transform,
 +            text_nodes,
 +            strut,
 +            first_letter,
++            annotations,
          );
      }
      for child_id in root_node.children.iter().copied() {
-@@ -103,6 +169,9 @@
+@@ -103,6 +186,10 @@
              nodes,
              child_id,
              &text_transform,
 +            text_nodes,
 +            strut,
 +            first_letter,
++            annotations,
          );
      }
      if let Some(after_id) = root_node.after() {
-@@ -112,18 +181,72 @@
+@@ -112,18 +199,154 @@
              nodes,
              after_id,
              &text_transform,
 +            text_nodes,
 +            strut,
 +            first_letter,
++            annotations,
          );
      }
  
@@ -5306,6 +5339,20 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        builder.build_into_keeping_lines(&mut text_layout.layout)
 +    };
 +    text_layout.text_nodes = std::mem::take(text_nodes);
++    // pyro: the annotations' own layouts, now that the builder has let go of the contexts. They
++    // take room in their lines: the spans that hold them are built again with it.
++    let built: Vec<(TextAnnotation, NodeId)> = std::mem::take(&mut annotations.found)
++        .into_iter()
++        .filter_map(|(node_id, kind, holder)| {
++            Some((build_annotation(nodes, layout_ctx, font_ctx, scale, node_id, kind)?, holder))
++        })
++        .collect();
++    let space = annotation_room(&built, scale);
++    text_layout.annotations = built.into_iter().map(|(annotation, _)| annotation).collect();
++    if annotation_space.is_empty() && !space.is_empty() {
++        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, strut_build, &space);
++        return;
++    }
 +    // pyro: the "…" that `text-overflow: ellipsis` ends an overflowing line with, in the root's
 +    // own style (its first available font, as in Chromium).
 +    text_layout.ellipsis = root_node_style
@@ -5349,6 +5396,72 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        matches!(end, TextOverflowSide::Ellipsis)
 +    }
 +
++    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
++    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
++    fn build_annotation(
++        nodes: &crate::NodeTree,
++        layout_ctx: &mut LayoutContext<TextBrush>,
++        font_ctx: &mut FontContext,
++        scale: f32,
++        node_id: NodeId,
++        kind: TextAnnotationKind,
++    ) -> Option<TextAnnotation> {
++        use style::values::computed::text::TextEmphasisPosition;
++        use style::values::specified::text::RubyPosition;
++        let node = &nodes[node_id];
++        let style = node.primary_styles()?;
++        let itext = style.get_inherited_text();
++        let mut parley_style = stylo_to_parley::style(node_id, &style);
++        let (mut layout, under) = match kind {
++            TextAnnotationKind::Ruby { .. } => {
++                let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
++                let text_transform = CaseTransform::from_style(&style);
++                let mut text_transformer = TextTransformer::default();
++                let mut nested = FoundAnnotations::default();
++                let children = node.before().into_iter().chain(node.children.iter().copied()).chain(node.after());
++                for child_id in children {
++                    build_inline_layout_recursive(
++                        &mut builder,
++                        &mut text_transformer,
++                        nodes,
++                        child_id,
++                        &text_transform,
++                        &mut Vec::new(),
++                        &mut false,
++                        None,
++                        &mut nested,
++                    );
++                }
++                let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
++                (builder.build().0, under)
++            }
++            TextAnnotationKind::Emphasis => {
++                let mark = emphasis_mark(&itext.text_emphasis_style)?;
++                parley_style.font_size *= 0.5;
++                parley_style.line_height = parley::LineHeight::FontSizeRelative(1.0);
++                parley_style.letter_spacing = 0.0;
++                parley_style.word_spacing = 0.0;
++                let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
++                builder.push_text(mark);
++                // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
++                // mode the right side is over the line.
++                let position = itext.text_emphasis_position;
++                let under = if style.writing_mode.is_vertical() {
++                    position.contains(TextEmphasisPosition::LEFT)
++                } else if position.contains(TextEmphasisPosition::AUTO) {
++                    let lang: &str = &style.get_font()._x_lang.0;
++                    let lang = lang.to_ascii_lowercase();
++                    lang == "zh" || lang.starts_with("zh-")
++                } else {
++                    position.contains(TextEmphasisPosition::UNDER)
++                };
++                (builder.build().0, under)
++            }
++        };
++        layout.break_all_lines(None);
++        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
++    }
++
      fn build_inline_layout_recursive(
          builder: &mut TreeBuilder<TextBrush>,
          text_transformer: &mut TextTransformer,
@@ -5358,10 +5471,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
++        annotations: &mut FoundAnnotations,
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +266,18 @@
+@@ -143,6 +366,18 @@
                      }
                  }
  
@@ -5380,7 +5494,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -180,13 +315,16 @@
+@@ -180,13 +415,17 @@
                          );
                          for child_id in node.children.iter().copied() {
                              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
@@ -5395,11 +5509,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                text_nodes,
 +                                strut,
 +                                first_letter,
++                                annotations,
 +                            ));
                          }
                          builder.pop_style_span();
                      }
-@@ -196,6 +334,9 @@
+@@ -196,6 +435,9 @@
                          if is_inline_box_element(tag_name) {
                              if box_kind == InlineBoxKind::InFlow {
                                  text_transformer.word_break(builder);
@@ -5409,7 +5524,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -211,17 +352,6 @@
+@@ -211,58 +453,104 @@
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
                              });
@@ -5424,13 +5539,35 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 -                            builder.push_text("\n");
 -                            builder.pop_style_span();
 -                            text_transformer.word_break(builder);
++                        } else if annotations.is_ruby_annotation(tag_name) {
++                            // pyro: a ruby annotation of the text since its base started, drawn
++                            // over that text rather than in the line (`TextAnnotation`).
++                            annotations.annotate_ruby_base(node_id, builder.text().len());
                          } else {
                              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-                             let style = node
-@@ -234,35 +364,70 @@
+-                            let style = node
++                            let mut style = node
+                                 .primary_styles()
+                                 .map(|s| stylo_to_parley::style(node.id, &s))
+                                 .unwrap_or_else(|| parley::TextStyle {
+                                     white_space_collapse: WhiteSpaceCollapse::Collapse,
+                                     ..Default::default()
+                                 });
++                            style.annotation_space = space_of(&annotations.space, node_id);
  
                              builder.push_style_span(style);
- 
++                            // pyro: emphasis marks over the span's own text; a `<ruby>`'s first
++                            // base starts here.
++                            if let Some(style) = node.primary_styles() {
++                                annotations.enter(node_id, &style);
++                            }
++                            let is_ruby = *tag_name == local_name!("ruby");
++                            let outer_ruby = (annotations.ruby_base_start, annotations.ruby);
++                            if is_ruby {
++                                annotations.ruby_base_start = Some(builder.text().len());
++                                annotations.ruby = Some(node_id);
++                            }
++
 +                            // pyro: the span's inline-axis margin, border and padding take space
 +                            // at its start and its end (CSS 2.1 9.4.2): an edge box at each, inside
 +                            // the span's style, when there is any.
@@ -5453,7 +5590,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                            if (start_edge != 0.0 || end_edge != 0.0) && std::mem::take(strut) {
 +                                builder.push_text("\u{2060}");
 +                            }
-+
+ 
                              if let Some(before_id) = node.before() {
 -                                build_inline_layout_recursive(
 +                                crate::util::ensure_stack(|| build_inline_layout_recursive(
@@ -5466,6 +5603,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                    text_nodes,
 +                                    strut,
 +                                    first_letter,
++                                    annotations,
 +                                ));
                              }
  
@@ -5481,6 +5619,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                    text_nodes,
 +                                    strut,
 +                                    first_letter,
++                                    annotations,
 +                                ));
                              }
                              if let Some(after_id) = node.after() {
@@ -5495,16 +5634,20 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                    text_nodes,
 +                                    strut,
 +                                    first_letter,
++                                    annotations,
 +                                ));
                              }
  
++                            if is_ruby {
++                                (annotations.ruby_base_start, annotations.ruby) = outer_ruby;
++                            }
 +                            if end_edge != 0.0 {
 +                                builder.push_inline_box(edge(InlineBoxKind::SpanEnd, end_edge));
 +                            }
                              builder.pop_style_span();
                          }
                      }
-@@ -270,6 +435,9 @@
+@@ -270,6 +558,9 @@
                      (_, _) => {
                          if box_kind == InlineBoxKind::InFlow {
                              text_transformer.word_break(builder);
@@ -5514,7 +5657,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -292,9 +460,33 @@
+@@ -292,9 +583,33 @@
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
  
@@ -5551,6 +5694,127 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+@@ -303,3 +618,120 @@
+         }
+     }
+ }
++
++/// pyro: the ruby annotations and emphasis marks an inline root's build finds (see
++/// [`TextAnnotation`]), laid out once the root's own text is built.
++#[derive(Default)]
++struct FoundAnnotations {
++    /// Inside a `<ruby>`: where in the text the base of its next annotation starts.
++    ruby_base_start: Option<usize>,
++    /// The innermost `<ruby>` the build is in.
++    ruby: Option<NodeId>,
++    /// `<rt>`s with the bases they annotate, and elements with `text-emphasis`, in tree order,
++    /// each with the span whose box holds it: the `<ruby>`, or the emphasized element.
++    found: Vec<(NodeId, TextAnnotationKind, NodeId)>,
++    /// The room the annotations of each span take, from the build before.
++    space: Vec<(NodeId, parley::AnnotationSpace)>,
++}
++
++impl FoundAnnotations {
++    /// An element whose text is in the root: it has emphasis marks over its own text when its
++    /// `text-emphasis-style` (inherited) is not `none`.
++    fn enter(&mut self, node_id: NodeId, style: &style::properties::ComputedValues) {
++        use style::values::computed::text::TextEmphasisStyle;
++        if !matches!(style.get_inherited_text().text_emphasis_style, TextEmphasisStyle::None) {
++            self.found.push((node_id, TextAnnotationKind::Emphasis, node_id));
++        }
++    }
++
++    /// Whether an element of this name is a ruby annotation here: an `<rt>` (or an `<rtc>` of
++    /// them) inside a `<ruby>`.
++    fn is_ruby_annotation(&self, tag_name: &markup5ever::LocalName) -> bool {
++        self.ruby_base_start.is_some() && (*tag_name == local_name!("rt") || *tag_name == local_name!("rtc"))
++    }
++
++    /// The annotation `node_id` of the text since the base started, up to `end`; the next base
++    /// starts there.
++    fn annotate_ruby_base(&mut self, node_id: NodeId, end: usize) {
++        let start = self.ruby_base_start.replace(end).unwrap_or(end);
++        let holder = self.ruby.unwrap_or(node_id);
++        self.found.push((node_id, TextAnnotationKind::Ruby { base: start..end }, holder));
++    }
++}
++
++/// pyro: the mark `text-emphasis-style` draws (CSS Text Decoration 3, 3.1.1), if any.
++fn emphasis_mark(style: &style::values::computed::text::TextEmphasisStyle) -> Option<&str> {
++    use style::values::computed::text::TextEmphasisStyle;
++    use style::values::specified::text::TextEmphasisShapeKeyword as Shape;
++    match style {
++        TextEmphasisStyle::None => None,
++        TextEmphasisStyle::String(mark) => Some(mark.as_ref()).filter(|mark: &&str| !mark.is_empty()),
++        TextEmphasisStyle::Keyword { fill, shape } => Some(match (shape, fill.is_filled()) {
++            (Shape::Dot, true) => "\u{2022}",
++            (Shape::Dot, false) => "\u{25E6}",
++            (Shape::Circle, true) => "\u{25CF}",
++            (Shape::Circle, false) => "\u{25CB}",
++            (Shape::DoubleCircle, true) => "\u{25C9}",
++            (Shape::DoubleCircle, false) => "\u{25CE}",
++            (Shape::Triangle, true) => "\u{25B2}",
++            (Shape::Triangle, false) => "\u{25B3}",
++            (Shape::Sesame, true) => "\u{FE45}",
++            (Shape::Sesame, false) => "\u{FE46}",
++        }),
++    }
++}
++
++/// pyro: the room the annotations a span holds take beyond its content area (none without any).
++fn space_of(space: &[(NodeId, parley::AnnotationSpace)], node_id: NodeId) -> parley::AnnotationSpace {
++    space.iter().find(|(id, _)| *id == node_id).map(|(_, space)| *space).unwrap_or_default()
++}
++
++/// pyro: the room the annotations each span holds take beyond its content area (CSS px): the
++/// content area of each annotation (laid out at `scale`), over or under the text as it is drawn, on
++/// top of those of the annotations before it whose bases overlap its own on the same side (nested
++/// ruby: an annotation of a base that has one goes outside it).
++fn annotation_room(built: &[(TextAnnotation, NodeId)], scale: f32) -> Vec<(NodeId, parley::AnnotationSpace)> {
++    let mut space: Vec<(NodeId, parley::AnnotationSpace)> = Vec::new();
++    let mut stacked: Vec<f32> = Vec::with_capacity(built.len());
++    for (index, (annotation, holder)) in built.iter().enumerate() {
++        let height = annotation.layout.lines().next().map_or(0.0, |line| {
++            let metrics = line.metrics();
++            (metrics.content_block_max_coord - metrics.content_block_min_coord) / scale
++        });
++        let inside = built[..index]
++            .iter()
++            .zip(&stacked)
++            .filter(|((other, _), _)| other.under == annotation.under && bases_overlap(&other.kind, &annotation.kind))
++            .map(|(_, height)| *height)
++            .fold(0.0, f32::max);
++        let height = height.max(0.0) + inside;
++        stacked.push(height);
++        if height <= 0.0 {
++            continue;
++        }
++        let index = match space.iter().position(|(id, _)| id == holder) {
++            Some(index) => index,
++            None => {
++                space.push((*holder, parley::AnnotationSpace::default()));
++                space.len() - 1
++            }
++        };
++        let room = &mut space[index].1;
++        if annotation.under {
++            room.under = room.under.max(height);
++        } else {
++            room.over = room.over.max(height);
++        }
++    }
++    space
++}
++
++/// pyro: whether two ruby annotations annotate overlapping text.
++fn bases_overlap(a: &TextAnnotationKind, b: &TextAnnotationKind) -> bool {
++    match (a, b) {
++        (TextAnnotationKind::Ruby { base: a }, TextAnnotationKind::Ruby { base: b }) => {
++            a.start < b.end && b.start < a.end
++        }
++        _ => false,
++    }
++}
 diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom/src/layout/inline/layout.rs
 --- a/packages/blitz-dom/src/layout/inline/layout.rs
 +++ b/packages/blitz-dom/src/layout/inline/layout.rs
@@ -13105,7 +13369,7 @@ diff --git a/packages/blitz-dom/src/node/mod.rs b/packages/blitz-dom/src/node/mo
  #[cfg(feature = "custom-widget")]
  pub use custom_widget::{
      ComputedStyles, CustomWidgetData, CustomWidgetStatus, ProxyRenderContext, Widget,
-@@ -26,6 +26,7 @@
+@@ -26,6 +26,10 @@
  pub use node::*;
  pub use scrollbar::{ScrollbarColor, ScrollbarRef, ScrollbarWidth};
  pub use stylo_data::ComputedStyleRef;
@@ -13113,7 +13377,10 @@ diff --git a/packages/blitz-dom/src/node/mod.rs b/packages/blitz-dom/src/node/mo
  #[cfg(feature = "svg")]
  pub use svg::{SvgImageData, SvgIntrinsicDimensions};
 -pub use text::{GeneratedTextInputEvent, TextBrush, TextInputData, TextLayout};
-+pub use text::{FirstLetterSplit, GeneratedTextInputEvent, InputPlaceholder, TextBrush, TextInputData, TextLayout};
++pub use text::{
++    can_take_emphasis_mark, FirstLetterSplit, GeneratedTextInputEvent, InputPlaceholder, TextAnnotation,
++    TextAnnotationKind, TextBrush, TextInputData, TextLayout,
++};
 diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/node.rs
 --- a/packages/blitz-dom/src/node/node.rs
 +++ b/packages/blitz-dom/src/node/node.rs
@@ -14103,7 +14370,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
      pub layout: parley::layout::Layout<TextBrush>,
      /// Block-axis offset (in CSS px) of the line boxes from the top of the container's content
      /// box, as applied by `align-content`.
-@@ -33,10 +32,49 @@
+@@ -33,10 +32,99 @@
      /// containing block (as `SPAN_*_CB` flags). The inline root claims those boxes in its place.
      /// Set by each `RunMode::PerformLayout` run of inline layout.
      pub span_cb_flags: stylo_taffy::StyleFlags,
@@ -14137,6 +14404,9 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
 +    /// `text-overflow: ellipsis` at the end of its lines: paint ends each line that overflows
 +    /// the content box with it.
 +    pub ellipsis: Option<Box<parley::layout::Layout<TextBrush>>>,
++    /// pyro: text drawn over or under stretches of this text (ruby annotations, emphasis marks).
++    /// Empty for almost every inline root.
++    pub annotations: Vec<TextAnnotation>,
 +    /// pyro: the first letter of the root's first line, styled by an element's
 +    /// `::first-letter` (`layout::first_letter`), set before each build.
 +    pub first_letter: Option<FirstLetterSplit>,
@@ -14150,10 +14420,57 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
 +    pub text: NodeId,
 +    pub range: std::ops::Range<usize>,
 +    pub style_node: NodeId,
++}
++
++/// pyro: text drawn over (or under) a stretch of an inline root's text, as a ruby annotation is
++/// drawn over its base: its own layout of one line, whose content area (ascent to descent) is
++/// drawn against the base's content area, centred over the base. A ruby annotation (`<rt>`) and the
++/// emphasis marks of `text-emphasis` (which CSS draws "exactly as if each character was assigned
++/// the mark as its ruby annotation text") are both drawn this way, by blitz-paint's
++/// `draw_text_annotations`. The annotation does not take part in the root's lines: it adds no
++/// width to its base nor height to its line.
++#[derive(Clone)]
++pub struct TextAnnotation {
++    /// The `<rt>` element, or the element whose own text the marks emphasize.
++    pub node_id: NodeId,
++    pub kind: TextAnnotationKind,
++    /// Under the base (the line-under side: `ruby-position: under`, `text-emphasis-position:
++    /// under`, or `left` in a vertical writing mode), not over it.
++    pub under: bool,
++    /// The annotation's text on one line: the `<rt>`'s content in its style, or one emphasis mark
++    /// in the element's font at half its size.
++    pub layout: Box<parley::layout::Layout<TextBrush>>,
++}
++
++#[derive(Clone, Debug, PartialEq)]
++pub enum TextAnnotationKind {
++    /// A ruby annotation of the root's text in `base` (a byte range of [`TextLayout::text`]).
++    Ruby { base: std::ops::Range<usize> },
++    /// `text-emphasis`: the layout (one mark) is drawn over each character of the element's own
++    /// glyph runs that takes a mark ([`can_take_emphasis_mark`]).
++    Emphasis,
++}
++
++/// pyro: whether `text-emphasis` draws a mark over a character (CSS Text Decoration 3, 3.1):
++/// not over word separators, white space (Unicode `Z*`), control and format characters and
++/// unassigned code points (`Cc`, `Cf`, `Cn`), nor punctuation (`P*`).
++pub fn can_take_emphasis_mark(c: char) -> bool {
++    use icu_properties::props::{GeneralCategory, GeneralCategoryGroup};
++    use icu_properties::CodePointMapData;
++    if matches!(c, '\u{1361}' | '\u{10100}' | '\u{10101}' | '\u{1039F}' | '\u{1091F}') {
++        return false;
++    }
++    let category = CodePointMapData::<GeneralCategory>::new().get(c);
++    !(GeneralCategoryGroup::Separator.contains(category)
++        || GeneralCategoryGroup::Punctuation.contains(category)
++        || matches!(
++            category,
++            GeneralCategory::Control | GeneralCategory::Format | GeneralCategory::Unassigned
++        ))
  }
  
  impl TextLayout {
-@@ -44,10 +82,24 @@
+@@ -44,10 +132,24 @@
          Default::default()
      }
  
@@ -14182,7 +14499,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
      }
  }
  
-@@ -80,6 +132,72 @@
+@@ -80,6 +182,72 @@
      /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
      /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
      pub content_box_subpixel_offset: taffy::Point<f32>,
@@ -14255,7 +14572,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
  }
  
  // FIXME: Implement Clone for PlainEditor
-@@ -97,9 +215,17 @@
+@@ -97,9 +265,17 @@
              is_multiline,
              scroll_offset: 0.0,
              content_box_subpixel_offset: taffy::Point::ZERO,
@@ -17834,6 +18151,18 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
      resolved = origin_translation * resolved * origin_translation.inverse();
  
      if resolved != Affine::IDENTITY {
+diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/stylo_to_parley.rs
+--- a/packages/blitz-dom/src/stylo_to_parley.rs
++++ b/packages/blitz-dom/src/stylo_to_parley.rs
+@@ -569,6 +569,8 @@
+         strikethrough_offset: Default::default(),
+         strikethrough_size: Default::default(),
+         strikethrough_brush: Default::default(),
++        // pyro: set by the inline build for spans with annotations (`TextAnnotation`).
++        annotation_space: Default::default(),
+     }
+ }
+ 
 diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_refs.rs
 new file mode 100644
 --- /dev/null
