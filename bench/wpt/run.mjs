@@ -109,7 +109,9 @@ async function startBrowser() {
   killBrowser();
   const port = await freePort();
   child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error', '--load-resources', 'stylesheet', '--load-resources', 'iframe', '--cdp-max-connections', '64'],
-    { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', ...(KIND === 'reftest' ? reftestEnv(WPT) : {}) } });
+    // PYRO_PARENT_PID: the browser exits with this runner however it ends. It runs in a process group of its own, so a
+    // runner killed with its CI job (a cancelled or superseded run) left it serving on the self-hosted machine.
+    { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(KIND === 'reftest' ? reftestEnv(WPT) : {}) } });
   for (let i = 0; i < 1000; i++) {
     try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) { endpoint = `http://127.0.0.1:${port}`; return; } } catch {}
     await new Promise((r) => setTimeout(r, 10));
