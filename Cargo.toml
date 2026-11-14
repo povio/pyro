@@ -221,6 +221,8 @@ parley = { path = "vendor/parley" }
 fontique = { path = "vendor/fontique" }
 # A raster thread count per renderer; see vendor/anyrender_vello_cpu/README.pyro.md.
 anyrender_vello_cpu = { path = "vendor/anyrender_vello_cpu" }
+# SVG patterns, masks and clip paths of any content; see vendor/anyrender_svg/README.pyro.md.
+anyrender_svg = { path = "vendor/anyrender_svg" }
 # Style sharing; see vendor/stylo/README.pyro.md.
 stylo = { path = "vendor/stylo" }
 # ASCII hosts with invalid xn-- labels pass through; see vendor/idna/README.pyro.md.

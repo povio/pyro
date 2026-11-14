@@ -785,6 +785,26 @@ impl Replay<'_, '_> {
                         clip,
                     })
                 }
+                // A mask or a clip path of several shapes (CSS masks, SVG
+                // `<mask>` and `<clipPath>`): a `DestIn` layer multiplies what its
+                // isolated parent layer drew by its alpha. PDF has no
+                // destination-in, and drawn as a group the layer would paint
+                // over what it masks, so it is left out: the content stays
+                // unmasked.
+                RenderCommand::PushLayer(c) if c.blend.compose == peniko::Compose::DestIn => {
+                    self.stats.compose_skipped += 1;
+                    let mut depth = 1;
+                    while depth > 0 && i < cmds.len() {
+                        match &cmds[i] {
+                            RenderCommand::PushLayer(_) | RenderCommand::PushClipLayer(_) => depth += 1,
+                            RenderCommand::PopLayer => depth -= 1,
+                            // Recorded text runs are matched to glyph runs by their order.
+                            RenderCommand::GlyphRun(_) => self.glyph_runs += 1,
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                }
                 RenderCommand::PushLayer(c) => {
                     if c.filter.is_some() || c.backdrop_filter.is_some() {
                         self.stats.filters_skipped += 1;

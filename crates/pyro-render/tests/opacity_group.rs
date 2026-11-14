@@ -108,7 +108,7 @@ fn a_filtered_child_of_a_faded_or_filtered_parent_is_painted() {
         let img = render(&format!("<div style='opacity:.5'><div style='{shadowed}'></div></div>"), scale);
         assert_near(pixel(&img, scale, 200, 150), half, &format!("drop-shadow child, scale {scale}"));
         assert_near(pixel(&img, scale, 255, 205), half, &format!("its shadow, scale {scale}"));
-        // A colour function is not applied (yet), but the child is painted.
+        // A child with a colour function (black stays black in grayscale).
         let img = render(
             &format!("<div style='opacity:.5'><div style='{KID}background:#000;filter:grayscale(1)'></div></div>"),
             scale,

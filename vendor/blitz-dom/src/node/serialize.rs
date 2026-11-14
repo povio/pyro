@@ -32,11 +32,11 @@ impl SerializeOpts {
     }
 }
 
-const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+pub(super) const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 
 /// pyro: `value` with each `currentcolor` keyword, matched ASCII case-insensitively
 /// as CSS keywords are, replaced by `color`; `None` when it has none.
-fn replace_current_color(value: &str, color: &str) -> Option<String> {
+pub(super) fn replace_current_color(value: &str, color: &str) -> Option<String> {
     const KEYWORD: &str = "currentcolor";
     let lower = value.to_ascii_lowercase();
     if !lower.contains(KEYWORD) {
@@ -54,7 +54,7 @@ fn replace_current_color(value: &str, color: &str) -> Option<String> {
 }
 
 /// Writes an attribute's serialized name, per the HTML fragment serialization algorithm
-fn write_attr_name(name: &QualName, writer: &mut String) {
+pub(super) fn write_attr_name(name: &QualName, writer: &mut String) {
     match name.ns {
         ns!() | ns!(html) => {}
         ns!(xml) => writer.push_str("xml:"),
@@ -71,7 +71,7 @@ fn write_attr_name(name: &QualName, writer: &mut String) {
     writer.push_str(&name.local);
 }
 
-fn is_xlink_ns_decl(name: &QualName) -> bool {
+pub(super) fn is_xlink_ns_decl(name: &QualName) -> bool {
     (name.ns == ns!(xmlns) && name.local.as_str() == "xlink")
         || name.local.as_str() == "xmlns:xlink"
 }
@@ -121,16 +121,11 @@ impl Node {
 
     /// Serializes this `<svg>` subtree as a standalone SVG document for usvg, with
     /// `currentColor` resolved against each element's computed `color`.
+    ///
+    /// pyro: and with the page's CSS applied (`svg_css`).
     #[cfg(feature = "svg")]
     pub(crate) fn svg_source(&self) -> String {
-        let mut output = String::new();
-        let opts = SerializeOpts {
-            style: OutputStyle::Normal,
-            resolve_current_color: true,
-            declare_xlink_ns: true,
-        };
-        self.write_outer_html_in_style(&mut output, opts, 0);
-        output
+        super::svg_css::svg_source(self)
     }
 
     fn write_outer_html_in_style(&self, writer: &mut String, opts: SerializeOpts, nesting: usize) {

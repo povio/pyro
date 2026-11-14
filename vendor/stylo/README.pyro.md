@@ -65,6 +65,15 @@ crate (`diff -ruN`).
   lets a paint-only restyle of a table cell run no layout (`vendor/blitz-dom/README.pyro.md`, "Paint-only
   restyles run no layout and shape no text").
 
+- `values/specified/effects.rs`, `values/computed/effects.rs`, `values/animated/effects.rs`: `filter` and
+  `backdrop-filter` take `url()` for servo too (upstream: gecko only; servo's value type was `Impossible`, so a
+  `filter: url(#f)` declaration was dropped). blitz-paint resolves it to an SVG `<filter>` of the document.
+
+- `properties/longhands.toml`, `values/specified/transform.rs`: `transform-box` is parsed and computed for servo too
+  (upstream: gecko only), with all five boxes (upstream's servo parser took `border-box`, `fill-box` and
+  `view-box`). blitz-dom resolves SVG elements' transforms in it (`vendor/blitz-dom/README.pyro.md`, "The page's
+  CSS on inline SVG"); nothing reads it for CSS boxes, whose reference box stays the border box.
+
 ## Text decorations and emphasis
 
 - `properties/longhands.toml`: `text-decoration-skip-ink` is parsed and computed for Servo too (upstream: Gecko only);

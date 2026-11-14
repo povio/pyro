@@ -2,12 +2,14 @@
 //! whole renderer (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod backdrop_filter;
 mod borders_backgrounds;
 mod br_flex_item;
 mod clip_path_mask;
 mod container_queries;
 mod containing_block_chain;
 mod dotted_dashed_lines;
+mod filter_color;
 mod filter_drop_shadow;
 mod font_optical_sizing;
 mod font_unicode_range;
@@ -25,6 +27,7 @@ mod lang_pseudo_class;
 mod line_break_resume;
 mod line_height_normal;
 mod mirror;
+mod mix_blend_mode;
 mod opacity_group;
 mod out_of_flow_boundary;
 mod pdf_fidelity;
@@ -33,6 +36,8 @@ mod profiling_timers;
 mod render;
 mod sampled_animations;
 mod style_sheet_charset;
+mod svg_content;
+mod svg_filters;
 mod svg_reference_cycles;
 mod table_cell_height;
 mod table_cell_width;

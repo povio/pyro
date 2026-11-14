@@ -85,10 +85,9 @@ dependencies = [
 [[package]]
 name = "anyrender_svg"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39327debd1bdca190d086c107825a5dc4c665be31e99e5c0854345a050d08cad"
 dependencies = [
  "anyrender",
+ "anyrender_vello_cpu",
  "image",
  "kurbo",
  "peniko",
