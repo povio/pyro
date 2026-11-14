@@ -5,27 +5,36 @@
 //
 // The upstream is not in the repository. It is reconstructed by reverse-applying (`git apply -R`) the UPSTREAM.patch
 // committed at a base revision to that revision's copy of the crate. The default base is the merge base of HEAD and
-// MERGE_HEAD during a merge, else of HEAD and origin/main. The working tree's UPSTREAM.patch is never read to make
-// the upstream, so conflict markers in it do not matter: after merging main, resolve the source conflicts and run
-// `scripts/vendor/regen-patch --all`.
+// MERGE_HEAD during a merge, else of HEAD and origin/main. During a merge whose other side is main's (contained in
+// origin/main), main's upstream wins where it differs from the base's: main fixed a stale patch the base has, or has
+// a stale one, which the merge then keeps as main has it. The working tree's UPSTREAM.patch is never read to make the
+// upstream, so conflict markers in it do not matter: after merging main, resolve the source conflicts and run
+// `scripts/vendor/regen-patch --all` (bench/wpt/README.md, "Merging main into a branch").
 //
 //   (default)  Writes UPSTREAM.patch for the working tree in the crate's committed style (CRATES below), then checks
 //              it. A file whose contents equal its contents at HEAD, MERGE_HEAD or the base keeps that revision's
-//              section of the patch byte for byte, so a merge changes only the sections of files both sides edited
-//              (and those of files whose committed section was stale); every other section is regenerated.
+//              section of the patch byte for byte (when that revision's patch rebuilds the same upstream copy of the
+//              file), so a merge changes only the sections of files both sides edited (and those of files whose
+//              committed section was stale); every other section is regenerated.
 //   --fresh    Regenerates every section. On main this reproduces the committed patches byte for byte (stylo's
 //              timestamps, file times git does not keep, are carried over from the committed sections), except 9
 //              `index` lines of taffy's, which name its files as they were before the rename to Pyro (#308).
 //   --check    Writes nothing. Checks that the working tree's UPSTREAM.patch, applied with `git apply` to the
-//              reconstructed upstream, reproduces the crate's files. Exit 1 if it does not.
+//              reconstructed upstream, reproduces the crate's files, and that it reverse-applies to them. Exit 1 if
+//              not. CI runs `--check --all --base HEAD^1` on a pull request's merge commit
+//              (.github/workflows/vendor-patches.yml). Without --base on main itself it proves little: HEAD is its
+//              own base there, so the upstream is rebuilt from the very patch being checked.
 //   --all      Every crate with an UPSTREAM.patch.
-//   --base REV The revision whose committed patch and sources make the upstream. Use it when a crate moved to a new
-//              upstream (its README.pyro.md title changed): name the revision that has the upstream the working
-//              tree is on.
+//   --base REV The revision whose committed patch and sources make the upstream (main's side of a merge is then not
+//              preferred). A crate whose README.pyro.md title (its upstream) is not that revision's is rebuilt from
+//              a revision that has the working tree's title, HEAD first; with none, the crate stops, unless --base
+//              was given (a title edited for its wording).
 //   --upstream DIR  Also writes each crate's reconstructed upstream (the covered files) to DIR/<crate>.
 //
-// The other revisions (HEAD, MERGE_HEAD) must reconstruct the same upstream; one whose committed patch does not is
-// reported, and its sections are not reused. Covered files with conflict markers are an error.
+// The other revisions (HEAD, MERGE_HEAD) should reconstruct the same upstream; where one's committed patch does not,
+// it is reported, and its sections of those files are not reused. A crate is refused while a covered file has
+// conflict markers, is unmerged in the index (a modify/delete conflict leaves no markers) or is untracked (git add
+// it, or delete it: a backup a merge tool left?).
 //
 // blitz-paint's, parley_engine's and stylo's sections are Apple `diff -u` output (macOS's /usr/bin/diff). Elsewhere a
 // GNU diff can align some hunks differently: `git apply` still reproduces the sources, but the sections are noisier.
@@ -41,10 +50,12 @@ import path from 'node:path';
 //   git-dirs   `git diff --no-index --no-prefix a b` run in the parent of the two trees.
 //   git-repo   `git diff` in a checkout of the upstream (new files as `diff --git a/F b/F`).
 //   blitz-dom  git's hunks (myers) without the function after `@@`; `diff --git a/F b/F`, `new file mode 100644` for a
-//              new file, `---`/`+++`, no index line.
+//              new file, `deleted file mode 100644` for a deleted one (`git apply -R` needs it), `---`/`+++`, no
+//              index line.
 //   apple-git  `diff --git a/F b/F`, `new file mode 100644` for a new file, then Apple `diff -u` with labels a/F and b/F.
-//   diff-ruN   `diff -ruN a/F b/F`, then Apple `diff -u` with labels `a/F<TAB>mtime` and `b/F<TAB>mtime`.
-//   unified    Apple `diff -u` with labels a/F and b/F.
+//   diff-ruN   `diff -ruN a/F b/F`, then Apple `diff -u` with labels `a/F<TAB>mtime` and `b/F<TAB>mtime`; the missing
+//              side of a new or deleted file is GNU diff's epoch label, which git reads as no file.
+//   unified    Apple `diff -u` with labels a/F and b/F (/dev/null for a missing side).
 // order: path (sorted by path: git's index order, `find | sort`), tree (directory by directory: `diff -r`,
 //   `git diff --no-index` of two directories), committed (as the committed patch has them, new files last, by path).
 // alt: other Apple diff flags some committed sections were written with. Only --fresh uses them, for a file whose
@@ -132,6 +143,10 @@ if (opt('--base')) {
   baseWhy = `merge base of HEAD and ${mergeHeads.length ? 'MERGE_HEAD' : 'origin/main'}`;
 }
 const short = (sha) => sha.slice(0, 8);
+// The side of a merge that is main's (MERGE_HEAD first, then HEAD; contained in origin/main). Its upstream wins.
+const ORIGIN_MAIN = verify('origin/main');
+const onMain = (rev) => !!ORIGIN_MAIN && spawnSync('git', ['merge-base', '--is-ancestor', rev, ORIGIN_MAIN], { cwd: ROOT }).status === 0;
+const MAIN_SIDE = mergeHeads.length && !opt('--base') ? [mergeHeads[0], HEAD].find(onMain) ?? null : null;
 // Revisions whose committed sections a file can keep, ours first.
 const CANDIDATES = [
   { rev: HEAD, name: 'HEAD' },
@@ -181,14 +196,35 @@ function revFiles(rev, crate) {
   const title = tree.has('README.pyro.md') ? firstLine(blobs.get(tree.get('README.pyro.md'))) : null;
   return { files, patch, title, shas: new Map(keep) };
 }
+// Covered paths `git ls-files ARGS` lists in vendor/<crate>.
+function lsFiles(crate, args) {
+  const dir = `vendor/${crate}`;
+  const recs = git(['ls-files', '-z', ...args, '--', `${dir}/`]).split('\0').filter(Boolean);
+  // --unmerged prints `mode sha stage<TAB>path`.
+  const paths = args.includes('--unmerged') ? recs.map((r) => r.slice(r.indexOf('\t') + 1)) : recs;
+  const rels = paths.map((p) => Buffer.from(p, 'latin1').toString('utf8').slice(dir.length + 1));
+  return [...new Set(rels)].filter((rel) => covered(crate, rel)).sort();
+}
+// The crate's tracked files as the working tree has them. Untracked files are not taken: a commit staged with
+// `git add -u` would leave them out of the commit and in its patch. They stop the crate instead, as do files still
+// unmerged in the index (a modify/delete conflict leaves no markers) and conflict markers.
 function workFiles(crate) {
   const dir = `vendor/${crate}`;
-  const rels = new Set(git(['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', `${dir}/`]).split('\0').filter(Boolean)
-    .map((p) => Buffer.from(p, 'latin1').toString('utf8').slice(dir.length + 1)));
+  const untracked = lsFiles(crate, ['--others', '--exclude-standard']);
+  if (untracked.length) {
+    throw new Error(`${crate}: untracked ${untracked.map((r) => `${dir}/${r}`).join(', ')}: git add a new file, delete a backup (*.orig, *.rej)`);
+  }
   const files = new Map();
-  for (const rel of [...rels].sort()) {
+  for (const rel of lsFiles(crate, ['--cached'])) {
     const abs = path.join(ROOT, dir, rel);
-    if (covered(crate, rel) && fs.lstatSync(abs, { throwIfNoEntry: false })?.isFile()) files.set(rel, fs.readFileSync(abs));
+    if (fs.lstatSync(abs, { throwIfNoEntry: false })?.isFile()) files.set(rel, fs.readFileSync(abs));
+  }
+  const marked = [...files].filter(([, d]) => conflictMarker.test(d.toString('latin1'))).map(([r]) => r);
+  if (marked.length) throw new Error(`${crate}: conflict markers in ${marked.map((r) => `${dir}/${r}`).join(', ')}: resolve them first`);
+  const unmerged = lsFiles(crate, ['--unmerged']);
+  if (unmerged.length) {
+    throw new Error(`${crate}: unmerged in the index: ${unmerged.map((r) => `${dir}/${r}`).join(', ')}: resolve each (a modify/delete` +
+      ' conflict too) and git add or git rm it');
   }
   return files;
 }
@@ -339,7 +375,7 @@ function generate(crate, up, work, rels, ctx) {
       if (style === 'git-dirs') text = [...s.header, s.hunks].join('\n');
       else if (style === 'git-repo') text = [`diff --git a/${P(rel)} b/${P(rel)}`, ...s.header.slice(1), s.hunks].join('\n');
       else {
-        text = [`diff --git a/${P(rel)} b/${P(rel)}`, ...(isNew ? ['new file mode 100644'] : []),
+        text = [`diff --git a/${P(rel)} b/${P(rel)}`, ...(isNew ? ['new file mode 100644'] : []), ...(isGone ? ['deleted file mode 100644'] : []),
           `--- ${isNew ? '/dev/null' : `a/${P(rel)}`}`, `+++ ${isGone ? '/dev/null' : `b/${P(rel)}`}`, stripContext(s.hunks)].join('\n');
       }
       out.set(rel, text.replace(/\n$/, ''));
@@ -397,50 +433,88 @@ function regen(crate) {
   if (!cfg) throw new Error(`${crate}: not in CRATES (scripts/vendor/regen-patch): add its patch style there`);
   const dir = `vendor/${crate}`;
   const work = workFiles(crate);
-  const marked = [...work].filter(([, d]) => conflictMarker.test(d.toString('latin1'))).map(([r]) => r);
-  if (marked.length) throw new Error(`${crate}: conflict markers in ${marked.map((r) => `${dir}/${r}`).join(', ')}: resolve them first`);
   const readme = path.join(ROOT, dir, 'README.pyro.md');
   const workTitle = fs.existsSync(readme) ? firstLine(fs.readFileSync(readme)) : null;
 
-  // The upstream, from the base (or, for a crate the base does not have yet, the first revision that has its patch).
+  // Each revision's upstream: its committed patch reverse-applied to its sources (null when it does not apply).
   const revs = CANDIDATES.map((c) => ({ ...c, ...revFiles(c.rev, crate) })).filter((r) => r.patch !== null);
-  const src = revs.find((r) => r.rev === BASE) ?? revs[0];
-  if (!src) throw new Error(`${crate}: none of ${CANDIDATES.map((c) => c.name).join(', ')} has a committed ${dir}/UPSTREAM.patch to reconstruct the upstream from`);
-  if (src.rev !== BASE) console.error(`${crate}: the base has no UPSTREAM.patch; the upstream is reconstructed from ${src.name}'s`);
-  const where = `${short(src.rev)} (${src.rev === BASE ? 'the base' : src.name})`;
-  for (const r of revs) {
+  if (!revs.length) throw new Error(`${crate}: none of ${CANDIDATES.map((c) => c.name).join(', ')} has a committed ${dir}/UPSTREAM.patch to reconstruct the upstream from`);
+  for (const [i, r] of revs.entries()) {
+    const twin = revs.slice(0, i).find((x) => x.patch === r.patch && sameFiles(x.files, r.files));
+    if (twin) { r.up = twin.up; r.err = twin.err; continue; }
     try {
-      r.up = r !== src && r.patch === src.patch && sameFiles(r.files, src.files) ? 'same' : applyPatch(r.files, r.patch, crate, { reverse: true });
+      r.up = applyPatch(r.files, r.patch, crate, { reverse: true });
     } catch (e) {
-      if (r === src) throw new Error(`${crate}: the UPSTREAM.patch committed at ${where} does not reverse-apply to its sources (a stale patch: pass --base with a revision whose patch is right): ${e.message}`);
       r.up = null;
+      r.err = e.message;
     }
   }
+  const label = (r) => `${short(r.rev)} (${r.name})`;
+  // The upstream comes from main's side of a merge, else from the base: the first of them whose patch reverse-applies.
+  // Main's wins over the base's because a merge carries main's patch on: main fixed a stale patch the base has, or
+  // has a stale one this merge keeps (CI's check keeps main's right). A crate the base does not have yet: the first
+  // revision that has its patch.
+  const prefs = [MAIN_SIDE, BASE].filter(Boolean).map((rev) => revs.find((r) => r.rev === rev)).filter(Boolean);
+  let src = prefs.find((r) => r.up);
+  if (!src && prefs.length) {
+    throw new Error(`${crate}: the UPSTREAM.patch committed at ${label(prefs[0])} does not reverse-apply to its sources (a stale patch: pass --base with a revision whose patch is right): ${prefs[0].err}`);
+  }
+  if (!src) {
+    src = revs[0];
+    if (!src.up) throw new Error(`${crate}: the UPSTREAM.patch committed at ${label(src)} does not reverse-apply to its sources: ${src.err}`);
+    console.error(`${crate}: the base has no UPSTREAM.patch; the upstream is reconstructed from ${src.name}'s`);
+  }
+  // A README.pyro.md title that is not src's: the crate moved to a new upstream. A revision on it (HEAD first) has the
+  // upstream; with none, --base overrides the check (a title edited for its wording).
+  if (workTitle && src.title && workTitle !== src.title) {
+    const on = revs.find((r) => r.up && r.title === workTitle);
+    if (on) console.error(`${crate}: README.pyro.md names another upstream than ${label(src)} ("${workTitle}" vs "${src.title}"): the upstream is rebuilt from ${label(on)}, which is on it`);
+    else if (!opt('--base')) throw new Error(`${crate}: README.pyro.md names another upstream than ${label(src)} does ("${workTitle}" vs "${src.title}"): pass --base with a revision on the new upstream`);
+    src = on ?? src;
+  }
+  const where = label(src);
   const up = src.up;
   if (opt('--upstream')) {
     const out = path.resolve(opt('--upstream'), crate);
     fs.rmSync(out, { recursive: true, force: true });
     writeDir(out, up);
   }
-  if (!opt('--base') && workTitle && src.title && workTitle !== src.title) {
-    throw new Error(`${crate}: README.pyro.md names another upstream than ${where} does ("${workTitle}" vs "${src.title}"): pass --base with a revision on the new upstream`);
-  }
-  // Other revisions' sections are reused only if their patch makes the same upstream.
-  for (const r of revs) r.ok = r === src || r.up === 'same' || (!!r.up && sameFiles(r.up, up));
-  // Both sides of a merge agreeing against the base: the base is the odd one out.
+  // Both sides of a merge agreeing against the base, neither of them main's: the base is the odd one out.
   const others = revs.filter((r) => r !== src && r.up);
-  if (!opt('--base') && others.length >= 2 && others.every((r) => !r.ok && r.up !== 'same' && sameFiles(r.up, others[0].up))) {
-    throw new Error(`${crate}: the upstream reconstructed at ${where} differs from the one ${others.map((r) => `${r.name} (${short(r.rev)})`).join(' and ')} make` +
+  if (!opt('--base') && !MAIN_SIDE && src.rev === BASE && others.length >= 2 &&
+    others.every((r) => !sameFiles(r.up, up) && sameFiles(r.up, others[0].up))) {
+    throw new Error(`${crate}: the upstream reconstructed at ${where} differs from the one ${others.map(label).join(' and ')} make` +
       ` (${differing(others[0].up, up).slice(0, 4).join(', ')}): a stale patch at the base, or a new upstream; pass --base ${others[0].name}`);
   }
+  // Another revision's section of a file is reused only where its patch rebuilds the same upstream copy of the file.
+  const sameUp = (r, rel) => !!r.up && (r.up.has(rel) ? up.has(rel) && r.up.get(rel).equals(up.get(rel)) : !up.has(rel));
+  const refs = [];
   for (const r of revs) {
-    if (r.ok) continue;
-    const moved = r.title && src.title && r.title !== src.title;
-    if (moved && !opt('--base')) throw new Error(`${crate}: ${r.name} (${short(r.rev)}) is on another upstream ("${r.title}" vs "${src.title}"): pass --base with a revision on the upstream the working tree is on`);
-    const why = r.up ? `makes another upstream than ${where} (${differing(r.up, up).slice(0, 4).join(', ')})` : 'does not reverse-apply to its sources';
-    console.error(`${crate}: warning: the UPSTREAM.patch committed at ${r.name} (${short(r.rev)}) ${why}: a stale patch there; its sections are regenerated, not reused`);
+    if (r !== src) {
+      const moved = r.title && src.title && r.title !== src.title;
+      const bad = r.up ? differing(r.up, up) : null;
+      if (moved) {
+        console.error(`${crate}: ${label(r)} is on another upstream ("${r.title}" vs "${src.title}"): its sections are not reused`);
+        continue;
+      }
+      if (!r.up) {
+        console.error(`${crate}: warning: the UPSTREAM.patch committed at ${label(r)} does not reverse-apply to its sources: a stale patch there; its sections are regenerated, not reused`);
+        continue;
+      }
+      if (bad.length) {
+        const taken = `${short(src.rev)} (${src.name}${src.rev === MAIN_SIDE ? ", main's side" : ''}, taken)`;
+        console.error(`${crate}: warning: ${label(r)} rebuilds another upstream than ${taken} in ${bad.slice(0, 4).join(', ')}` +
+          `${bad.length > 4 ? `, … (${bad.length} files)` : ''}: a stale patch at one of them; its sections of those files are not reused` +
+          ` (if ${short(src.rev)}'s is the stale one, pass --base ${short(r.rev)})`);
+      }
+    }
+    try {
+      refs.push({ ...r, sections: sections(r.patch, crate), usable: (rel) => sameUp(r, rel) });
+    } catch (e) {
+      if (r === src) throw e;
+      console.error(`${crate}: warning: ${label(r)}'s UPSTREAM.patch is not read (${e.message}): its sections are regenerated, not reused`);
+    }
   }
-  const refs = revs.filter((r) => r.ok).map((r) => ({ ...r, sections: sections(r.patch, crate) }));
   return { cfg, dir, work, up, src, where, refs };
 }
 
@@ -452,7 +526,7 @@ function writePatch(crate) {
   // The revision whose patch has a section for the file as it is now.
   const asCommitted = (rel) => {
     const sha = work.has(rel) ? blobSha(work.get(rel)) : null;
-    return refs.find((x) => (x.shas.get(rel) ?? null) === sha && x.sections.has(rel));
+    return refs.find((x) => x.usable(rel) && (x.shas.get(rel) ?? null) === sha && x.sections.has(rel));
   };
   const kept = new Map(), regenerate = [];
   for (const rel of rels) {
@@ -464,11 +538,12 @@ function writePatch(crate) {
   // stylo's labels hold file times: the committed ones where the file is as committed, else upstream's copy time and
   // the file's modification time, as `diff -ruN` writes them.
   const labelTime = (l) => l?.split('\t')[1];
-  const epoch = localTime(new Date(0));
+  // A missing file's label: GNU diff's epoch, with its zone; git reads it as no file (a new or deleted one).
+  const epoch = '1970-01-01 00:00:00.000000000 +0000';
   const count = (list) => list.reduce((m, t) => m.set(t, (m.get(t) ?? 0) + 1), new Map());
   const copyTime = [...count([...base.sections.values()].map((s) => labelTime(s.labels.a)).filter(Boolean))].sort((x, y) => y[1] - x[1])[0]?.[0] ?? epoch;
   const times = (rel) => {
-    const any = refs.map((x) => x.sections.get(rel)).find(Boolean);
+    const any = refs.filter((x) => x.usable(rel)).map((x) => x.sections.get(rel)).find(Boolean);
     const same = asCommitted(rel);
     return {
       a: !up.has(rel) ? epoch : labelTime(any?.labels.a) ?? copyTime,
@@ -518,7 +593,20 @@ function checkPatch(crate, ctx) {
     console.log(`${crate}: FAIL: ${dir}/UPSTREAM.patch applied to the upstream reconstructed at ${where} differs from the working tree in ${bad.length} file(s): ${bad.slice(0, 10).join(', ')}${bad.length > 10 ? ', …' : ''}`);
     return false;
   }
-  console.log(`${crate}: patch verified: git apply on the upstream reconstructed at ${where} reproduces ${what}`);
+  // The next run rebuilds the upstream with `git apply -R` (a deleted file's section needs its `deleted file mode`).
+  let back;
+  try {
+    back = text.trim() ? applyPatch(work, text, crate, { reverse: true }) : new Map(work);
+  } catch (e) {
+    console.log(`${crate}: FAIL: ${dir}/UPSTREAM.patch applies, but does not reverse-apply to ${what} (git apply -R), as the next run needs:\n${e.message}`);
+    return false;
+  }
+  const badBack = differing(back, up);
+  if (badBack.length) {
+    console.log(`${crate}: FAIL: ${dir}/UPSTREAM.patch reverse-applied to ${what} gives another upstream than ${where}'s in ${badBack.length} file(s): ${badBack.slice(0, 10).join(', ')}`);
+    return false;
+  }
+  console.log(`${crate}: patch verified: git apply on the upstream reconstructed at ${where} reproduces ${what}, and git apply -R gives it back`);
   return true;
 }
 
@@ -526,13 +614,23 @@ function checkPatch(crate, ctx) {
 const all = fs.readdirSync(path.join(ROOT, 'vendor')).filter((c) => fs.existsSync(path.join(ROOT, 'vendor', c, 'UPSTREAM.patch')) || lsTree(BASE, `vendor/${c}`).has('UPSTREAM.patch')).sort();
 const list = flag('--all') ? all : names;
 for (const c of list) if (!fs.existsSync(path.join(ROOT, 'vendor', c))) throw new Error(`no vendor/${c}`);
-console.error(`base: ${short(BASE)} (${baseWhy})${mergeHeads.length ? `; merging ${mergeHeads.map(short).join(', ')}` : ''}`);
+console.error(`base: ${short(BASE)} (${baseWhy})${mergeHeads.length ? `; merging ${mergeHeads.map(short).join(', ')}` : ''}` +
+  `${MAIN_SIDE ? `; main's side: ${short(MAIN_SIDE)} (${MAIN_SIDE === HEAD ? 'HEAD' : 'MERGE_HEAD'})` : ''}`);
+// In a merge: without the baseline driver git merged bench/wpt/*baseline.json as text (a pass can be lost silently).
+if (mergeHeads.length) {
+  const driver = spawnSync('git', ['config', '--get', 'merge.wpt-baseline.driver'], { cwd: ROOT }).stdout?.toString().trim();
+  const wrapper = path.join(path.resolve(ROOT, git(['rev-parse', '--git-common-dir']).trim()), 'pyro-merge-wpt-baseline.sh');
+  if (!driver || !fs.existsSync(wrapper)) {
+    console.error('warning: the wpt-baseline merge driver is not set up in this clone, so git merged bench/wpt/baseline.json and' +
+      ' reftest-baseline.json as text: check them (scripts/vendor/setup-merge-drivers.sh sets it up for the next merge)');
+  }
+}
 let ok = true;
 for (const crate of list) {
   try {
     ok = (flag('--check') ? checkPatch(crate) : writePatch(crate)) && ok;
   } catch (e) {
-    console.log(`${crate}: FAIL: ${e.message}`);
+    console.log(`${crate}: FAIL: ${e.message.startsWith(`${crate}: `) ? e.message.slice(crate.length + 2) : e.message}`);
     ok = false;
   }
 }

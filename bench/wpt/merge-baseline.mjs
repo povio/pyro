@@ -26,6 +26,13 @@ if (!theirsFile) {
   process.exit(2);
 }
 
+// Exit 0: merged; 1: conflicts left, with markers. Any other failure exits 2, which the wrapper
+// (scripts/vendor/setup-merge-drivers.sh) reads as "restore ours and leave git's textual merge".
+process.on('uncaughtException', (e) => {
+  console.error(`merge-baseline: ${where}: ${e.stack ?? e.message}`);
+  process.exit(2);
+});
+
 function textMerge(why) {
   console.error(`merge-baseline: ${where}: ${why}; leaving a textual merge`);
   const r = spawnSync('git', ['merge-file', `--marker-size=${markerSize}`, '-L', 'ours', '-L', 'base', '-L', 'theirs', oursFile, baseFile, theirsFile], { stdio: 'inherit' });
@@ -88,51 +95,63 @@ function combine(x, y) {
   return { status: 'complete', ms, n: f.n, fail: f.fail.filter((n) => !p.pass.includes(n)), h: f.h };
 }
 
-// Header.
-let head;
-const pagesChanged = (side) => Object.keys({ ...base.tests, ...side.tests }).some((u) => !same(base.tests[u], side.tests[u]));
-if (same(ours.head, theirs.head)) head = ours.head;
-else if (base.head && same(ours.head, base.head)) {
-  if (pagesChanged(ours)) textMerge('theirs changed the header (WPT revision or directories) and ours changed pages');
-  head = theirs.head;
-} else if (base.head && same(theirs.head, base.head)) {
-  if (pagesChanged(theirs)) textMerge('ours changed the header (WPT revision or directories) and theirs changed pages');
-  head = ours.head;
-} else textMerge('both sides changed the header (WPT revision or directories)');
+// The merge itself; a failure in it (a bug, a format change) leaves git's textual merge rather than no conflict
+// markers at all.
+function mergePages() {
+  // Header.
+  let head;
+  const pagesChanged = (side) => Object.keys({ ...base.tests, ...side.tests }).some((u) => !same(base.tests[u], side.tests[u]));
+  if (same(ours.head, theirs.head)) head = ours.head;
+  else if (base.head && same(ours.head, base.head)) {
+    if (pagesChanged(ours)) textMerge('theirs changed the header (WPT revision or directories) and ours changed pages');
+    head = theirs.head;
+  } else if (base.head && same(theirs.head, base.head)) {
+    if (pagesChanged(theirs)) textMerge('ours changed the header (WPT revision or directories) and theirs changed pages');
+    head = ours.head;
+  } else textMerge('both sides changed the header (WPT revision or directories)');
 
-// Pages.
-const tests = {};
-const took = { ours: 0, theirs: 0, combined: 0 };
-const stuck = [];
-const STUCK = 'merge-baseline: conflict';
-for (const url of new Set([...Object.keys(ours.tests), ...Object.keys(theirs.tests), ...Object.keys(base.tests)])) {
-  const b = base.tests[url], o = ours.tests[url], t = theirs.tests[url];
-  let e;
-  if (same(o, t)) e = o;
-  else if (same(o, b)) { e = t; took.theirs++; }
-  else if (same(t, b)) { e = o; took.ours++; }
-  else if (!o || !t) e = o ?? t;
-  else if (covers(o, t)) { e = o; took.ours++; }
-  else if (covers(t, o)) { e = t; took.theirs++; }
-  else {
-    e = combine(o, t);
-    if (!e) { stuck.push(url); e = STUCK; } else took.combined++;
+  // Pages.
+  const tests = {};
+  const took = { ours: 0, theirs: 0, combined: 0 };
+  const stuck = [];
+  const STUCK = 'merge-baseline: conflict';
+  for (const url of new Set([...Object.keys(ours.tests), ...Object.keys(theirs.tests), ...Object.keys(base.tests)])) {
+    const b = base.tests[url], o = ours.tests[url], t = theirs.tests[url];
+    let e;
+    if (same(o, t)) e = o;
+    else if (same(o, b)) { e = t; took.theirs++; }
+    else if (same(t, b)) { e = o; took.ours++; }
+    else if (!o || !t) e = o ?? t;
+    else if (covers(o, t)) { e = o; took.ours++; }
+    else if (covers(t, o)) { e = t; took.theirs++; }
+    else {
+      e = combine(o, t);
+      if (!e) { stuck.push(url); e = STUCK; } else took.combined++;
+    }
+    if (e) tests[url] = e;
   }
-  if (e) tests[url] = e;
-}
 
-// A page whose entries cannot be combined is left as a conflict of its two lines; the rest is merged.
-let out = formatBaseline(head, tests);
-if (stuck.length) {
-  const L = Number(markerSize) || 7;
-  out = out.split('\n').map((line) => {
-    const m = /^ {2}(".*"): "merge-baseline: conflict"(,?)$/.exec(line);
-    if (!m) return line;
-    const url = JSON.parse(m[1]);
-    const row = (e) => `  ${m[1]}: ${JSON.stringify(e)}${m[2]}`;
-    return [`${'<'.repeat(L)} ours`, row(ours.tests[url]), '='.repeat(L), row(theirs.tests[url]), `${'>'.repeat(L)} theirs`].join('\n');
-  }).join('\n');
+  // A page whose entries cannot be combined is left as a conflict of its two lines; the rest is merged.
+  let out = formatBaseline(head, tests);
+  if (stuck.length) {
+    const L = Number(markerSize) || 7;
+    out = out.split('\n').map((line) => {
+      const m = /^ {2}(".*"): "merge-baseline: conflict"(,?)$/.exec(line);
+      if (!m) return line;
+      const url = JSON.parse(m[1]);
+      const row = (e) => `  ${m[1]}: ${JSON.stringify(e)}${m[2]}`;
+      return [`${'<'.repeat(L)} ours`, row(ours.tests[url]), '='.repeat(L), row(theirs.tests[url]), `${'>'.repeat(L)} theirs`].join('\n');
+    }).join('\n');
+  }
+  return { out, took, stuck };
 }
+let merged;
+try {
+  merged = mergePages();
+} catch (e) {
+  textMerge(`the merge failed (${e.stack ?? e.message})`);
+}
+const { out, took, stuck } = merged;
 fs.writeFileSync(oursFile, out);
 console.error(`merge-baseline: ${where}: merged page by page (${took.theirs} page(s) from theirs, ${took.ours} kept from ours, ${took.combined} combined)` +
   (stuck.length ? `; ${stuck.length} page(s) left as conflicts, their entries cannot be combined without losing a pass: ${stuck.slice(0, 5).join(', ')}` : ''));
