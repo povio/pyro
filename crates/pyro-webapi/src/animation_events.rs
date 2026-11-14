@@ -288,6 +288,9 @@ pub(crate) fn after_task(page: &Rc<PageDom>) {
         if !state.tracking(&dom, layout.style()) {
             return;
         }
+        // The syncs before that update record their style changes too: a
+        // read that asks for no style flush (`innerText`) does not lose them.
+        track_style_changes(state, &dom, layout.style());
         if state.stamp.get() == Some(layout.style().observation_stamp(&dom)) {
             return;
         }

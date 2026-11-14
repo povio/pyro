@@ -1131,3 +1131,31 @@ fn a_box_read_after_a_style_read_sees_a_seek() {
     assert_eq!(eval(&root, read), "0.5,200");
     assert_eq!(eval(&root, &format!("anim.currentTime = 250; {read}")), "0.25,150");
 }
+
+/// A read that asks for no style flush (`innerText` reads styles) after a
+/// task in which the page came to transition: the per-task checkpoint
+/// already records style changes, so the next update starts the transition
+/// its class change asks for.
+#[test]
+fn a_change_a_read_without_a_style_flush_restyled_still_transitions() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "globalThis.log = [];
+         for (const type of ['transitionrun', 'transitionstart', 'transitionend', 'transitioncancel'])
+           addEventListener(type, e => log.push(e.type + ':' + e.propertyName + ':' + e.target.id));
+         const s = document.createElement('style');
+         s.textContent = '.t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px }';
+         document.head.appendChild(s);
+         globalThis.a = document.createElement('div'); a.id = 'a'; a.className = 't'; document.body.appendChild(a);
+         a.innerText; setTimeout(() => {}, 0); 0",
+    );
+    // The timer's task, not the update one frame after it.
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(5)));
+    eval(&root, "a.classList.add('w'); a.innerText; 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
