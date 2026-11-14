@@ -77,6 +77,10 @@ crate (`diff -ruN`).
 - `values/specified/background.rs`: `background-attachment: local` is parsed and computed for servo too
   (upstream: gecko only, so the declaration was dropped). blitz-paint positions and clips such a layer against a
   scroll container's scrolled content.
+- `values/specified/background.rs`, `properties/shorthands.rs`: `mask-clip` takes `fill-box`, `stroke-box`,
+  `view-box` and `no-clip`, and `mask-origin` the three SVG boxes, for servo too (upstream: gecko only, so the
+  declaration was dropped); `background-clip` and `background-origin` still reject them. The `mask` shorthand
+  serializes them as Gecko's does. blitz-paint clips and positions mask layers with them.
 
 ## Moving from 0.22 to 0.23
 
