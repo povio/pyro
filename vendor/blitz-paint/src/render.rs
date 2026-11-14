@@ -667,10 +667,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Cull elements that fall entirely outside the current clip rectangle. In addition to
         // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
         // also culls elements scrolled out of view inside a clipping/scrolling container.
-        if screen_bbox.x1 < clip_rect.x0
-            || screen_bbox.x0 > clip_rect.x1
-            || screen_bbox.y1 < clip_rect.y0
-            || screen_bbox.y0 > clip_rect.y1
+        let outside = |bbox: Rect| {
+            bbox.x1 < clip_rect.x0 || bbox.x0 > clip_rect.x1 || bbox.y1 < clip_rect.y0 || bbox.y0 > clip_rect.y1
+        };
+        // pyro: an inline root's own text decorations reach outside its box by as much as they
+        // are thick (`text-decoration-thickness: 4em`).
+        if outside(screen_bbox)
+            && !(node.flags.is_inline_root() && {
+                let reach = crate::text::decoration_ink_reach(&styles) * self.scale;
+                reach > 0.0 && !outside(screen_bbox.inflate(reach, reach))
+            })
         {
             return;
         }

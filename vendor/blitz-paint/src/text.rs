@@ -6,12 +6,14 @@ use blitz_dom::{BaseDocument, NodeId, node::TextBrush, util::ToColorColor};
 use kurbo::{Affine, BezPath, Cap, Circle, Rect, Stroke, Vec2};
 use parley::{Affinity, Cursor, Layout, Line, PositionedLayoutItem, Selection};
 use peniko::{Fill, Mix};
+use smallvec::SmallVec;
 use std::rc::Rc;
 use std::sync::Arc;
 use style::properties::generated::longhands::text_decoration_style::computed_value::T as TextDecorationStyle;
 use style::values::computed::{
     Length, LengthPercentage, TextDecorationLength, TextDecorationLine, TextUnderlinePosition,
 };
+use style::values::computed::TextDecorationSkipInk;
 use style::values::generics::text::{GenericTextDecorationInset, GenericTextDecorationLength};
 
 use crate::color::{Color, ToColorColor as _};
@@ -236,6 +238,9 @@ struct ResolvedDecoration {
     underline_from_font: bool,
     /// `text-decoration-inset`. Resolved per run.
     inset: GenericTextDecorationInset<LengthPercentage>,
+    /// pyro: `text-decoration-skip-ink`: underlines and overlines leave gaps where glyphs cross
+    /// them, but for `auto` not where CJK glyphs do.
+    skip_ink: TextDecorationSkipInk,
 }
 
 /// An element on the current ancestor path (inline root -> run node), caching the
@@ -675,6 +680,9 @@ fn flush_line_decorations<S: PaintScene>(
     inline_root_id: NodeId,
     strut: &StrutGeometry,
     phase: DecorationPhase,
+    line_runs: &[parley::GlyphRun<'_, TextBrush>],
+    source: Option<&str>,
+    vertical: bool,
 ) {
     let TextPaintOptions {
         scale,
@@ -747,23 +755,78 @@ fn flush_line_decorations<S: PaintScene>(
         let baseline = f64::from(geom.baseline);
         // pyro: a decoration line (or its shadow), `top` CSS px below the baseline and
         // `thickness` CSS px thick (both whole); a wavy or double line reaches a few sizes further.
-        let draw_line = |scene: &mut S, top: f64, thickness: f64, double_dir: f64| {
+        // An underline or overline leaves gaps where glyphs cross it (`skip_ink`).
+        // `skip` is the line's thickness (CSS px, before it is cut) where it skips ink.
+        let draw_line = |scene: &mut S, top: f64, thickness: f64, double_dir: f64, skip: Option<f64>| {
             let (top, size) = (baseline + top * scale, thickness * scale);
+            let gaps = match skip {
+                Some(t) if deco.skip_ink != TextDecorationSkipInk::None && !vertical => ink_gaps(
+                    line_runs,
+                    source,
+                    (acc.min_x, acc.max_x),
+                    (top + 0.5 * scale, top + size - 0.5 * scale),
+                    t.min(13.0) * scale,
+                    deco.skip_ink == TextDecorationSkipInk::All,
+                ),
+                _ => SmallVec::new(),
+            };
             let line = |scene: &mut S, brush: &anyrender::Paint, transform: Affine| {
-                draw_decoration_line(
-                    scene,
-                    transform,
-                    scale,
-                    acc.min_x,
-                    width,
-                    top,
-                    size,
-                    brush,
-                    double_dir,
-                    deco.style,
-                    inset_start,
-                    inset_end,
-                )
+                let draw = |scene: &mut S, x0: f64, width: f64, inset_start: f64, inset_end: f64| {
+                    draw_decoration_line(
+                        scene,
+                        transform,
+                        scale,
+                        x0,
+                        width,
+                        top,
+                        size,
+                        brush,
+                        double_dir,
+                        deco.style,
+                        inset_start,
+                        inset_end,
+                    )
+                };
+                if gaps.is_empty() {
+                    return draw(scene, acc.min_x, width, inset_start, inset_end);
+                }
+                // The line between the gaps: a solid line is drawn piece by piece, any other
+                // inside a clip of its pieces (its pattern runs on under the gaps). A gap's edges
+                // are on whole device pixels (Blink clips them out aliased), so that a line drawn
+                // over another with the same gaps covers it.
+                let (start, end) = (acc.min_x + inset_start, acc.max_x - inset_end);
+                let [a, b, c, d, tx, _] = transform.as_coeffs();
+                let snap = |x: f64| if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) { (tx + x).round() - tx } else { x };
+                let mut pieces: SmallVec<[(f64, f64); 8]> = SmallVec::new();
+                let mut x = start;
+                for &(gap_start, gap_end) in &gaps {
+                    let (gap_start, gap_end) = (snap(gap_start), snap(gap_end));
+                    if gap_start > x {
+                        pieces.push((x, gap_start.min(end)));
+                    }
+                    x = x.max(gap_end);
+                }
+                if x < end {
+                    pieces.push((x, end));
+                }
+                pieces.retain(|(a, b)| b > a);
+                if deco.style == TextDecorationStyle::Solid {
+                    // One shape of the pieces' rects.
+                    let mut path = BezPath::new();
+                    for (a, b) in pieces {
+                        path.extend(&kurbo::Shape::to_path(&Rect::new(a, top, b, top + size), 0.1));
+                    }
+                    scene.fill(Fill::NonZero, transform, brush, None, &path);
+                } else if !pieces.is_empty() {
+                    let reach = size * 4.0 + scale;
+                    let mut clip = BezPath::new();
+                    for (a, b) in pieces {
+                        clip.extend(&kurbo::Shape::to_path(&Rect::new(a, top - reach, b, top + size + reach), 0.1));
+                    }
+                    scene.push_layer(Fill::NonZero, Mix::Normal, 1.0, transform, &clip, None, None);
+                    draw(scene, acc.min_x, width, inset_start, inset_end);
+                    scene.pop_layer();
+                }
             };
             match shadow {
                 Some(shadow) => {
@@ -800,7 +863,7 @@ fn flush_line_decorations<S: PaintScene>(
                 (t / 2.0).ceil().max(1.0)
             };
             // A `double` underline extends downward, away from the text.
-            draw_line(scene, top, whole_css_px(t), 1.0);
+            draw_line(scene, top, whole_css_px(t), 1.0, Some(t));
         }
         if wanted.contains(TextDecorationLine::OVERLINE) && deco.line.contains(TextDecorationLine::OVERLINE) {
             // Fonts don't provide a dedicated overline metric, so reuse the underline
@@ -808,14 +871,14 @@ fn flush_line_decorations<S: PaintScene>(
             let t = decoration_thickness(&deco.thickness, geom.underline_size, geom.css_font_size, scale);
             let thickness = whole_css_px(t);
             // A `double` overline extends upward, away from the text.
-            draw_line(scene, -ascent - thickness, thickness, -1.0);
+            draw_line(scene, -ascent - thickness, thickness, -1.0, Some(t));
         }
         if wanted.contains(TextDecorationLine::LINE_THROUGH) && deco.line.contains(TextDecorationLine::LINE_THROUGH) {
             let t = decoration_thickness(&deco.thickness, geom.strikethrough_size, geom.css_font_size, scale);
             // Centred two thirds of the ascent down from the text's top: Blink's
             // `TextDecorationInfo` line offset, its top rounded half down to a CSS pixel.
             let top = (-ascent / 3.0 - t / 2.0 - 0.5).ceil();
-            draw_line(scene, top, whole_css_px(t), 1.0);
+            draw_line(scene, top, whole_css_px(t), 1.0, None);
         }
     }
 }
@@ -853,7 +916,29 @@ fn own_decoration(styles: &style::properties::ComputedValues) -> Option<Resolved
             .text_underline_position
             .contains(TextUnderlinePosition::FROM_FONT),
         inset: text.text_decoration_inset.clone(),
+        skip_ink: itext.text_decoration_skip_ink,
     })
+}
+
+/// pyro: how far (CSS px) a box's own text decorations can reach outside its line boxes: their
+/// thickness and offset, and an em for where the font puts them.
+pub(crate) fn decoration_ink_reach(styles: &style::properties::ComputedValues) -> f64 {
+    let text = styles.get_text();
+    if text.text_decoration_line.is_empty() {
+        return 0.0;
+    }
+    let font_size = styles.get_font().font_size.used_size.0.px();
+    let em = Length::new(font_size);
+    let thickness = match &text.text_decoration_thickness {
+        GenericTextDecorationLength::LengthPercentage(lp) => lp.resolve(em).px().abs(),
+        _ => font_size / 10.0,
+    };
+    let offset = styles
+        .get_inherited_text()
+        .text_underline_offset
+        .non_auto()
+        .map_or(0.0, |lp| lp.resolve(em).px().abs());
+    f64::from(font_size + thickness + offset)
 }
 
 /// pyro: whether the decorations of a box's ancestors stop at it (CSS Text Decoration 3, 2.1):
@@ -862,13 +947,16 @@ fn own_decoration(styles: &style::properties::ComputedValues) -> Option<Resolved
 /// containers).
 fn stops_propagation(styles: &style::properties::ComputedValues) -> bool {
     use style::values::specified::box_::{DisplayInside, DisplayOutside};
+    let display = styles.clone_display();
+    // A `display: contents` element has no box (its `float` does nothing).
+    if display.is_contents() {
+        return false;
+    }
     let box_style = styles.get_box();
     if box_style.position.is_absolutely_positioned() || box_style.float.is_floating() {
         return true;
     }
-    let display = styles.clone_display();
-    display.outside() == DisplayOutside::Inline
-        && !matches!(display.inside(), DisplayInside::Flow | DisplayInside::Contents)
+    display.outside() == DisplayOutside::Inline && display.inside() != DisplayInside::Flow
 }
 
 /// pyro: the decorations propagated into the content of `node_id`'s box from its ancestors,
@@ -883,7 +971,7 @@ fn propagated_decorations(
 ) -> Propagated {
     // A node id's low half is its slot in the tree (the high half a version).
     let slot = |id: NodeId| id.as_u64() as u32 as usize;
-    let mut remember = |cache: &mut Vec<Option<(NodeId, Propagated)>>, id: NodeId, value: &Propagated| {
+    let remember = |cache: &mut Vec<Option<(NodeId, Propagated)>>, id: NodeId, value: &Propagated| {
         if cache.len() <= slot(id) {
             cache.resize(slot(id) + 1, None);
         }
@@ -902,7 +990,8 @@ fn propagated_decorations(
             break Rc::from([]);
         };
         let stops = node.primary_styles().is_some_and(|styles| stops_propagation(&styles));
-        let parent = node.layout_parent.get().or(node.parent);
+        // The DOM parent: a table part's box can be left out of the layout tree (a row group).
+        let parent = node.parent.or_else(|| node.layout_parent.get());
         match parent {
             Some(parent) if !stops => {
                 scratch.push(id);
@@ -1005,12 +1094,17 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         deco_boxes.clear();
         run_paints.clear();
         run_shadows.clear();
+        // pyro: the line's glyph runs, walked by each pass over the line.
+        let glyph_runs: SmallVec<[parley::GlyphRun<'_, TextBrush>; 16]> = line
+            .items()
+            .filter_map(|item| match item {
+                PositionedLayoutItem::GlyphRun(run) => Some(run),
+                _ => None,
+            })
+            .collect();
 
         // pyro: the line's decorations, and what each of its glyph runs is drawn with.
-        for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                continue;
-            };
+        for glyph_run in &glyph_runs {
             let run = glyph_run.run();
             let font_size = run.font_size();
             let metrics = run.font_metrics();
@@ -1130,7 +1224,18 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         };
         let deco_transform = shifted(transform, shift);
         let flush = |scene: &mut S, phase| {
-            flush_line_decorations(scene, deco_transform, options, deco_boxes, inline_root_id, &strut, phase)
+            flush_line_decorations(
+                scene,
+                deco_transform,
+                options,
+                deco_boxes,
+                inline_root_id,
+                &strut,
+                phase,
+                &glyph_runs,
+                source,
+                vertical.is_some(),
+            )
         };
 
         // pyro: what a glyph run draws: its glyphs in a colour (its own, or a shadow's) moved by
@@ -1257,14 +1362,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 .unwrap_or(0);
             for layer in (0..layers).rev() {
                 flush(scene, DecorationPhase::Shadow(layer));
-                let mut paints = run_paints.iter();
-                for item in line.items() {
-                    let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                        continue;
-                    };
-                    let Some(paint) = paints.next() else { break };
+                for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()) {
                     if let Some(shadow) = run_shadows[paint.shadows.clone()].get(layer) {
-                        draw_run(scene, &glyph_run, paint, Some(shadow), runs);
+                        draw_run(scene, glyph_run, paint, Some(shadow), runs);
                     }
                 }
             }
@@ -1272,18 +1372,13 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         if !deco_boxes.is_empty() {
             flush(scene, DecorationPhase::UnderOver);
         }
-        let mut paints = run_paints.iter();
-        for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                continue;
-            };
-            let Some(paint) = paints.next() else { break };
+        for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()) {
             if !layered {
                 for shadow in run_shadows[paint.shadows.clone()].iter().rev() {
-                    draw_run(scene, &glyph_run, paint, Some(shadow), runs);
+                    draw_run(scene, glyph_run, paint, Some(shadow), runs);
                 }
             }
-            draw_run(scene, &glyph_run, paint, None, runs);
+            draw_run(scene, glyph_run, paint, None, runs);
         }
         if !deco_boxes.is_empty() {
             flush(scene, DecorationPhase::LineThrough);
@@ -1628,4 +1723,223 @@ fn embolden_scale(color: Color) -> f64 {
         prev = *point;
     }
     prev.1
+}
+
+/// pyro: where `text-decoration-skip-ink` leaves gaps in a decoration line spanning `extent`
+/// (layout x), as Blink's `TextPainter::ClipDecorationLine` cuts them: around the ink of every
+/// glyph on the line inside `band` (layout y, top to bottom: the line less half a pixel at each
+/// edge), grown by `dilation` on each side (the line's thickness, at most 13px); not around CJK
+/// glyphs unless `cjk` (`skip-ink: all`). Merged and in order.
+fn ink_gaps(
+    runs: &[parley::GlyphRun<'_, TextBrush>],
+    source: Option<&str>,
+    extent: (f64, f64),
+    band: (f64, f64),
+    dilation: f64,
+    cjk: bool,
+) -> SmallVec<[(f64, f64); 8]> {
+    let mut gaps: SmallVec<[(f64, f64); 8]> = SmallVec::new();
+    // A 1px line's band is its middle: what crosses that line.
+    if band.1 < band.0 {
+        return gaps;
+    }
+    for glyph_run in runs {
+        let (run_x0, run_x1) = (f64::from(glyph_run.offset()), f64::from(glyph_run.offset() + glyph_run.advance()));
+        if run_x1 + dilation < extent.0 || run_x0 - dilation > extent.1 {
+            continue;
+        }
+        let run = glyph_run.run();
+        let (font, size) = (run.font(), run.font_size());
+        let coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
+        let reach = f64::from(size) + dilation;
+        let mut glyphs = glyph_run.positioned_glyphs();
+        'atoms: for (range, count) in glyph_run.atom_texts() {
+            // Whether the atom is CJK, looked up only for a glyph that crosses the band.
+            let mut atom_is_cjk = None;
+            for glyph in glyphs.by_ref().take(count) {
+                let x = f64::from(glyph.x);
+                // Glyphs far outside the line cannot reach it (their ink is within an em of them);
+                // past its end none can (glyphs come left to right, in either direction).
+                if x - reach > extent.1 {
+                    break 'atoms;
+                }
+                if x + reach < extent.0 || x - reach > extent.1 {
+                    continue;
+                }
+                // The band in the glyph's own space (y up from its origin).
+                let y = f64::from(glyph.y);
+                let (lo, hi) = ((y - band.1) as f32, (y - band.0) as f32);
+                let Some((a, b)) = glyph_intercept(font, coords, size, glyph.id, lo, hi) else {
+                    continue;
+                };
+                // CJK glyphs are skipped unless `cjk`.
+                if !cjk
+                    && *atom_is_cjk.get_or_insert_with(|| {
+                        source.and_then(|text| text.get(range.clone())?.chars().next()).is_some_and(is_cjk_char)
+                    })
+                {
+                    continue;
+                }
+                gaps.push((x + f64::from(a) - dilation, x + f64::from(b) + dilation));
+            }
+        }
+    }
+    gaps.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    let mut merged: SmallVec<[(f64, f64); 8]> = SmallVec::new();
+    for (a, b) in gaps {
+        match merged.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => merged.push((a, b)),
+        }
+    }
+    merged
+}
+
+/// pyro: whether a character is CJK (Han, kana, Hangul, their punctuation and compatibility
+/// forms), whose glyphs `text-decoration-skip-ink: auto` does not skip (Blink's
+/// `InkSkipCjkHandling::kExcludeCjk`).
+fn is_cjk_char(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x11FF
+        | 0x2E80..=0x2FDF
+        | 0x3000..=0x9FFF
+        | 0xA960..=0xA97F
+        | 0xAC00..=0xD7FF
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFFEF
+        | 0x20000..=0x3FFFF)
+}
+
+/// pyro: `text-decoration-skip-ink`: the extent along the baseline (font px, from the glyph's
+/// origin) of the ink of glyph `glyph` that lies in the band `lo..=hi` (font px above the
+/// baseline, y up), as Skia's `SkFont::getIntercepts` gives it: the leftmost and rightmost
+/// points of the outline inside the band. Cached by font, size, glyph and band (a paint asks for
+/// the same glyphs of the same links again and again).
+fn glyph_intercept(font: &parley::FontData, coords: &[i16], size: f32, glyph: u32, lo: f32, hi: f32) -> Option<(f32, f32)> {
+    use skrifa::MetadataProvider as _;
+    use skrifa::instance::{LocationRef, NormalizedCoord, Size};
+    use std::cell::RefCell;
+    use std::hash::{Hash, Hasher};
+
+    /// A multiplicative hash of the key's words (the keys are a font id, numbers and float bits).
+    #[derive(Default)]
+    struct KeyHasher(u64);
+    impl Hasher for KeyHasher {
+        fn finish(&self) -> u64 {
+            self.0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            for &byte in bytes {
+                self.write_u64(u64::from(byte));
+            }
+        }
+        fn write_u64(&mut self, word: u64) {
+            self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+        }
+    }
+    type Cache = std::collections::HashMap<[u64; 4], Option<(f32, f32)>, std::hash::BuildHasherDefault<KeyHasher>>;
+    thread_local! {
+        static INTERCEPTS: RefCell<Cache> = RefCell::default();
+    }
+    let coords_hash = if coords.is_empty() {
+        0
+    } else {
+        let mut hasher = KeyHasher::default();
+        coords.hash(&mut hasher);
+        hasher.finish()
+    };
+    let key = [
+        font.data.id(),
+        u64::from(font.index) << 32 | u64::from(glyph),
+        u64::from(size.to_bits()) << 32 | u64::from(coords_hash as u32),
+        u64::from(lo.to_bits()) << 32 | u64::from(hi.to_bits()),
+    ];
+    if let Some(known) = INTERCEPTS.with(|cache| cache.borrow().get(&key).copied()) {
+        return known;
+    }
+
+    /// The x extent of the parts of an outline inside a horizontal band.
+    struct BandPen {
+        lo: f32,
+        hi: f32,
+        at: (f32, f32),
+        start: (f32, f32),
+        extent: Option<(f32, f32)>,
+    }
+    impl BandPen {
+        fn segment(&mut self, to: (f32, f32)) {
+            let (from, (lo, hi)) = (self.at, (self.lo, self.hi));
+            self.at = to;
+            let ((x0, y0), (x1, y1)) = (from, to);
+            if (y0 < lo && y1 < lo) || (y0 > hi && y1 > hi) {
+                return;
+            }
+            let (ta, tb) = if y0 == y1 {
+                (0.0, 1.0)
+            } else {
+                let (a, b) = ((lo - y0) / (y1 - y0), (hi - y0) / (y1 - y0));
+                (a.min(b).max(0.0), a.max(b).min(1.0))
+            };
+            if ta > tb {
+                return;
+            }
+            for t in [ta, tb] {
+                let x = x0 + (x1 - x0) * t;
+                let e = self.extent.get_or_insert((x, x));
+                *e = (e.0.min(x), e.1.max(x));
+            }
+        }
+    }
+    impl skrifa::outline::OutlinePen for BandPen {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.at = (x, y);
+            self.start = (x, y);
+        }
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.segment((x, y));
+        }
+        fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+            let (x0, y0) = self.at;
+            const STEPS: usize = 8;
+            for i in 1..=STEPS {
+                let t = i as f32 / STEPS as f32;
+                let u = 1.0 - t;
+                self.segment((u * u * x0 + 2.0 * u * t * cx0 + t * t * x, u * u * y0 + 2.0 * u * t * cy0 + t * t * y));
+            }
+        }
+        fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+            let (x0, y0) = self.at;
+            const STEPS: usize = 12;
+            for i in 1..=STEPS {
+                let t = i as f32 / STEPS as f32;
+                let u = 1.0 - t;
+                let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+                self.segment((a * x0 + b * cx0 + c * cx1 + d * x, a * y0 + b * cy0 + c * cy1 + d * y));
+            }
+        }
+        fn close(&mut self) {
+            let start = self.start;
+            self.segment(start);
+        }
+    }
+
+    let extent = (|| {
+        let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
+        let outline = font_ref.outline_glyphs().get(skrifa::GlyphId::new(glyph))?;
+        let location: Vec<NormalizedCoord> = coords.iter().map(|&c| NormalizedCoord::from_bits(c)).collect();
+        let mut pen = BandPen { lo, hi, at: (0.0, 0.0), start: (0.0, 0.0), extent: None };
+        outline
+            .draw(skrifa::outline::DrawSettings::unhinted(Size::new(size), LocationRef::new(&location)), &mut pen)
+            .ok()?;
+        pen.extent
+    })();
+    INTERCEPTS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= 1 << 16 {
+            cache.clear();
+        }
+        cache.insert(key, extent);
+    });
+    extent
 }
