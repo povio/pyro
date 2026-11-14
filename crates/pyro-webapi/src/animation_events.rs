@@ -151,8 +151,6 @@ pub(crate) struct State {
     source_installed: Cell<bool>,
     /// The last [`State::next_report_key`].
     report_keys: Cell<u64>,
-    /// The page clock at the last frame-end style update ([`frame_end`]).
-    frame_updated: Cell<f64>,
     /// The before-change styles of the elements under such a root that may
     /// transition, by element, with their root: the engine styles none of
     /// them while the root is hidden, and styles them afresh once shown.
@@ -464,21 +462,6 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         }
     }
     schedule(page, planned, defer);
-}
-
-/// The style update at the end of an animation frame: as [`before_render`],
-/// at most once per [`crate::animation_frame::FRAME_MS`] of the page clock
-/// (a browser's frame; frames without a client come every few ms). The
-/// update a task schedules a frame after its change, and every capture,
-/// still catch what a skipped one would have.
-pub(crate) fn frame_end(page: &Rc<PageDom>) {
-    let now = crate::event::page_now_ms(page);
-    let state = &page.animation_events;
-    if now - state.frame_updated.get() < crate::animation_frame::FRAME_MS {
-        return;
-    }
-    state.frame_updated.set(now);
-    before_render(page);
 }
 
 /// A rendering opportunity (a screenshot or screencast frame): the style

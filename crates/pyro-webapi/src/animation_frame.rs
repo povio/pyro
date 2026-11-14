@@ -569,11 +569,14 @@ impl pyro_dom::animation::AnimationSource for Source {
 impl PageDom {
     /// The style update at the end of an animation frame (after its
     /// callbacks): the style changes since the last one start their
-    /// transitions and animations now, as in a browser's frame, at most once
-    /// per [`FRAME_MS`]. One flag and stamp check for a document that neither
-    /// animates nor transitions, or did not change.
+    /// transitions and animations now, as in a browser's frame. Every frame:
+    /// two frames give an element inserted in the first a style before the
+    /// second changes it (a double `requestAnimationFrame` before a change
+    /// that should transition), however fast frames come without a client.
+    /// One flag and stamp check for a document that neither animates nor
+    /// transitions, or did not change.
     pub fn update_animations(self: &Rc<Self>) {
-        crate::animation_events::frame_end(self);
+        crate::animation_events::before_render(self);
     }
 
     /// The animated values now, transitions included: what a screenshot or
