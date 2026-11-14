@@ -147,6 +147,11 @@ attributes and the `<style>` sheets inside the SVG, but never saw the page's she
   what usvg assumes (`<div style="fill: blue"><svg>`, the page's font for SVG text). Its box effects
   (`opacity`, `clip-path`, `mask`, `filter`, `transform`, ...) are its CSS box's, which blitz-paint applies, and
   are not written.
+- A shape of no geometry (a `rect` without a positive `width` and `height`, an `image` of a zero one, a `circle`
+  without a positive `r`, an `ellipse` of a zero radius or neither, a `path`, `polygon` or `polyline` without `d` or
+  `points`) is written with `filter:none`: it renders nothing, its filter included (SVG 2, Chromium; WPT
+  `svg-empty-element-with-filter-001`), where usvg keeps the group its filter makes and a flood would show. An empty
+  `<g>`'s filter still renders.
 - Fill and stroke boxes are the elements' bounding boxes from usvg: when an element needs one, the subtree is
   written twice, the first time with ids on those elements, and parsed (cached) for them.
 

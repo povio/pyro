@@ -445,6 +445,14 @@ impl Writer<'_> {
                     rewrites.push(Rewrite { name: "transform-origin", value: None, in_style: false });
                 }
                 self.geometry_rewrites(tag, style, &author, &mut rewrites);
+                // A shape of no geometry renders nothing, its filter included (SVG 2, as
+                // Chromium paints it); usvg keeps the group the filter makes, where a flood
+                // would show.
+                if (author.contains(&LonghandId::Filter) || data.attr(local_name!("filter")).is_some())
+                    && empty_shape(tag, data, &rewrites)
+                {
+                    rewrites.push(Rewrite { name: "filter", value: None, in_style: true });
+                }
                 if TRANSFORM_PROPERTIES.iter().any(|id| author.contains(id)) {
                     self.transform_rewrite(node, data, tag, style, &author, &mut rewrites, &mut temp_id);
                 }
@@ -823,6 +831,49 @@ impl Writer<'_> {
 
 /// `rect` as a `<rect>` with corner radii `rx`, `ry`; an empty one clips
 /// everything away (an empty `<clipPath>` would be invalid, which usvg drops).
+/// Whether a shape element has no geometry and renders nothing (SVG 2): a `rect` without a positive
+/// `width` and `height`, an `image` of a zero one, a `circle` without a positive `r`, an `ellipse`
+/// of a zero `rx` or `ry` or neither, a `path` or `polygon` without `d` or `points`. Read from its
+/// attributes after the CSS geometry `rewrites`.
+fn empty_shape(tag: &str, data: &ElementData, rewrites: &[Rewrite]) -> bool {
+    let value = |name: &str| -> Option<String> {
+        match rewrites.iter().find(|r| r.name == name && !r.in_style) {
+            Some(rewrite) => rewrite.value.clone(),
+            None => data
+                .attrs()
+                .iter()
+                .find(|attr| attr.name.ns == ns!() && &*attr.name.local == name)
+                .map(|attr| attr.value.to_string()),
+        }
+    };
+    // A length's number: `None` for none (or `auto`), 1 for one that is not a plain number
+    // (`calc()`), taken to be something.
+    let number = |name: &str| -> Option<f64> {
+        let value = value(name)?;
+        let value = value.trim();
+        if value.is_empty() || value == "auto" {
+            return None;
+        }
+        let end = value
+            .char_indices()
+            .find(|&(i, c)| !(c.is_ascii_digit() || c == '.' || ((c == '-' || c == '+') && i == 0)))
+            .map_or(value.len(), |(i, _)| i);
+        Some(value[..end].parse().unwrap_or(1.0))
+    };
+    let positive = |name: &str| number(name).is_some_and(|v| v > 0.0);
+    let zero = |name: &str| number(name).is_some_and(|v| v <= 0.0);
+    let blank = |name: &str| value(name).is_none_or(|v| v.trim().is_empty() || v.trim() == "none");
+    match tag {
+        "rect" => !positive("width") || !positive("height"),
+        "image" => zero("width") || zero("height"),
+        "circle" => !positive("r"),
+        "ellipse" => zero("rx") || zero("ry") || (number("rx").is_none() && number("ry").is_none()),
+        "path" => blank("d"),
+        "polygon" | "polyline" => blank("points"),
+        _ => false,
+    }
+}
+
 fn rect_element(rect: Rect, rx: f64, ry: f64) -> String {
     let (w, h) = (rect.width().max(0.0), rect.height().max(0.0));
     let radii = if rx > 0.0 && ry > 0.0 { format!(" rx=\"{}\" ry=\"{}\"", num(rx), num(ry)) } else { String::new() };

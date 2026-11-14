@@ -8,6 +8,9 @@ mod scene;
 mod window_renderer;
 
 mod backdrop;
+mod graph;
+/// pyro: see the `graph` module (an SVG filter primitive's subregion).
+pub use graph::CROP_IMAGE as FILTER_CROP_IMAGE;
 mod filters;
 
 pub use image_cache::ImageCacheConfig;

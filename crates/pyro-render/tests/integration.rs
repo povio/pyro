@@ -34,6 +34,7 @@ mod profiling_timers;
 mod render;
 mod style_sheet_charset;
 mod svg_content;
+mod svg_filters;
 mod svg_reference_cycles;
 mod table_cell_height;
 mod table_cell_width;

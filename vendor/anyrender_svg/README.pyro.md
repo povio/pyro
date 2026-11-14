@@ -8,9 +8,9 @@ out of the copy.
 
 ## The change
 
-`UPSTREAM.patch` is the whole diff: `src/render.rs` is rewritten around the same structure, `src/lib.rs` passes
-it the tree's viewport, and `Cargo.toml` depends on `anyrender_vello_cpu` (the vendored one) for offscreen
-rasters. Upstream draws a translucent red box for a pattern, clips with the first shape of a `<clipPath>` only
+`UPSTREAM.patch` is the whole diff: `src/render.rs` is rewritten around the same structure, `src/filter.rs` is
+new, `src/lib.rs` passes the tree's viewport, and `Cargo.toml` depends on `anyrender_vello_cpu` (the vendored one)
+for offscreen rasters and its filter conventions. Upstream draws a translucent red box for a pattern, clips with the first shape of a `<clipPath>` only
 (and only when it is a path), and ignores masks; pyro paints SVG content as Chromium does (WPT
 `css/css-transforms/matrix`, `css/css-masking/clip-path-svg-content`, `css/css-masking/mask-svg-content`):
 
@@ -38,7 +38,20 @@ rasters. Upstream draws a translucent red box for a pattern, clips with the firs
   with an opaque colour, whose overlaps then look as their union's): their edges are then anti-aliased as filled
   shapes', as a reference that draws the shapes has them (a clip layer's coverage rounds a level apart from a
   fill's). Text in a clip path is its glyph outlines.
-- Groups keep the order resvg applies: children, clip path, mask, then opacity and blend mode.
+- **Filters** (`filter`, a `<filter>`'s primitives or filter functions; `src/filter.rs`): each of a group's
+  filters is a layer around its children (the first innermost), clipped to its filter region, its filter usvg's
+  converted into an anyrender filter graph, which anyrender_vello_cpu applies when it replays the scene (its
+  `graph` module): `feFlood`, `feOffset`, `feGaussianBlur` and `feDropShadow` of one deviation, `feColorMatrix`
+  (every type, Chromium's constants), `feComponentTransfer`, `feMerge`, `feComposite` and `feBlend` (separable
+  modes), with subregions as crops. Each primitive works in its `color-interpolation-filters` space: an input in the
+  other space is read through a `feComponentTransfer` of conversion tables, a value converted back is the value it
+  came from, a flood is drawn in its reader's space, and the output is sRGB. Children that reach past the first
+  filter's region are clipped to it (SVG's source graphic stops there). A filter with any other primitive, or with
+  the transparent black flood usvg stands in for a primitive it could not read (`feConvolveMatrix` of a zero divisor),
+  is left out: the group is drawn unfiltered, as before. Mask and pattern rasters are recorded and replayed
+  (`append_scene`) as the page is, so that filters apply in them too (WPT `svg-mutation-filter-used-by-mask`).
+  Covered by the unit tests in `src/filter.rs` and pyro-render's `svg_filters.rs`.
+- Groups keep the order resvg applies: children, filters, clip path, mask, then opacity and blend mode.
 - Nested trees (`<image>` of an SVG, text, subtrees of clip paths, masks and patterns) are drawn with their own
   base transform; upstream reset it to the identity below the first group, which misplaced a group inside one.
 

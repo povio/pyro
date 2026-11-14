@@ -18,6 +18,8 @@ use std::f64::consts::PI;
 use anyrender::Filter;
 use anyrender::filters::component_transfer::TransferFunction;
 use anyrender::filters::{FilterEffect, FilterInput};
+
+use crate::graph::Graph;
 use kurbo::{Affine, Rect};
 use peniko::color::{AlphaColor, Srgb};
 use vello_cpu::Pixmap;
@@ -128,17 +130,33 @@ pub(crate) struct FilterPlan {
     alpha: f32,
     /// Whether a large blur may be computed at a reduced resolution ([`Self::factor`]).
     reduce: bool,
+    /// A filter that is no chain (an SVG `<filter>`'s), in place of the steps: see
+    /// [`crate::graph`].
+    graph: Option<Graph>,
 }
 
 impl FilterPlan {
-    /// The steps of `filter` (a chain, as CSS `filter` lists make) in device pixels under the layer's
-    /// `transform`; `None` when it has none this backend does, or is not a chain.
+    /// The steps of `filter` in device pixels under the layer's `transform`: a chain (as CSS
+    /// `filter` lists make) of blurs, drop shadows and colour functions, else a graph
+    /// ([`crate::graph`]); `None` when it does nothing or has a node this backend does not do.
     pub(crate) fn new(filter: &Filter, transform: Affine) -> Option<Self> {
         let [a, b, c, d, _, _] = transform.as_coeffs();
         let scale = (a * d - b * c).abs().sqrt();
         if !scale.is_finite() || scale == 0.0 {
             return None;
         }
+        match Self::chain(filter, transform, scale) {
+            Some(plan) => plan,
+            None => Graph::new(filter, transform)
+                .map(|graph| Self { steps: Vec::new(), alpha: 1.0, reduce: false, graph: Some(graph) }),
+        }
+    }
+
+    /// The plan of a chain (`Some(None)` when it does nothing), or `None` when `filter` is not
+    /// one: its nodes read the one before (the first the source), and each is a blur, a drop
+    /// shadow or a colour function.
+    fn chain(filter: &Filter, transform: Affine, scale: f64) -> Option<Option<Self>> {
+        let [a, b, c, d, _, _] = transform.as_coeffs();
         let mut steps = Vec::new();
         for (i, node) in filter.nodes().iter().enumerate() {
             let chained = node.inputs.secondary.is_none()
@@ -154,6 +172,7 @@ impl FilterPlan {
                 FilterEffect::GaussianBlur(blur) if blur.std_deviation > 0.0 => {
                     steps.push(Step::Blur { sigma: f64::from(blur.std_deviation) * scale });
                 }
+                FilterEffect::GaussianBlur(_) => {}
                 FilterEffect::DropShadow(shadow) => {
                     let (dx, dy) = (f64::from(shadow.dx), f64::from(shadow.dy));
                     steps.push(Step::DropShadow {
@@ -163,8 +182,10 @@ impl FilterPlan {
                         color: shadow.color,
                     });
                 }
-                FilterEffect::ColorMatrix(matrix) if !near_identity(&matrix.0) => {
-                    push_color(&mut steps, ColorOp::Matrix(matrix.0))
+                FilterEffect::ColorMatrix(matrix) => {
+                    if !near_identity(&matrix.0) {
+                        push_color(&mut steps, ColorOp::Matrix(matrix.0))
+                    }
                 }
                 FilterEffect::ComponentTransfer(transfer) => {
                     let functions = [
@@ -177,7 +198,7 @@ impl FilterPlan {
                         push_color(&mut steps, ColorOp::Transfer(Box::new(functions)));
                     }
                 }
-                _ => {}
+                _ => return None,
             }
         }
         // Trailing alpha scales become the layer's opacity.
@@ -195,7 +216,7 @@ impl FilterPlan {
                 steps.pop();
             }
         }
-        (!steps.is_empty() || alpha != 1.0).then_some(Self { steps, alpha, reduce: true })
+        Some((!steps.is_empty() || alpha != 1.0).then_some(Self { steps, alpha, reduce: true, graph: None }))
     }
 
     /// The plan computed at full resolution ([`Self::factor`] 1): a backdrop is read at the size
@@ -212,7 +233,13 @@ impl FilterPlan {
 
     /// Whether the filter leaves the pixels as they are, but for the alpha factor.
     pub(crate) fn is_alpha_only(&self) -> bool {
-        self.steps.is_empty()
+        self.steps.is_empty() && self.graph.is_none()
+    }
+
+    /// Whether the filter reads and makes nothing outside the layer's clip, its filter region (a
+    /// graph's, as SVG asks), where a chain reads the content beyond it (CSS).
+    pub(crate) fn bounded(&self) -> bool {
+        self.graph.is_some()
     }
 
     /// The colour functions of a filter of nothing else, when they keep the alpha and map each
@@ -227,6 +254,9 @@ impl FilterPlan {
 
     /// The pixels of the layer's unfiltered content the steps read to produce `out`.
     pub(crate) fn source_region(&self, out: PixelRect) -> PixelRect {
+        if let Some(graph) = &self.graph {
+            return graph.source_region(out);
+        }
         self.steps.iter().rev().fold(out, |needed, step| match *step {
             Step::Blur { sigma } => needed.inflate(reach(sigma)),
             Step::DropShadow { dx, dy, sigma, .. } => {
@@ -276,6 +306,9 @@ impl FilterPlan {
         let origin = Affine::translate((f64::from(region.x0), f64::from(region.y0)));
         if w == 0 || h == 0 {
             return Vec::new();
+        }
+        if let Some(graph) = &self.graph {
+            return vec![FilteredImage::scaled(graph.render(pixels, region), origin, 1)];
         }
         let mut scratch = Vec::new();
         match self.steps[..] {
@@ -404,7 +437,7 @@ fn transfer(function: &TransferFunction, c: f32) -> f32 {
 /// The colour functions `ops` on premultiplied RGBA `data`, as Chromium's colour filters (Skia's
 /// raster pipeline) do them: each pixel unpremultiplied (none when transparent), each function
 /// applied and its result clamped, premultiplied, rounded to bytes at the end.
-fn color_ops(data: &mut [u8], ops: &[ColorOp]) {
+pub(crate) fn color_ops(data: &mut [u8], ops: &[ColorOp]) {
     // Runs of one colour (boxes, the transparent pixels around them) are the common case: a run's
     // first pixel is computed, the rest copied.
     let mut last: Option<([u8; 4], [u8; 4])> = None;
@@ -637,7 +670,7 @@ fn extended_box_cols(src: &[u8], dst: &mut [u8], w: usize, h: usize, channels: u
 }
 
 /// How far (device px) a blur of `sigma` reads.
-fn reach(sigma: f64) -> i32 {
+pub(crate) fn reach(sigma: f64) -> i32 {
     if sigma <= 0.0 {
         return 0;
     }
@@ -647,7 +680,7 @@ fn reach(sigma: f64) -> i32 {
 /// `drop-shadow()` on premultiplied RGBA `data`: its alpha blurred by `sigma`, moved by `(dx, dy)`
 /// and filled with `color`, under the pixels.
 #[allow(clippy::too_many_arguments)]
-fn drop_shadow(
+pub(crate) fn drop_shadow(
     data: &mut [u8],
     scratch: &mut Vec<u8>,
     w: usize,
@@ -715,7 +748,7 @@ fn drop_shadow(
 }
 
 /// `v / 255` rounded, for `v` up to 255 * 255.
-fn div255(v: u32) -> u32 {
+pub(crate) fn div255(v: u32) -> u32 {
     (v + 128 + ((v + 128) >> 8)) >> 8
 }
 

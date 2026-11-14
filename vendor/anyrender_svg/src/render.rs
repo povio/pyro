@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use crate::util;
-use anyrender::{Paint, PaintScene};
-use anyrender_vello_cpu::{VelloCpuImageRenderer, VelloCpuScenePainter};
+use anyrender::{Filter, Paint, PaintScene, Scene};
+use anyrender_vello_cpu::VelloCpuImageRenderer;
+use std::sync::Arc;
 use kurbo::{Affine, BezPath, Rect, Shape};
 use peniko::{BlendMode, Blob, Color, Compose, Fill, ImageBrush, ImageData, Mix};
 use usvg::{Node, Path};
@@ -170,6 +171,7 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     let mix = util::to_mix(g.blend_mode());
     // The group's user space (its own `transform` included) in the scene.
     let ts = global_transform * transform;
+    let filters = filter_layers(g);
 
     let clip_shapes = g.clip_path().and_then(|clip| clip_shapes(clip, ts));
     let simple_clip = clip_shapes
@@ -223,7 +225,7 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     // background cut to a shape): the shape is filled with the rectangle's
     // paint, so its edges are a filled shape's (a clip layer's coverage rounds a
     // level apart from a fill's), as a reference drawing the shape has them.
-    if let (Some(shapes), false, None) = (&clip_shapes, blends, mask) {
+    if let (Some(shapes), false, None, true) = (&clip_shapes, blends, mask, filters.is_empty()) {
         if fill_clip_shapes(scene, g, base, global_transform, shapes, ctx) {
             return;
         }
@@ -244,7 +246,7 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
             None,
             None,
         );
-        render_group(scene, g, base, global_transform, error_handler, ctx);
+        render_filtered(scene, g, base, ts, &filters, global_transform, error_handler, ctx);
         scene.pop_layer();
         return;
     }
@@ -275,7 +277,7 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
         );
     }
 
-    render_group(scene, g, base, global_transform, error_handler, ctx);
+    render_filtered(scene, g, base, ts, &filters, global_transform, error_handler, ctx);
 
     if let Some(clip) = complex_clip {
         apply_clip(scene, clip, ts, layer_rect);
@@ -288,6 +290,73 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
         scene.pop_layer();
     }
     if simple_clip.is_some() {
+        scene.pop_layer();
+    }
+}
+
+/// pyro: the group's filters, each with its filter region (in the group's user space), the
+/// first applied first; none when one has a primitive anyrender_vello_cpu does not do (the
+/// group is then drawn unfiltered, as before; see `crate::filter`).
+fn filter_layers(g: &usvg::Group) -> Vec<(Arc<Filter>, Rect)> {
+    g.filters()
+        .iter()
+        .map(|filter| {
+            let region = filter.rect();
+            let region = Rect::new(
+                region.left() as f64,
+                region.top() as f64,
+                region.right() as f64,
+                region.bottom() as f64,
+            );
+            crate::filter::convert(filter).map(|graph| (Arc::new(graph), region))
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
+}
+
+/// pyro: `g`'s children in its filters' layers (`ts` maps the group's user space to the scene),
+/// the first filter innermost, clipped to its filter region when they reach past it (SVG's
+/// source graphic stops there).
+#[allow(clippy::too_many_arguments)]
+fn render_filtered<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+    scene: &mut S,
+    g: &usvg::Group,
+    base: Affine,
+    ts: Affine,
+    filters: &[(Arc<Filter>, Rect)],
+    global_transform: Affine,
+    error_handler: &mut F,
+    ctx: &Ctx,
+) {
+    for (filter, region) in filters.iter().rev() {
+        scene.push_layer(
+            Fill::NonZero,
+            BlendMode::default(),
+            1.0,
+            ts,
+            region,
+            Some(filter.clone()),
+            None,
+        );
+    }
+    let clip = filters.first().map(|(_, region)| *region).filter(|region| {
+        let content = g.stroke_bounding_box();
+        let content = Rect::new(
+            content.left() as f64,
+            content.top() as f64,
+            content.right() as f64,
+            content.bottom() as f64,
+        );
+        content.union(*region) != *region
+    });
+    if let Some(region) = clip {
+        scene.push_clip_layer(Fill::NonZero, ts, &region);
+    }
+    render_group(scene, g, base, global_transform, error_handler, ctx);
+    if clip.is_some() {
+        scene.pop_layer();
+    }
+    for _ in filters {
         scene.pop_layer();
     }
 }
@@ -611,7 +680,7 @@ fn mask_image(mask: &usvg::Mask, ts: Affine, rect: Rect) -> Option<(ImageBrush, 
     };
     let pixels = rasterize(rw, rh, |painter| {
         painter.push_clip_layer(Fill::NonZero, to_raster * ts, &mask_rect);
-        let mut no_errors: fn(&mut VelloCpuScenePainter, &Node) = |_, _| {};
+        let mut no_errors: fn(&mut Scene, &Node) = |_, _| {};
         render_group(
             painter,
             mask.root(),
@@ -667,12 +736,16 @@ fn raster_size(width: f64, height: f64) -> Option<(u32, u32, f64)> {
 }
 
 /// pyro: renders `draw` offscreen into a `width` x `height` premultiplied
-/// RGBA8 raster, with the same rasterizer as the page.
-fn rasterize(width: u32, height: u32, draw: impl FnOnce(&mut VelloCpuScenePainter)) -> Vec<u8> {
+/// RGBA8 raster, with the same rasterizer as the page. The commands are
+/// recorded and replayed (`append_scene`), as the page's are: the replay is
+/// what applies filter layers.
+fn rasterize(width: u32, height: u32, draw: impl FnOnce(&mut Scene)) -> Vec<u8> {
     use anyrender::ImageRenderer;
+    let mut scene = Scene::new();
+    draw(&mut scene);
     let mut renderer = VelloCpuImageRenderer::with_threads(width, height, 0);
     let mut pixels = Vec::new();
-    renderer.render_to_vec(draw, &mut pixels);
+    renderer.render_to_vec(|painter| painter.append_scene(scene, Affine::IDENTITY), &mut pixels);
     pixels
 }
 
@@ -719,7 +792,7 @@ fn pattern_brush(
         cull: Rect::new(0.0, 0.0, width as f64, height as f64),
     };
     let pixels = rasterize(width, height, |painter| {
-        let mut no_errors: fn(&mut VelloCpuScenePainter, &Node) = |_, _| {};
+        let mut no_errors: fn(&mut Scene, &Node) = |_, _| {};
         render_group(
             painter,
             pattern.root(),

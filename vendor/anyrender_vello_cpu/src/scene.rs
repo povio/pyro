@@ -479,13 +479,16 @@ impl VelloCpuScenePainter {
             x1: i32::from(self.render_ctx.width()),
             y1: i32::from(self.render_ctx.height()),
         };
-        let out = PixelRect::around(layer_transform.transform_rect_bbox(layer.clip.bounding_box())).intersect(frame);
+        let bounds = PixelRect::around(layer_transform.transform_rect_bbox(layer.clip.bounding_box()));
+        let out = bounds.intersect(frame);
         if out.is_empty() {
             return;
         }
         // Whole reduced pixels.
         let factor = plan.factor() as i32;
         let region = plan.source_region(out);
+        // pyro: an SVG filter's graph sees nothing outside its filter region (the clip).
+        let region = if plan.bounded() { region.intersect(bounds) } else { region };
         let region = PixelRect {
             x0: region.x0.div_euclid(factor) * factor,
             y0: region.y0.div_euclid(factor) * factor,

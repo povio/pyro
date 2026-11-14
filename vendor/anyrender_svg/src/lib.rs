@@ -21,6 +21,7 @@
 #![cfg_attr(test, allow(unused_crate_dependencies))] // Some dev dependencies are only used in tests
 
 mod error;
+mod filter;
 mod render;
 mod util;
 

@@ -7,7 +7,7 @@ workspace `Cargo.toml`. License: MIT OR Apache-2.0, as upstream. `.cargo_vcs_inf
 
 ## The change
 
-`UPSTREAM.patch` is the whole diff: six changes.
+`UPSTREAM.patch` is the whole diff: seven changes.
 
 ## A raster thread count per renderer
 
@@ -71,6 +71,23 @@ is a faded layer with no pixels of its own), and when the functions keep the alp
 solid colour (a box, a run of text), that content is drawn in the mapped colour (`map_color`) instead of being
 rendered apart. Covered by the unit tests in `src/filters.rs` and `src/scene.rs` and by pyro-render's
 `filter_color.rs`.
+
+## SVG filter graphs
+
+`src/graph.rs`. A filter layer whose filter is no chain of blurs, drop shadows and colour functions (an SVG
+`<filter>`, from anyrender_svg) is a graph: `feFlood`, `feOffset`, `feGaussianBlur`, `feDropShadow`,
+`feColorMatrix`, `feComponentTransfer`, `feComposite` (arithmetic included), `feBlend` (separable modes) and crops,
+reading the source graphic, its alpha and each other's results. Each node is computed over one region of device
+pixels, the part of the filter region (the layer's clip) the output needs: as SVG asks, nothing outside the filter
+region is read or made, the source graphic included (a chain, CSS's, reads the content past the clip). Colour nodes
+in a row are applied to each pixel in one go, as Skia composes colour filters. A graph with a node this backend does
+not do (`feImage`, `feTile`, `feTurbulence`, `feMorphology`, `feConvolveMatrix`, `feDisplacementMap`, lighting,
+`feBlend`'s non-separable modes) is drawn unfiltered, as before.
+
+Two conventions hold with the producer: the graph's output is its last node (`Filter::add` leaves a graph's output at
+its first node and the setter is private), and a primitive's subregion is an `Image` node of the image id
+`FILTER_CROP_IMAGE` (`u32::MAX`, exported) whose transform holds the rectangle (`[x0, y0, x1, y1, ..]`, the filter's
+space) and whose input is the node it crops. Unit tests in `src/graph.rs`.
 
 ## `backdrop-filter`
 
