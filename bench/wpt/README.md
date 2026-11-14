@@ -241,12 +241,12 @@ As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
 
 ### CI
 
-The `reftest` job runs `gate.mjs run --kind reftest` on the self-hosted runner (`lp-m1`, an 8-CPU M1) in one shard at
-`--jobs 8`, and `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build`
-jobs (the browser) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support files;
-171 MB). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out), `reftest-runner`
-(`lp-m1` or GitHub's `macos-15`, three shards there) and `reftest-args` (for example `--dirs css/CSS2 --no-rerun` to
-time a directory). A baseline holds for one runner only: results differ between machines (fonts, macOS versions).
+The `reftest` job runs `gate.mjs run --kind reftest` in two shards on GitHub's `macos-15` runners, one page per CPU,
+and `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build` jobs (the
+browser, built on `lp-m1`) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support
+files; 171 MB). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
+`reftest-runner` (`lp-m1`: one shard there) and `reftest-args` (for example `--dirs css/CSS2 --no-rerun` to time a
+directory).
 
 Measured on this pull request's runs (all 9,341 reftests; a run without a baseline runs every page twice):
 
@@ -255,25 +255,27 @@ Measured on this pull request's runs (all 9,341 reftests; a run without a baseli
 | `macos-15` (GitHub: M2 Pro, 5 vCPUs, 14 GB, macOS 15.8) | 2 x 5 | 53 s, 65 s | 2:04, 2:22 | every page |
 | `macos-15` | 3 x 5 | 34-37 s (70 s with the crash) | 1:28-2:35 | every page |
 | `lp-m1` (M1, 8 CPUs, 8 GB, macOS 26.7) | 1 x 8 | 72 s (9,300 pages), 115-131 s with the timeouts' tail | 4:55 | all but 5 pages, which a runner bug (since fixed) recorded as crashes |
+| `macos-15`, a pull request's gate run (baseline committed) | 2 x 5 | 35 s, 40 s | 0:52, 0:55 | (2 pages rerun) |
 
 The 11 pages that time out (15 s each) and the crash run last in a run without a baseline; a pull request's run skips
 them (nothing to protect), so its pass costs about what the first 9,300 pages do. The reftests run on `macos-15`:
-within each run there the two passes agreed on every page, two runs differed on one page
-(`css/css-color/animation/opacity-animation-ending-correctly-001.html`, a transition's timing; below), and `lp-m1`'s
-results matched theirs on every other page but the two that runner bug recorded as crashes. So `macos-15` is as
-deterministic as the self-hosted runner. On `lp-m1`, which runs one job at a time and already queues the four
-testharness shards and the client job of every pull request, the reftests would add 2 to 5 minutes to each run's turn
-on it; on `macos-15` they run beside them, two jobs of about 2 minutes (about 4 runner minutes per run, billed as
-macOS minutes). `reftest-runner: lp-m1` runs them there (a run's result does not depend on the runner it ran on, but
-compare a baseline only with runs from the same runner).
+within each bootstrap run there the two passes agreed on every page, the runs differed only on two transition pages
+(below), and `lp-m1`'s results matched theirs on every other page but the two that runner bug recorded as crashes.
+So `macos-15` is as deterministic as the self-hosted runner. On `lp-m1`, which runs one job at a time and already
+queues the four testharness shards and the client job of every pull request, the reftests would add 2 to 5 minutes to
+each run's turn on it; on `macos-15` they run beside them, two jobs of 1 to 2.5 minutes (2 to 5 runner minutes per run,
+billed as macOS minutes). `reftest-runner: lp-m1` runs them there; the baseline was recorded on `macos-15`, and the
+runners agreed, but a timing-dependent page can still tell them apart.
 
 `lp-m1` has no `zstd`, so its Actions cache entries are gzip archives; a runner with `zstd` looks for another cache
 version and misses them. The reftest job restores the WPT checkout and the browser with a `PATH` that hides `zstd`,
 so both runners share the entries `lp-m1` saves.
 
-Flaky: `css/css-color/animation/opacity-animation-ending-correctly-001.html` passed in two runs and timed out in both
-passes of a third (its `reftest-wait` waits on a 50 ms transition's end); it is not in `reftest-flaky.json` (that needs
-the `wpt-accept-loss` label), so a run in which it times out three times fails the gate.
+Flaky: `css/css-color/animation/opacity-animation-ending-correctly-001.html` and `-002.html` wait in `reftest-wait`
+for a 50 ms transition's end. -001 timed out in both passes of one of four runs; in the first gate run both timed out
+in their first run (10 s bound) and passed in all five reruns. They are not in `reftest-flaky.json` (that needs the
+`wpt-accept-loss` label): a run in which one times out every time fails the gate. The entry they would need:
+`"css/css-color/animation/opacity-animation-ending-correctly-*": {"reason": "...", "allowIncomplete": true}`.
 
 ### pyro vs Chrome
 
