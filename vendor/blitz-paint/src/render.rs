@@ -541,6 +541,21 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     &mut self.draw_text_context.borrow_mut(),
                     None,
                 );
+                // pyro: emphasis marks and ruby annotations are text the background shows in.
+                for line in layout.layout.lines() {
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &layout.annotations,
+                        &layout.text,
+                        self.dom,
+                        text_transform,
+                        self.scale,
+                        true,
+                        None,
+                        Some(Color::BLACK),
+                    );
+                }
             }
         }
         if let Some(children) = &*node.layout_children.borrow() {
@@ -1619,6 +1634,28 @@ impl ElementCx<'_, '_> {
                     }
                 }
             }
+            // pyro: ruby annotations and emphasis marks, over the text of each line.
+            if !text_layout.annotations.is_empty() {
+                let recording = draw_text_context.runs.is_some();
+                for line in text_layout.layout.lines() {
+                    let line_transform = match tops {
+                        Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
+                        None => transform,
+                    } * Affine::translate((text_shift, 0.0));
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &text_layout.annotations,
+                        &text_layout.text,
+                        self.context.dom,
+                        line_transform,
+                        self.scale,
+                        recording,
+                        None,
+                        None,
+                    );
+                }
+            }
             draw_text_context.text_shift = 0.0;
             draw_text_context.line_tops = None;
         }
@@ -1739,6 +1776,25 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 vertical,
             );
+            // pyro: ruby annotations and emphasis marks, turned with their line.
+            if !text_layout.annotations.is_empty() {
+                let recording = draw_text_context.runs.is_some();
+                let line = text_layout.layout.get(index);
+                if let Some(line) = line {
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &text_layout.annotations,
+                        &text_layout.text,
+                        self.context.dom,
+                        line_transform(index),
+                        self.scale,
+                        recording,
+                        vertical,
+                        None,
+                    );
+                }
+            }
         }
     }
 
