@@ -1,15 +1,80 @@
 use super::ElementCx;
-use kurbo::{BezPath, Circle, Ellipse, Point, Rect, Shape, SvgArc, Vec2};
+use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
+use anyrender::PaintScene;
+use kurbo::{Affine, BezPath, Insets, Point, Rect, Shape, SvgArc, Vec2};
+use peniko::Fill;
 use style::values::computed::basic_shape::{BasicShape, ClipPath};
 use style::values::computed::{Angle, CSSPixelLength, LengthPercentage};
 use style::values::generics::basic_shape::{
-    ArcSize, ArcSweep, AxisEndPoint, CommandEndPoint, ControlPoint, ControlReference,
+    ArcSize, ArcSweep, AxisEndPoint, CommandEndPoint, ControlPoint, ControlReference, FillRule,
     GenericBasicShape, GenericPathOrShapeFunction, GenericShapeCommand, GenericShapeRadius,
     ShapeBox, ShapeGeometryBox,
 };
+use style::values::generics::border::GenericBorderRadius;
 use style::values::generics::position::{GenericPosition, GenericPositionOrAuto};
 
+/// pyro: what an element's `clip-path` leaves of everything it paints (its shadows, box, content,
+/// descendants and outline), in CSS px from its border box's origin.
+pub(super) enum ElementClip {
+    /// Nothing is left: a shape of no area (an `inset()` past its box, an inside-out `rect()`, a
+    /// circle of radius 0), or a reference box of no area.
+    Nothing,
+    /// One shape, filled with its fill rule.
+    Shape(BezPath, Fill),
+}
+
+impl ElementClip {
+    fn shape(path: BezPath, fill: Fill) -> Self {
+        let bounds = path.bounding_box();
+        if bounds.width() > 0.0 && bounds.height() > 0.0 && bounds.is_finite() {
+            ElementClip::Shape(path, fill)
+        } else {
+            ElementClip::Nothing
+        }
+    }
+}
+
+/// pyro: paints `paint` clipped by an element's `clip-path` (none: unclipped). `transform` is the
+/// element's (its border box's origin), `scale` the device scale.
+pub(super) fn with_element_clip<S: PaintScene>(
+    scene: &mut S,
+    clip: Option<&ElementClip>,
+    transform: Affine,
+    scale: f64,
+    paint: impl FnOnce(&mut S),
+) {
+    match clip {
+        None => paint(scene),
+        // A clip that leaves nothing paints nothing.
+        Some(ElementClip::Nothing) => {}
+        Some(ElementClip::Shape(path, fill)) => {
+            scene.push_clip_layer(*fill, transform * Affine::scale(scale), path);
+            paint(scene);
+            scene.pop_layer();
+        }
+    }
+}
+
 impl ElementCx<'_, '_> {
+    /// pyro: the visible area (the viewport) in this element's space, in device px; empty under
+    /// a transform that cannot be inverted.
+    pub(super) fn visible_area(&self) -> Rect {
+        let painter = self.context;
+        let viewport = Rect::new(
+            painter.initial_x,
+            painter.initial_y,
+            painter.initial_x + painter.width as f64,
+            painter.initial_y + painter.height as f64,
+        );
+        if self.transform.determinant().abs() < 1e-12 {
+            return Rect::ZERO;
+        }
+        self.transform
+            .inverse()
+            .transform_rect_bbox(viewport)
+            .inflate(1.0, 1.0)
+    }
+
     /// Compute the rectangle (in scaled pixels, relative to the border box origin) described by
     /// the CSS 2 `clip` property, if it applies. `clip` only applies to absolutely positioned
     /// elements; `auto` components resolve to the corresponding border box edge.
@@ -41,9 +106,9 @@ impl ElementCx<'_, '_> {
         Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
     }
 
-    /// Compute the clip-path BezPath (if any) for this element.
-    /// Returns `None` if clip-path is `none` or unsupported.
-    pub(super) fn clip_path_shape(&self) -> Option<BezPath> {
+    /// pyro: the clip of this element's `clip-path`, `None` for `none` and for what is not
+    /// supported (a `url()` reference).
+    pub(super) fn element_clip(&self) -> Option<ElementClip> {
         match self.style.get_clip_path() {
             ClipPath::None => None,
             ClipPath::Url(_) => {
@@ -51,241 +116,357 @@ impl ElementCx<'_, '_> {
                 None
             }
             ClipPath::Shape(basic_shape, geometry_box) => {
-                let reference_box = self.resolve_geometry_box(geometry_box);
-                self.basic_shape_to_path(basic_shape, reference_box)
+                let reference = self.reference_box(geometry_box);
+                if !(reference.width() >= 0.0 && reference.height() >= 0.0) {
+                    return Some(ElementClip::Nothing);
+                }
+                Some(self.basic_shape_clip(basic_shape, reference))
             }
-            ClipPath::Box(geometry_box) => {
-                let reference_box = self.resolve_geometry_box(geometry_box);
-                Some(Rect::from(reference_box).into_path(0.1))
-            }
+            // A box alone clips to its edges, rounded by the box's radii.
+            ClipPath::Box(geometry_box) => Some(ElementClip::shape(
+                self.rounded_reference_box(geometry_box),
+                Fill::NonZero,
+            )),
         }
     }
 
-    /// Resolve a ShapeGeometryBox to a concrete rectangle (x, y, width, height) in scaled pixels
+    /// The box a `<geometry-box>` names, in CSS px from the border box's origin.
     ///
-    /// For SVG elements without associated CSS layout box, the used value for content-box and padding-box is fill-box and for border-box and margin-box is stroke-box.
-    /// For elements with associated CSS layout box, the used value for fill-box is content-box and for stroke-box and view-box is border-box.
-    fn resolve_geometry_box(&self, geometry_box: &ShapeGeometryBox) -> ReferenceBox {
-        match geometry_box {
+    /// For elements with associated CSS layout box, the used value for fill-box is content-box
+    /// and for stroke-box and view-box is border-box.
+    fn reference_box(&self, geometry_box: &ShapeGeometryBox) -> Rect {
+        let frame = &self.frame;
+        let device = match geometry_box {
             ShapeGeometryBox::ElementDependent
             | ShapeGeometryBox::StrokeBox
             | ShapeGeometryBox::ViewBox
-            | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox) => ReferenceBox {
-                x: 0.0,
-                y: 0.0,
-                width: self.frame.border_box.width() / self.scale,
-                height: self.frame.border_box.height() / self.scale,
-            },
-            ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => ReferenceBox {
-                x: self.frame.border_width.x0 / self.scale,
-                y: self.frame.border_width.y0 / self.scale,
-                width: self.frame.padding_box.width() / self.scale,
-                height: self.frame.padding_box.height() / self.scale,
-            },
+            | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox) => frame.border_box,
+            ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => frame.padding_box,
             ShapeGeometryBox::FillBox | ShapeGeometryBox::ShapeBox(ShapeBox::ContentBox) => {
-                ReferenceBox {
-                    x: (self.frame.border_width.x0 + self.frame.padding_width.x0) / self.scale,
-                    y: (self.frame.border_width.y0 + self.frame.padding_width.y0) / self.scale,
-                    width: self.frame.content_box.width() / self.scale,
-                    height: self.frame.content_box.height() / self.scale,
-                }
+                frame.content_box
             }
             ShapeGeometryBox::ShapeBox(ShapeBox::MarginBox) => {
-                // Margin box is not tracked in CssBox, fall back to border box
-                ReferenceBox {
-                    x: 0.0,
-                    y: 0.0,
-                    width: self.frame.border_box.width() / self.scale,
-                    height: self.frame.border_box.height() / self.scale,
-                }
+                return self.margin_box();
             }
-        }
+        };
+        scale_rect(device, 1.0 / self.scale)
     }
 
-    /// Convert a CSS basic-shape to a kurbo BezPath
-    fn basic_shape_to_path(
-        &self,
-        shape: &BasicShape,
-        reference_box: ReferenceBox,
-    ) -> Option<BezPath> {
-        let w = reference_box.width;
-        let h = reference_box.height;
-        let ox = reference_box.x;
-        let oy = reference_box.y;
+    /// The margin box, in CSS px from the border box's origin.
+    fn margin_box(&self) -> Rect {
+        let border_box = scale_rect(self.frame.border_box, 1.0 / self.scale);
+        border_box + self.margins()
+    }
+
+    fn margins(&self) -> Insets {
+        let margin = self.node.final_layout().margin;
+        Insets::new(
+            margin.left as f64,
+            margin.top as f64,
+            margin.right as f64,
+            margin.bottom as f64,
+        )
+    }
+
+    /// The edges of a `<geometry-box>` with its rounded corners (CSS Shapes' box shapes), in CSS
+    /// px: the border radii for the border box, the inner radii for the padding and content boxes,
+    /// and for the margin box the radii grown by the margins as `box-shadow`'s spread grows them
+    /// (Blink's `FloatRoundedRect::OutsetForShapeMargin`).
+    fn rounded_reference_box(&self, geometry_box: &ShapeGeometryBox) -> BezPath {
+        let frame = &self.frame;
+        let to_css = 1.0 / self.scale;
+        let radii = frame.border_radii * to_css;
+        let border = scale_insets(frame.border_width, to_css);
+        let padding = scale_insets(frame.padding_width, to_css);
+        let border_box = scale_rect(frame.border_box, to_css);
+        let (rect, radii) = match geometry_box {
+            ShapeGeometryBox::ElementDependent
+            | ShapeGeometryBox::StrokeBox
+            | ShapeGeometryBox::ViewBox
+            | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox) => (border_box, radii),
+            ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => {
+                (border_box - border, inset_radii(radii, border))
+            }
+            ShapeGeometryBox::FillBox | ShapeGeometryBox::ShapeBox(ShapeBox::ContentBox) => {
+                let inset = Insets::new(
+                    border.x0 + padding.x0,
+                    border.y0 + padding.y0,
+                    border.x1 + padding.x1,
+                    border.y1 + padding.y1,
+                );
+                (border_box - inset, inset_radii(radii, inset))
+            }
+            ShapeGeometryBox::ShapeBox(ShapeBox::MarginBox) => {
+                let m = self.margins();
+                let radii = NonUniformRoundedRectRadii {
+                    top_left: outset_radius(radii.top_left, m.x0, m.y0),
+                    top_right: outset_radius(radii.top_right, m.x1, m.y0),
+                    bottom_right: outset_radius(radii.bottom_right, m.x1, m.y1),
+                    bottom_left: outset_radius(radii.bottom_left, m.x0, m.y1),
+                };
+                (border_box + m, radii)
+            }
+        };
+        rounded_rect(rect, radii)
+    }
+
+    /// Convert a CSS basic-shape in its reference box (CSS px) to a clip.
+    fn basic_shape_clip(&self, shape: &BasicShape, reference: Rect) -> ElementClip {
+        let w = reference.width();
+        let h = reference.height();
+        let ox = reference.x0;
+        let oy = reference.y0;
 
         match shape {
             GenericBasicShape::Circle(circle) => {
-                let (cx, cy) = resolve_position(&circle.position, w, h, ox, oy);
-                let r = resolve_shape_radius(&circle.radius, w, h, cx - ox, cy - oy);
-                Some(Circle::new(Point::new(cx, cy), r).into_path(0.1))
+                let center = resolve_position(&circle.position, reference);
+                let r = circle_radius(&circle.radius, center, reference);
+                ElementClip::shape(oval(center, r, r), Fill::NonZero)
             }
             GenericBasicShape::Ellipse(ellipse) => {
-                let (cx, cy) = resolve_position(&ellipse.position, w, h, ox, oy);
-                let rx = resolve_shape_radius(&ellipse.semiaxis_x, w, h, cx - ox, cy - oy);
-                let ry = resolve_shape_radius(&ellipse.semiaxis_y, h, w, cy - oy, cx - ox);
-                Some(Ellipse::new(Point::new(cx, cy), (rx, ry), 0.0).into_path(0.1))
+                let center = resolve_position(&ellipse.position, reference);
+                let rx = ellipse_radius(&ellipse.semiaxis_x, center.x, reference.x0, reference.x1);
+                let ry = ellipse_radius(&ellipse.semiaxis_y, center.y, reference.y0, reference.y1);
+                ElementClip::shape(oval(center, rx, ry), Fill::NonZero)
             }
             GenericBasicShape::Polygon(polygon) => {
                 let mut path = BezPath::new();
-                let _fill = &polygon.fill;
-                let coords = &polygon.coordinates;
-
-                if coords.is_empty() {
-                    return None;
-                }
-
-                for (i, coord) in coords.iter().enumerate() {
-                    let x = ox + resolve_lp(&coord.0, w);
-                    let y = oy + resolve_lp(&coord.1, h);
+                for (i, coord) in polygon.coordinates.iter().enumerate() {
+                    let point = Point::new(ox + resolve_lp(&coord.0, w), oy + resolve_lp(&coord.1, h));
                     if i == 0 {
-                        path.move_to(Point::new(x, y));
+                        path.move_to(point);
                     } else {
-                        path.line_to(Point::new(x, y));
+                        path.line_to(point);
                     }
                 }
                 path.close_path();
-
-                Some(path)
+                ElementClip::shape(path, fill_rule(polygon.fill))
             }
             GenericBasicShape::Rect(inset_rect) => {
-                // inset() function: inset(top right bottom left round border-radius)
+                // `inset()` (`rect()` and `xywh()` compute to it): insets that add up to more
+                // than the box are reduced in proportion, to a rectangle of no area.
                 let top = resolve_lp(&inset_rect.rect.0, h);
                 let right = resolve_lp(&inset_rect.rect.1, w);
                 let bottom = resolve_lp(&inset_rect.rect.2, h);
                 let left = resolve_lp(&inset_rect.rect.3, w);
-
-                let x0 = ox + left;
-                let y0 = oy + top;
-                let x1 = ox + w - right;
-                let y1 = oy + h - bottom;
-
-                if x1 <= x0 || y1 <= y0 {
-                    return None;
+                let rect = Rect::new(ox + left, oy + top, ox + w - right, oy + h - bottom);
+                if !(rect.x1 > rect.x0 && rect.y1 > rect.y0) {
+                    return ElementClip::Nothing;
                 }
-
-                // TODO: Support border-radius on inset()
-                Some(kurbo::Rect::new(x0, y0, x1, y1).into_path(0.1))
+                // `round`: corner radii as `border-radius` gives them, percentages of the
+                // reference box, shrunk together when they overlap.
+                let radii = resolve_radii(&inset_rect.round, w, h);
+                ElementClip::shape(rounded_rect(rect, radii), Fill::NonZero)
             }
-            GenericBasicShape::PathOrShape(path_or_shape) => match path_or_shape {
-                GenericPathOrShapeFunction::Path(path) => svg_path_to_bezpath(
-                    path.commands(),
-                    |v| *v as f64,
-                    |v| *v as f64,
-                    |v| *v as f64,
-                )
-                .map(|mut p| {
-                    p.apply_affine(kurbo::Affine::translate((ox, oy)));
-                    p
-                }),
-                GenericPathOrShapeFunction::Shape(shape) => svg_path_to_bezpath(
-                    &shape.commands,
-                    move |v: &LengthPercentage| {
-                        v.resolve(CSSPixelLength::new(w as f32)).px() as f64
-                    },
-                    move |v: &LengthPercentage| {
-                        v.resolve(CSSPixelLength::new(h as f32)).px() as f64
-                    },
-                    move |v: &Angle| v.degrees() as f64,
-                )
-                .map(|mut p| {
-                    p.apply_affine(kurbo::Affine::translate((ox, oy)));
-                    p
-                }),
-            },
+            GenericBasicShape::PathOrShape(path_or_shape) => {
+                let (path, fill) = match path_or_shape {
+                    GenericPathOrShapeFunction::Path(path) => {
+                        // `path()` data is in CSS px, zoomed as lengths are.
+                        let zoom = self.style.effective_zoom.value() as f64;
+                        let path_data = svg_path_to_bezpath(
+                            path.commands(),
+                            |v| *v as f64 * zoom,
+                            |v| *v as f64 * zoom,
+                            |v| *v as f64 * zoom,
+                            |v| *v as f64,
+                        );
+                        (path_data, path.fill)
+                    }
+                    GenericPathOrShapeFunction::Shape(shape) => {
+                        // A single arc radius (and a percentage of it) is of the reference box's
+                        // direction-agnostic size, as a circle's.
+                        let agnostic = w.hypot(h) / std::f64::consts::SQRT_2;
+                        let path_data = svg_path_to_bezpath(
+                            &shape.commands,
+                            move |v: &LengthPercentage| resolve_lp(v, w),
+                            move |v: &LengthPercentage| resolve_lp(v, h),
+                            move |v: &LengthPercentage| resolve_lp(v, agnostic),
+                            move |v: &Angle| v.degrees() as f64,
+                        );
+                        (path_data, shape.fill)
+                    }
+                };
+                match path {
+                    Some(mut path) => {
+                        path.apply_affine(Affine::translate((ox, oy)));
+                        ElementClip::shape(path, fill_rule(fill))
+                    }
+                    None => ElementClip::Nothing,
+                }
+            }
         }
     }
 }
 
-/// A resolved reference box in scaled pixel coordinates
-#[derive(Clone, Copy)]
-struct ReferenceBox {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-}
-
-impl From<ReferenceBox> for kurbo::Rect {
-    fn from(reference_box: ReferenceBox) -> Self {
-        kurbo::Rect::new(
-            reference_box.x,
-            reference_box.y,
-            reference_box.x + reference_box.width,
-            reference_box.y + reference_box.height,
-        )
+fn fill_rule(rule: FillRule) -> Fill {
+    match rule {
+        FillRule::Nonzero => Fill::NonZero,
+        FillRule::Evenodd => Fill::EvenOdd,
     }
 }
 
-/// Resolve a LengthPercentage value against a basis length (already scaled)
+fn scale_rect(rect: Rect, by: f64) -> Rect {
+    Rect::new(rect.x0 * by, rect.y0 * by, rect.x1 * by, rect.y1 * by)
+}
+
+/// An ellipse as every clip draws one: as the box of `border-radius: 50%` is drawn, so that a
+/// `circle()` clips what a round box covers (WPT's references are such boxes).
+fn oval(center: Point, rx: f64, ry: f64) -> BezPath {
+    let radius = Vec2::new(rx, ry);
+    let radii = NonUniformRoundedRectRadii {
+        top_left: radius,
+        top_right: radius,
+        bottom_right: radius,
+        bottom_left: radius,
+    };
+    let rect = Rect::new(center.x - rx, center.y - ry, center.x + rx, center.y + ry);
+    CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii).border_box_path()
+}
+
+fn scale_insets(insets: Insets, by: f64) -> Insets {
+    Insets::new(insets.x0 * by, insets.y0 * by, insets.x1 * by, insets.y1 * by)
+}
+
+/// The radii of a box `inset` inside one with `radii` (CSS Backgrounds' inner radii).
+fn inset_radii(radii: NonUniformRoundedRectRadii, inset: Insets) -> NonUniformRoundedRectRadii {
+    let shrink = |r: Vec2, x: f64, y: f64| Vec2::new((r.x - x).max(0.0), (r.y - y).max(0.0));
+    NonUniformRoundedRectRadii {
+        top_left: shrink(radii.top_left, inset.x0, inset.y0),
+        top_right: shrink(radii.top_right, inset.x1, inset.y0),
+        bottom_right: shrink(radii.bottom_right, inset.x1, inset.y1),
+        bottom_left: shrink(radii.bottom_left, inset.x0, inset.y1),
+    }
+}
+
+/// A rectangle with elliptical corners, the radii shrunk together where they overlap (as
+/// `border-radius`'s are). One whose corners make a whole ellipse is that ellipse, drawn as
+/// `circle()` and `ellipse()` are (the same box clips alike whichever way it is given).
+fn rounded_rect(rect: Rect, radii: NonUniformRoundedRectRadii) -> BezPath {
+    let css_box = CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii);
+    let (rx, ry) = (rect.width() / 2.0, rect.height() / 2.0);
+    let r = css_box.border_radii;
+    let half = |c: Vec2| (c.x - rx).abs() < 1e-9 && (c.y - ry).abs() < 1e-9;
+    if rx > 0.0 && ry > 0.0 && half(r.top_left) && half(r.top_right) && half(r.bottom_right) && half(r.bottom_left) {
+        return oval(rect.center(), rx, ry);
+    }
+    css_box.border_box_path()
+}
+
+/// The `<border-radius>` of an `inset()`, in CSS px: widths of `w`, heights of `h`.
+fn resolve_radii(
+    round: &GenericBorderRadius<style::values::computed::NonNegativeLengthPercentage>,
+    w: f64,
+    h: f64,
+) -> NonUniformRoundedRectRadii {
+    let resolve = |corner: &style::values::computed::BorderCornerRadius| Vec2 {
+        x: resolve_lp(&corner.0.width.0, w),
+        y: resolve_lp(&corner.0.height.0, h),
+    };
+    NonUniformRoundedRectRadii {
+        top_left: resolve(&round.top_left),
+        top_right: resolve(&round.top_right),
+        bottom_right: resolve(&round.bottom_right),
+        bottom_left: resolve(&round.bottom_left),
+    }
+}
+
+/// A corner radius grown by the margins beside it (`dx` the horizontal one, `dy` the vertical):
+/// the radius plus the margin, the margin first scaled by `1 + (ratio - 1)^3` where the radius is
+/// smaller than it (CSS Backgrounds' spread rule); a sharp corner stays sharp.
+fn outset_radius(radius: Vec2, dx: f64, dy: f64) -> Vec2 {
+    fn grow(radius: f64, outset: f64) -> f64 {
+        if radius <= 0.0 {
+            return 0.0;
+        }
+        if outset <= 0.0 {
+            return (radius + outset).max(0.0);
+        }
+        if radius >= outset {
+            return radius + outset;
+        }
+        let ratio = radius / outset;
+        radius + outset * (1.0 + (ratio - 1.0).powi(3))
+    }
+    if radius.x <= 0.0 || radius.y <= 0.0 {
+        return Vec2::ZERO;
+    }
+    Vec2::new(grow(radius.x, dx), grow(radius.y, dy))
+}
+
+/// Resolve a LengthPercentage value against a basis length
 fn resolve_lp(lp: &LengthPercentage, basis: f64) -> f64 {
     let basis_css = CSSPixelLength::new(basis as f32);
     lp.resolve(basis_css).px() as f64
 }
 
-/// Resolve a position (or auto => center) to absolute coordinates
+/// Resolve a position (or auto => center) in the reference box
 fn resolve_position(
     position: &GenericPositionOrAuto<style::values::computed::Position>,
-    w: f64,
-    h: f64,
-    ox: f64,
-    oy: f64,
-) -> (f64, f64) {
+    reference: Rect,
+) -> Point {
     match position {
-        GenericPositionOrAuto::Auto => (ox + w / 2.0, oy + h / 2.0),
-        GenericPositionOrAuto::Position(pos) => {
-            let x = ox + resolve_lp(&pos.horizontal, w);
-            let y = oy + resolve_lp(&pos.vertical, h);
-            (x, y)
-        }
+        GenericPositionOrAuto::Auto => reference.center(),
+        GenericPositionOrAuto::Position(pos) => Point::new(
+            reference.x0 + resolve_lp(&pos.horizontal, reference.width()),
+            reference.y0 + resolve_lp(&pos.vertical, reference.height()),
+        ),
     }
 }
 
-/// Resolve a shape radius keyword or length value
-fn resolve_shape_radius(
+/// A `circle()`'s radius: a percentage is of the reference box's direction-agnostic size
+/// (`sqrt(w² + h²) / sqrt(2)`); the side keywords measure to the box's sides in both axes, the
+/// corner keywords to its corners.
+fn circle_radius(
     radius: &GenericShapeRadius<LengthPercentage>,
-    primary_size: f64,
-    secondary_size: f64,
-    center_offset_primary: f64,
-    center_offset_secondary: f64,
+    center: Point,
+    reference: Rect,
 ) -> f64 {
+    let dx = [(center.x - reference.x0).abs(), (reference.x1 - center.x).abs()];
+    let dy = [(center.y - reference.y0).abs(), (reference.y1 - center.y).abs()];
     match radius {
-        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, primary_size),
-        GenericShapeRadius::ClosestSide => center_offset_primary
-            .min(primary_size - center_offset_primary)
-            .min(center_offset_secondary)
-            .min(secondary_size - center_offset_secondary)
-            .max(0.0),
-        GenericShapeRadius::FarthestSide => center_offset_primary
-            .max(primary_size - center_offset_primary)
-            .max(center_offset_secondary)
-            .max(secondary_size - center_offset_secondary),
+        GenericShapeRadius::Length(lp) => {
+            let agnostic = reference.width().hypot(reference.height()) / std::f64::consts::SQRT_2;
+            resolve_lp(&lp.0, agnostic)
+        }
+        GenericShapeRadius::ClosestSide => dx[0].min(dx[1]).min(dy[0]).min(dy[1]),
+        GenericShapeRadius::FarthestSide => dx[0].max(dx[1]).max(dy[0]).max(dy[1]),
+        GenericShapeRadius::ClosestCorner => dx[0].min(dx[1]).hypot(dy[0].min(dy[1])),
+        GenericShapeRadius::FarthestCorner => dx[0].max(dx[1]).hypot(dy[0].max(dy[1])),
+    }
+}
 
-        GenericShapeRadius::FarthestCorner => {
-            let dp = center_offset_primary.max(primary_size - center_offset_primary);
-            let ds = center_offset_secondary.max(secondary_size - center_offset_secondary);
-            dp.hypot(ds)
-        }
-        GenericShapeRadius::ClosestCorner => {
-            let dp = center_offset_primary
-                .min(primary_size - center_offset_primary)
-                .max(0.0);
-            let ds = center_offset_secondary
-                .min(secondary_size - center_offset_secondary)
-                .max(0.0);
-            dp.hypot(ds)
-        }
+/// One of an `ellipse()`'s radii, along the axis whose reference box edges are `start` and `end`
+/// and center coordinate `center`: the side keywords measure to the sides in that axis only.
+fn ellipse_radius(
+    radius: &GenericShapeRadius<LengthPercentage>,
+    center: f64,
+    start: f64,
+    end: f64,
+) -> f64 {
+    let near = (center - start).abs().min((end - center).abs());
+    let far = (center - start).abs().max((end - center).abs());
+    match radius {
+        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, end - start),
+        GenericShapeRadius::ClosestSide => near,
+        GenericShapeRadius::FarthestSide => far,
+        // Behind a pref that is off (`layout.css.ellipse-corners.enabled`): the corner's
+        // distance along this axis.
+        GenericShapeRadius::ClosestCorner => near,
+        GenericShapeRadius::FarthestCorner => far,
     }
 }
 
 type GenericPathCommand<Angle, N> = GenericShapeCommand<Angle, N, GenericPosition<N, N>, N>;
 
-/// Convert an SVG path() to a kurbo BezPath.
+/// Convert an SVG path() or a shape() to a kurbo BezPath.
 /// The returned path is in the path's own coordinate system (origin at 0,0).
 /// The caller is responsible for translating it to the reference box origin.
+/// `resolve_radius` resolves an arc radius given alone (both radii).
 fn svg_path_to_bezpath<Angle: Copy, N>(
     commands: &[GenericPathCommand<Angle, N>],
     resolve_x: impl Fn(&N) -> f64,
     resolve_y: impl Fn(&N) -> f64,
+    resolve_radius: impl Fn(&N) -> f64,
     resolve_angle: impl Fn(&Angle) -> f64,
 ) -> Option<BezPath> {
     if commands.is_empty() {
@@ -369,29 +550,32 @@ fn svg_path_to_bezpath<Angle: Copy, N>(
                 arc_size,
                 rotate,
             } => {
-                // SVG arc commands are complex; approximate as a line for now
                 let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
+                let radii = match radii.ry.as_ref() {
+                    Some(ry) => Vec2::new(resolve_x(&radii.rx), resolve_y(ry)),
+                    None => Vec2::splat(resolve_radius(&radii.rx)),
+                };
                 let svg_arc = SvgArc {
                     from: cur,
                     to: p,
-                    radii: Vec2 {
-                        x: resolve_x(&radii.rx),
-                        y: resolve_y(radii.ry.as_ref().unwrap_or(&radii.rx)),
-                    },
-                    x_rotation: resolve_angle(rotate),
-                    large_arc: match arc_size {
-                        ArcSize::Large => true,
-                        ArcSize::Small => false,
-                    },
-                    // TODO: check mapping is correct
-                    sweep: match arc_sweep {
-                        ArcSweep::Ccw => true,
-                        ArcSweep::Cw => false,
-                    },
+                    radii,
+                    // kurbo takes radians; CSS and SVG give degrees.
+                    x_rotation: resolve_angle(rotate).to_radians(),
+                    large_arc: matches!(arc_size, ArcSize::Large),
+                    // `cw` is SVG's sweep flag 1 (the direction of increasing angles, clockwise
+                    // with y down).
+                    sweep: matches!(arc_sweep, ArcSweep::Cw),
                 };
-                let arc = kurbo::Arc::from_svg_arc(&svg_arc)?;
-                for el in arc.append_iter(0.1) {
-                    bez.push(el);
+                match kurbo::Arc::from_svg_arc(&svg_arc) {
+                    Some(arc) => {
+                        for el in arc.append_iter(0.1) {
+                            bez.push(el);
+                        }
+                    }
+                    // An arc with a zero radius is a straight line (SVG's out-of-range rule);
+                    // one ending where it starts draws nothing.
+                    None if p != cur => bez.line_to(p),
+                    None => {}
                 }
                 last_control = None;
                 cur = p;

@@ -1,5 +1,6 @@
 //! Rendering for the CSS `mask` properties (`mask-image`, `mask-position`,
-//! `mask-size`, `mask-repeat`, `mask-clip`, `mask-origin`).
+//! `mask-size`, `mask-repeat`, `mask-clip`, `mask-origin`, `mask-mode`,
+//! `mask-composite`).
 //!
 //! Masks are applied by:
 //!
@@ -16,15 +17,16 @@
 //! `background-*` properties share computed value types.
 use crate::render::background::get_cyclic;
 
-use super::background::ImageLayerStyles;
+use super::background::{BoxModelBox, ImageLayerStyles};
 use super::{ALMOST_OPAQUE, ElementCx};
-use anyrender::PaintScene;
-use peniko::{BlendMode, Compose, Fill, Mix};
+use anyrender::recording::RenderCommand;
+use anyrender::{Paint, PaintScene, Scene};
+use kurbo::{Affine, BezPath};
+use peniko::{BlendMode, Color, Compose, Fill, ImageBrush, ImageData, Mix};
+use std::cell::RefCell;
 use style::properties::generated::longhands::mask_composite::single_value::computed_value::T as StyloMaskComposite;
+use style::properties::generated::longhands::mask_mode::single_value::computed_value::T as StyloMaskMode;
 use style::values::generics::image::GenericImage;
-
-#[cfg(feature = "tracing")]
-use tracing::warn;
 
 impl ElementCx<'_, '_> {
     /// Whether the element has any CSS `mask-image` layers
@@ -37,6 +39,25 @@ impl ElementCx<'_, '_> {
             .any(|image| !matches!(image, GenericImage::None))
     }
 
+    /// pyro: the mask painting area (CSS Masking's "mask painting area"), in device px from the
+    /// border box's origin: the largest of the layers' `mask-clip` boxes (the boxes nest), rounded
+    /// by the element's radii; everything visible for `mask-clip: no-clip`. Outside it the mask
+    /// is transparent: nothing of the element is left.
+    fn mask_painting_area(&self) -> BezPath {
+        let svg_styles = self.style.get_svg();
+        let rank = |clip: BoxModelBox| match clip {
+            BoxModelBox::NoClip => 3,
+            BoxModelBox::BorderBox => 2,
+            BoxModelBox::PaddingBox => 1,
+            BoxModelBox::ContentBox => 0,
+        };
+        let largest = (0..svg_styles.mask_image.0.len())
+            .map(|idx| BoxModelBox::from(*get_cyclic(&svg_styles.mask_clip.0, idx)))
+            .max_by_key(|&clip| rank(clip))
+            .unwrap_or(BoxModelBox::BorderBox);
+        self.box_path(largest)
+    }
+
     /// If the element has a CSS mask, push an isolation layer for the masked content
     /// to be drawn into. Returns whether a layer was pushed, which should later be
     /// passed to [`maybe_pop_css_mask_layer`](Self::maybe_pop_css_mask_layer).
@@ -45,14 +66,14 @@ impl ElementCx<'_, '_> {
             return false;
         }
 
-        // Content outside of the mask painting area (at largest the border box) has
-        // a mask alpha of 0, so we can clip the isolation layer to the border box.
+        // Content outside of the mask painting area has a mask alpha of 0, so the
+        // isolation layer is clipped to it.
         scene.push_layer(
             Fill::NonZero,
             Mix::Normal,
             ALMOST_OPAQUE,
             self.transform,
-            &self.frame.border_box_path(),
+            &self.mask_painting_area(),
             None,
             None,
         );
@@ -67,40 +88,31 @@ impl ElementCx<'_, '_> {
             return;
         }
 
+        // The `DestIn` layer covers the whole isolation layer: where a destructive layer
+        // draws nothing, it leaves what is under it.
+        let area = self.mask_painting_area();
         scene.push_layer(
             Fill::NonZero,
             BlendMode::new(Mix::Normal, Compose::DestIn),
             1.0,
             self.transform,
-            &self.frame.border_box_path(),
+            &area,
             None,
             None,
         );
-        self.draw_css_mask(scene);
+        self.draw_css_mask(scene, &area);
         scene.pop_layer(); // Mask (DestIn) layer
         scene.pop_layer(); // Isolation layer
     }
 
     /// Draw the mask image layers (analogous to `draw_background` for `background-image`)
-    fn draw_css_mask(&self, scene: &mut impl PaintScene) {
+    fn draw_css_mask(&self, scene: &mut impl PaintScene, area: &BezPath) {
         let svg_styles = self.style.get_svg();
         let image_data = &self.element.mask_images;
         let layer_count = svg_styles.mask_image.0.len();
 
         for idx in (0..layer_count).rev() {
             let layer = ImageLayerStyles::from_svg(svg_styles, image_data, idx);
-            let mask_clip_path = self.box_path(layer.clip);
-
-            // TODO: support `mask-mode: luminance` (luminance masks are currently
-            // rendered as alpha masks).
-            #[cfg(feature = "tracing")]
-            {
-                use style::properties::generated::longhands::mask_mode::single_value::computed_value::T as StyloMaskMode;
-                let mask_mode = &svg_styles.mask_mode.0;
-                if matches!(get_cyclic(&mask_mode, idx), StyloMaskMode::Luminance) {
-                    warn!("mask-mode: luminance is not supported (falling back to alpha)");
-                }
-            }
 
             // Each mask layer is composited with the (already drawn) layers below it
             // using the Porter-Duff operator given by its `mask-composite` value. The
@@ -119,18 +131,127 @@ impl ElementCx<'_, '_> {
 
             // The layer is pushed unconditionally (even for `mask-image: none` layers,
             // which draw nothing) as compositing a transparent black layer with e.g.
-            // `intersect` clears the mask built up so far.
+            // `intersect` clears the mask built up so far. It covers the whole painting
+            // area, and the layer's image is cut to its `mask-clip` box inside it: outside
+            // that box the layer is transparent black, which its operator composites too.
             scene.push_layer(
                 Fill::NonZero,
                 BlendMode::new(Mix::Normal, compose),
                 1.0,
                 self.transform,
-                &mask_clip_path,
+                area,
                 None,
                 None,
             );
-            self.draw_image_layer(scene, &layer);
+            scene.push_clip_layer(Fill::NonZero, self.transform, &self.box_path(layer.clip));
+            // pyro: `mask-mode: luminance` uses the image's luminance as its alpha
+            // (`match-source` is alpha for an image).
+            if *get_cyclic(&svg_styles.mask_mode.0, idx) == StyloMaskMode::Luminance {
+                let mut recording = Scene::new();
+                self.draw_image_layer(&mut recording, &layer);
+                luminance_to_alpha(&mut recording);
+                scene.append_scene(recording, Affine::IDENTITY);
+            } else {
+                self.draw_image_layer(scene, &layer);
+            }
+            scene.pop_layer();
             scene.pop_layer();
         }
+    }
+}
+
+/// The luminance of an sRGB colour (unpremultiplied components), with `feColorMatrix`'s
+/// `luminanceToAlpha` coefficients.
+fn luminance([r, g, b]: [f32; 3]) -> f32 {
+    0.2125 * r + 0.7154 * g + 0.0721 * b
+}
+
+/// A colour's luminance mask value as its alpha, over black: `alpha × luminance`.
+fn luminance_color(color: Color) -> Color {
+    let [r, g, b, a] = color.components;
+    Color::new([0.0, 0.0, 0.0, (a * luminance([r, g, b])).clamp(0.0, 1.0)])
+}
+
+/// pyro: turns what `scene` paints into its luminance mask, as alpha over black: each solid
+/// colour, gradient stop and image pixel becomes black with the alpha `alpha × luminance`. Exact
+/// for content whose paints do not overlap translucently (an image, a gradient, a vector image's
+/// shapes side by side); the luminance of overlapping translucent paints is approximated.
+fn luminance_to_alpha(scene: &mut Scene) {
+    for command in &mut scene.commands {
+        match command {
+            RenderCommand::Fill(fill) => luminance_paint(&mut fill.brush),
+            RenderCommand::Stroke(stroke) => luminance_paint(&mut stroke.brush),
+            RenderCommand::GlyphRun(run) => luminance_paint(&mut run.brush),
+            RenderCommand::BoxShadow(shadow) => shadow.brush = luminance_color(shadow.brush),
+            RenderCommand::PushLayer(_) | RenderCommand::PushClipLayer(_) | RenderCommand::PopLayer => {}
+        }
+    }
+}
+
+fn luminance_paint(paint: &mut Paint) {
+    match paint {
+        Paint::Solid(color) => *color = luminance_color(*color),
+        Paint::Gradient(gradient) => {
+            for stop in gradient.stops.iter_mut() {
+                let color = stop.color.to_alpha_color::<color::Srgb>();
+                stop.color = color::DynamicColor::from_alpha_color(luminance_color(color));
+            }
+        }
+        Paint::Image(image) => *image = luminance_image(image),
+        // Paints the backend owns are left as they are.
+        Paint::Resource(_) | Paint::Custom(_) => {}
+    }
+}
+
+thread_local! {
+    /// The luminance masks of the last few mask images (keyed by their data's id), so an image
+    /// is converted once, and the renderer sees the same image (and caches it) frame to frame.
+    static LUMINANCE_IMAGES: RefCell<Vec<(u64, ImageData)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// An image's luminance mask (see [`luminance_to_alpha`]), black with alpha.
+fn luminance_image(image: &ImageBrush) -> ImageBrush {
+    let source = &image.image;
+    let id = source.data.id();
+    let cached = LUMINANCE_IMAGES.with_borrow(|cache| {
+        cache
+            .iter()
+            .find(|(key, _)| *key == id)
+            .map(|(_, data)| data.clone())
+    });
+    let data = cached.unwrap_or_else(|| {
+        let premultiplied = source.alpha_type == peniko::ImageAlphaType::AlphaPremultiplied;
+        let bgra = source.format == peniko::ImageFormat::Bgra8;
+        let mut out = Vec::with_capacity(source.data.data().len());
+        for pixel in source.data.data().chunks_exact(4) {
+            let (r, g, b) = if bgra {
+                (pixel[2], pixel[1], pixel[0])
+            } else {
+                (pixel[0], pixel[1], pixel[2])
+            };
+            let a = pixel[3] as f32 / 255.0;
+            let l = luminance([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]);
+            // Premultiplied components are already scaled by alpha.
+            let alpha = if premultiplied { l } else { l * a };
+            out.extend_from_slice(&[0, 0, 0, (alpha * 255.0).round().clamp(0.0, 255.0) as u8]);
+        }
+        let data = ImageData {
+            data: peniko::Blob::new(std::sync::Arc::new(out)),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: source.width,
+            height: source.height,
+        };
+        LUMINANCE_IMAGES.with_borrow_mut(|cache| {
+            if cache.len() >= 8 {
+                cache.remove(0);
+            }
+            cache.push((id, data.clone()));
+        });
+        data
+    });
+    ImageBrush {
+        image: data,
+        sampler: image.sampler,
     }
 }

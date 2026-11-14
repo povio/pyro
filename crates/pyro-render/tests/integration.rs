@@ -4,6 +4,7 @@
 
 mod borders_backgrounds;
 mod br_flex_item;
+mod clip_path_mask;
 mod container_queries;
 mod containing_block_chain;
 mod dotted_dashed_lines;
