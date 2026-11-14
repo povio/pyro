@@ -10,15 +10,28 @@ use parley::fontique::{Collection, CollectionOptions, SourceCache};
 use parley::FontContext;
 
 static FONTS: LazyLock<Mutex<FontContext>> = LazyLock::new(|| {
-    Mutex::new(FontContext {
-        source_cache: SourceCache::new_shared(),
-        collection: if FORK_SAFE_FONTS.load(Ordering::Relaxed) {
-            fork_safe_collection()
-        } else {
-            Collection::new(CollectionOptions { shared: false, system_fonts: true })
-        },
-    })
+    let mut collection = if FORK_SAFE_FONTS.load(Ordering::Relaxed) {
+        fork_safe_collection()
+    } else {
+        Collection::new(CollectionOptions { shared: false, system_fonts: true })
+    };
+    for font in STARTUP_FONTS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        collection.register_fonts(font.clone(), None);
+    }
+    Mutex::new(FontContext { source_cache: SourceCache::new_shared(), collection })
 });
+
+/// Fonts [`add_startup_font`] gave, registered when the process's fonts are made.
+static STARTUP_FONTS: Mutex<Vec<parley::fontique::Blob<u8>>> = Mutex::new(Vec::new());
+
+/// Adds `font` (TTF/OTF/TTC bytes) to the process's fonts as if it were installed
+/// (`serve --font`): found by its family name, as a system font is. Unlike
+/// [`register_fonts`], it loads nothing now: the fonts are made, with it, at
+/// their first use, so a fork template can be given fonts before it forks. Call
+/// before any font use; a font added later is not seen.
+pub fn add_startup_font(font: parley::fontique::Blob<u8>) {
+    STARTUP_FONTS.lock().unwrap_or_else(|e| e.into_inner()).push(font);
+}
 
 static FORK_SAFE_FONTS: AtomicBool = AtomicBool::new(false);
 

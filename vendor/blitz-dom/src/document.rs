@@ -88,6 +88,8 @@ pub(crate) fn init_stylo_prefs() {
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
+        // pyro: `background-clip: border-area` (blitz-paint clips it to the border's area).
+        style_config::set_pref!("layout.css.background-clip.border-area.enabled", true);
         style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
         style_config::set_pref!("layout.css.columns.enabled", true);
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
@@ -1832,11 +1834,12 @@ impl BaseDocument {
                     node.clear_layout_cache();
                     node.insert_damage(ALL_DAMAGE);
                 }
-                ImageType::Background(idx) | ImageType::Mask(idx) => {
+                ImageType::Background(idx) | ImageType::Mask(idx) | ImageType::BorderImage(idx) => {
                     let layer_image = node.element_data_mut().and_then(|el| {
                         let images = match image_type {
                             ImageType::Background(_) => &mut el.background_images,
                             ImageType::Mask(_) => &mut el.mask_images,
+                            ImageType::BorderImage(_) => &mut el.border_images,
                             ImageType::Image => unreachable!(),
                         };
                         images.get_mut(idx)

@@ -857,6 +857,7 @@ impl BaseDocument {
             }
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
+            self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
         }
     }
 
@@ -882,12 +883,16 @@ impl BaseDocument {
             return;
         };
 
-        let (style_images, elem_images) = match kind {
+        let (style_images, elem_images): (&[style::values::computed::Image], _) = match kind {
             ImageLayerKind::Background => (
                 &style.get_background().background_image.0,
                 &mut elem.background_images,
             ),
             ImageLayerKind::Mask => (&style.get_svg().mask_image.0, &mut elem.mask_images),
+            ImageLayerKind::BorderImage => (
+                std::slice::from_ref(&style.get_border().border_image_source),
+                &mut elem.border_images,
+            ),
         };
 
         let len = style_images.len();

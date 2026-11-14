@@ -691,6 +691,16 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  )]
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
+diff -ruN a/values/specified/background.rs b/values/specified/background.rs
+--- a/values/specified/background.rs	2026-11-11 19:55:57
++++ b/values/specified/background.rs	2026-11-14 10:07:12
+@@ -369,6 +369,5 @@
+ pub enum ImageLayerAttachment {
+     Scroll,
+     Fixed,
+-    #[cfg(feature = "gecko")]
+     Local,
+ }
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
 +++ b/values/specified/box.rs	2026-11-11 19:55:57

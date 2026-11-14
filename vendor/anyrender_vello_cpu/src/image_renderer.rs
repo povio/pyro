@@ -24,6 +24,12 @@ impl VelloCpuImageRenderer {
         self.scene.clear_image_cache();
     }
 
+    /// pyro: glyphs aliased or antialiased (`None`, the default); see
+    /// [`VelloCpuScenePainter::set_text_aliasing_threshold`]. Resizing keeps it.
+    pub fn set_text_aliasing_threshold(&mut self, threshold: Option<u8>) {
+        self.scene.set_text_aliasing_threshold(threshold);
+    }
+
     /// Create a renderer that rasterizes on `threads` worker threads of its own
     /// (vello_cpu's `RenderSettings::num_threads`; 0: on the calling thread,
     /// which is all it does without the `multithreading` feature). Resizing

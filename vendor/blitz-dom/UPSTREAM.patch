@@ -297,7 +297,16 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/document.rs
 --- a/packages/blitz-dom/src/document.rs
 +++ b/packages/blitz-dom/src/document.rs
-@@ -120,10 +120,22 @@
+@@ -88,6 +88,8 @@
+     INIT.call_once(|| {
+         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
+         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
++        // pyro: `background-clip: border-area` (blitz-paint clips it to the border's area).
++        style_config::set_pref!("layout.css.background-clip.border-area.enabled", true);
+         style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
+         style_config::set_pref!("layout.css.columns.enabled", true);
+         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
+@@ -120,10 +122,22 @@
          style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
          style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
          style_config::set_pref!("layout.css.text-overflow.enabled", true);
@@ -321,7 +330,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          style_config::set_pref!("layout.threads", -1);
      });
  }
-@@ -277,6 +289,34 @@
+@@ -277,6 +291,34 @@
      },
  }
  
@@ -356,7 +365,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  pub struct BaseDocument {
      /// ID of the document
      id: usize,
-@@ -290,10 +330,20 @@
+@@ -290,10 +332,20 @@
      pub(crate) viewport: Viewport,
      /// CSS media type used to evaluate `@media` rules.
      pub(crate) media_type: MediaType,
@@ -377,7 +386,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Document-wide work for the next [`resolve`](Self::resolve).
      pub(crate) flags: DocumentFlags,
      /// Strategy for Stylo's style traversal during `resolve`.
-@@ -354,6 +404,9 @@
+@@ -354,6 +406,9 @@
      pub(crate) focus_node_id: Option<NodeId>,
      /// The node which is currently active (if any)
      pub(crate) active_node_id: Option<NodeId>,
@@ -387,7 +396,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// The node which recieved a mousedown event (if any)
      pub(crate) mousedown_node_id: Option<NodeId>,
      /// The last time a mousedown was made (for double-click detection)
-@@ -389,6 +442,9 @@
+@@ -389,6 +444,9 @@
      pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
      /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
      pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
@@ -397,7 +406,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
      /// added, replaced or removed), so that CSSOM wrappers can detect that
      /// their cached rule data is stale.
-@@ -404,6 +460,34 @@
+@@ -404,6 +462,34 @@
      pub(crate) has_changes: bool,
      /// Set of changed nodes for updating the accessibility tree
      pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
@@ -432,7 +441,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// Nodes that contain custom widgets
      #[cfg(feature = "custom-widget")]
-@@ -426,6 +510,35 @@
+@@ -426,6 +512,35 @@
      /// the style traversal and by pseudo-element box construction).
      pub(crate) pending_style_image_nodes: Vec<NodeId>,
  
@@ -468,7 +477,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
      // keyed by request id
      pub(crate) pending_critical_resources: HashSet<usize>,
-@@ -514,11 +627,13 @@
+@@ -514,11 +629,13 @@
  
          let viewport = config.viewport.unwrap_or_default();
          let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -484,7 +493,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let nodes_to_id = HashMap::new();
  
          let base_url = config
-@@ -555,7 +670,11 @@
+@@ -555,7 +672,11 @@
              nodes_to_id,
              viewport,
              media_type,
@@ -496,7 +505,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              flags: DocumentFlags::empty(),
              style_threading: config.style_threading,
              incremental_layout: config.incremental.unwrap_or(true),
-@@ -563,11 +682,16 @@
+@@ -563,11 +684,16 @@
              devtool_settings: DevtoolSettings::default(),
              url: base_url,
              nodes_to_stylesheet: BTreeMap::new(),
@@ -514,7 +523,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
              hover_node_id: None,
              hover_hit_node_id: None,
-@@ -575,6 +699,7 @@
+@@ -575,6 +701,7 @@
              last_client_pointer_position: None,
              focus_node_id: None,
              active_node_id: None,
@@ -522,7 +531,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              mousedown_node_id: None,
              has_active_animations: false,
              subdoc_is_animating: false,
-@@ -589,9 +714,24 @@
+@@ -589,9 +716,24 @@
  
              has_changes: false,
              deferred_construction_nodes: Vec::new(),
@@ -547,7 +556,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              pending_critical_resources: HashSet::new(),
              controls_to_form: HashMap::new(),
              net_provider,
-@@ -741,6 +881,12 @@
+@@ -741,6 +883,12 @@
              .or(self.try_root_element().map(|el| el.id))
      }
  
@@ -560,7 +569,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn mutate<'doc>(&'doc mut self) -> DocumentMutator<'doc> {
          DocumentMutator::new(self)
      }
-@@ -991,6 +1137,10 @@
+@@ -991,6 +1139,10 @@
      /// it so that stale NodeIds are never dereferenced after the slot is freed.
      pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
          self.clear_interaction_state_for_removed_node(node_id);
@@ -571,7 +580,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.nodes.remove(node_id)
      }
  
-@@ -1105,14 +1255,18 @@
+@@ -1105,14 +1257,18 @@
          if let Some(node) = &mut node {
              on_drop(node_id);
              if let Some(before) = node.before() {
@@ -593,7 +602,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
  
              // Anonymous blocks live only in the slab, so deallocate the ones this
-@@ -1136,12 +1290,36 @@
+@@ -1136,12 +1292,36 @@
          // Free any anonymous blocks that this block owns before removing it.
          let nested = std::mem::take(&mut self.nodes[anon_id].anonymous_blocks);
          for nested_id in nested {
@@ -631,7 +640,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the DOM or focus changed since the last [`Self::clear_changes`]
      /// (i.e. whether the accessibility tree is out of date)
      pub fn has_changes(&self) -> bool {
-@@ -1198,7 +1376,7 @@
+@@ -1198,7 +1378,7 @@
              let mut node = doc.remove_node_from_tree(node_id);
              if let Some(node) = &mut node {
                  for &child in &node.children {
@@ -640,7 +649,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
                  for &anon_id in &node.anonymous_blocks {
                      doc.deallocate_anonymous_block(anon_id);
-@@ -1305,6 +1483,32 @@
+@@ -1305,6 +1485,32 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
@@ -673,7 +682,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let data = Stylesheet::from_str(
              css.as_ref(),
              self.url.url_extra_data(),
-@@ -1396,6 +1600,75 @@
+@@ -1396,6 +1602,75 @@
          }
      }
  
@@ -749,7 +758,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1429,9 +1702,17 @@
+@@ -1429,9 +1704,17 @@
          };
  
          match resource {
@@ -768,7 +777,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1469,18 +1750,22 @@
+@@ -1469,18 +1752,22 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -792,7 +801,21 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      ..Default::default()
                  };
  
-@@ -1580,7 +1865,75 @@
+@@ -1547,11 +1834,12 @@
+                     node.clear_layout_cache();
+                     node.insert_damage(ALL_DAMAGE);
+                 }
+-                ImageType::Background(idx) | ImageType::Mask(idx) => {
++                ImageType::Background(idx) | ImageType::Mask(idx) | ImageType::BorderImage(idx) => {
+                     let layer_image = node.element_data_mut().and_then(|el| {
+                         let images = match image_type {
+                             ImageType::Background(_) => &mut el.background_images,
+                             ImageType::Mask(_) => &mut el.mask_images,
++                            ImageType::BorderImage(_) => &mut el.border_images,
+                             ImageType::Image => unreachable!(),
+                         };
+                         images.get_mut(idx)
+@@ -1580,7 +1868,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -868,7 +891,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1700,14 +2053,24 @@
+@@ -1700,14 +2056,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -896,7 +919,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1718,7 +2081,7 @@
+@@ -1718,7 +2084,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -905,7 +928,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1753,7 +2116,7 @@
+@@ -1753,7 +2119,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -914,7 +937,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1859,10 +2222,16 @@
+@@ -1859,10 +2225,16 @@
          }
  
          // Focus the new node
@@ -932,7 +955,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          );
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
-@@ -1895,6 +2264,38 @@
+@@ -1895,6 +2267,38 @@
          true
      }
  
@@ -971,7 +994,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1991,10 +2392,12 @@
+@@ -1991,10 +2395,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -985,7 +1008,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2078,6 +2481,28 @@
+@@ -2078,6 +2484,28 @@
          true
      }
  
@@ -1014,7 +1037,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +2572,46 @@
+@@ -2147,12 +2575,46 @@
          self.mousedown_node_id
      }
  
@@ -1061,7 +1084,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +2647,12 @@
+@@ -2188,6 +2650,12 @@
          self.viewport.clone()
      }
  
@@ -1074,7 +1097,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2266,6 +2731,7 @@
+@@ -2266,6 +2734,7 @@
  
          self.set_stylist_device(make_device(
              &self.viewport,
@@ -1082,7 +1105,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.media_type.clone(),
              self.font_ctx.clone(),
          ));
-@@ -2317,6 +2783,15 @@
+@@ -2317,6 +2786,15 @@
          let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
          let styles_use_viewport_units = old_device.used_viewport_size();
  
@@ -1098,7 +1121,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2464,6 +2939,11 @@
+@@ -2464,6 +2942,11 @@
          (pos, *self.nodes[node_id].unrounded_layout())
      }
  
@@ -1110,7 +1133,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2677,7 +3157,7 @@
+@@ -2677,7 +3160,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -1119,7 +1142,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -3782,6 +4262,7 @@
+@@ -3782,6 +4265,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -1127,7 +1150,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +4285,52 @@
+@@ -3804,6 +4288,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -1508,6 +1531,100 @@ new file mode 100644
 +        );
 +    }
 +}
+diff --git a/packages/blitz-dom/src/icc.rs b/packages/blitz-dom/src/icc.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/icc.rs
+@@ -0,0 +1,89 @@
++//! pyro: tagged images are drawn in their colour space (CSS Color 4, "Color spaces of tagged
++//! images"): a raster image's embedded ICC profile converts its pixels to sRGB when it is
++//! decoded, as Chromium does for an sRGB display. An untagged image is sRGB already.
++
++use std::collections::HashMap;
++use std::sync::{Arc, LazyLock, Mutex};
++
++use moxcms::{ColorProfile, DataColorSpace, Layout, TransformExecutor, TransformOptions};
++
++type Transform = Arc<dyn TransformExecutor<u8> + Send + Sync>;
++
++/// The transform to sRGB of each profile seen, by its bytes: `None` for a profile that is sRGB
++/// already (or not an RGB one moxcms reads), whose pixels stay as they are.
++static TRANSFORMS: LazyLock<Mutex<HashMap<Vec<u8>, Option<Transform>>>> =
++    LazyLock::new(Default::default);
++
++/// Converts `rgba` (RGBA8, unpremultiplied) from the colour space of the ICC profile `icc` to sRGB.
++pub(crate) fn to_srgb(icc: &[u8], rgba: &mut [u8]) {
++    const MAX_PROFILES: usize = 32;
++    let transform = {
++        let mut transforms = TRANSFORMS.lock().unwrap_or_else(|e| e.into_inner());
++        if let Some(transform) = transforms.get(icc) {
++            transform.clone()
++        } else {
++            if transforms.len() >= MAX_PROFILES {
++                transforms.clear();
++            }
++            let transform = transform_to_srgb(icc);
++            transforms.insert(icc.to_vec(), transform.clone());
++            transform
++        }
++    };
++    if let Some(transform) = transform {
++        let source = rgba.to_vec();
++        let _ = transform.transform(&source, rgba);
++    }
++}
++
++/// The transform from `icc`'s colour space to sRGB, `None` when there is nothing to convert:
++/// the profile is not an RGB one moxcms reads, or it maps every probe colour to itself within a
++/// level (an sRGB profile, which Skia also leaves alone), so that its images stay exact.
++fn transform_to_srgb(icc: &[u8]) -> Option<Transform> {
++    let profile = ColorProfile::new_from_slice(icc).ok()?;
++    if profile.color_space != DataColorSpace::Rgb {
++        return None;
++    }
++    let srgb = ColorProfile::new_srgb();
++    let transform = profile
++        .create_transform_8bit(Layout::Rgba, &srgb, Layout::Rgba, TransformOptions::default())
++        .ok()?;
++    // Ramps of each primary and of gray.
++    let probe: Vec<u8> = (0..=255u8)
++        .step_by(5)
++        .flat_map(|v| [[v, 0, 0, 255], [0, v, 0, 255], [0, 0, v, 255], [v, v, v, 255]])
++        .flatten()
++        .collect();
++    let mut mapped = vec![0; probe.len()];
++    transform.transform(&probe, &mut mapped).ok()?;
++    let identity = probe.iter().zip(&mapped).all(|(a, b)| a.abs_diff(*b) <= 1);
++    (!identity).then_some(transform)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// An sRGB profile changes nothing; one with red and green swapped swaps them.
++    #[test]
++    fn profiles_convert_to_srgb() {
++        let srgb = ColorProfile::new_srgb().encode().unwrap();
++        let mut pixels = vec![0x99, 0, 0, 255, 10, 200, 30, 128];
++        let original = pixels.clone();
++        to_srgb(&srgb, &mut pixels);
++        assert_eq!(pixels, original);
++
++        let mut swapped = ColorProfile::new_srgb();
++        std::mem::swap(&mut swapped.red_colorant, &mut swapped.green_colorant);
++        let swapped = swapped.encode().unwrap();
++        let mut pixels = vec![0x99, 0, 0, 255];
++        to_srgb(&swapped, &mut pixels);
++        assert!(pixels[0] <= 1 && pixels[1].abs_diff(0x99) <= 1 && pixels[2] <= 1, "{pixels:?}");
++        assert_eq!(pixels[3], 255, "alpha stays");
++
++        // Not a profile: the pixels stay.
++        let mut pixels = original.clone();
++        to_srgb(b"not a profile", &mut pixels);
++        assert_eq!(pixels, original);
++    }
++}
 diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
 --- a/packages/blitz-dom/src/iframe.rs
 +++ b/packages/blitz-dom/src/iframe.rs
@@ -1519,6 +1636,138 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
              // A sub-document is a separate devtools target with its own provider
              #[cfg(feature = "devtools")]
              devtools_provider: None,
+diff --git a/packages/blitz-dom/src/lang.rs b/packages/blitz-dom/src/lang.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/lang.rs
+@@ -0,0 +1,127 @@
++//! pyro: the language of an element, for `:lang()` (HTML, "The lang and xml:lang attributes"):
++//! the nearest inclusive ancestor's `xml:lang`, or `lang` on an HTML, SVG or MathML element, else
++//! the document's default language, which a `<meta http-equiv="content-language">` sets. A range
++//! matches by RFC 4647 extended filtering, ASCII case-insensitively, as in Chromium.
++
++use markup5ever::{LocalName, local_name, ns};
++
++use crate::node::Node;
++
++/// The `xml:lang`, else `lang`, attribute of `node` itself.
++pub(crate) fn own_lang(node: &Node) -> Option<&str> {
++    let elem = node.element_data()?;
++    let accepts_lang =
++        elem.name.ns == ns!(html) || elem.name.ns == ns!(svg) || elem.name.ns == ns!(mathml);
++    let mut lang = None;
++    for attr in elem.attrs() {
++        if attr.name.local == local_name!("lang") {
++            if attr.name.ns == ns!(xml) {
++                return Some(attr.value.as_str());
++            }
++            if attr.name.ns == ns!() && accepts_lang {
++                lang = lang.or(Some(attr.value.as_str()));
++            }
++        }
++    }
++    lang
++}
++
++/// The language of element `node` (`None`: unknown).
++pub(crate) fn language(node: &Node) -> Option<&str> {
++    let mut current = node;
++    loop {
++        if let Some(lang) = own_lang(current) {
++            return Some(lang);
++        }
++        match current.parent {
++            Some(parent) => current = current.with(parent),
++            // `current` is the document.
++            None => return default_language(current),
++        }
++    }
++}
++
++/// The pragma-set default language of `document`: the `content` of the last
++/// `<meta http-equiv="content-language">` of its `<head>`, up to the first space,
++/// unless it lists several (a comma).
++fn default_language(document: &Node) -> Option<&str> {
++    fn child<'a>(node: &'a Node, name: &LocalName) -> Option<&'a Node> {
++        node.children
++            .iter()
++            .map(|&id| node.with(id))
++            .find(|n| n.data.is_element_with_tag_name(name))
++    }
++    let head = child(child(document, &local_name!("html"))?, &local_name!("head"))?;
++    head.children.iter().rev().map(|&id| head.with(id)).find_map(|meta| {
++        let elem = meta.element_data().filter(|e| e.name.local == local_name!("meta"))?;
++        elem.attr(local_name!("http-equiv"))
++            .filter(|v| v.trim().eq_ignore_ascii_case("content-language"))?;
++        let content = elem.attr(local_name!("content")).filter(|c| !c.contains(','))?;
++        content.split_ascii_whitespace().next()
++    })
++}
++
++/// RFC 4647 §3.3.2 extended filtering of language tag `tag` by `range`, ASCII
++/// case-insensitively, with the implicit wildcard of Selectors 4 (`:lang(en)`
++/// matches `en-US`).
++pub(crate) fn range_matches(tag: &str, range: &str) -> bool {
++    if range.is_empty() || tag.is_empty() {
++        return false;
++    }
++    let mut tags = tag.split('-');
++    let mut ranges = range.split('-');
++    let (Some(t0), Some(r0)) = (tags.next(), ranges.next()) else { return false };
++    if r0 != "*" && !t0.eq_ignore_ascii_case(r0) {
++        return false;
++    }
++    for r in ranges {
++        if r == "*" {
++            continue;
++        }
++        loop {
++            let Some(t) = tags.next() else { return false };
++            if t.eq_ignore_ascii_case(r) {
++                break;
++            }
++            // A singleton ends the subtags a range may skip.
++            if t.len() == 1 {
++                return false;
++            }
++        }
++    }
++    true
++}
++
++#[cfg(test)]
++mod tests {
++    use super::range_matches;
++
++    #[test]
++    fn ranges_match_by_extended_filtering_ascii_case_insensitively() {
++        for (tag, range) in [
++            ("es", "es"),
++            ("es-MX", "es"),
++            ("ES", "es"),
++            ("en-GB-scouse", "en-GB"),
++            ("en-us", "en"),
++            ("En", "en"),
++            ("de-Latn-DE", "de-DE"),
++            ("de-DE", "*-DE"),
++        ] {
++            assert!(range_matches(tag, range), "{tag} {range}");
++        }
++        for (tag, range) in [
++            ("MX-es", "es"),
++            ("en-US", "en-GB"),
++            ("en", "en-GB"),
++            ("fi", "fİ"),
++            ("fi", "Fı"),
++            ("kl", "\u{212a}l"),
++            ("de-x-DE", "de-DE"),
++            ("", "en"),
++            ("en", ""),
++        ] {
++            assert!(!range_matches(tag, range), "{tag} {range}");
++        }
++    }
++}
 diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src/layout/construct.rs
 --- a/packages/blitz-dom/src/layout/construct.rs
 +++ b/packages/blitz-dom/src/layout/construct.rs
@@ -3651,6 +3900,32 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  node.insert_damage(ONLY_RELAYOUT);
              }
          }
+@@ -552,6 +857,7 @@
+             }
+             self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
+             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
++            self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
+         }
+     }
+ 
+@@ -577,12 +883,16 @@
+             return;
+         };
+ 
+-        let (style_images, elem_images) = match kind {
++        let (style_images, elem_images): (&[style::values::computed::Image], _) = match kind {
+             ImageLayerKind::Background => (
+                 &style.get_background().background_image.0,
+                 &mut elem.background_images,
+             ),
+             ImageLayerKind::Mask => (&style.get_svg().mask_image.0, &mut elem.mask_images),
++            ImageLayerKind::BorderImage => (
++                std::slice::from_ref(&style.get_border().border_image_source),
++                &mut elem.border_images,
++            ),
+         };
+ 
+         let len = style_images.len();
 diff --git a/packages/blitz-dom/src/layout/first_letter.rs b/packages/blitz-dom/src/layout/first_letter.rs
 new file mode 100644
 --- /dev/null
@@ -10454,7 +10729,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 --- a/packages/blitz-dom/src/lib.rs
 +++ b/packages/blitz-dom/src/lib.rs
-@@ -46,14 +46,18 @@
+@@ -46,19 +46,30 @@
  mod events;
  mod font_metrics;
  mod form;
@@ -10473,7 +10748,19 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  /// Computation of resolved CSS property values (`getComputedStyle()`)
  mod resolved_style;
  /// Scrolling of nodes and the viewport, and scroll animations.
-@@ -95,6 +99,7 @@
+ mod scrolling;
+ mod selection;
++/// pyro: the colour space of tagged images.
++mod icc;
++/// pyro: the language of an element, for `:lang()`.
++mod lang;
++/// pyro: SVG reference cycles usvg does not break.
++#[cfg(feature = "svg")]
++mod svg_refs;
+ /// Implementations that interact with servo's style engine
+ mod stylo;
+ mod stylo_device;
+@@ -95,6 +106,7 @@
  // `Node::final_layout`)
  pub use config::{DocumentConfig, StyleThreading};
  pub use document::{
@@ -11552,7 +11839,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -599,8 +630,32 @@
+@@ -599,23 +630,73 @@
      }
  }
  
@@ -11573,6 +11860,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +
  impl ImageHandler {
      fn parse(&self, bytes: Bytes) -> Result<Resource, String> {
+-        let image_err = match image::ImageReader::new(Cursor::new(&bytes))
 +        let key = decoded_key(&bytes);
 +        if let Some((_, w, h, data)) = DECODED
 +            .lock()
@@ -11582,11 +11870,21 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +        {
 +            return Ok(Resource::Image(self.kind, w, h, data));
 +        }
-         let image_err = match image::ImageReader::new(Cursor::new(&bytes))
++        // pyro: `ImageReader::decode`, keeping the image's ICC profile.
++        let decoded = image::ImageReader::new(Cursor::new(&bytes))
              .with_guessed_format()
              .expect("IO errors impossible with Cursor")
-@@ -609,13 +664,28 @@
-             Ok(image) => {
+-            .decode()
+-        {
+-            Ok(image) => {
++            .into_decoder()
++            .and_then(|mut decoder| {
++                image::Limits::default().reserve(image::ImageDecoder::total_bytes(&decoder))?;
++                let icc = image::ImageDecoder::icc_profile(&mut decoder).ok().flatten();
++                image::DynamicImage::from_decoder(decoder).map(|image| (image, icc))
++            });
++        let image_err = match decoded {
++            Ok((image, icc)) => {
                  let width = image.width();
                  let height = image.height();
 -                let raw_rgba8_data = image.into_rgba8().into_raw();
@@ -11596,7 +11894,12 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 -                    height,
 -                    Arc::new(raw_rgba8_data),
 -                ));
-+                let raw_rgba8_data = Arc::new(image.into_rgba8().into_raw());
++                let mut rgba = image.into_rgba8().into_raw();
++                // pyro: a tagged image's pixels in sRGB.
++                if let Some(icc) = icc {
++                    crate::icc::to_srgb(&icc, &mut rgba);
++                }
++                let raw_rgba8_data = Arc::new(rgba);
 +                {
 +                    const MAX_IMAGES: usize = 64;
 +                    const MAX_BYTES: usize = 64 << 20;
@@ -11621,7 +11924,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -649,6 +719,62 @@
+@@ -649,6 +730,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -11782,7 +12085,17 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/node/element.rs
 --- a/packages/blitz-dom/src/node/element.rs
 +++ b/packages/blitz-dom/src/node/element.rs
-@@ -118,6 +118,10 @@
+@@ -79,6 +79,9 @@
+ 
+     pub mask_images: ThinVec<Option<ImageResourceData>>,
+ 
++    /// pyro: the `border-image-source` image (at most one entry).
++    pub border_images: ThinVec<Option<ImageResourceData>>,
++
+     /// Parley text layout (elements with inline inner display mode only)
+     pub inline_layout_data: Option<Box<TextLayout>>,
+ 
+@@ -118,6 +121,10 @@
      // Pseudo element nodes
      pub before: Option<NodeId>,
      pub after: Option<NodeId>,
@@ -11793,7 +12106,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
      /// Detailed layout information from the most recent layout (currently
      /// grid track sizing information for grid containers only). Used by
-@@ -143,6 +147,25 @@
+@@ -143,6 +150,25 @@
      pub final_layout: Layout,
      pub scroll_offset: crate::Point<f64>,
      pub scrollable_overflow: KurboRect,
@@ -11819,7 +12132,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
      /// recorded by the layout pass for CSSOM geometry lookups.
      #[cfg(feature = "writing-mode")]
-@@ -157,6 +180,11 @@
+@@ -157,6 +183,11 @@
              final_layout: Layout::new(),
              scroll_offset: crate::Point::ZERO,
              scrollable_overflow: KurboRect::ZERO,
@@ -11831,7 +12144,23 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              #[cfg(feature = "writing-mode")]
              writing_mode: stylo_taffy::WritingMode::empty(),
          }
-@@ -337,6 +365,7 @@
+@@ -295,6 +326,7 @@
+             .field("special_data", &self.special_data)
+             .field("background_images", &self.background_images)
+             .field("mask_images", &self.mask_images)
++            .field("border_images", &self.border_images)
+             .field("inline_layout_data", &self.inline_layout_data)
+             .field("list_item_data", &self.list_item_data)
+             .field("template_contents", &self.template_contents)
+@@ -321,6 +353,7 @@
+             special_data: self.special_data.clone(),
+             background_images: self.background_images.clone(),
+             mask_images: self.mask_images.clone(),
++            border_images: self.border_images.clone(),
+             inline_layout_data: self.inline_layout_data.clone(),
+             list_item_data: self.list_item_data.clone(),
+             template_contents: self.template_contents,
+@@ -337,6 +370,7 @@
              may_have_animations: AtomicBool::new(false),
              before: None,
              after: None,
@@ -11839,7 +12168,15 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              detailed_layout_info: taffy::DetailedLayoutInfo::None,
              display_constructed_as: StyloDisplay::Block,
              layout_data: None,
-@@ -451,6 +480,7 @@
+@@ -439,6 +473,7 @@
+             template_contents: None,
+             background_images: ThinVec::new(),
+             mask_images: ThinVec::new(),
++            border_images: ThinVec::new(),
+ 
+             stylo_element_data: Default::default(),
+             selector_flags: Cell::new(ElementSelectorFlags::empty()),
+@@ -451,6 +486,7 @@
              may_have_animations: AtomicBool::new(false),
              before: None,
              after: None,
@@ -11847,7 +12184,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              detailed_layout_info: taffy::DetailedLayoutInfo::None,
              display_constructed_as: StyloDisplay::Block,
              layout_data: None,
-@@ -470,6 +500,12 @@
+@@ -470,6 +506,12 @@
          {
              data.element_state.insert(ElementState::CHECKED);
          }
@@ -11860,7 +12197,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
          // The element state needs to be modified if the element can be disabled.
          if data.can_be_disabled() {
-@@ -648,6 +684,24 @@
+@@ -648,6 +690,24 @@
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
@@ -14941,11 +15278,12 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              NonTSPseudoClass::Fullscreen => false,
              NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
 -            NonTSPseudoClass::Indeterminate => false,
+-            NonTSPseudoClass::Lang(_) => false,
+-            NonTSPseudoClass::CustomState(_) => false,
 +            NonTSPseudoClass::Indeterminate => {
 +                self.element_state().contains(ElementState::INDETERMINATE)
 +            }
-             NonTSPseudoClass::Lang(_) => false,
--            NonTSPseudoClass::CustomState(_) => false,
++            NonTSPseudoClass::Lang(ref lang) => self.match_element_lang(None, lang),
 +            NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
              NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
 -            NonTSPseudoClass::PlaceholderShown => false,
@@ -15009,7 +15347,33 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -917,27 +1137,168 @@
+@@ -889,15 +1109,21 @@
+     }
+ 
+     fn lang_attr(&self) -> Option<style::selector_parser::AttrValue> {
+-        None
++        // pyro
++        crate::lang::own_lang(self).map(AtomString::from)
+     }
+ 
+     fn match_element_lang(
+         &self,
+-        _override_lang: Option<Option<style::selector_parser::AttrValue>>,
+-        _value: &style::selector_parser::Lang,
++        override_lang: Option<Option<style::selector_parser::AttrValue>>,
++        value: &style::selector_parser::Lang,
+     ) -> bool {
+-        false
++        // pyro: the element's language (`crate::lang`), or the attribute a snapshot had.
++        match override_lang {
++            Some(Some(lang)) => crate::lang::range_matches(lang.as_ref(), value),
++            Some(None) => false,
++            None => crate::lang::language(self).is_some_and(|lang| crate::lang::range_matches(lang, value)),
++        }
+     }
+ 
+     fn is_html_document_body_element(&self) -> bool {
+@@ -917,27 +1143,168 @@
          root_element.children.contains(&self.id)
      }
  
@@ -15137,7 +15501,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    parent: BlitzNode<'a>,
 +    child_index: usize,
 +}
-+
+ 
 +impl<'a> Iterator for Traverser<'a> {
 +    type Item = BlitzNode<'a>;
 +
@@ -15150,7 +15514,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        Some(node)
 +    }
 +}
- 
++
 +impl std::hash::Hash for BlitzNode<'_> {
 +    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
 +        state.write_u64(self.id.as_u64())
@@ -15188,7 +15552,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              ));
          };
  
-@@ -1358,6 +1719,15 @@
+@@ -1358,6 +1725,15 @@
                  }
              }
  
@@ -15204,7 +15568,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +1743,59 @@
+@@ -1373,148 +1749,59 @@
              }
          }
  
@@ -15392,7 +15756,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +1808,28 @@
+@@ -1527,6 +1814,28 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -15421,7 +15785,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +1837,180 @@
+@@ -1534,11 +1843,180 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -15602,7 +15966,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,16 +2018,150 @@
+@@ -1546,16 +2024,150 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -15753,7 +16117,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if !data.damage.is_empty() {
                  // Mark the ancestor chain so that the damage propagation pass
                  // visits this element.
-@@ -1597,6 +2203,12 @@
+@@ -1597,6 +2209,12 @@
      }
  }
  
@@ -15766,7 +16130,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2281,41 @@
+@@ -1669,12 +2287,41 @@
                      .push(pe_node_id);
              }
          }
@@ -15808,7 +16172,18 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1737,3 +2378,688 @@
+@@ -1707,6 +2354,10 @@
+             &style.get_background().background_image.0,
+             &el.background_images,
+         ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
++            || out_of_sync(
++                std::slice::from_ref(&style.get_border().border_image_source),
++                &el.border_images,
++            )
+     })
+ }
+ 
+@@ -1737,3 +2388,688 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -16521,6 +16896,214 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
          MediaData {
              media_type,
              viewport_size,
+diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/stylo_to_kurbo.rs
+--- a/packages/blitz-dom/src/stylo_to_kurbo.rs
++++ b/packages/blitz-dom/src/stylo_to_kurbo.rs
+@@ -119,6 +119,14 @@
+         resolved *= transform;
+     }
+ 
++    // pyro: coefficients a hair from whole numbers are whole, as Chromium's rotations by multiples
++    // of 90 degrees are exact (`SinCosDegrees`): `rotate(360deg)` is the identity, so its text is
++    // placed and snapped as untransformed text is (WPT css-transforms/transform-input-*).
++    resolved = Affine::new(resolved.as_coeffs().map(|v| {
++        let whole = v.round();
++        if (v - whole).abs() < 1e-9 { whole } else { v }
++    }));
++
+     resolved = origin_translation * resolved * origin_translation.inverse();
+ 
+     if resolved != Affine::IDENTITY {
+diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_refs.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/svg_refs.rs
+@@ -0,0 +1,185 @@
++//! pyro: SVG sources whose clip path, mask or filter references form a cycle longer than usvg
++//! breaks. usvg sets a reference that closes a cycle of one or two elements to `none`
++//! (`fix_recursive_links`), but follows a longer one without end and overflows the stack
++//! (WPT css/css-masking/clip-path-svg-content/clip-path-recursion-001.svg: clip0, clip, clip2),
++//! which ended the browser. The source is rewritten first as usvg would treat it: every
++//! reference that closes a cycle becomes `none`.
++
++use std::borrow::Cow;
++use std::collections::HashMap;
++use std::ops::Range;
++
++use usvg::roxmltree;
++
++const SVG_NS: &str = "http://www.w3.org/2000/svg";
++
++/// `source` with the references that close a cycle among clip paths, masks or filters set to
++/// `none`; borrowed when there is none (or it is not XML usvg would read).
++pub(crate) fn break_reference_cycles(source: &[u8]) -> Cow<'_, [u8]> {
++    let Ok(text) = std::str::from_utf8(source) else { return Cow::Borrowed(source) };
++    if !text.contains("url(") || !["clip-path", "mask", "filter"].iter().any(|p| text.contains(p)) {
++        return Cow::Borrowed(source);
++    }
++    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
++    let Ok(doc) = roxmltree::Document::parse_with_options(text, options) else {
++        return Cow::Borrowed(source);
++    };
++    let mut cuts = Vec::new();
++    for (tag, property) in [("clipPath", "clip-path"), ("mask", "mask"), ("filter", "filter")] {
++        cuts.extend(cycle_closing_references(&doc, tag, property));
++    }
++    if cuts.is_empty() {
++        return Cow::Borrowed(source);
++    }
++    cuts.sort_by_key(|range| range.start);
++    cuts.dedup();
++    let mut out = String::with_capacity(text.len());
++    let mut at = 0;
++    for cut in cuts {
++        if cut.start < at {
++            continue;
++        }
++        out.push_str(&text[at..cut.start]);
++        out.push_str("none");
++        at = cut.end;
++    }
++    out.push_str(&text[at..]);
++    Cow::Owned(out.into_bytes())
++}
++
++/// The source ranges of the `property` references (attribute values, or values in a `style`
++/// attribute) that close a cycle among the `tag` elements: a depth-first search from each,
++/// whose back edges they are. Without them the references form no cycle.
++fn cycle_closing_references(
++    doc: &roxmltree::Document<'_>,
++    tag: &str,
++    property: &str,
++) -> Vec<Range<usize>> {
++    let elements: Vec<roxmltree::Node<'_, '_>> = doc
++        .descendants()
++        .filter(|n| {
++            // As usvg reads them: in the SVG namespace or none (blitz serializes an inline
++            // `<svg>` without `xmlns`).
++            n.is_element()
++                && n.tag_name().name() == tag
++                && matches!(n.tag_name().namespace(), None | Some(SVG_NS))
++        })
++        .collect();
++    if elements.is_empty() {
++        return Vec::new();
++    }
++    let index: HashMap<&str, usize> =
++        elements.iter().enumerate().filter_map(|(i, n)| Some((n.attribute("id")?, i))).collect();
++    // The references each element's content (itself included) makes: (target, source range).
++    let edges: Vec<Vec<(usize, Range<usize>)>> = elements
++        .iter()
++        .map(|element| {
++            element
++                .descendants()
++                .filter(|n| n.is_element())
++                .flat_map(|n| references(n, property))
++                .filter_map(|(id, range)| Some((*index.get(id)?, range)))
++                .collect()
++        })
++        .collect();
++    // 0: unvisited, 1: on the search's path, 2: done.
++    let mut state = vec![0u8; elements.len()];
++    let mut cuts = Vec::new();
++    for start in 0..elements.len() {
++        if state[start] != 0 {
++            continue;
++        }
++        // (element, next edge to follow)
++        let mut stack = vec![(start, 0)];
++        state[start] = 1;
++        while let Some((node, next)) = stack.pop() {
++            let Some((target, range)) = edges[node].get(next) else {
++                state[node] = 2;
++                continue;
++            };
++            stack.push((node, next + 1));
++            match state[*target] {
++                0 => {
++                    state[*target] = 1;
++                    stack.push((*target, 0));
++                }
++                1 => cuts.push(range.clone()),
++                _ => {}
++            }
++        }
++    }
++    cuts
++}
++
++/// The `url(#id)` references `node` makes with `property`, as an attribute or a declaration of
++/// its `style` attribute: the id and the source range of the value.
++fn references<'a>(node: roxmltree::Node<'a, '_>, property: &str) -> Vec<(&'a str, Range<usize>)> {
++    let mut found = Vec::new();
++    for attr in node.attributes() {
++        if attr.namespace().is_some() {
++            continue;
++        }
++        if attr.name() == property {
++            let range = attr.range_value();
++            let raw = &node.document().input_text()[range.clone()];
++            if let Some(id) = url_id(raw) {
++                found.push((id, range));
++            }
++        } else if attr.name() == "style" {
++            let range = attr.range_value();
++            let raw = &node.document().input_text()[range.clone()];
++            let mut offset = range.start;
++            for declaration in raw.split_inclusive(';') {
++                let body = declaration.trim_end_matches(';');
++                if let Some((name, value)) = body.split_once(':') {
++                    if name.trim() == property {
++                        if let Some(id) = url_id(value) {
++                            let start = offset + name.len() + 1;
++                            found.push((id, start..start + value.len()));
++                        }
++                    }
++                }
++                offset += declaration.len();
++            }
++        }
++    }
++    found
++}
++
++/// The id of a `url(#id)` value (quoted or not).
++fn url_id(value: &str) -> Option<&str> {
++    let inner = value.trim().strip_prefix("url(")?.strip_suffix(')')?.trim();
++    let inner = inner.trim_matches(|c| c == '"' || c == '\'');
++    inner.strip_prefix('#').filter(|id| !id.is_empty())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::break_reference_cycles;
++
++    fn broken(svg: &str) -> String {
++        String::from_utf8(break_reference_cycles(svg.as_bytes()).into_owned()).unwrap()
++    }
++
++    #[test]
++    fn a_cycle_of_three_clip_paths_loses_the_reference_that_closes_it() {
++        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg">
++<clipPath id="a"><rect clip-path="url(#b)"/></clipPath>
++<clipPath id="b"><rect style="fill:red; clip-path: url('#c')"/></clipPath>
++<clipPath id="c"><rect clip-path="url(#a)"/></clipPath>
++<rect clip-path="url(#a)"/></svg>"#;
++        let out = broken(svg);
++        assert_eq!(out.matches("none").count(), 1, "{out}");
++        assert!(out.contains(r#"<clipPath id="c"><rect clip-path="none"/>"#), "{out}");
++        assert!(out.ends_with(r#"<rect clip-path="url(#a)"/></svg>"#));
++        usvg::Tree::from_str(&out, &usvg::Options::default()).unwrap();
++    }
++
++    #[test]
++    fn sources_without_a_cycle_are_kept() {
++        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><clipPath id="a"><rect/></clipPath>
++<mask id="m"><rect clip-path="url(#a)"/></mask><rect mask="url(#m)" clip-path="url(#a)"/></svg>"#;
++        assert!(matches!(break_reference_cycles(svg.as_bytes()), std::borrow::Cow::Borrowed(_)));
++        assert!(matches!(break_reference_cycles(b"not xml url("), std::borrow::Cow::Borrowed(_)));
++    }
++}
 diff --git a/packages/blitz-dom/src/traversal.rs b/packages/blitz-dom/src/traversal.rs
 --- a/packages/blitz-dom/src/traversal.rs
 +++ b/packages/blitz-dom/src/traversal.rs
@@ -16624,7 +17207,57 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  /// Decode raw font bytes, decompressing WOFF/WOFF2 if the `woff` feature is enabled.
  /// Returns the original slice unchanged for TTF/OTF input, and also on decompression
  /// failure. With the `woff` feature disabled, all input passes through unchanged.
-@@ -156,11 +176,31 @@
+@@ -47,15 +67,32 @@
+ pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
+     let mut db = fontdb::Database::new();
+     db.load_system_fonts();
++    // pyro: and the fonts `add_svg_font` gave.
++    for font in SVG_FONTS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
++        db.load_font_source(fontdb::Source::Binary(font.clone()));
++    }
+     Arc::new(db)
+ });
+ 
++/// pyro: fonts added to usvg's font database when it is made.
++#[cfg(feature = "svg")]
++static SVG_FONTS: std::sync::Mutex<Vec<Arc<dyn AsRef<[u8]> + Send + Sync>>> = std::sync::Mutex::new(Vec::new());
++
++/// pyro: adds `font` (TTF/OTF/TTC bytes) to the fonts SVG text is drawn with, beside the system
++/// fonts, as if it were installed. Call before the first SVG is parsed: the database is made then.
++#[cfg(feature = "svg")]
++pub fn add_svg_font(font: Arc<dyn AsRef<[u8]> + Send + Sync>) {
++    SVG_FONTS.lock().unwrap_or_else(|e| e.into_inner()).push(font);
++}
++
+ /// Which kind of CSS image layer list (`background-image` or `mask-image`) to
+ /// flush from style to dedicated storage on the node.
+ #[derive(Clone, Copy, Debug)]
+ pub enum ImageLayerKind {
+     Background,
+     Mask,
++    /// pyro: `border-image-source`, a list of one image.
++    BorderImage,
+ }
+ 
+ impl ImageLayerKind {
+@@ -63,6 +100,7 @@
+         match self {
+             Self::Background => ImageType::Background(idx),
+             Self::Mask => ImageType::Mask(idx),
++            Self::BorderImage => ImageType::BorderImage(idx),
+         }
+     }
+ }
+@@ -72,6 +110,8 @@
+     Image,
+     Background(usize),
+     Mask(usize),
++    /// pyro: `border-image-source`.
++    BorderImage(usize),
+ }
+ 
+ /// A point
+@@ -156,11 +196,33 @@
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
  pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
@@ -16645,7 +17278,9 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
          ..Default::default()
      };
 -    crate::node::SvgImageData::from_data(source, &options)
-+    let svg = crate::node::SvgImageData::from_data(source, &options)?;
++    // pyro: a reference cycle usvg would follow without end (`crate::svg_refs`).
++    let checked = crate::svg_refs::break_reference_cycles(source);
++    let svg = crate::node::SvgImageData::from_data(&checked, &options)?;
 +    PARSED.with(|p| {
 +        let mut p = p.borrow_mut();
 +        if p.len() >= MAX_ENTRIES {
@@ -16657,7 +17292,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +294,82 @@
+@@ -254,3 +316,82 @@
          }
      };
  }

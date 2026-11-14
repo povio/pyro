@@ -179,6 +179,30 @@ fn layout_bodies_and_shared_assets_follow_the_network_identity() {
     assert!(t.browser.context_net(plain).unwrap().config().shared_asset_cache.is_some());
 }
 
+/// A linked sheet decodes as CSS Syntax says: the response's charset, else its `@charset`, else
+/// the link's `charset` (Chromium reads the obsolete attribute), else the document's encoding
+/// (WPT css/CSS2/syntax/at-charset-0xx, charset-attr-001). It used to decode as UTF-8. The
+/// sheets are `data:` URLs, whose `text/css` has no charset.
+#[test]
+fn linked_sheets_decode_by_charset_rule_link_charset_and_document_encoding() {
+    let (mut t, rec, page) = setup();
+    t.enable_network(pyro_net::NetConfig::default()).unwrap();
+    // `.tést` in ISO-8859-1 after its `@charset`, `.平和` in Shift_JIS, `.é` in windows-1252.
+    // (`%25`: the document's own data: URL decodes one level of escapes.)
+    let document = "data:text/html;charset=windows-1252,\
+        <link rel=stylesheet href='data:text/css,@charset \"iso-8859-1\";.t%25E9st{}'>\
+        <link rel=stylesheet href='data:text/css,.%2595%25BD%2598%2561{}' charset=shift_jis>\
+        <link rel=stylesheet href='data:text/css,.%25E9{}'>\
+        <link rel=stylesheet href='data:text/css;charset=utf-8,@charset \"shift_jis\";.%25C3%25A9{}'>";
+    t.browser.navigate(page, NavigateOpts::address_bar(document.to_owned())).unwrap();
+    until_network_idle(&mut t, &rec);
+    eval(&t, page, "for (const s of document.styleSheets) console.log('rule:' + s.cssRules[0].selectorText)");
+    let console = rec.console.borrow();
+    let rules: Vec<&str> = console.iter().filter_map(|c| c.strip_prefix("log:rule:")).collect();
+    // The last one: the response's charset over its `@charset`.
+    assert_eq!(rules, [".tést", ".平和", ".é", ".é"], "{console:?}");
+}
+
 #[test]
 fn static_files_load_on_the_browser_thread_with_network_events() {
     let dir = std::env::temp_dir().join(format!("pyro-browser-static-{}", std::process::id()));
