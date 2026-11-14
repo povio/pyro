@@ -20,6 +20,7 @@ mod input_placeholder;
 mod line_break_resume;
 mod line_height_normal;
 mod mirror;
+mod opacity_group;
 mod out_of_flow_boundary;
 mod pdf_fidelity;
 mod pdf_variable_fonts;

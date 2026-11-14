@@ -752,11 +752,25 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
         let paints_own_box = !node.is_inline_with_only_block_children();
 
-        if paints_own_box {
-            cx.draw_outset_box_shadow(scene);
-        }
+        // pyro: `opacity` and `filter` apply to everything the element paints, as one group
+        // (Chromium's effect node): its outset box-shadow, its box, its content and descendants
+        // (positioned ones too: the element is their stacking context) and its outline. The
+        // group is recorded first, and its layer covers what it painted (its ink, plus what the
+        // filter reaches), where the layer was the border box (descendants and the outline outside
+        // it were cut off, the shadow was drawn at full strength outside the layer).
+        let filter = convert_filters(&effects.filter.0).map(Arc::new);
+        let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
+        let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some();
+        let element = ElementPaint {
+            node,
+            paints_own_box,
+            should_clip,
+            is_text_input,
+            content_position,
+            child_clip_rect,
+        };
 
-        // clip-path clip ayer
+        // clip-path clip layer (it clips the shadow and the outline too, as in Chromium)
         self.layer_manager.maybe_with_layer(
             scene,
             has_clip_path,
@@ -774,103 +788,24 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 // Save it so that the mask can be drawn untransformed by scroll offsets.
                 let unscrolled_transform = cx.transform;
 
-                let filter = convert_filters(&effects.filter.0).map(Arc::new);
-                let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
-
-                // Adjust effect layer clip by filter expansion area
-                //
-                // Returns a rectangle centered at the origin representing how much the filter
-                // expands the processing region in each direction. The rect coordinates are:
-                // - x0: negative left expansion
-                // - y0: negative top expansion
-                // - x1: positive right expansion
-                // - y1: positive bottom expansion
-                let filter_expansion_area = filter
-                    .as_ref()
-                    .map(|f| f.expansion_rect())
-                    .unwrap_or(Rect::ZERO);
-
-                let mut effect_layer_clip = cx.frame.border_box_path().bounding_box();
-                effect_layer_clip.x0 += filter_expansion_area.x0;
-                effect_layer_clip.y0 += filter_expansion_area.y0;
-                effect_layer_clip.x1 += filter_expansion_area.x1;
-                effect_layer_clip.y1 += filter_expansion_area.y1;
-
-                // Opacity/Filter layer if box has opacity or a filter.
-                // Clipped to border-box as it needs to include the background and borders.
-                self.layer_manager.maybe_with_layer(
-                    scene,
-                    has_opacity || filter.is_some() || backdrop_filter.is_some(),
-                    BlendMode::default(),
-                    opacity,
-                    cx.transform,
-                    &effect_layer_clip,
-                    filter,
-                    backdrop_filter,
-                    |scene| {
-                        if paints_own_box {
-                            if cx.context.backgrounds {
-                                cx.draw_background(scene);
-                            }
-                            cx.draw_inset_box_shadow(scene);
-                        }
-                        if cx.context.backgrounds {
-                            cx.draw_table_row_backgrounds(scene);
-                        }
-                        cx.draw_table_borders(scene);
-                        if paints_own_box {
-                            cx.draw_border(scene);
-                        }
-                        cx.stroke_devtools(scene);
-
-                        // TODO: allow layers with opacity to be unclipped (overflow: visible)
-                        let clip = if is_text_input {
-                            &cx.frame.text_input_clip_path()
-                        } else {
-                            &cx.frame.padding_box_path()
-                        };
-
-                        // Clip layer if box requires clipping. Opacity set to 1.0
-                        self.layer_manager.maybe_with_layer(
-                            scene,
-                            should_clip,
-                            BlendMode::default(),
-                            1.0, // opacity
-                            cx.transform,
-                            clip,
-                            None,
-                            None,
-                            |scene| {
-                                // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
-                                let content_position = Point {
-                                    x: content_position.x - node.scroll_offset().x,
-                                    y: content_position.y - node.scroll_offset().y,
-                                };
-
-                                cx.transform = self.scrolled_transform(node, cx.transform);
-                                cx.draw_image(scene);
-                                #[cfg(feature = "svg")]
-                                cx.draw_svg(scene);
-                                #[cfg(feature = "custom-widget")]
-                                cx.draw_custom_widget(scene);
-                                cx.draw_sub_document(scene);
-                                cx.draw_input(scene);
-                                cx.draw_text_input_text(scene, content_position);
-                                cx.draw_inline_layout(scene, content_position);
-                                cx.draw_marker(scene, content_position);
-                                cx.draw_children(scene, cx.transform, child_clip_rect);
-                            },
-                        );
-
-                        // Overlay scrollbars, drawn unscrolled above the
-                        // clipped content.
-                        #[cfg(feature = "scrollbars")]
-                        {
-                            cx.transform = unscrolled_transform;
-                            cx.draw_scrollbars(scene);
-                        }
-                    },
-                );
+                if has_effect_layer {
+                    let mut group = Scene::new();
+                    self.paint_element(&mut cx, &mut group, &element);
+                    self.paint_effect_group(
+                        scene,
+                        group,
+                        EffectLayer {
+                            transform: unscrolled_transform,
+                            visible: clip_rect,
+                            border_box: cx.frame.border_box,
+                            opacity,
+                            filter,
+                            backdrop_filter,
+                        },
+                    );
+                } else {
+                    self.paint_element(&mut cx, scene, &element);
+                }
 
                 // Apply the CSS `mask` (if any) to the content drawn above
                 cx.transform = unscrolled_transform;
@@ -878,29 +813,155 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             },
         );
 
-        // The outline goes over the box and its contents (Chromium paints it
-        // in a phase of its own after the foreground): one with a negative
-        // `outline-offset` lies inside the box, over its background. It has the
-        // element's opacity, in a layer of its own: the box's layer is clipped
-        // to the border box.
-        if let Some(outline_bounds) = cx.outline_bounds() {
-            self.layer_manager.maybe_with_layer(
-                scene,
-                has_opacity,
-                BlendMode::default(),
-                opacity,
-                cx.transform,
-                &outline_bounds,
-                None,
-                None,
-                |scene| cx.draw_outline(scene),
-            );
-        }
-
         self.layer_manager
             .maybe_pop_layer(scene, blend_layer_pushed);
         self.layer_manager
             .maybe_pop_layer(scene, css_clip_layer_pushed);
+    }
+
+    /// Paints an element and its descendants, in Chromium's order: outset box-shadow,
+    /// background, inset box-shadow, border, the content clipped to the padding box (when the
+    /// element clips), scrollbars, outline. Leaves `cx.transform` as it found it.
+    fn paint_element(
+        &self,
+        cx: &mut ElementCx<'_, '_>,
+        scene: &mut impl PaintScene,
+        element: &ElementPaint<'_>,
+    ) {
+        let ElementPaint {
+            node,
+            paints_own_box,
+            should_clip,
+            is_text_input,
+            content_position,
+            child_clip_rect,
+        } = *element;
+        let unscrolled_transform = cx.transform;
+
+        if paints_own_box {
+            cx.draw_outset_box_shadow(scene);
+            if cx.context.backgrounds {
+                cx.draw_background(scene);
+            }
+            cx.draw_inset_box_shadow(scene);
+        }
+        if cx.context.backgrounds {
+            cx.draw_table_row_backgrounds(scene);
+        }
+        cx.draw_table_borders(scene);
+        if paints_own_box {
+            cx.draw_border(scene);
+        }
+        cx.stroke_devtools(scene);
+
+        let clip = if is_text_input {
+            &cx.frame.text_input_clip_path()
+        } else {
+            &cx.frame.padding_box_path()
+        };
+
+        // Clip layer if box requires clipping. Opacity set to 1.0
+        self.layer_manager.maybe_with_layer(
+            scene,
+            should_clip,
+            BlendMode::default(),
+            1.0, // opacity
+            cx.transform,
+            clip,
+            None,
+            None,
+            |scene| {
+                // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
+                let content_position = Point {
+                    x: content_position.x - node.scroll_offset().x,
+                    y: content_position.y - node.scroll_offset().y,
+                };
+
+                cx.transform = self.scrolled_transform(node, cx.transform);
+                cx.draw_image(scene);
+                #[cfg(feature = "svg")]
+                cx.draw_svg(scene);
+                #[cfg(feature = "custom-widget")]
+                cx.draw_custom_widget(scene);
+                cx.draw_sub_document(scene);
+                cx.draw_input(scene);
+                cx.draw_text_input_text(scene, content_position);
+                cx.draw_inline_layout(scene, content_position);
+                cx.draw_marker(scene, content_position);
+                cx.draw_children(scene, cx.transform, child_clip_rect);
+            },
+        );
+        cx.transform = unscrolled_transform;
+
+        // Overlay scrollbars, drawn unscrolled above the
+        // clipped content.
+        #[cfg(feature = "scrollbars")]
+        cx.draw_scrollbars(scene);
+
+        // The outline goes over the box and its contents (Chromium paints it
+        // in a phase of its own after the foreground): one with a negative
+        // `outline-offset` lies inside the box, over its background.
+        cx.draw_outline(scene);
+    }
+
+    /// pyro: the layer of an element's opacity and filters around the `group` it painted. The
+    /// layer is the group's ink (what its commands can touch, [`crate::bounds::scene_bounds`]),
+    /// grown by what the filter reaches and cut to the visible area, in the element's space (the
+    /// filter's lengths are in it). A group that paints nothing visible draws nothing.
+    fn paint_effect_group(&self, scene: &mut impl PaintScene, mut group: Scene, layer: EffectLayer) {
+        let EffectLayer {
+            transform,
+            visible,
+            border_box,
+            opacity,
+            filter,
+            backdrop_filter,
+        } = layer;
+        // A group of one shape in one colour needs no layer: its opacity is that colour's.
+        if filter.is_none() && backdrop_filter.is_none() && crate::bounds::fold_opacity(&mut group.commands, opacity) {
+            scene.append_scene(group, Affine::IDENTITY);
+            return;
+        }
+        let mut ink = crate::bounds::scene_bounds(&group.commands);
+        if backdrop_filter.is_some() {
+            let border_box = transform.transform_rect_bbox(border_box);
+            ink = Some(ink.map_or(border_box, |ink| ink.union(border_box)));
+        }
+        let Some(ink) = ink else {
+            return;
+        };
+        if transform.determinant().abs() < 1e-12 {
+            return;
+        }
+        let inverse = transform.inverse();
+        let mut bounds = inverse.transform_rect_bbox(ink);
+        if let Some(filter) = &filter {
+            let reach = filter.expansion_rect();
+            bounds = Rect::new(
+                bounds.x0 + reach.x0,
+                bounds.y0 + reach.y0,
+                bounds.x1 + reach.x1,
+                bounds.y1 + reach.y1,
+            );
+        }
+        // The visible area is in screen coordinates (the scene's, less the initial offset).
+        let visible = visible + Vec2::new(self.initial_x, self.initial_y);
+        let bounds = bounds.intersect(inverse.transform_rect_bbox(visible)).expand();
+        if !(bounds.width() > 0.0 && bounds.height() > 0.0) {
+            return;
+        }
+        let pushed = self.layer_manager.maybe_push_layer(
+            scene,
+            true,
+            BlendMode::default(),
+            opacity,
+            transform,
+            &bounds,
+            filter,
+            backdrop_filter,
+        );
+        scene.append_scene(group, Affine::IDENTITY);
+        self.layer_manager.maybe_pop_layer(scene, pushed);
     }
 
     fn render_node(
@@ -2275,4 +2336,28 @@ fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBo
     };
 
     CssBox::new(border_box, border, padding, outline_width, border_radii)
+}
+
+/// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.
+#[derive(Clone, Copy)]
+struct ElementPaint<'n> {
+    node: &'n Node,
+    paints_own_box: bool,
+    should_clip: bool,
+    is_text_input: bool,
+    content_position: Point,
+    child_clip_rect: Rect,
+}
+
+/// pyro: an element's opacity and filter layer ([`BlitzDomPainter::paint_effect_group`]).
+struct EffectLayer {
+    /// The element's transform (unscrolled): the layer's and its filter's space.
+    transform: Affine,
+    /// The area of the screen not clipped away by the element's ancestors.
+    visible: Rect,
+    /// The element's border box, in its space (a backdrop filter covers it).
+    border_box: Rect,
+    opacity: f32,
+    filter: Option<Arc<anyrender::Filter>>,
+    backdrop_filter: Option<Arc<anyrender::Filter>>,
 }

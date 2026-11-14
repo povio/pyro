@@ -140,6 +140,19 @@ from the root of an upstream checkout at that commit) is the whole diff.
     `a_list_markers_symbol_is_a_shape_sized_from_the_font_at_whole_css_pixels` in
     `crates/pyro-render/tests/text_line_tops.rs`.
 
+- Paint gaps from the ToS feature videos (Chromium 147):
+  - `src/render.rs` (`render_element`, `paint_element`, `paint_effect_group`), `src/bounds.rs`: `opacity`, `filter`
+    and `backdrop-filter` apply to everything an element paints, as one group (Chromium's effect node): its outset
+    box-shadow, its box, its content and descendants (positioned ones outside its box too: it is their stacking
+    context) and its outline, all inside its `clip-path` and `mask`, which clip the shadow and the outline as in
+    Chromium. The group is recorded first, and its layer covers what it painted (`scene_bounds`: its commands'
+    bounds, grown by the filter's reach, cut to the area its ancestors leave visible), where the layer was the
+    border box: the outset shadow was drawn outside it at full strength, and descendants outside the border box
+    were cut off (a zero-size wrapper fading a popover painted nothing). A group of one shape in one solid colour
+    (a spotlight ring) takes the opacity into its colour and gets no layer (`fold_opacity`), as Skia folds a
+    layer's alpha into its single draw. The outline has no layer of its own any more. Covered by
+    `crates/pyro-render/tests/opacity_group.rs`.
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/pyro-render/tests/mirror.rs`.

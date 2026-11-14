@@ -1,3 +1,175 @@
+diff --git a/packages/blitz-paint/src/bounds.rs b/packages/blitz-paint/src/bounds.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-paint/src/bounds.rs
+@@ -0,0 +1,167 @@
++//! pyro: where recorded drawing commands can paint, in the scene's coordinates: the bounds of an
++//! element's opacity and filter layer (`BlitzDomPainter::paint_effect_group`). Bounds are
++//! conservative (a glyph run's are its glyph origins with an em or two around them) and never
++//! smaller than what the commands touch, so the layer does not cut anything off.
++
++use anyrender::Paint;
++use anyrender::recording::{FillCommand, RenderCommand, StrokeCommand};
++use kurbo::{Join, Rect, Shape};
++
++/// The area `commands` can touch: `None` when they draw nothing.
++pub(crate) fn scene_bounds(commands: &[RenderCommand]) -> Option<Rect> {
++    let mut at = 0;
++    let mut bounds = None;
++    // An unbalanced `PopLayer` ends a run: keep going after it.
++    while at < commands.len() {
++        bounds = union(bounds, layer_bounds(commands, &mut at));
++    }
++    bounds
++}
++
++/// The bounds of the commands from `*at` to the `PopLayer` that ends their layer (or the end),
++/// leaving `*at` after that `PopLayer`.
++fn layer_bounds(commands: &[RenderCommand], at: &mut usize) -> Option<Rect> {
++    let mut bounds = None;
++    while let Some(command) = commands.get(*at) {
++        *at += 1;
++        let painted = match command {
++            RenderCommand::PopLayer => return bounds,
++            RenderCommand::PushLayer(layer) => {
++                let clip = layer.transform.transform_rect_bbox(layer.clip.bounding_box());
++                let inner = layer_bounds(commands, at);
++                // A filter spreads the content (a blur, a shadow's offset); a backdrop filter
++                // paints the whole clip.
++                let inner = match (&layer.filter, inner) {
++                    (Some(filter), Some(inner)) => {
++                        let reach = filter.bounds_expansion(&layer.transform);
++                        Some(Rect::new(
++                            inner.x0 + reach.x0,
++                            inner.y0 + reach.y0,
++                            inner.x1 + reach.x1,
++                            inner.y1 + reach.y1,
++                        ))
++                    }
++                    (_, inner) => inner,
++                };
++                let inner = if layer.backdrop_filter.is_some() { Some(clip) } else { inner };
++                inner.map(|inner| inner.intersect(clip))
++            }
++            RenderCommand::PushClipLayer(layer) => {
++                let clip = layer.transform.transform_rect_bbox(layer.clip.bounding_box());
++                layer_bounds(commands, at).map(|inner| inner.intersect(clip))
++            }
++            RenderCommand::Fill(fill) => Some(fill.transform.transform_rect_bbox(fill.shape.bounding_box())),
++            RenderCommand::Stroke(stroke) => {
++                let style = &stroke.style;
++                // Half the width out, a miter's tip up to `miter_limit` times that.
++                let miter = if style.join == Join::Miter { style.miter_limit.max(1.0) } else { 1.0 };
++                let reach = style.width * 0.5 * miter.max(std::f64::consts::SQRT_2) + 1.0;
++                Some(stroke.transform.transform_rect_bbox(stroke.shape.bounding_box().inflate(reach, reach)))
++            }
++            RenderCommand::GlyphRun(run) => {
++                let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
++                for glyph in &run.glyphs {
++                    x0 = x0.min(f64::from(glyph.x));
++                    y0 = y0.min(f64::from(glyph.y));
++                    x1 = x1.max(f64::from(glyph.x));
++                    y1 = y1.max(f64::from(glyph.y));
++                }
++                if run.glyphs.is_empty() {
++                    None
++                } else {
++                    // Glyphs reach about an em above their baseline origin and a little below;
++                    // a skewed or rotated glyph (synthetic italic, upright vertical text) further.
++                    let em = f64::from(run.font_size).abs() * if run.glyph_transform.is_some() { 3.0 } else { 1.0 };
++                    let embolden = run.embolden.x.abs().max(run.embolden.y.abs());
++                    let ink = Rect::new(x0 - em, y0 - em * 1.5, x1 + em * 2.0, y1 + em).inflate(embolden, embolden);
++                    Some(run.transform.transform_rect_bbox(ink))
++                }
++            }
++            RenderCommand::BoxShadow(shadow) => {
++                let reach = shadow.std_dev.abs() * 3.0 + 1.0;
++                Some(shadow.transform.transform_rect_bbox(shadow.rect.inflate(reach, reach)))
++            }
++        };
++        bounds = union(bounds, painted.filter(|r| r.width() > 0.0 && r.height() > 0.0));
++    }
++    bounds
++}
++
++/// pyro: when `commands` draw a single shape (one fill, stroke or box shadow of a solid colour,
++/// within clips), folds `opacity` into its colour and returns true: the opacity of a group of one
++/// shape is its colour's alpha times it, so the group needs no layer (Skia folds a layer's alpha
++/// into its single draw the same way). A glyph run is not one shape (its glyphs overlap).
++pub(crate) fn fold_opacity(commands: &mut [RenderCommand], opacity: f32) -> bool {
++    let mut draws = commands
++        .iter_mut()
++        .filter(|command| !matches!(command, RenderCommand::PushClipLayer(_) | RenderCommand::PopLayer));
++    let (Some(draw), None) = (draws.next(), draws.next()) else {
++        return false;
++    };
++    match draw {
++        RenderCommand::Fill(FillCommand { brush: Paint::Solid(color), .. })
++        | RenderCommand::Stroke(StrokeCommand { brush: Paint::Solid(color), .. }) => {
++            *color = color.multiply_alpha(opacity);
++            true
++        }
++        RenderCommand::BoxShadow(shadow) => {
++            shadow.brush = shadow.brush.multiply_alpha(opacity);
++            true
++        }
++        _ => false,
++    }
++}
++
++fn union(a: Option<Rect>, b: Option<Rect>) -> Option<Rect> {
++    match (a, b) {
++        (Some(a), Some(b)) => Some(a.union(b)),
++        (a, None) => a,
++        (None, b) => b,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use anyrender::{PaintScene, Scene};
++    use kurbo::Affine;
++    use peniko::{Fill, Mix, color::palette::css::BLACK};
++
++    #[test]
++    fn a_clip_bounds_what_it_holds_and_nothing_is_nothing() {
++        let mut scene = Scene::new();
++        assert_eq!(scene_bounds(&scene.commands), None);
++        scene.fill(Fill::NonZero, Affine::translate((10.0, 0.0)), BLACK, None, &Rect::new(0.0, 0.0, 5.0, 5.0));
++        scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &Rect::new(0.0, 0.0, 100.0, 100.0));
++        scene.fill(Fill::NonZero, Affine::IDENTITY, BLACK, None, &Rect::new(50.0, 50.0, 500.0, 500.0));
++        scene.pop_layer();
++        scene.push_layer(Fill::NonZero, Mix::Normal, 0.5, Affine::IDENTITY, &Rect::new(0.0, 0.0, 9.0, 9.0), None, None);
++        scene.pop_layer();
++        assert_eq!(scene_bounds(&scene.commands), Some(Rect::new(10.0, 0.0, 100.0, 100.0)));
++    }
++
++    #[test]
++    fn only_a_single_solid_shape_takes_the_opacity_into_its_colour() {
++        let shape = Rect::new(0.0, 0.0, 5.0, 5.0);
++        let mut one = Scene::new();
++        one.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &shape);
++        one.fill(Fill::NonZero, Affine::IDENTITY, BLACK, None, &shape);
++        one.pop_layer();
++        assert!(fold_opacity(&mut one.commands, 0.5));
++        assert!(
++            matches!(&one.commands[1], RenderCommand::Fill(f) if f.brush == Paint::Solid(BLACK.multiply_alpha(0.5)))
++        );
++
++        let mut two = Scene::new();
++        two.fill(Fill::NonZero, Affine::IDENTITY, BLACK, None, &shape);
++        two.fill(Fill::NonZero, Affine::IDENTITY, BLACK, None, &shape);
++        assert!(!fold_opacity(&mut two.commands, 0.5));
++        assert!(matches!(&two.commands[0], RenderCommand::Fill(f) if f.brush == Paint::Solid(BLACK)));
++
++        let mut layered = Scene::new();
++        layered.push_layer(Fill::NonZero, Mix::Normal, 0.5, Affine::IDENTITY, &shape, None, None);
++        layered.fill(Fill::NonZero, Affine::IDENTITY, BLACK, None, &shape);
++        layered.pop_layer();
++        assert!(!fold_opacity(&mut layered.commands, 0.5));
++    }
++}
 diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/src/debug_overlay.rs
 --- a/packages/blitz-paint/src/debug_overlay.rs
 +++ b/packages/blitz-paint/src/debug_overlay.rs
@@ -51,7 +223,15 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 --- a/packages/blitz-paint/src/lib.rs
 +++ b/packages/blitz-paint/src/lib.rs
-@@ -26,6 +26,11 @@
+@@ -4,6 +4,7 @@
+ #![allow(clippy::collapsible_if)]
+ 
+ mod blend;
++mod bounds;
+ mod color;
+ mod debug_overlay;
+ mod filters;
+@@ -26,6 +27,11 @@
      all(feature = "apple-font-embolden", target_os = "ios"),
  ));
  
@@ -63,7 +243,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  /// The default color for text selection highlights
  const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
  
-@@ -50,6 +55,69 @@
+@@ -50,6 +56,69 @@
      x_offset: u32,
      y_offset: u32,
  ) {
@@ -133,7 +313,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
      // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
      //
-@@ -59,7 +127,7 @@
+@@ -59,7 +128,7 @@
      #[cfg(feature = "custom-widget")]
      build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
  
@@ -142,7 +322,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
          doc,
          scale,
          width,
-@@ -68,6 +136,8 @@
+@@ -68,6 +137,8 @@
          y_offset as f64,
          &custom_widget_scenes,
      );
@@ -151,7 +331,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      generator.paint_scene(scene);
  
      // println!(
-@@ -78,6 +148,134 @@
+@@ -78,6 +149,134 @@
      // );
  }
  
@@ -540,58 +720,308 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -585,7 +752,6 @@
+@@ -585,12 +752,25 @@
  
          let paints_own_box = !node.is_inline_with_only_block_children();
  
 -        cx.draw_outline(scene);
-         if paints_own_box {
-             cx.draw_outset_box_shadow(scene);
-         }
-@@ -643,10 +809,14 @@
-                     backdrop_filter,
-                     |scene| {
-                         if paints_own_box {
+-        if paints_own_box {
+-            cx.draw_outset_box_shadow(scene);
+-        }
++        // pyro: `opacity` and `filter` apply to everything the element paints, as one group
++        // (Chromium's effect node): its outset box-shadow, its box, its content and descendants
++        // (positioned ones too: the element is their stacking context) and its outline. The
++        // group is recorded first, and its layer covers what it painted (its ink, plus what the
++        // filter reaches), where the layer was the border box (descendants and the outline outside
++        // it were cut off, the shadow was drawn at full strength outside the layer).
++        let filter = convert_filters(&effects.filter.0).map(Arc::new);
++        let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
++        let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some();
++        let element = ElementPaint {
++            node,
++            paints_own_box,
++            should_clip,
++            is_text_input,
++            content_position,
++            child_clip_rect,
++        };
+ 
+-        // clip-path clip ayer
++        // clip-path clip layer (it clips the shadow and the outline too, as in Chromium)
+         self.layer_manager.maybe_with_layer(
+             scene,
+             has_clip_path,
+@@ -608,99 +788,24 @@
+                 // Save it so that the mask can be drawn untransformed by scroll offsets.
+                 let unscrolled_transform = cx.transform;
+ 
+-                let filter = convert_filters(&effects.filter.0).map(Arc::new);
+-                let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
+-
+-                // Adjust effect layer clip by filter expansion area
+-                //
+-                // Returns a rectangle centered at the origin representing how much the filter
+-                // expands the processing region in each direction. The rect coordinates are:
+-                // - x0: negative left expansion
+-                // - y0: negative top expansion
+-                // - x1: positive right expansion
+-                // - y1: positive bottom expansion
+-                let filter_expansion_area = filter
+-                    .as_ref()
+-                    .map(|f| f.expansion_rect())
+-                    .unwrap_or(Rect::ZERO);
+-
+-                let mut effect_layer_clip = cx.frame.border_box_path().bounding_box();
+-                effect_layer_clip.x0 += filter_expansion_area.x0;
+-                effect_layer_clip.y0 += filter_expansion_area.y0;
+-                effect_layer_clip.x1 += filter_expansion_area.x1;
+-                effect_layer_clip.y1 += filter_expansion_area.y1;
+-
+-                // Opacity/Filter layer if box has opacity or a filter.
+-                // Clipped to border-box as it needs to include the background and borders.
+-                self.layer_manager.maybe_with_layer(
+-                    scene,
+-                    has_opacity || filter.is_some() || backdrop_filter.is_some(),
+-                    BlendMode::default(),
+-                    opacity,
+-                    cx.transform,
+-                    &effect_layer_clip,
+-                    filter,
+-                    backdrop_filter,
+-                    |scene| {
+-                        if paints_own_box {
 -                            cx.draw_background(scene);
-+                            if cx.context.backgrounds {
-+                                cx.draw_background(scene);
-+                            }
-                             cx.draw_inset_box_shadow(scene);
-                         }
+-                            cx.draw_inset_box_shadow(scene);
+-                        }
 -                        cx.draw_table_row_backgrounds(scene);
-+                        if cx.context.backgrounds {
-+                            cx.draw_table_row_backgrounds(scene);
-+                        }
-                         cx.draw_table_borders(scene);
-                         if paints_own_box {
-                             cx.draw_border(scene);
-@@ -707,6 +877,25 @@
-                 cx.maybe_pop_css_mask_layer(scene, mask_layer_pushed);
-             },
-         );
+-                        cx.draw_table_borders(scene);
+-                        if paints_own_box {
+-                            cx.draw_border(scene);
+-                        }
+-                        cx.stroke_devtools(scene);
+-
+-                        // TODO: allow layers with opacity to be unclipped (overflow: visible)
+-                        let clip = if is_text_input {
+-                            &cx.frame.text_input_clip_path()
+-                        } else {
+-                            &cx.frame.padding_box_path()
+-                        };
+-
+-                        // Clip layer if box requires clipping. Opacity set to 1.0
+-                        self.layer_manager.maybe_with_layer(
+-                            scene,
+-                            should_clip,
+-                            BlendMode::default(),
+-                            1.0, // opacity
+-                            cx.transform,
+-                            clip,
+-                            None,
+-                            None,
+-                            |scene| {
+-                                // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
+-                                let content_position = Point {
+-                                    x: content_position.x - node.scroll_offset().x,
+-                                    y: content_position.y - node.scroll_offset().y,
+-                                };
+-
+-                                cx.transform = self.scrolled_transform(node, cx.transform);
+-                                cx.draw_image(scene);
+-                                #[cfg(feature = "svg")]
+-                                cx.draw_svg(scene);
+-                                #[cfg(feature = "custom-widget")]
+-                                cx.draw_custom_widget(scene);
+-                                cx.draw_sub_document(scene);
+-                                cx.draw_input(scene);
+-                                cx.draw_text_input_text(scene, content_position);
+-                                cx.draw_inline_layout(scene, content_position);
+-                                cx.draw_marker(scene, content_position);
+-                                cx.draw_children(scene, cx.transform, child_clip_rect);
+-                            },
+-                        );
+-
+-                        // Overlay scrollbars, drawn unscrolled above the
+-                        // clipped content.
+-                        #[cfg(feature = "scrollbars")]
+-                        {
+-                            cx.transform = unscrolled_transform;
+-                            cx.draw_scrollbars(scene);
+-                        }
+-                    },
+-                );
++                if has_effect_layer {
++                    let mut group = Scene::new();
++                    self.paint_element(&mut cx, &mut group, &element);
++                    self.paint_effect_group(
++                        scene,
++                        group,
++                        EffectLayer {
++                            transform: unscrolled_transform,
++                            visible: clip_rect,
++                            border_box: cx.frame.border_box,
++                            opacity,
++                            filter,
++                            backdrop_filter,
++                        },
++                    );
++                } else {
++                    self.paint_element(&mut cx, scene, &element);
++                }
+ 
+                 // Apply the CSS `mask` (if any) to the content drawn above
+                 cx.transform = unscrolled_transform;
+@@ -712,6 +817,151 @@
+             .maybe_pop_layer(scene, blend_layer_pushed);
+         self.layer_manager
+             .maybe_pop_layer(scene, css_clip_layer_pushed);
++    }
++
++    /// Paints an element and its descendants, in Chromium's order: outset box-shadow,
++    /// background, inset box-shadow, border, the content clipped to the padding box (when the
++    /// element clips), scrollbars, outline. Leaves `cx.transform` as it found it.
++    fn paint_element(
++        &self,
++        cx: &mut ElementCx<'_, '_>,
++        scene: &mut impl PaintScene,
++        element: &ElementPaint<'_>,
++    ) {
++        let ElementPaint {
++            node,
++            paints_own_box,
++            should_clip,
++            is_text_input,
++            content_position,
++            child_clip_rect,
++        } = *element;
++        let unscrolled_transform = cx.transform;
++
++        if paints_own_box {
++            cx.draw_outset_box_shadow(scene);
++            if cx.context.backgrounds {
++                cx.draw_background(scene);
++            }
++            cx.draw_inset_box_shadow(scene);
++        }
++        if cx.context.backgrounds {
++            cx.draw_table_row_backgrounds(scene);
++        }
++        cx.draw_table_borders(scene);
++        if paints_own_box {
++            cx.draw_border(scene);
++        }
++        cx.stroke_devtools(scene);
++
++        let clip = if is_text_input {
++            &cx.frame.text_input_clip_path()
++        } else {
++            &cx.frame.padding_box_path()
++        };
++
++        // Clip layer if box requires clipping. Opacity set to 1.0
++        self.layer_manager.maybe_with_layer(
++            scene,
++            should_clip,
++            BlendMode::default(),
++            1.0, // opacity
++            cx.transform,
++            clip,
++            None,
++            None,
++            |scene| {
++                // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
++                let content_position = Point {
++                    x: content_position.x - node.scroll_offset().x,
++                    y: content_position.y - node.scroll_offset().y,
++                };
++
++                cx.transform = self.scrolled_transform(node, cx.transform);
++                cx.draw_image(scene);
++                #[cfg(feature = "svg")]
++                cx.draw_svg(scene);
++                #[cfg(feature = "custom-widget")]
++                cx.draw_custom_widget(scene);
++                cx.draw_sub_document(scene);
++                cx.draw_input(scene);
++                cx.draw_text_input_text(scene, content_position);
++                cx.draw_inline_layout(scene, content_position);
++                cx.draw_marker(scene, content_position);
++                cx.draw_children(scene, cx.transform, child_clip_rect);
++            },
++        );
++        cx.transform = unscrolled_transform;
++
++        // Overlay scrollbars, drawn unscrolled above the
++        // clipped content.
++        #[cfg(feature = "scrollbars")]
++        cx.draw_scrollbars(scene);
 +
 +        // The outline goes over the box and its contents (Chromium paints it
 +        // in a phase of its own after the foreground): one with a negative
-+        // `outline-offset` lies inside the box, over its background. It has the
-+        // element's opacity, in a layer of its own: the box's layer is clipped
-+        // to the border box.
-+        if let Some(outline_bounds) = cx.outline_bounds() {
-+            self.layer_manager.maybe_with_layer(
-+                scene,
-+                has_opacity,
-+                BlendMode::default(),
-+                opacity,
-+                cx.transform,
-+                &outline_bounds,
-+                None,
-+                None,
-+                |scene| cx.draw_outline(scene),
++        // `outline-offset` lies inside the box, over its background.
++        cx.draw_outline(scene);
++    }
++
++    /// pyro: the layer of an element's opacity and filters around the `group` it painted. The
++    /// layer is the group's ink (what its commands can touch, [`crate::bounds::scene_bounds`]),
++    /// grown by what the filter reaches and cut to the visible area, in the element's space (the
++    /// filter's lengths are in it). A group that paints nothing visible draws nothing.
++    fn paint_effect_group(&self, scene: &mut impl PaintScene, mut group: Scene, layer: EffectLayer) {
++        let EffectLayer {
++            transform,
++            visible,
++            border_box,
++            opacity,
++            filter,
++            backdrop_filter,
++        } = layer;
++        // A group of one shape in one colour needs no layer: its opacity is that colour's.
++        if filter.is_none() && backdrop_filter.is_none() && crate::bounds::fold_opacity(&mut group.commands, opacity) {
++            scene.append_scene(group, Affine::IDENTITY);
++            return;
++        }
++        let mut ink = crate::bounds::scene_bounds(&group.commands);
++        if backdrop_filter.is_some() {
++            let border_box = transform.transform_rect_bbox(border_box);
++            ink = Some(ink.map_or(border_box, |ink| ink.union(border_box)));
++        }
++        let Some(ink) = ink else {
++            return;
++        };
++        if transform.determinant().abs() < 1e-12 {
++            return;
++        }
++        let inverse = transform.inverse();
++        let mut bounds = inverse.transform_rect_bbox(ink);
++        if let Some(filter) = &filter {
++            let reach = filter.expansion_rect();
++            bounds = Rect::new(
++                bounds.x0 + reach.x0,
++                bounds.y0 + reach.y0,
++                bounds.x1 + reach.x1,
++                bounds.y1 + reach.y1,
 +            );
 +        }
++        // The visible area is in screen coordinates (the scene's, less the initial offset).
++        let visible = visible + Vec2::new(self.initial_x, self.initial_y);
++        let bounds = bounds.intersect(inverse.transform_rect_bbox(visible)).expand();
++        if !(bounds.width() > 0.0 && bounds.height() > 0.0) {
++            return;
++        }
++        let pushed = self.layer_manager.maybe_push_layer(
++            scene,
++            true,
++            BlendMode::default(),
++            opacity,
++            transform,
++            &bounds,
++            filter,
++            backdrop_filter,
++        );
++        scene.append_scene(group, Affine::IDENTITY);
++        self.layer_manager.maybe_pop_layer(scene, pushed);
+     }
  
-         self.layer_manager
-             .maybe_pop_layer(scene, blend_layer_pushed);
-@@ -724,9 +913,11 @@
+     fn render_node(
+@@ -724,9 +974,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
          match &node.data {
@@ -605,7 +1035,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -837,6 +1028,45 @@
+@@ -837,6 +1089,45 @@
  }
  
  /// Converts parley BoundingBox into peniko Rect
@@ -651,14 +1081,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -963,7 +1193,258 @@
-                     None,
-                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
-                 );
-+            }
-+        }
-+    }
-+
+@@ -967,6 +1258,257 @@
+         }
+     }
+ 
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -894,7 +1320,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            if !left {
 +                cx.frame.border_radii.top_left = Vec2::ZERO;
 +                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-             }
++            }
 +            if !right {
 +                cx.frame.border_radii.top_right = Vec2::ZERO;
 +                cx.frame.border_radii.bottom_right = Vec2::ZERO;
@@ -907,10 +1333,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            cx.draw_border(scene);
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
-         }
-     }
- 
-@@ -976,6 +1457,11 @@
++        }
++    }
++
+     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
+         if self.node.flags.is_inline_root() {
+             let text_layout = self.element
+@@ -976,6 +1518,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -922,7 +1351,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +1470,22 @@
+@@ -984,23 +1531,22 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -954,7 +1383,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,17 +1493,183 @@
+@@ -1008,17 +1554,183 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1140,7 +1569,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,9 +1681,15 @@
+@@ -1030,9 +1742,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -1158,7 +1587,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +1704,63 @@
+@@ -1047,6 +1765,62 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -1173,7 +1602,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
 +                None => (transform, tops),
 +            };
- 
++
 +            // pyro: an empty input shows its placeholder, its lines placed as the
 +            // value's (a single line centred in the content box), under the caret.
 +            if let Some(placeholder) = input_data.shown_placeholder() {
@@ -1218,11 +1647,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +                draw_text_context.line_tops = None;
 +            }
-+
+ 
              if self.node.is_focussed() {
                  // Render selection/caret
-                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +1791,7 @@
+@@ -1078,6 +1852,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1230,7 +1658,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1088,8 +1802,11 @@
+@@ -1088,8 +1863,11 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -1242,7 +1670,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1114,14 +1831,25 @@
+@@ -1114,14 +1892,25 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -1271,7 +1699,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1147,11 +1875,90 @@
+@@ -1147,11 +1936,90 @@
                      brush_override: None,
                  },
                  self.node.id,
@@ -1362,7 +1790,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_children(
          &self,
          scene: &mut impl PaintScene,
-@@ -1232,6 +2039,9 @@
+@@ -1232,6 +2100,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -1372,6 +1800,35 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
+@@ -1465,4 +2336,28 @@
+     };
+ 
+     CssBox::new(border_box, border, padding, outline_width, border_radii)
++}
++
++/// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.
++#[derive(Clone, Copy)]
++struct ElementPaint<'n> {
++    node: &'n Node,
++    paints_own_box: bool,
++    should_clip: bool,
++    is_text_input: bool,
++    content_position: Point,
++    child_clip_rect: Rect,
+ }
++
++/// pyro: an element's opacity and filter layer ([`BlitzDomPainter::paint_effect_group`]).
++struct EffectLayer {
++    /// The element's transform (unscrolled): the layer's and its filter's space.
++    transform: Affine,
++    /// The area of the screen not clipped away by the element's ancestors.
++    visible: Rect,
++    /// The element's border box, in its space (a backdrop filter covers it).
++    border_box: Rect,
++    opacity: f32,
++    filter: Option<Arc<anyrender::Filter>>,
++    backdrop_filter: Option<Arc<anyrender::Filter>>,
++}
 diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/src/render/border.rs
 --- a/packages/blitz-paint/src/render/border.rs
 +++ b/packages/blitz-paint/src/render/border.rs
@@ -2190,7 +2647,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let Some(border_style) = table.border_style.as_deref() else {
              return;
          };
-@@ -589,8 +926,115 @@
+@@ -589,8 +926,109 @@
          }
      }
  
@@ -2292,12 +2749,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        Some((style, color, width, offset + width))
 +    }
 +
-+    /// The box the outline is drawn in, if it is drawn.
-+    pub(crate) fn outline_bounds(&self) -> Option<Rect> {
-+        let (.., outset) = self.outline_line()?;
-+        Some(self.frame.border_box.inflate(outset.max(0.0), outset.max(0.0)))
-+    }
-+
 +    /// Draw the outline: a line of the outline's width around the border box
 +    /// moved out by `outline-offset` (in, when negative), its corners rounded
 +    /// as the border's are, drawn as Blink draws a border of that style
@@ -2308,7 +2759,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ✅ solid - Defines a solid border
      /// ❌ double - Defines a double border
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
-@@ -600,33 +1044,64 @@
+@@ -600,33 +1038,64 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
