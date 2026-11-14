@@ -1,0 +1,539 @@
+#!/usr/bin/env bun
+// Writes or checks vendor/<crate>/UPSTREAM.patch, the whole diff between a vendored crate and its upstream.
+//
+//   scripts/vendor/regen-patch [--all | CRATE...] [--check] [--fresh] [--base REV] [--upstream DIR]
+//
+// The upstream is not in the repository. It is reconstructed by reverse-applying (`git apply -R`) the UPSTREAM.patch
+// committed at a base revision to that revision's copy of the crate. The default base is the merge base of HEAD and
+// MERGE_HEAD during a merge, else of HEAD and origin/main. The working tree's UPSTREAM.patch is never read to make
+// the upstream, so conflict markers in it do not matter: after merging main, resolve the source conflicts and run
+// `scripts/vendor/regen-patch --all`.
+//
+//   (default)  Writes UPSTREAM.patch for the working tree in the crate's committed style (CRATES below), then checks
+//              it. A file whose contents equal its contents at HEAD, MERGE_HEAD or the base keeps that revision's
+//              section of the patch byte for byte, so a merge changes only the sections of files both sides edited
+//              (and those of files whose committed section was stale); every other section is regenerated.
+//   --fresh    Regenerates every section. On main this reproduces the committed patches byte for byte (stylo's
+//              timestamps, file times git does not keep, are carried over from the committed sections), except 9
+//              `index` lines of taffy's, which name its files as they were before the rename to Pyro (#308).
+//   --check    Writes nothing. Checks that the working tree's UPSTREAM.patch, applied with `git apply` to the
+//              reconstructed upstream, reproduces the crate's files. Exit 1 if it does not.
+//   --all      Every crate with an UPSTREAM.patch.
+//   --base REV The revision whose committed patch and sources make the upstream. Use it when a crate moved to a new
+//              upstream (its README.pyro.md title changed): name the revision that has the upstream the working
+//              tree is on.
+//   --upstream DIR  Also writes each crate's reconstructed upstream (the covered files) to DIR/<crate>.
+//
+// The other revisions (HEAD, MERGE_HEAD) must reconstruct the same upstream; one whose committed patch does not is
+// reported, and its sections are not reused. Covered files with conflict markers are an error.
+//
+// blitz-paint's, parley_engine's and stylo's sections are Apple `diff -u` output (macOS's /usr/bin/diff). Elsewhere a
+// GNU diff can align some hunks differently: `git apply` still reproduces the sources, but the sections are noisier.
+import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+// files: what the patch covers, as paths in vendor/<crate> (a directory covers what is under it); null: every file but
+//   README.pyro.md and UPSTREAM.patch. prefix: the files' path in the patch, under a/ and b/.
+// style: how a file's section is written (generate() below):
+//   git-dirs   `git diff --no-index --no-prefix a b` run in the parent of the two trees.
+//   git-repo   `git diff` in a checkout of the upstream (new files as `diff --git a/F b/F`).
+//   blitz-dom  git's hunks (myers) without the function after `@@`; `diff --git a/F b/F`, `new file mode 100644` for a
+//              new file, `---`/`+++`, no index line.
+//   apple-git  `diff --git a/F b/F`, `new file mode 100644` for a new file, then Apple `diff -u` with labels a/F and b/F.
+//   diff-ruN   `diff -ruN a/F b/F`, then Apple `diff -u` with labels `a/F<TAB>mtime` and `b/F<TAB>mtime`.
+//   unified    Apple `diff -u` with labels a/F and b/F.
+// order: path (sorted by path: git's index order, `find | sort`), tree (directory by directory: `diff -r`,
+//   `git diff --no-index` of two directories), committed (as the committed patch has them, new files last, by path).
+// alt: other Apple diff flags some committed sections were written with. Only --fresh uses them, for a file whose
+//   contents are as committed and whose committed section `diff -u` does not reproduce; a regenerated file's
+//   section is always `diff -u`.
+const CRATES = {
+  anyrender_svg: { files: null, prefix: '', style: 'git-dirs', order: 'tree' },
+  anyrender_vello_cpu: { files: null, prefix: '', style: 'git-dirs', order: 'tree' },
+  'blitz-dom': { files: ['src', 'assets'], prefix: 'packages/blitz-dom/', style: 'blitz-dom', order: 'path' },
+  'blitz-paint': { files: ['src'], prefix: 'packages/blitz-paint/', style: 'apple-git', order: 'path' },
+  fontique: { files: null, prefix: '', style: 'git-repo', order: 'path' },
+  parley: { files: null, prefix: '', style: 'git-repo', order: 'path' },
+  parley_engine: { files: null, prefix: '', style: 'unified', order: 'committed' },
+  // The sections last written on 2026-11-11 are minimal diffs (`diff -d`); later ones are plain `diff -u`.
+  stylo: { files: null, prefix: '', style: 'diff-ruN', order: 'tree', alt: [['-u', '-d']] },
+  // Cargo.toml is not upstream's (the workspace sections are cut), so it is not covered.
+  taffy: { files: ['src', 'examples', 'README.md'], prefix: '', style: 'git-repo', order: 'path' },
+};
+const PYRO_FILES = new Set(['README.pyro.md', 'UPSTREAM.patch']);
+const APPLE_DIFF = '/usr/bin/diff';
+
+const argv = process.argv.slice(2);
+const FLAGS = new Set(['--all', '--check', '--fresh', '--help', '-h']);
+const flag = (k) => argv.includes(k);
+const opt = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
+const VALUED = ['--base', '--upstream'];
+const names = argv.filter((a, i) => !a.startsWith('-') && !VALUED.includes(argv[i - 1]));
+const unknown = argv.filter((a) => a.startsWith('-') && !FLAGS.has(a) && !VALUED.includes(a));
+if (flag('--help') || flag('-h') || unknown.length || (!names.length && !flag('--all'))) {
+  const text = fs.readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1).filter((l) => l.startsWith('//')).map((l) => l.slice(3));
+  console.error(text.slice(0, text.findIndex((l) => l.startsWith("blitz-paint's"))).join('\n'));
+  if (unknown.length) console.error(`unknown option ${unknown.join(' ')}`);
+  process.exit(flag('--help') || flag('-h') ? 0 : 2);
+}
+
+// ---------- processes ----------
+process.on('uncaughtException', (e) => {
+  console.error(`regen-patch: ${e.message}`);
+  process.exit(2);
+});
+function run(cmd, args, { cwd, input, env, ok = [0] } = {}) {
+  const r = spawnSync(cmd, args, { cwd, input, env, maxBuffer: 1 << 30 });
+  if (r.error) throw r.error;
+  if (!ok.includes(r.status)) {
+    throw new Error(`${cmd} ${args.join(' ')} (in ${cwd ?? process.cwd()}) exited with ${r.status}\n${r.stderr.toString().trim()}`);
+  }
+  return r;
+}
+const ROOT = run('git', ['rev-parse', '--show-toplevel']).stdout.toString().trim();
+// Repository commands. Patch text is handled as latin1, which round-trips every byte.
+const git = (args, o = {}) => run('git', args, { cwd: ROOT, ...o }).stdout.toString('latin1');
+const verify = (rev) => {
+  const r = spawnSync('git', ['rev-parse', '-q', '--verify', `${rev}^{commit}`], { cwd: ROOT });
+  return r.status === 0 ? r.stdout.toString().trim() : null;
+};
+
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'regen-patch-'));
+process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
+// Commands on the scratch trees: no user or system configuration (diff.algorithm, apply.whitespace, an attributes file
+// with diff drivers), and no repository around them.
+const SCRATCH_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+Object.assign(SCRATCH_ENV, {
+  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1', GIT_CEILING_DIRECTORIES: TMP,
+  HOME: TMP, XDG_CONFIG_HOME: TMP, LC_ALL: 'C',
+});
+const scratch = (cmd, args, cwd, ok) => run(cmd, args, { cwd, env: SCRATCH_ENV, ok });
+
+// ---------- revisions ----------
+const HEAD = verify('HEAD');
+const mergeHeads = (() => {
+  const f = path.resolve(ROOT, git(['rev-parse', '--git-path', 'MERGE_HEAD']).trim());
+  return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(verify).filter(Boolean) : [];
+})();
+// A cherry-pick, revert or rebase in progress: the commit being applied.
+const pickHeads = ['CHERRY_PICK_HEAD', 'REVERT_HEAD', 'REBASE_HEAD'].map(verify).filter(Boolean);
+let BASE, baseWhy;
+if (opt('--base')) {
+  BASE = verify(opt('--base'));
+  if (!BASE) throw new Error(`--base ${opt('--base')}: not a commit`);
+  baseWhy = opt('--base');
+} else {
+  const other = mergeHeads[0] ?? verify('origin/main');
+  if (!other) throw new Error('no origin/main to take the merge base with: pass --base REV');
+  BASE = git(['merge-base', 'HEAD', other]).trim();
+  baseWhy = `merge base of HEAD and ${mergeHeads.length ? 'MERGE_HEAD' : 'origin/main'}`;
+}
+const short = (sha) => sha.slice(0, 8);
+// Revisions whose committed sections a file can keep, ours first.
+const CANDIDATES = [
+  { rev: HEAD, name: 'HEAD' },
+  ...mergeHeads.map((rev, i) => ({ rev, name: mergeHeads.length > 1 ? `MERGE_HEAD ${i + 1}` : 'MERGE_HEAD' })),
+  ...pickHeads.map((rev) => ({ rev, name: 'the commit being applied' })),
+  { rev: BASE, name: 'the base' },
+].filter((c, i, all) => c.rev && all.findIndex((d) => d.rev === c.rev) === i);
+
+// ---------- trees ----------
+// A tree is a Map rel -> Buffer: the covered files of vendor/<crate> at a revision, in the working tree, or in a
+// scratch directory.
+const covered = (crate, rel) => {
+  if (PYRO_FILES.has(rel)) return false;
+  const f = CRATES[crate].files;
+  return !f || f.some((r) => rel === r || rel.startsWith(`${r}/`));
+};
+function lsTree(rev, dir) {
+  const out = new Map();
+  for (const rec of git(['ls-tree', '-r', '-z', rev, '--', `${dir}/`]).split('\0')) {
+    const m = /^(\d+) (\w+) ([0-9a-f]+)\t(.*)$/s.exec(rec);
+    if (m && m[2] === 'blob') out.set(Buffer.from(m[4], 'latin1').toString('utf8').slice(dir.length + 1), m[3]);
+  }
+  return out;
+}
+function catBlobs(shas) {
+  const want = [...new Set(shas)];
+  const out = new Map();
+  if (!want.length) return out;
+  const buf = run('git', ['cat-file', '--batch'], { cwd: ROOT, input: want.join('\n') + '\n' }).stdout;
+  let at = 0;
+  for (const sha of want) {
+    const nl = buf.indexOf(10, at);
+    const [got, type, size] = buf.subarray(at, nl).toString().split(' ');
+    if (type !== 'blob' || got !== sha) throw new Error(`git cat-file: expected blob ${sha}, got ${buf.subarray(at, nl)}`);
+    out.set(sha, buf.subarray(nl + 1, nl + 1 + Number(size)));
+    at = nl + 1 + Number(size) + 1;
+  }
+  return out;
+}
+function revFiles(rev, crate) {
+  const dir = `vendor/${crate}`;
+  const tree = lsTree(rev, dir);
+  const keep = [...tree].filter(([rel]) => covered(crate, rel));
+  const blobs = catBlobs([...keep.map(([, sha]) => sha), ...['UPSTREAM.patch', 'README.pyro.md'].filter((f) => tree.has(f)).map((f) => tree.get(f))]);
+  const files = new Map(keep.map(([rel, sha]) => [rel, blobs.get(sha)]));
+  const patch = tree.has('UPSTREAM.patch') ? blobs.get(tree.get('UPSTREAM.patch')).toString('latin1') : null;
+  const title = tree.has('README.pyro.md') ? firstLine(blobs.get(tree.get('README.pyro.md'))) : null;
+  return { files, patch, title, shas: new Map(keep) };
+}
+function workFiles(crate) {
+  const dir = `vendor/${crate}`;
+  const rels = new Set(git(['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', `${dir}/`]).split('\0').filter(Boolean)
+    .map((p) => Buffer.from(p, 'latin1').toString('utf8').slice(dir.length + 1)));
+  const files = new Map();
+  for (const rel of [...rels].sort()) {
+    const abs = path.join(ROOT, dir, rel);
+    if (covered(crate, rel) && fs.lstatSync(abs, { throwIfNoEntry: false })?.isFile()) files.set(rel, fs.readFileSync(abs));
+  }
+  return files;
+}
+function readDir(root) {
+  const out = new Map();
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const abs = path.join(d, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (e.isFile()) out.set(path.relative(root, abs).split(path.sep).join('/'), fs.readFileSync(abs));
+    }
+  };
+  if (fs.existsSync(root)) walk(root);
+  return out;
+}
+function writeDir(root, files, prefix = '') {
+  for (const [rel, data] of files) {
+    const abs = path.join(root, prefix, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, data);
+  }
+}
+const firstLine = (buf) => buf.toString('utf8').split('\n')[0];
+const blobSha = (data) => crypto.createHash('sha1').update(`blob ${data.length}\0`).update(data).digest('hex');
+const sameFiles = (a, b) => a.size === b.size && [...a].every(([k, v]) => b.has(k) && v.equals(b.get(k)));
+function differing(a, b) {
+  const out = [];
+  for (const k of new Set([...a.keys(), ...b.keys()])) {
+    if (!a.has(k)) out.push(`${k} (only in the second)`);
+    else if (!b.has(k)) out.push(`${k} (only in the first)`);
+    else if (!a.get(k).equals(b.get(k))) out.push(k);
+  }
+  return out.sort();
+}
+
+let scratchN = 0;
+const scratchDir = (what) => { const d = path.join(TMP, `${++scratchN}-${what}`); fs.mkdirSync(d, { recursive: true }); return d; };
+// `git apply [-R]` of `patch` to `files`; returns the result, or throws with git's message.
+function applyPatch(files, patch, crate, { reverse = false } = {}) {
+  const dir = scratchDir(reverse ? 'upstream' : 'applied');
+  writeDir(dir, files, CRATES[crate].prefix);
+  const pf = path.join(TMP, `${scratchN}.patch`);
+  fs.writeFileSync(pf, patch, 'latin1');
+  scratch('git', ['apply', ...(reverse ? ['-R'] : []), '--whitespace=nowarn', pf], dir);
+  const out = readDir(path.join(dir, CRATES[crate].prefix));
+  return out;
+}
+
+// ---------- patch sections ----------
+// Splits a patch into one section per file, by its hunks' line counts (a removed line that starts with "-- " is not
+// taken for a file header). Returns Map rel -> text, in the patch's order, and each section's labels.
+function sections(patch, crate) {
+  const lines = patch.split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  const out = new Map();
+  let cur = null, oldLeft = 0, newLeft = 0;
+  const finish = () => {
+    if (!cur) return;
+    if (!cur.rel) throw new Error(`${crate}: a section of the committed UPSTREAM.patch names no file:\n${cur.lines.slice(0, 3).join('\n')}`);
+    out.set(cur.rel, { text: cur.lines.join('\n') + '\n', labels: cur.labels });
+    cur = null;
+  };
+  const relOf = (p) => {
+    const noTab = p.split('\t')[0];
+    const stripped = noTab.slice(noTab.indexOf('/') + 1);
+    const { prefix } = CRATES[crate];
+    if (!stripped.startsWith(prefix)) throw new Error(`${crate}: UPSTREAM.patch names ${noTab}, outside ${prefix || 'the crate'}`);
+    return stripped.slice(prefix.length);
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (oldLeft > 0 || newLeft > 0) {
+      const c = l[0];
+      if (c === '\\') { cur.lines.push(l); continue; }
+      if (c === '+') newLeft--;
+      else if (c === '-') oldLeft--;
+      else { oldLeft--; newLeft--; }
+      cur.lines.push(l);
+      continue;
+    }
+    if (l.startsWith('diff ')) {
+      finish();
+      const parts = l.split(' ');
+      cur = { lines: [l], rel: relOf(parts.at(-1)), labels: {}, hunks: 0 };
+    } else if (l.startsWith('--- ') && lines[i + 1]?.startsWith('+++ ')) {
+      if (!cur || cur.hunks) { finish(); cur = { lines: [], rel: null, labels: {}, hunks: 0 }; }
+      const a = l.slice(4), b = lines[i + 1].slice(4);
+      cur.labels = { a, b };
+      cur.rel ??= relOf(b.startsWith('/dev/null') ? a : b);
+      cur.lines.push(l, lines[++i]);
+    } else if (l.startsWith('@@ ')) {
+      const m = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(l);
+      if (!m || !cur) throw new Error(`${crate}: unreadable hunk header in UPSTREAM.patch: ${l}`);
+      oldLeft = m[1] === undefined ? 1 : Number(m[1]);
+      newLeft = m[2] === undefined ? 1 : Number(m[2]);
+      cur.hunks++;
+      cur.lines.push(l);
+    } else if (cur) cur.lines.push(l);
+    else if (l.trim()) throw new Error(`${crate}: UPSTREAM.patch has text before its first file: ${l}`);
+  }
+  finish();
+  return out;
+}
+
+// ---------- generating ----------
+const pad = (n) => String(n).padStart(2, '0');
+const localTime = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const stripContext = (hunks) => hunks.replace(/^(@@ [^@]* @@).*$/gm, '$1');
+
+// git's sections for the given files: Map rel -> { header: [lines], hunks: text }.
+function gitSections(crate, up, work, rels, abbrev) {
+  const dir = scratchDir('git-diff');
+  const { prefix } = CRATES[crate];
+  writeDir(path.join(dir, 'a'), rels.filter((r) => up.has(r)).map((r) => [r, up.get(r)]), prefix);
+  writeDir(path.join(dir, 'b'), rels.filter((r) => work.has(r)).map((r) => [r, work.get(r)]), prefix);
+  fs.mkdirSync(path.join(dir, 'a'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'b'), { recursive: true });
+  const out = scratch('git', ['diff', '--no-index', '--no-prefix', '--no-renames', '--no-color', '--no-ext-diff', '--no-textconv',
+    '--diff-algorithm=myers', `--abbrev=${abbrev}`, 'a', 'b'], dir, [0, 1]).stdout.toString('latin1');
+  const res = new Map();
+  for (const [rel, s] of sections(out, crate)) {
+    const lines = s.text.split('\n');
+    const at = lines.findIndex((l) => l.startsWith('@@ '));
+    if (at < 0) throw new Error(`${crate}: git diff of ${rel} has no hunks (a binary file?):\n${s.text}`);
+    res.set(rel, { header: lines.slice(0, at), hunks: lines.slice(at).join('\n') });
+  }
+  return res;
+}
+function appleDiff(flags, a, b, la, lb) {
+  const r = run(APPLE_DIFF, [...flags, '--label', la, '--label', lb, a ?? '/dev/null', b ?? '/dev/null'], { env: SCRATCH_ENV, ok: [0, 1] });
+  const out = r.stdout.toString('latin1');
+  if (!/^@@ /m.test(out)) throw new Error(`diff of ${lb} has no hunks (a binary file?):\n${out}`);
+  return out;
+}
+
+// The patch's section for each of `rels` (files that differ from the upstream), generated.
+function generate(crate, up, work, rels, ctx) {
+  const { style, prefix } = CRATES[crate];
+  const P = (rel) => prefix + rel;
+  const out = new Map();
+  if (['git-dirs', 'git-repo', 'blitz-dom'].includes(style)) {
+    const g = gitSections(crate, up, work, rels, ctx.abbrev);
+    for (const rel of rels) {
+      const s = g.get(rel);
+      if (!s) throw new Error(`${crate}: git diff printed nothing for ${rel}`);
+      const isNew = !up.has(rel), isGone = !work.has(rel);
+      let text;
+      if (style === 'git-dirs') text = [...s.header, s.hunks].join('\n');
+      else if (style === 'git-repo') text = [`diff --git a/${P(rel)} b/${P(rel)}`, ...s.header.slice(1), s.hunks].join('\n');
+      else {
+        text = [`diff --git a/${P(rel)} b/${P(rel)}`, ...(isNew ? ['new file mode 100644'] : []),
+          `--- ${isNew ? '/dev/null' : `a/${P(rel)}`}`, `+++ ${isGone ? '/dev/null' : `b/${P(rel)}`}`, stripContext(s.hunks)].join('\n');
+      }
+      out.set(rel, text.replace(/\n$/, ''));
+    }
+    return out;
+  }
+  // Apple diff, one file at a time.
+  const dir = scratchDir('diff');
+  writeDir(path.join(dir, 'a'), rels.filter((r) => up.has(r)).map((r) => [r, up.get(r)]));
+  writeDir(path.join(dir, 'b'), rels.filter((r) => work.has(r)).map((r) => [r, work.get(r)]));
+  const section = (rel, flags) => {
+    const a = up.has(rel) ? path.join(dir, 'a', rel) : null, b = work.has(rel) ? path.join(dir, 'b', rel) : null;
+    const la = a ? `a/${P(rel)}` : '/dev/null', lb = b ? `b/${P(rel)}` : '/dev/null';
+    if (style === 'apple-git') {
+      const head = [`diff --git a/${P(rel)} b/${P(rel)}`, ...(a ? [] : ['new file mode 100644']), ...(b ? [] : ['deleted file mode 100644'])];
+      return head.join('\n') + '\n' + appleDiff(flags, a, b, la, lb);
+    }
+    if (style === 'unified') return appleDiff(flags, a, b, la, lb);
+    if (style === 'diff-ruN') {
+      const t = ctx.times(rel);
+      return `diff -ruN a/${P(rel)} b/${P(rel)}\n` + appleDiff(flags, a, b, `a/${P(rel)}\t${t.a}`, `b/${P(rel)}\t${t.b}`);
+    }
+    throw new Error(`${crate}: unknown style ${style}`);
+  };
+  for (const rel of rels) {
+    let text = section(rel, ['-u']);
+    // --fresh: a file as committed whose section another variant of the diff wrote (ALT_DIFF) takes that variant's.
+    const committed = ctx.committed(rel);
+    if (committed !== undefined && text !== committed) {
+      for (const flags of CRATES[crate].alt ?? []) {
+        const t = section(rel, flags);
+        if (t === committed) { text = t; ctx.alt.push(`${rel} (diff ${flags.join(' ')})`); break; }
+      }
+    }
+    out.set(rel, text.replace(/\n$/, ''));
+  }
+  return out;
+}
+
+function compare(order) {
+  const byPath = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  if (order !== 'tree') return byPath;
+  return (a, b) => {
+    const x = a.split('/'), y = b.split('/');
+    for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return byPath(x[i], y[i]);
+    return x.length - y.length;
+  };
+}
+
+// ---------- one crate ----------
+const conflictMarker = /^(<{7}|>{7}) /m;
+
+function regen(crate) {
+  const cfg = CRATES[crate];
+  if (!cfg) throw new Error(`${crate}: not in CRATES (scripts/vendor/regen-patch): add its patch style there`);
+  const dir = `vendor/${crate}`;
+  const work = workFiles(crate);
+  const marked = [...work].filter(([, d]) => conflictMarker.test(d.toString('latin1'))).map(([r]) => r);
+  if (marked.length) throw new Error(`${crate}: conflict markers in ${marked.map((r) => `${dir}/${r}`).join(', ')}: resolve them first`);
+  const readme = path.join(ROOT, dir, 'README.pyro.md');
+  const workTitle = fs.existsSync(readme) ? firstLine(fs.readFileSync(readme)) : null;
+
+  // The upstream, from the base (or, for a crate the base does not have yet, the first revision that has its patch).
+  const revs = CANDIDATES.map((c) => ({ ...c, ...revFiles(c.rev, crate) })).filter((r) => r.patch !== null);
+  const src = revs.find((r) => r.rev === BASE) ?? revs[0];
+  if (!src) throw new Error(`${crate}: none of ${CANDIDATES.map((c) => c.name).join(', ')} has a committed ${dir}/UPSTREAM.patch to reconstruct the upstream from`);
+  if (src.rev !== BASE) console.error(`${crate}: the base has no UPSTREAM.patch; the upstream is reconstructed from ${src.name}'s`);
+  const where = `${short(src.rev)} (${src.rev === BASE ? 'the base' : src.name})`;
+  for (const r of revs) {
+    try {
+      r.up = r !== src && r.patch === src.patch && sameFiles(r.files, src.files) ? 'same' : applyPatch(r.files, r.patch, crate, { reverse: true });
+    } catch (e) {
+      if (r === src) throw new Error(`${crate}: the UPSTREAM.patch committed at ${where} does not reverse-apply to its sources (a stale patch: pass --base with a revision whose patch is right): ${e.message}`);
+      r.up = null;
+    }
+  }
+  const up = src.up;
+  if (opt('--upstream')) {
+    const out = path.resolve(opt('--upstream'), crate);
+    fs.rmSync(out, { recursive: true, force: true });
+    writeDir(out, up);
+  }
+  if (!opt('--base') && workTitle && src.title && workTitle !== src.title) {
+    throw new Error(`${crate}: README.pyro.md names another upstream than ${where} does ("${workTitle}" vs "${src.title}"): pass --base with a revision on the new upstream`);
+  }
+  // Other revisions' sections are reused only if their patch makes the same upstream.
+  for (const r of revs) r.ok = r === src || r.up === 'same' || (!!r.up && sameFiles(r.up, up));
+  // Both sides of a merge agreeing against the base: the base is the odd one out.
+  const others = revs.filter((r) => r !== src && r.up);
+  if (!opt('--base') && others.length >= 2 && others.every((r) => !r.ok && r.up !== 'same' && sameFiles(r.up, others[0].up))) {
+    throw new Error(`${crate}: the upstream reconstructed at ${where} differs from the one ${others.map((r) => `${r.name} (${short(r.rev)})`).join(' and ')} make` +
+      ` (${differing(others[0].up, up).slice(0, 4).join(', ')}): a stale patch at the base, or a new upstream; pass --base ${others[0].name}`);
+  }
+  for (const r of revs) {
+    if (r.ok) continue;
+    const moved = r.title && src.title && r.title !== src.title;
+    if (moved && !opt('--base')) throw new Error(`${crate}: ${r.name} (${short(r.rev)}) is on another upstream ("${r.title}" vs "${src.title}"): pass --base with a revision on the upstream the working tree is on`);
+    const why = r.up ? `makes another upstream than ${where} (${differing(r.up, up).slice(0, 4).join(', ')})` : 'does not reverse-apply to its sources';
+    console.error(`${crate}: warning: the UPSTREAM.patch committed at ${r.name} (${short(r.rev)}) ${why}: a stale patch there; its sections are regenerated, not reused`);
+  }
+  const refs = revs.filter((r) => r.ok).map((r) => ({ ...r, sections: sections(r.patch, crate) }));
+  return { cfg, dir, work, up, src, where, refs };
+}
+
+function writePatch(crate) {
+  const r = regen(crate);
+  const { cfg, dir, work, up, src, refs } = r;
+  const rels = [...new Set([...up.keys(), ...work.keys()])].filter((f) => !(up.has(f) && work.has(f) && up.get(f).equals(work.get(f))));
+  const base = refs.find((x) => x.rev === src.rev);
+  // The revision whose patch has a section for the file as it is now.
+  const asCommitted = (rel) => {
+    const sha = work.has(rel) ? blobSha(work.get(rel)) : null;
+    return refs.find((x) => (x.shas.get(rel) ?? null) === sha && x.sections.has(rel));
+  };
+  const kept = new Map(), regenerate = [];
+  for (const rel of rels) {
+    const from = flag('--fresh') ? null : asCommitted(rel);
+    if (from) kept.set(rel, { text: from.sections.get(rel).text, from: from.name });
+    else regenerate.push(rel);
+  }
+  const abbrev = /^index ([0-9a-f]+)\.\./m.exec(base.patch)?.[1].length ?? 7;
+  // stylo's labels hold file times: the committed ones where the file is as committed, else upstream's copy time and
+  // the file's modification time, as `diff -ruN` writes them.
+  const labelTime = (l) => l?.split('\t')[1];
+  const epoch = localTime(new Date(0));
+  const count = (list) => list.reduce((m, t) => m.set(t, (m.get(t) ?? 0) + 1), new Map());
+  const copyTime = [...count([...base.sections.values()].map((s) => labelTime(s.labels.a)).filter(Boolean))].sort((x, y) => y[1] - x[1])[0]?.[0] ?? epoch;
+  const times = (rel) => {
+    const any = refs.map((x) => x.sections.get(rel)).find(Boolean);
+    const same = asCommitted(rel);
+    return {
+      a: !up.has(rel) ? epoch : labelTime(any?.labels.a) ?? copyTime,
+      b: !work.has(rel) ? epoch : same ? labelTime(same.sections.get(rel).labels.b) : localTime(fs.statSync(path.join(ROOT, dir, rel)).mtime),
+    };
+  };
+  const ctx = { abbrev, times, committed: (rel) => asCommitted(rel)?.sections.get(rel).text, alt: [] };
+  const made = regenerate.length ? generate(crate, up, work, regenerate, ctx) : new Map();
+  const cmp = compare(cfg.order);
+  let order = [...rels].sort((a, b) => cmp(cfg.prefix + a, cfg.prefix + b));
+  if (cfg.order === 'committed') {
+    const seen = [];
+    for (const x of refs) for (const rel of x.sections.keys()) if (rels.includes(rel) && !seen.includes(rel)) seen.push(rel);
+    order = [...seen, ...order.filter((f) => !seen.includes(f))];
+  }
+  const text = order.map((rel) => (kept.has(rel) ? kept.get(rel).text : made.get(rel) + '\n')).join('');
+  const file = path.join(ROOT, dir, 'UPSTREAM.patch');
+  const before = fs.existsSync(file) ? fs.readFileSync(file, 'latin1') : null;
+  if (before !== text) fs.writeFileSync(file, text, 'latin1');
+  const keptBy = count([...kept.values()].map((k) => k.from));
+  const keptNote = [...keptBy].map(([k, n]) => `${n} from ${k}`).join(', ');
+  console.log(`${crate}: UPSTREAM.patch ${before === text ? 'unchanged' : 'written'}: ${order.length} file(s)` +
+    `${kept.size ? `, ${kept.size} section(s) kept as committed (${keptNote})` : ''}, ${regenerate.length} regenerated` +
+    `${regenerate.length && regenerate.length <= 12 ? ` (${regenerate.sort().join(', ')})` : ''}${ctx.alt.length ? `; written by another diff variant: ${ctx.alt.sort().join(', ')}` : ''}`);
+  return checkPatch(crate, { ...r, text });
+}
+
+function checkPatch(crate, ctx) {
+  const dir = `vendor/${crate}`;
+  const { work, up, where } = ctx ?? regen(crate);
+  const file = path.join(ROOT, dir, 'UPSTREAM.patch');
+  const text = ctx?.text ?? (fs.existsSync(file) ? fs.readFileSync(file, 'latin1') : '');
+  if (/^(<{7}|={7}|>{7})( |$)/m.test(text)) {
+    console.log(`${crate}: FAIL: ${dir}/UPSTREAM.patch has conflict markers (run scripts/vendor/regen-patch ${crate})`);
+    return false;
+  }
+  let got;
+  try {
+    got = text.trim() ? applyPatch(up, text, crate) : new Map(up);
+  } catch (e) {
+    console.log(`${crate}: FAIL: ${dir}/UPSTREAM.patch does not apply to the upstream reconstructed at ${where}:\n${e.message}`);
+    return false;
+  }
+  const bad = differing(got, work);
+  const what = CRATES[crate].files ? CRATES[crate].files.map((f) => `${dir}/${f}`).join(', ') : dir;
+  if (bad.length) {
+    console.log(`${crate}: FAIL: ${dir}/UPSTREAM.patch applied to the upstream reconstructed at ${where} differs from the working tree in ${bad.length} file(s): ${bad.slice(0, 10).join(', ')}${bad.length > 10 ? ', …' : ''}`);
+    return false;
+  }
+  console.log(`${crate}: patch verified: git apply on the upstream reconstructed at ${where} reproduces ${what}`);
+  return true;
+}
+
+// ---------- main ----------
+const all = fs.readdirSync(path.join(ROOT, 'vendor')).filter((c) => fs.existsSync(path.join(ROOT, 'vendor', c, 'UPSTREAM.patch')) || lsTree(BASE, `vendor/${c}`).has('UPSTREAM.patch')).sort();
+const list = flag('--all') ? all : names;
+for (const c of list) if (!fs.existsSync(path.join(ROOT, 'vendor', c))) throw new Error(`no vendor/${c}`);
+console.error(`base: ${short(BASE)} (${baseWhy})${mergeHeads.length ? `; merging ${mergeHeads.map(short).join(', ')}` : ''}`);
+let ok = true;
+for (const crate of list) {
+  try {
+    ok = (flag('--check') ? checkPatch(crate) : writePatch(crate)) && ok;
+  } catch (e) {
+    console.log(`${crate}: FAIL: ${e.message}`);
+    ok = false;
+  }
+}
+process.exit(ok ? 0 : 1);

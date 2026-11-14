@@ -1,0 +1,9 @@
+# Merge drivers for files that most branches append to (bench/wpt/README.md, "Merging main into a branch").
+# union is git's own (no setup): the lines both sides added are kept, ours first. Read the result: a line both sides
+# edited is kept twice.
+vendor/*/README.pyro.md merge=union
+crates/pyro-render/tests/integration.rs merge=union
+# wpt-baseline is bench/wpt/merge-baseline.mjs; set it up once per clone with scripts/vendor/setup-merge-drivers.sh
+# (without it git merges these files as text).
+bench/wpt/baseline.json merge=wpt-baseline
+bench/wpt/reftest-baseline.json merge=wpt-baseline

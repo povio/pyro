@@ -99,6 +99,37 @@ that changes nothing leaves the file byte-identical (no artifact). One page per 
 Naming every pass would make the file ~38 MB instead of ~0.5 MB; `h` is what lets the gate tell that a page's
 subtests changed, since a `fail` entry does not name its passes.
 
+## Merging main into a branch
+
+Most branches touch the same few files, so a merge of main used to conflict in them every time. `.gitattributes` and
+two scripts make those conflicts mechanical:
+
+- `vendor/*/README.pyro.md` and `crates/pyro-render/tests/integration.rs` merge with git's `union` driver: the lines
+  both sides added are kept, ours first. Read the README result: a line both sides edited comes out twice, and two
+  sections both sides appended at the same place lose the blank line between them.
+- `baseline.json` and `reftest-baseline.json` merge page by page (`merge-baseline.mjs`). A page only one side changed
+  takes that side's entry (a loss accepted there stays accepted). A page both sides changed keeps every pass of either
+  side; when two entries cannot be combined (`fail` entries of different subtest names), that page's two lines are
+  left as a conflict. The gate checks the result as usual.
+- `vendor/*/UPSTREAM.patch` still conflicts. `scripts/vendor/regen-patch --all` rewrites it from the merged sources
+  and checks that `git apply` on the upstream reproduces them. It rebuilds the upstream from the patch committed at
+  the merge base, so the conflict markers do not matter. A file that is as one side committed it keeps that side's
+  section byte for byte: only the files both sides edited get new sections.
+
+```sh
+scripts/vendor/setup-merge-drivers.sh           # once per clone; on a branch older than the script:
+                                                #   git show origin/main:scripts/vendor/setup-merge-drivers.sh | sh
+git fetch origin
+git -c attr.tree=origin/main merge origin/main  # main's .gitattributes, also on a branch older than it (git 2.43+)
+# resolve the source conflicts, if any: git diff --name-only --diff-filter=U
+scripts/vendor/regen-patch --all
+git add -u && git commit --no-edit
+```
+
+`scripts/vendor/regen-patch --check --all` checks the committed patches without writing anything. `--fresh`
+regenerates every section instead of keeping the committed ones. blitz-paint's, parley_engine's and stylo's sections
+are macOS `diff -u` output: elsewhere the regenerated sections can align differently (they still apply).
+
 ## Before making it a required check
 
 The gate's false failures come from pages whose results depend on load. `flaky.json` starts with the six such pages
