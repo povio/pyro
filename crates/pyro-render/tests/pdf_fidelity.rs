@@ -388,6 +388,20 @@ fn blurred_outset_shadows_are_drawn() {
 }
 
 #[test]
+fn a_mask_layer_is_not_painted_over_what_it_masks() {
+    // PDF has no destination-in: a mask's `DestIn` layer (here an SVG `<mask>`,
+    // whose coverage is drawn as an image) is left out, and the content stays
+    // unmasked instead of covered by the mask's image.
+    let out = print(
+        r##"<!doctype html><body style="margin:0"><svg width="100" height="100">
+        <mask id="m"><rect width="50" height="100" fill="white"/></mask>
+        <rect width="100" height="100" fill="#0000ff" mask="url(#m)"/></svg>"##,
+    );
+    assert_eq!((out.stats.compose_skipped, out.stats.images), (1, 0), "{:?}", out.stats);
+    assert!(out.stats.fills >= 1, "the masked rect is drawn: {:?}", out.stats);
+}
+
+#[test]
 fn page_boxes_keep_their_output() {
     // `.pz-page` documents: no tags, no links; text is written with its
     // source; blurred shadows are drawn (PYRO_PDF_SHADOWS=0 skips

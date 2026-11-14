@@ -702,6 +702,13 @@ pub enum ElClass {
     SvgGraphics,
     SvgA,
     SvgRoot,
+    SvgClipPath,
+    SvgMask,
+    SvgPattern,
+    SvgLinearGradient,
+    SvgRadialGradient,
+    SvgFilter,
+    SvgMarker,
     Other,
 }
 
@@ -714,6 +721,13 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             // SVGGraphicsElement interfaces (SVG 2).
             "g" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "path" | "text" | "tspan"
             | "textPath" | "use" | "image" | "foreignObject" | "switch" | "defs" => ElClass::SvgGraphics,
+            "clipPath" => ElClass::SvgClipPath,
+            "mask" => ElClass::SvgMask,
+            "pattern" => ElClass::SvgPattern,
+            "linearGradient" => ElClass::SvgLinearGradient,
+            "radialGradient" => ElClass::SvgRadialGradient,
+            "filter" => ElClass::SvgFilter,
+            "marker" => ElClass::SvgMarker,
             _ => ElClass::Svg,
         };
     }
@@ -878,6 +892,13 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgGraphics => s.wrap::<SvgGraphicsElement>(d, k),
         SvgA => s.wrap::<SvgAElement>(d, k),
         SvgRoot => s.wrap::<SvgSvgElement>(d, k),
+        SvgClipPath => s.wrap::<SvgClipPathElement>(d, k),
+        SvgMask => s.wrap::<SvgMaskElement>(d, k),
+        SvgPattern => s.wrap::<SvgPatternElement>(d, k),
+        SvgLinearGradient => s.wrap::<SvgLinearGradientElement>(d, k),
+        SvgRadialGradient => s.wrap::<SvgRadialGradientElement>(d, k),
+        SvgFilter => s.wrap::<SvgFilterElement>(d, k),
+        SvgMarker => s.wrap::<SvgMarkerElement>(d, k),
         Other => s.wrap::<Element>(d, k),
     }
 }
@@ -2847,6 +2868,80 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     });
 });
 simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement);
+// SVG 2 elements with enumerated attributes, as `SVGAnimatedEnumeration`s
+// (`collections::SvgEnum`: the keywords, in the order of their values from 1).
+const UNITS: &[&str] = &["userSpaceOnUse", "objectBoundingBox"];
+static CLIP_PATH_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "clipPathUnits", keywords: UNITS, initial: 1, slot: 22 };
+static MASK_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "maskUnits", keywords: UNITS, initial: 2, slot: 23 };
+static MASK_CONTENT_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "maskContentUnits", keywords: UNITS, initial: 1, slot: 24 };
+static PATTERN_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "patternUnits", keywords: UNITS, initial: 2, slot: 25 };
+static PATTERN_CONTENT_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "patternContentUnits", keywords: UNITS, initial: 1, slot: 26 };
+static GRADIENT_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "gradientUnits", keywords: UNITS, initial: 2, slot: 27 };
+static SPREAD_METHOD: collections::SvgEnum =
+    collections::SvgEnum { attr: "spreadMethod", keywords: &["pad", "reflect", "repeat"], initial: 1, slot: 28 };
+static FILTER_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "filterUnits", keywords: UNITS, initial: 2, slot: 29 };
+static PRIMITIVE_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "primitiveUnits", keywords: UNITS, initial: 1, slot: 30 };
+static MARKER_UNITS: collections::SvgEnum =
+    collections::SvgEnum { attr: "markerUnits", keywords: &["userSpaceOnUse", "strokeWidth"], initial: 2, slot: 31 };
+
+macro_rules! svg_enum {
+    ($def:expr, $prop:literal, $e:expr) => {
+        $def.getter($prop, |s, n| Ok(collections::animated_enumeration(s, n.page(), n.id, &$e)?.value()));
+    };
+}
+
+/// The `SVGUnitTypes` constants, which the elements with units attributes include.
+fn unit_type_constants<C: JsClass>(def: &mut ClassDef<C>) {
+    def.constant("SVG_UNIT_TYPE_UNKNOWN", 0.0);
+    def.constant("SVG_UNIT_TYPE_USERSPACEONUSE", 1.0);
+    def.constant("SVG_UNIT_TYPE_OBJECTBOUNDINGBOX", 2.0);
+}
+
+simple_class!(SvgClipPathElement, "SVGClipPathElement", SvgElement, |def| {
+    unit_type_constants(def);
+    svg_enum!(def, "clipPathUnits", CLIP_PATH_UNITS);
+});
+simple_class!(SvgMaskElement, "SVGMaskElement", SvgElement, |def| {
+    unit_type_constants(def);
+    svg_enum!(def, "maskUnits", MASK_UNITS);
+    svg_enum!(def, "maskContentUnits", MASK_CONTENT_UNITS);
+});
+simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
+    unit_type_constants(def);
+    svg_enum!(def, "patternUnits", PATTERN_UNITS);
+    svg_enum!(def, "patternContentUnits", PATTERN_CONTENT_UNITS);
+});
+simple_class!(SvgGradientElement, "SVGGradientElement", SvgElement, |def| {
+    unit_type_constants(def);
+    def.constant("SVG_SPREADMETHOD_UNKNOWN", 0.0);
+    def.constant("SVG_SPREADMETHOD_PAD", 1.0);
+    def.constant("SVG_SPREADMETHOD_REFLECT", 2.0);
+    def.constant("SVG_SPREADMETHOD_REPEAT", 3.0);
+    svg_enum!(def, "gradientUnits", GRADIENT_UNITS);
+    svg_enum!(def, "spreadMethod", SPREAD_METHOD);
+});
+simple_class!(SvgLinearGradientElement, "SVGLinearGradientElement", SvgGradientElement);
+simple_class!(SvgRadialGradientElement, "SVGRadialGradientElement", SvgGradientElement);
+simple_class!(SvgFilterElement, "SVGFilterElement", SvgElement, |def| {
+    unit_type_constants(def);
+    svg_enum!(def, "filterUnits", FILTER_UNITS);
+    svg_enum!(def, "primitiveUnits", PRIMITIVE_UNITS);
+});
+simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
+    def.constant("SVG_MARKERUNITS_UNKNOWN", 0.0);
+    def.constant("SVG_MARKERUNITS_USERSPACEONUSE", 1.0);
+    def.constant("SVG_MARKERUNITS_STROKEWIDTH", 2.0);
+    svg_enum!(def, "markerUnits", MARKER_UNITS);
+});
+
 // SVG 2 `a`: the link attributes it shares with HTML's.
 simple_class!(SvgAElement, "SVGAElement", SvgGraphicsElement, |def| {
     reflect_str!(def, "rel", "rel");
@@ -3400,6 +3495,14 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgGraphicsElement>();
     engine.register::<SvgSvgElement>();
     engine.register::<SvgAElement>();
+    engine.register::<SvgClipPathElement>();
+    engine.register::<SvgMaskElement>();
+    engine.register::<SvgPatternElement>();
+    engine.register::<SvgGradientElement>();
+    engine.register::<SvgLinearGradientElement>();
+    engine.register::<SvgRadialGradientElement>();
+    engine.register::<SvgFilterElement>();
+    engine.register::<SvgMarkerElement>();
     engine.register::<DomImplementation>();
 }
 

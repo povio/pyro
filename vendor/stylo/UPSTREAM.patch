@@ -196,6 +196,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  
  [caption-side]
+@@ -2117,7 +2132,6 @@
+ type = "TransformBox"
+ initial = "computed::TransformBox::ViewBox"
+ struct = "box"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-transforms/#transform-box"
+ animation_type = "discrete"
+ affects = "overflow"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-11 20:10:18
@@ -830,3 +838,16 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
          }
          let function = {
              let f = input.expect_function()?;
+diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
+--- a/values/specified/transform.rs	2026-11-14 08:56:29
++++ b/values/specified/transform.rs	2026-11-14 09:42:38
+@@ -44,7 +44,8 @@
+ 
+ #[cfg(feature = "servo")]
+ fn all_transform_boxes_are_enabled(_context: &ParserContext) -> bool {
+-    false
++    // pyro: SVG content resolves every box (blitz-dom `node/svg_css.rs`).
++    true
+ }
+ 
+ /// The specified value of `transform-box`.

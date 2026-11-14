@@ -1430,6 +1430,32 @@ impl Node {
                 .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
         }
 
+        /// pyro: an SVG presentation attribute's value parsed as the CSS
+        /// property's value (`property` is its name).
+        fn parse_svg_presentation_attr(property: &str, value: &str) -> Option<PropertyDeclaration> {
+            use style::properties::{PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
+            use style::stylesheets::{CssRuleType, Origin};
+            use style_traits::ParsingMode;
+
+            let property = PropertyId::parse_enabled_for_all_content(property).ok()?;
+            let mut declarations = SourcePropertyDeclaration::default();
+            parse_one_declaration_into(
+                &mut declarations,
+                property,
+                value,
+                Origin::Author,
+                &crate::url::DocumentUrl::default().url_extra_data(),
+                None,
+                // A number is a length in user units (CSS px), as Gecko parses
+                // presentation attributes.
+                ParsingMode::ALLOW_UNITLESS_LENGTH,
+                style::context::QuirksMode::NoQuirks,
+                CssRuleType::Style,
+            )
+            .ok()?;
+            declarations.drain().declarations.next()
+        }
+
         // `<input type=image>` is the only input type that is replaced
         // content, and it is the only one that takes the embedded-content
         // presentational attributes. The type attribute is matched ASCII
@@ -1446,6 +1472,19 @@ impl Node {
         for attr in elem.attrs() {
             let name = &attr.name.local;
             let value = attr.value.as_str();
+
+            // pyro: an SVG element's `clip-path` and `transform-origin` attributes are
+            // the CSS properties' presentation attributes (a basic shape, CSS lengths
+            // and keywords): blitz-dom's SVG serializer (`node/svg_css.rs`) writes their
+            // computed values for usvg, which knows neither form.
+            if elem.name.ns == ns!(svg)
+                && attr.name.ns == ns!()
+                && (*name == local_name!("clip-path") || *name == local_name!("transform-origin"))
+            {
+                if let Some(declaration) = parse_svg_presentation_attr(&**name, value) {
+                    push_style(declaration);
+                }
+            }
 
             if *name == local_name!("lang") {
                 if attr.name.ns == ns!(xml) {
