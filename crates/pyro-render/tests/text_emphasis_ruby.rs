@@ -110,7 +110,7 @@ fn emphasis_marks_and_annotations_take_room_in_the_line() {
             render(&format!("<div style='line-height:1;width:300px;background:#000;{emphasis}'>{content}</div>"), scale)
         };
         let plain = page("MONITOR", "");
-        let marks = page("MONITOR", "text-emphasis:'x'");
+        let marks = page("MONITOR", "text-emphasis:\"x\"");
         let ruby = page("<ruby>M<rt>x</rt>O<rt>x</rt>N<rt>x</rt>I<rt>x</rt>T<rt>x</rt>O<rt>x</rt>R<rt>x</rt></ruby>", "");
         assert!(inked_rows(&marks) > inked_rows(&plain), "scale {scale}: the line grows");
         assert_eq!(inked_rows(&marks), inked_rows(&ruby), "scale {scale}: by as much for both");

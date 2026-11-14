@@ -65,6 +65,12 @@ crate (`diff -ruN`).
   lets a paint-only restyle of a table cell run no layout (`vendor/blitz-dom/README.pyro.md`, "Paint-only
   restyles run no layout and shape no text").
 
+## Text decorations and emphasis
+
+- `properties/longhands.toml`: `text-decoration-skip-ink` is parsed and computed for Servo too (upstream: Gecko only);
+  blitz-paint skips ink by it. `text-emphasis-style` gives `rebuild_box` damage under Servo (its `affects` is
+  `overflow`): Blitz lays its marks out with the text, and they take room in their lines.
+
 ## Container queries, typed values
 
 - `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules

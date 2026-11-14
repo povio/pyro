@@ -2679,6 +2679,7 @@ struct = "inherited_text"
 servo_pref = "layout.css.text-emphasis.enabled"
 animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
+servo_restyle_damage = "rebuild_box"
 affects = "overflow"
 
 [text-underline-offset]

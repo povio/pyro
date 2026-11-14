@@ -714,6 +714,31 @@ document, its line breaking and its min/max-content widths, uses the same opport
 inherits it. `BaseDocument::line_break_override` reads it back (pyro-render rebuilds a persistent document whose
 setting differs). Covered by `crates/pyro-render/tests/hyphen_digit_breaks.rs`.
 
+## Ruby annotations and emphasis marks
+
+- `src/node/text.rs` (`TextAnnotation`, `TextAnnotationKind`, `can_take_emphasis_mark`), `src/layout/inline/build.rs`
+  (`FoundAnnotations`, `build_annotation`, `annotation_room`, `emphasis_mark`): an inline root's build finds its ruby
+  annotations and emphasis marks. An `<rt>` (or `<rtc>`) inside a `<ruby>` is not part of the root's text: it annotates
+  the text since the ruby (or the annotation before it) started, its base. An element whose `text-emphasis-style` is
+  not `none` has marks over its own text. Once the root is built each annotation gets a layout of its own, one line:
+  the `<rt>`'s content in its style, or the mark (`dot` `•◦`, `circle` `●○`, `double-circle` `◉◎`, `triangle` `▲△`,
+  `sesame` `﹅﹆`, or the string) in the element's font at half its size, as an `<rt>` has it. `under` is
+  `ruby-position: under` or `text-emphasis-position: under` (`auto` is `under right` for Chinese, by `-x-lang`;
+  in a vertical writing mode `left` is under the line). blitz-paint draws them (`draw_text_annotations`). Marks skip
+  word separators, `Z*`, `Cc`, `Cf`, `Cn` and `P*` characters (CSS Text Decoration 3, 3.1).
+- Room in the line: each annotation's content area (ascent to descent of its line) is room its holder needs beyond
+  its content area, over or under it (`parley::TextStyle::annotation_space`; nested ruby stacks: an annotation of a
+  base that has one goes outside it). The root is built again with it once it has any, so the line box grows where
+  the line height leaves too little (CSS Ruby 1, 4.4), for ruby and marks alike (WPT `text-emphasis-line-height-*`).
+- `src/stylo_to_parley.rs`: `annotation_space` is set by the build only.
+- `src/layout/damage.rs` (`compute_layout_damage`): a change of `text-emphasis-style`, `text-emphasis-position` or
+  `ruby-position` collects the inline layout again (Stylo gives `text-emphasis-style` relayout damage for it).
+- `src/document.rs`: the prefs `layout.css.text-emphasis.enabled`, `layout.css.ruby.enabled` (`ruby-position`,
+  `ruby-align`) and `layout.css.text-decoration-inset-percentage.enabled`.
+- Not done: ruby layout proper. An annotation wider than its base does not space the base out, `ruby-align` is
+  ignored, `<rt>`'s box (background, border) is not painted, and `display: ruby*` stays unparsed (Stylo has it
+  for Gecko only), so ruby is found by element name. Covered by `crates/pyro-render/tests/text_emphasis_ruby.rs`.
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were

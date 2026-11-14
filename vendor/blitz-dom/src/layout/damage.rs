@@ -711,7 +711,11 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
                 || old_text.overflow_wrap != new_text.overflow_wrap
                 || old_text.letter_spacing != new_text.letter_spacing
                 || old_text.word_spacing != new_text.word_spacing
-                || old_text.text_rendering != new_text.text_rendering)
+                || old_text.text_rendering != new_text.text_rendering
+                // pyro: ruby annotations and emphasis marks are laid out with the text.
+                || old_text.text_emphasis_style != new_text.text_emphasis_style
+                || old_text.text_emphasis_position != new_text.text_emphasis_position
+                || old_text.ruby_position != new_text.ruby_position)
         {
             return true;
         }
