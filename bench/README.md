@@ -296,6 +296,36 @@ bun bench/fidelity/shippy.ts --compare <run dir>             # metrics and image
 `repro.ts` (`shots/<name>.chromium.png`, `.pyro.png` before a fix, `.pyro-fixed.png` after it), which also prints
 the layout numbers a page publishes as `window.__measure()`.
 
+### Paint report (`fidelity/paint.ts`)
+
+Chromium against pyro on paint, as a report (no gate): the same pages rendered in Playwright's Chromium and in pyro,
+each pair scored with SSIM (luma) and mean absolute difference, and the paint matrix's probe pixels compared. Three
+page sets:
+
+- `wpt`: a fixed sample of the WPT paint reftests' test pages (`fidelity/paint-wpt-sample.txt`, 309 pages: every
+  12th of each paint directory, every 20th of CSS2's paint subdirectories), 800x600 at deviceScaleFactor 1, settled as
+  WPT settles a reftest (load, fonts, two frames, `reftest-wait`).
+- `repros`: `fidelity/repros`, at their `fidelity-viewport` and deviceScaleFactor 2, as `repro.ts` captures them.
+- `matrix`: `fidelity/paint-matrix.ts`, generated: each paint feature (box-shadow, text-shadow, each filter function,
+  borders and radii, outlines, gradients and background images, images, clip-path, masks, mix-blend-mode, 2D and 3D
+  transforms) in each context (opacity on the box, opacity .5 and 0 on its parent, a transform, an overflow clip, a
+  filter, a positioned box outside a zero-size parent, without and with opacity, a stacking context), 29 x 10 pages
+  of 360x260 at 1. Probe pixels (1x1 elements inside the subject, so they follow a transform, measured in Chromium)
+  say what a low SSIM is: a probe disagrees when a channel differs by more than 24.
+
+```bash
+(cd bench && bun install) && bun bench/node_modules/playwright-core/cli.js install chromium
+bun bench/fidelity/paint.ts --bin target/release/pyro [--sets wpt,repros,matrix] [--match RE] [--images 40] [--out DIR] [--wpt DIR]
+```
+
+The output directory (default `~/Library/Caches/pyro/paint-report/<time>`) gets `report.md` (per set, the matrix of
+SSIM by feature and context, the probes that disagree, and the worst pages by feature), `report.json` (every page) and
+side-by-side images (Chromium | pyro | difference) of the worst pages. Without `--wpt` the sample's pages are fetched
+from WPT at the pinned revision (sparse, about 70 MB) into `~/Library/Caches/pyro/wpt-paint-<revision>`. The whole
+report takes a few minutes. `.github/workflows/paint-report.yml` runs it every Sunday, on demand and on pull requests
+that change it, against the browser of main's last WPT run (or a release), and uploads it as the `paint-report`
+artifact. The six ToS screens stay with `shippy.ts`, which needs the ToS app stack.
+
 ## Page-break fixtures against Chrome (`pdf/fixtures/`)
 
 Reproducible sets for how paper-cut `Page.printToPDF` documents break, with Chrome 156's results. `generators/` holds

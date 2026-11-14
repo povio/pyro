@@ -1,0 +1,126 @@
+name: Paint report
+
+# Chromium against pyro on paint (bench/fidelity/paint.ts): a sample of the WPT paint reftests, bench/fidelity/repros
+# and the paint matrix (each paint feature in each context), scored with SSIM, mean absolute difference and probe
+# pixels. A report, not a gate: weekly and on demand, uploaded as the `paint-report` artifact (report.md, report.json,
+# images of the worst pages).
+#
+# pyro is the browser main's last successful WPT run used (its cache entry, read from that run's `prepare` log), or
+# the newest release's macOS arm64 build when that entry is gone or a release tag is asked for. Chromium is the
+# Playwright build bench/package.json pins; on the self-hosted runner it stays installed between runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pyro:
+        description: Which pyro (main = the browser of main's last WPT run; or a release tag such as v0.0.35)
+        type: string
+        default: main
+      sets:
+        description: Page sets (wpt, repros, matrix)
+        type: string
+        default: wpt,repros,matrix
+      runner:
+        description: Where it runs
+        type: choice
+        options: [lp-m1, macos-15]
+        default: lp-m1
+  schedule:
+    # Sundays, 03:17 UTC: off the hours pull requests queue on the self-hosted runner.
+    - cron: '17 3 * * 0'
+  # A pull request that changes the report runs it (against main's browser).
+  pull_request:
+    paths:
+      - bench/fidelity/paint*
+      - .github/workflows/paint-report.yml
+
+permissions:
+  contents: read
+  actions: read # main's WPT run and its cache entry
+
+concurrency:
+  group: paint-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ${{ inputs.runner || 'lp-m1' }}
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYRO: ${{ inputs.pyro || 'main' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            bench
+            packages/pyro
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Install the report's dependencies
+        working-directory: bench
+        run: bun install --frozen-lockfile
+      - name: Chromium (the Playwright build of bench/package.json)
+        run: |
+          start=$(date +%s)
+          bun bench/node_modules/playwright-core/cli.js install chromium
+          echo "Chromium install: $(( $(date +%s) - start )) s"
+      # The browser main's last successful WPT run built or restored: its cache key, from that run's prepare log.
+      - name: Find main's browser
+        id: main
+        if: env.PYRO == 'main'
+        run: |
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow wpt.yml --branch main --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          job=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" --jq '.jobs[] | select(.name == "prepare") | .id')
+          # (curl: gh api refuses to print a log, which holds terminal escape sequences)
+          key=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" \
+            | grep -o 'browser-key=wpt-browser-[A-Za-z0-9-]*' | head -1 | cut -d= -f2 || true)
+          echo "WPT run $run, browser key ${key:-not found}"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      # A PATH without zstd: lp-m1 has none, so its cache entries are gzip; a runner with zstd would miss them.
+      - uses: actions/cache/restore@v4
+        id: browser
+        if: steps.main.outputs.key != ''
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
+        with:
+          path: browser.tgz
+          key: ${{ steps.main.outputs.key }}
+      - name: Unpack the browser, or download a release
+        run: |
+          if [ -f browser.tgz ]; then
+            tar -xzf browser.tgz
+            echo "pyro: main's browser (${{ steps.main.outputs.key }})"
+          else
+            tag="$PYRO"
+            if [ "$tag" = main ]; then tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName); fi
+            # The npm package of the release: its darwin-arm64 binary (the fork build).
+            mkdir -p release browser
+            gh release download "$tag" -R "$GITHUB_REPOSITORY" --pattern 'povio-pyro-*.tgz' -D release
+            tar -xzf release/povio-pyro-*.tgz -C release package/native/darwin-arm64/pyro
+            cp release/package/native/darwin-arm64/pyro browser/pyro
+            echo "pyro: release $tag"
+          fi
+          browser/pyro version
+      # The WPT sample's pages at the pinned revision (bench/fidelity/paint.ts fetches them when missing).
+      - uses: actions/cache@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
+        with:
+          path: ~/Library/Caches/pyro/wpt-paint-*
+          key: wpt-paint-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/fidelity/paint-wpt-sample.txt', 'bench/fidelity/paint.ts') }}
+      - name: Report
+        env:
+          SETS: ${{ inputs.sets || 'wpt,repros,matrix' }}
+        run: |
+          bun bench/fidelity/paint.ts --bin browser/pyro --sets "$SETS" --out paint-report
+          # The step summary takes at most 1 MiB.
+          head -c 900000 paint-report/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: paint-report
+          path: paint-report
+          if-no-files-found: error
+          retention-days: 30
