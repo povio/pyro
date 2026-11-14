@@ -1159,3 +1159,30 @@ fn a_change_a_read_without_a_style_flush_restyled_still_transitions() {
     );
 }
 
+/// SMIL `<animate>` of a CSS property: computed styles read its value at the
+/// document's time (discrete: the first value for the first half), a frozen
+/// one keeps its last value, one that never begins (an event `begin`) and
+/// one whose active duration ended without `fill="freeze"` leave the base
+/// value. `keyTimes` place the values.
+#[test]
+fn smil_animate_of_css_properties() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        r#"document.body.innerHTML = `<svg width="100" height="100">
+             <circle id="d" r="10" style="fill: red"><animate attributeName="fill" from="blue" to="green" begin="0s" dur="100s" calcMode="discrete"/></circle>
+             <circle id="f" r="10" style="fill: red"><animate attributeName="fill" to="green" from="blue" dur="1ms" fill="freeze"/></circle>
+             <circle id="e" r="10" style="fill: red"><animate attributeName="fill" from="blue" to="green" begin="click" dur="100s"/></circle>
+             <circle id="r" r="10" style="fill: red"><animate attributeName="fill" from="blue" to="green" dur="1ms"/></circle>
+             <circle id="k" r="10" style="fill: red"><animate attributeName="fill" values="blue;green;yellow" keyTimes="0;0.000001;1" dur="1000s" calcMode="discrete"/></circle>
+           </svg>`; 0"#,
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    assert_eq!(
+        eval(
+            &root,
+            "['d', 'f', 'e', 'r', 'k'].map(id => getComputedStyle(document.getElementById(id)).fill).join(' ')"
+        ),
+        "rgb(0, 0, 255) rgb(0, 128, 0) rgb(255, 0, 0) rgb(255, 0, 0) rgb(0, 128, 0)"
+    );
+}

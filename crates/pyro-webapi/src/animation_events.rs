@@ -151,6 +151,8 @@ pub(crate) struct State {
     source_installed: Cell<bool>,
     /// The last [`State::next_report_key`].
     report_keys: Cell<u64>,
+    /// The document's SMIL `<animate>` elements (`smil.rs`).
+    pub(crate) smil: crate::smil::Cache,
     /// The before-change styles of the elements under such a root that may
     /// transition, by element, with their root: the engine styles none of
     /// them while the root is hidden, and styles them afresh once shown.
@@ -187,7 +189,7 @@ impl State {
     /// values are sampled into the layout engine's cascade), a listener could
     /// observe their events, or `getAnimations()` lists them.
     fn tracking(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> bool {
-        dom.has_animation_listeners() || self.listed.get() || self.rules(dom, style).animates()
+        dom.has_animation_listeners() || self.listed.get() || dom.smil_seen() || self.rules(dom, style).animates()
     }
     fn transitions_tracked(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> bool {
         dom.has_transition_listeners() || self.listed.get() || self.rules(dom, style).animates()
@@ -222,6 +224,7 @@ impl State {
         self.hidden_roots.borrow_mut().clear();
         self.hidden_content.borrow_mut().clear();
         self.scripted.borrow_mut().clear();
+        self.smil.clear();
         self.bump();
     }
 
@@ -331,7 +334,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             }
         }
         let now_ms = crate::event::page_now_ms(page);
-        if !wanted.is_empty() {
+        if !wanted.is_empty() || crate::smil::present(page, &dom) {
             state.install_source(page, style);
         }
         let mut animations = state.animations.borrow_mut();
@@ -557,7 +560,7 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         let style = layout.style();
         !page.is_disposed()
             && !page.scripting_disabled()
-            && state.rules(&dom, style).animates()
+            && (dom.smil_seen() || state.rules(&dom, style).animates())
             && state.stamp.get() != Some(style.observation_stamp(&dom))
     };
     if pending {

@@ -443,6 +443,9 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         };
         visit(el, true, effect);
     }
+    // SMIL `<animate>` elements, under the CSS animations of their targets.
+    let now_or_settled = (!settled).then_some(now);
+    moving |= crate::smil::walk(page, now_or_settled, &mut |el, effect| visit(el, false, effect));
     // CSS animations, in each element's `animation-name` order.
     for t in animations.iter().filter(|t| t.is_live()) {
         let Some((own_timing, style)) = css_animation_timing(t) else { continue };
@@ -506,8 +509,9 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
 /// timelines' state, and while a value moves with time, the clock in steps of
 /// [`FRAME_MS`]. 0 while nothing animates.
 pub(crate) fn stamp(page: &PageDom, now: f64) -> u64 {
-    let generation = page.animation_events.generation.get();
     let moving = walk(page, now, false, &mut |_, _, _| {});
+    // The `<animate>` elements as last read (after the walk read them).
+    let generation = page.animation_events.generation.get() ^ crate::smil::version(page).rotate_left(29);
     let generation = generation.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17);
     if moving {
         generation ^ ((now / FRAME_MS).floor() as i64 as u64).wrapping_add(1)
