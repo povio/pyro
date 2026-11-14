@@ -474,6 +474,12 @@ impl ElementCx<'_, '_> {
         {
             return;
         }
+        // pyro: a border image is drawn instead of the border's styles (Blink's
+        // `BoxPainterBase::PaintBorder`); one that cannot be drawn leaves them.
+        if self.draw_border_image(scene) {
+            return;
+        }
+
         let style = &*self.style;
         let border = style.get_border();
         let current_color = style.clone_color();
@@ -522,7 +528,11 @@ impl ElementCx<'_, '_> {
                     // `r`, inner radius `r - width`, concentric). For 0 < r < width CSS
                     // draws a rounded outer edge against a sharp inner corner, which a
                     // stroke can't represent — leave those to the per-edge fill.
-                    let is_exact = |r: Vec2| r.x == 0.0 || r.x >= width;
+                    // pyro: and kurbo's `RoundedRect` keeps the radius: it clamps each to half
+                    // the rect's smaller side, which a CSS corner beside a square one exceeds
+                    // (`border-radius: 100% 0 0 0`).
+                    let half_side = (bb.width().min(bb.height()) - width) / 2.0;
+                    let is_exact = |r: Vec2| r.x == 0.0 || (r.x >= width && r.x - width / 2.0 <= half_side);
                     let stroke_is_exact = is_exact(radii.top_left)
                         && is_exact(radii.top_right)
                         && is_exact(radii.bottom_right)
@@ -683,6 +693,48 @@ impl ElementCx<'_, '_> {
             scene.fill(Fill::NonZero, self.transform, color, None, &path);
             start = next;
         }
+    }
+
+    /// pyro: the area this element's border paints, which `background-clip: border-area` (CSS
+    /// Backgrounds 4) clips to: each side with a style and a width, all of it whatever its
+    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
+    /// are square (with rounded corners, the whole side).
+    pub(super) fn border_area_path(&self) -> BezPath {
+        let border = self.style.get_border();
+        let sides = [
+            (Edge::Top, border.border_top_style),
+            (Edge::Right, border.border_right_style),
+            (Edge::Bottom, border.border_bottom_style),
+            (Edge::Left, border.border_left_style),
+        ];
+        let bb = self.frame.border_box;
+        let mut path = BezPath::new();
+        // The round dots already in `path`: two dotted sides share their corner's dot, which
+        // must be in the path once (twice, its edge came out bolder).
+        let mut dots = Vec::new();
+        for (edge, style) in sides {
+            let width = self.edge_width(edge);
+            if style.none_or_hidden() || width <= 0.0 {
+                continue;
+            }
+            match style {
+                BorderStyle::Double if width >= 3.0 * self.scale => {
+                    path.extend(&self.frame.border_slice(0.0, 1.0 / 3.0).border_edge_shape(edge));
+                    path.extend(&self.frame.border_slice(2.0 / 3.0, 1.0).border_edge_shape(edge));
+                }
+                BorderStyle::Dotted | BorderStyle::Dashed if !self.frame.has_border_radius() => {
+                    let (origin, along, across, length) = match edge {
+                        Edge::Top => (Point::new(bb.x0, bb.y0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), bb.width()),
+                        Edge::Bottom => (Point::new(bb.x0, bb.y1), Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0), bb.width()),
+                        Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
+                        Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
+                    };
+                    straight_side_marks(&mut path, &mut dots, style, origin, (along, across), (length, width), self.scale);
+                }
+                _ => path.extend(&self.frame.border_edge_shape(edge)),
+            }
+        }
+        path
     }
 
     /// The border width (in device pixels) of a single edge.

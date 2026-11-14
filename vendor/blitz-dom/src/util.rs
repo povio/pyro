@@ -91,6 +91,8 @@ pub fn add_svg_font(font: Arc<dyn AsRef<[u8]> + Send + Sync>) {
 pub enum ImageLayerKind {
     Background,
     Mask,
+    /// pyro: `border-image-source`, a list of one image.
+    BorderImage,
 }
 
 impl ImageLayerKind {
@@ -98,6 +100,7 @@ impl ImageLayerKind {
         match self {
             Self::Background => ImageType::Background(idx),
             Self::Mask => ImageType::Mask(idx),
+            Self::BorderImage => ImageType::BorderImage(idx),
         }
     }
 }
@@ -107,6 +110,8 @@ pub enum ImageType {
     Image,
     Background(usize),
     Mask(usize),
+    /// pyro: `border-image-source`.
+    BorderImage(usize),
 }
 
 /// A point

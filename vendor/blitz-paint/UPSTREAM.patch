@@ -262,10 +262,156 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
                  .as_color_color(),
          ),
          StyloFilter::Url(_) => return None,
+diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gradient.rs
+--- a/packages/blitz-paint/src/gradient.rs
++++ b/packages/blitz-paint/src/gradient.rs
+@@ -2,7 +2,8 @@
+ use color::DynamicColor;
+ use kurbo::{self, Affine, Point, Rect, Vec2};
+ use peniko::{self, ColorStop, Gradient, LinearGradientPosition, SweepGradientPosition};
+-use style::color::AbsoluteColor;
++use style::color::mix::HueInterpolationMethod;
++use style::color::{AbsoluteColor, ColorSpace as StyloColorSpace};
+ use style::{
+     OwnedSlice,
+     values::{
+@@ -52,6 +53,66 @@
+     scale: f64,
+     current_color: &AbsoluteColor,
+ ) -> (peniko::Gradient, Option<Affine>) {
++    let (mut peniko_gradient, transform) =
++        to_peniko_gradient_srgb(gradient, origin_rect, bounding_box, scale, current_color);
++    // pyro: the gradient's colour interpolation method (`in hsl`, `in oklch longer hue`; Stylo
++    // makes Oklab the default when a stop uses a modern colour syntax). Stops were interpolated in
++    // sRGB whatever it said.
++    let method = match gradient {
++        GenericGradient::Linear {
++            color_interpolation_method,
++            ..
++        }
++        | GenericGradient::Radial {
++            color_interpolation_method,
++            ..
++        }
++        | GenericGradient::Conic {
++            color_interpolation_method,
++            ..
++        } => color_interpolation_method,
++    };
++    peniko_gradient.interpolation_cs = interpolation_space(method.space);
++    peniko_gradient.hue_direction = match method.hue {
++        HueInterpolationMethod::Longer => color::HueDirection::Longer,
++        HueInterpolationMethod::Increasing => color::HueDirection::Increasing,
++        HueInterpolationMethod::Decreasing => color::HueDirection::Decreasing,
++        HueInterpolationMethod::Shorter | HueInterpolationMethod::Specified => {
++            color::HueDirection::Shorter
++        }
++    };
++    (peniko_gradient, transform)
++}
++
++/// pyro: the colour space of `color`'s crate for a CSS one.
++fn interpolation_space(space: StyloColorSpace) -> color::ColorSpaceTag {
++    use color::ColorSpaceTag as Tag;
++    match space {
++        StyloColorSpace::Srgb => Tag::Srgb,
++        StyloColorSpace::Hsl => Tag::Hsl,
++        StyloColorSpace::Hwb => Tag::Hwb,
++        StyloColorSpace::Lab => Tag::Lab,
++        StyloColorSpace::Lch => Tag::Lch,
++        StyloColorSpace::Oklab => Tag::Oklab,
++        StyloColorSpace::Oklch => Tag::Oklch,
++        StyloColorSpace::SrgbLinear => Tag::LinearSrgb,
++        // `color` has no linear Display P3: the gamma-encoded one is the nearest.
++        StyloColorSpace::DisplayP3 | StyloColorSpace::DisplayP3Linear => Tag::DisplayP3,
++        StyloColorSpace::A98Rgb => Tag::A98Rgb,
++        StyloColorSpace::ProphotoRgb => Tag::ProphotoRgb,
++        StyloColorSpace::Rec2020 => Tag::Rec2020,
++        StyloColorSpace::XyzD50 => Tag::XyzD50,
++        StyloColorSpace::XyzD65 => Tag::XyzD65,
++    }
++}
++
++fn to_peniko_gradient_srgb(
++    gradient: &StyloGradient,
++    origin_rect: Rect,
++    bounding_box: Rect,
++    scale: f64,
++    current_color: &AbsoluteColor,
++) -> (peniko::Gradient, Option<Affine>) {
+     match gradient {
+         // https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient
+         GenericGradient::Linear {
 diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-paint/src/kurbo_css/css_box.rs
 --- a/packages/blitz-paint/src/kurbo_css/css_box.rs
 +++ b/packages/blitz-paint/src/kurbo_css/css_box.rs
-@@ -196,6 +196,9 @@
+@@ -40,8 +40,45 @@
+     pub outline_width: f64,
+ 
+     pub border_radii: NonUniformRoundedRectRadii,
++
++    /// pyro: what the padding box's and the content box's radii (each border radius less the
++    /// widths beside it) are scaled by to fit their box, 1 when they fit (see
++    /// [`inner_radii_scale`]).
++    padding_radii_scale: f64,
++    content_radii_scale: f64,
+ }
+ 
++/// pyro: the scale an inner box's radii need to fit it, as Blink fits them
++/// (`FloatRoundedRect::AdjustRadii` when the rect is not renderable): CSS Backgrounds 3 §5.5 has
++/// the padding edge's radii the border radii less the border widths, which overflow a box with
++/// one large corner (`border-radius: 100% 0 0 0` and a border), and its curve then left the box.
++fn inner_radii_scale(rect: Rect, radii: &NonUniformRoundedRectRadii, insets: Insets) -> f64 {
++    let inner = |r: Vec2, corner: Corner| {
++        let r = r - get_corner_insets(insets, corner);
++        if r.x <= 0.0 || r.y <= 0.0 {
++            Vec2::ZERO
++        } else {
++            r
++        }
++    };
++    let (tl, tr) = (
++        inner(radii.top_left, Corner::TopLeft),
++        inner(radii.top_right, Corner::TopRight),
++    );
++    let (br, bl) = (
++        inner(radii.bottom_right, Corner::BottomRight),
++        inner(radii.bottom_left, Corner::BottomLeft),
++    );
++    let widest = (tl.x + tr.x).max(bl.x + br.x);
++    let tallest = (tl.y + bl.y).max(tr.y + br.y);
++    if widest <= 0.0 || tallest <= 0.0 {
++        return 1.0;
++    }
++    (rect.width().max(0.0) / widest)
++        .min(rect.height().max(0.0) / tallest)
++        .min(1.0)
++}
++
+ impl CssBox {
+     pub fn new(
+         border_box: Rect,
+@@ -73,6 +110,10 @@
+         if min_factor < 1.0 {
+             border_radii *= min_factor
+         }
++
++        let padding_radii_scale = inner_radii_scale(padding_box, &border_radii, border);
++        let content_radii_scale =
++            inner_radii_scale(content_box, &border_radii, add_insets(border, padding));
+ 
+         Self {
+             padding_box,
+@@ -83,6 +124,8 @@
+             padding_width: padding,
+             border_width: border,
+             border_radii,
++            padding_radii_scale,
++            content_radii_scale,
+         }
+     }
+ 
+@@ -196,6 +239,9 @@
      }
  
      /// Construct a bezpath drawing the outline
@@ -275,7 +421,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
      pub fn outline(&self) -> BezPath {
          let mut path = BezPath::new();
  
-@@ -209,6 +212,24 @@
+@@ -209,6 +255,24 @@
          path
      }
  
@@ -300,6 +446,32 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
      /// Construct a bezpath drawing the frame border
      pub fn border_box_path(&self) -> BezPath {
          let mut path = BezPath::new();
+@@ -583,7 +647,25 @@
+             ContentBox => {
+                 corner_radii - get_corner_insets(add_insets(*border_width, *padding_width), corner)
+             }
++        };
++
++        // pyro: inner radii that do not fit their box are scaled to fit it; their centre is then
++        // no longer the border's (in the inner box's corner, `radii` in from it).
++        let (inner_box, scale) = match side {
++            PaddingBox => (self.padding_box, self.padding_radii_scale),
++            ContentBox => (self.content_box, self.content_radii_scale),
++            BorderBox | OutlineBox => (*border_box, 1.0),
+         };
++        if scale < 1.0 && radii.x > 0.0 && radii.y > 0.0 {
++            let radii = radii * scale;
++            let center = match corner {
++                TopLeft => Point::new(inner_box.x0 + radii.x, inner_box.y0 + radii.y),
++                TopRight => Point::new(inner_box.x1 - radii.x, inner_box.y0 + radii.y),
++                BottomLeft => Point::new(inner_box.x0 + radii.x, inner_box.y1 - radii.y),
++                BottomRight => Point::new(inner_box.x1 - radii.x, inner_box.y1 - radii.y),
++            };
++            return (center, radii);
++        }
+ 
+         (border_box.origin() + center, radii)
+     }
 diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 --- a/packages/blitz-paint/src/lib.rs
 +++ b/packages/blitz-paint/src/lib.rs
@@ -549,7 +721,14 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/render.rs
 --- a/packages/blitz-paint/src/render.rs
 +++ b/packages/blitz-paint/src/render.rs
-@@ -28,6 +28,7 @@
+@@ -1,5 +1,6 @@
+ mod background;
+ mod border;
++mod border_image;
+ mod box_shadow;
+ mod clip_path;
+ mod form_controls;
+@@ -28,6 +29,7 @@
  use blitz_dom::{BaseDocument, ElementData, Node, NodeId, local_name};
  use blitz_traits::devtools::DevtoolSettings;
  
@@ -557,10 +736,21 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  use style::values::computed::{BorderCornerRadius, ColorOrAuto};
  use style::{
      dom::TElement,
-@@ -124,6 +125,12 @@
+@@ -45,7 +47,6 @@
+ use kurbo::{self, Affine, Insets, Point, Rect, Shape, Size, Stroke, Vec2};
+ use peniko::{self, BlendMode, Fill, ImageData, ImageSampler};
+ use style::computed_values::isolation::T as Isolation;
+-use style::values::generics::color::GenericColor;
+ use taffy::Layout;
+ 
+ /// An opacity just below 1.0, used to force the renderer to allocate an isolated
+@@ -124,6 +125,15 @@
      pub(crate) initial_y: f64,
      /// The id of the document's root element (cached to avoid re-resolving it for every element)
      pub(crate) root_element_id: Option<NodeId>,
++    /// pyro: the element whose background is the canvas background: the root element, or the
++    /// body whose background propagates to it; `None` when the root element is not rendered.
++    pub(crate) canvas_background: Option<NodeId>,
 +    /// pyro: the document's top layer, bottom first (usually
 +    /// empty). Its elements are skipped where the tree puts them and painted
 +    /// above everything, each over its `::backdrop`.
@@ -570,7 +760,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Scrollbar hover/drag state, resolved once per scene like the root element
      #[cfg(feature = "scrollbars")]
      pub(crate) hovered_scrollbar: Option<blitz_dom::node::ScrollbarRef>,
-@@ -134,6 +141,11 @@
+@@ -134,6 +144,11 @@
      pub(crate) draw_text_context: RefCell<DrawTextContext>,
      /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
      pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
@@ -582,10 +772,19 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
      // Pre-computed `Scene`s for each CustomWidget
      pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
-@@ -167,6 +179,12 @@
+@@ -158,6 +173,7 @@
+ 
+         let layer_manager = LayerManager::default();
+         let root_element_id = dom.try_root_element().map(|el| el.id);
++        let canvas_background = canvas_background_source(dom);
+ 
+         Self {
+             dom,
+@@ -167,6 +183,13 @@
              initial_x,
              initial_y,
              root_element_id,
++            canvas_background,
 +            top_layer: if dom.has_top_layer() {
 +                dom.top_layer_nodes().collect()
 +            } else {
@@ -595,7 +794,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              #[cfg(feature = "scrollbars")]
              hovered_scrollbar: dom.hovered_scrollbar(),
              #[cfg(feature = "scrollbars")]
-@@ -174,6 +192,8 @@
+@@ -174,6 +197,8 @@
              layer_manager,
              draw_text_context: RefCell::new(DrawTextContext::default()),
              selection_ranges,
@@ -604,16 +803,69 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              custom_widget_scenes,
          }
      }
-@@ -231,7 +251,7 @@
-             }
+@@ -198,46 +223,22 @@
+             return;
          };
+         let root_id = root_element.id;
+-        let bg_width = (self.width as f32).max(root_element.final_layout().size.width);
+-        let bg_height = (self.height as f32).max(root_element.final_layout().size.height);
  
+-        let background_color = {
+-            let html_styles = root_element.primary_styles();
+-            let html_color = html_styles
+-                .as_ref()
+-                .map_or(&GenericColor::TRANSPARENT_BLACK, |s| {
+-                    s.get_background_color()
+-                });
+-            if *html_color == GenericColor::TRANSPARENT_BLACK {
+-                root_element
+-                    .children
+-                    .iter()
+-                    .find_map(|id| {
+-                        self.dom
+-                            .as_ref()
+-                            .get_node(*id)
+-                            .filter(|node| node.data.is_element_with_tag_name(&local_name!("body")))
+-                    })
+-                    .and_then(|body| body.primary_styles())
+-                    .map(|style| {
+-                        let current_color = style.clone_color();
+-                        style
+-                            .get_background_color()
+-                            .resolve_to_absolute(&current_color)
+-                    })
+-            } else {
+-                let current_color = html_styles.as_ref().unwrap().clone_color();
+-                Some(html_color.resolve_to_absolute(&current_color))
+-            }
+-        };
+-
 -        if let Some(bg_color) = background_color {
-+        if let Some(bg_color) = background_color.filter(|_| self.backgrounds) {
-             let bg_color = bg_color.as_srgb_color();
-             let rect = Rect::from_origin_size(
-                 (self.initial_x, self.initial_y),
-@@ -255,6 +275,10 @@
+-            let bg_color = bg_color.as_srgb_color();
+-            let rect = Rect::from_origin_size(
+-                (self.initial_x, self.initial_y),
+-                (bg_width as f64, bg_height as f64),
+-            );
+-            scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &rect);
++        // pyro: the root element paints the canvas background (`draw_canvas_background`), in
++        // its effect group. A root that paints nothing of its own (`visibility: hidden`) leaves
++        // it to be painted here, its colour alone, as before.
++        if self.backgrounds
++            && let Some(source) = self.canvas_background
++            && root_element
++                .primary_styles()
++                .is_some_and(|style| style.get_inherited_box().visibility != StyloVisibility::Visible)
++            && let Some(style) = self.dom.get_node(source).and_then(|node| node.primary_styles())
++        {
++            let bg_color = style
++                .get_background_color()
++                .resolve_to_absolute(&style.clone_color())
++                .as_srgb_color();
++            scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &self.canvas_rect());
+         }
+ 
+         // The root clip rectangle is the viewport (in screen coordinates, with the
+@@ -255,6 +256,10 @@
              viewport_clip_rect,
          );
  
@@ -624,12 +876,24 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -284,10 +308,141 @@
+@@ -284,10 +289,153 @@
                      self.initial_x,
                      self.initial_y,
                  );
 +            }
 +        }
++    }
++
++    /// pyro: the canvas, in scene space: the viewport, or the root element's box where that is
++    /// larger.
++    fn canvas_rect(&self) -> Rect {
++        let size = self
++            .root_element_id
++            .and_then(|id| self.dom.get_node(id))
++            .map_or(taffy::Size::ZERO, |root| root.final_layout().size);
++        let width = (self.width as f64).max(size.width as f64 * self.scale);
++        let height = (self.height as f64).max(size.height as f64 * self.scale);
++        Rect::from_origin_size((self.initial_x, self.initial_y), (width, height))
 +    }
 +
 +    /// pyro: paints the top layer above the document, bottom
@@ -766,7 +1030,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
          let location = node.final_layout().location;
          parent
-@@ -317,8 +472,10 @@
+@@ -317,8 +465,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
                  || contain_paint
@@ -779,7 +1043,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -376,9 +533,13 @@
+@@ -376,9 +526,13 @@
                      TextPaintOptions {
                          scale: self.scale,
                          brush_override: Some(Color::BLACK),
@@ -793,7 +1057,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  );
              }
          }
-@@ -419,6 +580,15 @@
+@@ -419,6 +573,15 @@
              return;
          }
  
@@ -809,7 +1073,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -585,12 +755,27 @@
+@@ -585,12 +748,27 @@
  
          let paints_own_box = !node.is_inline_with_only_block_children();
  
@@ -842,11 +1106,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          self.layer_manager.maybe_with_layer(
              scene,
              has_clip_path,
-@@ -607,100 +792,25 @@
-                 // `cx.transform` is mutated to apply scroll offsets while drawing content.
+@@ -608,100 +786,25 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
--
+ 
 -                let filter = convert_filters(&effects.filter.0).map(Arc::new);
 -                let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
 -
@@ -862,7 +1125,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                    .as_ref()
 -                    .map(|f| f.expansion_rect())
 -                    .unwrap_or(Rect::ZERO);
- 
+-
 -                let mut effect_layer_clip = cx.frame.border_box_path().bounding_box();
 -                effect_layer_clip.x0 += filter_expansion_area.x0;
 -                effect_layer_clip.y0 += filter_expansion_area.y0;
@@ -898,7 +1161,25 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                        } else {
 -                            &cx.frame.padding_box_path()
 -                        };
--
++                if has_effect_layer {
++                    let mut group = Scene::new();
++                    self.paint_element(&mut cx, &mut group, &element);
++                    self.paint_effect_group(
++                        scene,
++                        group,
++                        EffectLayer {
++                            transform: unscrolled_transform,
++                            visible: clip_rect,
++                            border_box: cx.frame.border_box,
++                            opacity,
++                            filter,
++                            backdrop_filter,
++                        },
++                    );
++                } else {
++                    self.paint_element(&mut cx, scene, &element);
++                }
+ 
 -                        // Clip layer if box requires clipping. Opacity set to 1.0
 -                        self.layer_manager.maybe_with_layer(
 -                            scene,
@@ -940,31 +1221,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                        }
 -                    },
 -                );
-+                if has_effect_layer {
-+                    let mut group = Scene::new();
-+                    self.paint_element(&mut cx, &mut group, &element);
-+                    self.paint_effect_group(
-+                        scene,
-+                        group,
-+                        EffectLayer {
-+                            transform: unscrolled_transform,
-+                            visible: clip_rect,
-+                            border_box: cx.frame.border_box,
-+                            opacity,
-+                            filter,
-+                            backdrop_filter,
-+                        },
-+                    );
-+                } else {
-+                    self.paint_element(&mut cx, scene, &element);
-+                }
- 
+-
                  // Apply the CSS `mask` (if any) to the content drawn above
                  cx.transform = unscrolled_transform;
-@@ -714,6 +824,151 @@
+                 cx.maybe_pop_css_mask_layer(scene, mask_layer_pushed);
+@@ -712,8 +815,173 @@
+             .maybe_pop_layer(scene, blend_layer_pushed);
+         self.layer_manager
              .maybe_pop_layer(scene, css_clip_layer_pushed);
-     }
- 
++    }
++
 +    /// Paints an element and its descendants, in Chromium's order: outset box-shadow,
 +    /// background, inset box-shadow, border, the content clipped to the padding box (when the
 +    /// element clips), scrollbars, outline. Leaves `cx.transform` as it found it.
@@ -985,8 +1251,28 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let unscrolled_transform = cx.transform;
 +
 +        if paints_own_box {
++            // pyro: the root element paints the canvas background, under its own shadow, in
++            // place of its background; the body whose background that is paints none.
++            let is_root = self.root_element_id == Some(node.id);
++            if is_root
++                && cx.context.backgrounds
++                && let Some(source) = self.canvas_background
++            {
++                // Not under the root element's own transform (Chromium paints the canvas in
++                // the view's space): its images are positioned against the untransformed box.
++                let own = node.transform().as_deref().copied().unwrap_or_default();
++                if own.determinant().abs() > 1e-12 {
++                    let canvas_cx = ElementCx {
++                        transform: cx.transform * own.inverse(),
++                        frame: cx.frame.clone(),
++                        style: cx.style.clone(),
++                        ..*cx
++                    };
++                    canvas_cx.draw_canvas_background(scene, source, self.canvas_rect());
++                }
++            }
 +            cx.draw_outset_box_shadow(scene);
-+            if cx.context.backgrounds {
++            if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
 +                cx.draw_background(scene);
 +            }
 +            cx.draw_inset_box_shadow(scene);
@@ -1048,8 +1334,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // in a phase of its own after the foreground): one with a negative
 +        // `outline-offset` lies inside the box, over its background.
 +        cx.draw_outline(scene);
-+    }
-+
+     }
+ 
 +    /// pyro: the layer of an element's opacity and filters around the `group` it painted. The
 +    /// layer is the group's ink (what its commands can touch, [`crate::bounds::scene_bounds`]),
 +    /// grown by what the filter reaches and cut to the visible area, in the element's space (the
@@ -1113,7 +1399,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn render_node(
          &self,
          scene: &mut impl PaintScene,
-@@ -724,9 +979,11 @@
+@@ -724,9 +992,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
          match &node.data {
@@ -1127,7 +1413,64 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -837,6 +1094,45 @@
+@@ -781,7 +1051,56 @@
+             devtools: self.dom.devtools(),
+             custom_widget_scene,
+         }
++    }
++}
++
++/// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's
++/// `LayoutBox::BackgroundTransfersToView` decides it: the root element, unless it is an HTML
++/// `html` element without a background of its own, when it is its first `body` child, if that
++/// is rendered (not `display: none` or `contents`) and neither element has containment. `None`
++/// when the root element is not rendered.
++fn canvas_background_source(dom: &BaseDocument) -> Option<NodeId> {
++    let root = dom.try_root_element()?;
++    let root_style = root.primary_styles()?;
++    if root_style.get_box().display.is_none() {
++        return None;
+     }
++    let has_background = |style: &ComputedValues| {
++        let background = style.get_background();
++        background
++            .background_image
++            .0
++            .iter()
++            .any(|image| !matches!(image, style::values::computed::Image::None))
++            || background
++                .background_color
++                .resolve_to_absolute(&style.clone_color())
++                .alpha
++                > 0.0
++    };
++    let contained = |style: &ComputedValues| !style.get_box().slow_clone_contain().is_empty();
++    if has_background(&root_style)
++        || contained(&root_style)
++        || !root.data.is_element_with_tag_name(&local_name!("html"))
++    {
++        return Some(root.id);
++    }
++    let body = root
++        .children
++        .iter()
++        .filter_map(|&id| dom.get_node(id))
++        .find(|node| node.data.is_element_with_tag_name(&local_name!("body")));
++    let Some(body) = body else {
++        return Some(root.id);
++    };
++    let Some(body_style) = body.primary_styles() else {
++        return Some(root.id);
++    };
++    let display = body_style.get_box().display;
++    if display.is_none() || display.is_contents() || contained(&body_style) {
++        return Some(root.id);
++    }
++    Some(body.id)
+ }
+ 
+ fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
+@@ -837,6 +1156,45 @@
  }
  
  /// Converts parley BoundingBox into peniko Rect
@@ -1173,7 +1516,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,6 +1263,257 @@
+@@ -967,6 +1325,257 @@
          }
      }
  
@@ -1431,7 +1774,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
              let text_layout = self.element
-@@ -976,6 +1523,11 @@
+@@ -976,6 +1585,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -1443,7 +1786,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +1536,22 @@
+@@ -984,23 +1598,22 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -1475,7 +1818,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,17 +1559,185 @@
+@@ -1008,17 +1621,185 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1663,7 +2006,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,9 +1749,15 @@
+@@ -1030,9 +1811,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -1681,7 +2024,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +1772,64 @@
+@@ -1047,6 +1834,63 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -1696,7 +2039,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
 +                None => (transform, tops),
 +            };
- 
++
 +            // pyro: an empty input shows its placeholder, its lines placed as the
 +            // value's (a single line centred in the content box), under the caret.
 +            if let Some(placeholder) = input_data.shown_placeholder() {
@@ -1742,11 +2085,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +                draw_text_context.line_tops = None;
 +            }
-+
+ 
              if self.node.is_focussed() {
                  // Render selection/caret
-                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +1860,7 @@
+@@ -1078,6 +1922,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -1754,7 +2096,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +1869,14 @@
+@@ -1086,10 +1931,14 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -1769,7 +2111,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1114,14 +1901,25 @@
+@@ -1114,14 +1963,25 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -1798,7 +2140,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1145,13 +1943,93 @@
+@@ -1145,10 +2005,90 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -1809,9 +2151,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  &mut draw_text_context,
 +                None,
              );
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -1886,13 +2228,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
-+        }
-+    }
-+
-     fn draw_children(
-         &self,
-         scene: &mut impl PaintScene,
-@@ -1232,6 +2110,9 @@
+         }
+     }
+ 
+@@ -1232,6 +2172,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -1902,7 +2241,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1465,4 +2346,28 @@
+@@ -1465,4 +2408,28 @@
      };
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
@@ -1931,6 +2270,854 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    filter: Option<Arc<anyrender::Filter>>,
 +    backdrop_filter: Option<Arc<anyrender::Filter>>,
 +}
+diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-paint/src/render/background.rs
+--- a/packages/blitz-paint/src/render/background.rs
++++ b/packages/blitz-paint/src/render/background.rs
+@@ -1,6 +1,7 @@
+ use super::{ALMOST_OPAQUE, ElementCx, to_image_quality, to_peniko_image};
+ use crate::color::{Color, ToColorColor};
+ use crate::gradient::to_peniko_gradient;
++use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
+ use anyrender::PaintScene;
+ use blitz_dom::CopyStyleGetters;
+ use blitz_dom::NodeId;
+@@ -10,6 +11,7 @@
+ use style::{
+     computed_values::border_collapse::T as BorderCollapse,
+     properties::{
++        ComputedValues,
+         generated::longhands::{
+             background_attachment::single_value::computed_value::T as StyloBackgroundAttachment,
+             background_clip::single_value::computed_value::T as StyloBackgroundClip,
+@@ -20,7 +22,7 @@
+     values::{
+         computed::{
+             BackgroundRepeat, Gradient as StyloGradient, Image as ComputedImage, LengthPercentage,
+-            background::BackgroundSize,
++            Overflow, background::BackgroundSize,
+         },
+         generics::image::GenericImage,
+         specified::background::BackgroundRepeatKeyword,
+@@ -82,6 +84,8 @@
+     pub size: &'a BackgroundSize,
+     pub clip: BoxModelBox,
+     pub text_clip: bool,
++    /// pyro: `background-clip: border-area`: the area the border paints.
++    pub border_area: bool,
+     pub origin: BoxModelBox,
+     pub attachment: StyloBackgroundAttachment,
+ }
+@@ -101,6 +105,8 @@
+             size: get_cyclic(&bg_styles.background_size.0, idx),
+             clip: (*get_cyclic(&bg_styles.background_clip.0, idx)).into(),
+             text_clip: *get_cyclic(&bg_styles.background_clip.0, idx) == StyloBackgroundClip::Text,
++            border_area: *get_cyclic(&bg_styles.background_clip.0, idx)
++                == StyloBackgroundClip::BorderArea,
+             origin: (*get_cyclic(&bg_styles.background_origin.0, idx)).into(),
+             attachment: *get_cyclic(&bg_styles.background_attachment.0, idx),
+         }
+@@ -120,6 +126,7 @@
+             size: get_cyclic(&svg_styles.mask_size.0, idx),
+             clip: (*get_cyclic(&svg_styles.mask_clip.0, idx)).into(),
+             text_clip: false,
++            border_area: false,
+             origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
+             // There is no `mask-attachment` property
+             attachment: StyloBackgroundAttachment::Scroll,
+@@ -129,37 +136,141 @@
+ 
+ impl ElementCx<'_, '_> {
+     pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
+-        let bg_styles = &self.style.get_background();
+-        let image_data = &self.element.background_images;
++        let style = self.style.clone();
++        self.draw_background_layers(scene, &style, &self.element.background_images, None);
++    }
++
++    /// pyro: the canvas background (CSS Backgrounds 3 §2.11.2), drawn by the root element in place
++    /// of its own background: the background of `source` (the root element, or the body whose
++    /// background propagates to it) over the whole of `canvas` (scene space). Its images are
++    /// positioned against the root element's boxes, as if painted for it alone. Drawn in the root
++    /// element's effect group (its opacity, filters and blend mode apply), not under its transform.
++    pub(super) fn draw_canvas_background(
++        &self,
++        scene: &mut impl PaintScene,
++        source: NodeId,
++        canvas: Rect,
++    ) {
++        let Some(node) = self.context.dom.get_node(source) else {
++            return;
++        };
++        let (Some(style), Some(element)) = (node.primary_styles(), node.element_data()) else {
++            return;
++        };
++        if self.transform.determinant().abs() < 1e-12 {
++            return;
++        }
++        let canvas = self.transform.inverse().transform_rect_bbox(canvas);
++        let style = (*style).clone();
++        self.draw_background_layers(scene, &style, &element.background_images, Some(canvas));
++    }
++
++    /// The background of `style` with the images `image_data`, over this element's background
++    /// painting area, or over `canvas` (this element's space) for the canvas background.
++    fn draw_background_layers(
++        &self,
++        scene: &mut impl PaintScene,
++        style: &ComputedValues,
++        image_data: &[Option<ImageResourceData>],
++        canvas: Option<Rect>,
++    ) {
++        let bg_styles = &style.get_background();
+         let layer_count = bg_styles.background_image.0.len();
+ 
++        // pyro: `background-attachment: local` layers of a scroll container see the boxes of its
++        // scrolled content, cut to its padding box.
++        let local = canvas
++            .is_none()
++            .then(|| self.local_frame())
++            .flatten()
++            .map(|frame| ElementCx {
++                frame,
++                style: self.style.clone(),
++                ..*self
++            });
++        let local_cx = |attachment: StyloBackgroundAttachment| {
++            local
++                .as_ref()
++                .filter(|_| attachment == StyloBackgroundAttachment::Local)
++        };
++
+         // The background color is clipped by the clip of the last layer in the list
+         let last_clip = *get_cyclic(&bg_styles.background_clip.0, layer_count - 1);
++        let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
+         let background_clip: BoxModelBox = last_clip.into();
+-        let background_clip_path = self.box_path(background_clip);
++        let clip_path = |clip: BoxModelBox,
++                         border_area: bool,
++                         attachment: StyloBackgroundAttachment| {
++            match (canvas, local_cx(attachment)) {
++                (Some(canvas), _) => canvas.to_path(0.1),
++                (None, Some(local)) => local.box_path(clip),
++                (None, None) if border_area => self.border_area_path(),
++                (None, None) => self.box_path(clip),
++            }
++        };
++        let background_clip_path = clip_path(
++            background_clip,
++            last_clip == StyloBackgroundClip::BorderArea,
++            last_attachment,
++        );
+ 
+         // Draw background color (if any)
+-        let mut text_run = last_clip == StyloBackgroundClip::Text;
++        let mut text_run = last_clip == StyloBackgroundClip::Text && canvas.is_none();
+         if text_run {
+             self.begin_text_clip_group(scene);
+         }
+-        self.draw_solid_bg(scene, &background_clip_path);
++        let current_color = style.clone_color();
++        let bg_color = bg_styles
++            .background_color
++            .resolve_to_absolute(&current_color)
++            .as_srgb_color();
++        if bg_color != Color::TRANSPARENT {
++            let local_color = local_cx(last_attachment).is_some();
++            if local_color {
++                scene.push_clip_layer(
++                    Fill::NonZero,
++                    self.transform,
++                    &self.frame.padding_box_path(),
++                );
++            }
++            scene.fill(
++                Fill::NonZero,
++                self.transform,
++                bg_color,
++                None,
++                &background_clip_path,
++            );
++            if local_color {
++                scene.pop_layer();
++            }
++        }
+ 
+         for idx in (0..layer_count).rev() {
+             let layer = ImageLayerStyles::from_background(bg_styles, image_data, idx);
+-            if layer.text_clip != text_run {
++            let layer_text_clip = layer.text_clip && canvas.is_none();
++            if layer_text_clip != text_run {
+                 if text_run {
+                     self.end_text_clip_group(scene);
+                 } else {
+                     self.begin_text_clip_group(scene);
+                 }
+-                text_run = layer.text_clip;
++                text_run = layer_text_clip;
+             }
+             if layer_paints_nothing(&layer) {
+                 continue;
+             }
+-            let background_clip_path = self.box_path(layer.clip);
++            let background_clip_path = clip_path(layer.clip, layer.border_area, layer.attachment);
++            let local = local_cx(layer.attachment);
++            let cx = local.unwrap_or(self);
++            let area = canvas.unwrap_or_else(|| cx.box_rect(layer.clip));
+ 
++            if local.is_some() {
++                scene.push_clip_layer(
++                    Fill::NonZero,
++                    self.transform,
++                    &self.frame.padding_box_path(),
++                );
++            }
+             self.context.layer_manager.maybe_with_layer(
+                 scene,
+                 true,
+@@ -170,15 +281,62 @@
+                 None,
+                 None,
+                 |scene| {
+-                    self.draw_image_layer(scene, &layer);
++                    cx.draw_image_layer_in(scene, &layer, area, &current_color);
+                 },
+             );
++            if local.is_some() {
++                scene.pop_layer();
++            }
+         }
+         if text_run {
+             self.end_text_clip_group(scene);
+         }
+     }
+ 
++    /// pyro: this element's boxes as a `background-attachment: local` layer sees them on a scroll
++    /// container: those of its scrolled content, the padding box grown to the scrollable overflow
++    /// and moved by the scroll offset, without corner radii (the padding box, which clips the
++    /// layer, has them). `None` for an element that does not scroll: `local` is then `scroll`.
++    fn local_frame(&self) -> Option<CssBox> {
++        let box_style = self.style.get_box();
++        let scrolls = |overflow: Overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
++        if !(scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y)) {
++            return None;
++        }
++        let scale = self.scale;
++        let padding_box = self.frame.padding_box;
++        // The scrollable overflow, relative to the padding box's top left (CSS px), with the
++        // padding box itself: the area the content scrolls in.
++        let overflow = self.node.final_layout().scrollable_overflow_rect.rect();
++        let area = Rect::new(
++            0.0,
++            0.0,
++            padding_box.width() / scale,
++            padding_box.height() / scale,
++        )
++        .union(Rect::new(
++            overflow.left as f64,
++            overflow.top as f64,
++            overflow.right as f64,
++            overflow.bottom as f64,
++        ));
++        let scroll = self.node.scroll_offset();
++        let area = area - Vec2::new(scroll.x, scroll.y);
++        let scrolled_padding_box = Rect::new(
++            padding_box.x0 + area.x0 * scale,
++            padding_box.y0 + area.y0 * scale,
++            padding_box.x0 + area.x1 * scale,
++            padding_box.y0 + area.y1 * scale,
++        );
++        Some(CssBox::new(
++            scrolled_padding_box + self.frame.border_width,
++            self.frame.border_width,
++            self.frame.padding_width,
++            0.0,
++            NonUniformRoundedRectRadii::default(),
++        ))
++    }
++
+     /// Starts an isolated group for `background-clip: text` layers; layers drawn
+     /// until [`end_text_clip_group`](Self::end_text_clip_group) are clipped to text.
+     fn begin_text_clip_group(&self, scene: &mut impl PaintScene) {
+@@ -231,15 +389,30 @@
+ 
+     /// Draw a single layer of a CSS image layer list (`background-image` or `mask-image`)
+     pub(super) fn draw_image_layer(&self, scene: &mut impl PaintScene, layer: &ImageLayerStyles) {
++        let current_color = self.style.clone_color();
++        self.draw_image_layer_in(scene, layer, self.box_rect(layer.clip), &current_color);
++    }
++
++    /// Draw a single layer over `area`, its background painting area (this element's space, device
++    /// px): the clip box, or the canvas. `current_color` resolves `currentcolor` in gradients.
++    fn draw_image_layer_in(
++        &self,
++        scene: &mut impl PaintScene,
++        layer: &ImageLayerStyles,
++        area: Rect,
++        current_color: &style::color::AbsoluteColor,
++    ) {
+         match layer.stylo_image {
+             GenericImage::None => {
+                 // Do nothing
+             }
+-            GenericImage::Gradient(gradient) => self.draw_gradient_layer(scene, gradient, layer),
++            GenericImage::Gradient(gradient) => {
++                self.draw_gradient_layer(scene, gradient, layer, area, current_color)
++            }
+             GenericImage::Url(_) => {
+-                self.draw_raster_image_layer(scene, layer);
++                self.draw_raster_image_layer(scene, layer, area);
+                 #[cfg(feature = "svg")]
+-                self.draw_svg_image_layer(scene, layer);
++                self.draw_svg_image_layer(scene, layer, area);
+             }
+             GenericImage::LightDark(_) => {
+                 #[cfg(feature = "tracing")]
+@@ -373,19 +546,6 @@
+         }
+     }
+ 
+-    fn draw_solid_bg(&self, scene: &mut impl PaintScene, shape: &BezPath) {
+-        let current_color = self.style.clone_color();
+-        let background_color = &self.style.get_background().background_color;
+-        let bg_color = background_color
+-            .resolve_to_absolute(&current_color)
+-            .as_srgb_color();
+-
+-        if bg_color != Color::TRANSPARENT {
+-            // Fill the color
+-            scene.fill(Fill::NonZero, self.transform, bg_color, None, shape);
+-        }
+-    }
+-
+     /// Whether the layer is positioned against the viewport
+     /// (`background-attachment: fixed`) rather than the element's origin box.
+     /// `fixed` behaves as `scroll` on elements affected by a CSS transform
+@@ -410,15 +570,30 @@
+ 
+     /// Whether this element or any of its ancestors has a CSS transform
+     ///
+-    /// TODO: this misses transformed elements whose resolved transform is the
+-    /// identity (e.g. `transform: translate(0)`), and elements with
+-    /// `will-change: transform`, both of which should also degrade `fixed`
+-    /// to `scroll` (see WPT css/css-transforms/transform-fixed-bg-005/008)
++    /// pyro: a transform that resolves to the identity (`transform: translate(0)`), an
++    /// individual transform property and `will-change: transform` count too: each degrades
++    /// `fixed` to `scroll`, as in Chromium (WPT css/css-transforms/transform-fixed-bg-005/008).
+     fn is_transformed(&self) -> bool {
++        use style::values::generics::transform::{GenericRotate, GenericScale, GenericTranslate};
++        use style::values::specified::box_::WillChangeBits;
+         let mut current = Some(self.node.id);
+         while let Some(node) = current.and_then(|id| self.context.dom.get_node(id)) {
+             if node.transform().is_some() {
+                 return true;
++            }
++            if let Some(style) = node.primary_styles() {
++                let box_style = style.get_box();
++                if !box_style.transform.0.is_empty()
++                    || !matches!(box_style.rotate, GenericRotate::None)
++                    || !matches!(box_style.translate, GenericTranslate::None)
++                    || !matches!(box_style.scale, GenericScale::None)
++                    || box_style
++                        .will_change
++                        .bits
++                        .contains(WillChangeBits::TRANSFORM)
++                {
++                    return true;
++                }
+             }
+             current = node.parent;
+         }
+@@ -426,7 +601,12 @@
+     }
+ 
+     #[cfg(feature = "svg")]
+-    fn draw_svg_image_layer(&self, scene: &mut impl PaintScene, layer: &ImageLayerStyles) {
++    fn draw_svg_image_layer(
++        &self,
++        scene: &mut impl PaintScene,
++        layer: &ImageLayerStyles,
++        area: Rect,
++    ) {
+         let Some(bg_image) = layer.image_data else {
+             return;
+         };
+@@ -439,14 +619,10 @@
+             return;
+         }
+ 
+-        let (origin_rect, base_transform) = if self.layer_is_fixed(layer) {
+-            self.fixed_positioning_area()
+-        } else {
+-            (self.box_rect(layer.origin), self.transform)
+-        };
++        let (origin_rect, base_transform, area) = self.positioning_area(layer, area);
+ 
+-        let frame_w = (origin_rect.width() / self.scale) as f32;
+-        let frame_h = (origin_rect.height() / self.scale) as f32;
++        let frame_w = origin_rect.width() / self.scale;
++        let frame_h = origin_rect.height() / self.scale;
+ 
+         // Size the SVG per the CSS default sizing algorithm
+         // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
+@@ -461,7 +637,7 @@
+         }
+         .filter(|r| r.is_finite() && *r > 0.0);
+ 
+-        let bg_size = compute_layer_size(
++        let (bg_pos, bg_size) = compute_layer_position_and_size(
+             layer,
+             frame_w,
+             frame_h,
+@@ -482,23 +658,50 @@
+             (bg_size.height * self.scale) as f32,
+         );
+ 
+-        let bg_pos = compute_layer_position(
+-            layer,
+-            frame_w - bg_size.width as f32,
+-            frame_h - bg_size.height as f32,
++        // pyro: the image repeats as a raster one does, over the painting area (it was drawn
++        // once, at its position).
++        let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
++        let bg_size = bg_size * self.scale;
++        let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
++        let x = raster_axis_tiles(
++            *repeat_x,
++            origin_rect.x0,
++            origin_rect.width(),
++            area.x0,
++            area.x1,
++            bg_pos.x,
++            bg_size.width,
+         );
+-
+-        let transform = base_transform
+-            * kurbo::Affine::translate((
+-                origin_rect.x0 + bg_pos.x * self.scale,
+-                origin_rect.y0 + bg_pos.y * self.scale,
+-            ))
+-            * viewport;
+-
+-        anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
++        let y = raster_axis_tiles(
++            *repeat_y,
++            origin_rect.y0,
++            origin_rect.height(),
++            area.y0,
++            area.y1,
++            bg_pos.y,
++            bg_size.height,
++        );
++        if x.count as u64 * y.count as u64 > 2_000 {
++            return;
++        }
++        for hc in 0..y.count {
++            for wc in 0..x.count {
++                let origin = Vec2::new(
++                    x.start + wc as f64 * x.stride,
++                    y.start + hc as f64 * y.stride,
++                );
++                let transform = base_transform * kurbo::Affine::translate(origin) * viewport;
++                anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
++            }
++        }
+     }
+ 
+-    fn draw_raster_image_layer(&self, scene: &mut impl PaintScene, layer: &ImageLayerStyles) {
++    fn draw_raster_image_layer(
++        &self,
++        scene: &mut impl PaintScene,
++        layer: &ImageLayerStyles,
++        area: Rect,
++    ) {
+         let Some(bg_image) = layer.image_data else {
+             return;
+         };
+@@ -509,11 +712,7 @@
+         let image_rendering = self.style.clone_image_rendering();
+         let quality = to_image_quality(image_rendering);
+ 
+-        let (origin_rect, base_transform) = if self.layer_is_fixed(layer) {
+-            self.fixed_positioning_area()
+-        } else {
+-            (self.box_rect(layer.origin), self.transform)
+-        };
++        let (origin_rect, base_transform, area) = self.positioning_area(layer, area);
+ 
+         let image_width = image_data.width as f64;
+         let image_height = image_data.height as f64;
+@@ -527,76 +726,125 @@
+ 
+         let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
+         let bg_size = bg_size * self.scale;
++        if !(bg_size.width > 0.0 && bg_size.height > 0.0) {
++            return;
++        }
+ 
+-        let x_ratio = bg_size.width / image_width;
+-        let y_ratio = bg_size.height / image_height;
+-
+         let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
+-
+-        let x = raster_axis_tiling(
++        // pyro: the tiles cover the whole painting area (the clip box, or the canvas), not just
++        // the positioning area: a repeating image fills the border area of a `border-box` clip
++        // and, for the root element, the canvas.
++        let x = raster_axis_tiles(
+             *repeat_x,
+             origin_rect.x0,
+             origin_rect.width(),
++            area.x0,
++            area.x1,
+             bg_pos.x,
+             bg_size.width,
+-            image_width,
+-            x_ratio,
+         );
+-        let y = raster_axis_tiling(
++        let y = raster_axis_tiles(
+             *repeat_y,
+             origin_rect.y0,
+             origin_rect.height(),
++            area.y0,
++            area.y1,
+             bg_pos.y,
+             bg_size.height,
+-            image_height,
+-            y_ratio,
+         );
++        if x.count == 0 || y.count == 0 {
++            return;
++        }
+ 
+-        let transform = base_transform
+-            .pre_scale_non_uniform(x_ratio, y_ratio)
+-            .then_translate(Vec2 {
+-                x: x.translate,
+-                y: y.translate,
+-            });
+-        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
+-
++        let mut brush = to_peniko_image(image_data, quality);
++        // pyro: an axis that does not repeat stops at the image's edge, as in Chromium: sampling
++        // past it (a scaled image's edge pixels) wrapped the opposite edge's pixels in. `repeat`
++        // and `round` tiles are one repeating fill, their seams sampled across (Chromium's image
++        // shader).
++        let extend = |repeat: BackgroundRepeatKeyword| match repeat {
++            BackgroundRepeatKeyword::Repeat | BackgroundRepeatKeyword::Round => {
++                peniko::Extend::Repeat
++            }
++            BackgroundRepeatKeyword::Space | BackgroundRepeatKeyword::NoRepeat => {
++                peniko::Extend::Pad
++            }
++        };
++        brush.sampler.x_extend = extend(*repeat_x);
++        brush.sampler.y_extend = extend(*repeat_y);
++        let scale =
++            Affine::scale_non_uniform(bg_size.width / image_width, bg_size.height / image_height);
++        // Tiles that touch are one fill with the image repeating in it.
++        let contiguous = |t: &AxisTiles, extend: peniko::Extend| {
++            t.count == 1 || (t.stride == t.len && extend == peniko::Extend::Repeat)
++        };
++        if contiguous(&x, brush.sampler.x_extend) && contiguous(&y, brush.sampler.y_extend) {
++            let rect = Rect::new(
++                x.start,
++                y.start,
++                x.start + x.len + (x.count - 1) as f64 * x.stride,
++                y.start + y.len + (y.count - 1) as f64 * y.stride,
++            );
++            let brush_transform = Affine::translate((x.start, y.start)) * scale;
++            scene.fill(
++                peniko::Fill::NonZero,
++                base_transform,
++                brush.as_ref(),
++                Some(brush_transform),
++                &rect,
++            );
++            return;
++        }
++        if x.count as u64 * y.count as u64 > 10_000 {
++            return;
++        }
++        // Spaced tiles are each the image on its own, clamped in both axes (Chromium draws them
++        // through a picture shader of one image per cell): a row of `round` tiles with spaced
++        // rows matches no-repeat copies laid side by side (WPT `background-repeat-space-6`/`-7`).
++        brush.sampler.x_extend = peniko::Extend::Pad;
++        brush.sampler.y_extend = peniko::Extend::Pad;
+         for hc in 0..y.count {
+             for wc in 0..x.count {
+-                let transform = transform.then_translate(Vec2 {
+-                    x: wc as f64 * x.stride,
+-                    y: hc as f64 * y.stride,
+-                });
+-
++                let origin = Point::new(
++                    x.start + wc as f64 * x.stride,
++                    y.start + hc as f64 * y.stride,
++                );
++                let rect = Rect::from_origin_size(origin, (x.len, y.len));
++                let brush_transform = Affine::translate(origin.to_vec2()) * scale;
+                 scene.fill(
+                     peniko::Fill::NonZero,
+-                    transform,
+-                    to_peniko_image(image_data, quality).as_ref(),
+-                    None,
+-                    &tile_rect,
++                    base_transform,
++                    brush.as_ref(),
++                    Some(brush_transform),
++                    &rect,
+                 );
+             }
+         }
+     }
+ 
++    /// The background positioning area of `layer` and the transform from its space to the scene,
++    /// with `area` (this element's space) taken to that space: the viewport for a fixed layer,
++    /// else the origin box in this element's space.
++    fn positioning_area(&self, layer: &ImageLayerStyles, area: Rect) -> (Rect, Affine, Rect) {
++        if self.layer_is_fixed(layer) {
++            let (viewport_rect, transform) = self.fixed_positioning_area();
++            let area = (transform.inverse() * self.transform).transform_rect_bbox(area);
++            (viewport_rect, transform, area)
++        } else {
++            (self.box_rect(layer.origin), self.transform, area)
++        }
++    }
++
+     fn draw_gradient_layer(
+         &self,
+         scene: &mut impl PaintScene,
+         gradient: &StyloGradient,
+         layer: &ImageLayerStyles,
++        area: Rect,
++        current_color: &style::color::AbsoluteColor,
+     ) {
+-        // For a fixed layer the positioning area (the viewport) already covers
+-        // everything visible, so it also serves as the clip rect (no extension
+-        // towards the clip box is needed).
+-        let (origin_rect, base_transform, clip_rect) = if self.layer_is_fixed(layer) {
+-            let (viewport_rect, transform) = self.fixed_positioning_area();
+-            (viewport_rect, transform, viewport_rect)
+-        } else {
+-            (
+-                self.box_rect(layer.origin),
+-                self.transform,
+-                self.box_rect(layer.clip),
+-            )
+-        };
++        // The tiles cover the painting area (`area`: the clip box, or the canvas), in the
++        // positioning area's space.
++        let (origin_rect, base_transform, clip_rect) = self.positioning_area(layer, area);
+ 
+         let (bg_pos, bg_size) = compute_layer_position_and_size(
+             layer,
+@@ -628,24 +876,51 @@
+             bg_pos.y,
+             bg_size.height,
+         );
++
++        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
++        let bounding_box = self.frame.border_box.bounding_box();
++
++        let (gradient, gradient_transform) =
++            to_peniko_gradient(gradient, tile_rect, bounding_box, self.scale, current_color);
++        // pyro: a gradient of one colour is that colour (`linear-gradient(white, white)`): the
++        // ramp came out a level short of it in places. Repeating in both axes, its tiles cover
++        // the painting area: one fill, however small they are (`background-size: 0.2px`).
++        let solid = uniform_gradient_color(&gradient);
++        let repeats = |repeat: &BackgroundRepeatKeyword| {
++            matches!(
++                repeat,
++                BackgroundRepeatKeyword::Repeat | BackgroundRepeatKeyword::Round
++            )
++        };
++        if let Some(color) = solid
++            && repeats(repeat_x)
++            && repeats(repeat_y)
++            && bg_size.width > 0.0
++            && bg_size.height > 0.0
++        {
++            scene.fill(
++                peniko::Fill::NonZero,
++                base_transform,
++                color,
++                None,
++                &clip_rect,
++            );
++            return;
++        }
+ 
+         // FIXME: https://wpt.live/css/css-backgrounds/background-size/background-size-near-zero-gradient.html
+         if x.count as u64 * y.count as u64 > 500 {
+             return;
+         }
+-
+-        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
+-        let bounding_box = self.frame.border_box.bounding_box();
+-        let current_color = self.style.clone_color();
+-
+-        let (gradient, gradient_transform) = to_peniko_gradient(
+-            gradient,
+-            tile_rect,
+-            bounding_box,
+-            self.scale,
+-            &current_color,
+-        );
+-        let brush = anyrender::Paint::Gradient(&gradient);
++        let brush = match &solid {
++            Some(color) => anyrender::Paint::Solid(*color),
++            None => anyrender::Paint::Gradient(&gradient),
++        };
++        let gradient_transform = if solid.is_some() {
++            None
++        } else {
++            gradient_transform
++        };
+ 
+         let transform = base_transform.then_translate(Vec2 {
+             x: x.translate,
+@@ -875,48 +1150,64 @@
+     stride: f64,
+ }
+ 
+-/// Per-axis placement and tiling for a raster image layer. `Repeat`/`Round`
+-/// produce a single fill covering the whole positioning area (relying on the
+-/// image brush repeating), while `Space` produces `count` explicit tiles
+-/// spaced `stride` apart.
+-///
+-/// The fill rect is in image pixel coordinates (the drawing transform is
+-/// pre-scaled by `ratio`), while translations are in device pixels.
+-fn raster_axis_tiling(
++/// The tiles of a raster image layer along one axis: where the first starts, their length and
++/// the distance between their starts, in device px.
++struct AxisTiles {
++    start: f64,
++    len: f64,
++    stride: f64,
++    count: u32,
++}
++
++/// pyro: the tiles of a raster image layer along one axis that cover the painting area
++/// `area_start..area_end`, for a positioning area at `origin_start` (`origin_len` long), the image
++/// at `bg_pos` in it and `tile_len` long. `repeat` and `round` (already sized to fit) tile the
++/// whole painting area; `space` spaces the copies that fit in the positioning area so that the
++/// first and last touch its edges and repeats that pattern over the painting area, or places one
++/// copy at `bg_pos` when two do not fit; `no-repeat` places one copy.
++fn raster_axis_tiles(
+     repeat: BackgroundRepeatKeyword,
+     origin_start: f64,
+     origin_len: f64,
++    area_start: f64,
++    area_end: f64,
+     bg_pos: f64,
+     tile_len: f64,
+-    image_len: f64,
+-    ratio: f64,
+-) -> AxisTiling {
++) -> AxisTiles {
+     use BackgroundRepeatKeyword::*;
+ 
+-    match repeat {
+-        Repeat | Round => {
+-            let extend_len = extend(bg_pos, tile_len);
+-            AxisTiling {
+-                translate: origin_start - extend_len,
+-                rect_len: (origin_len + extend_len) / ratio,
+-                count: 1,
+-                stride: 0.0,
+-            }
++    let cover = |anchor: f64, stride: f64| {
++        let first = anchor + ((area_start - anchor) / stride).floor() * stride;
++        let count = ((area_end - first) / stride)
++            .ceil()
++            .clamp(0.0, u32::MAX as f64) as u32;
++        AxisTiles {
++            start: first,
++            len: tile_len,
++            stride,
++            count,
+         }
++    };
++    match repeat {
++        Repeat | Round => cover(origin_start + bg_pos, tile_len),
+         Space => {
+             let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
+-            AxisTiling {
+-                translate: origin_start + if count == 1 { bg_pos } else { 0.0 },
+-                rect_len: image_len,
+-                count,
+-                stride,
++            if count > 1 {
++                cover(origin_start, stride)
++            } else {
++                AxisTiles {
++                    start: origin_start + bg_pos,
++                    len: tile_len,
++                    stride: 0.0,
++                    count: 1,
++                }
+             }
+         }
+-        NoRepeat => AxisTiling {
+-            translate: origin_start + bg_pos,
+-            rect_len: image_len,
+-            count: 1,
++        NoRepeat => AxisTiles {
++            start: origin_start + bg_pos,
++            len: tile_len,
+             stride: 0.0,
++            count: 1,
+         },
+     }
+ }
+@@ -958,11 +1249,24 @@
+         }
+         Space => {
+             let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
+-            AxisTiling {
+-                translate: origin_start + if count == 1 { bg_pos } else { 0.0 },
+-                rect_len: tile_len,
+-                count,
+-                stride,
++            if count > 1 {
++                // pyro: the spaced pattern repeats over the painting area (a `border-box` clip
++                // shows it in the border too), as a raster image's does.
++                let first = origin_start + ((clip_start - origin_start) / stride).floor() * stride;
++                let count = ((clip_start + clip_len - first) / stride).ceil().max(0.0) as u32;
++                AxisTiling {
++                    translate: first,
++                    rect_len: tile_len,
++                    count,
++                    stride,
++                }
++            } else {
++                AxisTiling {
++                    translate: origin_start + bg_pos,
++                    rect_len: tile_len,
++                    count,
++                    stride,
++                }
+             }
+         }
+         NoRepeat => AxisTiling {
+@@ -986,6 +1290,16 @@
+     (count, stride)
+ }
+ 
++/// pyro: the colour of a gradient whose stops all have one colour, which paints as that colour.
++pub(super) fn uniform_gradient_color(gradient: &peniko::Gradient) -> Option<Color> {
++    let first = gradient.stops.first()?;
++    gradient
++        .stops
++        .iter()
++        .all(|stop| stop.color == first.color)
++        .then(|| first.color.to_alpha_color::<peniko::color::Srgb>())
++}
++
+ /// Whether drawing the layer is guaranteed to paint nothing, making its clip
+ /// layer unnecessary
+ fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
 diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/src/render/border.rs
 --- a/packages/blitz-paint/src/render/border.rs
 +++ b/packages/blitz-paint/src/render/border.rs
@@ -1952,7 +3139,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      render::{ElementCx, PhysicalTracks},
  };
  
-@@ -90,64 +90,390 @@
+@@ -90,64 +90,396 @@
      (outer, inner)
  }
  
@@ -2381,10 +3568,29 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        {
 +            return;
 +        }
++        // pyro: a border image is drawn instead of the border's styles (Blink's
++        // `BoxPainterBase::PaintBorder`); one that cannot be drawn leaves them.
++        if self.draw_border_image(scene) {
++            return;
++        }
++
          let style = &*self.style;
          let border = style.get_border();
          let current_color = style.clone_color();
-@@ -234,6 +560,7 @@
+@@ -196,7 +528,11 @@
+                     // `r`, inner radius `r - width`, concentric). For 0 < r < width CSS
+                     // draws a rounded outer edge against a sharp inner corner, which a
+                     // stroke can't represent — leave those to the per-edge fill.
+-                    let is_exact = |r: Vec2| r.x == 0.0 || r.x >= width;
++                    // pyro: and kurbo's `RoundedRect` keeps the radius: it clamps each to half
++                    // the rect's smaller side, which a CSS corner beside a square one exceeds
++                    // (`border-radius: 100% 0 0 0`).
++                    let half_side = (bb.width().min(bb.height()) - width) / 2.0;
++                    let is_exact = |r: Vec2| r.x == 0.0 || (r.x >= width && r.x - width / 2.0 <= half_side);
+                     let stroke_is_exact = is_exact(radii.top_left)
+                         && is_exact(radii.top_right)
+                         && is_exact(radii.bottom_right)
+@@ -234,6 +570,7 @@
          // At most 8 entries: 4 edges, each of which can contribute 2 (the outer
          // and inner halves of a `groove`/`ridge`).
          let mut borders: SmallVec<[(Color, BezPath); 8]> = SmallVec::new();
@@ -2392,7 +3598,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
          for &edge in &[Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
              let (color, edge_style) = match edge {
-@@ -244,7 +571,11 @@
+@@ -244,7 +581,11 @@
              };
              let color = color.resolve_to_absolute(&current_color).as_srgb_color();
  
@@ -2405,7 +3611,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                  continue;
              }
  
-@@ -253,10 +584,9 @@
+@@ -253,10 +594,9 @@
                  // guard against drawing them anyway.
                  BorderStyle::None | BorderStyle::Hidden => {}
  
@@ -2419,7 +3625,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
                  // A double border is two solid lines separated by a gap, splitting
                  // the border width into three equal parts (outer line / gap / inner
-@@ -315,6 +645,20 @@
+@@ -315,6 +655,20 @@
              }
          }
  
@@ -2440,7 +3646,56 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -351,163 +695,152 @@
+@@ -341,6 +695,48 @@
+         }
+     }
+ 
++    /// pyro: the area this element's border paints, which `background-clip: border-area` (CSS
++    /// Backgrounds 4) clips to: each side with a style and a width, all of it whatever its
++    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
++    /// are square (with rounded corners, the whole side).
++    pub(super) fn border_area_path(&self) -> BezPath {
++        let border = self.style.get_border();
++        let sides = [
++            (Edge::Top, border.border_top_style),
++            (Edge::Right, border.border_right_style),
++            (Edge::Bottom, border.border_bottom_style),
++            (Edge::Left, border.border_left_style),
++        ];
++        let bb = self.frame.border_box;
++        let mut path = BezPath::new();
++        // The round dots already in `path`: two dotted sides share their corner's dot, which
++        // must be in the path once (twice, its edge came out bolder).
++        let mut dots = Vec::new();
++        for (edge, style) in sides {
++            let width = self.edge_width(edge);
++            if style.none_or_hidden() || width <= 0.0 {
++                continue;
++            }
++            match style {
++                BorderStyle::Double if width >= 3.0 * self.scale => {
++                    path.extend(&self.frame.border_slice(0.0, 1.0 / 3.0).border_edge_shape(edge));
++                    path.extend(&self.frame.border_slice(2.0 / 3.0, 1.0).border_edge_shape(edge));
++                }
++                BorderStyle::Dotted | BorderStyle::Dashed if !self.frame.has_border_radius() => {
++                    let (origin, along, across, length) = match edge {
++                        Edge::Top => (Point::new(bb.x0, bb.y0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), bb.width()),
++                        Edge::Bottom => (Point::new(bb.x0, bb.y1), Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0), bb.width()),
++                        Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
++                        Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
++                    };
++                    straight_side_marks(&mut path, &mut dots, style, origin, (along, across), (length, width), self.scale);
++                }
++                _ => path.extend(&self.frame.border_edge_shape(edge)),
++            }
++        }
++        path
++    }
++
+     /// The border width (in device pixels) of a single edge.
+     fn edge_width(&self, edge: Edge) -> f64 {
+         match edge {
+@@ -351,163 +747,152 @@
          }
      }
  
@@ -2458,8 +3713,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -        if thickness <= 0.0 {
 -            return;
 -        }
--
--        let (dash_ratio, gap_ratio) = dashed_ratios(thickness, self.scale);
 +    /// On a box with square corners each side is a straight line from corner to
 +    /// corner over the whole side, so sides of one style and colour overlap in
 +    /// their corner (and a side is mitred only against a neighbour of another
@@ -2482,6 +3735,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let uniform = sides.iter().all(|side| *side == sides[0])
 +            && SIDES.iter().all(|&edge| thickness(edge) == first_width);
  
+-        let (dash_ratio, gap_ratio) = dashed_ratios(thickness, self.scale);
+-
 -        // Work out the centre line to stroke and the dash/gap lengths along it.
 -        let (centerline, dash, gap) = if self.frame.has_border_radius() {
 -            // Rounded corners: stroke the rounded centre line running through the
@@ -2665,12 +3920,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -                    Edge::Left => Point::new(bb.x0 + radius, bb.y0 + along),
 -                    Edge::Right => Point::new(bb.x1 - radius, bb.y0 + along),
 -                }
-+            let (origin, along, across, length) = match edge {
-+                Edge::Top => (Point::new(bb.x0, bb.y0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), bb.width()),
-+                Edge::Bottom => (Point::new(bb.x0, bb.y1), Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0), bb.width()),
-+                Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
-+                Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
-             };
+-            };
 -
 -            let span = length - thickness;
 -            if span <= 0.0 {
@@ -2686,6 +3936,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -                    let center = dot_center(radius + i as f64 * spacing);
 -                    path.extend(Circle::new(center, radius).path_elements(0.1));
 -                }
++            let (origin, along, across, length) = match edge {
++                Edge::Top => (Point::new(bb.x0, bb.y0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), bb.width()),
++                Edge::Bottom => (Point::new(bb.x0, bb.y1), Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0), bb.width()),
++                Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
++                Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
++            };
 +            let side = ((along, across), (length, thickness(edge)));
 +            // A neighbour of another style or colour meets this side in a
 +            // mitre; one alike is drawn over, and a missing one leaves the
@@ -2738,7 +3994,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      pub(crate) fn draw_table_borders(&self, scene: &mut impl PaintScene) {
-@@ -522,6 +855,10 @@
+@@ -522,6 +907,10 @@
          let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
              return;
          };
@@ -2749,7 +4005,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let Some(border_style) = table.border_style.as_deref() else {
              return;
          };
-@@ -589,8 +926,109 @@
+@@ -589,8 +978,109 @@
          }
      }
  
@@ -2861,7 +4117,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ✅ solid - Defines a solid border
      /// ❌ double - Defines a double border
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
-@@ -600,33 +1038,64 @@
+@@ -600,33 +1090,64 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
@@ -2947,27 +4203,913 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
 +    lines
  }
+diff --git a/packages/blitz-paint/src/render/border_image.rs b/packages/blitz-paint/src/render/border_image.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-paint/src/render/border_image.rs
+@@ -0,0 +1,642 @@
++//! pyro: `border-image` (CSS Backgrounds 3 §6), painted as Blink's
++//! `NinePieceImagePainter` and `NinePieceImageGrid` paint it.
++
++use super::{ElementCx, to_image_quality};
++use crate::gradient::to_peniko_gradient;
++use anyrender::PaintScene;
++use blitz_dom::CopyStyleGetters;
++use blitz_dom::node::{ImageData, RasterImageData};
++use kurbo::{Affine, Rect, Vec2};
++use peniko::{Extend, Fill, ImageBrush, ImageQuality, ImageSampler};
++use style::values::computed::{
++    Gradient as StyloGradient, Length, NumberOrPercentage, border::BorderImageSideWidth,
++};
++use style::values::generics::{image::GenericImage, length::GenericLengthOrNumber};
++use style::values::specified::border::BorderImageRepeatKeyword as Rule;
++
++/// The most tiles one piece draws one by one (a raster piece without spacing is a single
++/// repeating fill): a 1px tile over a 4K screen would otherwise be thousands of draws.
++const MAX_TILES: usize = 4096;
++
++/// The image a border image is cut from.
++enum Source<'a> {
++    Raster(&'a RasterImageData),
++    #[cfg(feature = "svg")]
++    Svg(&'a blitz_dom::node::SvgImageData),
++    Gradient(&'a StyloGradient),
++}
++
++/// One side of the nine-piece grid: how much of the image it cuts off (image units) and how
++/// wide it is drawn (device px, whole).
++#[derive(Clone, Copy, Debug, Default)]
++struct Edge {
++    slice: f64,
++    width: f64,
++}
++
++impl Edge {
++    fn drawable(self) -> bool {
++        self.slice > 0.0 && self.width > 0.0
++    }
++
++    /// Device px per image unit.
++    fn scale(self) -> f64 {
++        if self.drawable() {
++            self.width / self.slice
++        } else {
++            1.0
++        }
++    }
++}
++
++/// How one piece covers its area along one axis (Blink's `TileParameters`).
++#[derive(Clone, Copy, Debug)]
++struct Tiling {
++    /// The tile's length, device px.
++    tile: f64,
++    /// Where the first tile starts, from the area's start.
++    phase: f64,
++    /// The gap after each tile.
++    spacing: f64,
++}
++
++/// Blink's `ComputeTileParameters`: `extent` is the area's length, `tile` the tile's length at
++/// the piece's scale. `None` for `space` when not even one tile fits: the piece is not drawn.
++fn tiling(rule: Rule, extent: f64, tile: f64) -> Option<Tiling> {
++    match rule {
++        Rule::Stretch => Some(Tiling {
++            tile,
++            phase: 0.0,
++            spacing: 0.0,
++        }),
++        Rule::Round => {
++            let repetitions = (extent / tile).round().max(1.0);
++            Some(Tiling {
++                tile: extent / repetitions,
++                phase: 0.0,
++                spacing: 0.0,
++            })
++        }
++        // Centred: a tile in the middle of the area, and the others on both sides of it.
++        Rule::Repeat => Some(Tiling {
++            tile,
++            phase: (extent - tile) / 2.0,
++            spacing: 0.0,
++        }),
++        Rule::Space => {
++            let repetitions = (extent / tile).floor();
++            if repetitions < 1.0 {
++                return None;
++            }
++            // The space left over goes around the tiles: before the first, between them and
++            // after the last.
++            let space = (extent - repetitions * tile) / (repetitions + 1.0);
++            Some(Tiling {
++                tile,
++                phase: space,
++                spacing: space,
++            })
++        }
++    }
++}
++
++/// A piece of the grid: the part of the image it is cut from, where it goes, and how it
++/// fills that area. `tile_scale` is in device px per image unit.
++struct Piece {
++    source: Rect,
++    destination: Rect,
++    tile_scale: Vec2,
++    rules: (Rule, Rule),
++    corner: bool,
++}
++
++/// A rect from its origin and size, with negative sizes taken as zero (gfx::SizeF's).
++fn rect(x: f64, y: f64, width: f64, height: f64) -> Rect {
++    Rect::new(x, y, x + width.max(0.0), y + height.max(0.0))
++}
++
++impl ElementCx<'_, '_> {
++    /// Draw the element's `border-image` instead of its borders. Returns false when there is
++    /// none to draw (`border-image-source: none`, or an image that is not loaded): the borders
++    /// are then drawn as usual.
++    pub(super) fn draw_border_image(&self, scene: &mut impl PaintScene) -> bool {
++        let border = self.style.get_border();
++        let source = match &border.border_image_source {
++            GenericImage::None => return false,
++            GenericImage::Gradient(gradient) => Source::Gradient(gradient),
++            GenericImage::Url(_) => match self.element.border_images.first() {
++                Some(Some(data)) => match &data.image {
++                    ImageData::Raster(raster) => Source::Raster(raster),
++                    #[cfg(feature = "svg")]
++                    ImageData::Svg(svg) if !svg.intrinsic_dimensions.degenerate_view_box => {
++                        Source::Svg(svg)
++                    }
++                    _ => return false,
++                },
++                _ => return false,
++            },
++            _ => return false,
++        };
++        let scale = self.scale;
++        let bb = self.frame.border_box;
++        let widths = self.frame.border_width;
++
++        // The border image area: the border box grown by `border-image-outset`, on whole pixels.
++        let outset =
++            |value: &style::values::computed::NonNegativeLengthOrNumber, width: f64| match value {
++                GenericLengthOrNumber::Number(n) => n.0 as f64 * width,
++                GenericLengthOrNumber::Length(l) => l.0.px() as f64 * scale,
++            };
++        let outsets = &border.border_image_outset;
++        let area = Rect::new(
++            (bb.x0 - outset(&outsets.3, widths.x0)).round(),
++            (bb.y0 - outset(&outsets.0, widths.y0)).round(),
++            (bb.x1 + outset(&outsets.1, widths.x1)).round(),
++            (bb.y1 + outset(&outsets.2, widths.y1)).round(),
++        );
++        if !(area.width() > 0.0 && area.height() > 0.0) {
++            return true;
++        }
++
++        // The image's size in its own units: pixels for a raster image, CSS px for an SVG one,
++        // device px for a gradient (sized as the border image area). `units` converts image
++        // units to device px for `auto` widths, `numbers` slice numbers to image units.
++        let (image_w, image_h, units, numbers) = match &source {
++            Source::Raster(raster) => (raster.width as f64, raster.height as f64, scale, 1.0),
++            #[cfg(feature = "svg")]
++            Source::Svg(svg) => {
++                let (w, h) = svg_size(svg, area.width() / scale, area.height() / scale);
++                (w, h, scale, 1.0)
++            }
++            Source::Gradient(_) => (area.width(), area.height(), 1.0, scale),
++        };
++        if !(image_w > 0.0 && image_h > 0.0) {
++            return true;
++        }
++
++        let slices = &border.border_image_slice;
++        let slice = |value: &NumberOrPercentage, extent: f64| {
++            let resolved = match value {
++                NumberOrPercentage::Number(n) => *n as f64 * numbers,
++                NumberOrPercentage::Percentage(p) => p.0 as f64 * extent,
++            };
++            resolved.min(extent)
++        };
++        let width = |value: &BorderImageSideWidth, border_width: f64, slice: f64, extent: f64| {
++            match value {
++                BorderImageSideWidth::Number(n) => (n.0 as f64 * border_width).round(),
++                BorderImageSideWidth::Auto => (slice * units).round(),
++                BorderImageSideWidth::LengthPercentage(lp) => {
++                    (lp.0.resolve(Length::new((extent / scale) as f32)).px() as f64 * scale).round()
++                }
++            }
++        };
++        let widths_style = &border.border_image_width;
++        let mut top = Edge {
++            slice: slice(&slices.offsets.0.0, image_h),
++            ..Edge::default()
++        };
++        let mut right = Edge {
++            slice: slice(&slices.offsets.1.0, image_w),
++            ..Edge::default()
++        };
++        let mut bottom = Edge {
++            slice: slice(&slices.offsets.2.0, image_h),
++            ..Edge::default()
++        };
++        let mut left = Edge {
++            slice: slice(&slices.offsets.3.0, image_w),
++            ..Edge::default()
++        };
++        top.width = width(&widths_style.0, widths.y0, top.slice, area.height());
++        right.width = width(&widths_style.1, widths.x1, right.slice, area.width());
++        bottom.width = width(&widths_style.2, widths.y1, bottom.slice, area.height());
++        left.width = width(&widths_style.3, widths.x0, left.slice, area.width());
++
++        // Opposite sides wider than the area together shrink, all four alike, to whole pixels
++        // (rounded: truncating left a pixel's gap between them, WPT `border-image-calc.html`).
++        let factor = (area.width() / (left.width + right.width).max(1.0))
++            .min(area.height() / (top.width + bottom.width).max(1.0));
++        if factor < 1.0 {
++            for edge in [&mut top, &mut right, &mut bottom, &mut left] {
++                edge.width = (edge.width * factor).round();
++            }
++        }
++
++        let repeat = &border.border_image_repeat;
++        let (horizontal, vertical_rule) = (repeat.0, repeat.1);
++        let (iw, ih) = (image_w, image_h);
++        let middle_source = (iw - left.slice - right.slice, ih - top.slice - bottom.slice);
++        let middle_size = (
++            area.width() - left.width - right.width,
++            area.height() - top.width - bottom.width,
++        );
++        let (x0, y0, x1, y1) = (area.x0, area.y0, area.x1, area.y1);
++
++        let mut pieces: Vec<Piece> = Vec::with_capacity(9);
++        let corner = |source: Rect, destination: Rect| Piece {
++            source,
++            destination,
++            tile_scale: Vec2::ZERO,
++            rules: (Rule::Stretch, Rule::Stretch),
++            corner: true,
++        };
++        if top.drawable() && left.drawable() {
++            pieces.push(corner(
++                rect(0.0, 0.0, left.slice, top.slice),
++                rect(x0, y0, left.width, top.width),
++            ));
++        }
++        if top.drawable() && right.drawable() {
++            pieces.push(corner(
++                rect(iw - right.slice, 0.0, right.slice, top.slice),
++                rect(x1 - right.width, y0, right.width, top.width),
++            ));
++        }
++        if bottom.drawable() && left.drawable() {
++            pieces.push(corner(
++                rect(0.0, ih - bottom.slice, left.slice, bottom.slice),
++                rect(x0, y1 - bottom.width, left.width, bottom.width),
++            ));
++        }
++        if bottom.drawable() && right.drawable() {
++            pieces.push(corner(
++                rect(
++                    iw - right.slice,
++                    ih - bottom.slice,
++                    right.slice,
++                    bottom.slice,
++                ),
++                rect(
++                    x1 - right.width,
++                    y1 - bottom.width,
++                    right.width,
++                    bottom.width,
++                ),
++            ));
++        }
++        // The sides: across, as wide as their edge; along, tiled by their rule. A left or
++        // right side runs down (`vertical`), a top or bottom one across.
++        let side = |edge: Edge, source: Rect, destination: Rect, vertical: bool| {
++            let along = if vertical {
++                (source.height(), destination.height())
++            } else {
++                (source.width(), destination.width())
++            };
++            let rules = if vertical {
++                (Rule::Stretch, vertical_rule)
++            } else {
++                (horizontal, Rule::Stretch)
++            };
++            (edge.drawable() && along.0 > 0.0 && along.1 > 0.0).then(|| Piece {
++                source,
++                destination,
++                tile_scale: Vec2::new(edge.scale(), edge.scale()),
++                rules,
++                corner: false,
++            })
++        };
++        pieces.extend(side(
++            left,
++            rect(0.0, top.slice, left.slice, middle_source.1),
++            rect(x0, y0 + top.width, left.width, middle_size.1),
++            true,
++        ));
++        pieces.extend(side(
++            right,
++            rect(iw - right.slice, top.slice, right.slice, middle_source.1),
++            rect(x1 - right.width, y0 + top.width, right.width, middle_size.1),
++            true,
++        ));
++        pieces.extend(side(
++            top,
++            rect(left.slice, 0.0, middle_source.0, top.slice),
++            rect(x0 + left.width, y0, middle_size.0, top.width),
++            false,
++        ));
++        pieces.extend(side(
++            bottom,
++            rect(left.slice, ih - bottom.slice, middle_source.0, bottom.slice),
++            rect(
++                x0 + left.width,
++                y1 - bottom.width,
++                middle_size.0,
++                bottom.width,
++            ),
++            false,
++        ));
++        // The middle, with `fill`: scaled as the top (or bottom) side across and the left (or
++        // right) side down, or stretched along an axis whose rule is `stretch`.
++        if slices.fill
++            && middle_source.0 > 0.0
++            && middle_source.1 > 0.0
++            && middle_size.0 > 0.0
++            && middle_size.1 > 0.0
++        {
++            let mut tile_scale = Vec2::new(units, units);
++            if top.drawable() {
++                tile_scale.x = top.scale();
++            } else if bottom.drawable() {
++                tile_scale.x = bottom.scale();
++            }
++            if left.drawable() {
++                tile_scale.y = left.scale();
++            } else if right.drawable() {
++                tile_scale.y = right.scale();
++            }
++            if horizontal == Rule::Stretch {
++                tile_scale.x = middle_size.0 / middle_source.0;
++            }
++            if vertical_rule == Rule::Stretch {
++                tile_scale.y = middle_size.1 / middle_source.1;
++            }
++            pieces.push(Piece {
++                source: rect(left.slice, top.slice, middle_source.0, middle_source.1),
++                destination: rect(
++                    x0 + left.width,
++                    y0 + top.width,
++                    middle_size.0,
++                    middle_size.1,
++                ),
++                tile_scale,
++                rules: (horizontal, vertical_rule),
++                corner: false,
++            });
++        }
++
++        let painter = PiecePainter {
++            cx: self,
++            source: &source,
++            image: Rect::new(0.0, 0.0, iw, ih),
++        };
++        for piece in &pieces {
++            if piece.corner || piece.rules == (Rule::Stretch, Rule::Stretch) {
++                painter.stretched(scene, piece.source, piece.destination);
++                continue;
++            }
++            let (dst, src) = (piece.destination, piece.source);
++            let Some(h) = tiling(piece.rules.0, dst.width(), src.width() * piece.tile_scale.x)
++            else {
++                continue;
++            };
++            let Some(v) = tiling(
++                piece.rules.1,
++                dst.height(),
++                src.height() * piece.tile_scale.y,
++            ) else {
++                continue;
++            };
++            painter.tiled(scene, src, dst, h, v);
++        }
++        true
++    }
++}
++
++/// The size of an SVG border image in CSS px: its own, or the border image area's where it
++/// has none (CSS Images' default sizing, against the area).
++#[cfg(feature = "svg")]
++fn svg_size(svg: &blitz_dom::node::SvgImageData, area_w: f64, area_h: f64) -> (f64, f64) {
++    let width = svg
++        .intrinsic_width()
++        .filter(|w| w.is_finite() && *w > 0.0)
++        .map(f64::from);
++    let height = svg
++        .intrinsic_height()
++        .filter(|h| h.is_finite() && *h > 0.0)
++        .map(f64::from);
++    let ratio = match (width, height) {
++        (Some(w), Some(h)) => Some(w / h),
++        _ => svg.viewbox_aspect_ratio().map(f64::from),
++    }
++    .filter(|r| r.is_finite() && *r > 0.0);
++    match (width, height) {
++        (Some(w), Some(h)) => (w, h),
++        (Some(w), None) => (w, ratio.map_or(area_h, |r| w / r)),
++        (None, Some(h)) => (ratio.map_or(area_w, |r| h * r), h),
++        (None, None) => match ratio {
++            Some(r) => {
++                let h = (area_w / r).min(area_h);
++                (h * r, h)
++            }
++            None => (area_w, area_h),
++        },
++    }
++}
++
++/// Draws pieces of one border image.
++struct PiecePainter<'a, 'c, 'd, 'e> {
++    cx: &'a ElementCx<'c, 'd>,
++    source: &'a Source<'e>,
++    /// The whole image, in image units.
++    image: Rect,
++}
++
++impl PiecePainter<'_, '_, '_, '_> {
++    /// `source` (image units) drawn into `destination` (device px).
++    fn stretched(&self, scene: &mut impl PaintScene, source: Rect, destination: Rect) {
++        if source.is_zero_area() || destination.is_zero_area() {
++            return;
++        }
++        if let Source::Raster(raster) = self.source {
++            let Some((brush, crop)) = self.crop(raster, source, Extend::Pad) else {
++                return;
++            };
++            let brush_transform = Affine::translate(destination.origin().to_vec2())
++                * Affine::scale_non_uniform(
++                    destination.width() / crop.0,
++                    destination.height() / crop.1,
++                );
++            scene.fill(
++                Fill::NonZero,
++                self.cx.transform,
++                brush.as_ref(),
++                Some(brush_transform),
++                &destination,
++            );
++            return;
++        }
++        self.vector(scene, source, destination, destination);
++    }
++
++    /// `source` tiled over `destination` by the two axes' tilings.
++    fn tiled(
++        &self,
++        scene: &mut impl PaintScene,
++        source: Rect,
++        destination: Rect,
++        h: Tiling,
++        v: Tiling,
++    ) {
++        if source.is_zero_area() || destination.is_zero_area() || !(h.tile > 0.0 && v.tile > 0.0) {
++            return;
++        }
++        let origin = destination.origin() + Vec2::new(h.phase, v.phase);
++        if let Source::Raster(raster) = self.source
++            && h.spacing == 0.0
++            && v.spacing == 0.0
++        {
++            // One fill of the whole area with the piece repeating: no seams between tiles.
++            let Some((brush, crop)) = self.crop(raster, source, Extend::Repeat) else {
++                return;
++            };
++            let brush_transform = Affine::translate(origin.to_vec2())
++                * Affine::scale_non_uniform(h.tile / crop.0, v.tile / crop.1);
++            scene.fill(
++                Fill::NonZero,
++                self.cx.transform,
++                brush.as_ref(),
++                Some(brush_transform),
++                &destination,
++            );
++            return;
++        }
++        // Each tile on its own: the tiles that overlap the area, cut to it.
++        let positions = |start: f64, end: f64, origin: f64, t: Tiling| {
++            let period = t.tile + t.spacing;
++            let first = ((start - origin) / period).floor() as i64;
++            let mut out = Vec::new();
++            let mut k = first;
++            loop {
++                let at = origin + k as f64 * period;
++                if at >= end - 1e-6 || out.len() > MAX_TILES {
++                    break;
++                }
++                if at + t.tile > start + 1e-6 {
++                    out.push(at);
++                }
++                k += 1;
++            }
++            out
++        };
++        let xs = positions(destination.x0, destination.x1, origin.x, h);
++        let ys = positions(destination.y0, destination.y1, origin.y, v);
++        if xs.len() * ys.len() > MAX_TILES {
++            return;
++        }
++        let raster = match self.source {
++            Source::Raster(raster) => self.crop(raster, source, Extend::Pad),
++            _ => None,
++        };
++        for &y in &ys {
++            for &x in &xs {
++                let tile = Rect::new(x, y, x + h.tile, y + v.tile);
++                let visible = tile.intersect(destination);
++                if visible.is_zero_area() {
++                    continue;
++                }
++                match &raster {
++                    Some((brush, crop)) => {
++                        let brush_transform = Affine::translate(tile.origin().to_vec2())
++                            * Affine::scale_non_uniform(
++                                tile.width() / crop.0,
++                                tile.height() / crop.1,
++                            );
++                        scene.fill(
++                            Fill::NonZero,
++                            self.cx.transform,
++                            brush.as_ref(),
++                            Some(brush_transform),
++                            &visible,
++                        );
++                    }
++                    None => self.vector(scene, source, tile, visible),
++                }
++            }
++        }
++    }
++
++    /// A gradient or SVG image drawn so that `source` covers `tile`, cut to `visible`.
++    fn vector(&self, scene: &mut impl PaintScene, source: Rect, tile: Rect, visible: Rect) {
++        // Image units to device px (the element's space).
++        let placement = Affine::translate(tile.origin().to_vec2())
++            * Affine::scale_non_uniform(
++                tile.width() / source.width(),
++                tile.height() / source.height(),
++            )
++            * Affine::translate(-source.origin().to_vec2());
++        match self.source {
++            Source::Raster(_) => {}
++            Source::Gradient(gradient) => {
++                let image = self.image;
++                let current_color = self.cx.style.clone_color();
++                let (gradient, gradient_transform) =
++                    to_peniko_gradient(gradient, image, image, self.cx.scale, &current_color);
++                if let Some(color) = super::background::uniform_gradient_color(&gradient) {
++                    scene.fill(Fill::NonZero, self.cx.transform, color, None, &visible);
++                    return;
++                }
++                let brush_transform = placement * gradient_transform.unwrap_or(Affine::IDENTITY);
++                scene.fill(
++                    Fill::NonZero,
++                    self.cx.transform,
++                    anyrender::Paint::Gradient(&gradient),
++                    Some(brush_transform),
++                    &visible,
++                );
++            }
++            #[cfg(feature = "svg")]
++            Source::Svg(svg) => {
++                let scale = self.cx.scale;
++                // The tree drawn at the image's size in device px, then placed.
++                let viewport = super::svg_viewport_affine(
++                    svg,
++                    (self.image.width() * scale) as f32,
++                    (self.image.height() * scale) as f32,
++                );
++                let transform =
++                    self.cx.transform * placement * Affine::scale(1.0 / scale) * viewport;
++                scene.push_clip_layer(Fill::NonZero, self.cx.transform, &visible);
++                anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
++                scene.pop_layer();
++            }
++        }
++    }
++
++    /// The pixels of a raster image under `source` (rounded to whole pixels) as a brush of
++    /// their own, so that sampling never reaches the pixels around them; with its size.
++    fn crop(
++        &self,
++        raster: &RasterImageData,
++        source: Rect,
++        extend: Extend,
++    ) -> Option<(ImageBrush, (f64, f64))> {
++        let (w, h) = (raster.width as usize, raster.height as usize);
++        let x0 = (source.x0.round().max(0.0) as usize).min(w);
++        let y0 = (source.y0.round().max(0.0) as usize).min(h);
++        let x1 = (source.x1.round().max(0.0) as usize)
++            .min(w)
++            .max(x0 + 1)
++            .min(w);
++        let y1 = (source.y1.round().max(0.0) as usize)
++            .min(h)
++            .max(y0 + 1)
++            .min(h);
++        if x1 <= x0 || y1 <= y0 {
++            return None;
++        }
++        let (cw, ch) = (x1 - x0, y1 - y0);
++        let data: &[u8] = raster.data.data();
++        let mut pixels = Vec::with_capacity(cw * ch * 4);
++        for row in y0..y1 {
++            let start = (row * w + x0) * 4;
++            pixels.extend_from_slice(data.get(start..start + cw * 4)?);
++        }
++        let quality: ImageQuality = to_image_quality(self.cx.style.clone_image_rendering());
++        let brush = ImageBrush {
++            image: peniko::ImageData {
++                data: peniko::Blob::from(pixels),
++                format: peniko::ImageFormat::Rgba8,
++                width: cw as u32,
++                height: ch as u32,
++                alpha_type: peniko::ImageAlphaType::Alpha,
++            },
++            sampler: ImageSampler {
++                x_extend: extend,
++                y_extend: extend,
++                quality,
++                alpha: 1.0,
++            },
++        };
++        Some((brush, (cw as f64, ch as f64)))
++    }
++}
 diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-paint/src/render/box_shadow.rs
 --- a/packages/blitz-paint/src/render/box_shadow.rs
 +++ b/packages/blitz-paint/src/render/box_shadow.rs
-@@ -80,6 +80,17 @@
-                         let radius = self.frame.border_radii.average();
-                         let rect = self.frame.border_box.inflate(spread, spread);
+@@ -1,10 +1,93 @@
+ use super::ElementCx;
+ use crate::color::{Color, ToColorColor as _};
++use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
+ use anyrender::PaintScene;
+ use blitz_dom::CopyStyleGetters;
+-use kurbo::{Rect, Vec2};
++use kurbo::{Insets, Rect, Vec2};
+ use peniko::{Compose, Fill, Mix};
  
++/// pyro: a corner radius of a shadow shape grown by `spread` (shrunk when negative), as CSS
++/// Backgrounds 3 §7.1.1 has it (and WPT's `box-shadow-radius-generated-ref.html` computes it): a
++/// radius larger than the spread, or of a corner that covers more than its box (`coverage`, the
++/// smaller of its two radii's share of half the box), grows by the spread; a smaller one by the
++/// spread times `1 - (1 - r / spread)³ (1 - coverage³)`, so that a square corner stays square and a
++/// small radius grows smoothly into a large one, while a corner that is all of the box's side (a
++/// circle's) stays round. A shrinking radius stops at zero.
++fn spread_radius(radius: f64, spread: f64, coverage: f64) -> f64 {
++    if radius <= 0.0 {
++        return 0.0;
++    }
++    if spread <= 0.0 {
++        return (radius + spread).max(0.0);
++    }
++    if radius > spread || coverage > 1.0 {
++        return radius + spread;
++    }
++    radius + spread * (1.0 - (1.0 - radius / spread).powi(3) * (1.0 - coverage.powi(3)))
++}
++
++/// pyro: the radii of a shadow shape whose box (`size`, before the spread) was grown by `spread`
++/// on every side. A corner that is square in either direction stays square.
++fn spread_radii(
++    radii: &NonUniformRoundedRectRadii,
++    size: kurbo::Size,
++    spread: f64,
++) -> NonUniformRoundedRectRadii {
++    let corner = |r: Vec2| {
++        if r.x <= 0.0 || r.y <= 0.0 {
++            return Vec2::ZERO;
++        }
++        let coverage = (2.0 * r.x / size.width).min(2.0 * r.y / size.height);
++        let coverage = if coverage.is_finite() { coverage } else { 0.0 };
++        Vec2::new(
++            spread_radius(r.x, spread, coverage),
++            spread_radius(r.y, spread, coverage),
++        )
++    };
++    NonUniformRoundedRectRadii {
++        top_left: corner(radii.top_left),
++        top_right: corner(radii.top_right),
++        bottom_right: corner(radii.bottom_right),
++        bottom_left: corner(radii.bottom_left),
++    }
++}
++
++/// pyro: the single radius of a shadow shape whose corners are all circular arcs of one radius
++/// (a rectangle, or a rounded rectangle), which vello's blurred rounded rectangle can draw.
++fn uniform_radius(radii: &NonUniformRoundedRectRadii) -> Option<f64> {
++    let r = radii.top_left.x;
++    [
++        radii.top_left,
++        radii.top_right,
++        radii.bottom_right,
++        radii.bottom_left,
++    ]
++    .iter()
++    .all(|c| (c.x - r).abs() < 1e-6 && (c.y - r).abs() < 1e-6)
++    .then_some(r)
++}
++
++/// pyro: the inner radii of a box's padding edge: each border radius less the border widths
++/// beside it (CSS Backgrounds 3 §5.2).
++fn padding_radii(frame: &CssBox) -> NonUniformRoundedRectRadii {
++    let r = &frame.border_radii;
++    let w = frame.border_width;
++    let inner = |r: Vec2, x: f64, y: f64| {
++        let r = Vec2::new((r.x - x).max(0.0), (r.y - y).max(0.0));
++        if r.x == 0.0 || r.y == 0.0 {
++            Vec2::ZERO
++        } else {
++            r
++        }
++    };
++    NonUniformRoundedRectRadii {
++        top_left: inner(r.top_left, w.x0, w.y0),
++        top_right: inner(r.top_right, w.x1, w.y0),
++        bottom_right: inner(r.bottom_right, w.x1, w.y1),
++        bottom_left: inner(r.bottom_left, w.x0, w.y1),
++    }
++}
++
+ impl ElementCx<'_, '_> {
+     pub(super) fn draw_outset_box_shadow(&self, scene: &mut impl PaintScene) {
+         let box_shadow = &self.style.get_effects().box_shadow.0;
+@@ -21,7 +104,11 @@
+             .background_color
+             .resolve_to_absolute(&current_color)
+             .as_srgb_color();
+-        let bg_is_opaque = bg_color.components[3] >= 1.0;
++        // pyro: a root or body whose background is the canvas's paints none of its own over
++        // the shadow, which must then be cut out of its box.
++        let canvas_background = self.context.root_element_id == Some(self.node.id)
++            || self.context.canvas_background == Some(self.node.id);
++        let bg_is_opaque = bg_color.components[3] >= 1.0 && !canvas_background;
+         let needs_clip = opacity < 1.0 || !bg_is_opaque;
+ 
+         let max_shadow_rect = box_shadow.iter().fold(Rect::ZERO, |prev, shadow| {
+@@ -76,12 +163,42 @@
+                             continue;
+                         }
+ 
+-                        // TODO draw shadows with matching individual radii instead of averaging
+-                        let radius = self.frame.border_radii.average();
++                        // pyro: the shadow shape is the border box grown by the spread, each
++                        // corner's radii grown by the spread formula (CSS Backgrounds 3 §7.1.1).
+                         let rect = self.frame.border_box.inflate(spread, spread);
++                        if rect.width() <= 0.0 || rect.height() <= 0.0 {
++                            continue;
++                        }
++                        let radii = spread_radii(
++                            &self.frame.border_radii,
++                            self.frame.border_box.size(),
++                            spread,
++                        );
++                        let shape = CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii);
+ 
+-                        // Fill the color
+-                        scene.draw_box_shadow(transform, rect, shadow_color, radius, blur);
 +                        // Without blur the shadow is a solid rounded rectangle: fill it as a
 +                        // path (antialiased edges) rather than with vello's blurred-rectangle
 +                        // function, which evaluates powf for every pixel it covers. A spread
 +                        // ring (`box-shadow: 0 0 0 6000px`) covered a whole 3840x2160 frame:
 +                        // 60 of the frame's 88 ms of CPU time.
 +                        if blur == 0.0 {
-+                            let shape = kurbo::RoundedRect::from_rect(rect, radius);
-+                            scene.fill(Fill::NonZero, transform, shadow_color, None, &shape);
++                            scene.fill(
++                                Fill::NonZero,
++                                transform,
++                                shadow_color,
++                                None,
++                                &shape.border_box_path(),
++                            );
 +                            continue;
 +                        }
 +
-                         // Fill the color
-                         scene.draw_box_shadow(transform, rect, shadow_color, radius, blur);
++                        // pyro: Chromium blurs with a standard deviation of half the blur
++                        // radius (`BlurRadiusToStdDev`), in device px. Corners of differing radii
++                        // are drawn with their average (vello's blurred rectangle has one).
++                        let radius = uniform_radius(&shape.border_radii)
++                            .unwrap_or_else(|| shape.border_radii.average());
++                        let std_dev = blur * self.scale / 2.0;
++                        scene.draw_box_shadow(transform, rect, shadow_color, radius, std_dev);
                      }
+                 }
+             },
+@@ -97,6 +214,7 @@
+         }
+ 
+         let padding_box = self.frame.padding_box_path();
++        let inner_radii = padding_radii(&self.frame);
+ 
+         for shadow in box_shadow.iter().filter(|s| s.inset) {
+             let shadow_color = shadow
+@@ -104,17 +222,40 @@
+                 .color
+                 .resolve_to_absolute(&current_color)
+                 .as_srgb_color();
+-            if shadow_color == Color::TRANSPARENT {
+-                return;
++            if shadow_color.components[3] <= 0.0 || shadow_color == Color::TRANSPARENT {
++                continue;
+             }
+ 
+-            // TODO draw shadows with matching individual radii instead of averaging
+-            let radius = self.frame.border_radii.average();
+-            let transform = self.transform.then_translate(Vec2 {
+-                x: shadow.base.horizontal.px() as f64,
+-                y: shadow.base.vertical.px() as f64,
++            let offset = Vec2 {
++                x: shadow.base.horizontal.px() as f64 * self.scale,
++                y: shadow.base.vertical.px() as f64 * self.scale,
++            };
++            let transform = self.transform.then_translate(offset);
++            // The unshadowed area is the padding box shrunk by the spread radius, its radii the
++            // padding edge's shrunk (or, for a negative spread, grown) by the spread formula.
++            let spread = shadow.spread.px() as f64 * self.scale;
++            let blur = shadow.base.blur.px() as f64 * self.scale;
++            let hole = self.frame.padding_box.inflate(-spread, -spread);
++            let hole_shape = (hole.width() > 0.0 && hole.height() > 0.0).then(|| {
++                let radii = spread_radii(&inner_radii, self.frame.padding_box.size(), -spread);
++                CssBox::new(hole, Insets::ZERO, Insets::ZERO, 0.0, radii)
+             });
+ 
++            // pyro: without blur the shadow is the padding box less the moved hole, one fill in
++            // a clip to the padding box (no layers: the colour blends as a box's does).
++            if blur == 0.0 {
++                let mut path = padding_box.clone();
++                if let Some(shape) = &hole_shape {
++                    let mut hole_path = shape.border_box_path();
++                    hole_path.apply_affine(kurbo::Affine::translate(offset));
++                    path.extend(&hole_path);
++                }
++                scene.push_clip_layer(Fill::NonZero, self.transform, &padding_box);
++                scene.fill(Fill::EvenOdd, self.transform, shadow_color, None, &path);
++                scene.pop_layer();
++                continue;
++            }
++
+             scene.push_layer(
+                 Fill::NonZero,
+                 Mix::Normal,
+@@ -141,19 +282,35 @@
+                 None,
+                 None,
+             );
+-            // The unshadowed area is the padding box shrunk by the spread radius
+-            let spread = shadow.spread.px() as f64 * self.scale;
+-            let hole = self.frame.padding_box.inflate(-spread, -spread);
+-            scene.draw_box_shadow(
+-                transform,
+-                hole,
+-                Color::WHITE,
+-                radius,
+-                shadow.base.blur.px() as f64 * self.scale,
+-            );
++            if let Some(shape) = &hole_shape {
++                let radius = uniform_radius(&shape.border_radii)
++                    .unwrap_or_else(|| shape.border_radii.average());
++                scene.draw_box_shadow(transform, hole, Color::WHITE, radius, blur / 2.0);
++            }
+ 
+             scene.pop_layer();
+             scene.pop_layer();
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// The spread formula of CSS Backgrounds 3 §7.1.1, against WPT's
++    /// `box-shadow-radius-000.html` (a 5px radius spread by 20px is 16.56px) and
++    /// `box-shadow-border-radius-001.html` (a 2px circle spread by 149px is a 300px circle).
++    #[test]
++    fn spread_radius_follows_the_spec_formula() {
++        assert_eq!(spread_radius(10.0, 10.0, 0.5), 20.0);
++        assert_eq!(spread_radius(10.0, 5.0, 0.5), 15.0);
++        assert!((spread_radius(8.0, 16.0, 0.0) - 22.0).abs() < 1e-9);
++        assert!((spread_radius(5.0, 20.0, 0.0) - 16.5625).abs() < 1e-9);
++        assert_eq!(spread_radius(1.0, 149.0, 1.0), 150.0);
++        assert_eq!(spread_radius(0.0, 20.0, 0.0), 0.0);
++        // A negative spread (inset shadows) shrinks, and stops at zero.
++        assert_eq!(spread_radius(10.0, -4.0, 0.0), 6.0);
++        assert_eq!(spread_radius(3.0, -4.0, 0.0), 0.0);
++    }
++}
 diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 --- a/packages/blitz-paint/src/text.rs
 +++ b/packages/blitz-paint/src/text.rs

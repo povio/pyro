@@ -2,6 +2,7 @@
 //! whole renderer (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod borders_backgrounds;
 mod br_flex_item;
 mod container_queries;
 mod containing_block_chain;

@@ -714,6 +714,15 @@ document, its line breaking and its min/max-content widths, uses the same opport
 inherits it. `BaseDocument::line_break_override` reads it back (pyro-render rebuilds a persistent document whose
 setting differs). Covered by `crates/pyro-render/tests/hyphen_digit_breaks.rs`.
 
+## The `border-image-source` image is loaded; `background-clip: border-area` parses
+
+`src/util.rs` (`ImageLayerKind::BorderImage`, `ImageType::BorderImage`), `src/node/element.rs`
+(`ElementData::border_images`), `src/layout/damage.rs` (`flush_image_layers_from_style`), `src/stylo.rs`
+(`needs_style_image_flush`), `src/document.rs`: a `url()` in `border-image-source` is fetched and stored as the
+background and mask images are (a list of one), for blitz-paint's `border-image`. `src/document.rs` also turns
+on Stylo's `layout.css.background-clip.border-area.enabled`: `background-clip: border-area` was dropped as
+invalid, and blitz-paint clips it to the border's area. Covered by `crates/pyro-render/tests/borders_backgrounds.rs`.
+
 ## `:lang()`
 
 `src/lang.rs` (new), `src/stylo.rs` (`match_non_ts_pseudo_class`, `lang_attr`, `match_element_lang`): upstream
