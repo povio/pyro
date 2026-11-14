@@ -218,7 +218,16 @@ pub struct Snapshot {
     /// Bitmaps of the drawn canvases of a [`Live`] document, painted as
     /// their elements' content (other canvases paint nothing).
     pub canvases: Vec<CanvasImage>,
+    /// The animated values of a [`Live`] document's elements now
+    /// ([`Renderer::set_animations`]); `None` leaves the document's.
+    pub animations: Option<Arc<AnimationFrame>>,
 }
+
+pub use blitz_dom::animation;
+
+/// The animated values of a persistent document's elements at one moment,
+/// by element key (`blitz_dom::animation`): elements left out have none.
+pub type AnimationFrame = Vec<(u64, animation::ElementEffects)>;
 
 /// A canvas element's bitmap ([`Snapshot::canvases`]).
 #[derive(Clone, Debug)]
@@ -710,6 +719,9 @@ pub struct Renderer {
     resources: net::ResourceCache,
     /// Persistent documents of [`Live`] snapshots, by page.
     mirrors: HashMap<u64, mirror::Mirror>,
+    /// Animated values to sample into a page's persistent document at its
+    /// next sync ([`Renderer::set_animations`]).
+    animations: HashMap<u64, Arc<AnimationFrame>>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -756,6 +768,7 @@ impl Renderer {
             gpu: None,
             resources: net::ResourceCache::default(),
             mirrors: HashMap::new(),
+            animations: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
@@ -776,6 +789,27 @@ impl Renderer {
     pub fn forget(&mut self, page: u64) {
         self.mirrors.remove(&page);
         self.geometry.remove(&page);
+        self.animations.remove(&page);
+    }
+
+    /// Samples `frame` into `page`'s persistent document at its next sync or
+    /// render (made now if the document exists): the animated values of every
+    /// animated element, keyed as the page's tree. Elements left out lose
+    /// theirs.
+    pub fn set_animations(&mut self, page: u64, frame: Arc<AnimationFrame>) {
+        self.animations.insert(page, frame);
+    }
+
+    /// Hands `page`'s pending animated values to its document, which restyles
+    /// the elements whose values changed at its next resolve.
+    fn apply_animations(&mut self, page: u64) {
+        let Some(m) = self.mirrors.get_mut(&page) else { return };
+        let Some(frame) = self.animations.remove(&page) else { return };
+        if frame.is_empty() && !m.doc.has_sampled_animations() {
+            return;
+        }
+        let effects = frame.iter().filter_map(|(key, effects)| Some((m.node(*key)?, effects.clone()))).collect();
+        m.doc.set_sampled_animations(effects);
     }
 
     /// Pages with a persistent document.
@@ -892,6 +926,10 @@ impl Renderer {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
                 timings.mirror = Some(stats);
+                if let Some(frame) = &snap.animations {
+                    self.animations.insert(live.page, frame.clone());
+                }
+                self.apply_animations(live.page);
                 let hrefs = mirror::take_sprite_hrefs();
                 if let (false, Some(m)) = (hrefs.is_empty(), self.mirrors.get_mut(&live.page)) {
                     svg_use::resolve_sprites(
@@ -1091,6 +1129,8 @@ impl Renderer {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
+        self.apply_animations(page);
+        let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
         let profiling = profiling::on();
         let mirrored = profiling.then(|| started.elapsed());
         let mirror::Mirror { doc, bridge, .. } = m;

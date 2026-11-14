@@ -132,6 +132,13 @@ inline boxes: a paragraph with an edge is built and broken anew each time. Not d
 edges in right-to-left runs are placed in logical order. Covered by
 `crates/pyro-render/tests/inline_box_decorations.rs`.
 
+`style/mod.rs` (`TextStyle::annotation_space`, `AnnotationSpace`), `resolve/mod.rs`, `layout/style_metrics.rs`: room a
+span needs beyond its content area, over and under it, for what is drawn there (ruby annotations, emphasis marks;
+blitz-dom measures it). A span box's line-height-expanded extents grow to the content area plus that room where they
+are smaller (CSS Ruby 1, 4.4), so the line box holds the annotations. It is part of the resolved style, and so of the
+build cache's key. Zero by default: nothing else changes. Covered by
+`emphasis_marks_and_annotations_take_room_in_the_line` in `crates/pyro-render/tests/text_emphasis_ruby.rs`.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

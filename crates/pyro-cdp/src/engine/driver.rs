@@ -695,6 +695,9 @@ pub(super) struct ShotStep {
     pub(super) update: bool,
     pub(super) capture_only: bool,
     pub(super) key: Option<String>,
+    /// Animations as Playwright's `animations: "disabled"` leaves them (see
+    /// `PageDom::settled_animation_frame`), else where they are.
+    pub(super) settle_animations: bool,
 }
 
 impl Step {
@@ -4069,6 +4072,10 @@ struct MatchScreenshotParams {
     #[serde(rename = "as")]
     key: Option<String>,
     timeout: Option<u64>,
+    /// Playwright's screenshot assertion option: `disabled` (the default)
+    /// renders finite animations finished and cancels infinite ones and
+    /// transitions; `allow` renders them where they are.
+    animations: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -4110,7 +4117,17 @@ impl MatchScreenshotParams {
             None => None,
             Some(h) => Some(u64::from_str_radix(h, 16).map_err(|_| CdpError::invalid_params("sceneHash must be hex"))?),
         };
+        let settle_animations = match self.animations.as_deref() {
+            None | Some("disabled") => true,
+            Some("allow") => false,
+            Some(other) => {
+                return Err(CdpError::invalid_params(format!(
+                    "matchScreenshot animations must be 'disabled' or 'allow', not '{other}'"
+                )))
+            }
+        };
         let shot = ShotStep {
+            settle_animations,
             name: self.name,
             baseline,
             scene_hash,

@@ -1,8 +1,8 @@
-//! `clip-path` and `mask` on boxes, as Chromium paints them (WPT `css/css-masking/clip-path` and
-//! `mask-image`): the reference boxes with their rounded corners (the margin box's radii grown by
-//! the margins), the basic shapes' fill rules, percentages and keywords, `shape()`, an empty shape
-//! clipping everything, and `mask-mode: luminance`, `mask-clip: no-clip` and the SVG boxes of
-//! `mask-clip`/`mask-origin`.
+//! `clip-path` and `mask` on boxes, as Chromium paints them (WPT `css/css-masking/clip-path`,
+//! `clip-rule` and `mask-image`): the reference boxes with their rounded corners (the margin
+//! box's radii grown by the margins), the basic shapes' fill rules, percentages and keywords,
+//! `shape()`, an empty shape clipping everything, `url()` references to SVG `<clipPath>`s, and
+//! `mask-mode: luminance`, `mask-clip: no-clip` and the SVG boxes of `mask-clip`/`mask-origin`.
 use std::sync::Arc;
 
 use pyro_render::*;
@@ -186,6 +186,52 @@ fn shape_commands_are_placed_in_the_reference_box() {
     assert_pixel(&img, scale, (50.0, 140.0), WHITE, "below the line");
 }
 
+/// `clip-path: url(#c)` naming an SVG `<clipPath>` of the page clips the box with it: user units
+/// from the border box's origin, `objectBoundingBox` fractions of the border box, `clip-rule`.
+/// It clipped nothing.
+#[test]
+fn a_url_reference_clips_with_an_svg_clip_path() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='width:150px;height:100px;border:50px solid red;background:green;clip-path:url(#c)'></div>\
+             <svg width=0 height=0><clipPath id=c><rect x=50 y=50 width=150 height=100 /></clipPath></svg>",
+            scale,
+        );
+        assert_pixel(&img, scale, (100.0, 100.0), GREEN, "user space: inside the rect");
+        assert_pixel(&img, scale, (25.0, 25.0), WHITE, "user space: the border, outside the rect");
+        let img = render(
+            "<div style='width:200px;height:50px;background:green;clip-path:url(#half)'></div>\
+             <svg width=0 height=0><clipPath id=half clipPathUnits=objectBoundingBox><rect width=0.5 height=1 /></clipPath></svg>",
+            scale,
+        );
+        assert_pixel(&img, scale, (50.0, 25.0), GREEN, "objectBoundingBox: left half");
+        assert_pixel(&img, scale, (150.0, 25.0), WHITE, "objectBoundingBox: right half");
+        let img = render(
+            "<div style='width:100px;height:100px;background:green;clip-path:url(#ring)'></div>\
+             <svg width=0 height=0><clipPath id=ring><polygon clip-rule=evenodd \
+             points='0 0, 100 0, 100 100, 0 100, 0 25, 75 25, 75 75, 25 75, 25 25, 0 25' /></clipPath></svg>",
+            scale,
+        );
+        assert_pixel(&img, scale, (50.0, 50.0), WHITE, "clip-rule evenodd: the hole");
+        assert_pixel(&img, scale, (10.0, 50.0), GREEN, "clip-rule evenodd: the ring");
+    }
+}
+
+/// Clip paths whose references form a cycle (three long, which usvg follows without end) are
+/// invalid: the box is not painted, and the browser does not overflow its stack.
+#[test]
+fn a_clip_path_reference_cycle_clips_everything() {
+    let img = render(
+        "<div style='width:100px;height:100px;background:red;clip-path:url(#a)'></div>\
+         <svg width=0 height=0>\
+         <clipPath id=a><rect width=100 height=100 clip-path='url(#b)' /></clipPath>\
+         <clipPath id=b><rect width=100 height=100 clip-path='url(#c)' /></clipPath>\
+         <clipPath id=c><rect width=100 height=100 clip-path='url(#a)' /></clipPath></svg>",
+        1.0,
+    );
+    assert_pixel(&img, 1.0, (50.0, 50.0), WHITE, "a box clipped by a cycle");
+}
+
 /// `blue` at `alpha` over white.
 fn blue_over_white(alpha: f64) -> [u8; 3] {
     let c = (255.0 * (1.0 - alpha)).round() as u8;
@@ -259,4 +305,25 @@ fn mask_clip_and_origin_take_no_clip_and_the_svg_boxes() {
     );
     assert_pixel(&img, scale, (5.0, 5.0), WHITE, "fill-box origin: not at the padding box");
     assert_pixel(&img, scale, (15.0, 15.0), GREEN, "fill-box origin: at the content box");
+}
+
+/// An inline box (not atomic) is clipped by its `clip-path` and masked by its `mask-image`: its
+/// background and its text alike. Its clip path's reference box is its first fragment, as in
+/// Chromium; its mask is laid over its fragments side by side (`box-decoration-break: slice`).
+/// Neither applied: the inline box was painted whole.
+#[test]
+fn inline_boxes_take_their_clip_path_and_mask() {
+    for scale in [1.0, 2.0] {
+        let span = "background:green;color:green;font:40px/1 monospace";
+        let img = render(&format!("<div><span style='{span};clip-path:inset(0 50% 0 0)'>XXXX</span></div>"), scale);
+        let width = 4.0 * 24.0; // four monospace advances at 40px, about 24px each
+        assert_pixel(&img, scale, (width * 0.2, 20.0), GREEN, "the clipped inline's kept left half");
+        assert_pixel(&img, scale, (width * 0.8, 20.0), WHITE, "the clipped inline's right half");
+        let img = render(
+            &format!("<div><span style='{span};mask-image:linear-gradient(90deg, #000 50%, transparent 50%)'>XXXX</span></div>"),
+            scale,
+        );
+        assert_pixel(&img, scale, (width * 0.2, 20.0), GREEN, "the masked inline's left half");
+        assert_pixel(&img, scale, (width * 0.8, 20.0), WHITE, "the masked inline's right half");
+    }
 }

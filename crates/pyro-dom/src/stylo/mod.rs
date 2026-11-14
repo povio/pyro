@@ -54,6 +54,10 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
+        style_config::set_pref!("layout.css.text-decoration-inset-percentage.enabled", true);
+        // pyro: ruby annotations and emphasis marks (`TextAnnotation`).
+        style_config::set_pref!("layout.css.text-emphasis.enabled", true);
+        style_config::set_pref!("layout.css.ruby.enabled", true);
         style_config::set_pref!("layout.css.text-overflow.enabled", true);
         style_config::set_pref!("layout.css.text-underline-position.enabled", true);
         style_config::set_pref!("layout.css.view-transitions.enabled", true);

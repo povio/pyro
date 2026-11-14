@@ -2,6 +2,7 @@
 //! of lightpanda-io/browser (AGPL-3.0-only). Pure Rust, no JS engine
 //! dependency; JS bindings live in `pyro-webapi`.
 
+pub mod animation;
 mod attr_node;
 pub mod computed;
 pub mod direction;

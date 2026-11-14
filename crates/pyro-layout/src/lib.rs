@@ -232,6 +232,53 @@ fn kind(k: pyro_dom::snapshot::RenderNodeKind) -> TreeKind {
     }
 }
 
+/// pyro-dom's animated values as pyro-render takes them.
+pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_render::AnimationFrame {
+    use pyro_dom::animation as a;
+    use pyro_render::animation as b;
+    let composite = |c: a::Composite| match c {
+        a::Composite::Replace => b::Composite::Replace,
+        a::Composite::Add => b::Composite::Add,
+        a::Composite::Accumulate => b::Composite::Accumulate,
+    };
+    let effect = |e: &a::Effect| b::Effect {
+        keyframes: match &e.keyframes {
+            a::Keyframes::Css { name, easing, composite: c } => {
+                b::Keyframes::Css { name: style::Atom::from(&**name), easing: easing.clone(), composite: composite(*c) }
+            }
+            a::Keyframes::Text(text) => b::Keyframes::Text(Arc::new(b::TextKeyframes {
+                frames: text
+                    .frames
+                    .iter()
+                    .map(|f| b::TextKeyframe {
+                        offset: f.offset,
+                        easing: f.easing.clone(),
+                        composite: f.composite.map(composite),
+                        declarations: f.declarations.clone(),
+                    })
+                    .collect(),
+            })),
+        },
+        progress: e.progress,
+        before: e.before,
+        easing: e.easing.clone(),
+        composite: composite(e.composite),
+    };
+    frame
+        .elements
+        .iter()
+        .map(|el| {
+            (
+                el.key,
+                b::ElementEffects {
+                    transitions: el.transitions.iter().map(effect).collect(),
+                    animations: el.animations.iter().map(effect).collect(),
+                },
+            )
+        })
+        .collect()
+}
+
 /// pyro-dom's delta as pyro-render takes it.
 fn convert_delta(d: pyro_dom::snapshot::RenderDelta) -> Vec<DeltaOp> {
     use pyro_dom::snapshot::DeltaOp as D;
@@ -343,6 +390,7 @@ impl BlitzGeometry {
             background: None,
             canvases: Vec::new(),
             element_scroll: None,
+            animations: None,
         };
         if let Some(t) = t {
             SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
@@ -528,6 +576,16 @@ impl BlitzGeometry {
             RENDERER.with(|r| {
                 if let Some(r) = r.try_borrow_mut().ok().as_deref_mut().and_then(Option::as_mut) {
                     r.set_track_style_changes(self.page, true);
+                }
+            });
+        }
+        // The page's animated values now, sampled at this sync.
+        if let Some(frame) = style.take_animation_frame() {
+            let frame = Arc::new(animation_frame(&frame));
+            // The document's first sync makes the renderer (`sync_document`).
+            RENDERER.with(|r| {
+                if let Ok(mut r) = r.try_borrow_mut() {
+                    r.get_or_insert_with(Renderer::new).set_animations(self.page, frame);
                 }
             });
         }

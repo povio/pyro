@@ -698,6 +698,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     for ready in native {
         ready.set(true);
     }
+    // The frame's style update: what its callbacks changed starts transitions
+    // and animations now (the next frame's callbacks see them running).
+    w.target.page.update_animations();
 }
 
 fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {

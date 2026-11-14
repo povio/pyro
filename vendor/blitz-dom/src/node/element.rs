@@ -117,6 +117,10 @@ pub struct ElementData {
     /// element (or its pseudo-elements). Lets Stylo skip the animation lookups
     /// for elements that have never animated.
     pub may_have_animations: AtomicBool,
+    /// pyro: the animated values the embedder samples into this element's
+    /// cascade at the animations and transitions levels (`animation.rs`).
+    pub sampled_animations: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    pub sampled_transitions: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
 
     // Pseudo element nodes
     pub before: Option<NodeId>,
@@ -368,6 +372,8 @@ impl Clone for ElementData {
             dirty_descendants: AtomicBool::new(true),
             damaged_descendants: AtomicBool::new(true),
             may_have_animations: AtomicBool::new(false),
+            sampled_animations: None,
+            sampled_transitions: None,
             before: None,
             after: None,
             first_letter: None,
@@ -484,6 +490,8 @@ impl ElementData {
             dirty_descendants: AtomicBool::new(true),
             damaged_descendants: AtomicBool::new(true),
             may_have_animations: AtomicBool::new(false),
+            sampled_animations: None,
+            sampled_transitions: None,
             before: None,
             after: None,
             first_letter: None,

@@ -541,6 +541,22 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     &mut self.draw_text_context.borrow_mut(),
                     None,
                 );
+                // pyro: emphasis marks and ruby annotations are text the background shows in.
+                let recording = self.draw_text_context.borrow().runs.is_some();
+                for line in layout.layout.lines() {
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &layout.annotations,
+                        &layout.text,
+                        self.dom,
+                        text_transform,
+                        self.scale,
+                        recording,
+                        None,
+                        Some(Color::BLACK),
+                    );
+                }
             }
         }
         if let Some(children) = &*node.layout_children.borrow() {
@@ -652,10 +668,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Cull elements that fall entirely outside the current clip rectangle. In addition to
         // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
         // also culls elements scrolled out of view inside a clipping/scrolling container.
-        if screen_bbox.x1 < clip_rect.x0
-            || screen_bbox.x0 > clip_rect.x1
-            || screen_bbox.y1 < clip_rect.y0
-            || screen_bbox.y0 > clip_rect.y1
+        let outside = |bbox: Rect| {
+            bbox.x1 < clip_rect.x0 || bbox.x0 > clip_rect.x1 || bbox.y1 < clip_rect.y0 || bbox.y0 > clip_rect.y1
+        };
+        // pyro: an inline root's own text decorations reach outside its box by as much as they
+        // are thick (`text-decoration-thickness: 4em`).
+        if outside(screen_bbox)
+            && !(node.flags.is_inline_root() && {
+                let reach = crate::text::decoration_ink_reach(&styles) * self.scale;
+                reach > 0.0 && !outside(screen_bbox.inflate(reach, reach))
+            })
         {
             return;
         }
@@ -802,6 +824,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             element_clip.as_ref(),
             cx.transform,
             self.scale,
+            element_clip.as_ref().map_or(Rect::ZERO, |_| cx.visible_area()),
             |scene| {
                 // If the element has a CSS `mask`, then push an isolation layer for the
                 // masked content. The mask is applied when the layer is popped below.
@@ -1616,6 +1639,10 @@ impl ElementCx<'_, '_> {
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
         if self.node.flags.is_inline_root() {
+            // pyro: inline elements with a clip path or a mask (clip_path.rs).
+            if self.draw_inline_effects(scene, pos) {
+                return;
+            }
             let text_layout = self.element
                 .inline_layout_data
                 .as_ref()
@@ -1717,6 +1744,28 @@ impl ElementCx<'_, '_> {
                             draw_text_context.line_tops = tops;
                         }
                     }
+                }
+            }
+            // pyro: ruby annotations and emphasis marks, over the text of each line.
+            if !text_layout.annotations.is_empty() {
+                let recording = draw_text_context.runs.is_some();
+                for line in text_layout.layout.lines() {
+                    let line_transform = match tops {
+                        Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
+                        None => transform,
+                    } * Affine::translate((text_shift, 0.0));
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &text_layout.annotations,
+                        &text_layout.text,
+                        self.context.dom,
+                        line_transform,
+                        self.scale,
+                        recording,
+                        None,
+                        None,
+                    );
                 }
             }
             draw_text_context.text_shift = 0.0;
@@ -1839,6 +1888,25 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 vertical,
             );
+            // pyro: ruby annotations and emphasis marks, turned with their line.
+            if !text_layout.annotations.is_empty() {
+                let recording = draw_text_context.runs.is_some();
+                let line = text_layout.layout.get(index);
+                if let Some(line) = line {
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &text_layout.annotations,
+                        &text_layout.text,
+                        self.context.dom,
+                        line_transform(index),
+                        self.scale,
+                        recording,
+                        vertical,
+                        None,
+                    );
+                }
+            }
         }
     }
 

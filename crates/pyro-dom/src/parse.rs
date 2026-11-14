@@ -402,6 +402,7 @@ impl<A: DomAccess> Sink<A> {
         match name.local {
             local_name!("audio") | local_name!("video") => d.media_seen = true,
             local_name!("canvas") => d.canvas_seen = true,
+            local_name!("animate") if name.ns == markup5ever::ns!(svg) => d.smil_seen = true,
             _ => {}
         }
         let mut el = ElementData::new(name);

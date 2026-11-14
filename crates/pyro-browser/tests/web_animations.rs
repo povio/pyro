@@ -1021,3 +1021,168 @@ fn review_misc2_fragment_navigation_reveals_until_found_with_beforematch() {
     }
     assert_eq!(quiet(&mut t, &root, 150), format!("beforematch:p {MISC2_RAN}"));
 }
+
+/// Animated values are in the cascade: computed styles read a CSS
+/// animation (paused, a negative delay putting it halfway) and a script
+/// animation where they are, and the base value once they are gone.
+#[test]
+fn computed_styles_read_css_and_script_animations() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '@keyframes fade { from { opacity: 0 } to { opacity: 1 } }' +
+           ' .fade { animation: fade 10s linear -5s paused }';
+         globalThis.a = document.body.appendChild(document.createElement('div'));
+         globalThis.b = document.body.appendChild(document.createElement('div'));
+         0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    assert_eq!(
+        eval(
+            &root,
+            // Read in the task that set the class: the flush starts it.
+            "a.className = 'fade';
+             const css = getComputedStyle(a).opacity;
+             globalThis.anim = b.animate([{ opacity: 0.2 }, { opacity: 0.6 }], { duration: 1000 });
+             anim.pause();
+             anim.currentTime = 250;
+             [css, getComputedStyle(b).opacity].join()"
+        ),
+        "0.5,0.3"
+    );
+    assert_eq!(
+        eval(
+            &root,
+            "anim.cancel(); a.className = ''; [getComputedStyle(a).opacity, getComputedStyle(b).opacity].join()"
+        ),
+        "1,1"
+    );
+}
+
+/// A transition whose element was never read before its style changed is
+/// still a transition (the frames after the element appeared styled it), and
+/// `getAnimations()` in the same task lists it: the reftests that wait on
+/// `document.getAnimations()[0]` right after a change.
+#[test]
+fn get_animations_lists_a_transition_started_in_the_same_task() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '.box { background-color: rgb(0, 200, 0); transition: background-color 1000s steps(2) -499.9s }';
+         globalThis.box = document.body.appendChild(document.createElement('div'));
+         box.className = 'box';
+         0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    assert_eq!(
+        eval(
+            &root,
+            "box.style.backgroundColor = 'rgb(200, 0, 0)';
+             const list = document.getAnimations();
+             [list.length, list[0] instanceof CSSTransition, list[0].transitionProperty,
+              list[0].effect.getTiming().easing, list[0].effect.getComputedTiming().fill].join()"
+        ),
+        "1,true,background-color,steps(2),backwards"
+    );
+}
+
+/// A paused CSS animation is a paused `CSSAnimation`, held where its delay
+/// put it; script seeking its object moves what the cascade shows.
+#[test]
+fn css_animation_objects_follow_play_state_and_script_control() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '@keyframes grow { from { width: 100px } to { width: 200px } }' +
+           ' .grow { animation: grow 1s linear -0.25s paused both }';
+         globalThis.box = document.body.appendChild(document.createElement('div'));
+         box.className = 'grow';
+         0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    assert_eq!(
+        eval(
+            &root,
+            "globalThis.anim = box.getAnimations()[0];
+             [anim.playState, anim.currentTime, anim.effect.getComputedTiming().fill, getComputedStyle(box).width].join()"
+        ),
+        "paused,0,both,125px"
+    );
+    assert_eq!(eval(&root, "anim.currentTime = 500; getComputedStyle(box).width"), "175px");
+}
+
+/// A style read after a seek restyles without laying out: the box read after
+/// it still lays out with the new values.
+#[test]
+fn a_box_read_after_a_style_read_sees_a_seek() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "globalThis.box = document.body.appendChild(document.createElement('div'));
+         box.style.cssText = 'width: 100px; height: 20px';
+         globalThis.anim = box.animate([{ width: '100px', opacity: 0 }, { width: '300px', opacity: 1 }], 1000);
+         anim.pause(); anim.currentTime = 500; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    let read = "[getComputedStyle(box).opacity, box.getBoundingClientRect().width].join()";
+    assert_eq!(eval(&root, read), "0.5,200");
+    assert_eq!(eval(&root, &format!("anim.currentTime = 250; {read}")), "0.25,150");
+}
+
+/// A read that asks for no style flush (`innerText` reads styles) after a
+/// task in which the page came to transition: the per-task checkpoint
+/// already records style changes, so the next update starts the transition
+/// its class change asks for.
+#[test]
+fn a_change_a_read_without_a_style_flush_restyled_still_transitions() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "globalThis.log = [];
+         for (const type of ['transitionrun', 'transitionstart', 'transitionend', 'transitioncancel'])
+           addEventListener(type, e => log.push(e.type + ':' + e.propertyName + ':' + e.target.id));
+         const s = document.createElement('style');
+         s.textContent = '.t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px }';
+         document.head.appendChild(s);
+         globalThis.a = document.createElement('div'); a.id = 'a'; a.className = 't'; document.body.appendChild(a);
+         a.innerText; setTimeout(() => {}, 0); 0",
+    );
+    // The timer's task, not the update one frame after it.
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(5)));
+    eval(&root, "a.classList.add('w'); a.innerText; 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+/// SMIL `<animate>` of a CSS property: computed styles read its value at the
+/// document's time (discrete: the first value for the first half), a frozen
+/// one keeps its last value, one that never begins (an event `begin`) and
+/// one whose active duration ended without `fill="freeze"` leave the base
+/// value. `keyTimes` place the values.
+#[test]
+fn smil_animate_of_css_properties() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        r#"document.body.innerHTML = `<svg width="100" height="100">
+             <circle id="d" r="10" style="fill: red"><animate attributeName="fill" from="blue" to="green" begin="0s" dur="100s" calcMode="discrete"/></circle>
+             <circle id="f" r="10" style="fill: red"><animate attributeName="fill" to="green" from="blue" dur="1ms" fill="freeze"/></circle>
+             <circle id="e" r="10" style="fill: red"><animate attributeName="fill" from="blue" to="green" begin="click" dur="100s"/></circle>
+             <circle id="r" r="10" style="fill: red"><animate attributeName="fill" from="blue" to="green" dur="1ms"/></circle>
+             <circle id="k" r="10" style="fill: red"><animate attributeName="fill" values="blue;green;yellow" keyTimes="0;0.000001;1" dur="1000s" calcMode="discrete"/></circle>
+           </svg>`; 0"#,
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    assert_eq!(
+        eval(
+            &root,
+            "['d', 'f', 'e', 'r', 'k'].map(id => getComputedStyle(document.getElementById(id)).fill).join(' ')"
+        ),
+        "rgb(0, 0, 255) rgb(0, 128, 0) rgb(255, 0, 0) rgb(255, 0, 0) rgb(0, 128, 0)"
+    );
+}

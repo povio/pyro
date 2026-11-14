@@ -179,7 +179,7 @@ from the root of an upstream checkout at that commit) is the whole diff.
     under it (the page under an absolutely positioned parent, the canvas under the root element's group). The
     contexts are found in one pass over the nodes' styles when the painter is made. Covered by
     `crates/pyro-render/tests/mix_blend_mode.rs`.
-  - `src/text.rs` (`TextShadow`, `draw_shadows`, `stroke_text`, `flush_line_decorations`): `text-shadow`. Each glyph
+  - `src/text.rs` (`TextShadow`, `draw_shadow`, `stroke_text`, `flush_line_decorations`): `text-shadow`. Each glyph
     run draws its shadows, the last first, right before its glyphs (Chromium paints a text fragment's shadows right
     before it): the glyphs in the shadow's colour moved by its offset (the text's own colour does not matter:
     transparent text casts one), and a shadow with a blur radius inside a layer with a `blur()` of half the radius
@@ -266,6 +266,59 @@ from the root of an upstream checkout at that commit) is the whole diff.
     `mask-origin` take the SVG boxes (`fill-box` is the content box, `stroke-box` and `view-box` the border box) and
     `no-clip` (`BoxModelBox::NoClip`, the visible area): Stylo parses them for servo now (see
     `vendor/stylo/README.pyro.md`).
+  - `src/render/clip_path.rs` (`svg_clip`, `svg_reference`), `src/render/mask.rs` (`draw_svg_mask`): `url()`
+    references from a box to an SVG `<clipPath>` or `<mask>` of the page (`url(#id)`, or the page's own URL with a
+    fragment: a `<base>` does not make one external). The element's outermost `<svg>` is serialized as inline SVG is
+    for usvg (blitz-dom `BaseDocument::svg_reference_document`), in `<defs>`, with a box-sized rectangle that
+    references the element: user space is the border box's (the element's zoom applied), `objectBoundingBox` units
+    are of the border box, percentages of the viewport. A clip path of one shape (with no clip path of its own) is a
+    clip layer of that shape with its clip rule; any other is drawn into a `DestIn` layer over the element, as a
+    `<mask>` always is (anyrender_svg draws them). A reference to anything else clips nothing; clip paths and masks
+    whose references form a cycle (`svg_reference::reference_cycle`, a depth-first walk of `clip-path`, `mask` and
+    `style` references) clip and mask everything, without asking usvg, which follows a long cycle without end.
+  - `src/render/clip_path.rs` (`draw_inline_effects`), `src/render.rs` (`draw_inline_layout`): an inline box (not
+    atomic) with a `clip-path` or a mask is clipped and masked (both were ignored). As in Chromium it is a stacking
+    context painted after the rest of its inline formatting context: the layout is painted without the areas of
+    such boxes (their border boxes line by line, as tall as the line box, grown by their outline and shadows), then
+    into each box's areas under its clip path, whose reference box is its first fragment (as Blink's and Gecko's
+    are), and its mask, laid over its fragments side by side (`box-decoration-break: slice`). Inline boxes inside
+    one are painted with it. An inline box's margin box has its style's margins on every side.
+
+- Text decorations, emphasis marks and ruby (WPT reftest lane G):
+  - `src/text.rs` (`flush_line_decorations`, `decoration_thickness`, `whole_css_px`, `StrutGeometry`): decoration
+    lines are placed as Chromium places them, in whole CSS pixels from the baseline at any device scale (its
+    `TextDecorationInfo`, measured row for row on seven fonts at nine sizes, at scales 1 and 3): an underline
+    `max(1, ceil(t / 2))` below the baseline (`t` the thickness: `auto` a tenth of the font size, a length floored,
+    `from-font` rounded), at the baseline plus `text-underline-offset` when one is given, under the rounded descent
+    for `under`; an overline resting on the rounded ascent (it was the OS/2 `usWinAscent`, several pixels high for
+    `system-ui`); a line-through centred two thirds of the ascent down from the text's top, rounded half down. A line
+    is `t` cut to whole CSS pixels thick. The inline root's decorations (and those of a block it is in), where the
+    root has no text of its own on the line, use the root's font (the line's strut), not a descendant run's.
+  - `src/text.rs` (`stroke_text`, `RunPaint`, `DecorationPhase`, `draw_shadow`): each line is painted in passes over
+    its glyph runs (collected once): the decorations and what each run is drawn with, then underlines and overlines,
+    the glyphs, and line-throughs (CSS 2 Appendix E; they were all drawn after the glyphs). Where a line's decorations
+    cast text shadows, the shadows go under all the line draws, a layer per shadow (WPT
+    `text-shadow/standards-decor-noblur*`); otherwise each run's shadows go right before its glyphs, as before.
+  - `src/text.rs` (`propagated_decorations`, `own_decoration`, `stops_propagation`): a block's decorations are drawn
+    on the text of its in-flow descendants (they were drawn only on the text of the inline root that set them):
+    an inline root takes those of its ancestors up to an out-of-flow box or an atomic inline (`display: contents`
+    passes them through), by DOM parent, cached per node slot for the paint.
+  - `src/text.rs` (`ink_gaps`, `glyph_intercept`, `is_cjk_char`): `text-decoration-skip-ink` (`auto`, the initial
+    value, and `all`), as Blink's `TextPainter::ClipDecorationLine` does it: an underline or overline leaves a gap
+    around the ink of each glyph inside the line's band (less half a pixel at each edge; Skia's `getIntercepts`, from
+    the glyph's outline), grown by the thickness (at most 13px) on each side, not around CJK glyphs for `auto`, its
+    edges on whole device pixels. Intercepts are cached by font, size, glyph and band. Line-throughs skip nothing.
+  - `src/text.rs` (`decoration_ink_reach`), `src/render.rs` (`render_element`): an inline root outside the clip
+    rectangle is still painted when its own decorations reach into it (`text-decoration-thickness: 4em`).
+  - `src/text.rs` (`draw_text_annotations`, `draw_annotation`, `draw_glyph_run`), `src/render.rs`
+    (`draw_inline_layout`, `draw_vertical_inline_layout`, `draw_text_mask`): blitz-dom's `TextAnnotation`s. A ruby
+    annotation is drawn over the part of its base on the line the base starts on, an emphasis mark over each character
+    of the element's glyph runs that takes one: the annotation's line centred over the base (white space left out),
+    the bottom of its content area on the top of the base's (the span content area of the base's style), or its top on
+    the bottom for `under`; an annotation of a base that already has one on that side goes outside it (nested ruby,
+    marks outside ruby). Annotations turn with their line in vertical writing modes, and a `background-clip: text`
+    mask holds them.
+  - Covered by `crates/pyro-render/tests/text_decoration_lines.rs` and `text_emphasis_ruby.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

@@ -318,6 +318,25 @@ rebuilds, tables, rounding) read by pyro-render's profiling. The phase timers ru
   transition events read them instead of scanning the document for elements that may transition on every
   style flush: the cost is the elements restyled, as in Chrome, where transitions start in style recalc.
 
+## Animated values the embedder samples into the cascade
+
+- `animation.rs` (new), `document.rs`, `node/element.rs`, `lib.rs`, `stylo.rs` (`animation_rule`,
+  `transition_rule`, `may_have_animations`, `has_animations`, `LayoutThreadScope`), `resolve.rs`: pyro keeps the
+  timing of CSS animations, CSS transitions and Web Animations itself (its UA sheet sets `animation` and
+  `transition` to `none !important`, so Stylo's servo animations never start) and hands the document, per element,
+  the keyframe effects in effect with their iteration progress (`BaseDocument::set_sampled_animations`). The
+  document resolves each effect's keyframes against the element's base style (its rules without the animations and
+  transitions levels, cascaded; a CSS animation's from the `@keyframes` rule Stylo finds for the element, so `em`,
+  `currentcolor`, `var()` and `inherit` resolve as for the element) and samples them as Web Animations samples a
+  keyframe effect: the effect's easing (with its before flag), neutral 0%/100% keyframes taking the underlying value,
+  the interval's keyframe easing, `add`/`accumulate`, values that do not interpolate flipping at the midpoint. The
+  values go on the element as two declaration blocks that `animation_rule` and `transition_rule` answer, so Stylo
+  cascades them at their levels, and an element with them is kept out of style sharing. An element is restyled only
+  when its values change; resolved keyframes are kept until the base rules or the parent's style change, checked
+  after each traversal, where the elements styled anew get their values and one more traversal
+  (`resolve_sampled_animations`). Pseudo-elements are not animated. Tests:
+  `crates/pyro-render/tests/sampled_animations.rs`.
+
 ## Inline layouts in vertical writing modes
 
 Layout keeps a vertical inline root's lines logical (x inline, y block). `Node::vertical_block_axis` says which
@@ -831,6 +850,15 @@ elements of one kind, through the references their content makes, as attributes 
 `none`, as usvg treats a short cycle. Sources without a cycle are passed on as they are. Covered by
 `crates/pyro-render/tests/svg_reference_cycles.rs`.
 
+## SVG elements referenced from a box's CSS
+
+`src/node/svg.rs` (`BaseDocument::svg_reference_document`): blitz-paint applies `clip-path: url(#c)` and
+`mask-image: url(#m)` naming a `<clipPath>` or `<mask>` of an inline `<svg>` to a box. This gives it an SVG document
+for usvg: the outermost `<svg>` around the element, serialized as inline SVG is (`svg_source`, sprites resolved), in
+`<defs>` (none of it drawn, all of it referenceable), and content that references the element in a viewport of the
+given size (percentages in the element's content resolve against it), parsed by `util::parse_svg_image` (its fonts,
+its reference-cycle breaking). See blitz-paint's README.
+
 ## Generated content and pseudo-elements (WPT reftests)
 
 - `src/layout/first_letter.rs`, `src/layout/inline/build.rs`, `src/node/text.rs`, `src/node/element.rs`,
@@ -877,6 +905,31 @@ elements of one kind, through the references their content makes, as attributes 
 - `src/stylo.rs`: `<body text>` maps to `color` (a legacy colour value).
 
 Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit tests here.
+
+## Ruby annotations and emphasis marks
+
+- `src/node/text.rs` (`TextAnnotation`, `TextAnnotationKind`, `can_take_emphasis_mark`), `src/layout/inline/build.rs`
+  (`FoundAnnotations`, `build_annotation`, `annotation_room`, `emphasis_mark`): an inline root's build finds its ruby
+  annotations and emphasis marks. An `<rt>` (or `<rtc>`) inside a `<ruby>` is not part of the root's text: it annotates
+  the text since the ruby (or the annotation before it) started, its base. An element whose `text-emphasis-style` is
+  not `none` has marks over its own text. Once the root is built each annotation gets a layout of its own, one line:
+  the `<rt>`'s content in its style, or the mark (`dot` `•◦`, `circle` `●○`, `double-circle` `◉◎`, `triangle` `▲△`,
+  `sesame` `﹅﹆`, or the string) in the element's font at half its size, as an `<rt>` has it. `under` is
+  `ruby-position: under` or `text-emphasis-position: under` (`auto` is `under right` for Chinese, by `-x-lang`;
+  in a vertical writing mode `left` is under the line). blitz-paint draws them (`draw_text_annotations`). Marks skip
+  word separators, `Z*`, `Cc`, `Cf`, `Cn` and `P*` characters (CSS Text Decoration 3, 3.1).
+- Room in the line: each annotation's content area (ascent to descent of its line) is room its holder needs beyond
+  its content area, over or under it (`parley::TextStyle::annotation_space`; nested ruby stacks: an annotation of a
+  base that has one goes outside it). The root is built again with it once it has any, so the line box grows where
+  the line height leaves too little (CSS Ruby 1, 4.4), for ruby and marks alike (WPT `text-emphasis-line-height-*`).
+- `src/stylo_to_parley.rs`: `annotation_space` is set by the build only.
+- `src/layout/damage.rs` (`compute_layout_damage`): a change of `text-emphasis-style`, `text-emphasis-position` or
+  `ruby-position` collects the inline layout again (Stylo gives `text-emphasis-style` relayout damage for it).
+- `src/document.rs`: the prefs `layout.css.text-emphasis.enabled`, `layout.css.ruby.enabled` (`ruby-position`,
+  `ruby-align`) and `layout.css.text-decoration-inset-percentage.enabled`.
+- Not done: ruby layout proper. An annotation wider than its base does not space the base out, `ruby-align` is
+  ignored, `<rt>`'s box (background, border) is not painted, and `display: ruby*` stays unparsed (Stylo has it
+  for Gecko only), so ruby is found by element name. Covered by `crates/pyro-render/tests/text_emphasis_ruby.rs`.
 
 ## Moving from 0.3.0-beta.4 to main
 

@@ -121,6 +121,10 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
+        style_config::set_pref!("layout.css.text-decoration-inset-percentage.enabled", true);
+        // pyro: ruby annotations and emphasis marks (`TextAnnotation`).
+        style_config::set_pref!("layout.css.text-emphasis.enabled", true);
+        style_config::set_pref!("layout.css.ruby.enabled", true);
         style_config::set_pref!("layout.css.text-overflow.enabled", true);
         style_config::set_pref!("layout.css.text-underline-position.enabled", true);
         style_config::set_pref!("layout.css.view-transitions.enabled", true);
@@ -433,6 +437,8 @@ pub struct BaseDocument {
     // TODO: collapse animating state into a bitflags
     /// Whether there are active CSS animations/transitions (so we should re-render every frame)
     pub(crate) has_active_animations: bool,
+    /// pyro: the embedder's sampled animations (`animation.rs`).
+    pub(crate) sampled_animations: crate::animation::SampledAnimations,
     /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
     pub(crate) has_canvas: bool,
     /// Whether there are subdocuments that are animating (so we should re-render every frame)
@@ -704,6 +710,7 @@ impl BaseDocument {
             focus_ring: false,
             mousedown_node_id: None,
             has_active_animations: false,
+            sampled_animations: Default::default(),
             subdoc_is_animating: false,
             has_canvas: false,
             sub_document_nodes: HashSet::new(),

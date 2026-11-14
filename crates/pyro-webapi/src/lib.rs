@@ -17,6 +17,7 @@
 
 pub mod abort;
 mod animation_events;
+mod animation_frame;
 mod animations;
 mod cache_storage;
 pub mod canvas;
@@ -81,6 +82,7 @@ pub mod resource_timing;
 pub mod response;
 mod service_worker;
 mod service_worker_scope;
+mod smil;
 pub mod sri;
 pub mod storage;
 mod storage_manager;

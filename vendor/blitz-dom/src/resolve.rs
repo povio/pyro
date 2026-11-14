@@ -53,6 +53,10 @@ impl BaseDocument {
         let device_changed = !self.pending_device_changes.is_empty();
         self.flush_pending_device_changes();
         self.resolve_stylist(current_time_for_animations);
+        // pyro: sampled animations of elements styled anew resolve against that style.
+        if self.resolve_sampled_animations() {
+            self.resolve_stylist(current_time_for_animations);
+        }
         // Style reads must still discover background/mask resources. This
         // consumes only already-styled nodes, leaving construction/layout
         // damage intact for the next geometry query.
@@ -140,6 +144,10 @@ impl BaseDocument {
         for pass in 0..32 {
             // we need to resolve stylist first since it will need to drive our layout bits
             self.resolve_stylist(current_time_for_animations);
+            // pyro: sampled animations of elements styled anew resolve against that style.
+            if self.resolve_sampled_animations() {
+                self.resolve_stylist(current_time_for_animations);
+            }
             // pyro: counters and quotes in generated content, before damage propagates.
             self.resolve_generated_content();
             timer.record_time("style");

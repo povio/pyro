@@ -74,6 +74,12 @@ crate (`diff -ruN`).
   `view-box`). blitz-dom resolves SVG elements' transforms in it (`vendor/blitz-dom/README.pyro.md`, "The page's
   CSS on inline SVG"); nothing reads it for CSS boxes, whose reference box stays the border box.
 
+## Text decorations and emphasis
+
+- `properties/longhands.toml`: `text-decoration-skip-ink` is parsed and computed for Servo too (upstream: Gecko only);
+  blitz-paint skips ink by it. `text-emphasis-style` gives `rebuild_box` damage under Servo (its `affects` is
+  `overflow`): Blitz lays its marks out with the text, and they take room in their lines.
+
 ## Container queries, typed values
 
 - `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules
