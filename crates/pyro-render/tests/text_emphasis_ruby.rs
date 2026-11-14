@@ -13,7 +13,11 @@ use pyro_render::*;
 struct InterFetch;
 impl Fetcher for InterFetch {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        done(if url.ends_with("/inter.ttf") { Ok(include_bytes!("fonts/Inter-subset.ttf").to_vec()) } else { Err("offline".into()) });
+        done(if url.ends_with("/inter.ttf") {
+            Ok(include_bytes!("fonts/Inter-subset.ttf").to_vec())
+        } else {
+            Err("offline".into())
+        });
     }
 }
 
@@ -94,7 +98,10 @@ fn emphasis_marks_go_under_chinese_text() {
 /// annotation of a ruby base with an annotation of its own does (nested ruby).
 #[test]
 fn an_emphasis_mark_goes_outside_a_ruby_annotation() {
-    let marks = render("<div style='line-height:5'><span style='text-emphasis:\"x\"'><ruby>M<rt>A</rt></ruby></span></div>", 1.0);
+    let marks = render(
+        "<div style='line-height:5'><span style='text-emphasis:\"x\"'><ruby>M<rt>A</rt></ruby></span></div>",
+        1.0,
+    );
     let nested = render("<div style='line-height:5'><ruby><ruby>M<rt>A</rt></ruby><rt>x</rt></ruby></div>", 1.0);
     let annotated = render("<div style='line-height:5'><ruby>M<rt>A</rt></ruby></div>", 1.0);
     assert!(same(&marks, &nested));
@@ -111,7 +118,8 @@ fn emphasis_marks_and_annotations_take_room_in_the_line() {
         };
         let plain = page("MONITOR", "");
         let marks = page("MONITOR", "text-emphasis:\"x\"");
-        let ruby = page("<ruby>M<rt>x</rt>O<rt>x</rt>N<rt>x</rt>I<rt>x</rt>T<rt>x</rt>O<rt>x</rt>R<rt>x</rt></ruby>", "");
+        let ruby =
+            page("<ruby>M<rt>x</rt>O<rt>x</rt>N<rt>x</rt>I<rt>x</rt>T<rt>x</rt>O<rt>x</rt>R<rt>x</rt></ruby>", "");
         assert!(inked_rows(&marks) > inked_rows(&plain), "scale {scale}: the line grows");
         assert_eq!(inked_rows(&marks), inked_rows(&ruby), "scale {scale}: by as much for both");
     }

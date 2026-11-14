@@ -13,7 +13,11 @@ use pyro_render::*;
 struct InterFetch;
 impl Fetcher for InterFetch {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        done(if url.ends_with("/inter.ttf") { Ok(include_bytes!("fonts/Inter-subset.ttf").to_vec()) } else { Err("offline".into()) });
+        done(if url.ends_with("/inter.ttf") {
+            Ok(include_bytes!("fonts/Inter-subset.ttf").to_vec())
+        } else {
+            Err("offline".into())
+        });
     }
 }
 
@@ -55,7 +59,9 @@ fn an_underline_is_whole_css_pixels() {
         for size in [13, 16, 20, 24, 32] {
             let img = render(
                 "",
-                &format!("<span style='font-size:{size}px;color:transparent;text-decoration:underline #000'>MONITOR</span>"),
+                &format!(
+                    "<span style='font-size:{size}px;color:transparent;text-decoration:underline #000'>MONITOR</span>"
+                ),
                 scale,
             );
             let rows = column(&img, (12.0 * scale) as usize);

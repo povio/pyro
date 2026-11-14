@@ -535,6 +535,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     None,
                 );
                 // pyro: emphasis marks and ruby annotations are text the background shows in.
+                let recording = self.draw_text_context.borrow().runs.is_some();
                 for line in layout.layout.lines() {
                     crate::text::draw_text_annotations(
                         scene,
@@ -544,7 +545,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         self.dom,
                         text_transform,
                         self.scale,
-                        true,
+                        recording,
                         None,
                         Some(Color::BLACK),
                     );
