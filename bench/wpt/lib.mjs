@@ -55,12 +55,11 @@ export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
 }
 
 // ---------- reftest discovery ----------
-// The paint directories the reftest gate runs (reftest.mjs; README "Reftests"). CSS2 only in part: the directories
-// about painting (backgrounds, borders, colours, visual effects, outlines, stacking order).
+// The directories the reftest gate runs (reftest.mjs; README "Reftests"): the paint directories, and all of CSS2,
+// whose ~6,200 reftests (layout as much as paint) cost about 50 s of the run on the CI runner.
 export const REFTEST_DIRS = [
   'css/css-backgrounds', 'css/css-text-decor', 'css/filter-effects', 'css/compositing', 'css/css-masking',
-  'css/css-color', 'css/css-transforms', 'css/CSS2/backgrounds', 'css/CSS2/borders', 'css/CSS2/colors',
-  'css/CSS2/visufx', 'css/CSS2/ui', 'css/CSS2/zindex', 'css/CSS2/zorder', 'css/CSS2/stacking-context',
+  'css/css-color', 'css/css-transforms', 'css/CSS2',
 ];
 
 // Markup files as WPT's manifest reads them (tools/manifest/sourcefile.py): the tags it looks for, by regular

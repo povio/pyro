@@ -406,8 +406,12 @@ jobs:
       - name: Install the runner's dependencies
         working-directory: bench
         run: bun install --frozen-lockfile
+      # A PATH without zstd: lp-m1 has none, so its cache entries are gzip, and a runner with zstd (GitHub's macOS
+      # images) would look for another cache version and miss them.
       - uses: actions/cache@v4
         id: wpt-cache
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         with:
           path: wpt
           key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
@@ -420,6 +424,8 @@ jobs:
           name: wpt-browser
       - uses: actions/cache/restore@v4
         if: needs.build.result != 'success'
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         with:
           path: browser.tgz
           key: ${{ needs.prepare.outputs.browser-key }}

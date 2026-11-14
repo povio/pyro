@@ -216,6 +216,22 @@ function parse(log) {
   return subs;
 }
 
+// Reftests: a page whose browser died under it runs again alone (no other page in the browser), so the page that
+// crashes the browser is told apart from the pages that ran beside it: one that loses its browser alone is recorded
+// as `crash`, the others get their own result. (Testharness pages run again up to 3 times beside the others.)
+let running = 0, solo = null;
+const idle = [];
+async function enter(t) {
+  while (solo) await solo;
+  const leave = () => { if (--running === 0) idle.splice(0).forEach((f) => f()); };
+  if (!t.solo) { running++; return leave; }
+  let release;
+  solo = new Promise((r) => { release = r; });
+  while (running > 0) await new Promise((r) => idle.push(r));
+  running++;
+  return () => { solo = null; release(); leave(); };
+}
+
 const PLAN = tests.map((t) => t.url);
 await startBrowser();
 const results = [];
@@ -227,6 +243,8 @@ async function worker() {
     const t = tests[next++];
     let r;
     if (restarting) await restarting;
+    const leave = KIND === 'reftest' ? await enter(t) : () => {};
+    if (restarting) await restarting;
     const gen = generation;
     try { r = await guarded(slot, t, gen); }
     catch (e) {
@@ -235,12 +253,17 @@ async function worker() {
       // This page's browser died and no slot has replaced it yet. (After a replacement `child` may still be the
       // browser that was killed for it, until the new one is spawned.)
       if (gen === generation && (child.exitCode != null || child.signalCode)) { restarts++; await restartBrowser(gen); }
+      const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
+      if (KIND === 'reftest' && lost) {
+        if (!t.solo) { t.solo = true; tests.push(t); continue; }
+        r.status = 'crash';
+      }
       // The browser was replaced under this page (another slot's page hung it): run the page again.
-      if ((gen !== generation || /ECONNREFUSED|has been closed/.test(r.error)) && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
-    }
+      else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
+    } finally { leave(); }
     if (r.status === 'hang') { slot.browser = slot.ctx = slot.page = null; restarts++; await restartBrowser(gen); }
     if (r.status === 'timeout') await resetSlot(slot);
-    const { est, limit, retried, refs, fuzzy, viewport, ...meta } = t;
+    const { est, limit, retried, solo: alone, refs, fuzzy, viewport, ...meta } = t;
     results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log) });
     if (++done % 100 === 0) {
       if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, results }));
