@@ -22,6 +22,8 @@ use super::{ALMOST_OPAQUE, ElementCx};
 use anyrender::recording::RenderCommand;
 use anyrender::{Paint, PaintScene, Scene};
 use kurbo::{Affine, BezPath};
+#[cfg(feature = "svg")]
+use kurbo::Rect;
 use peniko::{BlendMode, Color, Compose, Fill, ImageBrush, ImageData, Mix};
 use std::cell::RefCell;
 use style::properties::generated::longhands::mask_composite::single_value::computed_value::T as StyloMaskComposite;
@@ -144,9 +146,20 @@ impl ElementCx<'_, '_> {
                 None,
             );
             scene.push_clip_layer(Fill::NonZero, self.transform, &self.box_path(layer.clip));
+            let mode = *get_cyclic(&svg_styles.mask_mode.0, idx);
+            // pyro: a reference to an SVG `<mask>` of the page.
+            #[cfg(feature = "svg")]
+            let drawn = match layer.stylo_image {
+                GenericImage::Url(url) => self.draw_svg_mask(scene, url, mode),
+                _ => false,
+            };
+            #[cfg(not(feature = "svg"))]
+            let drawn = false;
             // pyro: `mask-mode: luminance` uses the image's luminance as its alpha
             // (`match-source` is alpha for an image).
-            if *get_cyclic(&svg_styles.mask_mode.0, idx) == StyloMaskMode::Luminance {
+            if drawn {
+                // The `<mask>` is the layer.
+            } else if mode == StyloMaskMode::Luminance {
                 let mut recording = Scene::new();
                 self.draw_image_layer(&mut recording, &layer);
                 luminance_to_alpha(&mut recording);
@@ -157,6 +170,70 @@ impl ElementCx<'_, '_> {
             scene.pop_layer();
             scene.pop_layer();
         }
+    }
+}
+
+#[cfg(feature = "svg")]
+impl ElementCx<'_, '_> {
+    /// pyro: `mask-image: url(#id)` naming a `<mask>` of this document: the mask's rendering is
+    /// the layer's image (`mask-size`, `mask-position` and `mask-repeat` do not apply), its
+    /// reference box the border box (`objectBoundingBox` fractions of it), user space at the
+    /// border box's origin with the element's zoom. `mask-mode: match-source` is the mask's
+    /// `mask-type`; `alpha` and `luminance` are used instead of it. Returns whether the URL named
+    /// a `<mask>` (and the layer was drawn); a mask in a reference cycle masks everything.
+    fn draw_svg_mask(
+        &self,
+        scene: &mut impl PaintScene,
+        url: &style::values::computed::url::ComputedUrl,
+        mode: StyloMaskMode,
+    ) -> bool {
+        use super::clip_path::svg_reference::*;
+        let dom = self.context.dom;
+        let Some(target) = local_reference(dom, url) else {
+            return false;
+        };
+        let Some(node) = dom.get_node(target).filter(|node| is_svg_element(node, "mask")) else {
+            return false;
+        };
+        if reference_cycle(dom, target) {
+            return true;
+        }
+        let Some(id) = node.attr(blitz_dom::local_name!("id")) else {
+            return true;
+        };
+        let zoom = self.style.effective_zoom.value() as f64;
+        let to_user = 1.0 / (self.scale * zoom);
+        let shape = Rect::new(
+            self.frame.border_box.x0 * to_user,
+            self.frame.border_box.y0 * to_user,
+            self.frame.border_box.x1 * to_user,
+            self.frame.border_box.y1 * to_user,
+        );
+        // `alpha` or `luminance` over the mask's `mask-type` (an id selector is all usvg needs).
+        let simple_id = id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        let mask_type = match mode {
+            StyloMaskMode::Alpha if simple_id => format!("<style>#{id}{{mask-type:alpha!important}}</style>"),
+            StyloMaskMode::Luminance if simple_id => {
+                format!("<style>#{id}{{mask-type:luminance!important}}</style>")
+            }
+            _ => String::new(),
+        };
+        let content = mask_type + &opaque_rect(shape, &format!("mask=\"url(#{})\"", escape_attribute(id)));
+        let painter = self.context;
+        let Some(svg) = dom.svg_reference_document(
+            target,
+            &content,
+            (painter.width as f64 * to_user) as f32,
+            (painter.height as f64 * to_user) as f32,
+        ) else {
+            return true;
+        };
+        anyrender_svg::render_svg_tree(
+            scene,
+            &svg.tree,
+            self.transform * Affine::scale(self.scale * zoom),
+        );
+        true
     }
 }
 

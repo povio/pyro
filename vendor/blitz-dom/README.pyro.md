@@ -773,6 +773,15 @@ elements of one kind, through the references their content makes, as attributes 
 `none`, as usvg treats a short cycle. Sources without a cycle are passed on as they are. Covered by
 `crates/pyro-render/tests/svg_reference_cycles.rs`.
 
+## SVG elements referenced from a box's CSS
+
+`src/node/svg.rs` (`BaseDocument::svg_reference_document`): blitz-paint applies `clip-path: url(#c)` and
+`mask-image: url(#m)` naming a `<clipPath>` or `<mask>` of an inline `<svg>` to a box. This gives it an SVG document
+for usvg: the outermost `<svg>` around the element, serialized as inline SVG is (`svg_source`, sprites resolved), in
+`<defs>` (none of it drawn, all of it referenceable), and content that references the element in a viewport of the
+given size (percentages in the element's content resolve against it), parsed by `util::parse_svg_image` (its fonts,
+its reference-cycle breaking). See blitz-paint's README.
+
 ## Generated content and pseudo-elements (WPT reftests)
 
 - `src/layout/first_letter.rs`, `src/layout/inline/build.rs`, `src/node/text.rs`, `src/node/element.rs`,
