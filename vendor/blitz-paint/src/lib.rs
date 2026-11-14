@@ -56,7 +56,9 @@ pub fn paint_scene(
     x_offset: u32,
     y_offset: u32,
 ) {
-    paint_scene_with(scene, doc, scale, width, height, x_offset, y_offset, true)
+    // pyro: screenshots draw flat elements with a 3D transform as Chromium composites them
+    // (`BlitzDomPainter::composite_3d`); printed output stays vector.
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, true, true, true)
 }
 
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded
@@ -85,7 +87,7 @@ pub fn paint_scene_with(
     y_offset: u32,
     backgrounds: bool,
 ) {
-    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true)
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true, false)
 }
 
 /// [`paint_scene_with`] for print: text at its layout-unit x.
@@ -100,7 +102,7 @@ pub fn paint_scene_for_print(
     y_offset: u32,
     backgrounds: bool,
 ) {
-    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true)
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true, false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -114,6 +116,7 @@ fn paint_scene_inner(
     y_offset: u32,
     backgrounds: bool,
     fractional_text_x: bool,
+    composite_3d: bool,
 ) {
     // Painting walks `paint_children` and the stacking contexts, which a
     // resolve only marks stale.
@@ -139,6 +142,7 @@ fn paint_scene_inner(
     );
     generator.backgrounds = backgrounds;
     generator.fractional_text_x = fractional_text_x;
+    generator.composite_3d = composite_3d;
     generator.paint_scene(scene);
 
     // println!(

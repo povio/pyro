@@ -329,7 +329,7 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
     (`snap`): `rotate(360deg)` left `sin` noise that made text skip its pixel snapping.
 - `src/node/node.rs` (`set_transform`, `transform_context_for_children`, `TransformContext`,
   `transform_reference_box`, `scroll_offset_changed`, `NodeFlags::TRANSFORM_HIDES`,
-  `NodeFlags::GIVES_3D_CONTEXT`):
+  `NodeFlags::GIVES_3D_CONTEXT`, `NodeFlags::FLATTENS_3D`):
   - A 3D transform takes its parent's `perspective` (about its `perspective-origin`, which does not scroll),
     offset by the box's location less the parent's scroll offset (CSS Transforms 2, the accumulated 3D
     transformation matrix). Only the element's children in the DOM take it (WPT
@@ -351,6 +351,9 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
     element itself is not hidden: its children are planes of their own, which paint would hide with it.
   - `transform-box` picks the reference box: a CSS box's content box for `content-box` and `fill-box`, its
     border box otherwise.
+  - A flat element whose transform is a 3D matrix flattened (drawn, not hidden) sets `NodeFlags::FLATTENS_3D`:
+    blitz-paint has such an element that holds elements rasterized in its own plane, as Chromium composites
+    it.
 - `src/resolve.rs` (`resolve_transforms`, `table_cells_overflow`, `ContainingTransform`): each box resolves its
   transform with what its parent gives (`ContainingTransform::for_child`). While a parent gives its children a
   perspective or a 3D rendering context (or stopped giving one in this pass) their transforms are resolved

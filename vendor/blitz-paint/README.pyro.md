@@ -324,6 +324,22 @@ from the root of an upstream checkout at that commit) is the whole diff.
   `NodeFlags::TRANSFORM_HIDES`: its back face shows with `backface-visibility: hidden`, it lies behind the
   viewer, or its matrix has no inverse) is not painted, nor is its content. Covered by
   `crates/pyro-render/tests/transform_3d.rs`.
+- `src/render.rs` (`render_element`, `BlitzDomPainter::composite_3d`), `src/layers.rs` (`local_raster_marker`),
+  `src/lib.rs` (`paint_scene_inner`): a flat element with a 3D transform (blitz-dom's `NodeFlags::FLATTENS_3D`)
+  that has element children paints inside a layer marked by a filter that moves nothing (an offset by negative
+  zero), which anyrender_vello_cpu rasterizes in the element's plane and draws through its transform, as Chromium
+  composites the element: edges its boxes share resolve where the layout puts them, on whole pixels of the plane.
+  Drawn each through the transform, a child's edge over the element's took in what the element's edge let
+  through, and a child blending there came out up to 6 levels off the same colours painted without a blend (WPT
+  `mix-blend-mode-parent-with-3D-transform`). A box with no element in it shares no edge with another and keeps
+  drawing its fills through the transform, without a resampled image's rounding (which put a lone box's edges a
+  level apart inside and outside a scroll container, and 11 levels off a 2D rotation for an interpolated
+  `rotate3d`). The layer goes inside the element's blend and isolation layers and around its clip-path, mask and
+  effect group. Inside it (`local_raster_depth`), the groups clipped to the viewport (a blend's isolation, a backdrop
+  root's mark) reach 8 px past it: the plane is rasterized a pixel or two past the frame for the pixels on the
+  frame's edges to sample, and a clip on that edge cut through them (a fifth lighter along the screenshot's edge).
+  Screenshots only (`paint_scene`): print, `paint_scene_with` and the text-recording paint stay
+  vector. Covered by `crates/pyro-render/tests/transform_3d.rs`.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).

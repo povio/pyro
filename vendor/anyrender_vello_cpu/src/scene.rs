@@ -321,8 +321,15 @@ impl VelloCpuScenePainter {
     /// with whether it is a backdrop root.
     pub(crate) fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
         let mut open: Vec<(usize, bool)> = Vec::new();
+        // The pops of local-raster layers replayed as they are (their content captures a backdrop).
+        let mut unwrapped: Vec<usize> = Vec::new();
         let mut i = 0;
         while i < commands.len() {
+            if unwrapped.last() == Some(&i) {
+                unwrapped.pop();
+                i += 1;
+                continue;
+            }
             if self.backdrop_filters
                 && let Some((kind, layer, filter)) = crate::backdrop::marker(commands, i)
             {
@@ -345,6 +352,27 @@ impl VelloCpuScenePainter {
                 self.clip_paths.push(Pushed::ClipPath);
                 open.push((i, false));
                 i += 1;
+                continue;
+            }
+            if let RenderCommand::PushLayer(layer) = &commands[i]
+                && layer.filter.as_deref().is_some_and(is_local_raster_marker)
+            {
+                let end = matching_pop(commands, i);
+                let inner = &commands[i + 1..end];
+                // A backdrop filter inside reads what lies beneath the element too (a 3D transform
+                // makes no backdrop root), which a context of the element's own does not hold: the
+                // content is replayed here, as it is.
+                if self.backdrop_filters
+                    && (0..inner.len()).any(|j| {
+                        matches!(crate::backdrop::marker(inner, j), Some((crate::backdrop::Marker::Capture, ..)))
+                    })
+                {
+                    unwrapped.push(end);
+                    i += 1;
+                } else {
+                    self.draw_local_layer(layer, inner, transform);
+                    i = end + 1;
+                }
                 continue;
             }
             if let RenderCommand::PushLayer(layer) = &commands[i]
@@ -460,6 +488,68 @@ impl VelloCpuScenePainter {
         }
     }
 
+    /// pyro: the layer of a flat element with a 3D transform (blitz-paint's
+    /// `local_raster_marker`), drawn as Chromium composites the element: its commands are
+    /// rasterized in the element's plane (the layer's transform maps it to the frame) and the result
+    /// is drawn into the frame through that transform, sampled bilinearly. Edges its content shares
+    /// are resolved in its plane, on the whole pixels its layout puts them on, not each where the
+    /// transform puts it: a blended child's edge over its flattened parent's background came out
+    /// a few levels off a parent and child drawn there, where Chromium's layer has the same pixels.
+    /// A plane seen edge-on, or too large a one, is drawn as it is.
+    fn draw_local_layer(&mut self, layer: &LayerCommand, inner: &[RenderCommand], transform: Affine) {
+        const MAX_SIDE: i32 = 8192;
+        const MAX_PIXELS: i64 = 16 << 20;
+        let Some(to_frame) = local_raster_transform(transform * layer.transform) else {
+            self.replay(inner, transform);
+            return;
+        };
+        let from_frame = to_frame.inverse();
+        let local = from_frame * transform;
+        let Some(bounds) = painted_bounds(inner, local) else { return };
+        // What the frame shows of the plane, and a pixel around it that the sampling reads.
+        let frame = Rect::new(0.0, 0.0, f64::from(self.render_ctx.width()), f64::from(self.render_ctx.height()));
+        let visible = from_frame.transform_rect_bbox(frame.inflate(2.0, 2.0));
+        // A bound on a whole pixel stays there through the inverse's rounding (a column the
+        // content covers a 1e-13th of was sampled into its edge).
+        let region = PixelRect::around(bounds.intersect(visible).inflate(-WHOLE_PIXEL_SLACK, -WHOLE_PIXEL_SLACK));
+        if region.is_empty() {
+            return;
+        }
+        if region.width() > MAX_SIDE
+            || region.height() > MAX_SIDE
+            || i64::from(region.width()) * i64::from(region.height()) > MAX_PIXELS
+        {
+            self.replay(inner, transform);
+            return;
+        }
+        let (Ok(width), Ok(height)) = (u16::try_from(region.width()), u16::try_from(region.height())) else {
+            self.replay(inner, transform);
+            return;
+        };
+        let to_pixels = Affine::translate((-f64::from(region.x0), -f64::from(region.y0)));
+        let mut ctx = self.offscreen_context(width, height);
+        std::mem::swap(&mut self.render_ctx, &mut ctx);
+        let frame_to_ctx = self.frame_to_ctx;
+        self.frame_to_ctx = to_pixels * from_frame * frame_to_ctx;
+        self.replay(inner, to_pixels * local);
+        self.frame_to_ctx = frame_to_ctx;
+        std::mem::swap(&mut self.render_ctx, &mut ctx);
+        let mut pixels = Pixmap::new(width, height);
+        ctx.flush();
+        ctx.render(&mut pixels, &mut self.resources);
+        self.filter_contexts.push(ctx);
+
+        self.render_ctx.set_transform(to_frame);
+        self.render_ctx.set_fill_rule(Fill::NonZero);
+        self.render_ctx.set_paint(PaintType::Image(ImageBrush {
+            image: ImageSource::Pixmap(Arc::new(pixels)),
+            sampler: ImageSampler::new().with_quality(ImageQuality::Medium),
+        }));
+        self.render_ctx.set_paint_transform(Affine::translate((f64::from(region.x0), f64::from(region.y0))));
+        self.render_ctx.fill_rect(&region.to_rect());
+        self.render_ctx.reset_paint_transform();
+    }
+
     /// pyro: a filter layer. Its commands are rendered into a single-threaded context of their own,
     /// over the pixels its filter reads to produce what the layer's clip shows of the frame (at a
     /// reduced size for a large blur: [`FilterPlan::factor`]), the filter makes images of them
@@ -560,6 +650,88 @@ impl VelloCpuScenePainter {
             self.render_ctx.pop_layer();
         }
     }
+}
+
+/// pyro: the transform from the pixels a local-raster layer is rasterized in to the frame, given
+/// the one from its plane (`None` for a plane seen edge-on). The plane is rasterized at the
+/// larger of the scales the transform applies to its axes, as Chromium picks a layer's raster
+/// scale (its ideal contents scale): `scale3d(2, 2, 1)` is drawn as sharp as `scale(2)`, and a
+/// rotation out of the plane at the plane's own resolution.
+fn local_raster_transform(to_frame: Affine) -> Option<Affine> {
+    if !(to_frame.determinant().abs() > 1e-6) {
+        return None;
+    }
+    let [a, b, c, d, _, _] = to_frame.as_coeffs();
+    let scale = a.hypot(b).max(c.hypot(d));
+    // An interpolated rotation's scale is 1 give or take its rounding.
+    let scale = if (scale - 1.0).abs() < 1e-4 { 1.0 } else { scale };
+    (scale.is_finite() && scale > 1e-3).then(|| to_frame * Affine::scale(1.0 / scale))
+}
+
+/// pyro: how far past a whole pixel a local-raster layer's bound may lie and still be on it.
+const WHOLE_PIXEL_SLACK: f64 = 1e-4;
+
+/// pyro: the device pixels `commands` (under `transform`) paint, as [`content_bounds`] has them but
+/// for a layer, cut to what it holds: a group's clip is often the viewport (a `mix-blend-mode`'s
+/// isolation), which made a local-raster layer's region all of what shows of the plane where the
+/// same content without the group had its own bounds. A layer that filters or draws a backdrop
+/// keeps its clip (it paints where its content does not), and a local-raster layer in it adds
+/// the whole pixels of its plane it fills.
+fn painted_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
+    let mut bounds: Option<Rect> = None;
+    let mut i = 0;
+    while i < commands.len() {
+        let painted = match &commands[i] {
+            RenderCommand::PushLayer(layer) if layer.filter.as_deref().is_some_and(is_local_raster_marker) => {
+                let end = matching_pop(commands, i);
+                let inner = &commands[i + 1..end];
+                i = end;
+                match local_raster_transform(transform * layer.transform) {
+                    Some(to_frame) => painted_bounds(inner, to_frame.inverse() * transform).map(|plane| {
+                        let plane = plane.inflate(-WHOLE_PIXEL_SLACK, -WHOLE_PIXEL_SLACK);
+                        to_frame.transform_rect_bbox(PixelRect::around(plane).to_rect())
+                    }),
+                    None => painted_bounds(inner, transform),
+                }
+            }
+            RenderCommand::PushLayer(layer) if layer.filter.is_some() || layer.backdrop_filter.is_some() => {
+                let clip = (transform * layer.transform).transform_rect_bbox(layer.clip.bounding_box());
+                i = matching_pop(commands, i);
+                Some(clip)
+            }
+            command @ (RenderCommand::PushLayer(_) | RenderCommand::PushClipLayer(_)) => {
+                let (clip_transform, clip) = match command {
+                    RenderCommand::PushLayer(layer) => (layer.transform, layer.clip.bounding_box()),
+                    RenderCommand::PushClipLayer(layer) => (layer.transform, layer.clip.bounding_box()),
+                    _ => unreachable!(),
+                };
+                let clip = (transform * clip_transform).transform_rect_bbox(clip);
+                let end = matching_pop(commands, i);
+                let inside = painted_bounds(&commands[i + 1..end], transform);
+                i = end;
+                inside.map(|inside| inside.intersect(clip)).filter(|r| r.width() > 0.0 && r.height() > 0.0)
+            }
+            command => content_bounds(std::slice::from_ref(command), transform),
+        };
+        if let Some(painted) = painted {
+            bounds = Some(bounds.map_or(painted, |b| b.union(painted)));
+        }
+        i += 1;
+    }
+    bounds
+}
+
+/// pyro: whether `filter` is blitz-paint's `local_raster_marker`: a single offset by negative
+/// zero, which moves nothing (see [`VelloCpuScenePainter::draw_local_layer`]).
+pub(crate) fn is_local_raster_marker(filter: &Filter) -> bool {
+    matches!(
+        filter.nodes(),
+        [node] if matches!(
+            node.effect,
+            anyrender::filters::FilterEffect::Offset(v)
+                if v.x == 0.0 && v.y == 0.0 && v.x.is_sign_negative() && v.y.is_sign_negative()
+        )
+    )
 }
 
 /// pyro: `clip` under `transform` as a rectangle of whole device pixels, if it is one: a
@@ -1000,5 +1172,54 @@ mod color_filter_tests {
         let near = |got: &[u8], want: [u8; 4]| got.iter().zip(want).all(|(&g, w)| g.abs_diff(w) <= 1);
         assert!(near(pixel(&buffer, 20, 20), [64, 0, 0, 64]), "{:?}", pixel(&buffer, 20, 20));
         assert!(near(pixel(&buffer, 40, 20), [64, 64, 0, 64]), "{:?}", pixel(&buffer, 40, 20));
+    }
+}
+
+#[cfg(test)]
+mod local_raster_tests {
+    use std::sync::Arc;
+
+    use anyrender::filters::{Filter, FilterEffect};
+    use anyrender::{PaintScene, recording::Scene, render_to_buffer};
+    use kurbo::{Affine, Rect, Vec2};
+    use peniko::{Color, Fill, Mix};
+
+    use crate::VelloCpuImageRenderer;
+
+    /// pyro: a local-raster layer (blitz-paint's mark) under a rotation: a box that blends in
+    /// `difference` over its parent's box, in a group whose clip is the viewport, gives the same
+    /// pixels as the colours the blend makes painted without one. The content is rasterized in its
+    /// plane over what it paints (not the group's clip, which moved the layer's outer edges) and
+    /// drawn through the rotation; each fill drawn through it, the blended edge over the parent's
+    /// edge took in what the parent's edge let through.
+    #[test]
+    fn a_local_raster_layer_resolves_a_blend_in_its_plane() {
+        let marker = || Some(Arc::new(Filter::single(FilterEffect::Offset(Vec2::new(-0.0, -0.0)))));
+        // The content lies inside the frame (a group clipped to the frame cuts through the pixels
+        // its edges sample: blitz-paint widens such a clip in a local-raster layer).
+        let plane = Affine::translate((50.0, 10.0)) * Affine::rotate(0.35);
+        let rgb = |r, g, b| Color::from_rgba8(r, g, b, 255);
+        let viewport = Rect::new(0.0, 0.0, 160.0, 160.0);
+        let parent = Rect::new(0.0, 0.0, 60.0, 61.0);
+        let child = Rect::new(10.0, 11.0, 90.0, 91.0);
+        let render = |blend: bool| {
+            let mut scene = Scene::new();
+            scene.push_layer(Fill::NonZero, Mix::Normal, 1.0, plane, &Rect::new(-1e7, -1e7, 1e7, 1e7), marker(), None);
+            scene.fill(Fill::NonZero, plane, rgb(0, 255, 255), None, &parent);
+            if blend {
+                scene.push_layer(Fill::NonZero, Mix::Difference, 1.0, Affine::IDENTITY, &viewport, None, None);
+                scene.fill(Fill::NonZero, plane, rgb(255, 0, 255), None, &child);
+                scene.pop_layer();
+            } else {
+                scene.fill(Fill::NonZero, plane, rgb(255, 0, 255), None, &child);
+                scene.fill(Fill::NonZero, plane, rgb(255, 255, 0), None, &child.intersect(parent));
+            }
+            scene.pop_layer();
+            render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(scene, Affine::IDENTITY), 160, 160)
+        };
+        let (blended, painted) = (render(true), render(false));
+        assert!(blended.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255), "antialiased edges");
+        let off = blended.chunks_exact(4).zip(painted.chunks_exact(4)).filter(|(a, b)| a != b).count();
+        assert_eq!(off, 0, "pixels off");
     }
 }

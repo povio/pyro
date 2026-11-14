@@ -229,6 +229,41 @@ fn a_3d_rendering_context_composes_its_planes() {
     }
 }
 
+/// A flat box with a 3D transform is rasterized in its own plane and then drawn through its
+/// flattened transform, as Chromium composites it: a child that blends with it (`difference`
+/// of fuchsia over aqua) gives the same pixels as the blended colour painted without a blend.
+/// Each drawn through the transform, the blended child's edge over the parent's edge came out a
+/// few levels off the edge between the painted colours (WPT
+/// `mix-blend-mode-parent-with-3D-transform`).
+///
+/// Across the bottom of the viewport too: the blend's group, clipped to the viewport, cut through
+/// the pixels of the plane the screenshot's last rows sample, which came out a fifth lighter.
+#[test]
+fn a_blend_inside_a_flattened_box_matches_its_colour_painted_flat() {
+    let parent = "background:aqua;width:140px;height:140px;padding-top:1px;transform:rotateX(20deg)";
+    let blended = "background:fuchsia;margin:20px 0 0 20px;width:200px;height:200px";
+    for top in [0, 180] {
+        for scale in [1.0, 2.0] {
+            let test = render(
+                &format!(
+                    "<div style='margin-top:{top}px;{parent}'>\
+                     <div style='{blended};mix-blend-mode:difference'></div></div>"
+                ),
+                scale,
+            );
+            let reference = render(
+                &format!(
+                    "<div style='margin-top:{top}px;{parent}'><div style='{blended}'>\
+                     <div style='background:yellow;width:120px;height:120px'></div></div></div>"
+                ),
+                scale,
+            );
+            let off = test.data.chunks(4).zip(reference.data.chunks(4)).filter(|(a, b)| a != b).count();
+            assert_eq!(off, 0, "pixels off, top {top}, scale {scale}");
+        }
+    }
+}
+
 /// The out-of-flow boxes of a filtered inline (its stacking context) paint at the positioned
 /// level, above the blocks after it, as a transformed block's do (WPT
 /// `filtered-inline-is-container`): they were painted with the anonymous block that lays them

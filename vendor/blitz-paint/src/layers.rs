@@ -183,6 +183,15 @@ pub(crate) fn backdrop_root_marker() -> Arc<Filter> {
     Arc::new(Filter::empty())
 }
 
+/// pyro: the filter that marks the layer of a flat element with a 3D transform (blitz-dom's
+/// `NodeFlags::FLATTENS_3D`): an offset by negative zero, which moves nothing. anyrender_vello_cpu
+/// rasterizes such a layer's content in the plane the layer's transform maps to the frame and
+/// draws the result through it, as Chromium composites the element; a backend that does not know
+/// the marker draws the content as it is.
+pub(crate) fn local_raster_marker() -> Arc<Filter> {
+    Arc::new(Filter::single(anyrender::filters::FilterEffect::Offset(kurbo::Vec2::new(-0.0, -0.0))))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

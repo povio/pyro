@@ -90,6 +90,11 @@ bitflags! {
         /// include: the next pass resolves them again, whatever their own damage
         /// (`BaseDocument::resolve_transforms`).
         const GIVES_3D_CONTEXT = 0b10_00000000;
+        /// pyro: its transform is a 3D matrix flattened into the plane of the screen and it is
+        /// flat (`transform-style: flat`): Chromium composites such an element, rasterized in its
+        /// own plane and then drawn through its transform, which blitz-paint asks the backend to
+        /// do (`layers::local_raster_marker`). Set with the transform (`Node::set_transform`).
+        const FLATTENS_3D = 0b100_00000000;
     }
 }
 
@@ -673,6 +678,7 @@ impl Node {
         use euclid::default::Transform3D;
         let mut hides = false;
         let mut context = None;
+        let mut flattens = false;
         let transform = self.primary_styles().and_then(|s| {
             let layout = self.final_layout();
             let size = (layout.size.width as f64, layout.size.height as f64);
@@ -680,6 +686,7 @@ impl Node {
             let reference_box = self.transform_reference_box(box_styles.transform_box);
             let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);
             let preserve_3d = self.is_preserve_3d();
+            flattens = matches!(resolved, ResolvedTransform::Spatial(_)) && !preserve_3d;
             // A 2D transform of a flat element outside a 3D rendering context resolves as it
             // always has.
             if let ResolvedTransform::Flat(flat) = resolved
@@ -783,6 +790,7 @@ impl Node {
             flat.map(|t| to_device_px(t, scale))
         });
         self.flags.set(NodeFlags::TRANSFORM_HIDES, hides);
+        self.flags.set(NodeFlags::FLATTENS_3D, flattens && !hides && transform.is_some());
 
         let slot = self.transform_mut();
         match (slot.as_deref_mut(), transform) {
