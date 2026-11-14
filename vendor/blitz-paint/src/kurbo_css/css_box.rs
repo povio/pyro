@@ -40,6 +40,43 @@ pub struct CssBox {
     pub outline_width: f64,
 
     pub border_radii: NonUniformRoundedRectRadii,
+
+    /// pyro: what the padding box's and the content box's radii (each border radius less the
+    /// widths beside it) are scaled by to fit their box, 1 when they fit (see
+    /// [`inner_radii_scale`]).
+    padding_radii_scale: f64,
+    content_radii_scale: f64,
+}
+
+/// pyro: the scale an inner box's radii need to fit it, as Blink fits them
+/// (`FloatRoundedRect::AdjustRadii` when the rect is not renderable): CSS Backgrounds 3 §5.5 has
+/// the padding edge's radii the border radii less the border widths, which overflow a box with
+/// one large corner (`border-radius: 100% 0 0 0` and a border), and its curve then left the box.
+fn inner_radii_scale(rect: Rect, radii: &NonUniformRoundedRectRadii, insets: Insets) -> f64 {
+    let inner = |r: Vec2, corner: Corner| {
+        let r = r - get_corner_insets(insets, corner);
+        if r.x <= 0.0 || r.y <= 0.0 {
+            Vec2::ZERO
+        } else {
+            r
+        }
+    };
+    let (tl, tr) = (
+        inner(radii.top_left, Corner::TopLeft),
+        inner(radii.top_right, Corner::TopRight),
+    );
+    let (br, bl) = (
+        inner(radii.bottom_right, Corner::BottomRight),
+        inner(radii.bottom_left, Corner::BottomLeft),
+    );
+    let widest = (tl.x + tr.x).max(bl.x + br.x);
+    let tallest = (tl.y + bl.y).max(tr.y + br.y);
+    if widest <= 0.0 || tallest <= 0.0 {
+        return 1.0;
+    }
+    (rect.width().max(0.0) / widest)
+        .min(rect.height().max(0.0) / tallest)
+        .min(1.0)
 }
 
 impl CssBox {
@@ -74,6 +111,10 @@ impl CssBox {
             border_radii *= min_factor
         }
 
+        let padding_radii_scale = inner_radii_scale(padding_box, &border_radii, border);
+        let content_radii_scale =
+            inner_radii_scale(content_box, &border_radii, add_insets(border, padding));
+
         Self {
             padding_box,
             border_box,
@@ -83,6 +124,8 @@ impl CssBox {
             padding_width: padding,
             border_width: border,
             border_radii,
+            padding_radii_scale,
+            content_radii_scale,
         }
     }
 
@@ -605,6 +648,24 @@ impl CssBox {
                 corner_radii - get_corner_insets(add_insets(*border_width, *padding_width), corner)
             }
         };
+
+        // pyro: inner radii that do not fit their box are scaled to fit it; their centre is then
+        // no longer the border's (in the inner box's corner, `radii` in from it).
+        let (inner_box, scale) = match side {
+            PaddingBox => (self.padding_box, self.padding_radii_scale),
+            ContentBox => (self.content_box, self.content_radii_scale),
+            BorderBox | OutlineBox => (*border_box, 1.0),
+        };
+        if scale < 1.0 && radii.x > 0.0 && radii.y > 0.0 {
+            let radii = radii * scale;
+            let center = match corner {
+                TopLeft => Point::new(inner_box.x0 + radii.x, inner_box.y0 + radii.y),
+                TopRight => Point::new(inner_box.x1 - radii.x, inner_box.y0 + radii.y),
+                BottomLeft => Point::new(inner_box.x0 + radii.x, inner_box.y1 - radii.y),
+                BottomRight => Point::new(inner_box.x1 - radii.x, inner_box.y1 - radii.y),
+            };
+            return (center, radii);
+        }
 
         (border_box.origin() + center, radii)
     }

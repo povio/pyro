@@ -369,6 +369,5 @@ impl From<BackgroundOrigin> for BackgroundClip {
 pub enum ImageLayerAttachment {
     Scroll,
     Fixed,
-    #[cfg(feature = "gecko")]
     Local,
 }
