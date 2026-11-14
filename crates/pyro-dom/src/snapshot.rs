@@ -10,7 +10,8 @@
 //!   (the style engine holds the live text, CSSOM edits included);
 //! - `<script>`, `<noscript>` (scripting is on), `<template>`, comments and
 //!   processing instructions are left out, and so is an `<iframe>`'s `src`
-//!   (frames render as empty boxes);
+//!   (frames render as empty boxes); HTML markup leaves out event handler
+//!   (`on*`) attributes, which keyed trees keep (`content: attr(onclick)`);
 //! - a shadow host is serialized with its shadow tree in place of its
 //!   children, each `<slot>` replaced by the light children assigned to it
 //!   (its fallback content when none is): shadow styles become global;
@@ -157,13 +158,18 @@ impl Sink for HtmlSink<'_> {
         self.out.push_str(name);
         self.out.push('>');
     }
-    fn open(&mut self, key: u64, tag: &str, _name: &QualName, attrs: &[RAttr<'_>], marked: bool, _void: bool) {
+    fn open(&mut self, key: u64, tag: &str, name: &QualName, attrs: &[RAttr<'_>], marked: bool, _void: bool) {
         let out = &mut self.out;
         out.push('<');
         out.push_str(tag);
-        // The state attribute is for keyed trees: markup would lose its namespace.
+        // The state attribute is for keyed trees: markup would lose its namespace. Markup, which
+        // another engine may load, carries no event handler (`on*`) attributes; keyed trees keep
+        // them for `content: attr()`.
+        let html = name.ns == ns!(html);
         for a in attrs.iter().filter(|a| {
-            &*a.name.ns != STATE_NS && !matches!(&*a.name.local, "data-pyro-scroll-left" | "data-pyro-scroll-top")
+            &*a.name.ns != STATE_NS
+                && !matches!(&*a.name.local, "data-pyro-scroll-left" | "data-pyro-scroll-top")
+                && !(html && a.name.ns == ns!() && a.name.local.starts_with("on"))
         }) {
             out.push(' ');
             match &a.name.prefix {
@@ -399,7 +405,7 @@ impl Dom {
                                 ("link", "href") => href.is_some(),
                                 ("iframe" | "frame", "src" | "srcdoc") => html,
                                 _ => false,
-                            } || (html && name.starts_with("on"));
+                            };
                             if skip {
                                 continue;
                             }

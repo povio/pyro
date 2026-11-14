@@ -865,18 +865,18 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
  
          // The root clip rectangle is the viewport (in screen coordinates, with the
-@@ -255,6 +256,10 @@
+@@ -254,6 +255,10 @@
+             }),
              viewport_clip_rect,
          );
- 
++
 +        if !self.top_layer.is_empty() {
 +            self.paint_top_layer(scene, root_id, viewport_scroll, viewport_clip_rect);
 +        }
-+
+ 
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
-             if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -284,10 +289,153 @@
+@@ -284,8 +289,151 @@
                      self.initial_x,
                      self.initial_y,
                  );
@@ -970,8 +970,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            cur = node.parent.and_then(|p| self.dom.get_node(p));
          }
 +        true
-     }
- 
++    }
++
 +    /// The `::backdrop` of top-layer element `id`: a box filling the painted
 +    /// area below the element (UA style: `position: fixed; inset: 0`).
 +    fn paint_backdrop(&self, scene: &mut impl PaintScene, id: NodeId) {
@@ -1025,11 +1025,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            },
 +        );
-+    }
-+
+     }
+ 
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
-         let location = node.final_layout().location;
-         parent
 @@ -317,8 +465,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
@@ -1073,7 +1071,20 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -585,12 +748,27 @@
+@@ -540,11 +703,7 @@
+         };
+ 
+         // Compute clip-path (if any) and wrap all rendering in a clip layer
+-        let clip_path_shape = cx.clip_path_shape();
+-        let has_clip_path = clip_path_shape.is_some();
+-        let default_clip = cx.frame.border_box_path();
+-        let mut clip_path_for_layer = clip_path_shape.unwrap_or(default_clip);
+-        clip_path_for_layer.apply_affine(Affine::scale(self.scale));
++        let element_clip = cx.element_clip();
+ 
+         // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
+         // the element's rendering (including outlines and shadows), so it is the outermost layer.
+@@ -585,21 +744,32 @@
  
          let paints_own_box = !node.is_inline_with_only_block_children();
  
@@ -1102,11 +1113,23 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        };
  
 -        // clip-path clip ayer
+-        self.layer_manager.maybe_with_layer(
 +        // clip-path clip layer (it clips the shadow and the outline too, as in Chromium)
-         self.layer_manager.maybe_with_layer(
++        clip_path::with_element_clip(
              scene,
-             has_clip_path,
-@@ -608,100 +786,25 @@
+-            has_clip_path,
+-            BlendMode::default(),
+-            1.0,
++            element_clip.as_ref(),
+             cx.transform,
+-            &clip_path_for_layer,
+-            None,
+-            None,
++            self.scale,
+             |scene| {
+                 // If the element has a CSS `mask`, then push an isolation layer for the
+                 // masked content. The mask is applied when the layer is popped below.
+@@ -608,100 +778,25 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -1154,13 +1177,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                            cx.draw_border(scene);
 -                        }
 -                        cx.stroke_devtools(scene);
--
--                        // TODO: allow layers with opacity to be unclipped (overflow: visible)
--                        let clip = if is_text_input {
--                            &cx.frame.text_input_clip_path()
--                        } else {
--                            &cx.frame.padding_box_path()
--                        };
 +                if has_effect_layer {
 +                    let mut group = Scene::new();
 +                    self.paint_element(&mut cx, &mut group, &element);
@@ -1180,6 +1196,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    self.paint_element(&mut cx, scene, &element);
 +                }
  
+-                        // TODO: allow layers with opacity to be unclipped (overflow: visible)
+-                        let clip = if is_text_input {
+-                            &cx.frame.text_input_clip_path()
+-                        } else {
+-                            &cx.frame.padding_box_path()
+-                        };
+-
 -                        // Clip layer if box requires clipping. Opacity set to 1.0
 -                        self.layer_manager.maybe_with_layer(
 -                            scene,
@@ -1225,7 +1248,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  // Apply the CSS `mask` (if any) to the content drawn above
                  cx.transform = unscrolled_transform;
                  cx.maybe_pop_css_mask_layer(scene, mask_layer_pushed);
-@@ -712,8 +815,173 @@
+@@ -712,8 +807,173 @@
              .maybe_pop_layer(scene, blend_layer_pushed);
          self.layer_manager
              .maybe_pop_layer(scene, css_clip_layer_pushed);
@@ -1399,7 +1422,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn render_node(
          &self,
          scene: &mut impl PaintScene,
-@@ -724,9 +992,11 @@
+@@ -724,9 +984,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
          match &node.data {
@@ -1413,13 +1436,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -781,7 +1051,56 @@
-             devtools: self.dom.devtools(),
-             custom_widget_scene,
-         }
-+    }
-+}
-+
+@@ -784,6 +1046,55 @@
+     }
+ }
+ 
 +/// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's
 +/// `LayoutBox::BackgroundTransfersToView` decides it: the root element, unless it is an HTML
 +/// `html` element without a background of its own, when it is its first `body` child, if that
@@ -1430,7 +1450,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    let root_style = root.primary_styles()?;
 +    if root_style.get_box().display.is_none() {
 +        return None;
-     }
++    }
 +    let has_background = |style: &ComputedValues| {
 +        let background = style.get_background();
 +        background
@@ -1467,10 +1487,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        return Some(root.id);
 +    }
 +    Some(body.id)
- }
- 
++}
++
  fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
-@@ -837,6 +1156,45 @@
+     match image_rendering {
+         ImageRendering::Auto => peniko::ImageQuality::Medium,
+@@ -837,6 +1148,45 @@
  }
  
  /// Converts parley BoundingBox into peniko Rect
@@ -1516,10 +1538,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,6 +1325,257 @@
-         }
-     }
- 
+@@ -963,8 +1313,259 @@
+                     None,
+                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
+                 );
++            }
++        }
++    }
++
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -1677,8 +1703,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        }
 +                    }
 +                }
-+            }
-+        }
+             }
+         }
 +        if fragments.is_empty() {
 +            return;
 +        }
@@ -1769,12 +1795,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
 +        }
-+    }
-+
+     }
+ 
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
-         if self.node.flags.is_inline_root() {
-             let text_layout = self.element
-@@ -976,6 +1585,11 @@
+@@ -976,6 +1577,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -1786,7 +1810,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +1598,22 @@
+@@ -984,23 +1590,22 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -1818,7 +1842,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,17 +1621,185 @@
+@@ -1008,17 +1613,185 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -2006,7 +2030,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              );
          }
      }
-@@ -1030,9 +1811,15 @@
+@@ -1030,9 +1803,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -2024,7 +2048,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,6 +1834,63 @@
+@@ -1047,6 +1826,63 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -2088,7 +2112,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              if self.node.is_focussed() {
                  // Render selection/caret
-@@ -1078,6 +1922,7 @@
+@@ -1078,6 +1914,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -2096,7 +2120,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +1931,14 @@
+@@ -1086,10 +1923,14 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -2111,7 +2135,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1114,14 +1963,25 @@
+@@ -1114,14 +1955,25 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -2140,7 +2164,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1145,10 +2005,90 @@
+@@ -1145,11 +1997,91 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -2197,7 +2221,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let Some(child) = child else { break };
 +            top += child.final_layout().location.y;
 +            node = child;
-+        }
+         }
 +        // The baseline from the item's content box top, in CSS px.
 +        let baseline = match &first_line {
 +            Some((node, text, line)) => {
@@ -2228,10 +2252,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
-         }
++        }
      }
  
-@@ -1232,6 +2172,9 @@
+     fn draw_children(
+@@ -1232,6 +2164,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -2241,11 +2266,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1465,4 +2408,28 @@
-     };
+@@ -1466,3 +2401,27 @@
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
-+}
+ }
 +
 +/// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.
 +#[derive(Clone, Copy)]
@@ -2256,7 +2280,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    is_text_input: bool,
 +    content_position: Point,
 +    child_clip_rect: Rect,
- }
++}
 +
 +/// pyro: an element's opacity and filter layer ([`BlitzDomPainter::paint_effect_group`]).
 +struct EffectLayer {
@@ -2298,7 +2322,39 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
          generics::image::GenericImage,
          specified::background::BackgroundRepeatKeyword,
-@@ -82,6 +84,8 @@
+@@ -39,6 +41,8 @@
+     BorderBox,
+     PaddingBox,
+     ContentBox,
++    /// pyro: `mask-clip: no-clip`: everything visible.
++    NoClip,
+ }
+ 
+ // Also covers MaskClip as the type is the same
+@@ -52,6 +56,12 @@
+             // TODO: support BorderArea
+             StyloBackgroundClip::BorderArea => Self::BorderBox,
+             StyloBackgroundClip::Text => Self::BorderBox,
++
++            // pyro: `mask-clip`'s SVG boxes, for a box: fill-box is the content box, stroke-box
++            // and view-box the border box.
++            StyloBackgroundClip::FillBox => Self::ContentBox,
++            StyloBackgroundClip::StrokeBox | StyloBackgroundClip::ViewBox => Self::BorderBox,
++            StyloBackgroundClip::NoClip => Self::NoClip,
+         }
+     }
+ }
+@@ -63,6 +73,9 @@
+             StyloBackgroundOrigin::BorderBox => Self::BorderBox,
+             StyloBackgroundOrigin::PaddingBox => Self::PaddingBox,
+             StyloBackgroundOrigin::ContentBox => Self::ContentBox,
++            // pyro: `mask-origin`'s SVG boxes, for a box (as `mask-clip`'s above).
++            StyloBackgroundOrigin::FillBox => Self::ContentBox,
++            StyloBackgroundOrigin::StrokeBox | StyloBackgroundOrigin::ViewBox => Self::BorderBox,
+         }
+     }
+ }
+@@ -82,6 +95,8 @@
      pub size: &'a BackgroundSize,
      pub clip: BoxModelBox,
      pub text_clip: bool,
@@ -2307,7 +2363,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      pub origin: BoxModelBox,
      pub attachment: StyloBackgroundAttachment,
  }
-@@ -101,6 +105,8 @@
+@@ -101,6 +116,8 @@
              size: get_cyclic(&bg_styles.background_size.0, idx),
              clip: (*get_cyclic(&bg_styles.background_clip.0, idx)).into(),
              text_clip: *get_cyclic(&bg_styles.background_clip.0, idx) == StyloBackgroundClip::Text,
@@ -2316,7 +2372,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&bg_styles.background_origin.0, idx)).into(),
              attachment: *get_cyclic(&bg_styles.background_attachment.0, idx),
          }
-@@ -120,6 +126,7 @@
+@@ -120,6 +137,7 @@
              size: get_cyclic(&svg_styles.mask_size.0, idx),
              clip: (*get_cyclic(&svg_styles.mask_clip.0, idx)).into(),
              text_clip: false,
@@ -2324,7 +2380,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
              // There is no `mask-attachment` property
              attachment: StyloBackgroundAttachment::Scroll,
-@@ -129,37 +136,141 @@
+@@ -129,37 +147,141 @@
  
  impl ElementCx<'_, '_> {
      pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
@@ -2474,7 +2530,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              self.context.layer_manager.maybe_with_layer(
                  scene,
                  true,
-@@ -170,15 +281,62 @@
+@@ -170,15 +292,62 @@
                  None,
                  None,
                  |scene| {
@@ -2538,7 +2594,21 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Starts an isolated group for `background-clip: text` layers; layers drawn
      /// until [`end_text_clip_group`](Self::end_text_clip_group) are clipped to text.
      fn begin_text_clip_group(&self, scene: &mut impl PaintScene) {
-@@ -231,15 +389,30 @@
+@@ -217,6 +386,7 @@
+             BoxModelBox::BorderBox => self.frame.border_box_path(),
+             BoxModelBox::PaddingBox => self.frame.padding_box_path(),
+             BoxModelBox::ContentBox => self.frame.content_box_path(),
++            BoxModelBox::NoClip => self.visible_area().to_path(0.1),
+         }
+     }
+ 
+@@ -226,20 +396,36 @@
+             BoxModelBox::BorderBox => self.frame.border_box,
+             BoxModelBox::PaddingBox => self.frame.padding_box,
+             BoxModelBox::ContentBox => self.frame.content_box,
++            BoxModelBox::NoClip => self.visible_area(),
+         }
+     }
  
      /// Draw a single layer of a CSS image layer list (`background-image` or `mask-image`)
      pub(super) fn draw_image_layer(&self, scene: &mut impl PaintScene, layer: &ImageLayerStyles) {
@@ -2572,7 +2642,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -373,19 +546,6 @@
+@@ -373,19 +559,6 @@
          }
      }
  
@@ -2592,7 +2662,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,15 +570,30 @@
+@@ -410,23 +583,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -2610,7 +2680,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          while let Some(node) = current.and_then(|id| self.context.dom.get_node(id)) {
              if node.transform().is_some() {
                  return true;
-+            }
+             }
 +            if let Some(style) = node.primary_styles() {
 +                let box_style = style.get_box();
 +                if !box_style.transform.0.is_empty()
@@ -2624,10 +2694,10 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                {
 +                    return true;
 +                }
-             }
++            }
              current = node.parent;
          }
-@@ -426,7 +601,12 @@
+         false
      }
  
      #[cfg(feature = "svg")]
@@ -2641,7 +2711,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +619,10 @@
+@@ -439,14 +632,10 @@
              return;
          }
  
@@ -2659,7 +2729,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +637,7 @@
+@@ -461,7 +650,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -2668,7 +2738,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -482,23 +658,50 @@
+@@ -482,23 +671,50 @@
              (bg_size.height * self.scale) as f32,
          );
  
@@ -2733,7 +2803,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,11 +712,7 @@
+@@ -509,11 +725,7 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -2746,7 +2816,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let image_width = image_data.width as f64;
          let image_height = image_data.height as f64;
-@@ -527,76 +726,125 @@
+@@ -527,76 +739,125 @@
  
          let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
          let bg_size = bg_size * self.scale;
@@ -2912,11 +2982,10 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
-@@ -628,24 +876,51 @@
-             bg_pos.y,
+@@ -629,23 +890,50 @@
              bg_size.height,
          );
-+
+ 
 +        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
 +        let bounding_box = self.frame.border_box.bounding_box();
 +
@@ -2947,7 +3016,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            );
 +            return;
 +        }
- 
++
          // FIXME: https://wpt.live/css/css-backgrounds/background-size/background-size-near-zero-gradient.html
          if x.count as u64 * y.count as u64 > 500 {
              return;
@@ -2977,7 +3046,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
-@@ -875,48 +1150,64 @@
+@@ -875,48 +1163,64 @@
      stride: f64,
  }
  
@@ -3071,7 +3140,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +1249,24 @@
+@@ -958,11 +1262,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -3101,7 +3170,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +1290,16 @@
+@@ -986,6 +1303,16 @@
      (count, stride)
  }
  
@@ -5108,6 +5177,937 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +        // A negative spread (inset shadows) shrinks, and stops at zero.
 +        assert_eq!(spread_radius(10.0, -4.0, 0.0), 6.0);
 +        assert_eq!(spread_radius(3.0, -4.0, 0.0), 0.0);
++    }
++}
+diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint/src/render/clip_path.rs
+--- a/packages/blitz-paint/src/render/clip_path.rs
++++ b/packages/blitz-paint/src/render/clip_path.rs
+@@ -1,15 +1,80 @@
+ use super::ElementCx;
+-use kurbo::{BezPath, Circle, Ellipse, Point, Rect, Shape, SvgArc, Vec2};
++use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
++use anyrender::PaintScene;
++use kurbo::{Affine, BezPath, Insets, Point, Rect, Shape, SvgArc, Vec2};
++use peniko::Fill;
+ use style::values::computed::basic_shape::{BasicShape, ClipPath};
+ use style::values::computed::{Angle, CSSPixelLength, LengthPercentage};
+ use style::values::generics::basic_shape::{
+-    ArcSize, ArcSweep, AxisEndPoint, CommandEndPoint, ControlPoint, ControlReference,
++    ArcSize, ArcSweep, AxisEndPoint, CommandEndPoint, ControlPoint, ControlReference, FillRule,
+     GenericBasicShape, GenericPathOrShapeFunction, GenericShapeCommand, GenericShapeRadius,
+     ShapeBox, ShapeGeometryBox,
+ };
++use style::values::generics::border::GenericBorderRadius;
+ use style::values::generics::position::{GenericPosition, GenericPositionOrAuto};
+ 
++/// pyro: what an element's `clip-path` leaves of everything it paints (its shadows, box, content,
++/// descendants and outline), in CSS px from its border box's origin.
++pub(super) enum ElementClip {
++    /// Nothing is left: a shape of no area (an `inset()` past its box, an inside-out `rect()`, a
++    /// circle of radius 0), or a reference box of no area.
++    Nothing,
++    /// One shape, filled with its fill rule.
++    Shape(BezPath, Fill),
++}
++
++impl ElementClip {
++    fn shape(path: BezPath, fill: Fill) -> Self {
++        let bounds = path.bounding_box();
++        if bounds.width() > 0.0 && bounds.height() > 0.0 && bounds.is_finite() {
++            ElementClip::Shape(path, fill)
++        } else {
++            ElementClip::Nothing
++        }
++    }
++}
++
++/// pyro: paints `paint` clipped by an element's `clip-path` (none: unclipped). `transform` is the
++/// element's (its border box's origin), `scale` the device scale.
++pub(super) fn with_element_clip<S: PaintScene>(
++    scene: &mut S,
++    clip: Option<&ElementClip>,
++    transform: Affine,
++    scale: f64,
++    paint: impl FnOnce(&mut S),
++) {
++    match clip {
++        None => paint(scene),
++        // A clip that leaves nothing paints nothing.
++        Some(ElementClip::Nothing) => {}
++        Some(ElementClip::Shape(path, fill)) => {
++            scene.push_clip_layer(*fill, transform * Affine::scale(scale), path);
++            paint(scene);
++            scene.pop_layer();
++        }
++    }
++}
++
+ impl ElementCx<'_, '_> {
++    /// pyro: the visible area (the viewport) in this element's space, in device px; empty under
++    /// a transform that cannot be inverted.
++    pub(super) fn visible_area(&self) -> Rect {
++        let painter = self.context;
++        let viewport = Rect::new(
++            painter.initial_x,
++            painter.initial_y,
++            painter.initial_x + painter.width as f64,
++            painter.initial_y + painter.height as f64,
++        );
++        if self.transform.determinant().abs() < 1e-12 {
++            return Rect::ZERO;
++        }
++        self.transform
++            .inverse()
++            .transform_rect_bbox(viewport)
++            .inflate(1.0, 1.0)
++    }
++
+     /// Compute the rectangle (in scaled pixels, relative to the border box origin) described by
+     /// the CSS 2 `clip` property, if it applies. `clip` only applies to absolutely positioned
+     /// elements; `auto` components resolve to the corresponding border box edge.
+@@ -41,9 +106,9 @@
+         Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
+     }
+ 
+-    /// Compute the clip-path BezPath (if any) for this element.
+-    /// Returns `None` if clip-path is `none` or unsupported.
+-    pub(super) fn clip_path_shape(&self) -> Option<BezPath> {
++    /// pyro: the clip of this element's `clip-path`, `None` for `none` and for what is not
++    /// supported (a `url()` reference).
++    pub(super) fn element_clip(&self) -> Option<ElementClip> {
+         match self.style.get_clip_path() {
+             ClipPath::None => None,
+             ClipPath::Url(_) => {
+@@ -51,241 +116,357 @@
+                 None
+             }
+             ClipPath::Shape(basic_shape, geometry_box) => {
+-                let reference_box = self.resolve_geometry_box(geometry_box);
+-                self.basic_shape_to_path(basic_shape, reference_box)
++                let reference = self.reference_box(geometry_box);
++                if !(reference.width() >= 0.0 && reference.height() >= 0.0) {
++                    return Some(ElementClip::Nothing);
++                }
++                Some(self.basic_shape_clip(basic_shape, reference))
+             }
+-            ClipPath::Box(geometry_box) => {
+-                let reference_box = self.resolve_geometry_box(geometry_box);
+-                Some(Rect::from(reference_box).into_path(0.1))
+-            }
++            // A box alone clips to its edges, rounded by the box's radii.
++            ClipPath::Box(geometry_box) => Some(ElementClip::shape(
++                self.rounded_reference_box(geometry_box),
++                Fill::NonZero,
++            )),
+         }
+     }
+ 
+-    /// Resolve a ShapeGeometryBox to a concrete rectangle (x, y, width, height) in scaled pixels
++    /// The box a `<geometry-box>` names, in CSS px from the border box's origin.
+     ///
+-    /// For SVG elements without associated CSS layout box, the used value for content-box and padding-box is fill-box and for border-box and margin-box is stroke-box.
+-    /// For elements with associated CSS layout box, the used value for fill-box is content-box and for stroke-box and view-box is border-box.
+-    fn resolve_geometry_box(&self, geometry_box: &ShapeGeometryBox) -> ReferenceBox {
+-        match geometry_box {
++    /// For elements with associated CSS layout box, the used value for fill-box is content-box
++    /// and for stroke-box and view-box is border-box.
++    fn reference_box(&self, geometry_box: &ShapeGeometryBox) -> Rect {
++        let frame = &self.frame;
++        let device = match geometry_box {
+             ShapeGeometryBox::ElementDependent
+             | ShapeGeometryBox::StrokeBox
+             | ShapeGeometryBox::ViewBox
+-            | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox) => ReferenceBox {
+-                x: 0.0,
+-                y: 0.0,
+-                width: self.frame.border_box.width() / self.scale,
+-                height: self.frame.border_box.height() / self.scale,
+-            },
+-            ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => ReferenceBox {
+-                x: self.frame.border_width.x0 / self.scale,
+-                y: self.frame.border_width.y0 / self.scale,
+-                width: self.frame.padding_box.width() / self.scale,
+-                height: self.frame.padding_box.height() / self.scale,
+-            },
++            | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox) => frame.border_box,
++            ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => frame.padding_box,
+             ShapeGeometryBox::FillBox | ShapeGeometryBox::ShapeBox(ShapeBox::ContentBox) => {
+-                ReferenceBox {
+-                    x: (self.frame.border_width.x0 + self.frame.padding_width.x0) / self.scale,
+-                    y: (self.frame.border_width.y0 + self.frame.padding_width.y0) / self.scale,
+-                    width: self.frame.content_box.width() / self.scale,
+-                    height: self.frame.content_box.height() / self.scale,
+-                }
++                frame.content_box
+             }
+             ShapeGeometryBox::ShapeBox(ShapeBox::MarginBox) => {
+-                // Margin box is not tracked in CssBox, fall back to border box
+-                ReferenceBox {
+-                    x: 0.0,
+-                    y: 0.0,
+-                    width: self.frame.border_box.width() / self.scale,
+-                    height: self.frame.border_box.height() / self.scale,
+-                }
++                return self.margin_box();
+             }
+-        }
++        };
++        scale_rect(device, 1.0 / self.scale)
+     }
+ 
+-    /// Convert a CSS basic-shape to a kurbo BezPath
+-    fn basic_shape_to_path(
+-        &self,
+-        shape: &BasicShape,
+-        reference_box: ReferenceBox,
+-    ) -> Option<BezPath> {
+-        let w = reference_box.width;
+-        let h = reference_box.height;
+-        let ox = reference_box.x;
+-        let oy = reference_box.y;
++    /// The margin box, in CSS px from the border box's origin.
++    fn margin_box(&self) -> Rect {
++        let border_box = scale_rect(self.frame.border_box, 1.0 / self.scale);
++        border_box + self.margins()
++    }
+ 
++    fn margins(&self) -> Insets {
++        let margin = self.node.final_layout().margin;
++        Insets::new(
++            margin.left as f64,
++            margin.top as f64,
++            margin.right as f64,
++            margin.bottom as f64,
++        )
++    }
++
++    /// The edges of a `<geometry-box>` with its rounded corners (CSS Shapes' box shapes), in CSS
++    /// px: the border radii for the border box, the inner radii for the padding and content boxes,
++    /// and for the margin box the radii grown by the margins as `box-shadow`'s spread grows them
++    /// (Blink's `FloatRoundedRect::OutsetForShapeMargin`).
++    fn rounded_reference_box(&self, geometry_box: &ShapeGeometryBox) -> BezPath {
++        let frame = &self.frame;
++        let to_css = 1.0 / self.scale;
++        let radii = frame.border_radii * to_css;
++        let border = scale_insets(frame.border_width, to_css);
++        let padding = scale_insets(frame.padding_width, to_css);
++        let border_box = scale_rect(frame.border_box, to_css);
++        let (rect, radii) = match geometry_box {
++            ShapeGeometryBox::ElementDependent
++            | ShapeGeometryBox::StrokeBox
++            | ShapeGeometryBox::ViewBox
++            | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox) => (border_box, radii),
++            ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => {
++                (border_box - border, inset_radii(radii, border))
++            }
++            ShapeGeometryBox::FillBox | ShapeGeometryBox::ShapeBox(ShapeBox::ContentBox) => {
++                let inset = Insets::new(
++                    border.x0 + padding.x0,
++                    border.y0 + padding.y0,
++                    border.x1 + padding.x1,
++                    border.y1 + padding.y1,
++                );
++                (border_box - inset, inset_radii(radii, inset))
++            }
++            ShapeGeometryBox::ShapeBox(ShapeBox::MarginBox) => {
++                let m = self.margins();
++                let radii = NonUniformRoundedRectRadii {
++                    top_left: outset_radius(radii.top_left, m.x0, m.y0),
++                    top_right: outset_radius(radii.top_right, m.x1, m.y0),
++                    bottom_right: outset_radius(radii.bottom_right, m.x1, m.y1),
++                    bottom_left: outset_radius(radii.bottom_left, m.x0, m.y1),
++                };
++                (border_box + m, radii)
++            }
++        };
++        rounded_rect(rect, radii)
++    }
++
++    /// Convert a CSS basic-shape in its reference box (CSS px) to a clip.
++    fn basic_shape_clip(&self, shape: &BasicShape, reference: Rect) -> ElementClip {
++        let w = reference.width();
++        let h = reference.height();
++        let ox = reference.x0;
++        let oy = reference.y0;
++
+         match shape {
+             GenericBasicShape::Circle(circle) => {
+-                let (cx, cy) = resolve_position(&circle.position, w, h, ox, oy);
+-                let r = resolve_shape_radius(&circle.radius, w, h, cx - ox, cy - oy);
+-                Some(Circle::new(Point::new(cx, cy), r).into_path(0.1))
++                let center = resolve_position(&circle.position, reference);
++                let r = circle_radius(&circle.radius, center, reference);
++                ElementClip::shape(oval(center, r, r), Fill::NonZero)
+             }
+             GenericBasicShape::Ellipse(ellipse) => {
+-                let (cx, cy) = resolve_position(&ellipse.position, w, h, ox, oy);
+-                let rx = resolve_shape_radius(&ellipse.semiaxis_x, w, h, cx - ox, cy - oy);
+-                let ry = resolve_shape_radius(&ellipse.semiaxis_y, h, w, cy - oy, cx - ox);
+-                Some(Ellipse::new(Point::new(cx, cy), (rx, ry), 0.0).into_path(0.1))
++                let center = resolve_position(&ellipse.position, reference);
++                let rx = ellipse_radius(&ellipse.semiaxis_x, center.x, reference.x0, reference.x1);
++                let ry = ellipse_radius(&ellipse.semiaxis_y, center.y, reference.y0, reference.y1);
++                ElementClip::shape(oval(center, rx, ry), Fill::NonZero)
+             }
+             GenericBasicShape::Polygon(polygon) => {
+                 let mut path = BezPath::new();
+-                let _fill = &polygon.fill;
+-                let coords = &polygon.coordinates;
+-
+-                if coords.is_empty() {
+-                    return None;
+-                }
+-
+-                for (i, coord) in coords.iter().enumerate() {
+-                    let x = ox + resolve_lp(&coord.0, w);
+-                    let y = oy + resolve_lp(&coord.1, h);
++                for (i, coord) in polygon.coordinates.iter().enumerate() {
++                    let point = Point::new(ox + resolve_lp(&coord.0, w), oy + resolve_lp(&coord.1, h));
+                     if i == 0 {
+-                        path.move_to(Point::new(x, y));
++                        path.move_to(point);
+                     } else {
+-                        path.line_to(Point::new(x, y));
++                        path.line_to(point);
+                     }
+                 }
+                 path.close_path();
+-
+-                Some(path)
++                ElementClip::shape(path, fill_rule(polygon.fill))
+             }
+             GenericBasicShape::Rect(inset_rect) => {
+-                // inset() function: inset(top right bottom left round border-radius)
++                // `inset()` (`rect()` and `xywh()` compute to it): insets that add up to more
++                // than the box are reduced in proportion, to a rectangle of no area.
+                 let top = resolve_lp(&inset_rect.rect.0, h);
+                 let right = resolve_lp(&inset_rect.rect.1, w);
+                 let bottom = resolve_lp(&inset_rect.rect.2, h);
+                 let left = resolve_lp(&inset_rect.rect.3, w);
+-
+-                let x0 = ox + left;
+-                let y0 = oy + top;
+-                let x1 = ox + w - right;
+-                let y1 = oy + h - bottom;
+-
+-                if x1 <= x0 || y1 <= y0 {
+-                    return None;
++                let rect = Rect::new(ox + left, oy + top, ox + w - right, oy + h - bottom);
++                if !(rect.x1 > rect.x0 && rect.y1 > rect.y0) {
++                    return ElementClip::Nothing;
+                 }
+-
+-                // TODO: Support border-radius on inset()
+-                Some(kurbo::Rect::new(x0, y0, x1, y1).into_path(0.1))
++                // `round`: corner radii as `border-radius` gives them, percentages of the
++                // reference box, shrunk together when they overlap.
++                let radii = resolve_radii(&inset_rect.round, w, h);
++                ElementClip::shape(rounded_rect(rect, radii), Fill::NonZero)
+             }
+-            GenericBasicShape::PathOrShape(path_or_shape) => match path_or_shape {
+-                GenericPathOrShapeFunction::Path(path) => svg_path_to_bezpath(
+-                    path.commands(),
+-                    |v| *v as f64,
+-                    |v| *v as f64,
+-                    |v| *v as f64,
+-                )
+-                .map(|mut p| {
+-                    p.apply_affine(kurbo::Affine::translate((ox, oy)));
+-                    p
+-                }),
+-                GenericPathOrShapeFunction::Shape(shape) => svg_path_to_bezpath(
+-                    &shape.commands,
+-                    move |v: &LengthPercentage| {
+-                        v.resolve(CSSPixelLength::new(w as f32)).px() as f64
+-                    },
+-                    move |v: &LengthPercentage| {
+-                        v.resolve(CSSPixelLength::new(h as f32)).px() as f64
+-                    },
+-                    move |v: &Angle| v.degrees() as f64,
+-                )
+-                .map(|mut p| {
+-                    p.apply_affine(kurbo::Affine::translate((ox, oy)));
+-                    p
+-                }),
+-            },
++            GenericBasicShape::PathOrShape(path_or_shape) => {
++                let (path, fill) = match path_or_shape {
++                    GenericPathOrShapeFunction::Path(path) => {
++                        // `path()` data is in CSS px, zoomed as lengths are.
++                        let zoom = self.style.effective_zoom.value() as f64;
++                        let path_data = svg_path_to_bezpath(
++                            path.commands(),
++                            |v| *v as f64 * zoom,
++                            |v| *v as f64 * zoom,
++                            |v| *v as f64 * zoom,
++                            |v| *v as f64,
++                        );
++                        (path_data, path.fill)
++                    }
++                    GenericPathOrShapeFunction::Shape(shape) => {
++                        // A single arc radius (and a percentage of it) is of the reference box's
++                        // direction-agnostic size, as a circle's.
++                        let agnostic = w.hypot(h) / std::f64::consts::SQRT_2;
++                        let path_data = svg_path_to_bezpath(
++                            &shape.commands,
++                            move |v: &LengthPercentage| resolve_lp(v, w),
++                            move |v: &LengthPercentage| resolve_lp(v, h),
++                            move |v: &LengthPercentage| resolve_lp(v, agnostic),
++                            move |v: &Angle| v.degrees() as f64,
++                        );
++                        (path_data, shape.fill)
++                    }
++                };
++                match path {
++                    Some(mut path) => {
++                        path.apply_affine(Affine::translate((ox, oy)));
++                        ElementClip::shape(path, fill_rule(fill))
++                    }
++                    None => ElementClip::Nothing,
++                }
++            }
+         }
+     }
+ }
+ 
+-/// A resolved reference box in scaled pixel coordinates
+-#[derive(Clone, Copy)]
+-struct ReferenceBox {
+-    x: f64,
+-    y: f64,
+-    width: f64,
+-    height: f64,
++fn fill_rule(rule: FillRule) -> Fill {
++    match rule {
++        FillRule::Nonzero => Fill::NonZero,
++        FillRule::Evenodd => Fill::EvenOdd,
++    }
+ }
+ 
+-impl From<ReferenceBox> for kurbo::Rect {
+-    fn from(reference_box: ReferenceBox) -> Self {
+-        kurbo::Rect::new(
+-            reference_box.x,
+-            reference_box.y,
+-            reference_box.x + reference_box.width,
+-            reference_box.y + reference_box.height,
+-        )
++fn scale_rect(rect: Rect, by: f64) -> Rect {
++    Rect::new(rect.x0 * by, rect.y0 * by, rect.x1 * by, rect.y1 * by)
++}
++
++/// An ellipse as every clip draws one: as the box of `border-radius: 50%` is drawn, so that a
++/// `circle()` clips what a round box covers (WPT's references are such boxes).
++fn oval(center: Point, rx: f64, ry: f64) -> BezPath {
++    let radius = Vec2::new(rx, ry);
++    let radii = NonUniformRoundedRectRadii {
++        top_left: radius,
++        top_right: radius,
++        bottom_right: radius,
++        bottom_left: radius,
++    };
++    let rect = Rect::new(center.x - rx, center.y - ry, center.x + rx, center.y + ry);
++    CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii).border_box_path()
++}
++
++fn scale_insets(insets: Insets, by: f64) -> Insets {
++    Insets::new(insets.x0 * by, insets.y0 * by, insets.x1 * by, insets.y1 * by)
++}
++
++/// The radii of a box `inset` inside one with `radii` (CSS Backgrounds' inner radii).
++fn inset_radii(radii: NonUniformRoundedRectRadii, inset: Insets) -> NonUniformRoundedRectRadii {
++    let shrink = |r: Vec2, x: f64, y: f64| Vec2::new((r.x - x).max(0.0), (r.y - y).max(0.0));
++    NonUniformRoundedRectRadii {
++        top_left: shrink(radii.top_left, inset.x0, inset.y0),
++        top_right: shrink(radii.top_right, inset.x1, inset.y0),
++        bottom_right: shrink(radii.bottom_right, inset.x1, inset.y1),
++        bottom_left: shrink(radii.bottom_left, inset.x0, inset.y1),
+     }
+ }
+ 
+-/// Resolve a LengthPercentage value against a basis length (already scaled)
++/// A rectangle with elliptical corners, the radii shrunk together where they overlap (as
++/// `border-radius`'s are). One whose corners make a whole ellipse is that ellipse, drawn as
++/// `circle()` and `ellipse()` are (the same box clips alike whichever way it is given).
++fn rounded_rect(rect: Rect, radii: NonUniformRoundedRectRadii) -> BezPath {
++    let css_box = CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii);
++    let (rx, ry) = (rect.width() / 2.0, rect.height() / 2.0);
++    let r = css_box.border_radii;
++    let half = |c: Vec2| (c.x - rx).abs() < 1e-9 && (c.y - ry).abs() < 1e-9;
++    if rx > 0.0 && ry > 0.0 && half(r.top_left) && half(r.top_right) && half(r.bottom_right) && half(r.bottom_left) {
++        return oval(rect.center(), rx, ry);
++    }
++    css_box.border_box_path()
++}
++
++/// The `<border-radius>` of an `inset()`, in CSS px: widths of `w`, heights of `h`.
++fn resolve_radii(
++    round: &GenericBorderRadius<style::values::computed::NonNegativeLengthPercentage>,
++    w: f64,
++    h: f64,
++) -> NonUniformRoundedRectRadii {
++    let resolve = |corner: &style::values::computed::BorderCornerRadius| Vec2 {
++        x: resolve_lp(&corner.0.width.0, w),
++        y: resolve_lp(&corner.0.height.0, h),
++    };
++    NonUniformRoundedRectRadii {
++        top_left: resolve(&round.top_left),
++        top_right: resolve(&round.top_right),
++        bottom_right: resolve(&round.bottom_right),
++        bottom_left: resolve(&round.bottom_left),
++    }
++}
++
++/// A corner radius grown by the margins beside it (`dx` the horizontal one, `dy` the vertical):
++/// the radius plus the margin, the margin first scaled by `1 + (ratio - 1)^3` where the radius is
++/// smaller than it (CSS Backgrounds' spread rule); a sharp corner stays sharp.
++fn outset_radius(radius: Vec2, dx: f64, dy: f64) -> Vec2 {
++    fn grow(radius: f64, outset: f64) -> f64 {
++        if radius <= 0.0 {
++            return 0.0;
++        }
++        if outset <= 0.0 {
++            return (radius + outset).max(0.0);
++        }
++        if radius >= outset {
++            return radius + outset;
++        }
++        let ratio = radius / outset;
++        radius + outset * (1.0 + (ratio - 1.0).powi(3))
++    }
++    if radius.x <= 0.0 || radius.y <= 0.0 {
++        return Vec2::ZERO;
++    }
++    Vec2::new(grow(radius.x, dx), grow(radius.y, dy))
++}
++
++/// Resolve a LengthPercentage value against a basis length
+ fn resolve_lp(lp: &LengthPercentage, basis: f64) -> f64 {
+     let basis_css = CSSPixelLength::new(basis as f32);
+     lp.resolve(basis_css).px() as f64
+ }
+ 
+-/// Resolve a position (or auto => center) to absolute coordinates
++/// Resolve a position (or auto => center) in the reference box
+ fn resolve_position(
+     position: &GenericPositionOrAuto<style::values::computed::Position>,
+-    w: f64,
+-    h: f64,
+-    ox: f64,
+-    oy: f64,
+-) -> (f64, f64) {
++    reference: Rect,
++) -> Point {
+     match position {
+-        GenericPositionOrAuto::Auto => (ox + w / 2.0, oy + h / 2.0),
+-        GenericPositionOrAuto::Position(pos) => {
+-            let x = ox + resolve_lp(&pos.horizontal, w);
+-            let y = oy + resolve_lp(&pos.vertical, h);
+-            (x, y)
+-        }
++        GenericPositionOrAuto::Auto => reference.center(),
++        GenericPositionOrAuto::Position(pos) => Point::new(
++            reference.x0 + resolve_lp(&pos.horizontal, reference.width()),
++            reference.y0 + resolve_lp(&pos.vertical, reference.height()),
++        ),
+     }
+ }
+ 
+-/// Resolve a shape radius keyword or length value
+-fn resolve_shape_radius(
++/// A `circle()`'s radius: a percentage is of the reference box's direction-agnostic size
++/// (`sqrt(w² + h²) / sqrt(2)`); the side keywords measure to the box's sides in both axes, the
++/// corner keywords to its corners.
++fn circle_radius(
+     radius: &GenericShapeRadius<LengthPercentage>,
+-    primary_size: f64,
+-    secondary_size: f64,
+-    center_offset_primary: f64,
+-    center_offset_secondary: f64,
++    center: Point,
++    reference: Rect,
+ ) -> f64 {
++    let dx = [(center.x - reference.x0).abs(), (reference.x1 - center.x).abs()];
++    let dy = [(center.y - reference.y0).abs(), (reference.y1 - center.y).abs()];
+     match radius {
+-        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, primary_size),
+-        GenericShapeRadius::ClosestSide => center_offset_primary
+-            .min(primary_size - center_offset_primary)
+-            .min(center_offset_secondary)
+-            .min(secondary_size - center_offset_secondary)
+-            .max(0.0),
+-        GenericShapeRadius::FarthestSide => center_offset_primary
+-            .max(primary_size - center_offset_primary)
+-            .max(center_offset_secondary)
+-            .max(secondary_size - center_offset_secondary),
+-
+-        GenericShapeRadius::FarthestCorner => {
+-            let dp = center_offset_primary.max(primary_size - center_offset_primary);
+-            let ds = center_offset_secondary.max(secondary_size - center_offset_secondary);
+-            dp.hypot(ds)
++        GenericShapeRadius::Length(lp) => {
++            let agnostic = reference.width().hypot(reference.height()) / std::f64::consts::SQRT_2;
++            resolve_lp(&lp.0, agnostic)
+         }
+-        GenericShapeRadius::ClosestCorner => {
+-            let dp = center_offset_primary
+-                .min(primary_size - center_offset_primary)
+-                .max(0.0);
+-            let ds = center_offset_secondary
+-                .min(secondary_size - center_offset_secondary)
+-                .max(0.0);
+-            dp.hypot(ds)
+-        }
++        GenericShapeRadius::ClosestSide => dx[0].min(dx[1]).min(dy[0]).min(dy[1]),
++        GenericShapeRadius::FarthestSide => dx[0].max(dx[1]).max(dy[0]).max(dy[1]),
++        GenericShapeRadius::ClosestCorner => dx[0].min(dx[1]).hypot(dy[0].min(dy[1])),
++        GenericShapeRadius::FarthestCorner => dx[0].max(dx[1]).hypot(dy[0].max(dy[1])),
+     }
+ }
+ 
++/// One of an `ellipse()`'s radii, along the axis whose reference box edges are `start` and `end`
++/// and center coordinate `center`: the side keywords measure to the sides in that axis only.
++fn ellipse_radius(
++    radius: &GenericShapeRadius<LengthPercentage>,
++    center: f64,
++    start: f64,
++    end: f64,
++) -> f64 {
++    let near = (center - start).abs().min((end - center).abs());
++    let far = (center - start).abs().max((end - center).abs());
++    match radius {
++        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, end - start),
++        GenericShapeRadius::ClosestSide => near,
++        GenericShapeRadius::FarthestSide => far,
++        // Behind a pref that is off (`layout.css.ellipse-corners.enabled`): the corner's
++        // distance along this axis.
++        GenericShapeRadius::ClosestCorner => near,
++        GenericShapeRadius::FarthestCorner => far,
++    }
++}
++
+ type GenericPathCommand<Angle, N> = GenericShapeCommand<Angle, N, GenericPosition<N, N>, N>;
+ 
+-/// Convert an SVG path() to a kurbo BezPath.
++/// Convert an SVG path() or a shape() to a kurbo BezPath.
+ /// The returned path is in the path's own coordinate system (origin at 0,0).
+ /// The caller is responsible for translating it to the reference box origin.
++/// `resolve_radius` resolves an arc radius given alone (both radii).
+ fn svg_path_to_bezpath<Angle: Copy, N>(
+     commands: &[GenericPathCommand<Angle, N>],
+     resolve_x: impl Fn(&N) -> f64,
+     resolve_y: impl Fn(&N) -> f64,
++    resolve_radius: impl Fn(&N) -> f64,
+     resolve_angle: impl Fn(&Angle) -> f64,
+ ) -> Option<BezPath> {
+     if commands.is_empty() {
+@@ -369,29 +550,32 @@
+                 arc_size,
+                 rotate,
+             } => {
+-                // SVG arc commands are complex; approximate as a line for now
+                 let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
++                let radii = match radii.ry.as_ref() {
++                    Some(ry) => Vec2::new(resolve_x(&radii.rx), resolve_y(ry)),
++                    None => Vec2::splat(resolve_radius(&radii.rx)),
++                };
+                 let svg_arc = SvgArc {
+                     from: cur,
+                     to: p,
+-                    radii: Vec2 {
+-                        x: resolve_x(&radii.rx),
+-                        y: resolve_y(radii.ry.as_ref().unwrap_or(&radii.rx)),
+-                    },
+-                    x_rotation: resolve_angle(rotate),
+-                    large_arc: match arc_size {
+-                        ArcSize::Large => true,
+-                        ArcSize::Small => false,
+-                    },
+-                    // TODO: check mapping is correct
+-                    sweep: match arc_sweep {
+-                        ArcSweep::Ccw => true,
+-                        ArcSweep::Cw => false,
+-                    },
++                    radii,
++                    // kurbo takes radians; CSS and SVG give degrees.
++                    x_rotation: resolve_angle(rotate).to_radians(),
++                    large_arc: matches!(arc_size, ArcSize::Large),
++                    // `cw` is SVG's sweep flag 1 (the direction of increasing angles, clockwise
++                    // with y down).
++                    sweep: matches!(arc_sweep, ArcSweep::Cw),
+                 };
+-                let arc = kurbo::Arc::from_svg_arc(&svg_arc)?;
+-                for el in arc.append_iter(0.1) {
+-                    bez.push(el);
++                match kurbo::Arc::from_svg_arc(&svg_arc) {
++                    Some(arc) => {
++                        for el in arc.append_iter(0.1) {
++                            bez.push(el);
++                        }
++                    }
++                    // An arc with a zero radius is a straight line (SVG's out-of-range rule);
++                    // one ending where it starts draws nothing.
++                    None if p != cur => bez.line_to(p),
++                    None => {}
+                 }
+                 last_control = None;
+                 cur = p;
+diff --git a/packages/blitz-paint/src/render/mask.rs b/packages/blitz-paint/src/render/mask.rs
+--- a/packages/blitz-paint/src/render/mask.rs
++++ b/packages/blitz-paint/src/render/mask.rs
+@@ -1,5 +1,6 @@
+ //! Rendering for the CSS `mask` properties (`mask-image`, `mask-position`,
+-//! `mask-size`, `mask-repeat`, `mask-clip`, `mask-origin`).
++//! `mask-size`, `mask-repeat`, `mask-clip`, `mask-origin`, `mask-mode`,
++//! `mask-composite`).
+ //!
+ //! Masks are applied by:
+ //!
+@@ -16,16 +17,17 @@
+ //! `background-*` properties share computed value types.
+ use crate::render::background::get_cyclic;
+ 
+-use super::background::ImageLayerStyles;
++use super::background::{BoxModelBox, ImageLayerStyles};
+ use super::{ALMOST_OPAQUE, ElementCx};
+-use anyrender::PaintScene;
+-use peniko::{BlendMode, Compose, Fill, Mix};
++use anyrender::recording::RenderCommand;
++use anyrender::{Paint, PaintScene, Scene};
++use kurbo::{Affine, BezPath};
++use peniko::{BlendMode, Color, Compose, Fill, ImageBrush, ImageData, Mix};
++use std::cell::RefCell;
+ use style::properties::generated::longhands::mask_composite::single_value::computed_value::T as StyloMaskComposite;
++use style::properties::generated::longhands::mask_mode::single_value::computed_value::T as StyloMaskMode;
+ use style::values::generics::image::GenericImage;
+ 
+-#[cfg(feature = "tracing")]
+-use tracing::warn;
+-
+ impl ElementCx<'_, '_> {
+     /// Whether the element has any CSS `mask-image` layers
+     pub(super) fn has_css_mask(&self) -> bool {
+@@ -37,6 +39,25 @@
+             .any(|image| !matches!(image, GenericImage::None))
+     }
+ 
++    /// pyro: the mask painting area (CSS Masking's "mask painting area"), in device px from the
++    /// border box's origin: the largest of the layers' `mask-clip` boxes (the boxes nest), rounded
++    /// by the element's radii; everything visible for `mask-clip: no-clip`. Outside it the mask
++    /// is transparent: nothing of the element is left.
++    fn mask_painting_area(&self) -> BezPath {
++        let svg_styles = self.style.get_svg();
++        let rank = |clip: BoxModelBox| match clip {
++            BoxModelBox::NoClip => 3,
++            BoxModelBox::BorderBox => 2,
++            BoxModelBox::PaddingBox => 1,
++            BoxModelBox::ContentBox => 0,
++        };
++        let largest = (0..svg_styles.mask_image.0.len())
++            .map(|idx| BoxModelBox::from(*get_cyclic(&svg_styles.mask_clip.0, idx)))
++            .max_by_key(|&clip| rank(clip))
++            .unwrap_or(BoxModelBox::BorderBox);
++        self.box_path(largest)
++    }
++
+     /// If the element has a CSS mask, push an isolation layer for the masked content
+     /// to be drawn into. Returns whether a layer was pushed, which should later be
+     /// passed to [`maybe_pop_css_mask_layer`](Self::maybe_pop_css_mask_layer).
+@@ -45,14 +66,14 @@
+             return false;
+         }
+ 
+-        // Content outside of the mask painting area (at largest the border box) has
+-        // a mask alpha of 0, so we can clip the isolation layer to the border box.
++        // Content outside of the mask painting area has a mask alpha of 0, so the
++        // isolation layer is clipped to it.
+         scene.push_layer(
+             Fill::NonZero,
+             Mix::Normal,
+             ALMOST_OPAQUE,
+             self.transform,
+-            &self.frame.border_box_path(),
++            &self.mask_painting_area(),
+             None,
+             None,
+         );
+@@ -67,41 +88,32 @@
+             return;
+         }
+ 
++        // The `DestIn` layer covers the whole isolation layer: where a destructive layer
++        // draws nothing, it leaves what is under it.
++        let area = self.mask_painting_area();
+         scene.push_layer(
+             Fill::NonZero,
+             BlendMode::new(Mix::Normal, Compose::DestIn),
+             1.0,
+             self.transform,
+-            &self.frame.border_box_path(),
++            &area,
+             None,
+             None,
+         );
+-        self.draw_css_mask(scene);
++        self.draw_css_mask(scene, &area);
+         scene.pop_layer(); // Mask (DestIn) layer
+         scene.pop_layer(); // Isolation layer
+     }
+ 
+     /// Draw the mask image layers (analogous to `draw_background` for `background-image`)
+-    fn draw_css_mask(&self, scene: &mut impl PaintScene) {
++    fn draw_css_mask(&self, scene: &mut impl PaintScene, area: &BezPath) {
+         let svg_styles = self.style.get_svg();
+         let image_data = &self.element.mask_images;
+         let layer_count = svg_styles.mask_image.0.len();
+ 
+         for idx in (0..layer_count).rev() {
+             let layer = ImageLayerStyles::from_svg(svg_styles, image_data, idx);
+-            let mask_clip_path = self.box_path(layer.clip);
+ 
+-            // TODO: support `mask-mode: luminance` (luminance masks are currently
+-            // rendered as alpha masks).
+-            #[cfg(feature = "tracing")]
+-            {
+-                use style::properties::generated::longhands::mask_mode::single_value::computed_value::T as StyloMaskMode;
+-                let mask_mode = &svg_styles.mask_mode.0;
+-                if matches!(get_cyclic(&mask_mode, idx), StyloMaskMode::Luminance) {
+-                    warn!("mask-mode: luminance is not supported (falling back to alpha)");
+-                }
+-            }
+-
+             // Each mask layer is composited with the (already drawn) layers below it
+             // using the Porter-Duff operator given by its `mask-composite` value. The
+             // bottommost layer has no layers below it and is always drawn with SrcOver.
+@@ -119,18 +131,127 @@
+ 
+             // The layer is pushed unconditionally (even for `mask-image: none` layers,
+             // which draw nothing) as compositing a transparent black layer with e.g.
+-            // `intersect` clears the mask built up so far.
++            // `intersect` clears the mask built up so far. It covers the whole painting
++            // area, and the layer's image is cut to its `mask-clip` box inside it: outside
++            // that box the layer is transparent black, which its operator composites too.
+             scene.push_layer(
+                 Fill::NonZero,
+                 BlendMode::new(Mix::Normal, compose),
+                 1.0,
+                 self.transform,
+-                &mask_clip_path,
++                area,
+                 None,
+                 None,
+             );
+-            self.draw_image_layer(scene, &layer);
++            scene.push_clip_layer(Fill::NonZero, self.transform, &self.box_path(layer.clip));
++            // pyro: `mask-mode: luminance` uses the image's luminance as its alpha
++            // (`match-source` is alpha for an image).
++            if *get_cyclic(&svg_styles.mask_mode.0, idx) == StyloMaskMode::Luminance {
++                let mut recording = Scene::new();
++                self.draw_image_layer(&mut recording, &layer);
++                luminance_to_alpha(&mut recording);
++                scene.append_scene(recording, Affine::IDENTITY);
++            } else {
++                self.draw_image_layer(scene, &layer);
++            }
+             scene.pop_layer();
++            scene.pop_layer();
+         }
+     }
+ }
++
++/// The luminance of an sRGB colour (unpremultiplied components), with `feColorMatrix`'s
++/// `luminanceToAlpha` coefficients.
++fn luminance([r, g, b]: [f32; 3]) -> f32 {
++    0.2125 * r + 0.7154 * g + 0.0721 * b
++}
++
++/// A colour's luminance mask value as its alpha, over black: `alpha × luminance`.
++fn luminance_color(color: Color) -> Color {
++    let [r, g, b, a] = color.components;
++    Color::new([0.0, 0.0, 0.0, (a * luminance([r, g, b])).clamp(0.0, 1.0)])
++}
++
++/// pyro: turns what `scene` paints into its luminance mask, as alpha over black: each solid
++/// colour, gradient stop and image pixel becomes black with the alpha `alpha × luminance`. Exact
++/// for content whose paints do not overlap translucently (an image, a gradient, a vector image's
++/// shapes side by side); the luminance of overlapping translucent paints is approximated.
++fn luminance_to_alpha(scene: &mut Scene) {
++    for command in &mut scene.commands {
++        match command {
++            RenderCommand::Fill(fill) => luminance_paint(&mut fill.brush),
++            RenderCommand::Stroke(stroke) => luminance_paint(&mut stroke.brush),
++            RenderCommand::GlyphRun(run) => luminance_paint(&mut run.brush),
++            RenderCommand::BoxShadow(shadow) => shadow.brush = luminance_color(shadow.brush),
++            RenderCommand::PushLayer(_) | RenderCommand::PushClipLayer(_) | RenderCommand::PopLayer => {}
++        }
++    }
++}
++
++fn luminance_paint(paint: &mut Paint) {
++    match paint {
++        Paint::Solid(color) => *color = luminance_color(*color),
++        Paint::Gradient(gradient) => {
++            for stop in gradient.stops.iter_mut() {
++                let color = stop.color.to_alpha_color::<color::Srgb>();
++                stop.color = color::DynamicColor::from_alpha_color(luminance_color(color));
++            }
++        }
++        Paint::Image(image) => *image = luminance_image(image),
++        // Paints the backend owns are left as they are.
++        Paint::Resource(_) | Paint::Custom(_) => {}
++    }
++}
++
++thread_local! {
++    /// The luminance masks of the last few mask images (keyed by their data's id), so an image
++    /// is converted once, and the renderer sees the same image (and caches it) frame to frame.
++    static LUMINANCE_IMAGES: RefCell<Vec<(u64, ImageData)>> = const { RefCell::new(Vec::new()) };
++}
++
++/// An image's luminance mask (see [`luminance_to_alpha`]), black with alpha.
++fn luminance_image(image: &ImageBrush) -> ImageBrush {
++    let source = &image.image;
++    let id = source.data.id();
++    let cached = LUMINANCE_IMAGES.with_borrow(|cache| {
++        cache
++            .iter()
++            .find(|(key, _)| *key == id)
++            .map(|(_, data)| data.clone())
++    });
++    let data = cached.unwrap_or_else(|| {
++        let premultiplied = source.alpha_type == peniko::ImageAlphaType::AlphaPremultiplied;
++        let bgra = source.format == peniko::ImageFormat::Bgra8;
++        let mut out = Vec::with_capacity(source.data.data().len());
++        for pixel in source.data.data().chunks_exact(4) {
++            let (r, g, b) = if bgra {
++                (pixel[2], pixel[1], pixel[0])
++            } else {
++                (pixel[0], pixel[1], pixel[2])
++            };
++            let a = pixel[3] as f32 / 255.0;
++            let l = luminance([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]);
++            // Premultiplied components are already scaled by alpha.
++            let alpha = if premultiplied { l } else { l * a };
++            out.extend_from_slice(&[0, 0, 0, (alpha * 255.0).round().clamp(0.0, 255.0) as u8]);
++        }
++        let data = ImageData {
++            data: peniko::Blob::new(std::sync::Arc::new(out)),
++            format: peniko::ImageFormat::Rgba8,
++            alpha_type: peniko::ImageAlphaType::Alpha,
++            width: source.width,
++            height: source.height,
++        };
++        LUMINANCE_IMAGES.with_borrow_mut(|cache| {
++            if cache.len() >= 8 {
++                cache.remove(0);
++            }
++            cache.push((id, data.clone()));
++        });
++        data
++    });
++    ImageBrush {
++        image: data,
++        sampler: image.sampler,
 +    }
 +}
 diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs

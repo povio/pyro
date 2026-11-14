@@ -519,6 +519,23 @@ pub struct BaseDocument {
     /// `BaseDocument::may_have_generated_before_after`).
     pub(crate) generated_before_after: bool,
 
+    /// pyro: a style traversal kept a `::first-letter` style for some element (sticky): inline
+    /// roots look for a first letter to style (`layout::first_letter`).
+    pub(crate) first_letter_styles: bool,
+    /// pyro: elements whose `::first-letter` style a style traversal changed, for the next
+    /// resolve (`layout::first_letter::style_changed`).
+    pub(crate) first_letter_changed: Vec<NodeId>,
+
+    /// pyro: a style traversal kept a `::before` / `::after` whose content reads counters or
+    /// quotes (sticky): each resolve with damage evaluates them (`layout::counters`).
+    pub(crate) generated_counters: bool,
+    /// pyro: the generated text of each element's `::after` and `::before` with counters and
+    /// quotes evaluated (`layout::counters`), while `generated_counters`.
+    pub(crate) generated_text: HashMap<NodeId, crate::layout::counters::GeneratedText>,
+    /// pyro: a style change or a child list change since the last evaluation can have changed
+    /// counters or quotes (`layout::counters`).
+    pub(crate) counters_dirty: bool,
+
     /// pyro: the top layer (modal dialogs, showing popovers) as
     /// the embedder marks it, by rank (bottom first): elements whose
     /// `urn:x-pyro:state` `state` attribute has a `top-layer=N`
@@ -714,6 +731,11 @@ impl BaseDocument {
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
             generated_before_after: false,
+            first_letter_styles: false,
+            first_letter_changed: Vec::new(),
+            generated_counters: false,
+            generated_text: HashMap::new(),
+            counters_dirty: true,
             top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
@@ -1242,6 +1264,10 @@ impl BaseDocument {
             }
             if let Some(after) = node.after() {
                 crate::util::ensure_stack(|| self.drop_node_ignoring_parent_with(after, on_drop));
+            }
+            // pyro: the node holding its `::first-letter` style.
+            if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter) {
+                self.remove_node_from_tree(first_letter);
             }
 
             for &child in &node.children {

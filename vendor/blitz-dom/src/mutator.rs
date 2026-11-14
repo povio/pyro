@@ -908,6 +908,8 @@ impl DocumentMutator<'_> {
         changed: Range<usize>,
         removed_element: bool,
     ) {
+        // pyro: an element that came or went can change counters and quotes (`layout::counters`).
+        self.doc.counters_dirty = true;
         let parent = &self.doc.nodes[parent_id];
         let flags = parent.selector_flags().get();
         let mut hint = RestyleHint::empty();
@@ -1186,6 +1188,7 @@ impl DocumentMutator<'_> {
                             doc.remove_and_drop_pe(pe);
                         }
                     }
+                    crate::layout::first_letter::drop_style_node(doc, id);
                     let node = &mut doc.nodes[id];
                     if let Some(element) = node.element_data_mut() {
                         element.take_inline_layout();

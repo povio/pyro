@@ -41,6 +41,8 @@ pub(super) enum BoxModelBox {
     BorderBox,
     PaddingBox,
     ContentBox,
+    /// pyro: `mask-clip: no-clip`: everything visible.
+    NoClip,
 }
 
 // Also covers MaskClip as the type is the same
@@ -54,6 +56,12 @@ impl From<StyloBackgroundClip> for BoxModelBox {
             // TODO: support BorderArea
             StyloBackgroundClip::BorderArea => Self::BorderBox,
             StyloBackgroundClip::Text => Self::BorderBox,
+
+            // pyro: `mask-clip`'s SVG boxes, for a box: fill-box is the content box, stroke-box
+            // and view-box the border box.
+            StyloBackgroundClip::FillBox => Self::ContentBox,
+            StyloBackgroundClip::StrokeBox | StyloBackgroundClip::ViewBox => Self::BorderBox,
+            StyloBackgroundClip::NoClip => Self::NoClip,
         }
     }
 }
@@ -65,6 +73,9 @@ impl From<StyloBackgroundOrigin> for BoxModelBox {
             StyloBackgroundOrigin::BorderBox => Self::BorderBox,
             StyloBackgroundOrigin::PaddingBox => Self::PaddingBox,
             StyloBackgroundOrigin::ContentBox => Self::ContentBox,
+            // pyro: `mask-origin`'s SVG boxes, for a box (as `mask-clip`'s above).
+            StyloBackgroundOrigin::FillBox => Self::ContentBox,
+            StyloBackgroundOrigin::StrokeBox | StyloBackgroundOrigin::ViewBox => Self::BorderBox,
         }
     }
 }
@@ -375,6 +386,7 @@ impl ElementCx<'_, '_> {
             BoxModelBox::BorderBox => self.frame.border_box_path(),
             BoxModelBox::PaddingBox => self.frame.padding_box_path(),
             BoxModelBox::ContentBox => self.frame.content_box_path(),
+            BoxModelBox::NoClip => self.visible_area().to_path(0.1),
         }
     }
 
@@ -384,6 +396,7 @@ impl ElementCx<'_, '_> {
             BoxModelBox::BorderBox => self.frame.border_box,
             BoxModelBox::PaddingBox => self.frame.padding_box,
             BoxModelBox::ContentBox => self.frame.content_box,
+            BoxModelBox::NoClip => self.visible_area(),
         }
     }
 

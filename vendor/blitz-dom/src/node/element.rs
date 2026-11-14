@@ -125,6 +125,10 @@ pub struct ElementData {
     // Pseudo element nodes
     pub before: Option<NodeId>,
     pub after: Option<NodeId>,
+    /// pyro: the node holding this element's `::first-letter` style, the brush of its first
+    /// letter in the inline layout that holds it (`layout::first_letter`). Not in the tree: no
+    /// children, no damage, its parent is the letter's text's parent.
+    pub first_letter: Option<NodeId>,
 
     /// Detailed layout information from the most recent layout (currently
     /// grid track sizing information for grid containers only). Used by
@@ -372,6 +376,7 @@ impl Clone for ElementData {
             sampled_transitions: None,
             before: None,
             after: None,
+            first_letter: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -489,6 +494,7 @@ impl ElementData {
             sampled_transitions: None,
             before: None,
             after: None,
+            first_letter: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,

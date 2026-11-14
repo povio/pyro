@@ -4,6 +4,7 @@
 
 mod borders_backgrounds;
 mod br_flex_item;
+mod clip_path_mask;
 mod container_queries;
 mod containing_block_chain;
 mod dotted_dashed_lines;
@@ -11,6 +12,7 @@ mod filter_drop_shadow;
 mod font_optical_sizing;
 mod font_unicode_range;
 mod fractional_scroll_overflow;
+mod generated_content;
 mod hyphen_digit_breaks;
 mod image_input_replaced;
 mod incremental_construction;
