@@ -895,7 +895,7 @@ index fd573d2..18f8895 100644
      }
  }
 diff --git a/src/image_renderer.rs b/src/image_renderer.rs
-index 619d5d4..96cd8c5 100644
+index 619d5d4..6352428 100644
 --- a/src/image_renderer.rs
 +++ b/src/image_renderer.rs
 @@ -1,7 +1,7 @@
@@ -907,10 +907,16 @@ index 619d5d4..96cd8c5 100644
  
  pub struct VelloCpuImageRenderer {
      scene: VelloCpuScenePainter,
-@@ -23,6 +23,25 @@ impl VelloCpuImageRenderer {
+@@ -23,6 +23,31 @@ impl VelloCpuImageRenderer {
      pub fn clear_image_cache(&mut self) {
          self.scene.clear_image_cache();
      }
++
++    /// pyro: glyphs aliased or antialiased (`None`, the default); see
++    /// [`VelloCpuScenePainter::set_text_aliasing_threshold`]. Resizing keeps it.
++    pub fn set_text_aliasing_threshold(&mut self, threshold: Option<u8>) {
++        self.scene.set_text_aliasing_threshold(threshold);
++    }
 +
 +    /// Create a renderer that rasterizes on `threads` worker threads of its own
 +    /// (vello_cpu's `RenderSettings::num_threads`; 0: on the calling thread,
@@ -933,7 +939,7 @@ index 619d5d4..96cd8c5 100644
  }
  
  impl AnyRenderContext for VelloCpuImageRenderer {}
-@@ -36,7 +55,8 @@ impl ImageRenderer for VelloCpuImageRenderer {
+@@ -36,7 +61,8 @@ impl ImageRenderer for VelloCpuImageRenderer {
      }
  
      fn resize(&mut self, width: u32, height: u32) {
@@ -956,7 +962,7 @@ index 5bc2e2c..836f92d 100644
  
  pub use image_cache::ImageCacheConfig;
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..870da8f 100644
+index 1b09a33..6eaf7f2 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,11 +1,14 @@
@@ -976,17 +982,21 @@ index 1b09a33..870da8f 100644
  use crate::image_cache::{ImageCache, ImageCacheConfig};
  
  const DEFAULT_TOLERANCE: f64 = 0.1;
-@@ -14,6 +17,9 @@ pub struct VelloCpuScenePainter {
+@@ -14,6 +17,13 @@ pub struct VelloCpuScenePainter {
      pub(crate) render_ctx: vello_cpu::RenderContext,
      pub(crate) resources: vello_cpu::Resources,
      pub(crate) image_cache: ImageCache,
 +    /// pyro: single-threaded contexts that filter layers are rendered in (one per level of
 +    /// nesting), kept from frame to frame. See [`crate::filters`].
 +    pub(crate) filter_contexts: Vec<vello_cpu::RenderContext>,
++    /// pyro: glyphs are drawn aliased, a pixel painted when the glyph covers at least this
++    /// much of it (out of 255), as Chromium draws text when WPT runs it without font
++    /// antialiasing. `None` (the default): antialiased.
++    pub(crate) text_aliasing_threshold: Option<u8>,
  }
  
  impl VelloCpuScenePainter {
-@@ -22,10 +28,21 @@ impl VelloCpuScenePainter {
+@@ -22,13 +32,32 @@ impl VelloCpuScenePainter {
      }
  
      pub fn with_image_cache_config(width: u16, height: u16, config: ImageCacheConfig) -> Self {
@@ -1006,10 +1016,21 @@ index 1b09a33..870da8f 100644
              resources: vello_cpu::Resources::new(),
              image_cache: ImageCache::new(config),
 +            filter_contexts: Vec::new(),
++            text_aliasing_threshold: None,
          }
      }
  
-@@ -77,20 +94,11 @@ impl PaintScene for VelloCpuScenePainter {
++    /// pyro: draws glyphs aliased from now on, a pixel painted when the glyph covers at least
++    /// `threshold` of it (out of 255; vello_cpu's aliasing threshold), or antialiased (`None`,
++    /// the default). Other drawing stays antialiased.
++    pub fn set_text_aliasing_threshold(&mut self, threshold: Option<u8>) {
++        self.text_aliasing_threshold = threshold;
++    }
++
+     fn convert_paint(&mut self, paint: PaintRef<'_>) -> PaintType {
+         match paint {
+             Paint::Solid(alpha_color) => PaintType::Solid(alpha_color),
+@@ -77,20 +106,11 @@ impl PaintScene for VelloCpuScenePainter {
          alpha: f32,
          transform: Affine,
          clip: &impl Shape,
@@ -1033,7 +1054,7 @@ index 1b09a33..870da8f 100644
          self.render_ctx.set_transform(transform);
          self.render_ctx.set_fill_rule(fill);
          self.render_ctx.push_layer(
-@@ -98,7 +106,7 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -98,7 +118,7 @@ impl PaintScene for VelloCpuScenePainter {
              Some(blend.into()),
              Some(alpha),
              None,
@@ -1042,7 +1063,24 @@ index 1b09a33..870da8f 100644
          );
      }
  
-@@ -177,7 +185,13 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -163,6 +183,16 @@ impl PaintScene for VelloCpuScenePainter {
+         glyph_transform: Option<Affine>,
+         glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
+     ) {
++        // pyro: aliased glyphs, for this run only (`set_text_aliasing_threshold`), moved a
++        // 512th of a device pixel right and down: a pixel half covered at a glyph's left or top
++        // edge is then left out and one at its right or bottom edge painted, as Skia paints
++        // aliased paths (rounding a pixel centre on an edge down and right).
++        let transform = match self.text_aliasing_threshold {
++            Some(_) => Affine::translate((1.0 / 512.0, 1.0 / 512.0)) * transform,
++            None => transform,
++        };
++        self.render_ctx
++            .set_aliasing_threshold(self.text_aliasing_threshold);
+         self.render_ctx.set_transform(transform);
+         let paint = self.convert_paint(paint.into());
+         self.render_ctx.set_paint(paint);
+@@ -177,7 +207,13 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -1057,7 +1095,15 @@ index 1b09a33..870da8f 100644
                      .glyph_transform(glyph_transform.unwrap_or_default())
                      .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
                          id: g.id,
-@@ -216,6 +230,374 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -201,6 +237,7 @@ impl PaintScene for VelloCpuScenePainter {
+                     }));
+             }
+         }
++        self.render_ctx.set_aliasing_threshold(None);
+     }
+     fn draw_box_shadow(
+         &mut self,
+@@ -216,6 +253,374 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -1432,7 +1478,7 @@ index 1b09a33..870da8f 100644
  }
  
  #[cfg(test)]
-@@ -293,3 +675,55 @@ mod clip_rule_tests {
+@@ -293,3 +698,55 @@ mod clip_rule_tests {
          assert_pixels(true, true);
      }
  }

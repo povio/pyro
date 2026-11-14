@@ -7,7 +7,7 @@ workspace `Cargo.toml`. License: MIT OR Apache-2.0, as upstream. `.cargo_vcs_inf
 
 ## The change
 
-`UPSTREAM.patch` is the whole diff: three changes.
+`UPSTREAM.patch` is the whole diff: four changes.
 
 ## A raster thread count per renderer
 
@@ -57,6 +57,19 @@ and the bilinear scaling back up spread, and lets the frame's raster scale the r
 the full-resolution blur, at a cost that does not grow with the deviation (a 4K title card's 60 px shadow:
 0.5 ms). A blur of content in one solid colour (a text shadow's glyphs) blurs the alpha alone. Covered by the
 unit tests in `src/filters.rs` and by pyro-render's `filter_drop_shadow.rs` and `text_shadow.rs`.
+
+## Aliased glyphs
+
+`VelloCpuScenePainter::set_text_aliasing_threshold` (and `VelloCpuImageRenderer::set_text_aliasing_threshold`) draws
+glyphs aliased: `draw_glyphs` sets vello_cpu's aliasing threshold for its run only (a pixel is painted fully when
+the glyph covers at least that much of it, out of 255, else not at all) and clears it after, so every other shape
+stays antialiased. The run is moved a 512th of a device pixel right and down, so that a pixel exactly half covered
+is left out at a glyph's left or top edge and painted at its right or bottom edge, as Skia paints aliased paths (a
+pixel centre on an edge rounds down and right), and a glyph at a half pixel spans the pixels a box there would.
+`None`, the default, changes nothing. pyro-render passes 128 when `Renderer::text_antialiasing`
+is off (`serve --text-antialiasing off`): WPT's runner starts Chrome with font antialiasing off
+(`NoFontAntialiasing`), and the reftests are judged so. A filter layer's glyphs (`draw_filtered_layer` replays them
+through `draw_glyphs`) follow the same setting. Covered by pyro-render's `text_aliasing.rs`.
 
 Regenerate the patch from a pristine copy of the published crate:
 `git diff --no-index --no-prefix a b` with the published crate in `a` and this directory, without this file

@@ -98,6 +98,15 @@ options:
                                         Applies to line breaking and min-content
                                         widths (table columns). Default: off;
                                         env PYRO_HYPHEN_DIGIT_BREAKS=on|off
+  --text-antialiasing <on|off>          off: screenshots draw text aliased, each pixel
+                                        painted fully or not at all, as Chrome draws it
+                                        when WPT's runner starts it without font
+                                        antialiasing (the WPT reftests). Default: on;
+                                        env PYRO_TEXT_ANTIALIASING=on|off
+  --font <FILE>                         a font file (TTF, OTF or TTC) pages and SVG text
+                                        can use by its family name, as if it were
+                                        installed (repeatable; the WPT reftests' Ahem;
+                                        env PYRO_FONTS, files separated as in PATH)
   --parent-pid <PID>                    exit when process PID exits, however it ends
                                         (env PYRO_PARENT_PID; the SDK's
                                         Pyro.launch() sets it to its own pid)
@@ -256,6 +265,13 @@ pub struct ServeOptions {
     /// Chrome's line break between a hyphen and a digit
     /// (`pyro_render::set_hyphen_digit_breaks`). Off by default.
     pub hyphen_digit_breaks: bool,
+    /// `--text-antialiasing` (or `PYRO_TEXT_ANTIALIASING`): off draws the
+    /// text of screenshots aliased, as Chrome under WPT's runner
+    /// (`pyro_render::set_text_antialiasing`). On by default.
+    pub text_antialiasing: bool,
+    /// `--font` files: fonts pages can use by name, as if installed
+    /// (`pyro_render::add_font_file`).
+    pub fonts: Vec<PathBuf>,
     /// `--parent-pid` (or `PYRO_PARENT_PID`): exit with this
     /// process ([`crate::lifetime`]).
     pub parent_pid: Option<libc::pid_t>,
@@ -382,6 +398,13 @@ impl Default for ServeOptions {
                 .ok()
                 .and_then(|v| parse_switch(HYPHEN_DIGIT_BREAKS_ENV, &v).ok())
                 .unwrap_or(false),
+            text_antialiasing: std::env::var(TEXT_ANTIALIASING_ENV)
+                .ok()
+                .and_then(|v| parse_switch(TEXT_ANTIALIASING_ENV, &v).ok())
+                .unwrap_or(true),
+            fonts: std::env::var_os(FONTS_ENV)
+                .map(|v| std::env::split_paths(&v).filter(|p| !p.as_os_str().is_empty()).collect())
+                .unwrap_or_default(),
             parent_pid: std::env::var(PARENT_PID_ENV).ok().and_then(|v| parse_pid(&v).ok()),
         }
     }
@@ -389,6 +412,12 @@ impl Default for ServeOptions {
 
 /// Environment equivalent of `--hyphen-digit-breaks` (`on`/`off`).
 pub const HYPHEN_DIGIT_BREAKS_ENV: &str = "PYRO_HYPHEN_DIGIT_BREAKS";
+
+/// Environment equivalent of `--font` entries, separated as in `PATH` (flags add to it).
+pub const FONTS_ENV: &str = "PYRO_FONTS";
+
+/// Environment equivalent of `--text-antialiasing` (`on`/`off`).
+pub const TEXT_ANTIALIASING_ENV: &str = "PYRO_TEXT_ANTIALIASING";
 
 /// Environment equivalent of `--parent-pid`.
 pub const PARENT_PID_ENV: &str = "PYRO_PARENT_PID";
@@ -499,6 +528,8 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             "--engine-reuse" => o.engine_reuse = EngineReuse::parse("--engine-reuse", &value()?)?,
             "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
             "--hyphen-digit-breaks" => o.hyphen_digit_breaks = parse_switch("--hyphen-digit-breaks", &value()?)?,
+            "--text-antialiasing" => o.text_antialiasing = parse_switch("--text-antialiasing", &value()?)?,
+            "--font" => o.fonts.push(PathBuf::from(value()?)),
             "--parent-pid" => o.parent_pid = Some(parse_pid(&value()?)?),
             "--template" => o.template = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown option '{other}'")),
@@ -590,6 +621,16 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     // same arguments): every renderer takes the default when it is made.
     #[cfg(feature = "render")]
     pyro_render::set_hyphen_digit_breaks(options.hyphen_digit_breaks);
+    #[cfg(feature = "render")]
+    pyro_render::set_text_antialiasing(options.text_antialiasing);
+    // Read now, loaded at the first font use (in the template and its forks too).
+    #[cfg(feature = "render")]
+    for path in &options.fonts {
+        if let Err(e) = pyro_render::add_font_file(path) {
+            eprintln!("pyro serve: --font {}: {e}", path.display());
+            return ExitCode::from(2);
+        }
+    }
     // Before any engine, and before the template is forked: it and its
     // forks use the same cache. Only the directory is looked at here.
     if let Some(dir) = &options.bytecode_cache {
@@ -1679,6 +1720,29 @@ mod tests {
         assert!(!args(&["--hyphen-digit-breaks", "off"]).unwrap().hyphen_digit_breaks);
         assert!(args(&["--hyphen-digit-breaks", "maybe"]).is_err());
         assert!(args(&["--hyphen-digit-breaks"]).is_err());
+    }
+
+    #[test]
+    fn text_antialiasing_flag() {
+        let args = |a: &[&str]| parse_args(&a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        if std::env::var_os(TEXT_ANTIALIASING_ENV).is_none() {
+            assert!(args(&[]).unwrap().text_antialiasing);
+        }
+        assert!(!args(&["--text-antialiasing", "off"]).unwrap().text_antialiasing);
+        assert!(args(&["--text-antialiasing", "on"]).unwrap().text_antialiasing);
+        assert!(args(&["--text-antialiasing", "maybe"]).is_err());
+        assert!(args(&["--text-antialiasing"]).is_err());
+    }
+
+    #[test]
+    fn font_flag() {
+        let args = |a: &[&str]| parse_args(&a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        if std::env::var_os(FONTS_ENV).is_none() {
+            assert!(args(&[]).unwrap().fonts.is_empty());
+        }
+        let fonts = args(&["--font", "/a/Ahem.ttf", "--font", "b.otf"]).unwrap().fonts;
+        assert!(fonts.ends_with(&[PathBuf::from("/a/Ahem.ttf"), PathBuf::from("b.otf")]));
+        assert!(args(&["--font"]).is_err());
     }
 
     #[test]

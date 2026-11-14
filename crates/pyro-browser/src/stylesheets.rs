@@ -92,6 +92,22 @@ impl Page {
     }
 }
 
+/// The environment encodings of the sheet `node` links, in order: its
+/// `charset` attribute (obsolete in HTML, read by Chromium), then its
+/// document's encoding.
+fn link_environment(bindings: &PageDom, node: NodeId) -> Vec<String> {
+    let dom = bindings.dom.borrow();
+    let charset = dom.get_attribute(node, "charset").ok().flatten().map(str::to_owned);
+    charset.into_iter().chain(document_encoding(bindings)).collect()
+}
+
+/// The encoding `bindings`' document was decoded with: the environment
+/// encoding of the sheets its `<style>` elements import.
+fn document_encoding(bindings: &PageDom) -> Option<String> {
+    let dom = bindings.dom.borrow();
+    dom.document_data(bindings.document()).ok().map(|d| d.charset.to_owned())
+}
+
 fn remove_sheet(page: &PageDom, node: NodeId) {
     page.apply_style_event(&ResourceEvent { node, kind: DomResourceKind::Stylesheet, reason: ResourceReason::Removed });
 }
@@ -265,6 +281,7 @@ impl Browser {
             cancel.disarm();
         }
         sheet.pending = false;
+        let environment = link_environment(bindings, node);
         let text = result
             .ok()
             .filter(|r| {
@@ -272,7 +289,10 @@ impl Browser {
                     && r.mime.eq_ignore_ascii_case("text/css")
                     && r.body.len() <= MAX_SHEET_BYTES
             })
-            .map(|r| r.text());
+            .map(|r| {
+                let environment: Vec<&str> = environment.iter().map(String::as_str).collect();
+                pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &environment).0.into_owned()
+            });
         let text = text.filter(|t| t.len() <= MAX_SHEET_BYTES && t.len() <= MAX_DOCUMENT_BYTES - sheets.bytes);
         let ok = text.is_some();
         if let Some(text) = text {
@@ -428,14 +448,16 @@ impl Browser {
             bindings.block_rendering(node, blocker);
         }
         let referrer = self.doc(page).map(|p| p.main_frame.url.clone()).unwrap_or_default();
+        let environment = document_encoding(&bindings).unwrap_or_default();
         for url in urls {
-            self.fetch_style_import(page, &loader, node, generation, url, 1, &referrer);
+            self.fetch_style_import(page, &loader, node, generation, url, 1, &referrer, &environment);
         }
         self.style_imports_settled(page, &loader, node);
         true
     }
 
-    /// Fetches one sheet a `<style>`'s sheet imports, `depth` imports deep.
+    /// Fetches one sheet a `<style>`'s sheet imports, `depth` imports deep;
+    /// `environment` is the importing sheet's encoding.
     #[allow(clippy::too_many_arguments)]
     fn fetch_style_import(
         &mut self,
@@ -446,6 +468,7 @@ impl Browser {
         url: String,
         depth: usize,
         referrer: &str,
+        environment: &str,
     ) {
         let index = {
             let Some(mut doc) = self.doc_mut(page) else { return };
@@ -463,8 +486,19 @@ impl Browser {
         };
         let finish_loader = loader.clone();
         let finish_url = url.clone();
+        let environment = environment.to_owned();
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
-            b.style_import_done(page, &finish_loader, node, generation, index, depth, &finish_url, result);
+            b.style_import_done(
+                page,
+                &finish_loader,
+                node,
+                generation,
+                index,
+                depth,
+                &finish_url,
+                &environment,
+                result,
+            );
         };
         let Some(resource_loader) = self.loader_for(page) else {
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
@@ -511,6 +545,7 @@ impl Browser {
         index: usize,
         depth: usize,
         url: &str,
+        environment: &str,
         result: Result<Resource, String>,
     ) {
         let ok = result.as_ref().is_ok_and(|r| (200..300).contains(&r.status));
@@ -528,19 +563,21 @@ impl Browser {
             entry.failed |= !ok && depth == 1;
         }
         if let Some(r) = result.as_ref().ok().filter(|r| ok && r.mime.eq_ignore_ascii_case("text/css")) {
-            // The page's layouts take this body rather than fetching the
-            // sheet again (they read `file:` and `data:` URLs themselves).
+            let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
+            // The page's layouts take this sheet rather than fetching it
+            // again (they read `file:` and `data:` URLs themselves), decoded
+            // (they cannot know its environment encoding).
             if let Some(p) = self.page(page.page).filter(|_| url.starts_with("http")) {
-                p.frames.layout_bodies.provide(url, &r.body);
+                p.frames.layout_bodies.provide(url, &pyro_dom::cssom::stylesheet_utf8_bytes(&text));
             }
             if depth < MAX_IMPORT_DEPTH {
                 let base = url::Url::parse(&r.url).ok();
-                let nested: Vec<String> = pyro_dom::cssom::leading_imports(&r.text())
+                let nested: Vec<String> = pyro_dom::cssom::leading_imports(&text)
                     .iter()
                     .filter_map(|href| Some(base.as_ref()?.join(href).ok()?.to_string()))
                     .collect();
                 for nested in nested {
-                    self.fetch_style_import(page, loader, node, generation, nested, depth + 1, &r.url);
+                    self.fetch_style_import(page, loader, node, generation, nested, depth + 1, &r.url, encoding);
                 }
             }
         }
