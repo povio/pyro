@@ -177,11 +177,13 @@ The slowest pages are slow by design or by a known engine gap, not by the runner
 
 WPT tests painting with reftests: a test page and one or more references that must render the same (`<link
 rel=match>`) or differently (`rel=mismatch`). `run.mjs --kind reftest` runs them and `gate.mjs ... --kind reftest`
-gates them exactly as above: each reftest is reported as one subtest, `reftest`, so a reftest that passed in
-`reftest-baseline.json` must still pass, a page that completed must still complete, an unrecorded pass fails as
-stale, and `reftest-flaky.json` (the format of `flaky.json`) lists what is not checked. Adding or widening one of its
-entries, or dropping a baseline pass, needs the `wpt-accept-loss` label. The refreshed baseline is the
-`wpt-reftest-baseline` artifact:
+gates them as above: each reftest is reported as one subtest, `reftest`, so a reftest that passed in
+`reftest-baseline.json` must still pass in some run of it, an unrecorded pass fails as stale, and `reftest-flaky.json`
+(the format of `flaky.json`) lists what is not checked. Only passes are protected: a failing reftest's completion
+carries no coverage, so it may time out instead (an animation page whose `reftest-wait` outlasts a loaded runner did,
+four runs in a row) and a timed-out one that now completes and fails is no gain. Adding or widening a
+`reftest-flaky.json` entry, or dropping a baseline pass, needs the `wpt-accept-loss` label. The refreshed baseline is
+the `wpt-reftest-baseline` artifact:
 
 ```sh
 gh run download <run-id> -n wpt-reftest-baseline -D bench/wpt     # writes bench/wpt/reftest-baseline.json

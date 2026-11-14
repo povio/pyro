@@ -355,7 +355,9 @@ export const wholePage = (f) => !!f && !f.subtests && !f.allowIncomplete;
 //   setChanged: a fail-list page completed, but no run reported the baseline's names (h), so which of its passes
 //     are gone is unknown: a regression until the entry is replaced (gate.mjs update --replace --match)
 //   unstable: the runs disagreed (status or passes): a flaky.json candidate
-export function judge(b, runs, flaky) {
+// `completion: false` (reftests) protects passes only: a page that passed nothing may stop completing without breaking,
+// and completing without a pass is no gain (a reftest's completion carries no coverage of its own).
+export function judge(b, runs, flaky, { completion = true } = {}) {
   const url = runs[0].url;
   const f = flaky?.get(url);
   const c = {
@@ -374,8 +376,8 @@ export function judge(b, runs, flaky) {
   const passedAny = (n) => passSets.some((s) => s.has(n));
   const passedAll = (n) => passSets.every((s) => s.has(n));
   const done = use.filter((t) => t.status === 'complete');
-  c.broke = b.status === 'complete' && !done.length;
-  c.fixed = b.status !== 'complete' && done.length === use.length;
+  c.broke = completion && b.status === 'complete' && !done.length;
+  c.fixed = completion && b.status !== 'complete' && done.length === use.length;
   if (b.pass) {
     const was = new Set(b.pass);
     c.lost = b.pass.filter((n) => !passedAny(n) && !ignore.has(n));

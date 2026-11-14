@@ -49,6 +49,8 @@ const SUITE = KIND === 'reftest'
 const BASELINE_FILE = path.resolve(opt('--baseline', path.join(HERE, SUITE.baseline)));
 const FLAKY_FILE = path.resolve(opt('--flaky', path.join(HERE, SUITE.flaky)));
 const B = path.basename(BASELINE_FILE), F = path.basename(FLAKY_FILE);
+// A reftest's coverage is its pass: whether a failing one completes is not checked (lib.mjs judge()).
+const JUDGE = KIND === 'reftest' ? { completion: false } : undefined;
 const WPT_REPO = 'https://github.com/web-platform-tests/wpt';
 const LABEL = 'wpt-accept-loss';
 // Reruns: each page whose first result differs runs at least RERUNS more times, more when few pages differ, so the
@@ -94,7 +96,7 @@ function run() {
   if (opt('--retest')) {
     if (!baseline) throw new Error('--retest needs a baseline');
     const prev = readJson(opt('--retest'));
-    const urls = prev.results.filter((t) => differs(judge(baseline.tests[t.url], [t], flaky))).map((t) => t.url);
+    const urls = prev.results.filter((t) => differs(judge(baseline.tests[t.url], [t], flaky, JUDGE))).map((t) => t.url);
     console.error(`retest: ${urls.length} page(s) in ${opt('--retest')} differ from the baseline`);
     const list = out + '.tests.json';
     writeJson(list, urls);
@@ -109,7 +111,7 @@ function run() {
   if (!flag('--no-rerun')) {
     if (!baseline) again = res.results.map((t) => t.url);
     else {
-      again = res.results.filter((t) => differs(judge(baseline.tests[t.url], [t], flaky))).map((t) => t.url);
+      again = res.results.filter((t) => differs(judge(baseline.tests[t.url], [t], flaky, JUDGE))).map((t) => t.url);
       copies = again.length > PAD_MAX ? 1 : Math.max(RERUNS, Math.ceil(jobs / again.length));
     }
   }
@@ -181,7 +183,7 @@ function check(files) {
   }
   const cmp = [...L.pages.values()].map(({ first, again }) => {
     const runs = [first, ...again];
-    return { ...judge(baseline?.tests[first.url], runs, flaky), runList: runs, t: runs[runs.length - 1], b: baseline?.tests[first.url] };
+    return { ...judge(baseline?.tests[first.url], runs, flaky, JUDGE), runList: runs, t: runs[runs.length - 1], b: baseline?.tests[first.url] };
   });
   const regressions = baseline ? cmp.filter(isRegression) : [];
   const improvements = baseline ? cmp.filter(isImprovement) : [];
@@ -232,7 +234,7 @@ function check(files) {
     if (regressions.some((c) => c.setChanged)) md += `\nA page whose subtest names changed on purpose: \`gh run download ${process.env.GITHUB_RUN_ID ?? '<run>'} -p 'wpt-shard-*' -D /tmp/wpt-run\`, then \`bun bench/wpt/gate.mjs update /tmp/wpt-run/*/*.json --replace --match '<page regex>'\`, commit, and label the pull request \`${LABEL}\`.\n`;
   }
   if (reruns.length && baseline) {
-    const recovered = reruns.filter((c) => !isRegression(c) && isRegression(judge(c.b, [c.runList[0]], flaky)));
+    const recovered = reruns.filter((c) => !isRegression(c) && isRegression(judge(c.b, [c.runList[0]], flaky, JUDGE)));
     md += `\nReran ${reruns.length} page(s) whose first result differed from the baseline (${Math.max(...L.runs.map((r) => r.rerunCopies ?? 0))}x at most); ${recovered.length} first-run regression(s) did not repeat${recovered.length ? ` (${recovered.slice(0, 10).map((c) => esc(c.url)).join(', ')})` : ''}.\n`;
   }
   if (unstable.length) {
@@ -311,7 +313,7 @@ function update(files) {
       if (old) e.ms = newMs(old.ms, roundMs(con.ms ?? 0), ms);
       replaced++;
     } else if (old && wholePage(f)) continue;
-    else if (old && isRegression(judge(old, runs, flaky))) { kept.push(url); continue; }
+    else if (old && isRegression(judge(old, runs, flaky, JUDGE))) { kept.push(url); continue; }
     else e = mergeEntry(old, con, { ms, ignore: f?.subtests && new Set(f.subtests) });
     const d = delta(old, e);
     gained += d.gained; lost += d.lost;
