@@ -54,6 +54,161 @@ export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
   return { tests: tests.filter((t) => t.dir !== 'encoding' || (k++ % sampleEncoding === 0)), excluded };
 }
 
+// ---------- reftest discovery ----------
+// The paint directories the reftest gate runs (reftest.mjs; README "Reftests"). CSS2 only in part: the directories
+// about painting (backgrounds, borders, colours, visual effects, outlines, stacking order).
+export const REFTEST_DIRS = [
+  'css/css-backgrounds', 'css/css-text-decor', 'css/filter-effects', 'css/compositing', 'css/css-masking',
+  'css/css-color', 'css/css-transforms', 'css/CSS2/backgrounds', 'css/CSS2/borders', 'css/CSS2/colors',
+  'css/CSS2/visufx', 'css/CSS2/ui', 'css/CSS2/zindex', 'css/CSS2/zorder', 'css/CSS2/stacking-context',
+];
+
+// Markup files as WPT's manifest reads them (tools/manifest/sourcefile.py): the tags it looks for, by regular
+// expression rather than a parser. A tag may carry a namespace prefix (SVG tests use <h:link>); comments are dropped.
+const MARKUP = /\.(html|htm|xht|xhtml|xml|svg)$/;
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const unescapeAttr = (s) => s.replace(/&(amp|lt|gt|quot|apos);/g, (_, e) => ENTITIES[e]);
+function tagsOf(src, name) {
+  const out = [];
+  for (const m of src.matchAll(new RegExp(`<(?:[A-Za-z][\\w-]*:)?${name}\\b((?:"[^"]*"|'[^']*'|[^'">])*)>`, 'gi'))) {
+    const a = {};
+    for (const x of m[1].matchAll(/([^\s=/>"']+)\s*(?:=\s*("[^"]*"|'[^']*'|[^\s>"']+))?/g)) {
+      a[x[1].toLowerCase()] = x[2] ? unescapeAttr(x[2].replace(/^(["'])([\s\S]*)\1$/, '$2')) : '';
+    }
+    out.push(a);
+  }
+  return out;
+}
+const metaOf = (tags, name) => tags.filter((a) => a.name === name).map((a) => a.content ?? '');
+// A URL relative to the WPT root, from `href` in the file at `rel` (a query or fragment is kept).
+function resolveIn(rel, href) {
+  if (href.trim() === 'about:blank') return 'about:blank';
+  const u = new URL(href.trim(), `http://wpt.invalid/${rel}`);
+  return u.host === 'wpt.invalid' ? decodeURIComponent(u.pathname).slice(1) + u.search : null;
+}
+// <meta name=fuzzy content="[ref-url:]maxDifference=a-b;totalPixels=c-d"> (names optional, a single value n means
+// n-n), as the manifest parses it: { '': [[a, b], [c, d]], '<ref url>': ... }, '' for the unprefixed value.
+export function parseFuzzy(contents, rel, refUrls) {
+  const out = {};
+  for (const content of contents) {
+    const i = content.lastIndexOf(':');
+    let key = '', value = content;
+    if (i >= 0) {
+      key = resolveIn(rel, content.slice(0, i));
+      if (!refUrls.includes(key)) throw new Error(`fuzzy key ${content.slice(0, i)} names no reference`);
+      value = content.slice(i + 1);
+    }
+    const parts = value.split(';');
+    if (parts.length !== 2) throw new Error(`malformed fuzzy value ${value}`);
+    const named = {}, positional = [];
+    for (let p of parts) {
+      let name = null;
+      if (p.includes('=')) {
+        [name, p] = p.split('=', 2).map((s) => s.trim());
+        if (name !== 'maxDifference' && name !== 'totalPixels') throw new Error(`${name} is not a fuzzy property`);
+      }
+      const [lo, hi = lo] = p.split('-').map((s) => s.trim());
+      const range = [Number(lo), Number(hi)];
+      if (!range.every((n) => Number.isInteger(n) && n >= 0)) throw new Error(`fuzzy value ${p} is not a range of integers`);
+      if (name) named[name] = range; else positional.push(range);
+    }
+    if (key in out) throw new Error(`two fuzzy values for ${key || 'every reference'}`);
+    out[key] = ['maxDifference', 'totalPixels'].map((n) => named[n] ?? positional.shift());
+  }
+  return out;
+}
+
+function walkMarkup(dir, out = []) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    // The manifest's non-test directories: nothing under them is a test.
+    if (e.isDirectory()) { if (!['resources', 'support', 'tools'].includes(e.name)) walkMarkup(p, out); }
+    else if (MARKUP.test(e.name)) out.push(p);
+  }
+  return out;
+}
+
+// What a page needs from wptserve that serve.mjs does not do: substitutions, pipes, Python handlers, other hosts.
+const SERVER_NAME = /\.(sub|https|h2|www)\./;
+const SERVER_CONTENT = /\.py\b|[?&]pipe=|\.sub\.(html|htm|xht|xhtml|svg|css|js)\b/;
+
+// Every reftest under `dirs` that serve.mjs can serve, as WPT's manifest classifies files: a markup file with
+// <link rel=match|mismatch href> that is not a manual, visual, crash or print test, not a testharness page and not
+// in a non-test directory. A reference that has references of its own is a test of its own too; as in wptrunner, a
+// test is compared with its own references only (the chain is not followed). `excluded` counts what was left out
+// and why; `info` counts what discovery noticed but kept.
+export function discoverReftests(wpt, dirs) {
+  const tests = [];
+  const excluded = {};
+  const info = {};
+  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; };
+  const note = (why) => { info[why] = (info[why] ?? 0) + 1; };
+  const parsed = new Map();
+  const parse = (rel) => {
+    if (parsed.has(rel)) return parsed.get(rel);
+    if (rel === 'about:blank') return { src: '', links: [], metas: [], scripts: [] };
+    let src = null;
+    try { src = fs.readFileSync(path.join(wpt, rel.replace(/[?#].*$/, '')), 'utf8').replace(/<!--[\s\S]*?-->/g, ''); } catch {}
+    const r = src == null ? null : { src, links: tagsOf(src, 'link'), metas: tagsOf(src, 'meta'), scripts: tagsOf(src, 'script') };
+    parsed.set(rel, r);
+    return r;
+  };
+  const refsOf = (rel, p) => p.links
+    .filter((a) => (a.rel === 'match' || a.rel === 'mismatch') && a.href != null)
+    .map((a) => ({ url: resolveIn(rel, a.href), rel: a.rel === 'match' ? '==' : '!=' }));
+  const referenced = new Set();
+  const noRefs = [];
+  for (const d of dirs) {
+    for (const f of walkMarkup(path.join(wpt, d))) {
+      const rel = path.relative(wpt, f).split(path.sep).join('/');
+      const base = path.basename(f);
+      const name = base.replace(/\.[^.]*$/, '');
+      const flag = name.includes('-') ? name.slice(name.lastIndexOf('-') + 1).split('.')[0] : null;
+      const parts = rel.split('/').slice(0, -1);
+      const isRefName = rel.includes('/reference/') || /(^|[-_])(not)?ref[0-9]*([-_]|$)/.test(name);
+      if (flag === 'manual') { exclude('manual'); continue; }
+      if (flag === 'visual') { exclude('visual (no reference)'); continue; }
+      if (flag === 'crash' || parts.includes('crashtests')) { exclude('crash test'); continue; }
+      const p = parse(rel);
+      if (!p) continue;
+      const refs = refsOf(rel, p);
+      for (const r of refs) if (r.url) referenced.add(r.url.replace(/[?#].*$/, ''));
+      if (flag === 'print' || parts.includes('print')) { if (refs.length) exclude('print reftest'); continue; }
+      const cssFlags = new Set(metaOf(p.metas, 'flags').flatMap((c) => c.split(/\s+/)));
+      if (!isRefName && ['animated', 'font', 'history', 'interact', 'paged', 'speech', 'userstyle'].some((x) => cssFlags.has(x))) { if (refs.length) exclude('manual (CSS flags)'); continue; }
+      if (p.scripts.some((a) => /(^|\/)resources\/testharness\.js$/.test(a.src ?? ''))) { note('testharness page (not a reftest)'); continue; }
+      if (!refs.length) { noRefs.push({ rel, isRefName }); continue; }
+      if (refs.some((r) => !r.url)) { exclude('reference on another host'); continue; }
+      // The page and its references, as served: wptserve features serve.mjs lacks, and testdriver.
+      const files = [rel, ...refs.map((r) => r.url)];
+      const ps = files.map((u) => parse(u.replace(/[?#].*$/, '')));
+      if (ps.some((x) => !x)) { exclude('reference not in the checkout'); continue; }
+      if (files.some((u) => SERVER_NAME.test(u) || /[?&]pipe=/.test(u)) || ps.some((x) => SERVER_CONTENT.test(x.src))) { exclude('needs wptserve (substitution, pipe, Python handler)'); continue; }
+      if (ps.some((x) => x.scripts.some((a) => /(^|\/)resources\/testdriver(-vendor)?\.js$/.test(a.src ?? '')))) { exclude('needs testdriver'); continue; }
+      if (metaOf(p.metas, 'device-pixel-ratio').length) { exclude('needs another device pixel ratio'); continue; }
+      let fuzzy;
+      try { fuzzy = parseFuzzy(metaOf(p.metas, 'fuzzy'), rel, refs.map((r) => r.url)); } catch { exclude('malformed fuzzy metadata'); continue; }
+      const vs = metaOf(p.metas, 'viewport-size')[0]?.match(/^\s*(\d+)\s*x\s*(\d+)\s*$/);
+      if (ps.slice(1).some((x) => refsOf('', x).length)) note('a reference has references of its own (compared one level, as wptrunner does)');
+      const long = metaOf(p.metas, 'timeout').some((c) => c.trim() === 'long');
+      const variants = metaOf(p.metas, 'variant');
+      for (const v of variants.length ? variants : ['']) {
+        tests.push({
+          dir: d, url: rel + v, long,
+          refs: refs.map((r) => ({ url: r.url + v, rel: r.rel })),
+          ...(Object.keys(fuzzy).length ? { fuzzy } : {}),
+          ...(vs ? { viewport: { width: Number(vs[1]), height: Number(vs[2]) } } : {}),
+        });
+      }
+    }
+  }
+  // Markup without references: reference files (named or linked as one) and the rest (visual tests, support pages).
+  for (const { rel, isRefName } of noRefs) exclude(isRefName || referenced.has(rel) ? 'reference file' : 'no reference (visual test or support page)');
+  return { tests, excluded, info };
+}
+
 // ---------- results ----------
 export const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 // The subtest names a page reported, once each, and those that passed. The report shim keys subtests by name, so a

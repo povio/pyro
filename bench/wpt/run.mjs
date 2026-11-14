@@ -1,6 +1,7 @@
-// WPT testharness runner over CDP (Playwright connectOverCDP), identical for every target.
+// WPT runner over CDP (Playwright connectOverCDP), identical for every target: testharness pages, or reftests with
+// --kind reftest (reftest.mjs: each reftest is reported as one subtest, "reftest").
 // Usage: bun run.mjs --wpt DIR --bin label=/path/to/serve-compatible-binary --out results.json
-//          [--base http://127.0.0.1:9415]   (default: start serve.mjs on a free port)
+//          [--kind testharness|reftest] [--base http://127.0.0.1:9415]   (default: start serve.mjs on a free port)
 //          [--dirs dom,url,...] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
 //          [--sample-encoding N] [--match REGEX] [--tests FILE] [--list]
 //          [--baseline baseline.json [--gate]] [--shard I/N] [--reuse-context] [--repeat N]
@@ -20,7 +21,8 @@ import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_DIRS, discover, plan, shard, readJson } from './lib.mjs';
+import { DEFAULT_DIRS, REFTEST_DIRS, discover, discoverReftests, plan, shard, readJson } from './lib.mjs';
+import { REFTEST_CONTEXT, runReftest } from './reftest.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(HERE, '..', 'package.json'));
 const { chromium } = require('playwright-core');
@@ -30,7 +32,10 @@ const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] :
 const WPT = path.resolve(opt('--wpt'));
 const [LABEL, BIN] = (opt('--bin', 'x=') ?? '').split(/=(.*)/s);
 const OUT = opt('--out');
-const DIRS = opt('--dirs', DEFAULT_DIRS.join(',')).split(',');
+const KIND = opt('--kind', 'testharness');
+if (KIND !== 'testharness' && KIND !== 'reftest') throw new Error(`--kind ${KIND}: expected testharness or reftest`);
+const KIND_DIRS = KIND === 'reftest' ? REFTEST_DIRS : DEFAULT_DIRS;
+const DIRS = opt('--dirs', KIND_DIRS.join(',')).split(',');
 const JOBS = Number(opt('--jobs', 6));
 const TIMEOUT = Number(opt('--timeout', 15000));
 const LONG = Number(opt('--long-timeout', 45000));
@@ -41,13 +46,13 @@ const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
 const REPEAT = Number(opt('--repeat', 1));
 // A run over part of the suite: the gate does not report baseline pages it did not run as missing.
-const RESTRICTED = DIRS.join(',') !== DEFAULT_DIRS.join(',') || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
+const RESTRICTED = DIRS.join(',') !== KIND_DIRS.join(',') || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
 if (GATE && !BASELINE) throw new Error('--gate needs --baseline');
 if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}: expected I/N with 0 <= I < N`);
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
-  const { tests, excluded } = discover(WPT, DIRS, { sampleEncoding: SAMPLE });
+  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS) : discover(WPT, DIRS, { sampleEncoding: SAMPLE });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
@@ -59,14 +64,14 @@ function selectTests() {
   const p = plan(sel, BASELINE, { gate: GATE, timeout: TIMEOUT, longTimeout: LONG });
   const mine = shard(p.tests, SHARD, SHARDS);
   // Copies interleaved (a b c a b c): with few pages and enough jobs, a page's copies run side by side.
-  return { tests: Array.from({ length: REPEAT }, () => mine.map((t) => ({ ...t }))).flat(), excluded, skipped: p.skipped, discovered: sel.length };
+  return { tests: Array.from({ length: REPEAT }, () => mine.map((t) => ({ ...t }))).flat(), excluded, info, skipped: p.skipped, discovered: sel.length };
 }
-const { tests, excluded, skipped, discovered } = selectTests();
+const { tests, excluded, info, skipped, discovered } = selectTests();
 if (argv.includes('--list')) {
   const by = {};
   for (const t of tests) by[t.dir] = (by[t.dir] ?? 0) + 1;
   const est = tests.reduce((a, t) => a + t.est, 0);
-  console.log(JSON.stringify({ total: tests.length, by, excluded, gateSkipped: skipped.length, estimatedMs: est }, null, 1));
+  console.log(JSON.stringify({ total: tests.length, by, excluded, ...(info ? { info } : {}), gateSkipped: skipped.length, estimatedMs: est }, null, 1));
   process.exit(0);
 }
 const gitRev = spawnSync('git', ['-C', WPT, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
@@ -144,7 +149,7 @@ async function openPage(slot) {
   }
   if (!slot.browser) slot.browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 });
   if (!slot.page) {
-    slot.ctx = await slot.browser.newContext();
+    slot.ctx = await slot.browser.newContext(KIND === 'reftest' ? REFTEST_CONTEXT : undefined);
     slot.page = await slot.ctx.newPage();
     slot.page.on('dialog', (d) => d.dismiss().catch(() => {}));
   }
@@ -154,6 +159,7 @@ async function openPage(slot) {
 // `gen`: the browser (`generation`) the page runs in.
 async function runOne(slot, t, gen) {
   const page = await openPage(slot);
+  if (KIND === 'reftest') return runReftest(page, t, BASE, t.limit);
   const t0 = Date.now();
   await page.goto(`${BASE}/${t.url}`, { waitUntil: 'commit', timeout: t.limit });
   // The wait also fails when the browser is gone, replaced because another slot's page hung it. It would fail until
@@ -234,8 +240,8 @@ async function worker() {
     }
     if (r.status === 'hang') { slot.browser = slot.ctx = slot.page = null; restarts++; await restartBrowser(gen); }
     if (r.status === 'timeout') await resetSlot(slot);
-    const { est, limit, retried, ...meta } = t;
-    results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: parse(r.log) });
+    const { est, limit, retried, refs, fuzzy, viewport, ...meta } = t;
+    results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log) });
     if (++done % 100 === 0) {
       if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, results }));
       console.error(`${LABEL}: ${done}/${PLAN.length} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
@@ -249,9 +255,9 @@ killBrowser();
 const serverCpuS = server ? cpuOf(server.pid) : 0;
 const ru = process.resourceUsage();
 const run = {
-  label: LABEL, bin: BIN, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: DIRS, jobs: JOBS,
+  label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: DIRS, jobs: JOBS,
   restricted: RESTRICTED, reuseContext: REUSE, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
-  wallMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, excluded, results,
+  wallMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }
 console.error(`${LABEL}: done ${PLAN.length} pages in ${(wallMs / 1000).toFixed(1)} s (CPU: browser ${browserCpuS.toFixed(1)} s, runner ${run.runnerCpuS.toFixed(1)} s, server ${serverCpuS.toFixed(1)} s), restarts ${restarts}`);

@@ -8,6 +8,11 @@ name: WPT
 # label). Pushes to main and manual runs run every page. A run whose gate passes, or fails only for a stale or
 # missing baseline, uploads the refreshed bench/wpt/baseline.json as `wpt-baseline` when it changed.
 #
+# The `reftest` and `reftest-gate` jobs do the same for the paint reftests (bench/wpt/README.md, "Reftests"): each
+# reftest renders its test and references in the browser at 800x600 and compares the screenshots with WPT's rules;
+# reftest-baseline.json and reftest-flaky.json play the parts of baseline.json and flaky.json, and a refreshed
+# baseline is the `wpt-reftest-baseline` artifact.
+#
 # The browser is the fork build (patched JavaScriptCore, as the npm package ships for arm64): with the system
 # framework, window named properties and import maps are missing and ~3,200 subtests on ~150 pages fail for that
 # reason alone. It is cached by its inputs, so a pull request that changes none of them skips both macOS builds.
@@ -29,6 +34,20 @@ on:
         default: false
       runner-args:
         description: Extra gate.mjs run arguments for every shard (e.g. --reuse-context or --jobs 1), to compare runs with gate.mjs diff
+        type: string
+        default: ''
+      suites:
+        description: Which gates run (the reftests alone leave the testharness shards and the client job out)
+        type: choice
+        options: [all, testharness, reftest]
+        default: all
+      reftest-runner:
+        description: Where the reftest shards run (default lp-m1; see the reftest job). A baseline holds for one runner only
+        type: choice
+        options: [default, lp-m1, macos-15]
+        default: default
+      reftest-args:
+        description: Extra gate.mjs run arguments for every reftest shard (e.g. --dirs css/CSS2 to measure a directory, --jobs 2)
         type: string
         default: ''
 
@@ -57,6 +76,8 @@ jobs:
       jsc-cached: ${{ steps.keys.outputs.jsc-cached }}
       browser-key: ${{ steps.keys.outputs.browser-key }}
       browser-cached: ${{ steps.keys.outputs.browser-cached }}
+      reftest-runner: ${{ steps.reftest.outputs.runner }}
+      reftest-shards: ${{ steps.reftest.outputs.shards }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -88,6 +109,20 @@ jobs:
             echo "browser-key=$browser_key"
             echo "browser-cached=$(cached "$browser_key")"
           } | tee -a "$GITHUB_OUTPUT"
+      # The reftest shards: one on the self-hosted runner, which runs one job at a time (more shards would only add
+      # their setup to its queue), three on GitHub's macos-15 runners (3 CPUs each). None for `suites: testharness`.
+      - name: Reftest shards
+        id: reftest
+        env:
+          RUNNER: ${{ inputs.reftest-runner }}
+          SUITES: ${{ inputs.suites }}
+        run: |
+          runner="${RUNNER:-default}"
+          if [ "$runner" = default ]; then runner=lp-m1; fi
+          if [ "$SUITES" = testharness ]; then shards='[]'
+          elif [ "$runner" = macos-15 ]; then shards='[0, 1, 2]'
+          else shards='[0]'; fi
+          { echo "runner=$runner"; echo "shards=$shards"; } | tee -a "$GITHUB_OUTPUT"
 
   # The patched JavaScriptCore, built (about 7 minutes) only when neither it nor the browser is cached.
   jsc:
@@ -165,7 +200,7 @@ jobs:
 
   wpt:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() }}
+    if: ${{ !cancelled() && !failure() && inputs.suites != 'reftest' }}
     runs-on: lp-m1
     timeout-minutes: 30
     strategy:
@@ -232,7 +267,7 @@ jobs:
   # (`pyro run`), which no other pull request job runs. ffmpeg (Playwright's build) lets the video tests run.
   client:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() }}
+    if: ${{ !cancelled() && !failure() && inputs.suites != 'reftest' }}
     runs-on: lp-m1
     timeout-minutes: 25
     defaults:
@@ -271,7 +306,7 @@ jobs:
 
   gate:
     needs: [prepare, jsc, build, wpt]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.suites != 'reftest' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -348,5 +383,144 @@ jobs:
         with:
           name: wpt-baseline
           path: baseline.json
+          retention-days: 30
+          overwrite: true
+
+  # The paint reftests: bench/wpt/gate.mjs run --kind reftest, the browser and the WPT checkout as the shards above.
+  reftest:
+    needs: [prepare, build]
+    if: ${{ !cancelled() && !failure() && needs.prepare.outputs.reftest-shards != '[]' }}
+    runs-on: ${{ needs.prepare.outputs.reftest-runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.prepare.outputs.reftest-shards) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Install the runner's dependencies
+        working-directory: bench
+        run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        id: wpt-cache
+        with:
+          path: wpt
+          key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
+      - name: Fetch WPT
+        if: steps.wpt-cache.outputs.cache-hit != 'true'
+        run: bench/wpt/fetch-wpt.sh wpt
+      - uses: actions/download-artifact@v4
+        if: needs.build.result == 'success'
+        with:
+          name: wpt-browser
+      - uses: actions/cache/restore@v4
+        if: needs.build.result != 'success'
+        with:
+          path: browser.tgz
+          key: ${{ needs.prepare.outputs.browser-key }}
+          fail-on-cache-miss: true
+      - run: tar -xzf browser.tgz
+      - name: Run reftest shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
+        env:
+          SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
+          RUNNER_ARGS: ${{ inputs.reftest-args }}
+          OUT: wpt-reftest-shard-${{ strategy.job-index }}.json
+        run: |
+          echo "$(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, $(( $(sysctl -n hw.memsize) / 1073741824 )) GB, macOS $(sw_vers -productVersion)"
+          read -r -a extra <<< "$RUNNER_ARGS"
+          full=()
+          if [ "$FULL" = true ]; then full=(--full); fi
+          # Rendering is CPU-bound: one page per CPU. Earlier arguments win, so reftest-args can override --jobs.
+          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(sysctl -n hw.ncpu)" \
+            --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: wpt-reftest-shard-${{ strategy.job-index }}
+          path: wpt-reftest-shard-${{ strategy.job-index }}.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+
+  # The reftest gate: as `gate`, with --kind reftest (bench/wpt/reftest-baseline.json and reftest-flaky.json).
+  reftest-gate:
+    needs: [prepare, jsc, build, reftest]
+    if: ${{ !cancelled() && inputs.suites != 'testharness' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # the wpt-accept-loss label
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wpt-reftest-shard-*
+          merge-multiple: true
+      - name: Check the reftests against bench/wpt/reftest-baseline.json
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          JOBS_BEFORE: 'prepare: ${{ needs.prepare.result }}, jsc: ${{ needs.jsc.result }}, build: ${{ needs.build.result }}, shards: ${{ needs.reftest.result }}'
+        run: |
+          shopt -s nullglob
+          files=(wpt-reftest-shard-*.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            msg="No reftest shard results, so nothing was checked: the jobs before this one failed or did not run ($JOBS_BEFORE). See their logs."
+            echo "::error title=WPT reftest gate::$msg"
+            printf '## WPT reftest gate: FAIL\n\n%s\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "verdict=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          args=()
+          if [ "$EVENT" = pull_request ]; then
+            if git show HEAD^1:bench/wpt/reftest-baseline.json > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+              args+=(--base-baseline "$RUNNER_TEMP/base-baseline.json")
+              if git show HEAD^1:bench/wpt/reftest-flaky.json > "$RUNNER_TEMP/base-flaky.json" 2>/dev/null; then
+                args+=(--base-flaky "$RUNNER_TEMP/base-flaky.json")
+              fi
+            fi
+            if labels="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.labels[].name')"; then
+              if grep -qx wpt-accept-loss <<< "$labels"; then args+=(--accept-loss); fi
+            else
+              echo "::warning title=WPT reftest gate::could not read the pull request's labels; checking as if it had none"
+            fi
+          fi
+          bun bench/wpt/gate.mjs check --kind reftest "${files[@]}" --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
+      - name: Refresh the baseline
+        id: refresh
+        if: ${{ !cancelled() && contains(fromJSON('["pass", "stale", "bootstrap", "rebaseline"]'), steps.check.outputs.verdict) }}
+        env:
+          DURATIONS: ${{ inputs.durations }}
+        run: |
+          flags=()
+          if [ "$DURATIONS" = true ]; then flags+=(--durations); fi
+          bun bench/wpt/gate.mjs update --kind reftest wpt-reftest-shard-*.json --out reftest-baseline.json "${flags[@]}"
+          if cmp -s reftest-baseline.json bench/wpt/reftest-baseline.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --no-index --stat bench/wpt/reftest-baseline.json reftest-baseline.json || true
+            echo "The refreshed baseline is the \`wpt-reftest-baseline\` artifact: \`gh run download $GITHUB_RUN_ID -n wpt-reftest-baseline -D bench/wpt\`." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.refresh.outputs.changed == 'true' }}
+        with:
+          name: wpt-reftest-baseline
+          path: reftest-baseline.json
           retention-days: 30
           overwrite: true
