@@ -14279,23 +14279,24 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1358,6 +1899,15 @@
+@@ -1358,6 +1899,16 @@
              return true;
          }
  
-+        // pyro: `transform-style: preserve-3d` makes a stacking context too (CSS Transforms 2):
-+        // its 3D rendering context paints as one. `perspective` should as well; it does not
-+        // yet. A `body` with a perspective would paint its negative `z-index` children above its
-+        // own background, where Chromium covers them with the 3D planes it draws, which here
-+        // need clipping at the viewer's plane first (WPT `perspective-split-by-zero-w`).
-+        if box_style.transform_style == style::computed_values::transform_style::T::Preserve3d {
++        // pyro: `perspective` other than `none` and `transform-style: preserve-3d` make a
++        // stacking context too (CSS Transforms 2), as they make a containing block.
++        if !matches!(
++            box_style.perspective,
++            style::values::generics::box_::GenericPerspective::None
++        ) || box_style.transform_style == style::computed_values::transform_style::T::Preserve3d
++        {
 +            return true;
 +        }
 +
          if self.applies_atomic_paint_effect() {
              return true;
          }
-@@ -1559,7 +2109,7 @@
+@@ -1559,7 +2110,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -14304,7 +14305,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1579,7 +2129,7 @@
+@@ -1579,7 +2130,7 @@
                  // against the viewport and do not scroll with it. (A fixed box
                  // whose containing block is a transformed ancestor scrolls with
                  // that ancestor like any other out-of-flow box.)
@@ -14313,7 +14314,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2140,7 @@
+@@ -1590,7 +2141,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -14322,7 +14323,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2155,7 @@
+@@ -1605,7 +2156,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -14331,7 +14332,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1818,8 +2368,21 @@
+@@ -1818,8 +2369,21 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -14355,7 +14356,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +2440,28 @@
+@@ -1877,11 +2441,28 @@
                  }
              }
  

@@ -299,10 +299,8 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
   again even when they are undamaged: they may have moved, or the parent changed. A scrolled parent that
   gives one is marked (`Node::scroll_offset_changed`, called from `scrolling.rs` and pyro-render's mirror), so
   the next pass reaches it.
-- `src/node/node.rs` (`is_stacking_context_root`): `transform-style: preserve-3d` makes a stacking context.
-  `perspective` should too and does not yet: a `body` with a perspective would paint its negative `z-index`
-  children above its own background, where Chromium covers them with 3D planes that first need clipping at
-  the viewer's plane (WPT `perspective-split-by-zero-w`).
+- `src/node/node.rs` (`is_stacking_context_root`): `perspective` and `transform-style: preserve-3d` make a
+  stacking context.
 - `src/layout/paint_tree.rs` (`build_paint_tree_impl`): a stacking context that is not positioned (a
   transform, an opacity, a filter) paints as a positioned box with `z-index: 0` does (CSS 2.1 Appendix E step
   8): above the in-flow content and floats, in tree order with the positioned boxes, where it painted with

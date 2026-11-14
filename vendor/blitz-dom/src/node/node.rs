@@ -1899,12 +1899,13 @@ impl Node {
             return true;
         }
 
-        // pyro: `transform-style: preserve-3d` makes a stacking context too (CSS Transforms 2):
-        // its 3D rendering context paints as one. `perspective` should as well; it does not
-        // yet. A `body` with a perspective would paint its negative `z-index` children above its
-        // own background, where Chromium covers them with the 3D planes it draws, which here
-        // need clipping at the viewer's plane first (WPT `perspective-split-by-zero-w`).
-        if box_style.transform_style == style::computed_values::transform_style::T::Preserve3d {
+        // pyro: `perspective` other than `none` and `transform-style: preserve-3d` make a
+        // stacking context too (CSS Transforms 2), as they make a containing block.
+        if !matches!(
+            box_style.perspective,
+            style::values::generics::box_::GenericPerspective::None
+        ) || box_style.transform_style == style::computed_values::transform_style::T::Preserve3d
+        {
             return true;
         }
 
