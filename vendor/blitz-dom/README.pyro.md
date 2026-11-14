@@ -276,13 +276,21 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
     offset by the box's location less the parent's scroll offset (CSS Transforms 2, the accumulated 3D
     transformation matrix). Only the element's children in the DOM take it (WPT
     `perspective-children-only-*`): not an out-of-flow box it contains further down.
-  - `backface-visibility: hidden` with the back face showing (Chromium's `IsBackFaceVisible`: the cofactor of
-    m33 against the determinant) sets `TRANSFORM_HIDES`, which blitz-paint reads, as do a box behind the
-    viewer and a non-invertible matrix. Under a `transform-style: preserve-3d` parent the accumulated matrix
-    of the 3D rendering context decides which face shows (a card flip: a child turned 180deg in a parent
-    turned 180deg faces the viewer). A `preserve-3d` element itself is not hidden: its children are planes
-    of their own, which paint would hide with it. The geometry is still flattened element by element (a
-    3D rendering context's planes are not composed, nor sorted by depth).
+  - In a 3D rendering context (a parent with `transform-style: preserve-3d`) an element's plane is the
+    projection of its accumulated matrix, which the parent's enters (a child turned -60deg in a parent
+    turned 60deg faces the viewer at full width), stored relative to the parent's place
+    (`Context3D::base`), so paint and layout queries, which compose transforms down the tree, land on
+    it. A `preserve-3d` element whose plane is edge-on (`rotateX(90deg)`) keeps a negligible thickness
+    (`regularize`) so its children can still be placed relative to it. Its planes are not sorted by
+    depth: they paint in tree order.
+  - The used `transform-style` is `flat` under a grouping property (CSS Transforms 2: `overflow` other
+    than `visible` and `clip`, `opacity` below 1, a `filter`, `clip-path` or mask, `isolation: isolate`,
+    a `mix-blend-mode`, paint containment): `Node::is_preserve_3d`.
+  - `backface-visibility: hidden` with the back face showing (Chromium's `IsBackFaceVisible`: the cofactor
+    of m33 against the determinant) sets `TRANSFORM_HIDES`, which blitz-paint reads, as do a box behind the
+    viewer and a non-invertible matrix. In a 3D rendering context the accumulated matrix decides which face
+    shows (a card flip: a child turned 180deg in a parent turned 180deg faces the viewer). A `preserve-3d`
+    element itself is not hidden: its children are planes of their own, which paint would hide with it.
   - `transform-box` picks the reference box: a CSS box's content box for `content-box` and `fill-box`, its
     border box otherwise.
 - `src/resolve.rs` (`resolve_transforms`, `table_cells_overflow`, `ContainingTransform`): each box resolves its
@@ -291,17 +299,23 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
   again even when they are undamaged: they may have moved, or the parent changed. A scrolled parent that
   gives one is marked (`Node::scroll_offset_changed`, called from `scrolling.rs` and pyro-render's mirror), so
   the next pass reaches it.
-- `src/node/node.rs` (`is_stacking_context_root`): `perspective` and `transform-style: preserve-3d` make a
-  stacking context.
+- `src/node/node.rs` (`is_stacking_context_root`): `transform-style: preserve-3d` makes a stacking context.
+  `perspective` should too and does not yet: a `body` with a perspective would paint its negative `z-index`
+  children above its own background, where Chromium covers them with 3D planes that first need clipping at
+  the viewer's plane (WPT `perspective-split-by-zero-w`).
 - `src/layout/paint_tree.rs` (`build_paint_tree_impl`): a stacking context that is not positioned (a
   transform, an opacity, a filter) paints as a positioned box with `z-index: 0` does (CSS 2.1 Appendix E step
   8): above the in-flow content and floats, in tree order with the positioned boxes, where it painted with
   the blocks. `z-index` applies to positioned boxes and to flex and grid items only: such a stacking context
   keeps its place in tree order whatever its `z-index` (WPT `css/css-transforms/z-index-does-not-apply.html`).
-  pyro-dom's hit testing already ordered them so (`Layout::paint_step`).
+  pyro-dom's hit testing already ordered them so (`Layout::paint_step`). Positioned boxes a box that is no
+  layer root lays out (the anonymous block holding a positioned or filtered inline's out-of-flow boxes) are
+  lifted to the nearest layer root's positioned level, as in-flow positioned boxes are
+  (`attach_hoisted_past_parent`): they painted under the blocks after the inline (WPT
+  `filtered-inline-is-container`).
 
-Covered by `crates/pyro-render/tests/transform_3d.rs` (paint, a scrolled perspective, the card flip, layout
-boxes), `crates/pyro-layout/tests/transform_3d.rs` (`getBoundingClientRect`, `elementFromPoint`) and the unit
+Covered by `crates/pyro-render/tests/transform_3d.rs` (paint, a scrolled perspective, the card flip, a
+composed 3D rendering context, grouping properties, a filtered inline's positioned boxes, layout boxes), `crates/pyro-layout/tests/transform_3d.rs` (`getBoundingClientRect`, `elementFromPoint`) and the unit
 tests in `src/stylo_to_kurbo.rs`.
 
 ## Style changes for transitions

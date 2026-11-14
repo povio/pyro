@@ -160,7 +160,7 @@ pub fn resolve_transform(
 /// within 1e-9 px of a whole pixel is on it. A rotation by a multiple of 90deg leaves rounding
 /// noise (sin 180deg = 1.2e-16 in f64) that made an axis-aligned transform a rotation, which
 /// text then draws without its pixel snapping; Chromium computes those angles exactly.
-fn snap(affine: Affine) -> Affine {
+pub(crate) fn snap(affine: Affine) -> Affine {
     let [a, b, c, d, e, f] = affine.as_coeffs();
     let linear = |v: f64| {
         let r = v.round();

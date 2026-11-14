@@ -187,6 +187,66 @@ fn a_3d_rendering_context_decides_which_face_its_children_show() {
     }
 }
 
+/// A 3D rendering context composes its planes before projecting them: a child turned -60deg in a
+/// `preserve-3d` parent turned 60deg faces the viewer at full width (flattened one by one it was a
+/// quarter wide), and two turns of 90deg about x make a 180deg flip of a box that an edge-on
+/// parent no longer swallows. A grouping property (here `isolation: isolate`) flattens the parent
+/// first, as `transform-style: flat` does.
+#[test]
+fn a_3d_rendering_context_composes_its_planes() {
+    let nest = |outer: &str, inner: &str| {
+        format!(
+            "<div style='position:absolute;left:100px;top:100px;width:200px;height:100px;{outer}'>\
+             <div style='width:200px;height:100px;background:green;{inner}'></div></div>"
+        )
+    };
+    for scale in [1.0, 2.0] {
+        let img =
+            render(&nest("transform-style:preserve-3d;transform:rotateY(60deg)", "transform:rotateY(-60deg)"), scale);
+        assert_eq!(
+            extent(&img, scale, GREEN, 200.0, 150.0),
+            ((100.5, 299.5), (100.5, 199.5)),
+            "composed, scale {scale}"
+        );
+        let img =
+            render(&nest("transform-style:preserve-3d;transform:rotateX(90deg)", "transform:rotateX(90deg)"), scale);
+        assert_eq!(
+            extent(&img, scale, GREEN, 200.0, 150.0),
+            ((100.5, 299.5), (100.5, 199.5)),
+            "edge-on parent, scale {scale}"
+        );
+        // Flattened: a quarter of the width about the centre.
+        for outer in
+            ["transform:rotateY(60deg)", "transform-style:preserve-3d;transform:rotateY(60deg);isolation:isolate"]
+        {
+            let img = render(&nest(outer, "transform:rotateY(-60deg)"), scale);
+            assert_eq!(
+                extent(&img, scale, GREEN, 200.0, 150.0),
+                ((175.5, 224.5), (100.5, 199.5)),
+                "{outer}, scale {scale}"
+            );
+        }
+    }
+}
+
+/// The out-of-flow boxes of a filtered inline (its stacking context) paint at the positioned
+/// level, above the blocks after it, as a transformed block's do (WPT
+/// `filtered-inline-is-container`): they were painted with the anonymous block that lays them
+/// out, under the next block.
+#[test]
+fn the_positioned_boxes_of_a_filtered_inline_paint_above_later_blocks() {
+    for filter in ["filter:blur(0px)", "position:relative"] {
+        let img = render(
+            &format!(
+                "<div style='font:16px/20px sans-serif'><span style='{filter}'>a<div style='position:absolute;left:0;top:0;width:100px;height:100px;background:green'></div></span></div>\
+                 <div style='height:300px;margin-top:-100px;background:red'></div>"
+            ),
+            1.0,
+        );
+        assert_eq!(pixel(&img, 1.0, 50.0, 50.0), GREEN, "{filter}");
+    }
+}
+
 /// Only an element's children in the DOM take its perspective: an absolutely positioned
 /// grandchild it contains does not (WPT `perspective-children-only-abspos`).
 #[test]
