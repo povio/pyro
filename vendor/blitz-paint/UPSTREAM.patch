@@ -1363,10 +1363,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -285,7 +305,150 @@
+@@ -284,10 +304,153 @@
+                     self.initial_x,
                      self.initial_y,
                  );
-             }
++            }
 +        }
 +    }
 +
@@ -1420,7 +1421,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                || !self.rendered(id)
 +            {
 +                continue;
-+            }
+             }
 +            self.paint_backdrop(scene, id);
 +            // The root element paints where the document pass would have
 +            // put it (`render_element` applies its own location, transform
@@ -1437,9 +1438,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            self.top_layer_root.set(Some(id));
 +            self.render_element(scene, id, transform, clip_rect);
 +            self.top_layer_root.set(None);
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// Whether `id` and its ancestors are styled and not `display: none`
 +    /// (the style traversal keeps stale styles under a `display: none`
 +    /// ancestor).
@@ -1472,7 +1473,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            || style.get_inherited_box().visibility != StyloVisibility::Visible
 +        {
 +            return;
-         }
++        }
 +        let effects = style.get_effects();
 +        let opacity = effects.opacity;
 +        let color = style
@@ -1511,9 +1512,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            },
 +        );
-     }
- 
++    }
++
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
+         let location = node.final_layout().location;
+         parent
 @@ -317,8 +480,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
@@ -1527,18 +1530,48 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -376,10 +541,30 @@
+@@ -328,6 +493,10 @@
+         transform: Affine,
+         root: bool,
+     ) {
++        // pyro: an inline box's mask is its own glyphs, where its inline root draws them.
++        if root && crate::text::draw_inline_text_mask(scene, self.dom, &self.draw_text_context, node_id, self.scale) {
++            return;
++        }
+         let node = &self.dom.as_ref().tree()[node_id];
+         if matches!(node.taffy_display(), taffy::Display::None) || (!root && node.is_out_of_flow())
+         {
+@@ -368,18 +537,45 @@
+                     + layout.block_offset as f64;
+                 let text_transform =
+                     transform * Affine::translate((x * self.scale, y * self.scale));
+-                crate::text::stroke_text(
++                // pyro: the glyphs where `draw_inline_layout` draws them, cut by an ellipsis as
++                // there.
++                let (text_shift, tops) = cx.text_placement(layout.block_offset as f64);
++                let mut context = self.draw_text_context.borrow_mut();
++                (context.text_shift, context.line_tops) = (text_shift, tops);
++                stroke_inline_text(
+                     scene,
+-                    layout.layout.lines(),
+                     self.dom,
++                    node,
++                    layout,
+                     text_transform,
                      TextPaintOptions {
                          scale: self.scale,
                          brush_override: Some(Color::BLACK),
 +                        // A `background-clip: text` mask is the glyphs alone.
 +                        shadows: false,
                      },
-                     node.id,
-+                    None,
-                     &mut self.draw_text_context.borrow_mut(),
-+                    None,
+-                    node.id,
+-                    &mut self.draw_text_context.borrow_mut(),
++                    &mut context,
++                    tops,
++                    self.scale,
                  );
++                (context.text_shift, context.line_tops) = (0.0, None);
++                drop(context);
 +                // pyro: emphasis marks and ruby annotations are text the background shows in.
 +                let recording = self.draw_text_context.borrow().runs.is_some();
 +                for line in layout.layout.lines() {
@@ -1558,7 +1591,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              }
          }
          if let Some(children) = &*node.layout_children.borrow() {
-@@ -419,6 +604,15 @@
+@@ -419,6 +615,15 @@
              return;
          }
  
@@ -1574,7 +1607,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -435,6 +629,15 @@
+@@ -435,6 +640,15 @@
              return;
          }
  
@@ -1590,7 +1623,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let effects = styles.get_effects();
          let opacity = effects.opacity;
          if opacity == 0.0 {
-@@ -482,10 +685,16 @@
+@@ -482,10 +696,16 @@
          // Cull elements that fall entirely outside the current clip rectangle. In addition to
          // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
          // also culls elements scrolled out of view inside a clipping/scrolling container.
@@ -1611,7 +1644,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          {
              return;
          }
-@@ -540,11 +749,9 @@
+@@ -540,11 +760,9 @@
          };
  
          // Compute clip-path (if any) and wrap all rendering in a clip layer
@@ -1626,7 +1659,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
          // the element's rendering (including outlines and shadows), so it is the outermost layer.
-@@ -552,6 +759,19 @@
+@@ -552,6 +770,19 @@
          if css_clip_rect.is_some_and(|rect| rect.is_zero_area()) {
              return;
          }
@@ -1646,7 +1679,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
              scene,
              css_clip_rect.is_some(),
-@@ -566,40 +786,93 @@
+@@ -566,40 +797,93 @@
          // Use the viewport in scene coordinates so outlines, shadows and overflowing
          // descendants are not clipped to the element's border box.
          let blend = convert_blend_mode(effects.mix_blend_mode);
@@ -1761,7 +1794,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,112 +881,220 @@
+@@ -608,112 +892,220 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -1894,8 +1927,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              .maybe_pop_layer(scene, blend_layer_pushed);
          self.layer_manager
              .maybe_pop_layer(scene, css_clip_layer_pushed);
-     }
- 
++    }
++
 +    /// Paints an element and its descendants, in Chromium's order: outset box-shadow,
 +    /// background, inset box-shadow, border, the content clipped to the padding box (when the
 +    /// element clips), scrollbars, outline. Leaves `cx.transform` as it found it.
@@ -1999,8 +2032,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // in a phase of its own after the foreground): one with a negative
 +        // `outline-offset` lies inside the box, over its background.
 +        cx.draw_outline(scene);
-+    }
-+
+     }
+ 
 +    /// pyro: the layer of an element's opacity and filters around the `group` it painted. The
 +    /// layer is the group's ink (what its commands can touch, [`crate::bounds::scene_bounds`]),
 +    /// grown by what the filter reaches and cut to the visible area, in the element's space (the
@@ -2075,7 +2108,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn render_node(
          &self,
          scene: &mut impl PaintScene,
-@@ -724,9 +1105,11 @@
+@@ -724,9 +1116,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
          match &node.data {
@@ -2089,7 +2122,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -784,6 +1167,55 @@
+@@ -784,6 +1178,55 @@
      }
  }
  
@@ -2145,7 +2178,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
      match image_rendering {
          ImageRendering::Auto => peniko::ImageQuality::Medium,
-@@ -837,6 +1269,45 @@
+@@ -837,6 +1280,118 @@
  }
  
  /// Converts parley BoundingBox into peniko Rect
@@ -2155,6 +2188,79 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +/// ellipsis at its end edge, and the ellipsis follows the last atom kept (at the line's start
 +/// when none is). Returns the cut and the ellipsis's x (layout coordinates), `None` for a line
 +/// that fits.
++/// Strokes an inline root's text, each line cut where `text-overflow: ellipsis` cuts it (with the
++/// ellipsis drawn after what it keeps). pyro: shared by `draw_inline_layout` and the
++/// `background-clip: text` mask (`draw_text_mask`), which must cut its glyphs alike. `context` has
++/// the text's shift and line tops (`tops`) set.
++#[allow(clippy::too_many_arguments)]
++fn stroke_inline_text(
++    scene: &mut impl PaintScene,
++    dom: &BaseDocument,
++    node: &Node,
++    text_layout: &blitz_dom::node::TextLayout,
++    transform: Affine,
++    options: TextPaintOptions,
++    context: &mut DrawTextContext,
++    tops: Option<crate::text::LineTops>,
++    scale: f64,
++) {
++    let Some(ellipsis) = text_layout.ellipsis.as_deref() else {
++        crate::text::stroke_text(
++            scene,
++            text_layout.layout.lines(),
++            dom,
++            transform,
++            options,
++            node.id,
++            Some(&text_layout.text),
++            context,
++            None,
++            Some(&text_layout.layout),
++        );
++        return;
++    };
++    // The lines were broken in the unrounded box: a line as wide as the box (a
++    // box sized to its text) must not count as overflowing it by a rounding.
++    let width = node.unrounded_layout().content_box_width() * scale as f32;
++    for line in text_layout.layout.lines() {
++        let truncation = truncate_line(&line, ellipsis, width, scale as f32, text_layout.layout.is_rtl());
++        context.cut = truncation.map(|(cut, _)| cut);
++        crate::text::stroke_text(
++            scene,
++            std::iter::once(line.clone()),
++            dom,
++            transform,
++            options,
++            node.id,
++            Some(&text_layout.text),
++            context,
++            None,
++            Some(&text_layout.layout),
++        );
++        context.cut = None;
++        // The ellipsis on the line's baseline, next to the last atom kept.
++        if let Some((_, x)) = truncation {
++            let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
++            let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
++            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
++            context.line_tops = None;
++            crate::text::stroke_text(
++                scene,
++                ellipsis.lines(),
++                dom,
++                transform * Affine::translate(offset),
++                options,
++                node.id,
++                Some("\u{2026}"),
++                context,
++                None,
++                None,
++            );
++            context.line_tops = tops;
++        }
++    }
++}
++
 +fn truncate_line(
 +    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
 +    ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
@@ -2191,7 +2297,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -963,12 +1434,267 @@
+@@ -963,12 +1518,361 @@
                      None,
                      &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
                  );
@@ -2356,22 +2462,29 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        }
 +                    }
 +                }
-             }
-         }
++            }
++        }
 +        if fragments.is_empty() {
 +            return;
 +        }
 +
-+        // An element's first and last fragment.
++        // An element's first and last fragment, and how wide its fragments before each are
++        // (device px): with `box-decoration-break: slice` its fragments are pieces of one box.
 +        let mut ends: HashMap<NodeId, (usize, usize)> = HashMap::new();
++        let mut before: Vec<f32> = Vec::with_capacity(fragments.len());
++        let mut widths: HashMap<NodeId, f32> = HashMap::new();
 +        for (index, fragment) in fragments.iter().enumerate() {
 +            ends.entry(fragment.node).and_modify(|ends| ends.1 = index).or_insert((index, index));
++            let width = widths.entry(fragment.node).or_insert(0.0);
++            before.push(*width);
++            *width += fragment.x1 - fragment.x0;
 +        }
 +        let mut order: Vec<usize> = (0..fragments.len()).collect();
 +        order.sort_by_key(|&index| (fragments[index].line, fragments[index].depth));
 +
 +        // The boxes are where the text is.
-+        let transform = transform * Affine::translate((self.fractional_text_x_of_node(), 0.0));
++        let (text_transform, text_shift) = (transform, self.fractional_text_x_of_node());
++        let transform = transform * Affine::translate((text_shift, 0.0));
 +        let [a, b, c, d, tx, ty] = transform.as_coeffs();
 +        let translation_only = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0;
 +        let scale = self.scale as f32;
@@ -2384,25 +2497,56 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                continue;
 +            };
 +            let (starts, ends) = (ends[&fragment.node].0 == index, ends[&fragment.node].1 == index);
-+            let (left, right) =
-+                if style.clone_direction() == Direction::Rtl { (ends, starts) } else { (starts, ends) };
++            let rtl = style.clone_direction() == Direction::Rtl;
++            let (left, right) = if rtl { (ends, starts) } else { (starts, ends) };
++            // pyro: a box sliced across lines (`box-decoration-break: slice`, the initial value)
++            // casts the shadows and shows the background images of the whole box, its fragments
++            // laid side by side, each fragment its piece of them (Blink's
++            // `PaintRectForImageStrip`): how far the whole box reaches past the fragment's left
++            // and right (device px). Only where that shows: a box of one colour paints the same
++            // either way.
++            let effects = style.get_effects();
++            let stitch = (!(starts && ends)
++                && style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Slice
++                && (!effects.box_shadow.0.is_empty()
++                    || style
++                        .get_background()
++                        .background_image
++                        .0
++                        .iter()
++                        .any(|image| !matches!(image, GenericImage::None))))
++            .then(|| {
++                let width = fragment.x1 - fragment.x0;
++                let (earlier, later) = (before[index], widths[&fragment.node] - before[index] - width);
++                if rtl { (later, earlier) } else { (earlier, later) }
++            });
 +            let (border, padding) = (style.get_border(), style.get_padding());
 +            let side = |open: bool, width: f32| if open { 0.0 } else { width };
 +            // The used width: none where the side has no border style.
 +            let used = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
 +                if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() }
 +            };
-+            let border = taffy::Rect {
-+                left: side(!left, used(&border.border_left_width, border.border_left_style)),
-+                right: side(!right, used(&border.border_right_width, border.border_right_style)),
++            let whole_border = taffy::Rect {
++                left: used(&border.border_left_width, border.border_left_style),
++                right: used(&border.border_right_width, border.border_right_style),
 +                top: used(&border.border_top_width, border.border_top_style),
 +                bottom: used(&border.border_bottom_width, border.border_bottom_style),
 +            };
-+            let padding = taffy::Rect {
-+                left: side(!left, length(&padding.padding_left.0)),
-+                right: side(!right, length(&padding.padding_right.0)),
++            let whole_padding = taffy::Rect {
++                left: length(&padding.padding_left.0),
++                right: length(&padding.padding_right.0),
 +                top: length(&padding.padding_top.0),
 +                bottom: length(&padding.padding_bottom.0),
++            };
++            let border = taffy::Rect {
++                left: side(!left, whole_border.left),
++                right: side(!right, whole_border.right),
++                ..whole_border
++            };
++            let padding = taffy::Rect {
++                left: side(!left, whole_padding.left),
++                right: side(!right, whole_padding.right),
++                ..whole_padding
 +            };
 +            drop(style);
 +            let rect = Rect::new(
@@ -2411,26 +2555,33 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                fragment.x1 as f64,
 +                (fragment.bottom + (border.bottom + padding.bottom) * scale) as f64,
 +            );
-+            let (transform, size) = if translation_only {
-+                // To whole CSS pixels, as Chromium snaps a box's decorations
-+                // (and as block boxes are laid out), whatever the device scale.
-+                let snap = |v: f64| (v / self.scale).round() * self.scale;
-+                let (x0, y0) = (snap(tx + rect.x0), snap(ty + rect.y0));
-+                let (x1, y1) = (snap(tx + rect.x1), snap(ty + rect.y1));
-+                (Affine::translate((x0, y0)), Size::new(x1 - x0, y1 - y0))
-+            } else {
-+                (transform * Affine::translate((rect.x0, rect.y0)), rect.size())
++            // Where a rectangle of the lines goes, and its size (device px).
++            let place = |rect: Rect| {
++                if translation_only {
++                    // To whole CSS pixels, as Chromium snaps a box's decorations
++                    // (and as block boxes are laid out), whatever the device scale.
++                    let snap = |v: f64| (v / self.scale).round() * self.scale;
++                    let (x0, y0) = (snap(tx + rect.x0), snap(ty + rect.y0));
++                    let (x1, y1) = (snap(tx + rect.x1), snap(ty + rect.y1));
++                    (Affine::translate((x0, y0)), Size::new(x1 - x0, y1 - y0))
++                } else {
++                    (transform * Affine::translate((rect.x0, rect.y0)), rect.size())
++                }
 +            };
-+            let layout = Layout {
-+                size: taffy::Size {
-+                    width: (size.width / self.scale) as f32,
-+                    height: (size.height / self.scale) as f32,
-+                },
-+                border,
-+                padding,
-+                ..Layout::new()
++            let box_cx = |transform: Affine, size: Size, border, padding| {
++                let layout = Layout {
++                    size: taffy::Size {
++                        width: (size.width / self.scale) as f32,
++                        height: (size.height / self.scale) as f32,
++                    },
++                    border,
++                    padding,
++                    ..Layout::new()
++                };
++                self.context.element_cx(node, layout, transform, None)
 +            };
-+            let mut cx = self.context.element_cx(node, layout, transform, None);
++            let (transform, size) = place(rect);
++            let mut cx = box_cx(transform, size, border, padding);
 +            if !left {
 +                cx.frame.border_radii.top_left = Vec2::ZERO;
 +                cx.frame.border_radii.bottom_left = Vec2::ZERO;
@@ -2439,15 +2590,64 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                cx.frame.border_radii.top_right = Vec2::ZERO;
 +                cx.frame.border_radii.bottom_right = Vec2::ZERO;
 +            }
-+            cx.draw_outset_box_shadow(scene);
-+            if self.context.backgrounds {
-+                cx.draw_background(scene);
++            // The whole box, for a sliced box's shadows and background images, and the fragment's
++            // piece of it: its border box, and for the outer shadows the space past its closed
++            // sides and above and below it.
++            let whole = stitch.map(|(grow_left, grow_right)| {
++                let whole = Rect::new(rect.x0 - grow_left as f64, rect.y0, rect.x1 + grow_right as f64, rect.y1);
++                let (transform, size) = place(whole);
++                box_cx(transform, size, whole_border, whole_padding)
++            });
++            let piece = Rect::from_origin_size(Point::ZERO, size);
++            let far = 1e6;
++            let outside = Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far);
++            match &whole {
++                Some(whole) => {
++                    scene.push_clip_layer(Fill::NonZero, transform, &outside);
++                    whole.draw_outset_box_shadow(scene);
++                    scene.pop_layer();
++                }
++                None => cx.draw_outset_box_shadow(scene),
 +            }
-+            cx.draw_inset_box_shadow(scene);
++            if self.context.backgrounds {
++                // pyro: a `background-clip: text` layer shows through the box's own glyphs.
++                let text_clip = cx.style.get_background().background_clip.0.iter().any(|clip| {
++                    *clip == style::properties::generated::longhands::background_clip::single_value::computed_value::T::Text
++                });
++                if text_clip {
++                    self.context.draw_text_context.borrow_mut().inline_mask = Some(crate::text::InlineTextMask {
++                        element: fragment.node,
++                        root,
++                        transform: text_transform,
++                        tops,
++                        text_shift,
++                        line: fragment.line,
++                    });
++                }
++                match &whole {
++                    Some(whole) => {
++                        scene.push_clip_layer(Fill::NonZero, transform, &piece);
++                        whole.draw_background(scene);
++                        scene.pop_layer();
++                    }
++                    None => cx.draw_background(scene),
++                }
++                if text_clip {
++                    self.context.draw_text_context.borrow_mut().inline_mask = None;
++                }
++            }
++            match &whole {
++                Some(whole) => {
++                    scene.push_clip_layer(Fill::NonZero, transform, &piece);
++                    whole.draw_inset_box_shadow(scene);
++                    scene.pop_layer();
++                }
++                None => cx.draw_inset_box_shadow(scene),
+             }
 +            cx.draw_border(scene);
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
-+        }
+         }
      }
  
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
@@ -2459,7 +2659,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let text_layout = self.element
                  .inline_layout_data
                  .as_ref()
-@@ -976,6 +1702,11 @@
+@@ -976,6 +1880,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -2471,7 +2671,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +1715,22 @@
+@@ -984,23 +1893,22 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -2503,10 +2703,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,18 +1738,227 @@
+@@ -1008,18 +1916,186 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+-            crate::text::stroke_text(
 +            draw_text_context.text_shift = text_shift;
 +            draw_text_context.line_tops = tops;
 +            let options = TextPaintOptions {
@@ -2514,59 +2715,18 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                brush_override: None,
 +                shadows: true,
 +            };
-+            match text_layout.ellipsis.as_deref() {
-+                None => crate::text::stroke_text(
-+                    scene,
-+                    text_layout.layout.lines(),
-+                    self.context.dom,
-+                    transform,
-+                    options,
-+                    self.node.id,
-+                    Some(&text_layout.text),
-+                    &mut draw_text_context,
-+                    None,
-+                ),
-+                Some(ellipsis) => {
-+                    // The lines were broken in the unrounded box: a line as wide as the box (a
-+                    // box sized to its text) must not count as overflowing it by a rounding.
-+                    let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
-+                    for line in text_layout.layout.lines() {
-+                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, text_layout.layout.is_rtl());
-+                        draw_text_context.cut = truncation.map(|(cut, _)| cut);
-+                        crate::text::stroke_text(
-+                            scene,
-+                            std::iter::once(line.clone()),
-+                            self.context.dom,
-+                            transform,
-+                            options,
-+                            self.node.id,
-+                            Some(&text_layout.text),
-+                            &mut draw_text_context,
-+                            None,
-+                        );
-+                        draw_text_context.cut = None;
-+                        // The ellipsis on the line's baseline, next to the last atom kept.
-+                        if let Some((_, x)) = truncation {
-+                            let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
-+                            let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
-+                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
-+                            draw_text_context.line_tops = None;
-+                            crate::text::stroke_text(
-+                                scene,
-+                                ellipsis.lines(),
-+                                self.context.dom,
-+                                transform * Affine::translate(offset),
-+                                options,
-+                                self.node.id,
-+                                Some("\u{2026}"),
-+                                &mut draw_text_context,
-+                                None,
-+                            );
-+                            draw_text_context.line_tops = tops;
-+                        }
-+                    }
-+                }
-+            }
++            stroke_inline_text(
+                 scene,
+-                text_layout.layout.lines(),
+                 self.context.dom,
++                self.node,
++                text_layout,
+                 transform,
++                options,
++                &mut draw_text_context,
++                tops,
++                self.scale,
++            );
 +            // pyro: ruby annotations and emphasis marks, over the text of each line.
 +            if !text_layout.annotations.is_empty() {
 +                let recording = draw_text_context.runs.is_some();
@@ -2694,12 +2854,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
 +        for (index, line) in text_layout.layout.lines().enumerate() {
 +            let vertical = vertical(&line);
-             crate::text::stroke_text(
-                 scene,
--                text_layout.layout.lines(),
++            crate::text::stroke_text(
++                scene,
 +                std::iter::once(line),
-                 self.context.dom,
--                transform,
++                self.context.dom,
 +                line_transform(index),
                  TextPaintOptions {
                      scale: self.scale,
@@ -2710,6 +2868,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(&text_layout.text),
                  &mut draw_text_context,
 +                vertical,
++                Some(&text_layout.layout),
              );
 +            // pyro: ruby annotations and emphasis marks, turned with their line.
 +            if !text_layout.annotations.is_empty() {
@@ -2733,7 +2892,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1030,9 +1969,15 @@
+@@ -1030,9 +2106,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -2751,7 +2910,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +1992,64 @@
+@@ -1047,7 +2129,65 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -2808,6 +2967,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        Some(&placeholder.text),
 +                        &mut draw_text_context,
 +                        None,
++                        None,
 +                    );
 +                }
 +                draw_text_context.line_tops = None;
@@ -2816,7 +2976,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +2080,7 @@
+@@ -1078,6 +2218,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -2824,7 +2984,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +2089,14 @@
+@@ -1086,10 +2227,15 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -2834,12 +2994,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                None,
                  &mut draw_text_context,
 +                None,
++                None,
              );
 +            draw_text_context.line_tops = None;
          }
      }
  
-@@ -1114,14 +2121,25 @@
+@@ -1114,14 +2260,25 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -2868,7 +3029,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1145,13 +2163,93 @@
+@@ -1145,13 +2302,94 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -2877,6 +3038,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  self.node.id,
 +                None,
                  &mut draw_text_context,
++                None,
 +                None,
              );
          }
@@ -2962,7 +3124,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_children(
          &self,
          scene: &mut impl PaintScene,
-@@ -1183,16 +2281,20 @@
+@@ -1183,16 +2421,20 @@
                  // the viewport and do not scroll with it, so cancel out the viewport
                  // scroll (applied in `paint_scene`). A fixed box contained by a
                  // transformed ancestor scrolls with it like any out-of-flow box.
@@ -2984,7 +3146,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      parent_style_transform.pre_translate(kurbo::Vec2 {
                          x: offset.x as f64 * self.scale,
                          y: offset.y as f64 * self.scale,
-@@ -1232,6 +2334,9 @@
+@@ -1232,6 +2474,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -2994,10 +3156,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1466,3 +2571,29 @@
+@@ -1465,4 +2710,30 @@
+     };
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
- }
++}
 +
 +/// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.
 +#[derive(Clone, Copy)]
@@ -3008,7 +3171,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    is_text_input: bool,
 +    content_position: Point,
 +    child_clip_rect: Rect,
-+}
+ }
 +
 +/// pyro: an element's opacity and filter layer ([`BlitzDomPainter::paint_effect_group`]).
 +struct EffectLayer {
@@ -7711,7 +7874,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Draw the backgrounds of inline elements (e.g. `<span style="background: ...">`).
  ///
  /// Each glyph run carries the node id of the innermost inline element it belongs to
-@@ -29,30 +124,59 @@
+@@ -29,29 +124,58 @@
      doc: &BaseDocument,
      transform: Affine,
      inline_root_id: NodeId,
@@ -7733,6 +7896,16 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
              }
  
 -            let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
+-                continue;
+-            };
+-
+-            let current_color = styles.clone_color();
+-            let bg_color = styles
+-                .get_background()
+-                .background_color
+-                .resolve_to_absolute(&current_color)
+-                .as_srgb_color();
+-            if bg_color == Color::TRANSPARENT {
 +            // Text brushes point at the innermost inline. Its transparent
 +            // background must not hide backgrounds on enclosing inline boxes.
 +            let mut backgrounds = Vec::new();
@@ -7769,19 +7942,8 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            }
 +            if backgrounds.is_empty() {
                  continue;
--            };
--
--            let current_color = styles.clone_color();
--            let bg_color = styles
--                .get_background()
--                .background_color
--                .resolve_to_absolute(&current_color)
--                .as_srgb_color();
--            if bg_color == Color::TRANSPARENT {
--                continue;
              }
  
-             let metrics = glyph_run.run().font_metrics();
 @@ -63,38 +187,13 @@
              let y1 = baseline + metrics.descent as f64;
              let rect = Rect::new(x, y0, x + w, y1);
@@ -7824,17 +7986,29 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Mirrors Blink's `SelectBestDashGap`: choose the gap length (as close as possible to
  /// `gap_length`) that fits a whole number of `dash_length` dashes across `stroke_length`,
  /// so dashes are evenly distributed and a dash lands at each end of the line.
-@@ -139,6 +238,9 @@
+@@ -137,8 +236,19 @@
+     underline_under: bool,
+     /// Whether `text-underline-position: from-font` is in effect.
      underline_from_font: bool,
-     /// `text-decoration-inset`. Resolved per run.
-     inset: GenericTextDecorationInset<LengthPercentage>,
+-    /// `text-decoration-inset`. Resolved per run.
+-    inset: GenericTextDecorationInset<LengthPercentage>,
++    /// pyro: `text-decoration-inset` at the start and the end of the box's decoration line, `auto`
++    /// resolved (`None`: no inset). Percentages are resolved per line ([`DecorationInsets`]).
++    inset: Option<(LengthPercentage, LengthPercentage)>,
++    /// pyro: what the inset applies to: `box-decoration-break: clone` insets every fragment of
++    /// the box, `slice` (the initial value) its start in its first fragment and its end in its
++    /// last; the box's direction (the start is on the right in right-to-left boxes); its inline
++    /// padding and borders (CSS px, left and right), which percentages of the box count.
++    inset_clone: bool,
++    inset_rtl: bool,
++    inset_edges: (f32, f32),
 +    /// pyro: `text-decoration-skip-ink`: underlines and overlines leave gaps where glyphs cross
 +    /// them, but for `auto` not where CJK glyphs do.
 +    skip_ink: TextDecorationSkipInk,
  }
  
  /// An element on the current ancestor path (inline root -> run node), caching the
-@@ -151,8 +253,63 @@
+@@ -151,8 +261,63 @@
      fill_color: Color,
      /// The decoration this node introduces as a decorating box, if any.
      decoration: Option<ResolvedDecoration>,
@@ -7898,7 +8072,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Resolve the cached style values for a single node into a [`DecorationStackEntry`].
  fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationStackEntry {
      let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
-@@ -160,53 +317,33 @@
+@@ -160,53 +325,33 @@
              node_id,
              fill_color: Color::BLACK,
              decoration: None,
@@ -7966,7 +8140,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      }
  }
  
-@@ -219,13 +356,13 @@
+@@ -219,13 +364,13 @@
      /// The baseline the decoration is positioned from (the run's own, `vertical-align`
      /// shifted, baseline).
      baseline: f32,
@@ -7984,20 +8158,26 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      css_font_size: f64,
  }
  
-@@ -237,6 +374,12 @@
+@@ -237,8 +382,18 @@
  struct LineDecoration {
      node_id: NodeId,
      deco: ResolvedDecoration,
 +    /// pyro: the box is an ancestor of the inline root (a block whose decoration propagates
 +    /// into it): it is positioned from the line, as the root's own is.
 +    outer: bool,
-+    /// pyro: the `text-shadow` of the first run the box covers on the line (Chromium draws a
-+    /// decoration with the shadows of the text it decorates).
-+    shadows: Vec<TextShadow>,
++    /// pyro: the runs the box covers on the line, in line order: their extent and their
++    /// `text-shadow` (a range of [`DrawTextContext::run_shadows`]). Chromium paints decorations
++    /// with each text fragment, so each run's part of the line casts that run's shadows.
++    segments: SmallVec<[(f64, f64, std::ops::Range<usize>); 4]>,
      min_x: f64,
      max_x: f64,
++    /// pyro: `text-decoration-inset` on this line (device px), at the left and right ends.
++    inset_left: f64,
++    inset_right: f64,
      /// Geometry from a run whose innermost node is the decorating box itself.
-@@ -246,6 +389,21 @@
+     own: Option<DecorationRunGeometry>,
+     /// Geometry from the first run the box covers (fallback when it has no own text on
+@@ -246,6 +401,21 @@
      first: Option<DecorationRunGeometry>,
  }
  
@@ -8019,7 +8199,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Reusable scratch storage for drawing text across all inline formatting contexts in a
  /// document. The vectors are cleared between uses without releasing their allocations.
  #[derive(Default)]
-@@ -253,38 +411,117 @@
+@@ -253,38 +423,304 @@
      stack: Vec<DecorationStackEntry>,
      path_scratch: Vec<NodeId>,
      deco_boxes: Vec<LineDecoration>,
@@ -8039,6 +8219,14 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    pub(crate) cut: Option<TextCut>,
 +    /// pyro: where the next `stroke_text` puts the top of each line (none: where the layout has it).
 +    pub(crate) line_tops: Option<LineTops>,
++    /// pyro: the next `stroke_text` draws only the runs of this element and its descendants (an
++    /// inline box's `background-clip: text` mask).
++    pub(crate) only_within: Option<NodeId>,
++    /// pyro: the inline box whose `background-clip: text` mask is being drawn, where its inline
++    /// root's text goes ([`InlineTextMask`]).
++    pub(crate) inline_mask: Option<InlineTextMask>,
++    /// pyro: the lines of the decorating boxes with an inset in the inline root being drawn, by box.
++    spans: Vec<(NodeId, Option<DecorationSpan>)>,
  }
  
 -/// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
@@ -8050,6 +8238,170 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -/// The result is floored to a whole number of device pixels (minimum 1), matching
 -/// browsers, which snap decoration thickness to whole pixels.
 -fn decoration_size(
++/// pyro: an inline box whose background is clipped to its text (`background-clip: text`): the
++/// mask is its own glyphs, drawn where its inline root draws them.
++#[derive(Clone, Copy)]
++pub(crate) struct InlineTextMask {
++    pub element: NodeId,
++    pub root: NodeId,
++    /// The transform of the root's text, and its whole-pixel line tops and x shift.
++    pub transform: Affine,
++    pub tops: Option<LineTops>,
++    pub text_shift: f64,
++    /// The line of the fragment being painted: the only one its clip shows.
++    pub line: usize,
++}
++
++/// pyro: draws the `background-clip: text` mask of an inline box (not atomic) whose fragment is
++/// being painted ([`DrawTextContext::inline_mask`], set by `draw_inline_boxes`): the glyphs of its
++/// own text and its descendants', in black, where its inline root draws them (its fragment's clip
++/// keeps this line's). Returns whether `node_id` is that box.
++pub(crate) fn draw_inline_text_mask<S: PaintScene>(
++    scene: &mut S,
++    doc: &BaseDocument,
++    context: &std::cell::RefCell<DrawTextContext>,
++    node_id: NodeId,
++    scale: f64,
++) -> bool {
++    let Some(mask) = context.borrow().inline_mask.filter(|mask| mask.element == node_id) else {
++        return false;
++    };
++    let Some(layout) = doc.get_node(mask.root).and_then(|root| root.element_data()?.inline_layout_data.as_ref()) else {
++        return true;
++    };
++    let mut context = context.borrow_mut();
++    let saved = (context.text_shift, context.line_tops);
++    (context.text_shift, context.line_tops, context.only_within) = (mask.text_shift, mask.tops, Some(mask.element));
++    stroke_text(
++        scene,
++        layout.layout.lines().skip(mask.line).take(1),
++        doc,
++        mask.transform,
++        TextPaintOptions { scale, brush_override: Some(Color::BLACK), shadows: false },
++        mask.root,
++        None,
++        &mut context,
++        None,
++        Some(&layout.layout),
++    );
++    (context.text_shift, context.line_tops) = saved;
++    context.only_within = None;
++    true
++}
++
++/// pyro: the fragments of a decorating box in an inline root: the lines it has text on (the first
++/// and the last, by their text ranges) and the length of its decoration line over all of them
++/// (device px).
++#[derive(Clone, Debug, PartialEq)]
++struct DecorationSpan {
++    first: std::ops::Range<usize>,
++    last: std::ops::Range<usize>,
++    length: f64,
++}
++
++/// pyro: the lines `node`'s text is on in `layout` (`None`: the inline root's, and those of the
++/// blocks around it), and the extent of its glyph runs on each, added up. A run is the node's
++/// when its element is the node or inside it.
++fn decoration_span(
++    layout: &Layout<TextBrush>,
++    doc: &BaseDocument,
++    root: NodeId,
++    node: Option<NodeId>,
++) -> Option<DecorationSpan> {
++    let within = |mut id: NodeId| {
++        let Some(node) = node else { return true };
++        loop {
++            if id == node {
++                return true;
++            }
++            if id == root {
++                return false;
++            }
++            match doc.get_node(id).and_then(|n| n.parent) {
++                Some(parent) => id = parent,
++                None => return false,
++            }
++        }
++    };
++    let mut span: Option<DecorationSpan> = None;
++    for line in layout.lines() {
++        // As `stroke_text` decorates the line: not the white space hanging at its end.
++        let content_end =
++            (!layout.is_rtl() && line.metrics().hanging_advance > 0.0).then(|| hanging_start(&line)).flatten();
++        let (mut x0, mut x1) = (f64::INFINITY, f64::NEG_INFINITY);
++        for item in line.items() {
++            if let PositionedLayoutItem::GlyphRun(run) = item
++                && within(run.style().brush.id)
++            {
++                let (start, end) = (f64::from(run.offset()), f64::from(run.offset() + run.advance()));
++                x0 = x0.min(start);
++                x1 = x1.max(content_end.map_or(end, |content_end| end.min(content_end).max(start)));
++            }
++        }
++        if x1 <= x0 {
++            continue;
++        }
++        let range = line.text_range();
++        match &mut span {
++            Some(span) => {
++                span.last = range;
++                span.length += x1 - x0;
++            }
++            None => span = Some(DecorationSpan { first: range.clone(), last: range, length: x1 - x0 }),
++        }
++    }
++    span
++}
++
++/// pyro: where the white space hanging at the end of a left-to-right `line` starts: its last glyph
++/// run's end, less the hanging advance (`None`: no glyph runs).
++fn hanging_start(line: &Line<'_, TextBrush>) -> Option<f64> {
++    let end = line
++        .items()
++        .filter_map(|item| match item {
++            PositionedLayoutItem::GlyphRun(run) => Some(run.offset() + run.advance()),
++            _ => None,
++        })
++        .reduce(f32::max)?;
++    Some(f64::from(end - line.metrics().hanging_advance))
++}
++
++/// pyro: `text-decoration-inset` of `deco` on a line where its box's runs are `width` long (device
++/// px), as (left, right) device px. With `box-decoration-break: slice` the start inset applies in
++/// the box's first fragment and the end inset in its last, and percentages are of the box's whole
++/// decoration line, its inline padding and borders included; with `clone`, in each fragment, of
++/// that fragment. `span` is the box's lines (`None`: unknown, each line is taken as the whole box).
++fn line_insets(
++    deco: &ResolvedDecoration,
++    width: f64,
++    span: Option<&DecorationSpan>,
++    line: &std::ops::Range<usize>,
++    scale: f64,
++) -> (f64, f64) {
++    let Some((start, end)) = &deco.inset else {
++        return (0.0, 0.0);
++    };
++    let (first, last) = match span {
++        Some(span) => (span.first == *line, span.last == *line),
++        None => (true, true),
++    };
++    // The start and end edges' padding and borders (CSS px), in the box's direction.
++    let (start_edge, end_edge) =
++        if deco.inset_rtl { (deco.inset_edges.1, deco.inset_edges.0) } else { deco.inset_edges };
++    let edges =
++        |starts: bool, ends: bool| f64::from(if starts { start_edge } else { 0.0 } + if ends { end_edge } else { 0.0 });
++    let (applies_start, applies_end, basis) = match span {
++        Some(span) if !deco.inset_clone => (first, last, span.length / scale + edges(true, true)),
++        _ => (deco.inset_clone || first, deco.inset_clone || last, width / scale + edges(first, last)),
++    };
++    let basis = Length::new(basis as f32);
++    let resolve = |v: &LengthPercentage, applies: bool| {
++        if applies { f64::from(v.resolve(basis).px()) * scale } else { 0.0 }
++    };
++    let (start, end) = (resolve(start, applies_start), resolve(end, applies_end));
++    if deco.inset_rtl { (end, start) } else { (start, end) }
++}
++
 +/// pyro: where Chromium paints the lines of a block's text: each line's top at the whole CSS pixel
 +/// nearest its unrounded place in the document (Blink's `TextFragmentPainter` rounds a text
 +/// fragment's top "to ensure consistent line heights"; its place within the line is in whole pixels
@@ -8149,6 +8501,21 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    thickness.trunc().max(1.0)
 +}
 +
++/// pyro: a decoration line from `x0` to `x1` (the space of `transform`) as its start and width,
++/// its ends on whole device pixels where the line is drawn only moved into a raster. Text sits at
++/// fractions of a pixel, and so do its runs' ends: a line ending there leaves a partly covered
++/// pixel where the lines of two boxes meet, or where a reference cuts a line with a box's clip
++/// (whole pixels). Chromium's lines end on whole pixels there too where its glyph advances are
++/// whole (WPT's Linux runs).
++fn snapped_ends(transform: Affine, x0: f64, x1: f64) -> (f64, f64) {
++    let [a, b, c, d, tx, _] = transform.as_coeffs();
++    if (a, b, c, d) != (1.0, 0.0, 0.0, 1.0) {
++        return (x0, x1 - x0);
++    }
++    let (x0, x1) = ((tx + x0).round() - tx, (tx + x1).round() - tx);
++    (x0, x1 - x0)
++}
++
  /// Draws a single decoration line of the given `text-decoration-style` spanning
 -/// `[x0, x0 + width]`. `baseline` is the line's baseline and `offset` positions the line
 -/// relative to it (`y = baseline - offset + size / 2`, growing downward). Geometry is built
@@ -8158,7 +8525,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// across renderers.
  ///
  /// `double_dir` points away from the text (`+1` = down, `-1` = up) and is used to place the
-@@ -296,9 +533,8 @@
+@@ -296,24 +732,21 @@
      scale: f64,
      x0: f64,
      width: f64,
@@ -8170,7 +8537,16 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      brush: &anyrender::Paint,
      double_dir: f64,
      deco_style: TextDecorationStyle,
-@@ -312,8 +548,7 @@
+     inset_start: f64,
+     inset_end: f64,
+ ) {
+-    // Inset the line from the box's start/end edges (assumes LTR: start is the left edge).
+-    // Negative insets extend the line past the text.
+-    let x = x0 + inset_start;
+-    let w = width - inset_start - inset_end;
++    // Inset the line from its left and right ends (pyro: `line_insets` puts the start and end
++    // insets on their sides). Negative insets extend the line past the text.
++    let (x, w) = snapped_ends(transform, x0 + inset_start, x0 + width - inset_end);
      if w <= 0.0 {
          return;
      }
@@ -8180,7 +8556,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      let butt_stroke = Stroke::new(size).with_caps(Cap::Butt);
  
      match deco_style {
-@@ -399,26 +634,75 @@
+@@ -399,26 +832,77 @@
  pub(crate) struct TextPaintOptions {
      pub scale: f64,
      pub brush_override: Option<Color>,
@@ -8236,6 +8612,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    strut: &StrutGeometry,
 +    phase: DecorationPhase,
 +    line_runs: &[parley::GlyphRun<'_, TextBrush>],
++    run_shadows: &[TextShadow],
 +    source: Option<&str>,
 +    vertical: bool,
  ) {
@@ -8244,6 +8621,9 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          brush_override,
 +        ..
      } = options;
+-    // Draw innermost boxes first so ancestors' decorations paint on top, matching the
+-    // per-run drawing order this replaced (`stack.iter().rev()`).
+-    for acc in deco_boxes.iter().rev() {
 +    let wanted = match phase {
 +        DecorationPhase::Shadow(_) => {
 +            TextDecorationLine::UNDERLINE | TextDecorationLine::OVERLINE | TextDecorationLine::LINE_THROUGH
@@ -8251,9 +8631,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        DecorationPhase::LineThrough => TextDecorationLine::LINE_THROUGH,
 +        DecorationPhase::UnderOver => TextDecorationLine::UNDERLINE | TextDecorationLine::OVERLINE,
 +    };
-     // Draw innermost boxes first so ancestors' decorations paint on top, matching the
-     // per-run drawing order this replaced (`stack.iter().rev()`).
-     for acc in deco_boxes.iter().rev() {
++    // pyro: the outermost box's lines first, each box's over those of the boxes around it, as
++    // Chromium paints a text fragment's applied decorations (WPT
++    // `text-shadow/decorations-multiple-zorder`).
++    for acc in deco_boxes.iter() {
          let deco = &acc.deco;
 +        if !deco.line.intersects(wanted) {
 +            continue;
@@ -8261,7 +8642,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          // Prefer the decorating box's own font; fall back to the first run it covers.
          let geom = match (&acc.own, &acc.first) {
              (Some(own), _) => own.clone(),
-@@ -426,9 +710,13 @@
+@@ -426,9 +910,13 @@
                  let mut geom = first.clone();
                  // A descendant run's baseline may be shifted by `vertical-align`, but the
                  // decoration is positioned from the decorating box's own baseline. For the
@@ -8278,18 +8659,50 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                  }
                  geom
              }
-@@ -456,146 +744,332 @@
+@@ -442,160 +930,408 @@
+         let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
+ 
+         // `text-decoration-inset` shortens (or, when negative, extends) the line from the
+-        // inline-start/end edges. Percentages resolve against the decoration line length
+-        // (the box's total advance on this line); `auto` is no inset.
+-        let (inset_start, inset_end) = match &deco.inset {
+-            GenericTextDecorationInset::LengthPercentage { start, end } => {
+-                // The extent is in device pixels; convert to CSS pixels so the resolved
+-                // result can be scaled back.
+-                let line_length = Length::new((width / scale) as f32);
+-                (
+-                    start.resolve(line_length).px() as f64 * scale,
+-                    end.resolve(line_length).px() as f64 * scale,
+-                )
++        // left and right ends (pyro: resolved per box in `stroke_text`, see `line_insets`).
++        let (inset_start, inset_end) = (acc.inset_left, acc.inset_right);
++        // pyro: the shadow this phase draws over each part of the line: the runs' shadows, in
++        // pieces of consecutive runs with the same one (the first piece reaching left of the line,
++        // the last right of it); none where the box has no shadow at this index.
++        let mut shadow_pieces: SmallVec<[(f64, f64, &TextShadow); 2]> = SmallVec::new();
++        if let DecorationPhase::Shadow(index) = phase {
++            let shadow_of = |(_, _, shadows): &(f64, f64, std::ops::Range<usize>)| {
++                run_shadows.get(shadows.clone()).and_then(|shadows| shadows.get(index))
++            };
++            let mut start = f64::NEG_INFINITY;
++            for (i, segment) in acc.segments.iter().enumerate() {
++                let shadow = shadow_of(segment);
++                let next = acc.segments.get(i + 1);
++                if next.is_some_and(|next| shadow_of(next) == shadow) {
++                    continue;
++                }
++                // A piece ends where the next run starts (the runs are in line order).
++                let end = next.map_or(f64::INFINITY, |next| next.0.max(start));
++                if let Some(shadow) = shadow {
++                    shadow_pieces.push((start, end, shadow));
++                }
++                start = end;
              }
-             GenericTextDecorationInset::Auto => (0.0, 0.0),
-         };
-+        // The shadow this phase draws, if the box has it.
-+        let shadow = match phase {
-+            DecorationPhase::Shadow(index) => match acc.shadows.get(index) {
-+                Some(shadow) => Some(shadow),
-+                None => continue,
-+            },
-+            _ => None,
-+        };
+-            GenericTextDecorationInset::Auto => (0.0, 0.0),
++            if shadow_pieces.is_empty() {
++                continue;
++            }
++        }
 +        let baseline = f64::from(geom.baseline);
 +        // pyro: a decoration line (or its shadow), `top` CSS px below the baseline and
 +        // `thickness` CSS px thick (both whole); a wavy or double line reaches a few sizes further.
@@ -8332,9 +8745,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                // inside a clip of its pieces (its pattern runs on under the gaps). A gap's edges
 +                // are on whole device pixels (Blink clips them out aliased), so that a line drawn
 +                // over another with the same gaps covers it.
-+                let (start, end) = (acc.min_x + inset_start, acc.max_x - inset_end);
 +                let [a, b, c, d, tx, _] = transform.as_coeffs();
 +                let snap = |x: f64| if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) { (tx + x).round() - tx } else { x };
++                // The line's ends as `draw_decoration_line` puts them.
++                let (start, end) = (snap(acc.min_x + inset_start), snap(acc.max_x - inset_end));
 +                let mut pieces: SmallVec<[(f64, f64); 8]> = SmallVec::new();
 +                let mut x = start;
 +                for &(gap_start, gap_end) in &gaps {
@@ -8366,18 +8780,31 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    scene.pop_layer();
 +                }
 +            };
-+            match shadow {
-+                Some(shadow) => {
-+                    let y = top + size / 2.0;
-+                    let reach = size * 4.0 + scale;
-+                    let ink = Rect::new(acc.min_x - reach, y - reach, acc.max_x + reach, y + reach);
-+                    draw_shadow(scene, shadow, scale, transform, ink, |scene, color, transform| {
-+                        line(scene, &anyrender::Paint::from(color), transform)
-+                    });
-+                }
-+                None => line(scene, &brush, transform),
++            if shadow_pieces.is_empty() {
++                return line(scene, &brush, transform);
 +            }
-+        };
++            let y = top + size / 2.0;
++            let reach = size * 4.0 + scale;
++            // Negative insets reach past the runs.
++            let (x0, x1) = (acc.min_x + inset_start.min(0.0), acc.max_x - inset_end.min(0.0));
++            let whole = shadow_pieces.len() == 1;
++            for &(piece_x0, piece_x1, shadow) in &shadow_pieces {
++                let ink = Rect::new(x0.max(piece_x0) - reach, y - reach, x1.min(piece_x1) + reach, y + reach);
++                draw_shadow(scene, shadow, scale, transform, ink, |scene, color, transform| {
++                    // A piece of the line (with its pattern, its gaps and insets) where its runs
++                    // are, cut on whole pixels as the lines of two boxes meet (`snapped_ends`).
++                    if !whole {
++                        let (cx0, w) = snapped_ends(transform, piece_x0.max(x0 - reach), piece_x1.min(x1 + reach));
++                        let clip = Rect::new(cx0, y - reach, cx0 + w, y + reach);
++                        scene.push_clip_layer(Fill::NonZero, transform, &clip);
++                    }
++                    line(scene, &anyrender::Paint::from(color), transform);
++                    if !whole {
++                        scene.pop_layer();
++                    }
++                });
++            }
+         };
 +        // The font's ascent and descent in whole CSS px.
 +        let ascent = (f64::from(geom.content_ascent) / scale).round();
 +        let descent = (f64::from(geom.content_descent) / scale).round();
@@ -8494,16 +8921,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                geom.css_font_size,
 -                scale,
 -            );
-+        if wanted.contains(TextDecorationLine::LINE_THROUGH) && deco.line.contains(TextDecorationLine::LINE_THROUGH) {
-+            let t = decoration_thickness(&deco.thickness, geom.strikethrough_size, geom.css_font_size, scale);
-+            // Centred two thirds of the ascent down from the text's top: Blink's
-+            // `TextDecorationInfo` line offset, its top rounded half down to a CSS pixel.
-+            let top = (-ascent / 3.0 - t / 2.0 - 0.5).ceil();
-+            draw_line(scene, top, whole_css_px(t), 1.0, None);
-+        }
-+    }
-+}
- 
+-
 -            // Centre the line-through a third of the ascent above the baseline, matching
 -            // Chrome (which places it `2/3 * ascent` below the text-top). Parley's
 -            // `strikethrough_offset` (the font's `yStrikeoutPosition`) sits lower and would
@@ -8511,6 +8929,45 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -            let ascent =
 -                win_ascent(win_ascent_ratios, &geom.font, geom.font_size).unwrap_or(geom.ascent);
 -            let offset = ascent / 3.0 + size / 2.0;
+-
+-            draw_decoration_line(
+-                scene,
+-                transform,
+-                scale,
+-                acc.min_x,
+-                width,
+-                geom.baseline,
+-                offset,
+-                size,
+-                &brush,
+-                1.0,
+-                deco.style,
+-                inset_start,
+-                inset_end,
+-            );
++        if wanted.contains(TextDecorationLine::LINE_THROUGH) && deco.line.contains(TextDecorationLine::LINE_THROUGH) {
++            let t = decoration_thickness(&deco.thickness, geom.strikethrough_size, geom.css_font_size, scale);
++            // Centred two thirds of the ascent down from the text's top: Blink's
++            // `TextDecorationInfo` line offset, its top rounded half down to a CSS pixel.
++            let top = (-ascent / 3.0 - t / 2.0 - 0.5).ceil();
++            draw_line(scene, top, whole_css_px(t), 1.0, None);
+         }
+     }
+ }
+ 
+-pub(crate) fn stroke_text<'a>(
+-    scene: &mut impl PaintScene,
+-    lines: impl Iterator<Item = Line<'a, TextBrush>>,
+-    doc: &BaseDocument,
+-    transform: Affine,
+-    options: TextPaintOptions,
+-    inline_root_id: NodeId,
+-    context: &mut DrawTextContext,
+-) {
+-    let TextPaintOptions {
+-        scale,
+-        brush_override,
+-    } = options;
 +/// pyro: the decoration a box draws as a decorating box (`text-decoration-line`), if any.
 +fn own_decoration(styles: &style::properties::ComputedValues) -> Option<ResolvedDecoration> {
 +    let itext = styles.get_inherited_text();
@@ -8531,6 +8988,34 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        .as_absolute()
 +        .map(ToColorColor::as_color_color)
 +        .unwrap_or(itext.color.as_color_color());
++    // pyro: `auto` insets by a twelfth and a half of the font size, at least 1px (Stylo's servo
++    // value, which Gecko shares), so that the lines of adjacent boxes stay apart.
++    let inset = match &text.text_decoration_inset {
++        GenericTextDecorationInset::Auto => {
++            let font_size = styles.get_font().font_size.computed_size().px();
++            let auto = LengthPercentage::new_length(Length::new((font_size / 12.5).max(1.0)));
++            Some((auto.clone(), auto))
++        }
++        GenericTextDecorationInset::LengthPercentage { start, end } => {
++            let zero = |v: &LengthPercentage| v.to_length().is_some_and(|l| l.px() == 0.0);
++            (!zero(start) || !zero(end)).then(|| (start.clone(), end.clone()))
++        }
++    };
++    // An inline box's padding and borders are part of the length its percentages resolve
++    // against; a block's (the inline root's, or one around it) are not on its lines.
++    let inset_edges = if inset.is_some() && styles.clone_display().is_inline_flow() {
++        let (border, padding) = (styles.get_border(), styles.get_padding());
++        let width = |w: &style::values::computed::BorderSideWidth, s: style::values::computed::BorderStyle| {
++            if s.none_or_hidden() { 0.0 } else { w.0.to_f32_px() }
++        };
++        let pad = |p: &LengthPercentage| p.resolve(Length::new(0.0)).px();
++        (
++            width(&border.border_left_width, border.border_left_style) + pad(&padding.padding_left.0),
++            width(&border.border_right_width, border.border_right_style) + pad(&padding.padding_right.0),
++        )
++    } else {
++        (0.0, 0.0)
++    };
 +    Some(ResolvedDecoration {
 +        line,
 +        style: text.text_decoration_style,
@@ -8543,26 +9028,15 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        underline_from_font: itext
 +            .text_underline_position
 +            .contains(TextUnderlinePosition::FROM_FONT),
-+        inset: text.text_decoration_inset.clone(),
++        inset_clone: inset.is_some()
++            && styles.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone,
++        inset_rtl: inset.is_some() && styles.clone_direction() == style::computed_values::direction::T::Rtl,
++        inset,
++        inset_edges,
 +        skip_ink: itext.text_decoration_skip_ink,
 +    })
 +}
- 
--            draw_decoration_line(
--                scene,
--                transform,
--                scale,
--                acc.min_x,
--                width,
--                geom.baseline,
--                offset,
--                size,
--                &brush,
--                1.0,
--                deco.style,
--                inset_start,
--                inset_end,
--            );
++
 +/// pyro: how far (CSS px) a box's own text decorations can reach outside its line boxes: their
 +/// thickness and offset, and an em for where the font puts them.
 +pub(crate) fn decoration_ink_reach(styles: &style::properties::ComputedValues) -> f64 {
@@ -8617,7 +9091,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    let remember = |cache: &mut Vec<Option<(NodeId, Propagated)>>, id: NodeId, value: &Propagated| {
 +        if cache.len() <= slot(id) {
 +            cache.resize(slot(id) + 1, None);
-         }
++        }
 +        cache[slot(id)] = Some((id, value.clone()));
 +    };
 +    scratch.clear();
@@ -8659,12 +9133,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +        remember(cache, child, &result);
 +        parent = child;
-     }
++    }
 +    result
- }
- 
--pub(crate) fn stroke_text<'a>(
--    scene: &mut impl PaintScene,
++}
++
 +/// `transform` with its content moved `shift` along the x axis of the text.
 +fn shifted(transform: Affine, shift: f64) -> Affine {
 +    if shift == 0.0 {
@@ -8674,22 +9146,27 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    }
 +}
 +
++/// Draws `lines` of an inline root's text. pyro: `layout` is the whole layout they are lines of,
++/// where a decorating box's lines are known: `text-decoration-inset` then applies at the box's
++/// ends, not at each line's ([`line_insets`]).
++#[allow(clippy::too_many_arguments)]
 +pub(crate) fn stroke_text<'a, S: PaintScene>(
 +    scene: &mut S,
-     lines: impl Iterator<Item = Line<'a, TextBrush>>,
-     doc: &BaseDocument,
-     transform: Affine,
-     options: TextPaintOptions,
-     inline_root_id: NodeId,
++    lines: impl Iterator<Item = Line<'a, TextBrush>>,
++    doc: &BaseDocument,
++    transform: Affine,
++    options: TextPaintOptions,
++    inline_root_id: NodeId,
 +    source: Option<&str>,
-     context: &mut DrawTextContext,
++    context: &mut DrawTextContext,
 +    vertical: Option<VerticalLine>,
- ) {
-     let TextPaintOptions {
-         scale,
-         brush_override,
++    layout: Option<&Layout<TextBrush>>,
++) {
++    let TextPaintOptions {
++        scale,
++        brush_override,
 +        shadows: paint_shadows,
-     } = options;
++    } = options;
 +    // pyro: text shadows are drawn in screenshots only (see `TextPaintOptions::shadows`), and not
 +    // in vertical writing modes, whose lines are turned (a shadow's offset is physical).
 +    let paint_shadows = paint_shadows && context.runs.is_none() && vertical.is_none();
@@ -8706,9 +9183,14 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        text_shift,
 +        cut,
 +        line_tops,
++        only_within,
++        inline_mask: _,
++        spans,
      } = context;
 +    let shift = *text_shift;
 +    let cut = *cut;
++    let only_within = *only_within;
++    spans.clear();
 +    let line_tops = line_tops.filter(|_| vertical.is_none());
 +    // pyro: the decorations of the root's ancestors that propagate into it.
 +    let outer = propagated_decorations(doc, inline_root_id, propagated, path_scratch);
@@ -8719,7 +9201,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1082,556 @@
+@@ -608,144 +1344,589 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -8733,17 +9215,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          // draws one decoration per box rather than one stepped segment per differently-sized
          // run. Clearing preserves the allocation for the next line and inline context.
          deco_boxes.clear();
-+        run_paints.clear();
-+        run_shadows.clear();
-+        // pyro: the line's glyph runs, walked by each pass over the line.
-+        let glyph_runs: SmallVec<[parley::GlyphRun<'_, TextBrush>; 16]> = line
-+            .items()
-+            .filter_map(|item| match item {
-+                PositionedLayoutItem::GlyphRun(run) => Some(run),
-+                _ => None,
-+            })
-+            .collect();
- 
+-
 -        for item in line.items() {
 -            if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
 -                let run = glyph_run.run();
@@ -8755,29 +9227,9 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                let glyph_xform = synthesis
 -                    .skew()
 -                    .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
-+        // pyro: the line's decorations, and what each of its glyph runs is drawn with.
-+        for glyph_run in &glyph_runs {
-+            let run = glyph_run.run();
-+            let font_size = run.font_size();
-+            let metrics = run.font_metrics();
-+            let style = glyph_run.style();
-+            let css_font_size = font_size as f64 / scale;
- 
+-
 -                let css_font_size = font_size as f64 / scale;
-+            // Reconcile the stack with this run's ancestor path. Build the path
-+            // (inline root -> run node), keep the shared prefix already on the stack,
-+            // pop the rest, and resolve styles only for the newly-descended nodes.
-+            path_scratch.clear();
-+            let mut walk_id = Some(style.brush.id);
-+            while let Some(node_id) = walk_id {
-+                path_scratch.push(node_id);
-+                if node_id == inline_root_id {
-+                    break;
-+                }
-+                walk_id = doc.get_node(node_id).and_then(|node| node.parent);
-+            }
-+            path_scratch.reverse();
- 
+-
 -                // Reconcile the stack with this run's ancestor path. Build the path
 -                // (inline root -> run node), keep the shared prefix already on the stack,
 -                // pop the rest, and resolve styles only for the newly-descended nodes.
@@ -8787,6 +9239,74 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                    path_scratch.push(node_id);
 -                    if node_id == inline_root_id {
 -                        break;
++        run_paints.clear();
++        run_shadows.clear();
++        // pyro: the line's glyph runs, walked by each pass over the line.
++        let mut glyph_runs: SmallVec<[parley::GlyphRun<'_, TextBrush>; 16]> = line
++            .items()
++            .filter_map(|item| match item {
++                PositionedLayoutItem::GlyphRun(run) => Some(run),
++                _ => None,
++            })
++            .collect();
++        // pyro: white space hanging at the end of a left-to-right line is not decorated (Chromium
++        // removes it), nor counted in a box's decoration line: the line's content ends that much
++        // before its last run does (its runs are where alignment and justification put them).
++        let hanging = line.metrics().hanging_advance;
++        let content_end = layout
++            .filter(|layout| !layout.is_rtl() && hanging > 0.0)
++            .and_then(|_| glyph_runs.iter().map(|run| run.offset() + run.advance()).reduce(f32::max))
++            .map(|end| f64::from(end - hanging));
++        // pyro: an inline box's text mask: its own runs only.
++        if let Some(element) = only_within {
++            glyph_runs.retain(|run| {
++                let mut id = run.style().brush.id;
++                loop {
++                    if id == element {
++                        return true;
+                     }
+-                    walk_id = doc.get_node(node_id).and_then(|node| node.parent);
++                    match doc.get_node(id).and_then(|node| node.parent) {
++                        Some(parent) if id != inline_root_id => id = parent,
++                        _ => return false,
++                    }
+                 }
+-                path_scratch.reverse();
++            });
++        }
+ 
+-                let shared = stack
+-                    .iter()
+-                    .zip(path_scratch.iter())
+-                    .take_while(|(entry, node_id)| entry.node_id == **node_id)
+-                    .count();
+-                stack.truncate(shared);
+-                for &node_id in &path_scratch[shared..] {
+-                    stack.push(resolve_decoration_entry(doc, node_id));
++        // pyro: the line's decorations, and what each of its glyph runs is drawn with.
++        for glyph_run in &glyph_runs {
++            let run = glyph_run.run();
++            let font_size = run.font_size();
++            let metrics = run.font_metrics();
++            let style = glyph_run.style();
++            let css_font_size = font_size as f64 / scale;
++
++            // Reconcile the stack with this run's ancestor path. Build the path
++            // (inline root -> run node), keep the shared prefix already on the stack,
++            // pop the rest, and resolve styles only for the newly-descended nodes.
++            path_scratch.clear();
++            let mut walk_id = Some(style.brush.id);
++            while let Some(node_id) = walk_id {
++                path_scratch.push(node_id);
++                if node_id == inline_root_id {
++                    break;
+                 }
++                walk_id = doc.get_node(node_id).and_then(|node| node.parent);
++            }
++            path_scratch.reverse();
+ 
+-                let fill_color = brush_override
+-                    .unwrap_or_else(|| stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK));
 +            let shared = stack
 +                .iter()
 +                .zip(path_scratch.iter())
@@ -8796,7 +9316,11 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            for &node_id in &path_scratch[shared..] {
 +                stack.push(resolve_decoration_entry(doc, node_id));
 +            }
-+
+ 
+-                let embolden = if FONT_EMBOLDEN_ENABLED {
+-                    font_embolden(font_size as f64, fill_color, transform)
+-                } else {
+-                    kurbo::Vec2::default()
 +            let fill_color = brush_override
 +                .unwrap_or_else(|| stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK));
 +            let shadows: &[TextShadow] = match stack.last() {
@@ -8835,6 +9359,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            // pyro: decorations span what the cut keeps of the run.
 +            let Some((run_x0, run_x1)) = kept_extent else { continue };
 +            let (run_x0, run_x1) = (run_x0 as f64, run_x1 as f64);
++            let run_x1 = content_end.map_or(run_x1, |end| run_x1.min(end).max(run_x0));
 +
 +            // pyro: the decorations of blocks the root is in come first (outermost).
 +            let boxes = outer
@@ -8849,44 +9374,90 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                            node_id,
 +                            deco: deco.clone(),
 +                            outer: is_outer,
-+                            shadows: shadows.to_vec(),
++                            segments: SmallVec::new(),
 +                            min_x: f64::INFINITY,
 +                            max_x: f64::NEG_INFINITY,
++                            inset_left: 0.0,
++                            inset_right: 0.0,
 +                            own: None,
 +                            first: None,
 +                        });
 +                        deco_boxes.len() - 1
-                     }
--                    walk_id = doc.get_node(node_id).and_then(|node| node.parent);
-+                };
++                    }
+                 };
 +                let acc = &mut deco_boxes[idx];
 +                acc.min_x = acc.min_x.min(run_x0);
 +                acc.max_x = acc.max_x.max(run_x1);
++                acc.segments.push((run_x0, run_x1, first_shadow..run_shadows.len()));
 +                if acc.first.is_none() {
 +                    acc.first = Some(geometry.clone());
-                 }
--                path_scratch.reverse();
--
--                let shared = stack
--                    .iter()
--                    .zip(path_scratch.iter())
--                    .take_while(|(entry, node_id)| entry.node_id == **node_id)
--                    .count();
--                stack.truncate(shared);
--                for &node_id in &path_scratch[shared..] {
--                    stack.push(resolve_decoration_entry(doc, node_id));
++                }
 +                // A run whose innermost node is the box itself is the box's own text, so
 +                // its font is the one Firefox positions and sizes the decoration with. A block
 +                // the root is in has the root's own text.
 +                let own_node = if is_outer { inline_root_id } else { node_id };
 +                if own_node == run_node_id {
 +                    acc.own = Some(geometry.clone());
-                 }
++                }
 +            }
 +        }
  
--                let fill_color = brush_override
--                    .unwrap_or_else(|| stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK));
+-                let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
+-                // Zero-size text is invisible, but hinting can give its glyphs ink. Fully
+-                // transparent text is skipped too: backends draw color (emoji) glyphs opaque.
+-                if font_size > 0.0 && fill_color.components[3] > 0.0 {
+-                    scene.draw_glyphs(
+-                        font,
+-                        font_size,
+-                        !FONT_EMBOLDEN_ENABLED, // hint
+-                        normalized_coords,
+-                        embolden,
+-                        Fill::NonZero,
+-                        &anyrender::Paint::from(fill_color),
+-                        1.0, // alpha
+-                        transform,
+-                        glyph_xform,
+-                        glyph_run.positioned_glyphs().map(|glyph| anyrender::Glyph {
+-                            id: glyph.id as _,
+-                            x: glyph.x,
+-                            y: glyph.y,
+-                        }),
+-                    );
++        // pyro: `text-decoration-inset`, at the ends of each box's decoration line.
++        for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.inset.is_some()) {
++            let span = layout.and_then(|layout| {
++                let key = if acc.outer || acc.node_id == inline_root_id { inline_root_id } else { acc.node_id };
++                if let Some((_, span)) = spans.iter().find(|(id, _)| *id == key) {
++                    return span.clone();
+                 }
++                let node = (key != inline_root_id).then_some(key);
++                let span = decoration_span(layout, doc, inline_root_id, node);
++                spans.push((key, span.clone()));
++                span
++            });
++            let line_range = line.text_range();
++            (acc.inset_left, acc.inset_right) =
++                line_insets(&acc.deco, acc.max_x - acc.min_x, span.as_ref(), &line_range, scale);
++        }
+ 
+-                // Accumulate this run's contribution to each decorating box on its ancestor
+-                // path. The decoration is drawn once per box after the whole line has been
+-                // walked (see `flush_line_decorations`), so mixed font sizes within a box
+-                // produce a single straight line rather than one stepped segment per run.
+-                let geometry = DecorationRunGeometry {
+-                    baseline: glyph_run.baseline(),
+-                    ascent: metrics.ascent,
+-                    descent: metrics.descent,
+-                    underline_offset: metrics.underline_offset,
+-                    underline_size: metrics.underline_size,
+-                    strikethrough_size: metrics.strikethrough_size,
+-                    font: font.clone(),
+-                    font_size,
+-                    css_font_size,
+-                };
+-                let run_node_id = style.brush.id;
+-                let run_x0 = glyph_run.offset() as f64;
+-                let run_x1 = run_x0 + glyph_run.advance() as f64;
 +        // pyro: the root's own font on the line, for the decorations of the root (and of the
 +        // blocks it is in) where it has no text of its own.
 +        let (strut_top, strut_bottom) = line.span_content_area(0);
@@ -8908,16 +9479,15 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                &strut,
 +                phase,
 +                &glyph_runs,
++                run_shadows,
 +                source,
 +                vertical.is_some(),
 +            )
 +        };
  
--                let embolden = if FONT_EMBOLDEN_ENABLED {
--                    font_embolden(font_size as f64, fill_color, transform)
--                } else {
--                    kurbo::Vec2::default()
--                };
+-                for entry in stack.iter() {
+-                    if entry.decoration.is_none() {
+-                        continue;
 +        // pyro: what a glyph run draws: its glyphs in a colour (its own, or a shadow's) moved by
 +        // a transform.
 +        let draw_run = |scene: &mut S, glyph_run: &parley::GlyphRun<'_, TextBrush>, paint: &RunPaint, shadow: Option<&TextShadow>, runs: &mut Option<Vec<crate::TextRun>>| {
@@ -8942,27 +9512,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                None => (transform, glyph_xform),
 +            };
 +            let fill_color = paint.fill_color;
- 
--                let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
--                // Zero-size text is invisible, but hinting can give its glyphs ink. Fully
--                // transparent text is skipped too: backends draw color (emoji) glyphs opaque.
--                if font_size > 0.0 && fill_color.components[3] > 0.0 {
--                    scene.draw_glyphs(
--                        font,
--                        font_size,
--                        !FONT_EMBOLDEN_ENABLED, // hint
--                        normalized_coords,
--                        embolden,
--                        Fill::NonZero,
--                        &anyrender::Paint::from(fill_color),
--                        1.0, // alpha
--                        transform,
--                        glyph_xform,
--                        glyph_run.positioned_glyphs().map(|glyph| anyrender::Glyph {
--                            id: glyph.id as _,
--                            x: glyph.x,
--                            y: glyph.y,
--                        }),
++
 +            let embolden = if FONT_EMBOLDEN_ENABLED {
 +                font_embolden(font_size as f64, fill_color, transform)
 +            } else {
@@ -9032,61 +9582,14 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                        baseline - f64::from(metrics.ascent) - em * 0.5,
 +                        f64::from(x1) + em,
 +                        baseline + f64::from(metrics.descent) + em * 0.5,
-                     );
++                    );
 +                    draw_shadow(scene, shadow, scale, transform, ink, draw);
-                 }
++                }
 +                None if fill_color.components[3] > 0.0 || runs.is_some() => {
 +                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
 +                    // next recorded one, so a run recorded but not drawn would stop the matching.
 +                    if let Some(runs) = runs.as_mut() {
 +                        runs.push(crate::TextRun::new(glyph_run, source, unshifted, kept.clone(), kept_extent));
-+                    }
-+                    draw(scene, fill_color, transform);
-+                }
-+                None => {}
-+            }
-+        };
- 
--                // Accumulate this run's contribution to each decorating box on its ancestor
--                // path. The decoration is drawn once per box after the whole line has been
--                // walked (see `flush_line_decorations`), so mixed font sizes within a box
--                // produce a single straight line rather than one stepped segment per run.
--                let geometry = DecorationRunGeometry {
--                    baseline: glyph_run.baseline(),
--                    ascent: metrics.ascent,
--                    descent: metrics.descent,
--                    underline_offset: metrics.underline_offset,
--                    underline_size: metrics.underline_size,
--                    strikethrough_size: metrics.strikethrough_size,
--                    font: font.clone(),
--                    font_size,
--                    css_font_size,
--                };
--                let run_node_id = style.brush.id;
--                let run_x0 = glyph_run.offset() as f64;
--                let run_x1 = run_x0 + glyph_run.advance() as f64;
--
--                for entry in stack.iter() {
--                    if entry.decoration.is_none() {
--                        continue;
-+        // pyro: where the line's decorations cast text shadows, the shadows go under all the line
-+        // draws, decorations' and glyphs' alike, a layer per shadow, the last lowest (as if each
-+        // shadow were the line drawn again in its colour). Otherwise each run's shadows go right
-+        // before its glyphs (Chromium paints a text fragment's shadows right before it). Then the
-+        // underlines and overlines, the glyphs, and the line-throughs (CSS 2 Appendix E).
-+        let layered = deco_boxes.iter().any(|deco| !deco.shadows.is_empty());
-+        if layered {
-+            let layers = run_paints
-+                .iter()
-+                .map(|paint| paint.shadows.len())
-+                .chain(deco_boxes.iter().map(|deco| deco.shadows.len()))
-+                .max()
-+                .unwrap_or(0);
-+            for layer in (0..layers).rev() {
-+                flush(scene, DecorationPhase::Shadow(layer));
-+                for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()) {
-+                    if let Some(shadow) = run_shadows[paint.shadows.clone()].get(layer) {
-+                        draw_run(scene, glyph_run, paint, Some(shadow), runs);
                      }
 -                    let idx = match deco_boxes.iter().position(|d| d.node_id == entry.node_id) {
 -                        Some(idx) => idx,
@@ -9100,6 +9603,27 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                                first: None,
 -                            });
 -                            deco_boxes.len() - 1
++                    draw(scene, fill_color, transform);
++                }
++                None => {}
++            }
++        };
++
++        // pyro: where the line's decorations cast text shadows, the shadows go under all the line
++        // draws, decorations' and glyphs' alike, a layer per shadow, the last lowest (as if each
++        // shadow were the line drawn again in its colour). Otherwise each run's shadows go right
++        // before its glyphs (Chromium paints a text fragment's shadows right before it). Then the
++        // underlines and overlines, the glyphs, and the line-throughs (CSS 2 Appendix E).
++        let layered = deco_boxes.iter().any(|deco| deco.segments.iter().any(|(_, _, shadows)| !shadows.is_empty()));
++        if layered {
++            // A box's line casts the shadows of the runs it covers.
++            let layers = run_paints.iter().map(|paint| paint.shadows.len()).max().unwrap_or(0);
++            for layer in (0..layers).rev() {
++                flush(scene, DecorationPhase::Shadow(layer));
++                for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()) {
++                    if let Some(shadow) = run_shadows[paint.shadows.clone()].get(layer) {
++                        draw_run(scene, glyph_run, paint, Some(shadow), runs);
++                    }
 +                }
 +            }
 +        }
@@ -9321,8 +9845,8 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    } else {
 +        y - (baseline - f64::from(metrics.content_block_min_coord))
 +    }
- }
- 
++}
++
 +/// pyro: draws a glyph run as `stroke_text` draws one (no shadows, decorations or recording).
 +fn draw_glyph_run<S: PaintScene>(
 +    scene: &mut S,
@@ -9377,10 +9901,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            y: glyph.y,
 +        }),
 +    );
-+}
-+
+ }
+ 
  /// Draw selection highlight rectangles for the given byte range in a layout.
- /// Uses Parley's Selection type for accurate geometry calculation.
+@@ -753,7 +1934,7 @@
  pub(crate) fn draw_text_selection(
      scene: &mut impl PaintScene,
      layout: &Layout<TextBrush>,
@@ -9389,7 +9913,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,10 +1639,52 @@
+@@ -761,12 +1942,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -9399,8 +9923,8 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -        scene.fill(Fill::NonZero, transform, SELECTION_COLOR, None, &rect);
 +        scene.fill(Fill::NonZero, line_transform(line_idx), SELECTION_COLOR, None, &rect);
      });
-+}
-+
+ }
+ 
 +/// pyro: how far each side of a glyph's outline grows when bold is synthesized (a font without
 +/// a face of the weight asked for): Skia's fake bold, which Chromium draws, strokes the outline
 +/// with a width of the text size times 1/24 at 9px and below, 1/32 at 36px and above, linear
@@ -9441,10 +9965,12 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    };
 +    let luminance = (canonical(rgba.r) * 54 + canonical(rgba.g) * 183 + canonical(rgba.b) * 19) >> 8;
 +    (luminance >> 5).min(3) as usize
- }
- 
++}
++
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
-@@ -804,3 +1724,222 @@
+ /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
+ /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
+@@ -804,3 +2027,222 @@
      }
      prev.1
  }
