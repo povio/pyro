@@ -44,6 +44,9 @@ pub struct ExternalBox {
     /// `scrollWidth/Height`.
     pub scroll_width: f64,
     pub scroll_height: f64,
+    /// Whether its scroll origin is at the end of the horizontal and the vertical axis (a
+    /// right-to-left or reversed flex scroll container): it scrolls to negative offsets there.
+    pub scroll_reversed: [bool; 2],
     /// Inside (or itself) a `position: fixed` box (then viewport coordinates).
     pub fixed: bool,
     /// Border and padding widths ([`TOP`], [`RIGHT`], [`BOTTOM`], [`LEFT`]).
@@ -337,6 +340,8 @@ pub struct LayoutBox {
     pub client_height: f64,
     pub scroll_width: f64,
     pub scroll_height: f64,
+    /// See [`ExternalBox::scroll_reversed`].
+    pub scroll_reversed: [bool; 2],
     pub border: [f64; 4],
     pub padding: [f64; 4],
     pub position: BoxPosition,
@@ -355,6 +360,7 @@ impl LayoutBox {
             client_height: b.client_height,
             scroll_width: b.scroll_width,
             scroll_height: b.scroll_height,
+            scroll_reversed: b.scroll_reversed,
             border: b.border,
             padding: b.padding,
             position: b.position,

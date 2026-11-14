@@ -727,7 +727,8 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
             NonTSPseudoClass::Target => false,
-            NonTSPseudoClass::Visited => false,
+            // pyro: links to the document itself (`ElementData::flush_link_visited`).
+            NonTSPseudoClass::Visited => self.element_state().contains(ElementState::VISITED),
             NonTSPseudoClass::Autofill => false,
             NonTSPseudoClass::Default => self.element_state().contains(ElementState::DEFAULT),
 

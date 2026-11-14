@@ -343,6 +343,34 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
+- Backgrounds and box edges, wave 3 of the WPT paint reftests (lane F2); covered by
+  `crates/pyro-render/tests/background_images_and_edges.rs`:
+  - `src/render/background.rs` (`round_layer_size`): the round step of `background-repeat` scales an axis to a
+    whole number of copies (at least one: an image over twice the area's size divided by zero copies), and with
+    `round` in one axis and `background-size: auto` in the other, the other axis with it, so the image keeps its
+    aspect ratio (CSS Backgrounds 3 §3.9; WPT `background-repeat-round-2`, `background-size-029`). The image is
+    positioned at its rounded size (it was positioned at its unrounded size, a phase off).
+  - `src/render/background.rs` (`draw_svg_image_layer`): an SVG image without `viewBox`, `width` or `height`
+    (blitz-dom keeps its source, `SvgImageData::for_url`) is laid out in the size the layer draws it at, its
+    percentages against that size (`SvgImageData::sized`, as an inline `<svg>` without a `viewBox`); it was laid
+    out at usvg's 100x100 and stretched (WPT `background-size-043`/`-044`, `diagonal-percentage-vector-background`).
+  - `src/render/background.rs` (`bleed_avoiding_border_box`): Chromium's background bleed avoidance
+    (`BoxDecorationData::ComputeBleedAvoidance`, `kBackgroundBleedShrinkBackground`): under a rounded border that
+    hides the background's edge (every side's colour opaque, its style neither dotted, dashed nor hidden, no
+    border image), layers cut to the border box are cut to it inset by half of each side's width (a sixth with a
+    `double` side), its radii shrunk with it. Drawn to the outer edge, the background showed through the border's
+    antialiased outer edge: a dark seam around a light border, which the same border over a white page lacks (WPT
+    `background-clip-content-box-with-border-radius-003` and `-padding-box-` compare against such a border). Not
+    for the canvas background or a scroll container's `local` layers, as in Chromium, and not under a side
+    narrower than two device pixels, where the background's inset edge and the border's two antialiased edges
+    share pixels and what lies under the box showed through between them (WPT
+    `filter-effects/blur-clip-border-radius`). A stroked border's curved outer edge covers a little less than
+    Skia's fill of it, so a rounded box whose background has the border's colour now has a slightly lighter
+    edge there than Chromium's, where the background's coverage used to add to it (ToS buttons and radio
+    buttons: SSIM changes in the sixth decimal).
+  - `src/render.rs` (`with_replaced_content_clip`): replaced content of a box with a border radius and a border or
+    padding is cut to the content edge's curve (CSS Backgrounds 3 §5.3); the padding box's clip around it was the
+    only one (WPT `border-radius-clip-001`).
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

@@ -3,6 +3,7 @@
 //! mostly link time. Add new test files as modules here.
 
 mod backdrop_filter;
+mod background_images_and_edges;
 mod borders_backgrounds;
 mod br_flex_item;
 mod clip_path_mask;

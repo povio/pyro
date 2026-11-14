@@ -2404,9 +2404,14 @@ impl ElementCx<'_, '_> {
             || y_offset < 0.0
             || x_offset + paint_size.width > container_size.width
             || y_offset + paint_size.height > container_size.height;
+        // pyro: replaced content is cut to the content edge's curve (CSS Backgrounds 3 §5.3),
+        // which lies inside the padding box's clip once a border or padding is set.
+        let inset = |i: kurbo::Insets| i.x0 != 0.0 || i.y0 != 0.0 || i.x1 != 0.0 || i.y1 != 0.0;
+        let rounded_content = self.frame.has_border_radius()
+            && (inset(self.frame.border_width) || inset(self.frame.padding_width));
         self.context.layer_manager.maybe_with_layer(
             scene,
-            overflows,
+            overflows || rounded_content,
             BlendMode::default(),
             1.0,
             self.transform,

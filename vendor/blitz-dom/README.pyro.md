@@ -932,6 +932,41 @@ for usvg: the outermost `<svg>` around the element, serialized as inline SVG is 
 given size (percentages in the element's content resolve against it), parsed by `util::parse_svg_image` (its fonts,
 its reference-cycle breaking). See blitz-paint's README.
 
+## SVG images by URL: `<view>` fragments, images without a size
+
+`src/node/svg.rs` (`SvgImageData::for_url`), `src/net.rs` (`ImageHandler::parse` gets the URL): an SVG image loaded
+from a URL whose fragment names a `<view>` element (`sprite.svg#icon`) is parsed again with the view's `viewBox`
+and `preserveAspectRatio` on its root, so it shows the view and has its aspect ratio (SVG 2 §5.8.3; WPT
+`background-size-contain-svg-view`, `-cover-svg-view`); the fragment was ignored. An image with no `viewBox`,
+`width` or `height` keeps its source in `inline_source`, as an inline `<svg>` without a `viewBox` does, so that
+blitz-paint lays its content out in the size it is drawn at (`SvgImageData::sized`: a background's size, an
+`<img>`'s content box); its percentages resolved against usvg's 100x100 and the tree was stretched. `with_root_attrs`
+generalizes `with_root_size`. Tests: `an_svg_view_fragment_shows_the_view` and
+`an_svg_background_without_a_size_is_laid_out_at_the_background_size` in pyro-render's
+`background_images_and_edges.rs`.
+
+## Links to the document itself are visited
+
+`src/node/element.rs` (`ElementData::flush_link_visited`), `src/mutator.rs` (`create_element`, `set_attribute_impl`,
+`clear_attribute_impl`), `src/document.rs` (`link_urls`), `src/stylo.rs`: a link whose `href` resolves to the
+document's own URL (fragment aside) has `ElementState::VISITED` instead of `UNVISITED`, and `:visited` matches by it,
+as the page a browser shows is in its history (WPT `css-color/currentcolor-004`, `color-mix-currentcolor-visited`,
+`css-backgrounds/background-image-gradient-currentcolor-visited`: `href=""`). `:visited` matched nothing. There is no
+history, so other links stay unvisited, and the user agent sheet keeps one link colour (`a[href]`): only a page's own
+`:visited` rules change what such a link looks like, and they apply in full rather than to colours alone. Test:
+`a_link_to_the_document_itself_is_visited` in pyro-render's `background_images_and_edges.rs`.
+
+## A scroll container's end padding in its scrollable overflow
+
+`src/resolve.rs` (`resolve_transforms`, `padded_inflow_box`): a scroll container's scrollable overflow (which
+pyro-render's `scrollWidth`/`scrollHeight` and scroll range read) includes each in-flow child's border box grown by
+the container's padding and the child's margin (not below zero), as Taffy's `scrollable_overflow_rect` and Blink's
+`ScrollableOverflowCalculator` have it: scrolled to the end, the end padding is in view after the content. The
+root's and a `body` whose overflow is the viewport's are left alone. The scroll range was short by the end padding,
+and a `content-box` local background reached the scrollport's edge at the end (WPT
+`local-attachment-content-box-scroll`). Test: `the_scroll_range_ends_after_the_end_padding` in pyro-layout's
+`scroll_origin.rs`.
+
 ## Generated content and pseudo-elements (WPT reftests)
 
 - `src/layout/first_letter.rs`, `src/layout/inline/build.rs`, `src/node/text.rs`, `src/node/element.rs`,
