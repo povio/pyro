@@ -166,7 +166,8 @@ from the root of an upstream checkout at that commit) is the whole diff.
     README): a capture where it starts to paint, before its own layers (its clip-path, mask and blend mode are no
     backdrop root for it), and a draw first in its effect group, so that its opacity and filter apply to the
     backdrop it shows; both clip to its border box with its radii. A backdrop root that none of its layers marks
-    (a `clip-path`, a mask, `will-change` of a property that makes one) is painted in a layer with an empty filter,
+    (a `clip-path`, a mask, `will-change` of a property that makes one, an animation of one in effect: blitz-dom's
+    `animates_backdrop_root`) is painted in a layer with an empty filter,
     for elements with a backdrop filter below them only (the layer costs a composite). An opaque group without a
     filter around a backdrop filter is a clip layer. Covered by `crates/pyro-render/tests/backdrop_filter.rs`.
   - `src/filters.rs` (`reference_filter`): a `url(#id)` filter (stylo parses it now) is the document's SVG

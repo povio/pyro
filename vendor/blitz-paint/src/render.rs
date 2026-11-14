@@ -791,7 +791,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let backdrop_root_pushed = self.layer_manager.maybe_push_layer(
             scene,
             self.backdrop_ancestors.contains(&node_id)
-                && crate::layers::backdrop_root(has_clip_path, cx.has_css_mask(), &styles.get_box().will_change),
+                && (crate::layers::backdrop_root(has_clip_path, cx.has_css_mask(), &styles.get_box().will_change)
+                    || self.dom.animates_backdrop_root(node_id)),
             BlendMode::default(),
             1.0,
             Affine::IDENTITY,

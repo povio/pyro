@@ -336,6 +336,11 @@ rebuilds, tables, rounding) read by pyro-render's profiling. The phase timers ru
   after each traversal, where the elements styled anew get their values and one more traversal
   (`resolve_sampled_animations`). Pseudo-elements are not animated. Tests:
   `crates/pyro-render/tests/sampled_animations.rs`.
+- `animation.rs` (`BaseDocument::animates_backdrop_root`): whether an element's sampled values (an effect in effect,
+  a filling one after it finished too) set a property that makes a backdrop root (`opacity`, `filter`,
+  `backdrop-filter`, `mix-blend-mode`, `clip-path`, `mask-image`): Web Animations has the element act as though it
+  had `will-change` of it, and blitz-paint marks it a backdrop root (WPT
+  `backdrop-filter-backdrop-root-animation-in-effect`).
 
 ## Inline layouts in vertical writing modes
 

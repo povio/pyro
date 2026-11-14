@@ -195,3 +195,21 @@ fn a_style_only_sync_samples_a_new_animation() {
     r.sync_delta(1, &[], (200, 100, 1.0, false, false), false).unwrap();
     assert_eq!(r.element_style(1, key).unwrap().get_effects().opacity, 1.0, "dropped");
 }
+
+/// An opacity animation in effect makes its element a backdrop root, as
+/// `will-change: opacity` would, at the end of a filling animation too, where
+/// the opacity is 1 again (WPT backdrop-filter-backdrop-root-animation-in-effect):
+/// the child's backdrop is what the element painted before it (nothing), not
+/// the page.
+#[test]
+fn an_opacity_animation_in_effect_makes_a_backdrop_root() {
+    const PAGE: &str = "<!doctype html><style>body{margin:0;background:#0ff} #target{width:100px;height:100px}\
+        #child{width:100px;height:100px;backdrop-filter:invert(1)}</style><div id=target><div id=child></div></div>";
+    let (snap, key) = page(PAGE);
+    let mut r = Renderer::new();
+    let img = render(&mut r, &snap, Vec::new());
+    assert_near(pixel(&img, 50, 50), [255, 0, 0], "no animation: the page, inverted");
+    let fade = text(&[(0.0, "opacity: 0"), (1.0, "opacity: 1")], 1.0, None);
+    let img = render(&mut r, &snap, frame(key, vec![], vec![fade]));
+    assert_near(pixel(&img, 50, 50), [0, 255, 255], "in effect at its end: a backdrop root");
+}
