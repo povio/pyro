@@ -73,7 +73,9 @@ jobs:
         run: |
           run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow wpt.yml --branch main --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           job=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" --jq '.jobs[] | select(.name == "prepare") | .id')
-          key=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" | grep -o 'browser-key=wpt-browser-[A-Za-z0-9-]*' | head -1 | cut -d= -f2 || true)
+          # (curl: gh api refuses to print a log, which holds terminal escape sequences)
+          key=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" \
+            | grep -o 'browser-key=wpt-browser-[A-Za-z0-9-]*' | head -1 | cut -d= -f2 || true)
           echo "WPT run $run, browser key ${key:-not found}"
           echo "key=$key" >> "$GITHUB_OUTPUT"
       # A PATH without zstd: lp-m1 has none, so its cache entries are gzip; a runner with zstd would miss them.
@@ -93,10 +95,11 @@ jobs:
           else
             tag="$PYRO"
             if [ "$tag" = main ]; then tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName); fi
+            # The npm package of the release: its darwin-arm64 binary (the fork build).
             mkdir -p release browser
-            gh release download "$tag" -R "$GITHUB_REPOSITORY" --pattern 'pyro-rust-*-macos-arm64-fork.tar.gz' -D release
-            tar -xzf release/*.tar.gz -C release
-            cp "$(find release -type f -name pyro -perm -u+x | head -1)" browser/pyro
+            gh release download "$tag" -R "$GITHUB_REPOSITORY" --pattern 'povio-pyro-*.tgz' -D release
+            tar -xzf release/povio-pyro-*.tgz -C release package/native/darwin-arm64/pyro
+            cp release/package/native/darwin-arm64/pyro browser/pyro
             echo "pyro: release $tag"
           fi
           browser/pyro version
