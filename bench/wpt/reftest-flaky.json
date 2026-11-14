@@ -1,0 +1,4 @@
+{
+ "//": "What the WPT reftest gate does not check, each with its reason (README.md, Reftests): flaky.json's format, for reftest pages. Keys are page URLs, or patterns where * matches anything. An entry is the whole page ({reason}) or only its completion ({reason, allowIncomplete: true}). Adding or widening an entry needs the wpt-accept-loss label.",
+ "tests": {}
+}
