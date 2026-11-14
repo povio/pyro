@@ -261,6 +261,39 @@ impl BaseDocument {
         !self.sampled_animations.is_empty()
     }
 
+    /// Whether an animation or transition in effect on the node animates a
+    /// property that makes a backdrop root (`opacity`, `filter`,
+    /// `backdrop-filter`, `mix-blend-mode`, `clip-path`, `mask-image`): Web
+    /// Animations has the element act as though it had `will-change` of that
+    /// property while the effect is in effect, after it finishes too when it
+    /// fills forwards (WPT backdrop-filter-backdrop-root-animation-in-effect).
+    pub fn animates_backdrop_root(&self, node_id: NodeId) -> bool {
+        use style::properties::{LonghandId, PropertyDeclarationId};
+        let Some(data) = self.get_node(node_id).and_then(|node| node.element_data()) else {
+            return false;
+        };
+        if data.sampled_animations.is_none() && data.sampled_transitions.is_none() {
+            return false;
+        }
+        let guard = self.guard.read();
+        [&data.sampled_animations, &data.sampled_transitions]
+            .into_iter()
+            .flatten()
+            .any(|block| {
+                let block = block.read_with(&guard);
+                [
+                    LonghandId::Opacity,
+                    LonghandId::Filter,
+                    LonghandId::BackdropFilter,
+                    LonghandId::MixBlendMode,
+                    LonghandId::ClipPath,
+                    LonghandId::MaskImage,
+                ]
+                .into_iter()
+                .any(|id| block.contains(PropertyDeclarationId::Longhand(id)))
+            })
+    }
+
     /// After a style traversal: resolves the keyframes of the elements whose
     /// base style changed (or that had none before), samples them again and
     /// marks those whose values changed for restyle. `true`: another

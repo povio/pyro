@@ -1,8 +1,299 @@
+diff --git b/src/backdrop.rs b/src/backdrop.rs
+new file mode 100644
+index 0000000..d72d1a9
+--- /dev/null
++++ b/src/backdrop.rs
+@@ -0,0 +1,285 @@
++//! pyro: `backdrop-filter`.
++//!
++//! blitz-paint records two markers for an element with a backdrop filter, each an empty layer with
++//! the filter and the element's border box (its radii too) as the clip:
++//!
++//! - a **capture** (opacity 0) where the element starts to paint, before its own layers (its
++//!   `clip-path`, mask and blend mode are no backdrop root for it);
++//! - a **draw** (opacity 1), first in the element's effect group, so that the element's opacity and
++//!   `filter` apply to the backdrop it shows, as in Chromium.
++//!
++//! The capture renders what the element's backdrop root painted before it (the commands since the
++//! innermost open layer that is a backdrop root: a filter, opacity, blend mode or backdrop filter,
++//! or blitz-paint's empty filter for `clip-path`, a mask and `will-change`; else since the start
++//! of the scene or of the filter layer replayed), cut to the border box, into a context of its own;
++//! filters it as Chromium does, reading past the box's edges the box mirrored (a blur takes in no
++//! colour from outside the box, and no transparency); and keeps the images. The draw draws them
++//! inside the border box. Scenes without a backdrop filter skip all of it.
++
++use std::sync::Arc;
++
++use anyrender::recording::{LayerCommand, RenderCommand};
++use anyrender::{Filter, PaintScene as _};
++use kurbo::{Affine, Rect, Shape};
++use peniko::{BlendMode, ImageBrush, ImageQuality, ImageSampler};
++use vello_common::paint::ImageSource;
++use vello_cpu::{PaintType, Pixmap};
++
++use crate::VelloCpuScenePainter;
++use crate::filters::{FilterPlan, PixelRect, mirrored};
++
++/// The opacity of the isolation layers blitz-paint pushes (`isolation: isolate`, the groups of a
++/// `mix-blend-mode`, masks, text clips), which are no backdrop root.
++const ISOLATION_ALPHA: f32 = 1.0 - f32::EPSILON;
++
++pub(crate) enum Marker {
++    Capture,
++    Draw,
++}
++
++/// The backdrop marker pushed at `i`, if one is: an empty layer with a backdrop filter.
++pub(crate) fn marker(commands: &[RenderCommand], i: usize) -> Option<(Marker, &LayerCommand, &Filter)> {
++    let RenderCommand::PushLayer(layer) = commands.get(i)? else {
++        return None;
++    };
++    let filter = layer.backdrop_filter.as_deref()?;
++    if !matches!(commands.get(i + 1), Some(RenderCommand::PopLayer)) {
++        return None;
++    }
++    Some((if layer.alpha == 0.0 { Marker::Capture } else { Marker::Draw }, layer, filter))
++}
++
++/// Whether the layer pushed at `i` is a backdrop root (Filter Effects 2): a filter, an opacity
++/// below 1, a blend mode, or an element with a backdrop filter (its group starts with the draw).
++pub(crate) fn is_root(commands: &[RenderCommand], i: usize) -> bool {
++    // An element with a backdrop filter: its group (a clip layer when opaque) starts with the draw.
++    if matches!(marker(commands, i + 1), Some((Marker::Draw, ..))) {
++        return true;
++    }
++    let RenderCommand::PushLayer(layer) = &commands[i] else {
++        return false;
++    };
++    layer.filter.is_some()
++        || layer.blend != BlendMode::default()
++        || (layer.alpha < 1.0 && layer.alpha != ISOLATION_ALPHA)
++}
++
++/// A captured, filtered backdrop.
++pub(crate) struct Captured {
++    key: Key,
++    /// The filter's images, placed in the frame's device pixels.
++    images: Vec<(Arc<Pixmap>, Affine)>,
++    /// The one colour of all of the filter's image, if it has one.
++    solid: Option<peniko::Color>,
++    /// Whether the images cover all they cover opaquely (then drawing them over what lies
++    /// beneath is drawing them in its place).
++    opaque: bool,
++    alpha: f32,
++}
++
++/// The one colour of all of `pixels` (premultiplied), unpremultiplied, if they have one.
++fn uniform(pixels: &Pixmap) -> Option<peniko::Color> {
++    let data = pixels.data();
++    let first = *data.first()?;
++    data.iter().all(|&p| p == first).then(|| {
++        let a = f32::from(first.a) / 255.0;
++        let channel = |c: u8| if first.a == 0 { 0.0 } else { (f32::from(c) / 255.0 / a).min(1.0) };
++        peniko::Color::new([channel(first.r), channel(first.g), channel(first.b), a])
++    })
++}
++
++/// What ties a capture to its draw: the filter both markers hold (one per element), the element's
++/// transform and border box.
++type Key = (usize, [f64; 6], Rect);
++
++fn key(layer: &LayerCommand) -> Key {
++    let filter = layer.backdrop_filter.as_ref().map_or(0, |filter| std::sync::Arc::as_ptr(filter) as usize);
++    (filter, layer.transform.as_coeffs(), layer.clip.bounding_box())
++}
++
++impl VelloCpuScenePainter {
++    /// The capture at `i` of `commands` (replayed under `transform`, with the layers `open` that
++    /// are pushed and not popped there, and whether each is a backdrop root).
++    pub(crate) fn capture_backdrop(
++        &mut self,
++        commands: &[RenderCommand],
++        i: usize,
++        open: &[(usize, bool)],
++        transform: Affine,
++        layer: &LayerCommand,
++        filter: &Filter,
++    ) {
++        let key = key(layer);
++        if self.backdrops.iter().any(|captured| captured.key == key) {
++            return;
++        }
++        let layer_transform = transform * layer.transform;
++        // A filter that changes nothing (`invert(0)`) draws nothing over the backdrop.
++        let Some(plan) = FilterPlan::new(filter, layer_transform) else {
++            return;
++        };
++        let plan = plan.at_full_resolution();
++        // The box's pixels the filter reads to make what shows of it, and around them what it reads
++        // past the box's edges, mirrored. The backdrop root's image is cut to the root's surface:
++        // the context drawn into for the scene's root (Chromium's root surface is the viewport) or
++        // a filter layer; a root layer's holds all of the box (a box reaching past the frame
++        // mirrors at its own edge).
++        let root = open.iter().rev().find(|&&(_, root)| root);
++        let start = root.map_or(0, |&(at, _)| at + 1);
++        let mut boxed = PixelRect::around(layer_transform.transform_rect_bbox(layer.clip.bounding_box()));
++        if root.is_none() {
++            boxed = boxed.intersect(self.bounds());
++        }
++        let shown = boxed.intersect(self.bounds());
++        if shown.is_empty() {
++            return;
++        }
++        let region = plan.source_region(shown);
++        let out = boxed.intersect(region);
++        let backdrop = self.render_commands(&commands[start..i], out, transform);
++        let input = if region == out { backdrop.clone() } else { mirrored(&backdrop, out, region) };
++        let ctx_to_frame = self.frame_to_ctx.inverse();
++        let mut images: Vec<(Arc<Pixmap>, Affine)> = plan
++            .render(input, region, None)
++            .into_iter()
++            .map(|image| (Arc::new(image.pixels), ctx_to_frame * image.transform))
++            .collect();
++        // A backdrop of one colour (a flat background, filtered) is drawn as that colour: a fill of
++        // one colour costs less than an image, and vello_cpu's u8 compositing rounds an image under
++        // a clip a level apart from one without (a masked backdrop in an `overflow: hidden` box).
++        let solid = match &images[..] {
++            [(pixels, _)] if !plan.draws_content() => uniform(pixels),
++            _ => None,
++        };
++        let opaque = images.iter().all(|(pixels, _)| pixels.data().iter().all(|p| p.a == 255));
++        if plan.draws_content() {
++            let origin = Affine::translate((f64::from(out.x0), f64::from(out.y0)));
++            images.push((Arc::new(backdrop), ctx_to_frame * origin));
++        }
++        self.backdrops.push(Captured { key, images, solid, opaque, alpha: plan.alpha() });
++    }
++
++    /// The draw of a captured backdrop: its images inside the marker's clip (the border box). With
++    /// `replace` they take the place of what lies there (Chromium draws a backdrop filter's output
++    /// with a source copy: where the backdrop root painted nothing, the filtered image is
++    /// transparent, and what the element's ancestors painted beneath must not show through); else
++    /// they go over it (inside the element's group, which starts transparent).
++    pub(crate) fn draw_backdrop(&mut self, layer: &LayerCommand, transform: Affine, replace: bool) {
++        let key = key(layer);
++        let Some(captured) = self.backdrops.iter().rev().find(|captured| captured.key == key) else {
++            return;
++        };
++        let (images, solid, alpha) = (captured.images.clone(), captured.solid, captured.alpha);
++        let replace = replace && !captured.opaque;
++        let opaque = captured.opaque;
++        // A border box that is a rectangle of whole device pixels needs no clip: the images are
++        // drawn inside it (a clip path rounded what it clipped a level apart from a plain fill).
++        let rect = crate::scene::pixel_rect(&layer.clip, transform * layer.transform).filter(|_| !replace || opaque);
++        let bounds = rect.map_or(self.bounds(), |rect| rect.intersect(self.bounds()));
++        self.render_ctx.set_transform(transform * layer.transform);
++        self.render_ctx.set_fill_rule(layer.fill);
++        if replace {
++            let copy = BlendMode::new(peniko::Mix::Normal, peniko::Compose::Copy);
++            self.render_ctx.push_layer(Some(&layer.clip), Some(copy), None, None, None);
++        } else if rect.is_none() {
++            self.render_ctx.push_clip_path(&layer.clip);
++        }
++        if alpha < 1.0 {
++            self.render_ctx.push_layer(None, None, Some(alpha), None, None);
++        }
++        for (pixels, placement) in images {
++            let image_transform = self.frame_to_ctx * placement;
++            let size = Rect::new(0.0, 0.0, f64::from(pixels.width()), f64::from(pixels.height()));
++            let area = PixelRect::around(image_transform.transform_rect_bbox(size)).intersect(bounds);
++            if area.is_empty() {
++                continue;
++            }
++            if let Some(color) = solid {
++                self.render_ctx.set_transform(Affine::IDENTITY);
++                self.render_ctx.set_paint(PaintType::Solid(color));
++                self.render_ctx.fill_rect(&area.to_rect());
++                continue;
++            }
++            let [a, b, c, d, e, f] = image_transform.as_coeffs();
++            let whole = a == 1.0 && d == 1.0 && b == 0.0 && c == 0.0 && e.fract() == 0.0 && f.fract() == 0.0;
++            self.render_ctx.set_transform(Affine::IDENTITY);
++            self.render_ctx.set_paint(PaintType::Image(ImageBrush {
++                image: ImageSource::Pixmap(pixels),
++                sampler: ImageSampler::new().with_quality(if whole { ImageQuality::Low } else { ImageQuality::Medium }),
++            }));
++            self.render_ctx.set_paint_transform(image_transform);
++            self.render_ctx.fill_rect(&area.to_rect());
++            self.render_ctx.reset_paint_transform();
++        }
++        if alpha < 1.0 {
++            self.render_ctx.pop_layer();
++        }
++        if replace {
++            self.render_ctx.pop_layer();
++        } else if rect.is_none() {
++            self.render_ctx.pop_clip();
++        }
++    }
++
++    /// Whether the group pushed at `i` (an element's, its draw first in it) is opaque and
++    /// unfiltered and its backdrop keeps its alpha (no `opacity()`): the backdrop is then drawn
++    /// before the group, in place of what lies there.
++    pub(crate) fn replaces_backdrop(&self, commands: &[RenderCommand], i: usize) -> bool {
++        let Some((Marker::Draw, marker, _)) = marker(commands, i + 1) else {
++            return false;
++        };
++        let key = key(marker);
++        self.backdrops.iter().rev().find(|captured| captured.key == key).is_some_and(|captured| captured.alpha == 1.0)
++            && match &commands[i] {
++                RenderCommand::PushClipLayer(_) => true,
++                RenderCommand::PushLayer(group) => {
++                    group.alpha == 1.0 && group.filter.is_none() && group.blend == BlendMode::default()
++                }
++                _ => false,
++            }
++    }
++
++    /// `commands` (replayed under `transform`) rendered over `out` of the current context into a
++    /// pixmap of their own, the layers they leave open closed.
++    fn render_commands(&mut self, commands: &[RenderCommand], out: PixelRect, transform: Affine) -> Pixmap {
++        let (width, height) = (out.width() as u16, out.height() as u16);
++        let mut ctx = self.offscreen_context(width, height);
++        std::mem::swap(&mut self.render_ctx, &mut ctx);
++        let shift = Affine::translate((-f64::from(out.x0), -f64::from(out.y0)));
++        let frame_to_ctx = self.frame_to_ctx;
++        self.frame_to_ctx = shift * frame_to_ctx;
++        let depth = self.clip_paths.len();
++        self.replay(commands, shift * transform);
++        while self.clip_paths.len() > depth {
++            self.pop_layer();
++        }
++        self.frame_to_ctx = frame_to_ctx;
++        std::mem::swap(&mut self.render_ctx, &mut ctx);
++        let mut pixels = Pixmap::new(width, height);
++        ctx.flush();
++        ctx.render(&mut pixels, &mut self.resources);
++        self.filter_contexts.push(ctx);
++        pixels
++    }
++
++    /// The pixels of the context drawn into.
++    pub(crate) fn bounds(&self) -> PixelRect {
++        PixelRect { x0: 0, y0: 0, x1: i32::from(self.render_ctx.width()), y1: i32::from(self.render_ctx.height()) }
++    }
++
++    /// A single-threaded context of `width` by `height` (one kept from an earlier frame if there is
++    /// one): filter layers and backdrops render apart in one.
++    pub(crate) fn offscreen_context(&mut self, width: u16, height: u16) -> vello_cpu::RenderContext {
++        match self.filter_contexts.pop() {
++            Some(mut ctx) => {
++                ctx.reset_and_resize(width, height);
++                ctx
++            }
++            None => vello_cpu::RenderContext::new_with(
++                width,
++                height,
++                vello_cpu::RenderSettings { num_threads: 0, ..*self.render_ctx.render_settings() },
++            ),
++        }
++    }
++}
 diff --git a/src/filters.rs b/src/filters.rs
-index fd573d2..18f8895 100644
+index fd573d2..61fe4d6 100644
 --- a/src/filters.rs
 +++ b/src/filters.rs
-@@ -1,63 +1,830 @@
+@@ -1,63 +1,1155 @@
 -use std::sync::Arc;
 -
 -use anyrender::{
@@ -64,7 +355,7 @@ index fd573d2..18f8895 100644
 -        EdgeMode::Wrap => vello_common::filter_effects::EdgeMode::Wrap,
 -        EdgeMode::Mirror => vello_common::filter_effects::EdgeMode::Mirror,
 -        EdgeMode::None => vello_common::filter_effects::EdgeMode::None,
-+//! pyro: the CSS filters `blur()` and `drop-shadow()` on layers.
++//! pyro: the CSS filter functions on layers: `blur()`, `drop-shadow()` and the colour functions.
 +//!
 +//! vello_cpu 0.3 filters a layer only when it renders on one thread (its multi-threaded dispatcher
 +//! panics on a filter layer), takes a single primitive per layer and panics on most of them (colour
@@ -75,12 +366,17 @@ index fd573d2..18f8895 100644
 +//!
 +//! The blur is Skia's on the CPU, which Chromium's filters and text shadows use: three box blurs
 +//! (SVG's `feGaussianBlur` approximation) from a standard deviation of 2, a Gaussian kernel below.
-+//! Other effects (the colour matrices: `grayscale()`, `opacity()`, ...) are left out, as before.
++//! The colour functions (`grayscale()`, `invert()`, `opacity()`, ...) are `feColorMatrix` matrices
++//! applied as Skia's matrix colour filters apply them, which Chromium builds them into: to each
++//! pixel's unpremultiplied sRGB values (not linearRGB), each result clamped to 0..1.
 +
 +use std::f64::consts::PI;
 +
 +use anyrender::Filter;
++use anyrender::filters::component_transfer::TransferFunction;
 +use anyrender::filters::{FilterEffect, FilterInput};
++
++use crate::graph::Graph;
 +use kurbo::{Affine, Rect};
 +use peniko::color::{AlphaColor, Srgb};
 +use vello_cpu::Pixmap;
@@ -161,28 +457,63 @@ index fd573d2..18f8895 100644
 +}
 +
 +/// One filter step, in device pixels.
-+#[derive(Clone, Copy, Debug)]
++#[derive(Clone, Debug)]
 +enum Step {
 +    /// `blur()`: every channel blurred.
 +    Blur { sigma: f64 },
 +    /// `drop-shadow()`: the layer over its alpha, blurred, moved and coloured.
 +    DropShadow { dx: f64, dy: f64, sigma: f64, color: AlphaColor<Srgb> },
++    /// Colour functions in a row (`feColorMatrix` matrices and `feComponentTransfer` functions of
++    /// the unpremultiplied values), applied in order to each pixel without rounding between them,
++    /// each result clamped: [`color_ops`].
++    Color(Vec<ColorOp>),
++}
++
++/// One colour function of a [`Step::Color`].
++#[derive(Clone, Debug)]
++pub(crate) enum ColorOp {
++    /// `feColorMatrix`: rows R, G, B, A of the unpremultiplied values and an offset, in 0..1.
++    Matrix([f32; 20]),
++    /// `feComponentTransfer`: a function of each channel (R, G, B, A).
++    Transfer(Box<[TransferFunction; 4]>),
 +}
 +
 +/// The steps of a layer's filter this backend does, in order.
 +pub(crate) struct FilterPlan {
 +    steps: Vec<Step>,
++    /// What the filter's last colour functions do when they only scale the alpha (`opacity()`):
++    /// the factor, which the layer's opacity takes over (Chromium's matrix rounds the same pixels
++    /// within a level), so that no step is left to do for a filter of `opacity()` alone.
++    alpha: f32,
++    /// Whether a large blur may be computed at a reduced resolution ([`Self::factor`]).
++    reduce: bool,
++    /// A filter that is no chain (an SVG `<filter>`'s), in place of the steps: see
++    /// [`crate::graph`].
++    graph: Option<Graph>,
 +}
 +
 +impl FilterPlan {
-+    /// The steps of `filter` (a chain, as CSS `filter` lists make) in device pixels under the layer's
-+    /// `transform`; `None` when it has none this backend does, or is not a chain.
++    /// The steps of `filter` in device pixels under the layer's `transform`: a chain (as CSS
++    /// `filter` lists make) of blurs, drop shadows and colour functions, else a graph
++    /// ([`crate::graph`]); `None` when it does nothing or has a node this backend does not do.
 +    pub(crate) fn new(filter: &Filter, transform: Affine) -> Option<Self> {
 +        let [a, b, c, d, _, _] = transform.as_coeffs();
 +        let scale = (a * d - b * c).abs().sqrt();
 +        if !scale.is_finite() || scale == 0.0 {
 +            return None;
 +        }
++        match Self::chain(filter, transform, scale) {
++            Some(plan) => plan,
++            None => Graph::new(filter, transform)
++                .map(|graph| Self { steps: Vec::new(), alpha: 1.0, reduce: false, graph: Some(graph) }),
++        }
++    }
++
++    /// The plan of a chain (`Some(None)` when it does nothing), or `None` when `filter` is not
++    /// one: its nodes read the one before (the first the source), and each is a blur, a drop
++    /// shadow or a colour function.
++    fn chain(filter: &Filter, transform: Affine, scale: f64) -> Option<Option<Self>> {
++        let [a, b, c, d, _, _] = transform.as_coeffs();
 +        let mut steps = Vec::new();
 +        for (i, node) in filter.nodes().iter().enumerate() {
 +            let chained = node.inputs.secondary.is_none()
@@ -198,6 +529,7 @@ index fd573d2..18f8895 100644
 +                FilterEffect::GaussianBlur(blur) if blur.std_deviation > 0.0 => {
 +                    steps.push(Step::Blur { sigma: f64::from(blur.std_deviation) * scale });
 +                }
++                FilterEffect::GaussianBlur(_) => {}
 +                FilterEffect::DropShadow(shadow) => {
 +                    let (dx, dy) = (f64::from(shadow.dx), f64::from(shadow.dy));
 +                    steps.push(Step::DropShadow {
@@ -207,14 +539,81 @@ index fd573d2..18f8895 100644
 +                        color: shadow.color,
 +                    });
 +                }
-+                _ => {}
++                FilterEffect::ColorMatrix(matrix) => {
++                    if !near_identity(&matrix.0) {
++                        push_color(&mut steps, ColorOp::Matrix(matrix.0))
++                    }
++                }
++                FilterEffect::ComponentTransfer(transfer) => {
++                    let functions = [
++                        transfer.red_function.clone(),
++                        transfer.green_function.clone(),
++                        transfer.blue_function.clone(),
++                        transfer.alpha_function.clone(),
++                    ];
++                    if !functions.iter().all(|f| matches!(f, TransferFunction::Identity)) {
++                        push_color(&mut steps, ColorOp::Transfer(Box::new(functions)));
++                    }
++                }
++                _ => return None,
 +            }
 +        }
-+        (!steps.is_empty()).then_some(Self { steps })
++        // Trailing alpha scales become the layer's opacity.
++        let mut alpha = 1.0f32;
++        while let Some(Step::Color(ops)) = steps.last_mut() {
++            let Some(factor) = ops.last().and_then(|op| match op {
++                ColorOp::Matrix(m) => alpha_scale(m),
++                ColorOp::Transfer(_) => None,
++            }) else {
++                break;
++            };
++            alpha *= factor;
++            ops.pop();
++            if ops.is_empty() {
++                steps.pop();
++            }
++        }
++        Some((!steps.is_empty() || alpha != 1.0).then_some(Self { steps, alpha, reduce: true, graph: None }))
++    }
++
++    /// The plan computed at full resolution ([`Self::factor`] 1): a backdrop is read at the size
++    /// of the box it shows through.
++    pub(crate) fn at_full_resolution(mut self) -> Self {
++        self.reduce = false;
++        self
++    }
++
++    /// The factor the layer's opacity is multiplied by (see [`Self::alpha`](#structfield.alpha)).
++    pub(crate) fn alpha(&self) -> f32 {
++        self.alpha
++    }
++
++    /// Whether the filter leaves the pixels as they are, but for the alpha factor.
++    pub(crate) fn is_alpha_only(&self) -> bool {
++        self.steps.is_empty() && self.graph.is_none()
++    }
++
++    /// Whether the filter reads and makes nothing outside the layer's clip, its filter region (a
++    /// graph's, as SVG asks), where a chain reads the content beyond it (CSS).
++    pub(crate) fn bounded(&self) -> bool {
++        self.graph.is_some()
++    }
++
++    /// The colour functions of a filter of nothing else, when they keep the alpha and map each
++    /// colour without reading its alpha: the content of a layer in one colour is then drawn in
++    /// that colour's image instead ([`map_color`]), without rendering it apart.
++    pub(crate) fn recolors(&self) -> Option<&[ColorOp]> {
++        match &self.steps[..] {
++            [Step::Color(ops)] if ops.iter().all(keeps_alpha) => Some(ops),
++            _ => None,
++        }
 +    }
 +
 +    /// The pixels of the layer's unfiltered content the steps read to produce `out`.
 +    pub(crate) fn source_region(&self, out: PixelRect) -> PixelRect {
++        if let Some(graph) = &self.graph {
++            return graph.source_region(out);
++        }
 +        self.steps.iter().rev().fold(out, |needed, step| match *step {
 +            Step::Blur { sigma } => needed.inflate(reach(sigma)),
 +            Step::DropShadow { dx, dy, sigma, .. } => {
@@ -226,6 +625,8 @@ index fd573d2..18f8895 100644
 +                };
 +                needed.union(moved.inflate(reach(sigma)))
 +            }
++            // A pixel's colour is made from that pixel alone.
++            Step::Color(_) => needed,
 +        })
 +    }
 +
@@ -236,7 +637,7 @@ index fd573d2..18f8895 100644
 +    /// bilinearly, within two levels of the full-resolution blur.
 +    pub(crate) fn factor(&self) -> usize {
 +        match self.steps[..] {
-+            [Step::Blur { sigma }] | [Step::DropShadow { sigma, .. }] => reduction(sigma),
++            [Step::Blur { sigma }] | [Step::DropShadow { sigma, .. }] if self.reduce => reduction(sigma),
 +            _ => 1,
 +        }
 +    }
@@ -262,6 +663,9 @@ index fd573d2..18f8895 100644
 +        let origin = Affine::translate((f64::from(region.x0), f64::from(region.y0)));
 +        if w == 0 || h == 0 {
 +            return Vec::new();
++        }
++        if let Some(graph) = &self.graph {
++            return vec![FilteredImage::scaled(graph.render(pixels, region), origin, 1)];
 +        }
 +        let mut scratch = Vec::new();
 +        match self.steps[..] {
@@ -298,12 +702,159 @@ index fd573d2..18f8895 100644
 +                        Step::DropShadow { dx, dy, sigma, color } => {
 +                            drop_shadow(data, &mut scratch, w, h, dx, dy, sigma, color)
 +                        }
++                        Step::Color(ref ops) => color_ops(data, ops),
 +                    }
 +                }
 +                vec![FilteredImage::scaled(pixels, origin, 1)]
 +            }
 +        }
 +    }
++}
++
++/// The identity colour matrix.
++const IDENTITY: [f32; 20] = [
++    1.0, 0.0, 0.0, 0.0, 0.0, //
++    0.0, 1.0, 0.0, 0.0, 0.0, //
++    0.0, 0.0, 1.0, 0.0, 0.0, //
++    0.0, 0.0, 0.0, 1.0, 0.0,
++];
++
++/// Whether a matrix changes no byte: the identity to f32 rounding (`grayscale(0)` is 0.2126 +
++/// 0.7874 in f32), off by at most 0.01 of a level on any pixel.
++fn near_identity(m: &[f32; 20]) -> bool {
++    m.iter().zip(IDENTITY).all(|(a, b)| (a - b).abs() <= 1e-5)
++}
++
++/// The factor a matrix scales the alpha by when it does nothing else (`opacity()`).
++fn alpha_scale(m: &[f32; 20]) -> Option<f32> {
++    let mut identity = *m;
++    identity[18] = 1.0;
++    (identity == IDENTITY && m[18] >= 0.0).then_some(m[18])
++}
++
++/// A colour step joins the colour functions before it.
++fn push_color(steps: &mut Vec<Step>, op: ColorOp) {
++    match steps.last_mut() {
++        Some(Step::Color(ops)) => ops.push(op),
++        _ => steps.push(Step::Color(vec![op])),
++    }
++}
++
++/// Whether a colour function keeps each pixel's alpha and makes its colour from the colour alone.
++fn keeps_alpha(op: &ColorOp) -> bool {
++    match op {
++        ColorOp::Matrix(m) => m[3] == 0.0 && m[8] == 0.0 && m[13] == 0.0 && m[15..] == [0.0, 0.0, 0.0, 1.0, 0.0],
++        ColorOp::Transfer(functions) => matches!(functions[3], TransferFunction::Identity),
++    }
++}
++
++/// One colour (unpremultiplied) through `ops` that [`keeps_alpha`]: what [`color_ops`] makes of
++/// each pixel of it.
++pub(crate) fn map_color(color: AlphaColor<Srgb>, ops: &[ColorOp]) -> AlphaColor<Srgb> {
++    let [r, g, b, alpha] = color.components;
++    let [r, g, b, _] = ops.iter().fold([r, g, b, alpha], |c, op| apply(op, c));
++    AlphaColor::new([r, g, b, alpha])
++}
++
++/// A colour function on `c` (unpremultiplied RGBA), clamped to 0..1: a matrix as Skia's
++/// `matrix_4x5` and `clamp_01` stages compute it, transfer functions as `feComponentTransfer`
++/// defines them.
++fn apply(op: &ColorOp, [r, g, b, a]: [f32; 4]) -> [f32; 4] {
++    match op {
++        ColorOp::Matrix(m) => std::array::from_fn(|row| {
++            let m = &m[row * 5..row * 5 + 5];
++            (m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0)
++        }),
++        ColorOp::Transfer(functions) => {
++            let c = [r, g, b, a];
++            std::array::from_fn(|i| transfer(&functions[i], c[i]).clamp(0.0, 1.0))
++        }
++    }
++}
++
++/// `feComponentTransfer`'s function of a channel value `c` in 0..1.
++fn transfer(function: &TransferFunction, c: f32) -> f32 {
++    match function {
++        TransferFunction::Identity => c,
++        TransferFunction::Table(values) if values.len() >= 2 => {
++            let n = values.len() - 1;
++            let k = ((c * n as f32).floor() as usize).min(n - 1);
++            values[k] + (c * n as f32 - k as f32) * (values[k + 1] - values[k])
++        }
++        TransferFunction::Discrete(values) if !values.is_empty() => {
++            let n = values.len();
++            values[((c * n as f32).floor() as usize).min(n - 1)]
++        }
++        TransferFunction::Table(_) | TransferFunction::Discrete(_) => c,
++        TransferFunction::Linear(f) => f.slope * c + f.intercept,
++        TransferFunction::Gamma(f) => f.amplitude * c.powf(f.exponent) + f.offset,
++    }
++}
++
++/// The colour functions `ops` on premultiplied RGBA `data`, as Chromium's colour filters (Skia's
++/// raster pipeline) do them: each pixel unpremultiplied (none when transparent), each function
++/// applied and its result clamped, premultiplied, rounded to bytes at the end.
++pub(crate) fn color_ops(data: &mut [u8], ops: &[ColorOp]) {
++    // Runs of one colour (boxes, the transparent pixels around them) are the common case: a run's
++    // first pixel is computed, the rest copied.
++    let mut last: Option<([u8; 4], [u8; 4])> = None;
++    for px in data.chunks_exact_mut(4) {
++        let input = [px[0], px[1], px[2], px[3]];
++        let output = match last {
++            Some((seen, output)) if seen == input => output,
++            _ => {
++                let output = color_pixel(input, ops);
++                last = Some((input, output));
++                output
++            }
++        };
++        px.copy_from_slice(&output);
++    }
++}
++
++fn color_pixel([r, g, b, a]: [u8; 4], ops: &[ColorOp]) -> [u8; 4] {
++    const BYTE: f32 = 1.0 / 255.0;
++    let alpha = f32::from(a) * BYTE;
++    // Skia's `unpremul`: times 1 / alpha, 0 where that is not finite.
++    let unpremul = if a == 0 { 0.0 } else { 1.0 / alpha };
++    let rgba = [
++        f32::from(r) * BYTE * unpremul,
++        f32::from(g) * BYTE * unpremul,
++        f32::from(b) * BYTE * unpremul,
++        alpha,
++    ];
++    let [r, g, b, a] = ops.iter().fold(rgba, |c, op| apply(op, c));
++    // `premul`, then `store_8888`: v * 255 rounded.
++    let byte = |v: f32| (v * 255.0 + 0.5) as u8;
++    [byte(r * a), byte(g * a), byte(b * a), byte(a)]
++}
++
++/// pyro: `pixels` (premultiplied RGBA over `out`) extended to `region` (which holds `out`) by
++/// mirroring at `out`'s edges, the edge pixel repeated (Skia's `SkTileMode::kMirror`, which
++/// Chromium reads a backdrop through for `backdrop-filter`: a blur takes in no colour from beyond
++/// the box and no transparency either). Farther than a box away it keeps mirroring.
++pub(crate) fn mirrored(pixels: &Pixmap, out: PixelRect, region: PixelRect) -> Pixmap {
++    let (w, h) = (i64::from(out.width()), i64::from(out.height()));
++    let (rw, rh) = (region.width() as usize, region.height() as usize);
++    let mut extended = Pixmap::new(rw as u16, rh as u16);
++    if w <= 0 || h <= 0 {
++        return extended;
++    }
++    let reflect = |v: i64, n: i64| {
++        let m = v.rem_euclid(2 * n);
++        (if m < n { m } else { 2 * n - 1 - m }) as usize
++    };
++    let columns: Vec<usize> = (0..rw as i64).map(|x| reflect(x + i64::from(region.x0 - out.x0), w)).collect();
++    let src = pixels.data_as_u8_slice();
++    let dst = extended.data_as_u8_slice_mut();
++    for (y, row) in dst.chunks_exact_mut(rw * 4).enumerate() {
++        let sy = reflect(y as i64 + i64::from(region.y0 - out.y0), h);
++        let line = &src[sy * w as usize * 4..(sy + 1) * w as usize * 4];
++        for (px, &sx) in row.chunks_exact_mut(4).zip(&columns) {
++            px.copy_from_slice(&line[sx * 4..sx * 4 + 4]);
++        }
++    }
++    extended
 +}
 +
 +/// The factor a blur of `sigma` (device px) is computed smaller by: see [`FilterPlan::factor`].
@@ -476,7 +1027,7 @@ index fd573d2..18f8895 100644
 +}
 +
 +/// How far (device px) a blur of `sigma` reads.
-+fn reach(sigma: f64) -> i32 {
++pub(crate) fn reach(sigma: f64) -> i32 {
 +    if sigma <= 0.0 {
 +        return 0;
 +    }
@@ -486,7 +1037,7 @@ index fd573d2..18f8895 100644
 +/// `drop-shadow()` on premultiplied RGBA `data`: its alpha blurred by `sigma`, moved by `(dx, dy)`
 +/// and filled with `color`, under the pixels.
 +#[allow(clippy::too_many_arguments)]
-+fn drop_shadow(
++pub(crate) fn drop_shadow(
 +    data: &mut [u8],
 +    scratch: &mut Vec<u8>,
 +    w: usize,
@@ -554,7 +1105,7 @@ index fd573d2..18f8895 100644
 +}
 +
 +/// `v / 255` rounded, for `v` up to 255 * 255.
-+fn div255(v: u32) -> u32 {
++pub(crate) fn div255(v: u32) -> u32 {
 +    (v + 128 + ((v + 128) >> 8)) >> 8
 +}
 +
@@ -892,8 +1443,700 @@ index fd573d2..18f8895 100644
 +                *o = ((s + area / 2) / area) as u8;
 +            }
 +        }
++    }
++
++    fn color(effects: impl Iterator<Item = FilterEffect>) -> FilterPlan {
++        FilterPlan::new(&Filter::linear_list(effects), Affine::IDENTITY).unwrap()
++    }
++
++    fn invert(amount: f32) -> FilterEffect {
++        let slope = 1.0 - 2.0 * amount;
++        FilterEffect::ColorMatrix(anyrender::filters::color_transformation::ColorMatrix([
++            slope, 0.0, 0.0, 0.0, amount, //
++            0.0, slope, 0.0, 0.0, amount, //
++            0.0, 0.0, slope, 0.0, amount, //
++            0.0, 0.0, 0.0, 1.0, 0.0,
++        ]))
++    }
++
++    /// A colour matrix applies to the unpremultiplied colour, as Skia's matrix colour filter does:
++    /// half-transparent red inverted is half-transparent cyan, and transparent stays transparent.
++    #[test]
++    fn a_colour_matrix_maps_unpremultiplied_colours() {
++        let plan = color(std::iter::once(invert(1.0)));
++        let out = PixelRect { x0: 0, y0: 0, x1: 3, y1: 1 };
++        assert_eq!(plan.source_region(out), out, "a colour reads its own pixel");
++        let mut pixels = Pixmap::new(3, 1);
++        pixels.data_as_u8_slice_mut().copy_from_slice(&[64, 0, 0, 128, 255, 255, 0, 255, 0, 0, 0, 0]);
++        let images = plan.render(pixels, out, None);
++        assert_eq!(images.len(), 1);
++        assert_eq!(images[0].pixels.data_as_u8_slice(), &[64, 128, 128, 128, 0, 0, 255, 255, 0, 0, 0, 0]);
++        assert!(!images[0].smooth);
++    }
++
++    /// Functions in a row are applied in order, each result clamped (no rounding to bytes between
++    /// them): red twice as bright stays red, then inverted is cyan.
++    #[test]
++    fn colour_functions_in_a_row_clamp_each_result() {
++        let brightness = FilterEffect::brightness(2.0);
++        let plan = color([brightness, invert(1.0)].into_iter());
++        let mut pixels = Pixmap::new(1, 1);
++        pixels.data_as_u8_slice_mut().copy_from_slice(&[255, 0, 0, 255]);
++        let images = plan.render(pixels, PixelRect { x0: 0, y0: 0, x1: 1, y1: 1 }, None);
++        assert_eq!(images[0].pixels.data_as_u8_slice(), &[0, 255, 255, 255]);
++    }
++
++    /// What needs no pixels of its own: the identity is skipped, and trailing `opacity()` becomes
++    /// the layer's opacity (alone, the filter is a faded layer). A colour function that keeps the
++    /// alpha can map the colour of content in one colour instead.
++    #[test]
++    fn neutral_functions_and_trailing_opacity_need_no_pixels() {
++        let identity = FilterEffect::ColorMatrix(anyrender::filters::color_transformation::ColorMatrix::IDENTITY);
++        let filter = Filter::linear_list([identity.clone()].into_iter());
++        assert!(FilterPlan::new(&filter, Affine::IDENTITY).is_none());
++        let plan = color([identity, FilterEffect::opacity(0.5), FilterEffect::opacity(0.5)].into_iter());
++        assert!(plan.is_alpha_only());
++        assert_eq!(plan.alpha(), 0.25);
++        let plan = color([FilterEffect::opacity(0.5), invert(1.0)].into_iter());
++        assert!(!plan.is_alpha_only() && plan.recolors().is_none(), "opacity first changes the alpha");
++        let plan = color([invert(1.0), FilterEffect::opacity(0.5)].into_iter());
++        assert_eq!(plan.alpha(), 0.5);
++        let matrices = plan.recolors().expect("invert keeps the alpha");
++        let mapped = map_color(AlphaColor::from_rgba8(255, 255, 0, 128), matrices);
++        assert_eq!(mapped.to_rgba8(), AlphaColor::<Srgb>::from_rgba8(0, 0, 255, 128).to_rgba8());
++        // A blur in the chain needs the pixels.
++        let plan = color([FilterEffect::blur(2.0), invert(1.0)].into_iter());
++        assert!(plan.recolors().is_none());
++        assert_eq!(plan.source_region(PixelRect { x0: 0, y0: 0, x1: 1, y1: 1 }).x0, -reach(2.0));
      }
  }
+diff --git b/src/graph.rs b/src/graph.rs
+new file mode 100644
+index 0000000..9f9fcd6
+--- /dev/null
++++ b/src/graph.rs
+@@ -0,0 +1,621 @@
++//! pyro: filters that are no chain: an SVG `<filter>`'s primitives, which read the source graphic,
++//! its alpha and each other's results. [`Graph`] holds them as nodes, each computed over one region
++//! of device pixels: the part of the filter region (the layer's clip) that the output needs.
++//! Everything outside the filter region is transparent, the source graphic too, as SVG asks.
++//!
++//! Two conventions hold between the producers (anyrender_svg) and this module:
++//!
++//! - The graph's output is its last node. `anyrender::Filter::add` leaves a graph's output at the
++//!   first node, and the setter is private.
++//! - A primitive's subregion, where it is smaller than the filter region, is an `Image` node of the
++//!   image id [`CROP_IMAGE`] after it, its input that node, the rectangle (in the filter's space,
++//!   the layer's) in its transform: `[x0, y0, x1, y1, _, _]`. Everything outside it is cleared.
++//!
++//! Colour spaces are the producer's: a primitive in linearRGB reads its inputs through a
++//! `feComponentTransfer` into linearRGB and its result goes back to sRGB through another, and the
++//! colour functions of a row are applied to each pixel in one go ([`color_ops`]), as Skia composes
++//! colour filters.
++
++use anyrender::Filter;
++use anyrender::filters::component_transfer::TransferFunction;
++use anyrender::filters::composite::CompositeOperator;
++use anyrender::filters::{FilterEffect, FilterInput, FilterSource};
++use kurbo::{Affine, Rect};
++use peniko::Mix;
++use peniko::color::{AlphaColor, Srgb};
++use vello_cpu::Pixmap;
++
++use crate::filters::{ColorOp, PixelRect, blur, color_ops, div255, drop_shadow, reach};
++
++/// pyro: the image id of an `Image` filter node that stands for a crop of its input to the
++/// rectangle `[x0, y0, x1, y1, ..]` of its transform, in the filter's space: a primitive's
++/// subregion (see the module's documentation).
++pub const CROP_IMAGE: u32 = u32::MAX;
++
++/// What a node reads.
++#[derive(Clone, Copy, Debug, PartialEq)]
++enum Input {
++    Source,
++    SourceAlpha,
++    Node(usize),
++}
++
++/// What a node does, in device pixels.
++#[derive(Clone, Debug)]
++enum Op {
++    /// The input as it is (`feGaussianBlur` of no deviation).
++    Pass,
++    /// Colour functions in a row ([`color_ops`]).
++    Color(Vec<ColorOp>),
++    Blur {
++        sigma: f64,
++    },
++    /// The input moved (bilinearly for a fraction of a pixel).
++    Offset {
++        dx: f64,
++        dy: f64,
++    },
++    /// A premultiplied colour over the whole region.
++    Flood([u8; 4]),
++    /// `feComposite`: the first input composited with the second.
++    Composite(CompositeOperator),
++    /// `feBlend`: the first input blended over the second (separable modes only).
++    Blend(Mix),
++    DropShadow {
++        dx: f64,
++        dy: f64,
++        sigma: f64,
++        color: AlphaColor<Srgb>,
++    },
++    /// The input with everything outside the rectangle (device pixels) cleared.
++    Crop(PixelRect),
++}
++
++#[derive(Clone, Debug)]
++struct Node {
++    op: Op,
++    inputs: [Option<Input>; 2],
++}
++
++/// A filter graph in device pixels (see the module's documentation).
++#[derive(Clone, Debug)]
++pub(crate) struct Graph {
++    nodes: Vec<Node>,
++    /// How far (device px) the output reads from each of its pixels, along any path.
++    reach: i32,
++}
++
++impl Graph {
++    /// `filter` under `transform` (the layer's, to device pixels), or `None` when a node the
++    /// output needs is one this backend does not do (the layer is then drawn unfiltered).
++    pub(crate) fn new(filter: &Filter, transform: Affine) -> Option<Self> {
++        let [a, b, c, d, _, _] = transform.as_coeffs();
++        let scale = (a * d - b * c).abs().sqrt();
++        let nodes = filter.nodes();
++        let n = nodes.len();
++        if n == 0 || !scale.is_finite() || scale == 0.0 {
++            return None;
++        }
++        // The nodes the output needs: inputs come before their readers.
++        let mut needed = vec![false; n];
++        needed[n - 1] = true;
++        for i in (0..n).rev() {
++            if !needed[i] {
++                continue;
++            }
++            for input in [&nodes[i].inputs.primary, &nodes[i].inputs.secondary].into_iter().flatten() {
++                if let FilterInput::Result(id) = input {
++                    let id = usize::from(id.0);
++                    if id >= i {
++                        return None;
++                    }
++                    needed[id] = true;
++                }
++            }
++        }
++        let mut index = vec![usize::MAX; n];
++        let mut graph: Vec<Node> = Vec::new();
++        for (i, node) in nodes.iter().enumerate() {
++            if !needed[i] {
++                continue;
++            }
++            // A missing input is the source graphic (a chain's first node has none).
++            let input = |input: &Option<FilterInput>| match input {
++                None | Some(FilterInput::Source(FilterSource::SourceGraphic)) => Some(Input::Source),
++                Some(FilterInput::Source(FilterSource::SourceAlpha)) => Some(Input::SourceAlpha),
++                Some(FilterInput::Source(_)) => None,
++                Some(FilterInput::Result(id)) => Some(Input::Node(index[usize::from(id.0)])),
++            };
++            let primary = input(&node.inputs.primary)?;
++            let (op, inputs) = match &node.effect {
++                FilterEffect::ColorMatrix(matrix) => {
++                    (Op::Color(vec![ColorOp::Matrix(matrix.0)]), [Some(primary), None])
++                }
++                FilterEffect::ComponentTransfer(transfer) => {
++                    let functions = [
++                        transfer.red_function.clone(),
++                        transfer.green_function.clone(),
++                        transfer.blue_function.clone(),
++                        transfer.alpha_function.clone(),
++                    ];
++                    let op = if functions.iter().all(|f| matches!(f, TransferFunction::Identity)) {
++                        Op::Pass
++                    } else {
++                        Op::Color(vec![ColorOp::Transfer(Box::new(functions))])
++                    };
++                    (op, [Some(primary), None])
++                }
++                FilterEffect::GaussianBlur(blur) => {
++                    let op = if blur.std_deviation > 0.0 {
++                        Op::Blur { sigma: f64::from(blur.std_deviation) * scale }
++                    } else {
++                        Op::Pass
++                    };
++                    (op, [Some(primary), None])
++                }
++                FilterEffect::DropShadow(shadow) => {
++                    let (dx, dy) = (f64::from(shadow.dx), f64::from(shadow.dy));
++                    let op = Op::DropShadow {
++                        dx: a * dx + c * dy,
++                        dy: b * dx + d * dy,
++                        sigma: f64::from(shadow.std_deviation.max(0.0)) * scale,
++                        color: shadow.color,
++                    };
++                    (op, [Some(primary), None])
++                }
++                FilterEffect::Offset(v) => {
++                    let op = Op::Offset { dx: a * v.x + c * v.y, dy: b * v.x + d * v.y };
++                    (op, [Some(primary), None])
++                }
++                FilterEffect::Flood(color) => {
++                    let p = color.premultiply().to_rgba8();
++                    (Op::Flood([p.r, p.g, p.b, p.a]), [None, None])
++                }
++                FilterEffect::Composite(operator) => {
++                    (Op::Composite(*operator), [Some(primary), Some(input(&node.inputs.secondary)?)])
++                }
++                FilterEffect::Blend(mix) if separable(*mix) => {
++                    (Op::Blend(*mix), [Some(primary), Some(input(&node.inputs.secondary)?)])
++                }
++                FilterEffect::Image(image) if image.image_id == CROP_IMAGE => {
++                    let [x0, y0, x1, y1, ..] = image.transform?;
++                    let rect = Rect::new(f64::from(x0), f64::from(y0), f64::from(x1), f64::from(y1));
++                    (Op::Crop(PixelRect::around(transform.transform_rect_bbox(rect))), [Some(primary), None])
++                }
++                _ => return None,
++            };
++            index[i] = graph.len();
++            graph.push(Node { op, inputs });
++        }
++        // A colour node read only by the colour node after it joins that node: the functions of
++        // a row are applied without rounding between them.
++        let last = graph.len() - 1;
++        let mut uses = uses(&graph);
++        for j in 0..graph.len() {
++            let Some(Input::Node(k)) = graph[j].inputs[0] else {
++                continue;
++            };
++            if k == last || uses[k] != 1 || !matches!(graph[j].op, Op::Color(_)) {
++                continue;
++            }
++            if let Op::Color(before) = &graph[k].op {
++                let mut ops = before.clone();
++                let Op::Color(after) = &graph[j].op else { unreachable!() };
++                ops.extend(after.iter().cloned());
++                graph[j] = Node { op: Op::Color(ops), inputs: [graph[k].inputs[0], None] };
++                graph[k] = Node { op: Op::Pass, inputs: [None, None] };
++                uses[k] = 0;
++            }
++        }
++        let mut reaches = vec![0i32; graph.len()];
++        for (i, node) in graph.iter().enumerate() {
++            let read = node
++                .inputs
++                .iter()
++                .flatten()
++                .map(|input| match *input {
++                    Input::Node(k) => reaches[k],
++                    _ => 0,
++                })
++                .max()
++                .unwrap_or(0);
++            let moved = |dx: f64, dy: f64| dx.abs().max(dy.abs()).ceil() as i32 + 1;
++            let own = match node.op {
++                Op::Blur { sigma } => reach(sigma),
++                Op::Offset { dx, dy } => moved(dx, dy),
++                Op::DropShadow { dx, dy, sigma, .. } => reach(sigma) + moved(dx, dy),
++                _ => 0,
++            };
++            reaches[i] = read.saturating_add(own);
++        }
++        Some(Self { reach: reaches[last], nodes: graph })
++    }
++
++    /// The pixels of the source the output over `out` reads.
++    pub(crate) fn source_region(&self, out: PixelRect) -> PixelRect {
++        PixelRect { x0: out.x0 - self.reach, y0: out.y0 - self.reach, x1: out.x1 + self.reach, y1: out.y1 + self.reach }
++    }
++
++    /// The output over `region`, from `source`: the layer's content (premultiplied RGBA) there.
++    pub(crate) fn render(&self, source: Pixmap, region: PixelRect) -> Pixmap {
++        let (w, h) = (source.width(), source.height());
++        let mut uses = uses(&self.nodes);
++        let last = self.nodes.len() - 1;
++        let mut results: Vec<Option<Pixmap>> = (0..self.nodes.len()).map(|_| None).collect();
++        let mut source_alpha: Option<Pixmap> = None;
++        let mut scratch = Vec::new();
++        for (i, node) in self.nodes.iter().enumerate() {
++            if uses[i] == 0 && i != last {
++                continue;
++            }
++            let mut read = |input: Option<Input>, results: &[Option<Pixmap>]| -> Pixmap {
++                match input {
++                    Some(Input::Source) | None => source.clone(),
++                    Some(Input::SourceAlpha) => source_alpha
++                        .get_or_insert_with(|| {
++                            let mut alpha = source.clone();
++                            for px in alpha.data_as_u8_slice_mut().chunks_exact_mut(4) {
++                                px[..3].fill(0);
++                            }
++                            alpha
++                        })
++                        .clone(),
++                    Some(Input::Node(k)) => results[k].clone().unwrap_or_else(|| Pixmap::new(w, h)),
++                }
++            };
++            let (wu, hu) = (usize::from(w), usize::from(h));
++            let result = match &node.op {
++                Op::Pass => read(node.inputs[0], &results),
++                Op::Color(ops) => {
++                    let mut pixels = read(node.inputs[0], &results);
++                    color_ops(pixels.data_as_u8_slice_mut(), ops);
++                    pixels
++                }
++                Op::Blur { sigma } => {
++                    let mut pixels = read(node.inputs[0], &results);
++                    blur(pixels.data_as_u8_slice_mut(), &mut scratch, wu, hu, 4, *sigma);
++                    pixels
++                }
++                Op::Offset { dx, dy } => offset(&read(node.inputs[0], &results), *dx, *dy),
++                Op::Flood(color) => {
++                    let mut pixels = Pixmap::new(w, h);
++                    for px in pixels.data_as_u8_slice_mut().chunks_exact_mut(4) {
++                        px.copy_from_slice(color);
++                    }
++                    pixels
++                }
++                Op::Composite(operator) => {
++                    let mut top = read(node.inputs[0], &results);
++                    composite(&mut top, &read(node.inputs[1], &results), *operator);
++                    top
++                }
++                Op::Blend(mix) => {
++                    let mut top = read(node.inputs[0], &results);
++                    blend(&mut top, &read(node.inputs[1], &results), *mix);
++                    top
++                }
++                Op::DropShadow { dx, dy, sigma, color } => {
++                    let mut pixels = read(node.inputs[0], &results);
++                    drop_shadow(pixels.data_as_u8_slice_mut(), &mut scratch, wu, hu, *dx, *dy, *sigma, *color);
++                    pixels
++                }
++                Op::Crop(rect) => {
++                    let mut pixels = read(node.inputs[0], &results);
++                    let keep = PixelRect {
++                        x0: rect.x0 - region.x0,
++                        y0: rect.y0 - region.y0,
++                        x1: rect.x1 - region.x0,
++                        y1: rect.y1 - region.y0,
++                    };
++                    for (y, row) in pixels.data_as_u8_slice_mut().chunks_exact_mut(wu * 4).enumerate() {
++                        let y = y as i32;
++                        for (x, px) in row.chunks_exact_mut(4).enumerate() {
++                            let x = x as i32;
++                            if x < keep.x0 || x >= keep.x1 || y < keep.y0 || y >= keep.y1 {
++                                px.fill(0);
++                            }
++                        }
++                    }
++                    pixels
++                }
++            };
++            for input in node.inputs.iter().flatten() {
++                if let Input::Node(k) = *input {
++                    uses[k] -= 1;
++                    if uses[k] == 0 {
++                        results[k] = None;
++                    }
++                }
++            }
++            results[i] = Some(result);
++        }
++        let mut output = results[last].take().unwrap_or_else(|| Pixmap::new(w, h));
++        output.set_may_have_transparency(true);
++        output
++    }
++}
++
++/// How many times each node is read.
++fn uses(nodes: &[Node]) -> Vec<usize> {
++    let mut uses = vec![0usize; nodes.len()];
++    for node in nodes {
++        for input in node.inputs.iter().flatten() {
++            if let Input::Node(k) = *input {
++                uses[k] += 1;
++            }
++        }
++    }
++    uses
++}
++
++/// Whether `feBlend` does `mix` here: the separable modes.
++fn separable(mix: Mix) -> bool {
++    !matches!(mix, Mix::Hue | Mix::Saturation | Mix::Color | Mix::Luminosity)
++}
++
++/// `pixels` moved by `(dx, dy)` device px: each output pixel the input at (x - dx, y - dy),
++/// transparent beyond it, interpolated between four pixels for a fraction of a pixel.
++fn offset(pixels: &Pixmap, dx: f64, dy: f64) -> Pixmap {
++    let (w, h) = (usize::from(pixels.width()), usize::from(pixels.height()));
++    let mut out = Pixmap::new(pixels.width(), pixels.height());
++    let src = pixels.data_as_u8_slice();
++    let dst = out.data_as_u8_slice_mut();
++    // Whole pixels when within a hundredth of one.
++    let snap = |v: f64| if (v - v.round()).abs() < 0.01 { v.round() } else { v };
++    let (dx, dy) = (snap(dx), snap(dy));
++    let (ix, fx) = (dx.floor(), dx - dx.floor());
++    let (iy, fy) = (dy.floor(), dy - dy.floor());
++    let (ix, iy) = (ix as isize, iy as isize);
++    let weights = [
++        ((1.0 - fx) * (1.0 - fy) * 65536.0).round() as u32,
++        (fx * (1.0 - fy) * 65536.0).round() as u32,
++        ((1.0 - fx) * fy * 65536.0).round() as u32,
++        (fx * fy * 65536.0).round() as u32,
++    ];
++    let at = |x: isize, y: isize, c: usize| -> u32 {
++        if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
++            0
++        } else {
++            u32::from(src[(y as usize * w + x as usize) * 4 + c])
++        }
++    };
++    for y in 0..h {
++        let sy = y as isize - iy;
++        for x in 0..w {
++            let sx = x as isize - ix;
++            let px = &mut dst[(y * w + x) * 4..(y * w + x) * 4 + 4];
++            for (c, v) in px.iter_mut().enumerate() {
++                *v = if weights[0] == 65536 {
++                    at(sx, sy, c)
++                } else {
++                    (at(sx - 1, sy - 1, c) * weights[3]
++                        + at(sx, sy - 1, c) * weights[2]
++                        + at(sx - 1, sy, c) * weights[1]
++                        + at(sx, sy, c) * weights[0]
++                        + 32768)
++                        >> 16
++                } as u8;
++            }
++        }
++    }
++    out
++}
++
++/// `feComposite`: `top` (premultiplied RGBA, the first input) composited with `bottom` (the
++/// second) by `operator`, into `top`. The arithmetic one is computed on the premultiplied values,
++/// each clamped, the colour to the alpha, as Skia's arithmetic image filter does.
++fn composite(top: &mut Pixmap, bottom: &Pixmap, operator: CompositeOperator) {
++    for (a, b) in top.data_as_u8_slice_mut().chunks_exact_mut(4).zip(bottom.data_as_u8_slice().chunks_exact(4)) {
++        let (aa, ba) = (u32::from(a[3]), u32::from(b[3]));
++        match operator {
++            CompositeOperator::Over => {
++                for c in 0..4 {
++                    a[c] = (u32::from(a[c]) + div255(u32::from(b[c]) * (255 - aa))).min(255) as u8;
++                }
++            }
++            CompositeOperator::In => {
++                for c in 0..4 {
++                    a[c] = div255(u32::from(a[c]) * ba) as u8;
++                }
++            }
++            CompositeOperator::Out => {
++                for c in 0..4 {
++                    a[c] = div255(u32::from(a[c]) * (255 - ba)) as u8;
++                }
++            }
++            CompositeOperator::Atop => {
++                for c in 0..4 {
++                    a[c] = div255(u32::from(a[c]) * ba + u32::from(b[c]) * (255 - aa)).min(255) as u8;
++                }
++            }
++            CompositeOperator::Xor => {
++                for c in 0..4 {
++                    a[c] = div255(u32::from(a[c]) * (255 - ba) + u32::from(b[c]) * (255 - aa)).min(255) as u8;
++                }
++            }
++            CompositeOperator::Arithmetic(k) => {
++                let v = |c: usize| {
++                    let (i1, i2) = (f32::from(a[c]) / 255.0, f32::from(b[c]) / 255.0);
++                    (k.k1 * i1 * i2 + k.k2 * i1 + k.k3 * i2 + k.k4).clamp(0.0, 1.0)
++                };
++                let alpha = v(3);
++                let rgb = [v(0), v(1), v(2)];
++                for c in 0..3 {
++                    a[c] = (rgb[c].min(alpha) * 255.0 + 0.5) as u8;
++                }
++                a[3] = (alpha * 255.0 + 0.5) as u8;
++            }
++        }
++    }
++}
++
++/// `feBlend`: `top` (the first input) blended over `bottom` (the second) by a separable `mix`,
++/// into `top`: Compositing and Blending's formula on premultiplied values.
++fn blend(top: &mut Pixmap, bottom: &Pixmap, mix: Mix) {
++    for (s, b) in top.data_as_u8_slice_mut().chunks_exact_mut(4).zip(bottom.data_as_u8_slice().chunks_exact(4)) {
++        let (sa, ba) = (f32::from(s[3]) / 255.0, f32::from(b[3]) / 255.0);
++        let alpha = sa + ba - sa * ba;
++        let mut out = [0.0f32; 4];
++        for c in 0..3 {
++            let (sp, bp) = (f32::from(s[c]) / 255.0, f32::from(b[c]) / 255.0);
++            let cs = if sa > 0.0 { (sp / sa).min(1.0) } else { 0.0 };
++            let cb = if ba > 0.0 { (bp / ba).min(1.0) } else { 0.0 };
++            out[c] = sp * (1.0 - ba) + bp * (1.0 - sa) + sa * ba * mix_channel(mix, cb, cs);
++        }
++        out[3] = alpha;
++        for c in 0..4 {
++            s[c] = (out[c].clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
++        }
++        for c in 0..3 {
++            s[c] = s[c].min(s[3]);
++        }
++    }
++}
++
++/// A separable blend mode's function of the backdrop `cb` and the source `cs` (unpremultiplied).
++fn mix_channel(mix: Mix, cb: f32, cs: f32) -> f32 {
++    let hard_light = |cb: f32, cs: f32| {
++        if cs <= 0.5 {
++            cb * 2.0 * cs
++        } else {
++            let s = 2.0 * cs - 1.0;
++            cb + s - cb * s
++        }
++    };
++    match mix {
++        Mix::Multiply => cb * cs,
++        Mix::Screen => cb + cs - cb * cs,
++        Mix::Overlay => hard_light(cs, cb),
++        Mix::Darken => cb.min(cs),
++        Mix::Lighten => cb.max(cs),
++        Mix::ColorDodge => {
++            if cb == 0.0 {
++                0.0
++            } else if cs >= 1.0 {
++                1.0
++            } else {
++                (cb / (1.0 - cs)).min(1.0)
++            }
++        }
++        Mix::ColorBurn => {
++            if cb >= 1.0 {
++                1.0
++            } else if cs <= 0.0 {
++                0.0
++            } else {
++                1.0 - ((1.0 - cb) / cs).min(1.0)
++            }
++        }
++        Mix::HardLight => hard_light(cb, cs),
++        Mix::SoftLight => {
++            if cs <= 0.5 {
++                cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb)
++            } else {
++                let d = if cb <= 0.25 { ((16.0 * cb - 12.0) * cb + 4.0) * cb } else { cb.sqrt() };
++                cb + (2.0 * cs - 1.0) * (d - cb)
++            }
++        }
++        Mix::Difference => (cb - cs).abs(),
++        Mix::Exclusion => cb + cs - 2.0 * cb * cs,
++        _ => cs,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use anyrender::filters::{ExternalImageSource, FilterInputs};
++    use peniko::color::palette;
++
++    fn pixmap(w: u16, h: u16, color: [u8; 4]) -> Pixmap {
++        let mut p = Pixmap::new(w, h);
++        for px in p.data_as_u8_slice_mut().chunks_exact_mut(4) {
++            px.copy_from_slice(&color);
++        }
++        p
++    }
++
++    fn at(p: &Pixmap, x: usize, y: usize) -> [u8; 4] {
++        let i = (y * usize::from(p.width()) + x) * 4;
++        p.data_as_u8_slice()[i..i + 4].try_into().unwrap()
++    }
++
++    const REGION: PixelRect = PixelRect { x0: 0, y0: 0, x1: 10, y1: 10 };
++
++    /// `feFlood` then `feComposite in` the source: the flood's colour where the source is.
++    #[test]
++    fn a_flood_composited_in_the_source() {
++        let mut filter = Filter::empty();
++        let flood = filter.add(FilterEffect::Flood(palette::css::LIME), FilterInputs::NONE);
++        filter.add(
++            FilterEffect::Composite(CompositeOperator::In),
++            FilterInputs::dual(FilterInput::Result(flood), FilterInput::Source(FilterSource::SourceGraphic)),
++        );
++        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
++        let mut source = Pixmap::new(10, 10);
++        source.data_as_u8_slice_mut()[..4].copy_from_slice(&[255, 0, 0, 255]);
++        let out = graph.render(source, REGION);
++        assert_eq!(at(&out, 0, 0), [0, 255, 0, 255]);
++        assert_eq!(at(&out, 1, 0), [0; 4]);
++    }
++
++    /// `feMerge` as `over`s, `feOffset` by whole pixels, and a subregion's crop.
++    #[test]
++    fn offsets_merges_and_crops() {
++        let mut filter = Filter::empty();
++        let moved = filter.add(
++            FilterEffect::Offset(kurbo::Vec2::new(2.0, 1.0)),
++            FilterInputs::single(FilterInput::Source(FilterSource::SourceGraphic)),
++        );
++        let flood = filter.add(FilterEffect::Flood(palette::css::BLUE), FilterInputs::NONE);
++        let cropped = filter.add(
++            FilterEffect::Image(ExternalImageSource {
++                image_id: CROP_IMAGE,
++                transform: Some([5.0, 0.0, 10.0, 10.0, 0.0, 0.0]),
++            }),
++            FilterInputs::single(FilterInput::Result(flood)),
++        );
++        filter.add(
++            FilterEffect::Composite(CompositeOperator::Over),
++            FilterInputs::dual(FilterInput::Result(moved), FilterInput::Result(cropped)),
++        );
++        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
++        let mut source = Pixmap::new(10, 10);
++        source.data_as_u8_slice_mut()[..4].copy_from_slice(&[255, 0, 0, 255]);
++        let out = graph.render(source, REGION);
++        assert_eq!(at(&out, 2, 1), [255, 0, 0, 255], "the source, moved");
++        assert_eq!(at(&out, 0, 0), [0; 4], "nothing left behind");
++        assert_eq!(at(&out, 4, 5), [0; 4], "the flood, cropped");
++        assert_eq!(at(&out, 5, 5), [0, 0, 255, 255], "the flood in its subregion");
++    }
++
++    /// Colour nodes in a row are one pass, without rounding between them; a node this backend
++    /// does not do leaves the whole graph out.
++    #[test]
++    fn colour_rows_and_unsupported_nodes() {
++        let mut filter = Filter::empty();
++        let first = filter.add(
++            FilterEffect::ColorMatrix(anyrender::filters::color_transformation::ColorMatrix::invert(1.0)),
++            FilterInputs::NONE,
++        );
++        filter.add(
++            FilterEffect::ColorMatrix(anyrender::filters::color_transformation::ColorMatrix::invert(1.0)),
++            FilterInputs::single(FilterInput::Result(first)),
++        );
++        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
++        assert_eq!(graph.nodes.iter().filter(|n| matches!(n.op, Op::Color(_))).count(), 1);
++        let out = graph.render(pixmap(10, 10, [10, 20, 30, 255]), REGION);
++        assert_eq!(at(&out, 3, 3), [10, 20, 30, 255]);
++        // Turbulence is not done here: no graph, the layer is drawn unfiltered.
++        let mut filter = Filter::empty();
++        filter.add(FilterEffect::Tile, FilterInputs::NONE);
++        assert!(Graph::new(&filter, Affine::IDENTITY).is_none());
++    }
++
++    #[test]
++    fn blend_multiply() {
++        let mut top = pixmap(1, 1, [255, 128, 0, 255]);
++        blend(&mut top, &pixmap(1, 1, [128, 128, 128, 255]), Mix::Multiply);
++        assert_eq!(at(&top, 0, 0), [128, 64, 0, 255]);
++    }
++}
 diff --git a/src/image_renderer.rs b/src/image_renderer.rs
 index 619d5d4..6352428 100644
 --- a/src/image_renderer.rs
@@ -950,19 +2193,23 @@ index 619d5d4..6352428 100644
  
      fn reset(&mut self) {
 diff --git a/src/lib.rs b/src/lib.rs
-index 5bc2e2c..836f92d 100644
+index 5bc2e2c..b764840 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -7,7 +7,6 @@ mod image_renderer;
+@@ -7,7 +7,10 @@ mod image_renderer;
  mod scene;
  mod window_renderer;
  
 -#[cfg(feature = "filters")]
++mod backdrop;
++mod graph;
++/// pyro: see the `graph` module (an SVG filter primitive's subregion).
++pub use graph::CROP_IMAGE as FILTER_CROP_IMAGE;
  mod filters;
  
  pub use image_cache::ImageCacheConfig;
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..6eaf7f2 100644
+index 1b09a33..98a98f2 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,11 +1,14 @@
@@ -978,17 +2225,28 @@ index 1b09a33..6eaf7f2 100644
 +use vello_common::paint::ImageSource;
  use vello_cpu::{PaintType, Pixmap};
  
-+use crate::filters::{FilterPlan, PixelRect};
++use crate::filters::{FilterPlan, PixelRect, map_color};
  use crate::image_cache::{ImageCache, ImageCacheConfig};
  
  const DEFAULT_TOLERANCE: f64 = 0.1;
-@@ -14,6 +17,13 @@ pub struct VelloCpuScenePainter {
+@@ -14,6 +17,24 @@ pub struct VelloCpuScenePainter {
      pub(crate) render_ctx: vello_cpu::RenderContext,
      pub(crate) resources: vello_cpu::Resources,
      pub(crate) image_cache: ImageCache,
 +    /// pyro: single-threaded contexts that filter layers are rendered in (one per level of
 +    /// nesting), kept from frame to frame. See [`crate::filters`].
 +    pub(crate) filter_contexts: Vec<vello_cpu::RenderContext>,
++    /// pyro: what each push not popped yet was (see [`Self::replay`]).
++    pub(crate) clip_paths: Vec<Pushed>,
++    /// pyro: whether the scene being replayed has a layer with a blend mode.
++    pub(crate) blending: bool,
++    /// pyro: whether the scene being replayed has a backdrop filter (see [`crate::backdrop`]).
++    pub(crate) backdrop_filters: bool,
++    /// pyro: the backdrops captured in the scene being replayed.
++    pub(crate) backdrops: Vec<crate::backdrop::Captured>,
++    /// pyro: from the frame's device pixels to those of the context drawn into (a filter layer's
++    /// or a backdrop's, offscreen).
++    pub(crate) frame_to_ctx: Affine,
 +    /// pyro: glyphs are drawn aliased, a pixel painted when the glyph covers at least this
 +    /// much of it (out of 255), as Chromium draws text when WPT runs it without font
 +    /// antialiasing. `None` (the default): antialiased.
@@ -996,7 +2254,7 @@ index 1b09a33..6eaf7f2 100644
  }
  
  impl VelloCpuScenePainter {
-@@ -22,13 +32,32 @@ impl VelloCpuScenePainter {
+@@ -22,13 +43,37 @@ impl VelloCpuScenePainter {
      }
  
      pub fn with_image_cache_config(width: u16, height: u16, config: ImageCacheConfig) -> Self {
@@ -1016,6 +2274,11 @@ index 1b09a33..6eaf7f2 100644
              resources: vello_cpu::Resources::new(),
              image_cache: ImageCache::new(config),
 +            filter_contexts: Vec::new(),
++            clip_paths: Vec::new(),
++            blending: false,
++            backdrop_filters: false,
++            backdrops: Vec::new(),
++            frame_to_ctx: Affine::IDENTITY,
 +            text_aliasing_threshold: None,
          }
      }
@@ -1030,7 +2293,30 @@ index 1b09a33..6eaf7f2 100644
      fn convert_paint(&mut self, paint: PaintRef<'_>) -> PaintType {
          match paint {
              Paint::Solid(alpha_color) => PaintType::Solid(alpha_color),
-@@ -77,20 +106,11 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -64,10 +109,22 @@ impl VelloCpuScenePainter {
+     }
+ }
+ 
++/// pyro: what a push of the painter pushed onto vello_cpu's context, for its pop.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Pushed {
++    /// A layer (`push_layer`, `push_clip_layer`).
++    Layer,
++    /// A clip path (non-isolated: see [`VelloCpuScenePainter::replay`]).
++    ClipPath,
++    /// Nothing (an opaque backdrop filter's group: see [`crate::backdrop`]).
++    Nothing,
++}
++
+ impl RenderContext for VelloCpuScenePainter {}
+ impl PaintScene for VelloCpuScenePainter {
+     fn reset(&mut self) {
+         self.render_ctx.reset();
++        self.clip_paths.clear();
+     }
+ 
+     fn push_layer(
+@@ -77,20 +134,11 @@ impl PaintScene for VelloCpuScenePainter {
          alpha: f32,
          transform: Affine,
          clip: &impl Shape,
@@ -1054,16 +2340,35 @@ index 1b09a33..6eaf7f2 100644
          self.render_ctx.set_transform(transform);
          self.render_ctx.set_fill_rule(fill);
          self.render_ctx.push_layer(
-@@ -98,7 +118,7 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -98,8 +146,9 @@ impl PaintScene for VelloCpuScenePainter {
              Some(blend.into()),
              Some(alpha),
              None,
 -            filter,
 +            None,
          );
++        self.clip_paths.push(Pushed::Layer);
      }
  
-@@ -163,6 +183,16 @@ impl PaintScene for VelloCpuScenePainter {
+     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
+@@ -107,10 +156,15 @@ impl PaintScene for VelloCpuScenePainter {
+         self.render_ctx.set_fill_rule(fill);
+         self.render_ctx
+             .push_clip_layer(&clip.into_path(DEFAULT_TOLERANCE));
++        self.clip_paths.push(Pushed::Layer);
+     }
+ 
+     fn pop_layer(&mut self) {
+-        self.render_ctx.pop_layer();
++        match self.clip_paths.pop() {
++            Some(Pushed::ClipPath) => self.render_ctx.pop_clip(),
++            Some(Pushed::Nothing) => {}
++            Some(Pushed::Layer) | None => self.render_ctx.pop_layer(),
++        }
+     }
+ 
+     fn stroke<'a>(
+@@ -163,6 +217,16 @@ impl PaintScene for VelloCpuScenePainter {
          glyph_transform: Option<Affine>,
          glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
      ) {
@@ -1080,7 +2385,7 @@ index 1b09a33..6eaf7f2 100644
          self.render_ctx.set_transform(transform);
          let paint = self.convert_paint(paint.into());
          self.render_ctx.set_paint(paint);
-@@ -177,7 +207,13 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -177,7 +241,13 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -1095,7 +2400,7 @@ index 1b09a33..6eaf7f2 100644
                      .glyph_transform(glyph_transform.unwrap_or_default())
                      .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
                          id: g.id,
-@@ -201,6 +237,7 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -201,6 +271,7 @@ impl PaintScene for VelloCpuScenePainter {
                      }));
              }
          }
@@ -1103,37 +2408,138 @@ index 1b09a33..6eaf7f2 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +253,374 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +287,500 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
 +
 +    /// pyro: replays `scene` as anyrender does, except that a layer with a filter this backend
-+    /// does (`blur()`, `drop-shadow()`) is rendered by [`Self::draw_filtered_layer`].
++    /// does (`blur()`, `drop-shadow()`, the colour functions) is filtered: see [`Self::replay`].
 +    fn append_scene(&mut self, scene: anyrender::recording::Scene, scene_transform: Affine) {
++        self.blending = scene.commands.iter().any(blends);
++        self.backdrop_filters = scene.commands.iter().any(
++            |command| matches!(command, RenderCommand::PushLayer(layer) if layer.backdrop_filter.is_some()),
++        );
++        self.backdrops.clear();
++        self.frame_to_ctx = Affine::IDENTITY;
 +        self.replay(&scene.commands, scene_transform);
++        self.backdrops.clear();
 +    }
 +}
 +
 +impl VelloCpuScenePainter {
-+    fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
++    /// pyro: replays `commands`; a layer with a filter is drawn by [`Self::draw_filtered_layer`],
++    /// unless its filter only fades it (`opacity()`: a layer of that opacity) or only maps colours
++    /// and its content is in one colour (then drawn in the mapped colour, in a layer as it is).
++    ///
++    /// A clip with a blend mode in what it clips is a clip path (vello_cpu's non-isolated clip),
++    /// not a clip layer: a CSS clip (`overflow`) makes no isolated group, so a `mix-blend-mode`
++    /// inside an `overflow: hidden` box blends with the box's background, as in Chromium (Skia's
++    /// clips are no layers either); in a clip layer it blended with nothing. What is a group pushes
++    /// a layer: a stacking context with blending descendants, a mask, a text clip. Other clips stay
++    /// clip layers, which draw what they clip as one: a clip path clips each fill on its own, and
++    /// where fills overlap under an antialiased edge their coverage adds up (`clip-path` circles
++    /// over a box and its border came out up to 97 levels off).
++    ///
++    /// A backdrop filter's markers capture and draw the element's backdrop: see
++    /// [`crate::backdrop`]. The layers pushed and not popped yet are kept for it (`open`), each
++    /// with whether it is a backdrop root.
++    pub(crate) fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
++        let mut open: Vec<(usize, bool)> = Vec::new();
 +        let mut i = 0;
 +        while i < commands.len() {
++            if self.backdrop_filters
++                && let Some((kind, layer, filter)) = crate::backdrop::marker(commands, i)
++            {
++                match kind {
++                    crate::backdrop::Marker::Capture => {
++                        self.capture_backdrop(commands, i, &open, transform, layer, filter)
++                    }
++                    crate::backdrop::Marker::Draw => self.draw_backdrop(layer, transform, false),
++                }
++                i += 2;
++                continue;
++            }
++            if let RenderCommand::PushClipLayer(clip) = &commands[i]
++                && self.blending
++                && blends_inside(commands, i)
++            {
++                self.render_ctx.set_transform(transform * clip.transform);
++                self.render_ctx.set_fill_rule(clip.fill);
++                self.render_ctx.push_clip_path(&clip.clip);
++                self.clip_paths.push(Pushed::ClipPath);
++                open.push((i, false));
++                i += 1;
++                continue;
++            }
 +            if let RenderCommand::PushLayer(layer) = &commands[i]
 +                && let Some(plan) =
 +                    layer.filter.as_deref().and_then(|filter| FilterPlan::new(filter, transform * layer.transform))
 +            {
 +                let end = matching_pop(commands, i);
-+                self.draw_filtered_layer(layer, &plan, &commands[i + 1..end], transform);
++                let inner = &commands[i + 1..end];
++                let recolor = match plan.recolors() {
++                    Some(matrices) => uniform_color(inner, false).map(|color| map_color(color, matrices)),
++                    None => None,
++                };
++                if plan.is_alpha_only() || recolor.is_some() {
++                    self.push_layer(
++                        layer.fill,
++                        layer.blend,
++                        layer.alpha * plan.alpha(),
++                        transform * layer.transform,
++                        &layer.clip,
++                        None,
++                        None,
++                    );
++                    match recolor {
++                        Some(_) => inner.iter().for_each(|command| self.replay_command(command, transform, recolor)),
++                        None => self.replay(inner, transform),
++                    }
++                    self.pop_layer();
++                } else {
++                    self.draw_filtered_layer(layer, &plan, inner, transform);
++                }
 +                i = end + 1;
 +                continue;
 +            }
-+            self.replay_command(&commands[i], transform);
++            // An opaque group whose backdrop replaces what lies beneath: the backdrop is drawn
++            // first, outside the group, and the group's draw is skipped.
++            if self.backdrop_filters
++                && self.replaces_backdrop(commands, i)
++                && let Some((_, marker, _)) = crate::backdrop::marker(commands, i + 1)
++            {
++                self.draw_backdrop(marker, transform, true);
++                open.push((i, true));
++                // The group's clip layer (an opaque group) pushes nothing: it would only round
++                // what it holds a second time.
++                match &commands[i] {
++                    RenderCommand::PushClipLayer(_) => self.clip_paths.push(Pushed::Nothing),
++                    command => self.replay_command(command, transform, None),
++                }
++                i += 3;
++                continue;
++            }
++            match &commands[i] {
++                RenderCommand::PushLayer(_) => {
++                    open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
++                }
++                RenderCommand::PushClipLayer(_) => {
++                    open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
++                }
++                RenderCommand::PopLayer => {
++                    open.pop();
++                }
++                _ => {}
++            }
++            self.replay_command(&commands[i], transform, None);
 +            i += 1;
 +        }
 +    }
 +
-+    fn replay_command(&mut self, command: &RenderCommand, transform: Affine) {
++    /// One command, its solid paint replaced by `recolor` if given (a colour filter's).
++    fn replay_command(&mut self, command: &RenderCommand, transform: Affine, recolor: Option<Color>) {
++        let paint = |brush| recolor.map_or_else(|| paint_ref(brush), Paint::Solid);
 +        match command {
 +            RenderCommand::PushLayer(c) => self.push_layer(
 +                c.fill,
@@ -1149,14 +2555,14 @@ index 1b09a33..6eaf7f2 100644
 +            RenderCommand::Stroke(c) => self.stroke(
 +                &c.style,
 +                transform * c.transform,
-+                paint_ref(&c.brush),
++                paint(&c.brush),
 +                c.brush_transform,
 +                &c.shape,
 +            ),
 +            RenderCommand::Fill(c) => self.fill(
 +                c.fill,
 +                transform * c.transform,
-+                paint_ref(&c.brush),
++                paint(&c.brush),
 +                c.brush_transform,
 +                &c.shape,
 +            ),
@@ -1167,7 +2573,7 @@ index 1b09a33..6eaf7f2 100644
 +                &c.normalized_coords,
 +                c.embolden,
 +                &c.style,
-+                paint_ref(&c.brush),
++                paint(&c.brush),
 +                c.brush_alpha,
 +                transform * c.transform,
 +                c.glyph_transform,
@@ -1198,13 +2604,16 @@ index 1b09a33..6eaf7f2 100644
 +            x1: i32::from(self.render_ctx.width()),
 +            y1: i32::from(self.render_ctx.height()),
 +        };
-+        let out = PixelRect::around(layer_transform.transform_rect_bbox(layer.clip.bounding_box())).intersect(frame);
++        let bounds = PixelRect::around(layer_transform.transform_rect_bbox(layer.clip.bounding_box()));
++        let out = bounds.intersect(frame);
 +        if out.is_empty() {
 +            return;
 +        }
 +        // Whole reduced pixels.
 +        let factor = plan.factor() as i32;
 +        let region = plan.source_region(out);
++        // pyro: an SVG filter's graph sees nothing outside its filter region (the clip).
++        let region = if plan.bounded() { region.intersect(bounds) } else { region };
 +        let region = PixelRect {
 +            x0: region.x0.div_euclid(factor) * factor,
 +            y0: region.y0.div_euclid(factor) * factor,
@@ -1217,40 +2626,32 @@ index 1b09a33..6eaf7f2 100644
 +        ) else {
 +            return;
 +        };
-+        let mut ctx = match self.filter_contexts.pop() {
-+            Some(mut ctx) => {
-+                ctx.reset_and_resize(width, height);
-+                ctx
-+            }
-+            None => vello_cpu::RenderContext::new_with(
-+                width,
-+                height,
-+                vello_cpu::RenderSettings {
-+                    num_threads: 0,
-+                    ..*self.render_ctx.render_settings()
-+                },
-+            ),
-+        };
++        let mut ctx = self.offscreen_context(width, height);
 +        std::mem::swap(&mut self.render_ctx, &mut ctx);
-+        self.replay(
-+            inner,
-+            Affine::scale(1.0 / f64::from(factor))
-+                * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)))
-+                * transform,
-+        );
++        let to_offscreen = Affine::scale(1.0 / f64::from(factor))
++            * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)));
++        let frame_to_ctx = self.frame_to_ctx;
++        self.frame_to_ctx = to_offscreen * frame_to_ctx;
++        self.replay(inner, to_offscreen * transform);
++        self.frame_to_ctx = frame_to_ctx;
 +        std::mem::swap(&mut self.render_ctx, &mut ctx);
 +        let mut pixels = Pixmap::new(width, height);
 +        ctx.flush();
 +        ctx.render(&mut pixels, &mut self.resources);
 +        self.filter_contexts.push(ctx);
-+        let images = plan.render(pixels, region, uniform_color(inner));
++        // A blur of glyphs in one colour (a text shadow's) blurs their alpha alone, as the blur mask
++        // filter Chromium draws text shadows with does; anything else is blurred in all four
++        // channels, as its blur filter does (a box was a level off with an invisible command in
++        // another colour beside it: WPT's filtered-inline-applies-to-block).
++        let images = plan.render(pixels, region, uniform_color(inner, true));
 +
 +        // An opaque layer of the normal blend mode whose clip is a rectangle of whole device pixels
 +        // needs no layer of its own: the images are drawn inside `out`, the clip there, and the
 +        // content (a drop shadow's) only when it lies inside the clip too. The layer cost a 4K
 +        // title card's shadow 3 to 5 ms of CPU time.
 +        let clip = out_rect(&layer.clip, layer_transform);
-+        let push = layer.alpha < 1.0
++        let alpha = layer.alpha * plan.alpha();
++        let push = alpha < 1.0
 +            || layer.blend != BlendMode::default()
 +            || pixel_rect(&layer.clip, layer_transform) != Some(clip)
 +            || (plan.draws_content()
@@ -1259,7 +2660,7 @@ index 1b09a33..6eaf7f2 100644
 +            self.render_ctx.set_transform(layer_transform);
 +            self.render_ctx.set_fill_rule(layer.fill);
 +            self.render_ctx
-+                .push_layer(Some(&layer.clip), Some(layer.blend), Some(layer.alpha), None, None);
++                .push_layer(Some(&layer.clip), Some(layer.blend), Some(alpha), None, None);
 +        }
 +        for image in images {
 +            let area = PixelRect::around(image.bounds()).intersect(out);
@@ -1289,7 +2690,7 @@ index 1b09a33..6eaf7f2 100644
 +/// pyro: `clip` under `transform` as a rectangle of whole device pixels, if it is one: a
 +/// rectangle path (four axis-aligned sides) under a transform without rotation or skew, its
 +/// edges on whole pixels.
-+fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
++pub(crate) fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
 +    let [_, b, c, _, _, _] = transform.as_coeffs();
 +    if b != 0.0 || c != 0.0 {
 +        return None;
@@ -1378,14 +2779,15 @@ index 1b09a33..6eaf7f2 100644
 +}
 +
 +/// The one solid colour `commands` paint in, if they are plain fills, strokes and glyph runs of
-+/// one colour (a text shadow's glyphs): their pixels are then that colour times their alpha.
-+fn uniform_color(commands: &[RenderCommand]) -> Option<peniko::Color> {
++/// one colour: their pixels are then that colour times their alpha. `glyphs_only` asks for glyph
++/// runs alone (a text shadow's).
++fn uniform_color(commands: &[RenderCommand], glyphs_only: bool) -> Option<peniko::Color> {
 +    let mut color = None;
 +    for command in commands {
 +        let paint = match command {
-+            RenderCommand::Fill(c) => &c.brush,
-+            RenderCommand::Stroke(c) => &c.brush,
 +            RenderCommand::GlyphRun(c) => &c.brush,
++            RenderCommand::Fill(c) if !glyphs_only => &c.brush,
++            RenderCommand::Stroke(c) if !glyphs_only => &c.brush,
 +            _ => return None,
 +        };
 +        let Paint::Solid(c) = paint else { return None };
@@ -1396,6 +2798,35 @@ index 1b09a33..6eaf7f2 100644
 +        }
 +    }
 +    color
++}
++
++/// pyro: whether a command pushes a layer with a blend mode (`mix-blend-mode`).
++fn blends(command: &RenderCommand) -> bool {
++    matches!(command, RenderCommand::PushLayer(layer)
++        if layer.blend.mix != peniko::Mix::Normal || layer.blend.compose == peniko::Compose::PlusLighter)
++}
++
++/// pyro: whether what the clip pushed at `push` clips has a layer with a blend mode that blends
++/// with what lies under the clip: in it, or in clips in it, but not in another layer (a group).
++fn blends_inside(commands: &[RenderCommand], push: usize) -> bool {
++    let mut depth = 0usize;
++    let mut i = push + 1;
++    while i < commands.len() {
++        match &commands[i] {
++            command @ RenderCommand::PushLayer(_) => {
++                if blends(command) {
++                    return true;
++                }
++                i = matching_pop(commands, i);
++            }
++            RenderCommand::PushClipLayer(_) => depth += 1,
++            RenderCommand::PopLayer if depth == 0 => return false,
++            RenderCommand::PopLayer => depth -= 1,
++            _ => {}
++        }
++        i += 1;
++    }
++    false
 +}
 +
 +/// The index of the `PopLayer` that closes the layer pushed at `push` (the end when none does).
@@ -1478,10 +2909,46 @@ index 1b09a33..6eaf7f2 100644
  }
  
  #[cfg(test)]
-@@ -293,3 +698,55 @@ mod clip_rule_tests {
+@@ -292,4 +857,148 @@ mod clip_rule_tests {
+         assert_pixels(false, true);
          assert_pixels(true, true);
      }
- }
++
++    /// pyro: a clip is no group: a blend mode inside it blends with what lies under it (red in
++    /// `difference` over yellow is lime), as CSS clips do. A clip layer isolated it (red).
++    #[test]
++    fn a_blend_mode_inside_a_clip_blends_with_what_lies_under_it() {
++        let yellow = peniko::Color::from_rgba8(255, 255, 0, 255);
++        let all = Rect::new(0.0, 0.0, 100.0, 100.0);
++        let mut recording = Scene::new();
++        recording.fill(Fill::NonZero, Affine::IDENTITY, yellow, None, &all);
++        recording.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &Rect::new(0.0, 0.0, 50.0, 100.0));
++        recording.push_layer(Fill::NonZero, Mix::Difference, 1.0, Affine::IDENTITY, &all, None, None);
++        recording.fill(Fill::NonZero, Affine::IDENTITY, RED, None, &all);
++        recording.pop_layer();
++        recording.pop_layer();
++        let buffer = render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(recording, Affine::IDENTITY), 100, 100);
++        let pixel = |x: usize, y: usize| &buffer[(y * 100 + x) * 4..(y * 100 + x) * 4 + 4];
++        assert_eq!(pixel(25, 50), &[0, 255, 0, 255], "blended under the clip");
++        assert_eq!(pixel(75, 50), &[255, 255, 0, 255], "outside the clip");
++    }
++
++    /// pyro: a clip with no blend mode in what it clips draws that as one: under its antialiased
++    /// edge a fill covered by another does not show through, as it does through a clip path
++    /// (each fill clipped on its own).
++    #[test]
++    fn a_clip_without_blending_clips_its_content_as_one() {
++        let all = Rect::new(0.0, 0.0, 100.0, 100.0);
++        let mut recording = Scene::new();
++        recording.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &kurbo::Circle::new((50.0, 50.0), 40.3));
++        recording.fill(Fill::NonZero, Affine::IDENTITY, RED, None, &all);
++        recording.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::from_rgba8(0, 0, 255, 255), None, &all);
++        recording.pop_layer();
++        let buffer = render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(recording, Affine::IDENTITY), 100, 100);
++        assert!(buffer.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255), "an antialiased edge");
++        assert!(buffer.chunks_exact(4).all(|p| p[0] == 0), "no red under the blue");
++    }
++}
 +
 +#[cfg(test)]
 +mod filter_layer_tests {
@@ -1534,3 +3001,60 @@ index 1b09a33..6eaf7f2 100644
 +        assert_eq!(pixel(&buffer, 70, 70), [0, 0, 0, 0]);
 +    }
 +}
++
++#[cfg(test)]
++mod color_filter_tests {
++    use std::sync::Arc;
++
++    use anyrender::filters::{Filter, FilterEffect};
++    use anyrender::{PaintScene, recording::Scene, render_to_buffer};
++    use kurbo::{Affine, Rect};
++    use peniko::{Color, Fill, Mix};
++
++    use crate::VelloCpuImageRenderer;
++
++    /// Squares of `colors` side by side (20 px each from x = 10) under a layer with `filter`.
++    fn render(filter: Filter, colors: &[Color], alpha: f32) -> Vec<u8> {
++        let mut scene = Scene::new();
++        let clip = Rect::new(0.0, 0.0, 100.0, 40.0);
++        scene.push_layer(Fill::NonZero, Mix::Normal, alpha, Affine::IDENTITY, &clip, Some(Arc::new(filter)), None);
++        for (i, &color) in colors.iter().enumerate() {
++            let x = 10.0 + 20.0 * i as f64;
++            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &Rect::new(x, 10.0, x + 20.0, 30.0));
++        }
++        scene.pop_layer();
++        render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(scene, Affine::IDENTITY), 100, 40)
++    }
++
++    fn pixel(buffer: &[u8], x: usize, y: usize) -> &[u8] {
++        &buffer[(y * 100 + x) * 4..(y * 100 + x) * 4 + 4]
++    }
++
++    const YELLOW: Color = Color::from_rgba8(255, 255, 0, 255);
++    const RED: Color = Color::from_rgba8(255, 0, 0, 255);
++
++    /// Content in one colour is drawn in the mapped colour, content in several is filtered as
++    /// pixels: the same colours either way.
++    #[test]
++    fn a_colour_filter_maps_content_in_one_colour_and_in_several() {
++        let grayscale = || Filter::linear_list(std::iter::once(FilterEffect::grayscale(1.0)));
++        let one = render(grayscale(), &[YELLOW], 1.0);
++        let several = render(grayscale(), &[YELLOW, RED], 1.0);
++        for buffer in [&one, &several] {
++            // 0.2126 + 0.7152 of 255.
++            assert_eq!(pixel(buffer, 20, 20), [237, 237, 237, 255]);
++            assert_eq!(pixel(buffer, 5, 5), [0, 0, 0, 0]);
++        }
++        assert_eq!(pixel(&several, 40, 20), [54, 54, 54, 255]);
++    }
++
++    /// `opacity()` alone fades the layer, the layer's own opacity too.
++    #[test]
++    fn the_opacity_function_fades_the_layer() {
++        let filter = Filter::linear_list(std::iter::once(FilterEffect::opacity(0.5)));
++        let buffer = render(filter, &[RED, YELLOW], 0.5);
++        let near = |got: &[u8], want: [u8; 4]| got.iter().zip(want).all(|(&g, w)| g.abs_diff(w) <= 1);
++        assert!(near(pixel(&buffer, 20, 20), [64, 0, 0, 64]), "{:?}", pixel(&buffer, 20, 20));
++        assert!(near(pixel(&buffer, 40, 20), [64, 64, 0, 64]), "{:?}", pixel(&buffer, 40, 20));
++    }
+ }

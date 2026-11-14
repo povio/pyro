@@ -100,6 +100,64 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   `a_rows_height_in_a_collapsed_table_covers_half_of_the_borders_around_it` in
   `crates/pyro-render/tests/table_cell_height.rs`.
 
+## Stacking contexts from `will-change`
+
+- `node/node.rs` (`is_stacking_context_root`): `will-change` of a property that would make a stacking context
+  makes one, as the spec asks and Gecko does (stylo's `STACKING_CONTEXT_UNCONDITIONAL` properties: `filter`,
+  `backdrop-filter`, `mix-blend-mode`, `clip-path`, `isolation`, `mask-image`, `position`; and `opacity`, the
+  transform properties and `perspective`): its positioned descendants paint inside it (WPT
+  backdrop-filter-image-size-filter-size-mismatch: an absolutely positioned box's backdrop root).
+
+## The page's CSS on inline SVG
+
+`node/svg_css.rs` (new; `node/serialize.rs` `svg_source` calls it): an inline `<svg>` is serialized for usvg
+with the page's CSS applied, as Chromium styles SVG content. usvg resolves presentation attributes, `style`
+attributes and the `<style>` sheets inside the SVG, but never saw the page's sheets: `rect { fill: blue }`,
+`transform-box`, a CSS `clip-path` or `mask-image` on an SVG element did nothing (WPT
+`css/css-transforms/transform-box`, `transform-origin`, `*-styles`, `css/css-masking/clip-path*`).
+
+- Each SVG element's properties set by author-level declarations (style sheets, `style` attributes,
+  animations; not the UA sheet or presentational hints, found by walking its rule node) are written with their
+  computed values: painting, text, `opacity`, `display`, `visibility`, `mix-blend-mode`, `isolation`,
+  `filter` and `mask-type` as declarations appended to the element's `style` attribute (usvg ranks those above
+  presentation attributes, as CSS does; its own `style` content stays first for what Stylo does not parse),
+  geometry properties (`x`, `y`, `width`, `height`, `cx`, `cy`, `r`, `rx`, `ry`, `d`) as the attributes of the
+  elements they apply to. `url()` values are written as `url(#fragment)`, the only form usvg follows.
+- Transforms (`transform`, `translate`, `rotate`, `scale`, `transform-origin`, `transform-box`, or the
+  `transform` attribute when only the origin or box comes from CSS) are resolved here, as usvg knows neither
+  CSS transform syntax nor `transform-box`: `stylo_to_kurbo::resolve_2d_transform` about the origin resolved in
+  the reference box (the `viewBox` size of the nearest `<svg>`, at its origin; or the element's fill or stroke
+  box), written as a `matrix()` (`patternTransform` and `gradientTransform` on patterns and gradients). The
+  origin of an SVG element without a CSS one is its `transform-origin` attribute or `0 0`.
+- A CSS `clip-path` basic shape (`circle()`, `ellipse()`, `inset()`, `polygon()`, `path()`) or box becomes a
+  `<clipPath>` of its own in its reference box (by default the stroke box, as Chromium maps `border-box`), its
+  shape written as the SVG element usvg builds the same geometry from (`<circle>`, `<ellipse>`, `<rect>` with
+  radii, `<polygon>`); `url(#id)` and `none` are written as they are. `mask-image: url(#mask)` becomes the
+  `mask`.
+- `stylo.rs` (`build_presentational_hints`): an SVG element's `clip-path` and `transform-origin` attributes are
+  presentational hints of the CSS properties (Chromium's presentation attributes), so a basic shape, CSS units
+  and keywords in them reach usvg as above, and an invalid one (`transform-origin="top 100%"`) is ignored, as in
+  CSS, where usvg read some of them. Other presentation attributes stay usvg's.
+- Declarations of the properties written here are taken out of the element's own `style` attribute: Stylo
+  parsed them, and those it rejected (`transform: scale(invalid)`) must not reach usvg, which read `transform`
+  there as an invalid transform. The `font` shorthand goes too (its longhands are written): usvg's tokenizer
+  stopped at `font: 40px/1 Ahem` and dropped every declaration after it. The computed declarations come first,
+  then what is left of the element's own (`stop-color`, `marker-end`, ... which Stylo does not parse for servo).
+- The root gets the inherited painting and text properties it has from its HTML ancestors when they differ from
+  what usvg assumes (`<div style="fill: blue"><svg>`, the page's font for SVG text). Its box effects
+  (`opacity`, `clip-path`, `mask`, `filter`, `transform`, ...) are its CSS box's, which blitz-paint applies, and
+  are not written.
+- A shape of no geometry (a `rect` without a positive `width` and `height`, an `image` of a zero one, a `circle`
+  without a positive `r`, an `ellipse` of a zero radius or neither, a `path`, `polygon` or `polyline` without `d` or
+  `points`) is written with `filter:none`: it renders nothing, its filter included (SVG 2, Chromium; WPT
+  `svg-empty-element-with-filter-001`), where usvg keeps the group its filter makes and a flood would show. An empty
+  `<g>`'s filter still renders.
+- Fill and stroke boxes are the elements' bounding boxes from usvg: when an element needs one, the subtree is
+  written twice, the first time with ids on those elements, and parsed (cached) for them.
+
+Stylo computes `transform-box` for servo too since this change (see `vendor/stylo/README.pyro.md`). Tests
+`crates/pyro-render/tests/svg_content.rs`.
+
 ## `<br>` as inline text
 
 - `node/node.rs` (`is_line_break`), `layout/construct.rs`: a `<br>` is a piece of inline text in every container, as
@@ -343,6 +401,11 @@ tests in `src/stylo_to_kurbo.rs`.
   after each traversal, where the elements styled anew get their values and one more traversal
   (`resolve_sampled_animations`). Pseudo-elements are not animated. Tests:
   `crates/pyro-render/tests/sampled_animations.rs`.
+- `animation.rs` (`BaseDocument::animates_backdrop_root`): whether an element's sampled values (an effect in effect,
+  a filling one after it finished too) set a property that makes a backdrop root (`opacity`, `filter`,
+  `backdrop-filter`, `mix-blend-mode`, `clip-path`, `mask-image`): Web Animations has the element act as though it
+  had `will-change` of it, and blitz-paint marks it a backdrop root (WPT
+  `backdrop-filter-backdrop-root-animation-in-effect`).
 
 ## Inline layouts in vertical writing modes
 

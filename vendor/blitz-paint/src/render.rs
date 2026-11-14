@@ -8,7 +8,7 @@ mod mask;
 
 use blitz_dom::CopyStyleGetters;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::kurbo_css::CssBox;
@@ -140,6 +140,10 @@ pub struct BlitzDomPainter<'dom, 'a> {
     #[cfg(feature = "scrollbars")]
     pub(crate) scrollbar_drag_target: Option<blitz_dom::node::ScrollbarRef>,
     pub(crate) layer_manager: LayerManager,
+    /// pyro: the stacking contexts painted as isolated groups for a `mix-blend-mode` in them.
+    pub(crate) blend_isolated: HashSet<NodeId>,
+    /// pyro: the ancestors of elements with a `backdrop-filter` (`layers::DocumentEffects`).
+    pub(crate) backdrop_ancestors: HashSet<NodeId>,
     /// Reusable scratch allocations shared by all text layouts painted for this document.
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
@@ -172,6 +176,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             .collect();
 
         let layer_manager = LayerManager::default();
+        let effects = crate::layers::document_effects(dom);
         let root_element_id = dom.try_root_element().map(|el| el.id);
         let canvas_background = canvas_background_source(dom);
 
@@ -195,6 +200,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             #[cfg(feature = "scrollbars")]
             scrollbar_drag_target: dom.scrollbar_drag_target(),
             layer_manager,
+            blend_isolated: effects.blend_isolated,
+            backdrop_ancestors: effects.backdrop_ancestors,
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
             backgrounds: true,
@@ -402,7 +409,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             .slow_clone_background_color()
             .resolve_to_absolute(&style.clone_color());
         let backdrop_filter =
-            convert_filters(&effects.backdrop_filter.0, self.scale, &style.clone_color()).map(Arc::new);
+            convert_filters(&effects.backdrop_filter.0, self.scale, &style.clone_color(), self.dom).map(Arc::new);
         let visible_color = color.alpha > 0.0 && self.backgrounds;
         if opacity <= 0.0 || (!visible_color && backdrop_filter.is_none()) {
             return;
@@ -735,12 +742,27 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
         // Compute clip-path (if any) and wrap all rendering in a clip layer
         let element_clip = cx.element_clip();
+        // pyro: a clip-path makes the element a backdrop root (`layers::backdrop_root`).
+        let has_clip_path = element_clip.is_some();
 
         // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
         // the element's rendering (including outlines and shadows), so it is the outermost layer.
         let css_clip_rect = cx.css_clip_rect();
         if css_clip_rect.is_some_and(|rect| rect.is_zero_area()) {
             return;
+        }
+
+        let current_color = styles.clone_color();
+        let filter = convert_filters(&effects.filter.0, self.scale, &current_color, self.dom).map(Arc::new);
+        let backdrop_filter =
+            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new);
+        // pyro: `backdrop-filter`: the backdrop is captured here, before the element's own layers
+        // (its clip-path, mask and blend mode are no backdrop root for it), and drawn first in its
+        // effect group (`paint_effect_group`). See anyrender_vello_cpu's `backdrop`.
+        let backdrop_clip = backdrop_filter.as_ref().map(|_| cx.frame.border_box_path());
+        if let (Some(backdrop), Some(clip)) = (&backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform, clip, None, Some(backdrop.clone()));
+            scene.pop_layer();
         }
         let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
             scene,
@@ -756,20 +778,35 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Use the viewport in scene coordinates so outlines, shadows and overflowing
         // descendants are not clipped to the element's border box.
         let blend = convert_blend_mode(effects.mix_blend_mode);
-        let isolate = styles.get_box().isolation == Isolation::Isolate;
+        let isolate = styles.get_box().isolation == Isolation::Isolate
+            || self.blend_isolated.contains(&node_id);
+        let viewport = Rect::new(
+            self.initial_x,
+            self.initial_y,
+            self.initial_x + self.width as f64,
+            self.initial_y + self.height as f64,
+        );
         let blend_layer_pushed = self.layer_manager.maybe_push_layer(
             scene,
             isolate || blend != BlendMode::default(),
             blend,
             if isolate { 1.0 - f32::EPSILON } else { 1.0 },
             Affine::IDENTITY,
-            &Rect::new(
-                self.initial_x,
-                self.initial_y,
-                self.initial_x + self.width as f64,
-                self.initial_y + self.height as f64,
-            ),
+            &viewport,
             None,
+            None,
+        );
+        // pyro: a backdrop root none of the element's layers marks (`layers::backdrop_root`).
+        let backdrop_root_pushed = self.layer_manager.maybe_push_layer(
+            scene,
+            self.backdrop_ancestors.contains(&node_id)
+                && (crate::layers::backdrop_root(has_clip_path, cx.has_css_mask(), &styles.get_box().will_change)
+                    || self.dom.animates_backdrop_root(node_id)),
+            BlendMode::default(),
+            1.0,
+            Affine::IDENTITY,
+            &viewport,
+            Some(crate::layers::backdrop_root_marker()),
             None,
         );
 
@@ -781,10 +818,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // group is recorded first, and its layer covers what it painted (its ink, plus what the
         // filter reaches), where the layer was the border box (descendants and the outline outside
         // it were cut off, the shadow was drawn at full strength outside the layer).
-        let current_color = styles.clone_color();
-        let filter = convert_filters(&effects.filter.0, self.scale, &current_color).map(Arc::new);
-        let backdrop_filter =
-            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color).map(Arc::new);
         let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some();
         let element = ElementPaint {
             node,
@@ -823,6 +856,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                             opacity,
                             filter,
                             backdrop_filter,
+                            backdrop_clip,
                         },
                     );
                 } else {
@@ -835,6 +869,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             },
         );
 
+        self.layer_manager
+            .maybe_pop_layer(scene, backdrop_root_pushed);
         self.layer_manager
             .maybe_pop_layer(scene, blend_layer_pushed);
         self.layer_manager
@@ -958,6 +994,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             opacity,
             filter,
             backdrop_filter,
+            backdrop_clip,
         } = layer;
         // A group of one shape in one colour needs no layer: its opacity is that colour's.
         if filter.is_none() && backdrop_filter.is_none() && crate::bounds::fold_opacity(&mut group.commands, opacity) {
@@ -992,6 +1029,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if !(bounds.width() > 0.0 && bounds.height() > 0.0) {
             return;
         }
+        // pyro: an opaque group without a filter around a backdrop filter is a clip layer (the same
+        // pixels; vello_cpu's u8 compositing of a full layer rounded a level apart by where clips
+        // around it end).
+        let group_backdrop = backdrop_filter.as_ref().filter(|_| opacity < 1.0 || filter.is_some()).cloned();
         let pushed = self.layer_manager.maybe_push_layer(
             scene,
             true,
@@ -1000,8 +1041,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             transform,
             &bounds,
             filter,
-            backdrop_filter,
+            group_backdrop,
         );
+        // pyro: the backdrop filter's draw, first in the group: under the element's content, and
+        // inside its opacity and filter (see `render_element`).
+        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
+            scene.pop_layer();
+        }
         scene.append_scene(group, Affine::IDENTITY);
         self.layer_manager.maybe_pop_layer(scene, pushed);
     }
@@ -2501,4 +2548,6 @@ struct EffectLayer {
     opacity: f32,
     filter: Option<Arc<anyrender::Filter>>,
     backdrop_filter: Option<Arc<anyrender::Filter>>,
+    /// pyro: the element's border box with its radii, in its space: what its backdrop shows in.
+    backdrop_clip: Option<kurbo::BezPath>,
 }

@@ -44,6 +44,7 @@ fn all_transform_boxes_are_enabled(_context: &ParserContext) -> bool {
 
 #[cfg(feature = "servo")]
 fn all_transform_boxes_are_enabled(_context: &ParserContext) -> bool {
+    // pyro: SVG content resolves every box (blitz-dom `node/svg_css.rs`).
     true
 }
 

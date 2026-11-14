@@ -1,7 +1,10 @@
 use anyrender::{Filter, PaintScene};
+use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Shape};
 use peniko::{BlendMode, Fill};
-use std::{cell::Cell, sync::Arc};
+use std::{cell::Cell, collections::HashSet, sync::Arc};
+use style::computed_values::mix_blend_mode::T as MixBlendMode;
+use style::values::specified::box_::{DisplayInside, WillChange};
 
 const LAYER_LIMIT: u32 = 1024;
 
@@ -99,6 +102,85 @@ impl LayerManager {
             self.layer_depth.update(|x| x - 1);
         }
     }
+}
+
+/// pyro: what painting a document needs to know before it starts, from one pass over its nodes'
+/// styles (usually nothing).
+pub(crate) struct DocumentEffects {
+    /// The stacking contexts that an element with a `mix-blend-mode` blends in (its nearest
+    /// ancestor that is one: the root element's at the latest). Each is painted as an isolated
+    /// group, as Chromium isolates a stacking context with blending descendants: the element
+    /// blends with what that context painted, never with what lies under it (the canvas under the
+    /// root element's). Without one, a `difference` box over its parent's box blended with the
+    /// page behind too.
+    pub(crate) blend_isolated: HashSet<NodeId>,
+    /// The ancestors of elements with a `backdrop-filter`: only these can be a backdrop root that
+    /// matters, and are marked as one ([`backdrop_root`]; the layer that marks one costs a
+    /// composite, which vello_cpu's u8 math rounds).
+    pub(crate) backdrop_ancestors: HashSet<NodeId>,
+}
+
+pub(crate) fn document_effects(dom: &BaseDocument) -> DocumentEffects {
+    let tree = dom.tree();
+    let mut contexts = HashSet::new();
+    let mut backdrop_ancestors = HashSet::new();
+    for (_, node) in tree.iter() {
+        let Some(style) = node.primary_styles() else {
+            continue;
+        };
+        let effects = style.get_effects();
+        if !effects.backdrop_filter.0.is_empty() {
+            let mut ancestor = node.parent;
+            while let Some(id) = ancestor
+                && backdrop_ancestors.insert(id)
+            {
+                ancestor = tree[id].parent;
+            }
+        }
+        if effects.mix_blend_mode == MixBlendMode::Normal {
+            continue;
+        }
+        let mut ancestor = node.parent;
+        while let Some(id) = ancestor {
+            let candidate = &tree[id];
+            let flex_or_grid_item = candidate
+                .parent
+                .and_then(|parent| tree[parent].primary_styles())
+                .is_some_and(|style| {
+                    matches!(
+                        style.get_box().display.inside(),
+                        DisplayInside::Flex | DisplayInside::Grid
+                    )
+                });
+            if candidate.is_root_element() || candidate.is_stacking_context_root(flex_or_grid_item)
+            {
+                contexts.insert(id);
+                break;
+            }
+            ancestor = candidate.parent;
+        }
+    }
+    DocumentEffects { blend_isolated: contexts, backdrop_ancestors }
+}
+
+/// pyro: whether an element is a backdrop root (Filter Effects 2) that none of its own layers marks
+/// as one for anyrender_vello_cpu's `backdrop` (its opacity, filter, blend mode and backdrop filter
+/// push layers it tells apart): a `clip-path`, a mask, or `will-change` of a property that makes
+/// one. Such an element is painted in a layer with an empty filter, which marks it.
+pub(crate) fn backdrop_root(has_clip_path: bool, has_mask: bool, will_change: &WillChange) -> bool {
+    use style::values::specified::box_::WillChangeBits;
+    has_clip_path
+        || has_mask
+        || will_change.bits.contains(WillChangeBits::BACKDROP_ROOT)
+        // stylo leaves masks out of `BACKDROP_ROOT`, and the property names are private (their
+        // debug form has them).
+        || (will_change.bits.contains(WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL)
+            && format!("{will_change:?}").contains("mask"))
+}
+
+/// pyro: the filter that marks a backdrop root's layer ([`backdrop_root`]): it filters nothing.
+pub(crate) fn backdrop_root_marker() -> Arc<Filter> {
+    Arc::new(Filter::empty())
 }
 
 #[cfg(test)]

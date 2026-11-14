@@ -8,7 +8,7 @@ use peniko::{BlendMode, Color, Fill, FontData, ImageBrush, ImageQuality, ImageSa
 use vello_common::paint::ImageSource;
 use vello_cpu::{PaintType, Pixmap};
 
-use crate::filters::{FilterPlan, PixelRect};
+use crate::filters::{FilterPlan, PixelRect, map_color};
 use crate::image_cache::{ImageCache, ImageCacheConfig};
 
 const DEFAULT_TOLERANCE: f64 = 0.1;
@@ -20,6 +20,17 @@ pub struct VelloCpuScenePainter {
     /// pyro: single-threaded contexts that filter layers are rendered in (one per level of
     /// nesting), kept from frame to frame. See [`crate::filters`].
     pub(crate) filter_contexts: Vec<vello_cpu::RenderContext>,
+    /// pyro: what each push not popped yet was (see [`Self::replay`]).
+    pub(crate) clip_paths: Vec<Pushed>,
+    /// pyro: whether the scene being replayed has a layer with a blend mode.
+    pub(crate) blending: bool,
+    /// pyro: whether the scene being replayed has a backdrop filter (see [`crate::backdrop`]).
+    pub(crate) backdrop_filters: bool,
+    /// pyro: the backdrops captured in the scene being replayed.
+    pub(crate) backdrops: Vec<crate::backdrop::Captured>,
+    /// pyro: from the frame's device pixels to those of the context drawn into (a filter layer's
+    /// or a backdrop's, offscreen).
+    pub(crate) frame_to_ctx: Affine,
     /// pyro: glyphs are drawn aliased, a pixel painted when the glyph covers at least this
     /// much of it (out of 255), as Chromium draws text when WPT runs it without font
     /// antialiasing. `None` (the default): antialiased.
@@ -47,6 +58,11 @@ impl VelloCpuScenePainter {
             resources: vello_cpu::Resources::new(),
             image_cache: ImageCache::new(config),
             filter_contexts: Vec::new(),
+            clip_paths: Vec::new(),
+            blending: false,
+            backdrop_filters: false,
+            backdrops: Vec::new(),
+            frame_to_ctx: Affine::IDENTITY,
             text_aliasing_threshold: None,
         }
     }
@@ -93,10 +109,22 @@ impl VelloCpuScenePainter {
     }
 }
 
+/// pyro: what a push of the painter pushed onto vello_cpu's context, for its pop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pushed {
+    /// A layer (`push_layer`, `push_clip_layer`).
+    Layer,
+    /// A clip path (non-isolated: see [`VelloCpuScenePainter::replay`]).
+    ClipPath,
+    /// Nothing (an opaque backdrop filter's group: see [`crate::backdrop`]).
+    Nothing,
+}
+
 impl RenderContext for VelloCpuScenePainter {}
 impl PaintScene for VelloCpuScenePainter {
     fn reset(&mut self) {
         self.render_ctx.reset();
+        self.clip_paths.clear();
     }
 
     fn push_layer(
@@ -120,6 +148,7 @@ impl PaintScene for VelloCpuScenePainter {
             None,
             None,
         );
+        self.clip_paths.push(Pushed::Layer);
     }
 
     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
@@ -127,10 +156,15 @@ impl PaintScene for VelloCpuScenePainter {
         self.render_ctx.set_fill_rule(fill);
         self.render_ctx
             .push_clip_layer(&clip.into_path(DEFAULT_TOLERANCE));
+        self.clip_paths.push(Pushed::Layer);
     }
 
     fn pop_layer(&mut self) {
-        self.render_ctx.pop_layer();
+        match self.clip_paths.pop() {
+            Some(Pushed::ClipPath) => self.render_ctx.pop_clip(),
+            Some(Pushed::Nothing) => {}
+            Some(Pushed::Layer) | None => self.render_ctx.pop_layer(),
+        }
     }
 
     fn stroke<'a>(
@@ -255,31 +289,132 @@ impl PaintScene for VelloCpuScenePainter {
     }
 
     /// pyro: replays `scene` as anyrender does, except that a layer with a filter this backend
-    /// does (`blur()`, `drop-shadow()`) is rendered by [`Self::draw_filtered_layer`].
+    /// does (`blur()`, `drop-shadow()`, the colour functions) is filtered: see [`Self::replay`].
     fn append_scene(&mut self, scene: anyrender::recording::Scene, scene_transform: Affine) {
+        self.blending = scene.commands.iter().any(blends);
+        self.backdrop_filters = scene.commands.iter().any(
+            |command| matches!(command, RenderCommand::PushLayer(layer) if layer.backdrop_filter.is_some()),
+        );
+        self.backdrops.clear();
+        self.frame_to_ctx = Affine::IDENTITY;
         self.replay(&scene.commands, scene_transform);
+        self.backdrops.clear();
     }
 }
 
 impl VelloCpuScenePainter {
-    fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
+    /// pyro: replays `commands`; a layer with a filter is drawn by [`Self::draw_filtered_layer`],
+    /// unless its filter only fades it (`opacity()`: a layer of that opacity) or only maps colours
+    /// and its content is in one colour (then drawn in the mapped colour, in a layer as it is).
+    ///
+    /// A clip with a blend mode in what it clips is a clip path (vello_cpu's non-isolated clip),
+    /// not a clip layer: a CSS clip (`overflow`) makes no isolated group, so a `mix-blend-mode`
+    /// inside an `overflow: hidden` box blends with the box's background, as in Chromium (Skia's
+    /// clips are no layers either); in a clip layer it blended with nothing. What is a group pushes
+    /// a layer: a stacking context with blending descendants, a mask, a text clip. Other clips stay
+    /// clip layers, which draw what they clip as one: a clip path clips each fill on its own, and
+    /// where fills overlap under an antialiased edge their coverage adds up (`clip-path` circles
+    /// over a box and its border came out up to 97 levels off).
+    ///
+    /// A backdrop filter's markers capture and draw the element's backdrop: see
+    /// [`crate::backdrop`]. The layers pushed and not popped yet are kept for it (`open`), each
+    /// with whether it is a backdrop root.
+    pub(crate) fn replay(&mut self, commands: &[RenderCommand], transform: Affine) {
+        let mut open: Vec<(usize, bool)> = Vec::new();
         let mut i = 0;
         while i < commands.len() {
+            if self.backdrop_filters
+                && let Some((kind, layer, filter)) = crate::backdrop::marker(commands, i)
+            {
+                match kind {
+                    crate::backdrop::Marker::Capture => {
+                        self.capture_backdrop(commands, i, &open, transform, layer, filter)
+                    }
+                    crate::backdrop::Marker::Draw => self.draw_backdrop(layer, transform, false),
+                }
+                i += 2;
+                continue;
+            }
+            if let RenderCommand::PushClipLayer(clip) = &commands[i]
+                && self.blending
+                && blends_inside(commands, i)
+            {
+                self.render_ctx.set_transform(transform * clip.transform);
+                self.render_ctx.set_fill_rule(clip.fill);
+                self.render_ctx.push_clip_path(&clip.clip);
+                self.clip_paths.push(Pushed::ClipPath);
+                open.push((i, false));
+                i += 1;
+                continue;
+            }
             if let RenderCommand::PushLayer(layer) = &commands[i]
                 && let Some(plan) =
                     layer.filter.as_deref().and_then(|filter| FilterPlan::new(filter, transform * layer.transform))
             {
                 let end = matching_pop(commands, i);
-                self.draw_filtered_layer(layer, &plan, &commands[i + 1..end], transform);
+                let inner = &commands[i + 1..end];
+                let recolor = match plan.recolors() {
+                    Some(matrices) => uniform_color(inner, false).map(|color| map_color(color, matrices)),
+                    None => None,
+                };
+                if plan.is_alpha_only() || recolor.is_some() {
+                    self.push_layer(
+                        layer.fill,
+                        layer.blend,
+                        layer.alpha * plan.alpha(),
+                        transform * layer.transform,
+                        &layer.clip,
+                        None,
+                        None,
+                    );
+                    match recolor {
+                        Some(_) => inner.iter().for_each(|command| self.replay_command(command, transform, recolor)),
+                        None => self.replay(inner, transform),
+                    }
+                    self.pop_layer();
+                } else {
+                    self.draw_filtered_layer(layer, &plan, inner, transform);
+                }
                 i = end + 1;
                 continue;
             }
-            self.replay_command(&commands[i], transform);
+            // An opaque group whose backdrop replaces what lies beneath: the backdrop is drawn
+            // first, outside the group, and the group's draw is skipped.
+            if self.backdrop_filters
+                && self.replaces_backdrop(commands, i)
+                && let Some((_, marker, _)) = crate::backdrop::marker(commands, i + 1)
+            {
+                self.draw_backdrop(marker, transform, true);
+                open.push((i, true));
+                // The group's clip layer (an opaque group) pushes nothing: it would only round
+                // what it holds a second time.
+                match &commands[i] {
+                    RenderCommand::PushClipLayer(_) => self.clip_paths.push(Pushed::Nothing),
+                    command => self.replay_command(command, transform, None),
+                }
+                i += 3;
+                continue;
+            }
+            match &commands[i] {
+                RenderCommand::PushLayer(_) => {
+                    open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
+                }
+                RenderCommand::PushClipLayer(_) => {
+                    open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
+                }
+                RenderCommand::PopLayer => {
+                    open.pop();
+                }
+                _ => {}
+            }
+            self.replay_command(&commands[i], transform, None);
             i += 1;
         }
     }
 
-    fn replay_command(&mut self, command: &RenderCommand, transform: Affine) {
+    /// One command, its solid paint replaced by `recolor` if given (a colour filter's).
+    fn replay_command(&mut self, command: &RenderCommand, transform: Affine, recolor: Option<Color>) {
+        let paint = |brush| recolor.map_or_else(|| paint_ref(brush), Paint::Solid);
         match command {
             RenderCommand::PushLayer(c) => self.push_layer(
                 c.fill,
@@ -295,14 +430,14 @@ impl VelloCpuScenePainter {
             RenderCommand::Stroke(c) => self.stroke(
                 &c.style,
                 transform * c.transform,
-                paint_ref(&c.brush),
+                paint(&c.brush),
                 c.brush_transform,
                 &c.shape,
             ),
             RenderCommand::Fill(c) => self.fill(
                 c.fill,
                 transform * c.transform,
-                paint_ref(&c.brush),
+                paint(&c.brush),
                 c.brush_transform,
                 &c.shape,
             ),
@@ -313,7 +448,7 @@ impl VelloCpuScenePainter {
                 &c.normalized_coords,
                 c.embolden,
                 &c.style,
-                paint_ref(&c.brush),
+                paint(&c.brush),
                 c.brush_alpha,
                 transform * c.transform,
                 c.glyph_transform,
@@ -344,13 +479,16 @@ impl VelloCpuScenePainter {
             x1: i32::from(self.render_ctx.width()),
             y1: i32::from(self.render_ctx.height()),
         };
-        let out = PixelRect::around(layer_transform.transform_rect_bbox(layer.clip.bounding_box())).intersect(frame);
+        let bounds = PixelRect::around(layer_transform.transform_rect_bbox(layer.clip.bounding_box()));
+        let out = bounds.intersect(frame);
         if out.is_empty() {
             return;
         }
         // Whole reduced pixels.
         let factor = plan.factor() as i32;
         let region = plan.source_region(out);
+        // pyro: an SVG filter's graph sees nothing outside its filter region (the clip).
+        let region = if plan.bounded() { region.intersect(bounds) } else { region };
         let region = PixelRect {
             x0: region.x0.div_euclid(factor) * factor,
             y0: region.y0.div_euclid(factor) * factor,
@@ -363,40 +501,32 @@ impl VelloCpuScenePainter {
         ) else {
             return;
         };
-        let mut ctx = match self.filter_contexts.pop() {
-            Some(mut ctx) => {
-                ctx.reset_and_resize(width, height);
-                ctx
-            }
-            None => vello_cpu::RenderContext::new_with(
-                width,
-                height,
-                vello_cpu::RenderSettings {
-                    num_threads: 0,
-                    ..*self.render_ctx.render_settings()
-                },
-            ),
-        };
+        let mut ctx = self.offscreen_context(width, height);
         std::mem::swap(&mut self.render_ctx, &mut ctx);
-        self.replay(
-            inner,
-            Affine::scale(1.0 / f64::from(factor))
-                * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)))
-                * transform,
-        );
+        let to_offscreen = Affine::scale(1.0 / f64::from(factor))
+            * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)));
+        let frame_to_ctx = self.frame_to_ctx;
+        self.frame_to_ctx = to_offscreen * frame_to_ctx;
+        self.replay(inner, to_offscreen * transform);
+        self.frame_to_ctx = frame_to_ctx;
         std::mem::swap(&mut self.render_ctx, &mut ctx);
         let mut pixels = Pixmap::new(width, height);
         ctx.flush();
         ctx.render(&mut pixels, &mut self.resources);
         self.filter_contexts.push(ctx);
-        let images = plan.render(pixels, region, uniform_color(inner));
+        // A blur of glyphs in one colour (a text shadow's) blurs their alpha alone, as the blur mask
+        // filter Chromium draws text shadows with does; anything else is blurred in all four
+        // channels, as its blur filter does (a box was a level off with an invisible command in
+        // another colour beside it: WPT's filtered-inline-applies-to-block).
+        let images = plan.render(pixels, region, uniform_color(inner, true));
 
         // An opaque layer of the normal blend mode whose clip is a rectangle of whole device pixels
         // needs no layer of its own: the images are drawn inside `out`, the clip there, and the
         // content (a drop shadow's) only when it lies inside the clip too. The layer cost a 4K
         // title card's shadow 3 to 5 ms of CPU time.
         let clip = out_rect(&layer.clip, layer_transform);
-        let push = layer.alpha < 1.0
+        let alpha = layer.alpha * plan.alpha();
+        let push = alpha < 1.0
             || layer.blend != BlendMode::default()
             || pixel_rect(&layer.clip, layer_transform) != Some(clip)
             || (plan.draws_content()
@@ -405,7 +535,7 @@ impl VelloCpuScenePainter {
             self.render_ctx.set_transform(layer_transform);
             self.render_ctx.set_fill_rule(layer.fill);
             self.render_ctx
-                .push_layer(Some(&layer.clip), Some(layer.blend), Some(layer.alpha), None, None);
+                .push_layer(Some(&layer.clip), Some(layer.blend), Some(alpha), None, None);
         }
         for image in images {
             let area = PixelRect::around(image.bounds()).intersect(out);
@@ -435,7 +565,7 @@ impl VelloCpuScenePainter {
 /// pyro: `clip` under `transform` as a rectangle of whole device pixels, if it is one: a
 /// rectangle path (four axis-aligned sides) under a transform without rotation or skew, its
 /// edges on whole pixels.
-fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
+pub(crate) fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
     let [_, b, c, _, _, _] = transform.as_coeffs();
     if b != 0.0 || c != 0.0 {
         return None;
@@ -524,14 +654,15 @@ fn content_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect>
 }
 
 /// The one solid colour `commands` paint in, if they are plain fills, strokes and glyph runs of
-/// one colour (a text shadow's glyphs): their pixels are then that colour times their alpha.
-fn uniform_color(commands: &[RenderCommand]) -> Option<peniko::Color> {
+/// one colour: their pixels are then that colour times their alpha. `glyphs_only` asks for glyph
+/// runs alone (a text shadow's).
+fn uniform_color(commands: &[RenderCommand], glyphs_only: bool) -> Option<peniko::Color> {
     let mut color = None;
     for command in commands {
         let paint = match command {
-            RenderCommand::Fill(c) => &c.brush,
-            RenderCommand::Stroke(c) => &c.brush,
             RenderCommand::GlyphRun(c) => &c.brush,
+            RenderCommand::Fill(c) if !glyphs_only => &c.brush,
+            RenderCommand::Stroke(c) if !glyphs_only => &c.brush,
             _ => return None,
         };
         let Paint::Solid(c) = paint else { return None };
@@ -542,6 +673,35 @@ fn uniform_color(commands: &[RenderCommand]) -> Option<peniko::Color> {
         }
     }
     color
+}
+
+/// pyro: whether a command pushes a layer with a blend mode (`mix-blend-mode`).
+fn blends(command: &RenderCommand) -> bool {
+    matches!(command, RenderCommand::PushLayer(layer)
+        if layer.blend.mix != peniko::Mix::Normal || layer.blend.compose == peniko::Compose::PlusLighter)
+}
+
+/// pyro: whether what the clip pushed at `push` clips has a layer with a blend mode that blends
+/// with what lies under the clip: in it, or in clips in it, but not in another layer (a group).
+fn blends_inside(commands: &[RenderCommand], push: usize) -> bool {
+    let mut depth = 0usize;
+    let mut i = push + 1;
+    while i < commands.len() {
+        match &commands[i] {
+            command @ RenderCommand::PushLayer(_) => {
+                if blends(command) {
+                    return true;
+                }
+                i = matching_pop(commands, i);
+            }
+            RenderCommand::PushClipLayer(_) => depth += 1,
+            RenderCommand::PopLayer if depth == 0 => return false,
+            RenderCommand::PopLayer => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
 
 /// The index of the `PopLayer` that closes the layer pushed at `push` (the end when none does).
@@ -697,6 +857,41 @@ mod clip_rule_tests {
         assert_pixels(false, true);
         assert_pixels(true, true);
     }
+
+    /// pyro: a clip is no group: a blend mode inside it blends with what lies under it (red in
+    /// `difference` over yellow is lime), as CSS clips do. A clip layer isolated it (red).
+    #[test]
+    fn a_blend_mode_inside_a_clip_blends_with_what_lies_under_it() {
+        let yellow = peniko::Color::from_rgba8(255, 255, 0, 255);
+        let all = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let mut recording = Scene::new();
+        recording.fill(Fill::NonZero, Affine::IDENTITY, yellow, None, &all);
+        recording.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &Rect::new(0.0, 0.0, 50.0, 100.0));
+        recording.push_layer(Fill::NonZero, Mix::Difference, 1.0, Affine::IDENTITY, &all, None, None);
+        recording.fill(Fill::NonZero, Affine::IDENTITY, RED, None, &all);
+        recording.pop_layer();
+        recording.pop_layer();
+        let buffer = render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(recording, Affine::IDENTITY), 100, 100);
+        let pixel = |x: usize, y: usize| &buffer[(y * 100 + x) * 4..(y * 100 + x) * 4 + 4];
+        assert_eq!(pixel(25, 50), &[0, 255, 0, 255], "blended under the clip");
+        assert_eq!(pixel(75, 50), &[255, 255, 0, 255], "outside the clip");
+    }
+
+    /// pyro: a clip with no blend mode in what it clips draws that as one: under its antialiased
+    /// edge a fill covered by another does not show through, as it does through a clip path
+    /// (each fill clipped on its own).
+    #[test]
+    fn a_clip_without_blending_clips_its_content_as_one() {
+        let all = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let mut recording = Scene::new();
+        recording.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &kurbo::Circle::new((50.0, 50.0), 40.3));
+        recording.fill(Fill::NonZero, Affine::IDENTITY, RED, None, &all);
+        recording.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::from_rgba8(0, 0, 255, 255), None, &all);
+        recording.pop_layer();
+        let buffer = render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(recording, Affine::IDENTITY), 100, 100);
+        assert!(buffer.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255), "an antialiased edge");
+        assert!(buffer.chunks_exact(4).all(|p| p[0] == 0), "no red under the blue");
+    }
 }
 
 #[cfg(test)]
@@ -748,5 +943,62 @@ mod filter_layer_tests {
         // A clip off whole pixels too.
         let buffer = render(Rect::new(0.0, 0.0, 50.5, 50.5), Rect::new(40.0, 40.0, 80.0, 80.0), 1.0);
         assert_eq!(pixel(&buffer, 70, 70), [0, 0, 0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod color_filter_tests {
+    use std::sync::Arc;
+
+    use anyrender::filters::{Filter, FilterEffect};
+    use anyrender::{PaintScene, recording::Scene, render_to_buffer};
+    use kurbo::{Affine, Rect};
+    use peniko::{Color, Fill, Mix};
+
+    use crate::VelloCpuImageRenderer;
+
+    /// Squares of `colors` side by side (20 px each from x = 10) under a layer with `filter`.
+    fn render(filter: Filter, colors: &[Color], alpha: f32) -> Vec<u8> {
+        let mut scene = Scene::new();
+        let clip = Rect::new(0.0, 0.0, 100.0, 40.0);
+        scene.push_layer(Fill::NonZero, Mix::Normal, alpha, Affine::IDENTITY, &clip, Some(Arc::new(filter)), None);
+        for (i, &color) in colors.iter().enumerate() {
+            let x = 10.0 + 20.0 * i as f64;
+            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &Rect::new(x, 10.0, x + 20.0, 30.0));
+        }
+        scene.pop_layer();
+        render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(scene, Affine::IDENTITY), 100, 40)
+    }
+
+    fn pixel(buffer: &[u8], x: usize, y: usize) -> &[u8] {
+        &buffer[(y * 100 + x) * 4..(y * 100 + x) * 4 + 4]
+    }
+
+    const YELLOW: Color = Color::from_rgba8(255, 255, 0, 255);
+    const RED: Color = Color::from_rgba8(255, 0, 0, 255);
+
+    /// Content in one colour is drawn in the mapped colour, content in several is filtered as
+    /// pixels: the same colours either way.
+    #[test]
+    fn a_colour_filter_maps_content_in_one_colour_and_in_several() {
+        let grayscale = || Filter::linear_list(std::iter::once(FilterEffect::grayscale(1.0)));
+        let one = render(grayscale(), &[YELLOW], 1.0);
+        let several = render(grayscale(), &[YELLOW, RED], 1.0);
+        for buffer in [&one, &several] {
+            // 0.2126 + 0.7152 of 255.
+            assert_eq!(pixel(buffer, 20, 20), [237, 237, 237, 255]);
+            assert_eq!(pixel(buffer, 5, 5), [0, 0, 0, 0]);
+        }
+        assert_eq!(pixel(&several, 40, 20), [54, 54, 54, 255]);
+    }
+
+    /// `opacity()` alone fades the layer, the layer's own opacity too.
+    #[test]
+    fn the_opacity_function_fades_the_layer() {
+        let filter = Filter::linear_list(std::iter::once(FilterEffect::opacity(0.5)));
+        let buffer = render(filter, &[RED, YELLOW], 0.5);
+        let near = |got: &[u8], want: [u8; 4]| got.iter().zip(want).all(|(&g, w)| g.abs_diff(w) <= 1);
+        assert!(near(pixel(&buffer, 20, 20), [64, 0, 0, 64]), "{:?}", pixel(&buffer, 20, 20));
+        assert!(near(pixel(&buffer, 40, 20), [64, 64, 0, 64]), "{:?}", pixel(&buffer, 40, 20));
     }
 }

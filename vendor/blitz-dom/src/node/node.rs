@@ -1920,6 +1920,20 @@ impl Node {
         if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
             return true;
         }
+        // pyro: `will-change` of a property that would make a stacking context makes one (its
+        // positioned descendants paint inside it, its backdrop-root group among them), as in
+        // Gecko: the unconditional ones, `opacity`, the transforms and `perspective`.
+        {
+            use style::values::specified::box_::WillChangeBits;
+            if box_style.will_change.bits.intersects(
+                WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL
+                    | WillChangeBits::OPACITY
+                    | WillChangeBits::TRANSFORM
+                    | WillChangeBits::PERSPECTIVE,
+            ) {
+                return true;
+            }
+        }
         // TODO: contain
 
         false

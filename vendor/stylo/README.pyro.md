@@ -27,11 +27,6 @@ crate (`diff -ruN`).
   `avoid-column`, as the spec has them (upstream has only `avoid`, and drops the declaration).
   `page-break-*` still rejects them.
 
-- `properties/longhands.toml`, `values/specified/transform.rs`: `transform-box` is parsed and computed for servo
-  too, with all five values (upstream: gecko only; servo parsed none, and its `content-box` and `stroke-box`
-  were off). blitz-dom resolves a CSS box's transform, `transform-origin` and `perspective-origin` against the
-  box it names (`Node::transform_reference_box`); `getComputedStyle` reports it.
-
 - `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
   are added (upstream has neither; both were counted unknown properties), inherited, in
   `inherited_text`. pyro-render's PDF output reads them to place page cuts of paper-cut documents.
@@ -69,6 +64,17 @@ crate (`diff -ruN`).
   (`augmented_restyle_damage_rebuild_stacking_context`, `has_mask_image`). Blitz's `compute_layout_damage` runs only on `RELAYOUT`, so this is what
   lets a paint-only restyle of a table cell run no layout (`vendor/blitz-dom/README.pyro.md`, "Paint-only
   restyles run no layout and shape no text").
+
+- `values/specified/effects.rs`, `values/computed/effects.rs`, `values/animated/effects.rs`: `filter` and
+  `backdrop-filter` take `url()` for servo too (upstream: gecko only; servo's value type was `Impossible`, so a
+  `filter: url(#f)` declaration was dropped). blitz-paint resolves it to an SVG `<filter>` of the document.
+
+- `properties/longhands.toml`, `values/specified/transform.rs`: `transform-box` is parsed and computed for servo too
+  (upstream: gecko only), with all five boxes (upstream's servo parser took `border-box`, `fill-box` and
+  `view-box`). blitz-dom resolves SVG elements' transforms in it (`vendor/blitz-dom/README.pyro.md`, "The page's
+  CSS on inline SVG"), and a CSS box's transform, `transform-origin` and `perspective-origin` against the box it
+  names (`Node::transform_reference_box`: the content box for `content-box` and `fill-box`, the border box
+  otherwise; "3D transforms flattened").
 
 ## Text decorations and emphasis
 

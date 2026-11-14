@@ -155,8 +155,31 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/filters.rs`, `src/render.rs`: filter lengths are converted to device pixels (the layers are drawn without
     the device scale in their transform), and a `drop-shadow()` without a colour has the element's `color`.
     Chromium takes drop-shadow's third length as the blur's standard deviation (measured), where `text-shadow` and
-    `box-shadow` take half of it. anyrender_vello_cpu applies `blur()` and `drop-shadow()` (see its README).
-    Covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
+    `box-shadow` take half of it. anyrender_vello_cpu applies `blur()`, `drop-shadow()` and the colour functions
+    (see its README). Covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
+  - `src/filters.rs`: the colour functions' matrices are Chromium's (`cc/paint/render_surface_filters.cc`), f32 for
+    f32: the filter effects spec's `feColorMatrix` equivalents with grayscale's and saturate's last column of each
+    row what the row leaves of 1, on sRGB values. They were anyrender's, which pyro's renderer did not apply.
+    Covered by `crates/pyro-render/tests/filter_color.rs`.
+  - `src/render.rs` (`render_element`, `paint_effect_group`), `src/layers.rs` (`document_effects`,
+    `backdrop_root`): `backdrop-filter`. An element with one records two markers for anyrender_vello_cpu (see its
+    README): a capture where it starts to paint, before its own layers (its clip-path, mask and blend mode are no
+    backdrop root for it), and a draw first in its effect group, so that its opacity and filter apply to the
+    backdrop it shows; both clip to its border box with its radii. A backdrop root that none of its layers marks
+    (a `clip-path`, a mask, `will-change` of a property that makes one, an animation of one in effect: blitz-dom's
+    `animates_backdrop_root`) is painted in a layer with an empty filter,
+    for elements with a backdrop filter below them only (the layer costs a composite). An opaque group without a
+    filter around a backdrop filter is a clip layer. Covered by `crates/pyro-render/tests/backdrop_filter.rs`.
+  - `src/filters.rs` (`reference_filter`): a `url(#id)` filter (stylo parses it now) is the document's SVG
+    `<filter>` with that id when that is a chain of `feColorMatrix` (every type) and `feComponentTransfer`, each in
+    its `color-interpolation-filters` space (linearRGB unless an ancestor's attribute says sRGB; sRGB for a filter
+    in a `display: none` subtree, as in Chromium). Anything else is left out, as before.
+  - `src/layers.rs` (`blend_isolation`), `src/render.rs` (`render_element`): a stacking context that holds an element
+    with a `mix-blend-mode` (its nearest ancestor that is one, the root element's at the latest) is painted as an
+    isolated group, as Chromium isolates one: the element blends with what the context painted, not with what lies
+    under it (the page under an absolutely positioned parent, the canvas under the root element's group). The
+    contexts are found in one pass over the nodes' styles when the painter is made. Covered by
+    `crates/pyro-render/tests/mix_blend_mode.rs`.
   - `src/text.rs` (`TextShadow`, `draw_shadow`, `stroke_text`, `flush_line_decorations`): `text-shadow`. Each glyph
     run draws its shadows, the last first, right before its glyphs (Chromium paints a text fragment's shadows right
     before it): the glyphs in the shadow's colour moved by its offset (the text's own colour does not matter:

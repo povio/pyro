@@ -1380,7 +1380,79 @@ pub fn dataset<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object
     s.wrap::<DomStringMap>(StringMapData { el: NodeHold::new(&page, id)? }, Some(key))
 }
 
+// ----- SVGAnimatedEnumeration ---------------------------------------------------
+
+/// An SVG element's enumerated attribute (`clipPathUnits`, `spreadMethod`, ...):
+/// the attribute name, its keywords in the order of their numeric values from 1
+/// (0 is the unknown value), the value of an absent or unrecognized keyword (its
+/// initial value), and the identity slot of the wrapper.
+pub struct SvgEnum {
+    pub attr: &'static str,
+    pub keywords: &'static [&'static str],
+    pub initial: u16,
+    pub slot: u64,
+}
+
+pub struct AnimatedEnumData {
+    el: NodeHold,
+    e: &'static SvgEnum,
+}
+
+impl AnimatedEnumData {
+    fn value(&self) -> u16 {
+        let dom = self.el.page.dom.borrow();
+        let keyword = dom.get_attribute(self.el.id, self.e.attr).ok().flatten();
+        keyword
+            .and_then(|k| self.e.keywords.iter().position(|w| *w == k.trim()))
+            .map_or(self.e.initial, |i| i as u16 + 1)
+    }
+}
+
+/// `SVGAnimatedEnumeration`: `baseVal` reflects the attribute (setting it writes
+/// the keyword, which re-renders the SVG as any attribute change does; 0 and
+/// values without a keyword throw a TypeError, as in Chromium); `animVal` is
+/// `baseVal`, as nothing animates it.
+pub struct SvgAnimatedEnumeration;
+impl JsClass for SvgAnimatedEnumeration {
+    const NAME: &'static str = "SVGAnimatedEnumeration";
+    type Data = AnimatedEnumData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor(
+            "baseVal",
+            |s, t| Ok(s.number(t.value() as f64)),
+            |_s, t, v| {
+                // WebIDL unsigned short.
+                let n = (to_u32(v)? & 0xffff) as usize;
+                let Some(keyword) = n.checked_sub(1).and_then(|i| t.e.keywords.get(i)) else {
+                    return Err(JsError::Type(
+                        format!("The enumeration value provided ({n}) is not a valid value for '{}'.", t.e.attr).into(),
+                    ));
+                };
+                t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.e.attr, keyword).js()
+            },
+        );
+        def.getter("animVal", |s, t| Ok(s.number(t.value() as f64)));
+    }
+}
+
+/// The element's `SVGAnimatedEnumeration` for `e`, the same object each time.
+pub fn animated_enumeration<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    id: NodeId,
+    e: &'static SvgEnum,
+) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, e.slot, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let page = page_rc(s)?;
+    s.wrap::<SvgAnimatedEnumeration>(AnimatedEnumData { el: NodeHold::new(&page, id)?, e }, Some(key))
+}
+
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<SvgAnimatedEnumeration>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();

@@ -7,7 +7,7 @@ workspace `Cargo.toml`. License: MIT OR Apache-2.0, as upstream. `.cargo_vcs_inf
 
 ## The change
 
-`UPSTREAM.patch` is the whole diff: four changes.
+`UPSTREAM.patch` is the whole diff: seven changes.
 
 ## A raster thread count per renderer
 
@@ -33,14 +33,14 @@ scale for a hinted one, by the conditions glifo hints under. glifo's main branch
 itself (`embolden_in_cache_units`); drop this when the workspace moves to a glifo with it. Covered by
 pyro-render's `a_missing_bold_face_is_synthesized`.
 
-## Filter layers (`blur()`, `drop-shadow()`)
+## Filter layers (`blur()`, `drop-shadow()`, the colour functions)
 
 vello_cpu 0.3 filters a layer only when it renders on one thread (its multi-threaded dispatcher panics on a
 filter layer, and pyro rasterizes frames of 4 M device px or more on threads), takes a single primitive per
 layer and panics on most of them (colour matrices). So the `filters` feature, which passed a layer's filter to
 vello_cpu, is not used (it does nothing now), and `VelloCpuScenePainter::append_scene` replays a recorded scene
-itself: a layer whose filter has a `blur()` or a `drop-shadow()` (`src/filters.rs`, `FilterPlan`; a chain of
-them is applied in order, other effects are left out as before) is rendered into a single-threaded context of
+itself: a layer whose filter has a `blur()`, a `drop-shadow()` or a colour function (`src/filters.rs`, `FilterPlan`;
+a chain of them is applied in order) is rendered into a single-threaded context of
 its own over the pixels the filter reads to produce what the layer's clip shows of the frame, filtered, and
 drawn into the frame as images inside a layer with its clip, blend mode and opacity; a drop shadow's content is
 then drawn as it is, over its shadow. An opaque layer of the normal blend mode whose clip is a rectangle of whole
@@ -55,8 +55,69 @@ the content at a resolution reduced by a power of two that leaves 4 to 8 there (
 blurs with boxes of fractional widths (Gwosdek et al.) of the full resolution's variance less what the reduction
 and the bilinear scaling back up spread, and lets the frame's raster scale the result up: within two levels of
 the full-resolution blur, at a cost that does not grow with the deviation (a 4K title card's 60 px shadow:
-0.5 ms). A blur of content in one solid colour (a text shadow's glyphs) blurs the alpha alone. Covered by the
+0.5 ms). A blur of glyph runs in one solid colour (a text shadow's) blurs the alpha alone, as the blur mask filter
+Chromium draws text shadows with does; other content is blurred in all four channels, as Chromium's blur filter does
+(a box blurred beside an invisible command in another colour came out a level off the box blurred alone). Covered by the
 unit tests in `src/filters.rs` and by pyro-render's `filter_drop_shadow.rs` and `text_shadow.rs`.
+
+The colour functions (`grayscale()`, `sepia()`, `saturate()`, `hue-rotate()`, `invert()`, `opacity()`,
+`brightness()`, `contrast()`) arrive as `feColorMatrix` matrices (and `url()` filters' `feComponentTransfer`
+functions, with linearRGB as conversion tables around them) (blitz-paint builds Chromium's) and are applied as
+Skia's matrix colour filter applies them, which Chromium builds them into: to each pixel's unpremultiplied sRGB
+values (not linearRGB), each matrix's result clamped to 0..1, functions in a row without rounding to bytes between
+them, premultiplied and rounded at the end (`color_matrices`; a run of equal pixels is computed once). A matrix that
+changes no byte (a neutral amount) is left out, trailing `opacity()` becomes the layer's opacity (`opacity()` alone
+is a faded layer with no pixels of its own), and when the functions keep the alpha and the layer's content is in one
+solid colour (a box, a run of text), that content is drawn in the mapped colour (`map_color`) instead of being
+rendered apart. Covered by the unit tests in `src/filters.rs` and `src/scene.rs` and by pyro-render's
+`filter_color.rs`.
+
+## SVG filter graphs
+
+`src/graph.rs`. A filter layer whose filter is no chain of blurs, drop shadows and colour functions (an SVG
+`<filter>`, from anyrender_svg) is a graph: `feFlood`, `feOffset`, `feGaussianBlur`, `feDropShadow`,
+`feColorMatrix`, `feComponentTransfer`, `feComposite` (arithmetic included), `feBlend` (separable modes) and crops,
+reading the source graphic, its alpha and each other's results. Each node is computed over one region of device
+pixels, the part of the filter region (the layer's clip) the output needs: as SVG asks, nothing outside the filter
+region is read or made, the source graphic included (a chain, CSS's, reads the content past the clip). Colour nodes
+in a row are applied to each pixel in one go, as Skia composes colour filters. A graph with a node this backend does
+not do (`feImage`, `feTile`, `feTurbulence`, `feMorphology`, `feConvolveMatrix`, `feDisplacementMap`, lighting,
+`feBlend`'s non-separable modes) is drawn unfiltered, as before.
+
+Two conventions hold with the producer: the graph's output is its last node (`Filter::add` leaves a graph's output at
+its first node and the setter is private), and a primitive's subregion is an `Image` node of the image id
+`FILTER_CROP_IMAGE` (`u32::MAX`, exported) whose transform holds the rectangle (`[x0, y0, x1, y1, ..]`, the filter's
+space) and whose input is the node it crops. Unit tests in `src/graph.rs`.
+
+## `backdrop-filter`
+
+`src/backdrop.rs`. blitz-paint records two markers for an element with a backdrop filter, each an empty layer with
+the filter and the element's border box (radii included) as the clip: a capture (opacity 0) where the element starts
+to paint and a draw (opacity 1) first in its effect group. The capture renders what the element's backdrop root
+painted before it (the commands since the innermost open layer that is a backdrop root: a filter, an opacity, a
+blend mode, a backdrop filter's group, blitz-paint's empty-filter mark; else since the start of the scene or of the
+filter layer replayed) into a context of its own, cut to the box (and to the context for the scene's root, as
+Chromium's root surface is the viewport), filters it with the box mirrored past its edges (Chromium's edge mode: a
+blur takes in no colour from outside the box) and keeps the images, keyed by the filter (one per element), the
+element's transform and its box. The draw draws them in the box. An opaque, unfiltered group's backdrop is drawn
+before the group in place of what lies there (Chromium draws it with a source copy: where the root painted nothing,
+the page beneath shows, not the content under the box twice), and the group pushes nothing; a backdrop of one
+colour is a fill of that colour, and a box on whole pixels needs no clip (each rounded a level apart under clips in
+vello_cpu's u8 compositing). Scenes without a backdrop filter skip all of it. Covered by pyro-render's
+`backdrop_filter.rs`.
+
+## Clips that a blend mode blends through
+
+`push_clip_layer` pushes a vello_cpu clip layer, an isolated group: a `mix-blend-mode` inside an
+`overflow: hidden` box blended with nothing (the layer starts transparent), where CSS clips make no group and
+Chromium's (Skia's) clips are no layers either. In a replayed scene that has a layer with a blend mode,
+`replay` makes a clip whose content has such a layer (in it or in clips in it, not in another layer) a clip
+path (vello_cpu's non-isolated clipping, `push_clip_path`/`pop_clip`; the painter keeps which kind each push
+was for `pop_layer`). Every other clip stays a clip layer: a clip path clips each fill on its own, and where
+fills overlap under an antialiased edge their coverage adds up (`clip-path` circles over a box and its border
+came out up to 97 levels off with clip paths everywhere). What is a group in CSS (a stacking context with
+blending descendants, a mask, a text clip) pushes a layer in blitz-paint. Covered by the unit tests in
+`src/scene.rs`.
 
 ## Aliased glyphs
 
