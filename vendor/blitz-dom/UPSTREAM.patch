@@ -11615,15 +11615,6 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  /// Implementations that interact with servo's style engine
  mod stylo;
  mod stylo_device;
-@@ -76,7 +89,7 @@
-     css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
- };
- pub use stylo_taffy::CopyStyleGetters;
--pub use stylo_to_kurbo::resolve_2d_transform;
-+pub use stylo_to_kurbo::{resolve_2d_transform, resolve_2d_transform_without_box};
- 
- pub mod net;
- pub mod util;
 @@ -95,6 +108,7 @@
  // `Node::final_layout`)
  pub use config::{DocumentConfig, StyleThreading};
@@ -17828,27 +17819,7 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
 diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/stylo_to_kurbo.rs
 --- a/packages/blitz-dom/src/stylo_to_kurbo.rs
 +++ b/packages/blitz-dom/src/stylo_to_kurbo.rs
-@@ -22,6 +22,19 @@
- //   - Translate by the negated computed X, Y and Z values of transform-origin.
- //
- // <https://drafts.csswg.org/css-transforms-2/#ctm>
-+/// pyro: [`resolve_2d_transform`] for an element without a box of its own (an SVG
-+/// `<clipPath>` and its shapes): a zero reference box at the origin.
-+pub fn resolve_2d_transform_without_box(box_styles: &BoxStyleStruct) -> Option<Affine> {
-+    let zero = CSSPixelLength::new(0.0);
-+    resolve_2d_transform(
-+        box_styles,
-+        Rect::new(
-+            euclid::default::Point2D::new(zero, zero),
-+            euclid::default::Size2D::new(zero, zero),
-+        ),
-+    )
-+}
-+
- pub fn resolve_2d_transform(
-     box_styles: &BoxStyleStruct,
-     reference_box: Rect<CSSPixelLength>,
-@@ -119,6 +132,14 @@
+@@ -119,6 +119,14 @@
          resolved *= transform;
      }
  

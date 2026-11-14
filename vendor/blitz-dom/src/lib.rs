@@ -89,7 +89,7 @@ pub use resolved_style::{
     css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
 };
 pub use stylo_taffy::CopyStyleGetters;
-pub use stylo_to_kurbo::{resolve_2d_transform, resolve_2d_transform_without_box};
+pub use stylo_to_kurbo::resolve_2d_transform;
 
 pub mod net;
 pub mod util;
