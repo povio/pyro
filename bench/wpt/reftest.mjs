@@ -7,7 +7,10 @@
 //   another size).
 // - The screenshot waits for the load event, document.fonts.ready and two animation frames. With class="reftest-wait"
 //   on the root element, the runner then fires TestRendered at it and waits until the class is gone, two frames after
-//   each change of the root's attributes (wptrunner's test-wait.js).
+//   each change of the root's attributes (wptrunner's test-wait.js). The frames are real ones, as Chrome's at 60 Hz:
+//   each requestAnimationFrame callback comes a frame's time (16.7 ms) after the last wait began. pyro runs frames
+//   back to back after each client command, so a page's animations would otherwise be captured within a millisecond
+//   of their start (backface-visibility-hidden-animated-002 turns 120 degrees in its first millisecond).
 // - Two screenshots are equal if no pixel differs in R, G or B. With fuzzy metadata ([ref:]maxDifference;totalPixels,
 //   inclusive ranges) they are equal if the largest channel difference and the number of differing pixels both fall
 //   in the ranges, or if nothing differs and a range allows 0 (wptrunner's check_pass).
@@ -87,7 +90,9 @@ function settle(ms) {
       clearTimeout(timer);
       resolve({ done: true });
     };
-    function paints() { requestAnimationFrame(() => requestAnimationFrame(ready)); }
+    // One real animation frame: a requestAnimationFrame callback a 60 Hz frame's time after now.
+    const frame = (then) => setTimeout(() => requestAnimationFrame(then), 1000 / 60);
+    function paints() { frame(() => frame(ready)); }
     const load = () => {
       void root?.getBoundingClientRect();
       void document.body?.offsetWidth;
