@@ -53,6 +53,10 @@ impl BaseDocument {
         let device_changed = !self.pending_device_changes.is_empty();
         self.flush_pending_device_changes();
         self.resolve_stylist(current_time_for_animations);
+        // pyro: sampled animations of elements styled anew resolve against that style.
+        if self.resolve_sampled_animations() {
+            self.resolve_stylist(current_time_for_animations);
+        }
         // Style reads must still discover background/mask resources. This
         // consumes only already-styled nodes, leaving construction/layout
         // damage intact for the next geometry query.
@@ -140,6 +144,12 @@ impl BaseDocument {
         for pass in 0..32 {
             // we need to resolve stylist first since it will need to drive our layout bits
             self.resolve_stylist(current_time_for_animations);
+            // pyro: sampled animations of elements styled anew resolve against that style.
+            if self.resolve_sampled_animations() {
+                self.resolve_stylist(current_time_for_animations);
+            }
+            // pyro: counters and quotes in generated content, before damage propagates.
+            self.resolve_generated_content();
             timer.record_time("style");
             if !self.stylist.has_container_queries() {
                 self.nodes.container_query_sizes.lock().unwrap().clear();
@@ -876,6 +886,16 @@ impl BaseDocument {
         deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
         deferred_construction_nodes.dedup_by_key(|task| task.node_id);
 
+        // pyro: the first letter each root's first line has (`layout::first_letter`), found on
+        // the tree construction left, with the nodes holding their styles made before the builds.
+        for task in deferred_construction_nodes.iter_mut() {
+            let ConstructionTaskData::InlineLayout(layout) = &mut task.data;
+            layout.first_letter = match self.first_letter_styles {
+                true => crate::layout::first_letter::split(self, task.node_id),
+                false => None,
+            };
+        }
+
         #[cfg(feature = "parallel-construct")]
         let iter = deferred_construction_nodes.into_par_iter();
         #[cfg(not(feature = "parallel-construct"))]
@@ -907,6 +927,7 @@ impl BaseDocument {
                     // Only the parley layout carries over (see `build_inline_layout_into`).
                     *layout = TextLayout {
                         layout: std::mem::take(&mut layout.layout),
+                        first_letter: layout.first_letter.take(),
                         ..TextLayout::new()
                     };
                     build_inline_layout_into(

@@ -185,6 +185,8 @@ impl Fetcher for PageFetcher {
         let kind = kind_of(&url);
         // A closed loop drops `done`: the render stops waiting at its deadline.
         let _ = self.handle.post(move |b| {
+            // An imported sheet without a charset of its own decodes as the document.
+            let environment = b.document_encoding(page);
             b.fetch_subresource(
                 page,
                 url,
@@ -192,7 +194,7 @@ impl Fetcher for PageFetcher {
                 Box::new(move |_, result| {
                     done(result.and_then(|r| {
                         if (200..300).contains(&r.status) {
-                            Ok(r.body)
+                            Ok(r.render_body(environment.as_slice()))
                         } else {
                             Err(format!("HTTP {}", r.status))
                         }
@@ -351,6 +353,8 @@ impl EngineHost {
                 })
                 .collect(),
             element_scroll: Some(s.element_scroll),
+            // CSS animations, transitions and Web Animations as they are now.
+            animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
         })
     }
 
@@ -766,7 +770,14 @@ impl EngineHost {
             }
         };
         let t = Instant::now();
-        let snapshot = self.snapshot(pid, element)?;
+        let mut snapshot = self.snapshot(pid, element)?;
+        if spec.settle_animations {
+            // A screenshot assertion compares stable pixels: no animation mid-flight.
+            let dom = self.thread.browser.page(pid).and_then(|p| p.main_frame.page_dom.clone());
+            if let Some(dom) = dom {
+                snapshot.animations = Some(Arc::new(pyro_layout::animation_frame(&dom.settled_animation_frame())));
+            }
+        }
         let snapshot_ms = ms(t.elapsed());
         let fetcher = self.fetcher(pid);
         let token = self.renders.token();

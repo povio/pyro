@@ -67,8 +67,23 @@ use usvg::fontdb;
 pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
+    // pyro: and the fonts `add_svg_font` gave.
+    for font in SVG_FONTS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        db.load_font_source(fontdb::Source::Binary(font.clone()));
+    }
     Arc::new(db)
 });
+
+/// pyro: fonts added to usvg's font database when it is made.
+#[cfg(feature = "svg")]
+static SVG_FONTS: std::sync::Mutex<Vec<Arc<dyn AsRef<[u8]> + Send + Sync>>> = std::sync::Mutex::new(Vec::new());
+
+/// pyro: adds `font` (TTF/OTF/TTC bytes) to the fonts SVG text is drawn with, beside the system
+/// fonts, as if it were installed. Call before the first SVG is parsed: the database is made then.
+#[cfg(feature = "svg")]
+pub fn add_svg_font(font: Arc<dyn AsRef<[u8]> + Send + Sync>) {
+    SVG_FONTS.lock().unwrap_or_else(|e| e.into_inner()).push(font);
+}
 
 /// Which kind of CSS image layer list (`background-image` or `mask-image`) to
 /// flush from style to dedicated storage on the node.
@@ -76,6 +91,8 @@ pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
 pub enum ImageLayerKind {
     Background,
     Mask,
+    /// pyro: `border-image-source`, a list of one image.
+    BorderImage,
 }
 
 impl ImageLayerKind {
@@ -83,6 +100,7 @@ impl ImageLayerKind {
         match self {
             Self::Background => ImageType::Background(idx),
             Self::Mask => ImageType::Mask(idx),
+            Self::BorderImage => ImageType::BorderImage(idx),
         }
     }
 }
@@ -92,6 +110,8 @@ pub enum ImageType {
     Image,
     Background(usize),
     Mask(usize),
+    /// pyro: `border-image-source`.
+    BorderImage(usize),
 }
 
 /// A point
@@ -192,7 +212,9 @@ pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData
         fontdb: Arc::clone(&*FONT_DB),
         ..Default::default()
     };
-    let svg = crate::node::SvgImageData::from_data(source, &options)?;
+    // pyro: a reference cycle usvg would follow without end (`crate::svg_refs`).
+    let checked = crate::svg_refs::break_reference_cycles(source);
+    let svg = crate::node::SvgImageData::from_data(&checked, &options)?;
     PARSED.with(|p| {
         let mut p = p.borrow_mut();
         if p.len() >= MAX_ENTRIES {

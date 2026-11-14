@@ -88,6 +88,8 @@ pub(crate) fn init_stylo_prefs() {
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
+        // pyro: `background-clip: border-area` (blitz-paint clips it to the border's area).
+        style_config::set_pref!("layout.css.background-clip.border-area.enabled", true);
         style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
         style_config::set_pref!("layout.css.columns.enabled", true);
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
@@ -119,6 +121,10 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
+        style_config::set_pref!("layout.css.text-decoration-inset-percentage.enabled", true);
+        // pyro: ruby annotations and emphasis marks (`TextAnnotation`).
+        style_config::set_pref!("layout.css.text-emphasis.enabled", true);
+        style_config::set_pref!("layout.css.ruby.enabled", true);
         style_config::set_pref!("layout.css.text-overflow.enabled", true);
         style_config::set_pref!("layout.css.text-underline-position.enabled", true);
         style_config::set_pref!("layout.css.view-transitions.enabled", true);
@@ -431,6 +437,8 @@ pub struct BaseDocument {
     // TODO: collapse animating state into a bitflags
     /// Whether there are active CSS animations/transitions (so we should re-render every frame)
     pub(crate) has_active_animations: bool,
+    /// pyro: the embedder's sampled animations (`animation.rs`).
+    pub(crate) sampled_animations: crate::animation::SampledAnimations,
     /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
     pub(crate) has_canvas: bool,
     /// Whether there are subdocuments that are animating (so we should re-render every frame)
@@ -514,6 +522,23 @@ pub struct BaseDocument {
     /// `::after` style for some element (sticky; see
     /// `BaseDocument::may_have_generated_before_after`).
     pub(crate) generated_before_after: bool,
+
+    /// pyro: a style traversal kept a `::first-letter` style for some element (sticky): inline
+    /// roots look for a first letter to style (`layout::first_letter`).
+    pub(crate) first_letter_styles: bool,
+    /// pyro: elements whose `::first-letter` style a style traversal changed, for the next
+    /// resolve (`layout::first_letter::style_changed`).
+    pub(crate) first_letter_changed: Vec<NodeId>,
+
+    /// pyro: a style traversal kept a `::before` / `::after` whose content reads counters or
+    /// quotes (sticky): each resolve with damage evaluates them (`layout::counters`).
+    pub(crate) generated_counters: bool,
+    /// pyro: the generated text of each element's `::after` and `::before` with counters and
+    /// quotes evaluated (`layout::counters`), while `generated_counters`.
+    pub(crate) generated_text: HashMap<NodeId, crate::layout::counters::GeneratedText>,
+    /// pyro: a style change or a child list change since the last evaluation can have changed
+    /// counters or quotes (`layout::counters`).
+    pub(crate) counters_dirty: bool,
 
     /// pyro: the top layer (modal dialogs, showing popovers) as
     /// the embedder marks it, by rank (bottom first): elements whose
@@ -685,6 +710,7 @@ impl BaseDocument {
             focus_ring: false,
             mousedown_node_id: None,
             has_active_animations: false,
+            sampled_animations: Default::default(),
             subdoc_is_animating: false,
             has_canvas: false,
             sub_document_nodes: HashSet::new(),
@@ -709,6 +735,11 @@ impl BaseDocument {
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
             generated_before_after: false,
+            first_letter_styles: false,
+            first_letter_changed: Vec::new(),
+            generated_counters: false,
+            generated_text: HashMap::new(),
+            counters_dirty: true,
             top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
@@ -1237,6 +1268,10 @@ impl BaseDocument {
             }
             if let Some(after) = node.after() {
                 crate::util::ensure_stack(|| self.drop_node_ignoring_parent_with(after, on_drop));
+            }
+            // pyro: the node holding its `::first-letter` style.
+            if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter) {
+                self.remove_node_from_tree(first_letter);
             }
 
             for &child in &node.children {
@@ -1806,11 +1841,12 @@ impl BaseDocument {
                     node.clear_layout_cache();
                     node.insert_damage(ALL_DAMAGE);
                 }
-                ImageType::Background(idx) | ImageType::Mask(idx) => {
+                ImageType::Background(idx) | ImageType::Mask(idx) | ImageType::BorderImage(idx) => {
                     let layer_image = node.element_data_mut().and_then(|el| {
                         let images = match image_type {
                             ImageType::Background(_) => &mut el.background_images,
                             ImageType::Mask(_) => &mut el.mask_images,
+                            ImageType::BorderImage(_) => &mut el.border_images,
                             ImageType::Image => unreachable!(),
                         };
                         images.get_mut(idx)

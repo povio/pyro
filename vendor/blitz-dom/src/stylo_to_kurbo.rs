@@ -151,15 +151,24 @@ pub fn resolve_transform(
         resolved *= transform;
     }
 
-    resolved = snap(origin_translation * resolved * origin_translation.inverse());
+    // pyro: coefficients a hair from whole numbers are whole, as Chromium's rotations by multiples
+    // of 90 degrees are exact (`SinCosDegrees`): `rotate(360deg)` is the identity, so its text is
+    // placed and snapped as untransformed text is (WPT css-transforms/transform-input-*).
+    resolved = Affine::new(resolved.as_coeffs().map(|v| {
+        let whole = v.round();
+        if (v - whole).abs() < 1e-9 { whole } else { v }
+    }));
+
+    resolved = origin_translation * resolved * origin_translation.inverse();
 
     ResolvedTransform::Flat((resolved != Affine::IDENTITY).then_some(resolved))
 }
 
 /// pyro: a linear coefficient within 1e-12 of 0, 1 or -1 is that value, and a translation
-/// within 1e-9 px of a whole pixel is on it. A rotation by a multiple of 90deg leaves rounding
-/// noise (sin 180deg = 1.2e-16 in f64) that made an axis-aligned transform a rotation, which
-/// text then draws without its pixel snapping; Chromium computes those angles exactly.
+/// within 1e-9 px of a whole pixel is on it: the 3D paths' counterpart of the 2D path's
+/// snapping above. A rotation by a multiple of 90deg leaves rounding noise (sin 180deg =
+/// 1.2e-16 in f64) that made an axis-aligned transform a rotation, which text then draws
+/// without its pixel snapping; Chromium computes those angles exactly.
 pub(crate) fn snap(affine: Affine) -> Affine {
     let [a, b, c, d, e, f] = affine.as_coeffs();
     let linear = |v: f64| {

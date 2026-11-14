@@ -569,6 +569,8 @@ pub(crate) fn style(
         strikethrough_offset: Default::default(),
         strikethrough_size: Default::default(),
         strikethrough_brush: Default::default(),
+        // pyro: set by the inline build for spans with annotations (`TextAnnotation`).
+        annotation_space: Default::default(),
     }
 }
 

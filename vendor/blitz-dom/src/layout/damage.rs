@@ -505,11 +505,18 @@ impl BaseDocument {
                 crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(*child));
             }
         }
-        if let Some(before_id) = before {
-            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(before_id));
-        }
-        if let Some(after_id) = after {
-            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(after_id));
+        for pseudo_id in [before, after].into_iter().flatten() {
+            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(pseudo_id));
+            // pyro: a pseudo-element's children are what its content generates (text, the box
+            // of a `content: url()` image), which no other walk reaches: an image's flags are
+            // cleared here, or the `mark_damaged` of its load would stop at its stale flag.
+            let mut index = 0;
+            while let Some(&child) = self.nodes.get(pseudo_id).and_then(|pseudo| pseudo.children.get(index)) {
+                if !self.nodes[child].is_text_node() {
+                    self.clear_damage_and_dirty_flags(child);
+                }
+                index += 1;
+            }
         }
 
         let node = &mut self.nodes[node_id];
@@ -711,7 +718,11 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
                 || old_text.overflow_wrap != new_text.overflow_wrap
                 || old_text.letter_spacing != new_text.letter_spacing
                 || old_text.word_spacing != new_text.word_spacing
-                || old_text.text_rendering != new_text.text_rendering)
+                || old_text.text_rendering != new_text.text_rendering
+                // pyro: ruby annotations and emphasis marks are laid out with the text.
+                || old_text.text_emphasis_style != new_text.text_emphasis_style
+                || old_text.text_emphasis_position != new_text.text_emphasis_position
+                || old_text.ruby_position != new_text.ruby_position)
         {
             return true;
         }
@@ -850,6 +861,7 @@ impl BaseDocument {
             }
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
+            self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
         }
     }
 
@@ -875,12 +887,16 @@ impl BaseDocument {
             return;
         };
 
-        let (style_images, elem_images) = match kind {
+        let (style_images, elem_images): (&[style::values::computed::Image], _) = match kind {
             ImageLayerKind::Background => (
                 &style.get_background().background_image.0,
                 &mut elem.background_images,
             ),
             ImageLayerKind::Mask => (&style.get_svg().mask_image.0, &mut elem.mask_images),
+            ImageLayerKind::BorderImage => (
+                std::slice::from_ref(&style.get_border().border_image_source),
+                &mut elem.border_images,
+            ),
         };
 
         let len = style_images.len();

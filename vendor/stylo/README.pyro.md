@@ -70,6 +70,12 @@ crate (`diff -ruN`).
   lets a paint-only restyle of a table cell run no layout (`vendor/blitz-dom/README.pyro.md`, "Paint-only
   restyles run no layout and shape no text").
 
+## Text decorations and emphasis
+
+- `properties/longhands.toml`: `text-decoration-skip-ink` is parsed and computed for Servo too (upstream: Gecko only);
+  blitz-paint skips ink by it. `text-emphasis-style` gives `rebuild_box` damage under Servo (its `affects` is
+  `overflow`): Blitz lays its marks out with the text, and they take room in their lines.
+
 ## Container queries, typed values
 
 - `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules
@@ -79,6 +85,13 @@ crate (`diff -ruN`).
 - `stylist.rs`: `Stylist::has_container_queries` tells blitz-dom whether a restyle has container
   conditions to evaluate.
 - `values/generics/mod.rs`: `GreaterThanOrEqualToOne` derives `ToTyped` (for `orphans`/`widows`).
+- `values/specified/background.rs`: `background-attachment: local` is parsed and computed for servo too
+  (upstream: gecko only, so the declaration was dropped). blitz-paint positions and clips such a layer against a
+  scroll container's scrolled content.
+- `values/specified/background.rs`, `properties/shorthands.rs`: `mask-clip` takes `fill-box`, `stroke-box`,
+  `view-box` and `no-clip`, and `mask-origin` the three SVG boxes, for servo too (upstream: gecko only, so the
+  declaration was dropped); `background-clip` and `background-origin` still reject them. The `mask` shorthand
+  serializes them as Gecko's does. blitz-paint clips and positions mask layers with them.
 
 ## Moving from 0.22 to 0.23
 

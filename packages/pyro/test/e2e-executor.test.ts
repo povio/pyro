@@ -219,6 +219,14 @@ test("a timed-out test's runs are cancelled before its afterEach hooks, which ca
 }, 60000);
 
 test('one fork-mode browser for the run: profiles per describe, pages closed, nothing left running', async () => {
+  // Browsers serving before the run are not this run's: a cancelled CI job can leave one behind on a self-hosted runner.
+  const serving = () =>
+    Bun.spawnSync(['ps', '-axo', 'pid=,ppid=,command='])
+      .stdout.toString()
+      .split('\n')
+      .filter((l) => l.includes(bin) && l.includes(' serve '));
+  const pid = (line: string) => line.trim().split(/\s+/)[0];
+  const before = new Set(serving().map(pid));
   const r = await e2e(['test/e2e-fixture/browser/browser.e2e.ts', '-j', '4', '--timeout', '20000']);
   expect(r.code).toBe(1); // the last test times out on purpose
   expect(r.out).toContain('test timed out after 500 ms');
@@ -228,6 +236,5 @@ test('one fork-mode browser for the run: profiles per describe, pages closed, no
   // Pages of a profile fork from one boot.
   for (const name of ['one', 'two']) expect(new Set(pages.filter((p) => p.name === name).map((p) => p.value)).size).toBe(1);
   // The browser (its whole process group) is gone with the run.
-  const ps = Bun.spawnSync(['ps', '-axo', 'pid=,ppid=,command=']).stdout.toString();
-  expect(ps.split('\n').filter((l) => l.includes(bin) && l.includes(' serve '))).toEqual([]);
+  expect(serving().filter((l) => !before.has(pid(l)))).toEqual([]);
 }, 60000);

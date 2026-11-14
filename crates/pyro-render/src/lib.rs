@@ -218,7 +218,16 @@ pub struct Snapshot {
     /// Bitmaps of the drawn canvases of a [`Live`] document, painted as
     /// their elements' content (other canvases paint nothing).
     pub canvases: Vec<CanvasImage>,
+    /// The animated values of a [`Live`] document's elements now
+    /// ([`Renderer::set_animations`]); `None` leaves the document's.
+    pub animations: Option<Arc<AnimationFrame>>,
 }
+
+pub use blitz_dom::animation;
+
+/// The animated values of a persistent document's elements at one moment,
+/// by element key (`blitz_dom::animation`): elements left out have none.
+pub type AnimationFrame = Vec<(u64, animation::ElementEffects)>;
 
 /// A canvas element's bitmap ([`Snapshot::canvases`]).
 #[derive(Clone, Debug)]
@@ -665,6 +674,37 @@ pub fn hyphen_digit_breaks() -> bool {
     HYPHEN_DIGIT_BREAKS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+static TEXT_ANTIALIASING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Sets the [`Renderer::text_antialiasing`] of every renderer made from now on,
+/// in this process (`serve --text-antialiasing off`). On by default.
+pub fn set_text_antialiasing(on: bool) {
+    TEXT_ANTIALIASING.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The default [`set_text_antialiasing`] set.
+pub fn text_antialiasing() -> bool {
+    TEXT_ANTIALIASING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Adds the font file at `path` (TTF/OTF/TTC) to the fonts of every page and
+/// inline SVG in this process, as if it were installed (`serve --font`; WPT's
+/// runner installs Ahem). Reads the file now and loads nothing else: call it
+/// at startup, before any font use (a fork template may be made afterwards).
+pub fn add_font_file(path: &std::path::Path) -> std::io::Result<()> {
+    let bytes = Arc::new(std::fs::read(path)?);
+    if skrifa::raw::FileRef::new(&bytes).is_err() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "not a TrueType or OpenType font"));
+    }
+    pyro_canvas::fonts::add_startup_font(Blob::new(bytes.clone() as _));
+    blitz_dom::util::add_svg_font(bytes);
+    Ok(())
+}
+
+/// The coverage (out of 255) from which a pixel of aliased text is painted: half
+/// of the pixel, as Skia paints a pixel whose centre the outline covers.
+const TEXT_ALIASING_THRESHOLD: u8 = 128;
+
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
     font_ctx: FontContext,
@@ -679,6 +719,9 @@ pub struct Renderer {
     resources: net::ResourceCache,
     /// Persistent documents of [`Live`] snapshots, by page.
     mirrors: HashMap<u64, mirror::Mirror>,
+    /// Animated values to sample into a page's persistent document at its
+    /// next sync ([`Renderer::set_animations`]).
+    animations: HashMap<u64, Arc<AnimationFrame>>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -700,6 +743,12 @@ pub struct Renderer {
     /// Read when a document is created: a page's persistent document keeps the
     /// value it was built with. Defaults to [`hyphen_digit_breaks`].
     pub hyphen_digit_breaks: bool,
+    /// Glyphs rasterized antialiased (the default), or aliased: each pixel
+    /// painted fully or not at all, as Chromium draws text when WPT's runner
+    /// starts it without font antialiasing (`NoFontAntialiasing`), which the
+    /// WPT reftests are judged with. Other drawing is antialiased either way,
+    /// and PDFs are not rasterized. Defaults to [`text_antialiasing`].
+    pub text_antialiasing: bool,
 }
 
 impl Default for Renderer {
@@ -719,12 +768,14 @@ impl Renderer {
             gpu: None,
             resources: net::ResourceCache::default(),
             mirrors: HashMap::new(),
+            animations: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
             hyphen_digit_breaks: hyphen_digit_breaks(),
+            text_antialiasing: text_antialiasing(),
         }
     }
 
@@ -738,6 +789,27 @@ impl Renderer {
     pub fn forget(&mut self, page: u64) {
         self.mirrors.remove(&page);
         self.geometry.remove(&page);
+        self.animations.remove(&page);
+    }
+
+    /// Samples `frame` into `page`'s persistent document at its next sync or
+    /// render (made now if the document exists): the animated values of every
+    /// animated element, keyed as the page's tree. Elements left out lose
+    /// theirs.
+    pub fn set_animations(&mut self, page: u64, frame: Arc<AnimationFrame>) {
+        self.animations.insert(page, frame);
+    }
+
+    /// Hands `page`'s pending animated values to its document, which restyles
+    /// the elements whose values changed at its next resolve.
+    fn apply_animations(&mut self, page: u64) {
+        let Some(m) = self.mirrors.get_mut(&page) else { return };
+        let Some(frame) = self.animations.remove(&page) else { return };
+        if frame.is_empty() && !m.doc.has_sampled_animations() {
+            return;
+        }
+        let effects = frame.iter().filter_map(|(key, effects)| Some((m.node(*key)?, effects.clone()))).collect();
+        m.doc.set_sampled_animations(effects);
     }
 
     /// Pages with a persistent document.
@@ -854,6 +926,10 @@ impl Renderer {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
                 timings.mirror = Some(stats);
+                if let Some(frame) = &snap.animations {
+                    self.animations.insert(live.page, frame.clone());
+                }
+                self.apply_animations(live.page);
                 let hrefs = mirror::take_sprite_hrefs();
                 if let (false, Some(m)) = (hrefs.is_empty(), self.mirrors.get_mut(&live.page)) {
                     svg_use::resolve_sprites(
@@ -1053,6 +1129,8 @@ impl Renderer {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
+        self.apply_animations(page);
+        let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
         let profiling = profiling::on();
         let mirrored = profiling.then(|| started.elapsed());
         let mirror::Mirror { doc, bridge, .. } = m;
@@ -1534,6 +1612,7 @@ impl Renderer {
                     if width as usize * height as usize >= THREADED_RASTER_PIXELS { raster_threads() } else { 0 };
                 let slot = if threads > 0 { &mut self.cpu_threaded } else { &mut self.cpu };
                 let r = ensure_cpu(slot, width, height, threads);
+                r.set_text_aliasing_threshold((!self.text_antialiasing).then_some(TEXT_ALIASING_THRESHOLD));
                 r.render(
                     |p| {
                         p.reset();

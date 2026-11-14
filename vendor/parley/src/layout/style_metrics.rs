@@ -141,6 +141,16 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
 
         let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantum);
         metrics.font_size = style.font_size;
+        // pyro: what is drawn over or under the span's text (ruby annotations, emphasis marks)
+        // takes room beyond its content area; the span box grows to hold it where its line height
+        // leaves too little (CSS Ruby 1, 4.4).
+        let space = style.annotation_space;
+        if space.over > 0. {
+            metrics.over = metrics.over.max(metrics.ascent + space.over);
+        }
+        if space.under > 0. {
+            metrics.under = metrics.under.max(metrics.descent + space.under);
+        }
 
         if index == 0 {
             // The root span box (the strut).

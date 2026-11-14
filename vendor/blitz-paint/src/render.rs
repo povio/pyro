@@ -1,5 +1,6 @@
 mod background;
 mod border;
+mod border_image;
 mod box_shadow;
 mod clip_path;
 mod form_controls;
@@ -46,7 +47,6 @@ use style::{
 use kurbo::{self, Affine, Insets, Point, Rect, Shape, Size, Stroke, Vec2};
 use peniko::{self, BlendMode, Fill, ImageData, ImageSampler};
 use style::computed_values::isolation::T as Isolation;
-use style::values::generics::color::GenericColor;
 use taffy::Layout;
 
 /// An opacity just below 1.0, used to force the renderer to allocate an isolated
@@ -125,6 +125,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) initial_y: f64,
     /// The id of the document's root element (cached to avoid re-resolving it for every element)
     pub(crate) root_element_id: Option<NodeId>,
+    /// pyro: the element whose background is the canvas background: the root element, or the
+    /// body whose background propagates to it; `None` when the root element is not rendered.
+    pub(crate) canvas_background: Option<NodeId>,
     /// pyro: the document's top layer, bottom first (usually
     /// empty). Its elements are skipped where the tree puts them and painted
     /// above everything, each over its `::backdrop`.
@@ -170,6 +173,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
         let layer_manager = LayerManager::default();
         let root_element_id = dom.try_root_element().map(|el| el.id);
+        let canvas_background = canvas_background_source(dom);
 
         Self {
             dom,
@@ -179,6 +183,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             initial_x,
             initial_y,
             root_element_id,
+            canvas_background,
             top_layer: if dom.has_top_layer() {
                 dom.top_layer_nodes().collect()
             } else {
@@ -218,46 +223,22 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         };
         let root_id = root_element.id;
-        let bg_width = (self.width as f32).max(root_element.final_layout().size.width);
-        let bg_height = (self.height as f32).max(root_element.final_layout().size.height);
 
-        let background_color = {
-            let html_styles = root_element.primary_styles();
-            let html_color = html_styles
-                .as_ref()
-                .map_or(&GenericColor::TRANSPARENT_BLACK, |s| {
-                    s.get_background_color()
-                });
-            if *html_color == GenericColor::TRANSPARENT_BLACK {
-                root_element
-                    .children
-                    .iter()
-                    .find_map(|id| {
-                        self.dom
-                            .as_ref()
-                            .get_node(*id)
-                            .filter(|node| node.data.is_element_with_tag_name(&local_name!("body")))
-                    })
-                    .and_then(|body| body.primary_styles())
-                    .map(|style| {
-                        let current_color = style.clone_color();
-                        style
-                            .get_background_color()
-                            .resolve_to_absolute(&current_color)
-                    })
-            } else {
-                let current_color = html_styles.as_ref().unwrap().clone_color();
-                Some(html_color.resolve_to_absolute(&current_color))
-            }
-        };
-
-        if let Some(bg_color) = background_color.filter(|_| self.backgrounds) {
-            let bg_color = bg_color.as_srgb_color();
-            let rect = Rect::from_origin_size(
-                (self.initial_x, self.initial_y),
-                (bg_width as f64, bg_height as f64),
-            );
-            scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &rect);
+        // pyro: the root element paints the canvas background (`draw_canvas_background`), in
+        // its effect group. A root that paints nothing of its own (`visibility: hidden`) leaves
+        // it to be painted here, its colour alone, as before.
+        if self.backgrounds
+            && let Some(source) = self.canvas_background
+            && root_element
+                .primary_styles()
+                .is_some_and(|style| style.get_inherited_box().visibility != StyloVisibility::Visible)
+            && let Some(style) = self.dom.get_node(source).and_then(|node| node.primary_styles())
+        {
+            let bg_color = style
+                .get_background_color()
+                .resolve_to_absolute(&style.clone_color())
+                .as_srgb_color();
+            scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &self.canvas_rect());
         }
 
         // The root clip rectangle is the viewport (in screen coordinates, with the
@@ -310,6 +291,18 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 );
             }
         }
+    }
+
+    /// pyro: the canvas, in scene space: the viewport, or the root element's box where that is
+    /// larger.
+    fn canvas_rect(&self) -> Rect {
+        let size = self
+            .root_element_id
+            .and_then(|id| self.dom.get_node(id))
+            .map_or(taffy::Size::ZERO, |root| root.final_layout().size);
+        let width = (self.width as f64).max(size.width as f64 * self.scale);
+        let height = (self.height as f64).max(size.height as f64 * self.scale);
+        Rect::from_origin_size((self.initial_x, self.initial_y), (width, height))
     }
 
     /// pyro: paints the top layer above the document, bottom
@@ -541,6 +534,22 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     &mut self.draw_text_context.borrow_mut(),
                     None,
                 );
+                // pyro: emphasis marks and ruby annotations are text the background shows in.
+                let recording = self.draw_text_context.borrow().runs.is_some();
+                for line in layout.layout.lines() {
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &layout.annotations,
+                        &layout.text,
+                        self.dom,
+                        text_transform,
+                        self.scale,
+                        recording,
+                        None,
+                        Some(Color::BLACK),
+                    );
+                }
             }
         }
         if let Some(children) = &*node.layout_children.borrow() {
@@ -661,10 +670,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Cull elements that fall entirely outside the current clip rectangle. In addition to
         // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
         // also culls elements scrolled out of view inside a clipping/scrolling container.
-        if screen_bbox.x1 < clip_rect.x0
-            || screen_bbox.x0 > clip_rect.x1
-            || screen_bbox.y1 < clip_rect.y0
-            || screen_bbox.y0 > clip_rect.y1
+        let outside = |bbox: Rect| {
+            bbox.x1 < clip_rect.x0 || bbox.x0 > clip_rect.x1 || bbox.y1 < clip_rect.y0 || bbox.y0 > clip_rect.y1
+        };
+        // pyro: an inline root's own text decorations reach outside its box by as much as they
+        // are thick (`text-decoration-thickness: 4em`).
+        if outside(screen_bbox)
+            && !(node.flags.is_inline_root() && {
+                let reach = crate::text::decoration_ink_reach(&styles) * self.scale;
+                reach > 0.0 && !outside(screen_bbox.inflate(reach, reach))
+            })
         {
             return;
         }
@@ -719,11 +734,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         };
 
         // Compute clip-path (if any) and wrap all rendering in a clip layer
-        let clip_path_shape = cx.clip_path_shape();
-        let has_clip_path = clip_path_shape.is_some();
-        let default_clip = cx.frame.border_box_path();
-        let mut clip_path_for_layer = clip_path_shape.unwrap_or(default_clip);
-        clip_path_for_layer.apply_affine(Affine::scale(self.scale));
+        let element_clip = cx.element_clip();
 
         // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
         // the element's rendering (including outlines and shadows), so it is the outermost layer.
@@ -785,15 +796,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         };
 
         // clip-path clip layer (it clips the shadow and the outline too, as in Chromium)
-        self.layer_manager.maybe_with_layer(
+        clip_path::with_element_clip(
             scene,
-            has_clip_path,
-            BlendMode::default(),
-            1.0,
+            element_clip.as_ref(),
             cx.transform,
-            &clip_path_for_layer,
-            None,
-            None,
+            self.scale,
+            element_clip.as_ref().map_or(Rect::ZERO, |_| cx.visible_area()),
             |scene| {
                 // If the element has a CSS `mask`, then push an isolation layer for the
                 // masked content. The mask is applied when the layer is popped below.
@@ -853,8 +861,28 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let unscrolled_transform = cx.transform;
 
         if paints_own_box {
+            // pyro: the root element paints the canvas background, under its own shadow, in
+            // place of its background; the body whose background that is paints none.
+            let is_root = self.root_element_id == Some(node.id);
+            if is_root
+                && cx.context.backgrounds
+                && let Some(source) = self.canvas_background
+            {
+                // Not under the root element's own transform (Chromium paints the canvas in
+                // the view's space): its images are positioned against the untransformed box.
+                let own = node.transform().as_deref().copied().unwrap_or_default();
+                if own.determinant().abs() > 1e-12 {
+                    let canvas_cx = ElementCx {
+                        transform: cx.transform * own.inverse(),
+                        frame: cx.frame.clone(),
+                        style: cx.style.clone(),
+                        ..*cx
+                    };
+                    canvas_cx.draw_canvas_background(scene, source, self.canvas_rect());
+                }
+            }
             cx.draw_outset_box_shadow(scene);
-            if cx.context.backgrounds {
+            if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
                 cx.draw_background(scene);
             }
             cx.draw_inset_box_shadow(scene);
@@ -1048,6 +1076,55 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             custom_widget_scene,
         }
     }
+}
+
+/// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's
+/// `LayoutBox::BackgroundTransfersToView` decides it: the root element, unless it is an HTML
+/// `html` element without a background of its own, when it is its first `body` child, if that
+/// is rendered (not `display: none` or `contents`) and neither element has containment. `None`
+/// when the root element is not rendered.
+fn canvas_background_source(dom: &BaseDocument) -> Option<NodeId> {
+    let root = dom.try_root_element()?;
+    let root_style = root.primary_styles()?;
+    if root_style.get_box().display.is_none() {
+        return None;
+    }
+    let has_background = |style: &ComputedValues| {
+        let background = style.get_background();
+        background
+            .background_image
+            .0
+            .iter()
+            .any(|image| !matches!(image, style::values::computed::Image::None))
+            || background
+                .background_color
+                .resolve_to_absolute(&style.clone_color())
+                .alpha
+                > 0.0
+    };
+    let contained = |style: &ComputedValues| !style.get_box().slow_clone_contain().is_empty();
+    if has_background(&root_style)
+        || contained(&root_style)
+        || !root.data.is_element_with_tag_name(&local_name!("html"))
+    {
+        return Some(root.id);
+    }
+    let body = root
+        .children
+        .iter()
+        .filter_map(|&id| dom.get_node(id))
+        .find(|node| node.data.is_element_with_tag_name(&local_name!("body")));
+    let Some(body) = body else {
+        return Some(root.id);
+    };
+    let Some(body_style) = body.primary_styles() else {
+        return Some(root.id);
+    };
+    let display = body_style.get_box().display;
+    if display.is_none() || display.is_contents() || contained(&body_style) {
+        return Some(root.id);
+    }
+    Some(body.id)
 }
 
 fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
@@ -1525,6 +1602,10 @@ impl ElementCx<'_, '_> {
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
         if self.node.flags.is_inline_root() {
+            // pyro: inline elements with a clip path or a mask (clip_path.rs).
+            if self.draw_inline_effects(scene, pos) {
+                return;
+            }
             let text_layout = self.element
                 .inline_layout_data
                 .as_ref()
@@ -1626,6 +1707,28 @@ impl ElementCx<'_, '_> {
                             draw_text_context.line_tops = tops;
                         }
                     }
+                }
+            }
+            // pyro: ruby annotations and emphasis marks, over the text of each line.
+            if !text_layout.annotations.is_empty() {
+                let recording = draw_text_context.runs.is_some();
+                for line in text_layout.layout.lines() {
+                    let line_transform = match tops {
+                        Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
+                        None => transform,
+                    } * Affine::translate((text_shift, 0.0));
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &text_layout.annotations,
+                        &text_layout.text,
+                        self.context.dom,
+                        line_transform,
+                        self.scale,
+                        recording,
+                        None,
+                        None,
+                    );
                 }
             }
             draw_text_context.text_shift = 0.0;
@@ -1748,6 +1851,25 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 vertical,
             );
+            // pyro: ruby annotations and emphasis marks, turned with their line.
+            if !text_layout.annotations.is_empty() {
+                let recording = draw_text_context.runs.is_some();
+                let line = text_layout.layout.get(index);
+                if let Some(line) = line {
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &text_layout.annotations,
+                        &text_layout.text,
+                        self.context.dom,
+                        line_transform(index),
+                        self.scale,
+                        recording,
+                        vertical,
+                        None,
+                    );
+                }
+            }
         }
     }
 

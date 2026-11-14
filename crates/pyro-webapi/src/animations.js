@@ -9,12 +9,17 @@
 // never make this module; animations that are idle, paused or finished
 // cost nothing over time.
 //
-// Animated values are not part of the cascade: `getComputedStyle` and the
-// layout show the underlying style. `commitStyles()` writes the animated
-// values (computed here, see `animatedValue`) into the inline style.
+// Animated values reach the cascade through the engine: every change of an
+// animation's state is reported to it (`report`, animation_frame.rs), which
+// samples the keyframes into the layout engine's cascade at the time a
+// layout, style read or capture happens. A CSSAnimation or CSSTransition is
+// reported once script controls it (until then the engine's own timeline of
+// the CSS animation or transition is the same). `commitStyles()` writes the
+// animated values (computed here, see `animatedValues`) into the inline
+// style.
 (native => {
   'use strict';
-  const { now, schedule, cssName } = native;
+  const { now, schedule, cssName, report: reportState, reportKey } = native;
   const apply = Reflect.apply;
   const P = Promise;
   const promiseThen = P.prototype.then;
@@ -577,7 +582,10 @@
     updateTiming(timing) {
       const st = brand(effects, this, 'an AnimationEffect');
       st.timing = updateTimingFrom(st.timing, timing, false);
-      if (st.animation) timingChanged(st.animation);
+      if (st.animation) {
+        st.animation.scripted = true;
+        timingChanged(st.animation);
+      }
     }
   }
 
@@ -630,16 +638,20 @@
       const st = brand(effects, this, 'a KeyframeEffect');
       if (value !== null && !isElement(value)) throw new TypeError("The provided value is not of type 'Element'.");
       st.target = value;
+      effectChanged(st);
     }
     get pseudoElement() { return brand(effects, this, 'a KeyframeEffect').pseudo; }
     set pseudoElement(value) {
-      brand(effects, this, 'a KeyframeEffect').pseudo = value === null ? null : pseudoElement(value);
+      const st = brand(effects, this, 'a KeyframeEffect');
+      st.pseudo = value === null ? null : pseudoElement(value);
+      effectChanged(st);
     }
     get composite() { return brand(effects, this, 'a KeyframeEffect').composite; }
     set composite(value) {
       const st = brand(effects, this, 'a KeyframeEffect');
       const c = String(value);
       if (COMPOSITES.includes(c)) st.composite = c;
+      effectChanged(st);
     }
     get iterationComposite() { return brand(effects, this, 'a KeyframeEffect').iterationComposite; }
     set iterationComposite(value) {
@@ -656,8 +668,16 @@
       });
     }
     setKeyframes(keyframes) {
-      brand(effects, this, 'a KeyframeEffect').frames = processKeyframes(keyframes);
+      const st = brand(effects, this, 'a KeyframeEffect');
+      st.frames = processKeyframes(keyframes);
+      effectChanged(st);
     }
+  }
+  // The effect's animation draws something else now.
+  function effectChanged(st) {
+    if (!st.animation) return;
+    st.animation.scripted = true;
+    report(st.animation);
   }
   function pseudoElement(value) {
     const s = String(value);
@@ -875,6 +895,48 @@
     // Only animations getAnimations() may list stay referenced from here.
     if (isRelevant(a)) live.add(a.self); else live.delete(a.self);
     plan(a);
+    report(a);
+  }
+
+  // Hands the engine the animation's state (animation_frame.rs), which
+  // samples its keyframes into the cascade; `null` once it has no effect and
+  // none to come without script.
+  function report(a) {
+    if (a.css !== undefined && !a.scripted) return;
+    const e = a.effect;
+    if (a.key === undefined) {
+      if (!e) return;
+      a.key = reportKey();
+    }
+    const target = e && e.keyframe && e.pseudo === null ? e.target : null;
+    const timing = e && computedTimingOf(e);
+    const inEffect = timing && timing.activeTime !== null;
+    const coming = a.pending !== null || playStateOf(a) === 'running';
+    const gone = !target || a.replaceState === 'removed' || (!inEffect && !coming) ||
+      (a.timeline === null && a.holdTime === null);
+    // A script animation that shows nothing leaves; a CSS animation's or
+    // transition's object stays, so that its CSS run shows nothing either
+    // (canceled, finished without fill, sought out of its interval).
+    if (gone && a.css === undefined) {
+      reportState(a.key, null);
+      return;
+    }
+    if (!e) return;
+    const t = e.timing;
+    // A CSS animation's or transition's own effect has no keyframes (the
+    // engine's are the CSS ones); one script gave it has.
+    const frames = e.frames.map(f => {
+      let text = '';
+      for (const { prop, value } of f.values.values()) text += `${prop}: ${value}; `;
+      return [f.computed, f.easing.text === 'linear' ? null : f.easing.text, f.composite === 'auto' ? null : f.composite, text];
+    });
+    const origin = a.timeline ? timelines.get(a.timeline).origin : null;
+    reportState(a.key, [
+      target, a.css !== undefined ? a.cssId : -1, frames, a.startTime, a.holdTime, a.rate, origin,
+      t.delay, t.endDelay, t.fill === 'auto' ? 'none' : t.fill, t.iterationStart, t.iterations,
+      iterationDuration(t), t.direction, t.easing.text === 'linear' ? null : t.easing.text, e.composite,
+      gone ? 1 : 0,
+    ]);
   }
 
   function finishNotification(a) {
@@ -938,6 +1000,7 @@
     a.timerGen++;
     a.finishGen++;
     live.delete(a.self);
+    report(a);
   }
 
   // The effect is current or in effect: getAnimations() lists it.
@@ -1000,12 +1063,14 @@
     }
     set effect(v) {
       const a = brand(animations, this, 'an Animation');
+      a.scripted = true;
       if (v !== null && !effects.has(v)) throw new TypeError("The provided value is not of type 'AnimationEffect'.");
       setEffect(a, v === null ? null : effects.get(v));
     }
     get timeline() { return brand(animations, this, 'an Animation').timeline; }
     set timeline(v) {
       const a = brand(animations, this, 'an Animation');
+      a.scripted = true;
       if (v !== null && !timelines.has(v)) throw new TypeError("The provided value is not of type 'AnimationTimeline'.");
       if (v === a.timeline) return;
       const previous = playStateOf(a);
@@ -1020,6 +1085,7 @@
     get startTime() { return brand(animations, this, 'an Animation').startTime; }
     set startTime(v) {
       const a = brand(animations, this, 'an Animation');
+      a.scripted = true;
       const start = v === null ? null : toDouble(v, 'startTime');
       const tt = timelineTime(a.timeline);
       if (tt === null && start !== null) a.holdTime = null;
@@ -1038,6 +1104,7 @@
     get currentTime() { return currentTimeOf(brand(animations, this, 'an Animation')); }
     set currentTime(v) {
       const a = brand(animations, this, 'an Animation');
+      a.scripted = true;
       const seek = v === null ? null : toDouble(v, 'currentTime');
       silentlySetCurrentTime(a, seek);
       if (a.pending === 'pause') {
@@ -1053,6 +1120,7 @@
     get playbackRate() { return brand(animations, this, 'an Animation').rate; }
     set playbackRate(v) {
       const a = brand(animations, this, 'an Animation');
+      a.scripted = true;
       const rate = toDouble(v, 'playbackRate');
       a.pendingRate = null;
       const previous = currentTimeOf(a);
@@ -1074,10 +1142,10 @@
       if (end === Infinity) return 0;
       return Math.min(Math.max(ct / end, 0), 1);
     }
-    play() { play(brand(animations, this, 'an Animation'), true); }
-    pause() { pause(brand(animations, this, 'an Animation')); }
+    play() { play(scripted(brand(animations, this, 'an Animation')), true); }
+    pause() { pause(scripted(brand(animations, this, 'an Animation'))); }
     finish() {
-      const a = brand(animations, this, 'an Animation');
+      const a = scripted(brand(animations, this, 'an Animation'));
       const rate = effectiveRate(a);
       if (rate === 0) throw invalidState('Cannot finish Animation with a playbackRate of 0.');
       if (rate > 0 && endOf(a) === Infinity) throw invalidState('Cannot finish Animation with an infinite target effect end.');
@@ -1098,9 +1166,9 @@
       track(a);
       updateFinished(a, true, true);
     }
-    cancel() { cancel(brand(animations, this, 'an Animation')); }
+    cancel() { cancel(scripted(brand(animations, this, 'an Animation'))); }
     reverse() {
-      const a = brand(animations, this, 'an Animation');
+      const a = scripted(brand(animations, this, 'an Animation'));
       if (timelineTime(a.timeline) === null) throw invalidState('Cannot reverse an animation with no active timeline');
       const original = a.pendingRate;
       a.pendingRate = -effectiveRate(a);
@@ -1112,7 +1180,7 @@
       }
     }
     updatePlaybackRate(v) {
-      const a = brand(animations, this, 'an Animation');
+      const a = scripted(brand(animations, this, 'an Animation'));
       const rate = toDouble(v, 'playbackRate');
       const previous = playStateOf(a);
       a.pendingRate = rate;
@@ -1175,6 +1243,13 @@
   }
   Object.defineProperty(Animation.prototype, Symbol.toStringTag, { value: 'Animation', configurable: true });
 
+  // Script controls the animation: a CSS animation or transition follows its
+  // object's state from now on (reported).
+  function scripted(a) {
+    a.scripted = true;
+    return a;
+  }
+
   function setEffect(a, effect) {
     if (a.effect === effect) return;
     if (effect && effect.animation && effect.animation !== a) {
@@ -1191,7 +1266,9 @@
   // CSSAnimation and CSSTransition: the CSS animations and transitions the
   // engine keeps (animation_events.rs), made when getAnimations() first
   // lists them. Their effects have the CSS timing and no keyframes: the
-  // layout settles CSS animations at their end state.
+  // engine samples the CSS keyframes (or the transition's values) itself, by
+  // its own timeline until script controls the object, by the object's
+  // state after.
   const CSS_TRANSITION = 0, CSS_ANIMATION = 1;
   const cssRuns = new Map();
   class CSSAnimation extends Animation {
@@ -1202,18 +1279,41 @@
     constructor() { throw illegal(); }
     get transitionProperty() { return brand(animations, this, 'a CSSTransition').cssName; }
   }
-  function cssRun([id, target, transition, name, start, delay, duration, iterations]) {
-    const timing = { delay, duration, iterations, fill: transition ? 'backwards' : 'none' };
+  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held]) {
+    const timing = { delay, duration, iterations, fill, direction, easing };
     const effect = new KeyframeEffect(target, null, timing);
     const object = Reflect.construct(Animation, [effect, documentTimeline], transition ? CSSTransition : CSSAnimation);
     const a = animations.get(object);
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
     a.cssName = name;
-    object.startTime = start;
+    a.cssId = id;
+    // As the engine's timeline: started then, or held by
+    // `animation-play-state: paused`. One the style started this frame
+    // waits for the frame to start it (play-pending, its time held at 0),
+    // as a CSS animation or transition that starts does: listed by
+    // getAnimations() however short it is, `ready` once it runs.
+    const age = now() - start;
+    if (held !== null) {
+      a.startTime = null;
+      a.holdTime = held;
+    } else if (age < FRAME_MS) {
+      a.startTime = null;
+      a.holdTime = 0;
+      a.ready = deferred();
+      schedulePending(a, 'play');
+    } else {
+      a.startTime = start;
+      a.holdTime = null;
+    }
+    track(a);
+    updateFinished(a, true, false);
     return object;
   }
+  // A frame of the engine's (animation_frame.rs, `FRAME_MS`).
+  const FRAME_MS = 16;
   // The engine's runs now ([id, target, transition, name, start, delay,
-  // duration, iterations]); those it dropped (canceled) leave the list.
+  // duration, iterations, direction, fill, easing, held]); those it dropped
+  // (canceled) leave the list.
   function cssSync(runs) {
     const seen = new Set();
     for (const run of runs) {

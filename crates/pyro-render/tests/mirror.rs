@@ -4679,6 +4679,7 @@ fn assert_review(groups: Vec<Vec<(String, Mutate)>>) {
 
 /// Longhands Stylo now gives repaint or overflow damage (they used to relayout), on table parts,
 /// inline children, flex items, scroll and clip containers, list items and form controls.
+/// (`text-emphasis-style` relayouts again: its marks take room in their lines.)
 #[test]
 fn review_moved_longhands_match_fresh_builds() {
     let props = [

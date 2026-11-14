@@ -327,6 +327,25 @@ tests in `src/stylo_to_kurbo.rs`.
   transition events read them instead of scanning the document for elements that may transition on every
   style flush: the cost is the elements restyled, as in Chrome, where transitions start in style recalc.
 
+## Animated values the embedder samples into the cascade
+
+- `animation.rs` (new), `document.rs`, `node/element.rs`, `lib.rs`, `stylo.rs` (`animation_rule`,
+  `transition_rule`, `may_have_animations`, `has_animations`, `LayoutThreadScope`), `resolve.rs`: pyro keeps the
+  timing of CSS animations, CSS transitions and Web Animations itself (its UA sheet sets `animation` and
+  `transition` to `none !important`, so Stylo's servo animations never start) and hands the document, per element,
+  the keyframe effects in effect with their iteration progress (`BaseDocument::set_sampled_animations`). The
+  document resolves each effect's keyframes against the element's base style (its rules without the animations and
+  transitions levels, cascaded; a CSS animation's from the `@keyframes` rule Stylo finds for the element, so `em`,
+  `currentcolor`, `var()` and `inherit` resolve as for the element) and samples them as Web Animations samples a
+  keyframe effect: the effect's easing (with its before flag), neutral 0%/100% keyframes taking the underlying value,
+  the interval's keyframe easing, `add`/`accumulate`, values that do not interpolate flipping at the midpoint. The
+  values go on the element as two declaration blocks that `animation_rule` and `transition_rule` answer, so Stylo
+  cascades them at their levels, and an element with them is kept out of style sharing. An element is restyled only
+  when its values change; resolved keyframes are kept until the base rules or the parent's style change, checked
+  after each traversal, where the elements styled anew get their values and one more traversal
+  (`resolve_sampled_animations`). Pseudo-elements are not animated. Tests:
+  `crates/pyro-render/tests/sampled_animations.rs`.
+
 ## Inline layouts in vertical writing modes
 
 Layout keeps a vertical inline root's lines logical (x inline, y block). `Node::vertical_block_axis` says which
@@ -780,6 +799,146 @@ parley `LayoutContext` (and on the per-thread contexts of `parallel-construct`),
 document, its line breaking and its min/max-content widths, uses the same opportunities, and an iframe's document
 inherits it. `BaseDocument::line_break_override` reads it back (pyro-render rebuilds a persistent document whose
 setting differs). Covered by `crates/pyro-render/tests/hyphen_digit_breaks.rs`.
+
+## The `border-image-source` image is loaded; `background-clip: border-area` parses
+
+`src/util.rs` (`ImageLayerKind::BorderImage`, `ImageType::BorderImage`), `src/node/element.rs`
+(`ElementData::border_images`), `src/layout/damage.rs` (`flush_image_layers_from_style`), `src/stylo.rs`
+(`needs_style_image_flush`), `src/document.rs`: a `url()` in `border-image-source` is fetched and stored as the
+background and mask images are (a list of one), for blitz-paint's `border-image`. `src/document.rs` also turns
+on Stylo's `layout.css.background-clip.border-area.enabled`: `background-clip: border-area` was dropped as
+invalid, and blitz-paint clips it to the border's area. Covered by `crates/pyro-render/tests/borders_backgrounds.rs`.
+
+## `:lang()`
+
+`src/lang.rs` (new), `src/stylo.rs` (`match_non_ts_pseudo_class`, `lang_attr`, `match_element_lang`): upstream
+never matched `:lang()`. An element's language is the nearest inclusive ancestor's `xml:lang`, or `lang` on an
+HTML, SVG or MathML element, else the document's pragma-set default language (the `content` of the last
+`<meta http-equiv="content-language">` of its `<head>`, unless it lists several); a range matches by RFC 4647
+extended filtering, ASCII case-insensitively, as in Chromium (WPT css/CSS2/selectors/lang-*, syntax/
+case-sensitive-004). `lang_attr` gives Stylo the element's own attribute for invalidation; `:lang()` is a
+revalidation selector, so style sharing stays correct. The HTTP `Content-Language` header is not seen (the
+document's response headers do not reach the renderer). Covered by `crates/pyro-render/tests/lang_pseudo_class.rs`.
+
+## Tagged images in sRGB
+
+`src/icc.rs` (new), `src/net.rs` (`ImageHandler::parse`), `Cargo.toml` (`moxcms` 0.8, the image crate's own colour
+management library): a raster image's embedded ICC profile converts its pixels to sRGB when it is decoded (CSS
+Color 4, "Color spaces of tagged images"), as Chromium draws them for an sRGB screen (WPT css/css-color/
+tagged-images-*). `parse` decodes as `ImageReader::decode` does, keeping the decoder for `icc_profile()`. Each
+profile's transform is made once (32 kept); a profile that maps a probe of primary and gray ramps to itself
+within a level (an sRGB profile, which Skia leaves alone too) converts nothing, so sRGB-tagged images keep their
+exact pixels, and so do untagged ones. Profiles that are not RGB (CMYK, gray) are left out. Covered by
+`crates/pyro-render/tests/tagged_images.rs`.
+
+## Fonts for SVG text given at startup
+
+`src/util.rs` (`add_svg_font`, `FONT_DB`): fonts `add_svg_font` gave are loaded into usvg's font database, beside
+the system fonts, when it is made, so SVG text finds them by family name as if they were installed (pyro's
+`serve --font`, which the WPT reftest runner uses for Ahem). Call it before the first SVG is parsed. Covered by
+`crates/pyro-render/tests/startup_fonts.rs`.
+
+## Rotations by multiples of 90 degrees are exact
+
+`src/stylo_to_kurbo.rs` (`resolve_2d_transform`): the transform's coefficients that lie within 1e-9 of a whole number
+are made whole before the transform origin is applied, as Chromium computes a rotation by a multiple of 90 degrees
+exactly (`SinCosDegrees`). Stylo's `rotate(360deg)` came out with `b` and `c` of 2.4e-16, so the box was transformed:
+its text was not snapped to quarter pixels as untransformed text is, and was a few pixels off its reference, which
+the fuzzy limits of WPT css-transforms/transform-input-* hide while text is antialiased but not once it is aliased
+(the reftest runner's text). Now such a turn is no transform at all. Covered by
+`text_turned_by_a_whole_turn_draws_as_untransformed_text` in `crates/pyro-render/tests/text_aliasing.rs`.
+
+## SVG reference cycles usvg does not break
+
+`src/svg_refs.rs` (new), `src/util.rs` (`parse_svg_image`): usvg sets a clip path, mask or filter reference that
+closes a cycle of one or two elements to `none` (`fix_recursive_links`), but follows a longer cycle without end and
+overflows the stack, which ended the browser (WPT css/css-masking/clip-path-svg-content/clip-path-recursion-001.svg:
+`clip0`, `clip`, `clip2`). Before usvg parses a source that has `url(` and one of those properties, it is read with
+roxmltree (usvg's own), and every reference that closes a cycle (a back edge of a depth-first search over the
+elements of one kind, through the references their content makes, as attributes or `style` declarations) is set to
+`none`, as usvg treats a short cycle. Sources without a cycle are passed on as they are. Covered by
+`crates/pyro-render/tests/svg_reference_cycles.rs`.
+
+## SVG elements referenced from a box's CSS
+
+`src/node/svg.rs` (`BaseDocument::svg_reference_document`): blitz-paint applies `clip-path: url(#c)` and
+`mask-image: url(#m)` naming a `<clipPath>` or `<mask>` of an inline `<svg>` to a box. This gives it an SVG document
+for usvg: the outermost `<svg>` around the element, serialized as inline SVG is (`svg_source`, sprites resolved), in
+`<defs>` (none of it drawn, all of it referenceable), and content that references the element in a viewport of the
+given size (percentages in the element's content resolve against it), parsed by `util::parse_svg_image` (its fonts,
+its reference-cycle breaking). See blitz-paint's README.
+
+## Generated content and pseudo-elements (WPT reftests)
+
+- `src/layout/first_letter.rs`, `src/layout/inline/build.rs`, `src/node/text.rs`, `src/node/element.rs`,
+  `src/resolve.rs`, `src/stylo.rs`, `src/document.rs`, `src/mutator.rs`: `::first-letter` is applied (it was
+  cascaded and never used). The first letter of a block container's first line is its first typographic letter
+  unit with the punctuation before and after it (Unicode Ps, Pe, Pi, Pf and Po, as CSS 2.1 and Chromium include);
+  collapsible white space before it stays outside, and white space that does not collapse (a no-break space)
+  is content before it, so there is no first letter (as in Gecko). A block passes its first line on to its first
+  in-flow block child, so the letter may be in a descendant block, an inline or a `::before`; the nearest block
+  container with a `::first-letter` style styles it; table cells, inline-blocks, floats and positioned boxes keep
+  their first line, out-of-flow boxes are passed over, and an atomic inline or a `<br>` first means no first
+  letter. The text keeps its node: before an inline root builds its inline layout (`resolve_deferred_tasks`),
+  `first_letter::split` finds the letter (`TextLayout::first_letter`) and the build wraps its bytes in a span of
+  the pseudo-element's style. The style lives on a node the originating element owns (`ElementData::
+  first_letter`, not in the tree, no damage), the span's brush, so paint reads its colour, background and
+  decorations as an inline's; its parent is the letter's text's parent, from which the style inherits (the rules
+  the cascade matched, cascaded again with that parent: CSS 2.1's fictional tag sequence). A `::first-letter`
+  style that came, went or changed in a style traversal builds the inline layout holding the letter again
+  (`first_letter::style_changed`). A floated first letter (a drop cap) is not supported and is left unstyled.
+- `src/layout/counters.rs`, `src/layout/construct.rs`, `src/resolve.rs`, `src/stylo.rs`, `src/mutator.rs`:
+  `content` generates counters, quotes and images (only strings were). Before damage propagates, a walk in tree
+  order applies `counter-reset`, `counter-increment` and `counter-set` (in that order, as Gecko does; a list
+  item increments `list-item`) and evaluates the `content` of each `::before`/`::after` that generates a box:
+  `counter()` and `counters()` in the predefined counter styles (numeric, alphabetic, additive, cyclic; an
+  unknown name or a value out of a style's range is decimal) and `open-quote`/`close-quote` at the document's
+  quote depth (`quotes: auto` is English's). A counter is visible to its element, its descendants and its
+  following siblings; one a sibling made is replaced; an element with no box (`display: none`, `display:
+  contents`) changes none. The walk runs once a traversal kept a `::before`/`::after` whose content reads a
+  counter or a quote (sticky), and only after a restyle changed what counters read of an element (its and its
+  pseudo-elements' counter properties, `content`, `display` and `quotes`: `CounterInputs`) or a child list
+  changed (`counters_dirty`); an owner whose content changed is damaged. `content: url()` makes an `img` box (an
+  inline replaced box inheriting from the pseudo-element) fetched as `<img>` is (`load_generated_image`).
+- `src/layout/construct.rs`: the pseudo-elements of an inline inside an inline are made (the walk read the
+  parent's display, so only an inline root's children had theirs).
+- `src/layout/damage.rs`: `clear_damage_and_dirty_flags` clears the flags of what a pseudo-element generates (an
+  image's box): `mark_damaged` from the image's load stopped at its stale flag, so it was never laid out.
+- `src/layout/list.rs`, `src/layout/construct.rs`: a `::before` or `::after` with `display: list-item` gets a
+  marker. An inside symbol marker is text in the item's font when the page styles `::marker` (as Gecko draws
+  it), the bundled bullet glyph otherwise. An inside marker that is text (a number, or such a symbol) makes a
+  line of its own in an item with no other content; an empty item's bullet-font symbol marker stays unpainted
+  (painting it exposes WPT `list-style-position-applies-to-015`, an empty item in a table caption, until table
+  captions render).
+- `assets/default.css`: `area` is `display: none` without Gecko's `!important`, as in Chromium.
+- `src/stylo.rs`: `<body text>` maps to `color` (a legacy colour value).
+
+Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit tests here.
+
+## Ruby annotations and emphasis marks
+
+- `src/node/text.rs` (`TextAnnotation`, `TextAnnotationKind`, `can_take_emphasis_mark`), `src/layout/inline/build.rs`
+  (`FoundAnnotations`, `build_annotation`, `annotation_room`, `emphasis_mark`): an inline root's build finds its ruby
+  annotations and emphasis marks. An `<rt>` (or `<rtc>`) inside a `<ruby>` is not part of the root's text: it annotates
+  the text since the ruby (or the annotation before it) started, its base. An element whose `text-emphasis-style` is
+  not `none` has marks over its own text. Once the root is built each annotation gets a layout of its own, one line:
+  the `<rt>`'s content in its style, or the mark (`dot` `•◦`, `circle` `●○`, `double-circle` `◉◎`, `triangle` `▲△`,
+  `sesame` `﹅﹆`, or the string) in the element's font at half its size, as an `<rt>` has it. `under` is
+  `ruby-position: under` or `text-emphasis-position: under` (`auto` is `under right` for Chinese, by `-x-lang`;
+  in a vertical writing mode `left` is under the line). blitz-paint draws them (`draw_text_annotations`). Marks skip
+  word separators, `Z*`, `Cc`, `Cf`, `Cn` and `P*` characters (CSS Text Decoration 3, 3.1).
+- Room in the line: each annotation's content area (ascent to descent of its line) is room its holder needs beyond
+  its content area, over or under it (`parley::TextStyle::annotation_space`; nested ruby stacks: an annotation of a
+  base that has one goes outside it). The root is built again with it once it has any, so the line box grows where
+  the line height leaves too little (CSS Ruby 1, 4.4), for ruby and marks alike (WPT `text-emphasis-line-height-*`).
+- `src/stylo_to_parley.rs`: `annotation_space` is set by the build only.
+- `src/layout/damage.rs` (`compute_layout_damage`): a change of `text-emphasis-style`, `text-emphasis-position` or
+  `ruby-position` collects the inline layout again (Stylo gives `text-emphasis-style` relayout damage for it).
+- `src/document.rs`: the prefs `layout.css.text-emphasis.enabled`, `layout.css.ruby.enabled` (`ruby-position`,
+  `ruby-align`) and `layout.css.text-decoration-inset-percentage.enabled`.
+- Not done: ruby layout proper. An annotation wider than its base does not space the base out, `ruby-align` is
+  ignored, `<rt>`'s box (background, border) is not painted, and `display: ruby*` stays unparsed (Stylo has it
+  for Gecko only), so ruby is found by element name. Covered by `crates/pyro-render/tests/text_emphasis_ruby.rs`.
 
 ## Moving from 0.3.0-beta.4 to main
 
