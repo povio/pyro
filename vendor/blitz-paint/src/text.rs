@@ -54,6 +54,38 @@ impl VerticalLine {
         Self { central, all_upright }
     }
 
+    /// pyro: how far [`Self::fragment_shift`] moves a run along the block axis (layout px).
+    fn fragment_shift_y(self, run: &parley::GlyphRun<'_, TextBrush>) -> f32 {
+        self.fragment_shift(run).translation().y as f32
+    }
+
+    /// pyro: how far a run's glyphs move along the block axis when they are drawn turned with
+    /// the line (sideways), `None` when they stand upright: [`ink_gaps`] cuts around the outlines
+    /// of turned glyphs only.
+    fn turned_run_shift(self, run: &parley::GlyphRun<'_, TextBrush>, source: Option<&str>) -> Option<f64> {
+        match self.run_placement(run, source) {
+            (shift, None) => Some(shift.translation().y),
+            (_, Some(_)) => None,
+        }
+    }
+
+    /// pyro: the metrics a decoration of `run` is placed with on a central baseline (Blink's
+    /// `TextDecorationOffset` with `FontBaseline::kCentral`), `None` for sideways text (on the
+    /// alphabetic baseline, placed as horizontal text is). `scale`: device px per CSS px.
+    fn central_metrics(self, run: &parley::GlyphRun<'_, TextBrush>, scale: f64) -> Option<CentralMetrics> {
+        self.central?;
+        let metrics = run.run().font_metrics();
+        // The fragment's box, as `fragment_shift` centres it: its whole-CSS-pixel ascent above the
+        // baseline (Chrome's geometry at a device scale is its geometry at 1, scaled).
+        let baseline = run.baseline() + self.fragment_shift_y(run);
+        let (ascent, descent) = (f64::from(metrics.ascent) / scale, f64::from(metrics.descent) / scale);
+        Some(CentralMetrics {
+            line_over: baseline - (ascent.round() * scale) as f32,
+            height: ascent.round() + descent.round(),
+            em: f64::from(run.run().font_size()) / scale,
+        })
+    }
+
     /// Moves a run's fragment box from the alphabetic baseline to the central one.
     fn fragment_shift(self, run: &parley::GlyphRun<'_, TextBrush>) -> Affine {
         let Some(central) = self.central else {
@@ -107,6 +139,82 @@ fn is_upright_char(c: char) -> bool {
         | 0xFFE0..=0xFFE6
         | 0x1F000..=0x1FAFF
         | 0x20000..=0x3FFFF)
+}
+
+/// pyro: a glyph run's font on a central baseline (the `mixed` and `upright` text of
+/// `vertical-rl`/`vertical-lr`), where Blink places decorations from the text fragment's
+/// line-over edge by the em box (`TextDecorationOffset::ComputeUnderlineOffsetForUnder` with
+/// `FontBaseline::kCentral`), not from the alphabetic baseline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CentralMetrics {
+    /// The fragment's line-over edge (layout y of the line, before the line is turned).
+    line_over: f32,
+    /// The font's ascent plus descent, each rounded to a whole CSS px (Blink's `FontMetrics`
+    /// rounds both: its float height is this too), on which the central baseline is centred.
+    height: f64,
+    /// The font size (CSS px).
+    em: f64,
+}
+
+/// pyro: a decoration line of a vertical line, `top..top + size` across the line (layout y), with
+/// its edges moved onto whole device pixels where `transform` turns the line a quarter: Blink draws
+/// the line unantialiased, so it covers the pixels whose centres it covers.
+fn snap_turned_band(transform: Affine, top: f64, size: f64) -> (f64, f64) {
+    let [a, _, c, d, e, _] = transform.as_coeffs();
+    if a != 0.0 || d != 0.0 || c.abs() != 1.0 {
+        return (top, size);
+    }
+    // The device x of a layout y is `c * y + e`.
+    let snap = |y: f64| ((c * y + e + 0.5).floor() - e) / c;
+    let (y0, y1) = (snap(top), snap(top + size));
+    (y0.min(y1), (y1 - y0).abs())
+}
+
+/// pyro: Blink's `LayoutUnit::FromFloatRound`: to the nearest 1/64 px.
+fn layout_unit(v: f64) -> f64 {
+    (v * 64.0).round() / 64.0
+}
+
+impl CentralMetrics {
+    /// Where a decoration line `thickness` CSS px thick starts, CSS px below the line-over edge
+    /// (measured on Chrome 157, Inter at 10 to 54 px): an underline 1px under the em box
+    /// (`offset`: `text-underline-offset`, CSS px), or (`over`) 1px over it (the offset then moves
+    /// it away from the text, upward); an overline on the font's whole-pixel ascent (`TextTop`,
+    /// `Height() - Height() / 2` over the central baseline), or under the em box where the
+    /// underline and overline trade sides.
+    fn decoration_top(self, underline: bool, over: bool, offset: f64, thickness: f64) -> f64 {
+        let half = self.height / 2.0;
+        match (underline, over) {
+            // `BottomOfEmHeight`: the em box's bottom is half an em below the central baseline.
+            (true, false) | (false, true) => {
+                let offset = if underline { offset } else { 0.0 };
+                (layout_unit(half + self.em / 2.0) + layout_unit(offset)).floor() + 1.0
+            }
+            // `TopOfEmHeight`, on the line-over side.
+            (true, true) => (layout_unit(half - self.em / 2.0) - layout_unit(offset)).floor() - 1.0 - thickness.floor(),
+            // `TextTop`: `Height() - Height() / 2` over the central baseline, in whole pixels.
+            (false, false) => (half - (self.height - half.floor())).floor() - thickness.floor(),
+        }
+    }
+}
+
+/// pyro: whether a decorating box's underline goes on the line-over side (and its overline on
+/// the line-under side) in text on a central baseline: Blink's `ResolveUnderlinePosition`
+/// (`kOver`): for Japanese and Korean unless `text-underline-position: left`, otherwise only
+/// for `right`. Mongolian too, as css-text-decor-3's `auto` and Gecko have it (Blink leaves it
+/// out; WPT's `text-underline-position-auto-001`).
+fn underline_over_in_vertical(styles: &style::properties::ComputedValues) -> bool {
+    if !styles.writing_mode.is_vertical() {
+        return false;
+    }
+    let position = styles.get_inherited_text().text_underline_position;
+    let lang: &str = &styles.get_font()._x_lang.0;
+    let primary = lang.split(['-', '_']).next().unwrap_or("");
+    if ["ja", "ko", "mn"].iter().any(|l| primary.eq_ignore_ascii_case(l)) {
+        !position.contains(TextUnderlinePosition::LEFT)
+    } else {
+        position.contains(TextUnderlinePosition::RIGHT)
+    }
 }
 
 /// Draw the backgrounds of inline elements (e.g. `<span style="background: ...">`).
@@ -236,6 +344,9 @@ struct ResolvedDecoration {
     underline_under: bool,
     /// Whether `text-underline-position: from-font` is in effect.
     underline_from_font: bool,
+    /// pyro: the underline and overline trade sides in text on a central baseline
+    /// ([`underline_over_in_vertical`]).
+    underline_over_in_vertical: bool,
     /// `text-decoration-inset`. Resolved per run.
     inset: GenericTextDecorationInset<LengthPercentage>,
     /// pyro: `text-decoration-skip-ink`: underlines and overlines leave gaps where glyphs cross
@@ -364,6 +475,9 @@ struct DecorationRunGeometry {
     underline_size: f32,
     strikethrough_size: f32,
     css_font_size: f64,
+    /// pyro: the run's font on a central baseline (vertical text), which places underlines and
+    /// overlines instead of the alphabetic baseline.
+    central: Option<CentralMetrics>,
 }
 
 /// A decoration accumulated across the runs of a single line for one decorating box.
@@ -682,7 +796,7 @@ fn flush_line_decorations<S: PaintScene>(
     phase: DecorationPhase,
     line_runs: &[parley::GlyphRun<'_, TextBrush>],
     source: Option<&str>,
-    vertical: bool,
+    vertical: Option<VerticalLine>,
 ) {
     let TextPaintOptions {
         scale,
@@ -711,8 +825,9 @@ fn flush_line_decorations<S: PaintScene>(
                 // A descendant run's baseline may be shifted by `vertical-align`, but the
                 // decoration is positioned from the decorating box's own baseline. For the
                 // inline root (and a block it is in) that is the line's baseline, and its font
-                // (pyro) the root's: the line's strut.
-                if acc.node_id == inline_root_id || acc.outer {
+                // (pyro) the root's: the line's strut. (In a vertical line Blink places a
+                // decoration from the text it decorates, the run's own fragment.)
+                if (acc.node_id == inline_root_id || acc.outer) && vertical.is_none() {
                     geom.baseline = strut.baseline;
                     geom.content_ascent = strut.ascent;
                     geom.content_descent = strut.descent;
@@ -759,14 +874,19 @@ fn flush_line_decorations<S: PaintScene>(
         // `skip` is the line's thickness (CSS px, before it is cut) where it skips ink.
         let draw_line = |scene: &mut S, top: f64, thickness: f64, double_dir: f64, skip: Option<f64>| {
             let (top, size) = (baseline + top * scale, thickness * scale);
+            let (top, size) = match vertical {
+                Some(_) => snap_turned_band(transform, top, size),
+                None => (top, size),
+            };
             let gaps = match skip {
-                Some(t) if deco.skip_ink != TextDecorationSkipInk::None && !vertical => ink_gaps(
+                Some(t) if deco.skip_ink != TextDecorationSkipInk::None => ink_gaps(
                     line_runs,
                     source,
                     (acc.min_x, acc.max_x),
                     (top + 0.5 * scale, top + size - 0.5 * scale),
                     t.min(13.0) * scale,
                     deco.skip_ink == TextDecorationSkipInk::All,
+                    vertical,
                 ),
                 _ => SmallVec::new(),
             };
@@ -795,8 +915,17 @@ fn flush_line_decorations<S: PaintScene>(
                 // are on whole device pixels (Blink clips them out aliased), so that a line drawn
                 // over another with the same gaps covers it.
                 let (start, end) = (acc.min_x + inset_start, acc.max_x - inset_end);
-                let [a, b, c, d, tx, _] = transform.as_coeffs();
-                let snap = |x: f64| if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) { (tx + x).round() - tx } else { x };
+                let [a, b, c, d, tx, ty] = transform.as_coeffs();
+                let snap = |x: f64| {
+                    if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) {
+                        (tx + x).round() - tx
+                    } else if a == 0.0 && d == 0.0 && b.abs() == 1.0 && c.abs() == 1.0 {
+                        // pyro: a vertical line, turned a quarter: its x runs along the device y.
+                        ((ty + b * x).round() - ty) / b
+                    } else {
+                        x
+                    }
+                };
                 let mut pieces: SmallVec<[(f64, f64); 8]> = SmallVec::new();
                 let mut x = start;
                 for &(gap_start, gap_end) in &gaps {
@@ -843,6 +972,14 @@ fn flush_line_decorations<S: PaintScene>(
         // The font's ascent and descent in whole CSS px.
         let ascent = (f64::from(geom.content_ascent) / scale).round();
         let descent = (f64::from(geom.content_descent) / scale).round();
+        // pyro: on a central baseline, a line's top (CSS px from the baseline) from the fragment's
+        // line-over edge ([`CentralMetrics::decoration_top`]).
+        let central_top = |underline: bool, offset: f64, t: f64| {
+            geom.central.map(|central| {
+                let over = deco.underline_over_in_vertical;
+                f64::from(central.line_over - geom.baseline) / scale + central.decoration_top(underline, over, offset, t)
+            })
+        };
 
         if wanted.contains(TextDecorationLine::UNDERLINE) && deco.line.contains(TextDecorationLine::UNDERLINE) {
             let t = decoration_thickness(&deco.thickness, geom.underline_size, geom.css_font_size, scale);
@@ -851,7 +988,9 @@ fn flush_line_decorations<S: PaintScene>(
                 .underline_offset
                 .as_ref()
                 .map(|lp| f64::from(lp.resolve(Length::new(geom.css_font_size as f32)).px()));
-            let top = if deco.underline_under {
+            let top = if let Some(top) = central_top(true, offset.unwrap_or(0.0), t) {
+                top
+            } else if deco.underline_under {
                 // Below the descent, clear of descending glyphs like "gqy".
                 descent + offset.unwrap_or(0.0).round()
             } else if deco.underline_from_font {
@@ -871,7 +1010,8 @@ fn flush_line_decorations<S: PaintScene>(
             let t = decoration_thickness(&deco.thickness, geom.underline_size, geom.css_font_size, scale);
             let thickness = whole_css_px(t);
             // A `double` overline extends upward, away from the text.
-            draw_line(scene, -ascent - thickness, thickness, -1.0, Some(t));
+            let top = central_top(false, 0.0, t).unwrap_or(-ascent - thickness);
+            draw_line(scene, top, thickness, -1.0, Some(t));
         }
         if wanted.contains(TextDecorationLine::LINE_THROUGH) && deco.line.contains(TextDecorationLine::LINE_THROUGH) {
             let t = decoration_thickness(&deco.thickness, geom.strikethrough_size, geom.css_font_size, scale);
@@ -915,6 +1055,7 @@ fn own_decoration(styles: &style::properties::ComputedValues) -> Option<Resolved
         underline_from_font: itext
             .text_underline_position
             .contains(TextUnderlinePosition::FROM_FONT),
+        underline_over_in_vertical: underline_over_in_vertical(styles),
         inset: text.text_decoration_inset.clone(),
         skip_ink: itext.text_decoration_skip_ink,
     })
@@ -1161,13 +1302,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             // produce a single straight line rather than one stepped segment per run.
             let (content_top, content_bottom) = line.span_content_area(glyph_run.style_index());
             let geometry = DecorationRunGeometry {
-                baseline: glyph_run.baseline(),
+                // pyro: in a vertical line, where the run's fragment is drawn (`VerticalLine`).
+                baseline: glyph_run.baseline() + vertical.map_or(0.0, |vertical| vertical.fragment_shift_y(glyph_run)),
                 content_ascent: glyph_run.baseline() - content_top,
                 content_descent: content_bottom - glyph_run.baseline(),
                 underline_offset: metrics.underline_offset,
                 underline_size: metrics.underline_size,
                 strikethrough_size: metrics.strikethrough_size,
                 css_font_size,
+                central: vertical.and_then(|vertical| vertical.central_metrics(glyph_run, scale)),
             };
             let run_node_id = style.brush.id;
             // pyro: decorations span what the cut keeps of the run.
@@ -1234,7 +1377,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 phase,
                 &glyph_runs,
                 source,
-                vertical.is_some(),
+                vertical,
             )
         };
 
@@ -1729,7 +1872,9 @@ fn embolden_scale(color: Color) -> f64 {
 /// (layout x), as Blink's `TextPainter::ClipDecorationLine` cuts them: around the ink of every
 /// glyph on the line inside `band` (layout y, top to bottom: the line less half a pixel at each
 /// edge), grown by `dilation` on each side (the line's thickness, at most 13px); not around CJK
-/// glyphs unless `cjk` (`skip-ink: all`). Merged and in order.
+/// glyphs unless `cjk` (`skip-ink: all`). Merged and in order. pyro: in a `vertical` line, the
+/// glyphs turned with it are where they are drawn, and upright ones leave no gap.
+#[allow(clippy::too_many_arguments)]
 fn ink_gaps(
     runs: &[parley::GlyphRun<'_, TextBrush>],
     source: Option<&str>,
@@ -1737,6 +1882,7 @@ fn ink_gaps(
     band: (f64, f64),
     dilation: f64,
     cjk: bool,
+    vertical: Option<VerticalLine>,
 ) -> SmallVec<[(f64, f64); 8]> {
     let mut gaps: SmallVec<[(f64, f64); 8]> = SmallVec::new();
     // A 1px line's band is its middle: what crosses that line.
@@ -1748,6 +1894,13 @@ fn ink_gaps(
         if run_x1 + dilation < extent.0 || run_x0 - dilation > extent.1 {
             continue;
         }
+        let shift = match vertical {
+            Some(vertical) => match vertical.turned_run_shift(glyph_run, source) {
+                Some(shift) => shift,
+                None => continue,
+            },
+            None => 0.0,
+        };
         let run = glyph_run.run();
         let (font, size) = (run.font(), run.font_size());
         let coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
@@ -1767,7 +1920,7 @@ fn ink_gaps(
                     continue;
                 }
                 // The band in the glyph's own space (y up from its origin).
-                let y = f64::from(glyph.y);
+                let y = f64::from(glyph.y) + shift;
                 let (lo, hi) = ((y - band.1) as f32, (y - band.0) as f32);
                 let Some((a, b)) = glyph_intercept(font, coords, size, glyph.id, lo, hi) else {
                     continue;

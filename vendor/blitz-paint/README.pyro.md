@@ -320,6 +320,25 @@ from the root of an upstream checkout at that commit) is the whole diff.
     marks outside ruby). Annotations turn with their line in vertical writing modes, and a `background-clip: text`
     mask holds them.
   - Covered by `crates/pyro-render/tests/text_decoration_lines.rs` and `text_emphasis_ruby.rs`.
+- Vertical writing modes (WPT reftest lane L):
+  - `src/text.rs` (`CentralMetrics`, `underline_over_in_vertical`, `flush_line_decorations`): on the central baseline
+    of `vertical-rl`/`vertical-lr` text (`mixed` and `upright`) underlines and overlines are placed from the text
+    fragment's line-over edge by the em box, as Blink's `TextDecorationOffset` does with `FontBaseline::kCentral`
+    (measured on Chrome 157, Inter at 10 to 54 px, whose rounded ascent and descent are Blink's float height too): an
+    underline `floor(H/2 + em/2 + offset) + 1` px from the edge (1px under the em box), an overline on the font's
+    whole-pixel ascent (`floor(H/2 - (H - floor(H/2))) - t`). `text-underline-position: right`, and Japanese or Korean
+    text without `left`, trade their sides (`ResolveUnderlinePosition`'s `kOver`): the underline goes 1px over the em
+    box (`text-underline-offset` moving it outward) and the overline where the underline would be. The run's own
+    fragment places them (Blink uses no decorating box in vertical writing modes), its baseline where `VerticalLine`
+    draws it. Sideways text keeps the alphabetic baseline and the horizontal rules. A vertical line's decorations
+    have their edges on whole device pixels (Blink draws them unantialiased; `snap_turned_band`).
+  - `src/text.rs` (`ink_gaps`, `VerticalLine::turned_run_shift`): `text-decoration-skip-ink` cuts the decorations of
+    vertical lines too, around the glyphs turned with the line (upright glyphs leave no gap), their gap edges on whole
+    device pixels.
+  - `src/render.rs` (`draw_vertical_inline_layout`, `draw_turned_lines`): `sideways-lr` lines are turned a quarter
+    counterclockwise, running bottom to top from the content box's bottom with their line-over side on the left
+    (they were drawn as `sideways-rl`'s, top to bottom).
+  - Covered by `crates/pyro-render/tests/vertical_text_decorations.rs`.
 - `src/render.rs` (`render_element`): an element whose 3D transform hides it (blitz-dom's
   `NodeFlags::TRANSFORM_HIDES`: its back face shows with `backface-visibility: hidden`, it lies behind the
   viewer, or its matrix has no inverse) is not painted, nor is its content. Covered by

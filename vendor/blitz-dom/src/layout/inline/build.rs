@@ -319,10 +319,13 @@ fn build_inline_layout_with(
                 let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
                 builder.push_text(mark);
                 // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
-                // mode the right side is over the line.
+                // mode the right side is over the line (pyro: under it in `sideways-lr`).
                 let position = itext.text_emphasis_position;
                 let under = if style.writing_mode.is_vertical() {
-                    position.contains(TextEmphasisPosition::LEFT)
+                    let sideways_lr = style
+                        .writing_mode
+                        .contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR);
+                    position.contains(TextEmphasisPosition::LEFT) != sideways_lr
                 } else if position.contains(TextEmphasisPosition::AUTO) {
                     let lang: &str = &style.get_font()._x_lang.0;
                     let lang = lang.to_ascii_lowercase();
