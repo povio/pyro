@@ -409,7 +409,16 @@ pub(crate) fn collect_layout_children(
     container_node_id: NodeId,
     out: &mut LayoutChildren,
 ) {
-    collect_layout_children_with_wrap(doc, container_node_id, out, None)
+    collect_layout_children_with_wrap(doc, container_node_id, out, None);
+    // pyro: table parts among a block container's children are wrapped in anonymous tables
+    // (CSS 2.1 §17.2.1, `table_fixup`). A table fixes up its own children; an inline root's
+    // layout children are its atomic inlines.
+    let node = &doc.nodes[container_node_id];
+    let is_table = node.display_style().is_some_and(|display| display.inside() == DisplayInside::Table);
+    if !is_table && !node.flags.is_inline_root() {
+        let LayoutChildren { children, anonymous_blocks, .. } = out;
+        super::table_fixup::wrap_misparented_table_parts(doc, container_node_id, children, anonymous_blocks);
+    }
 }
 
 fn collect_layout_children_with_wrap(
@@ -634,9 +643,9 @@ fn collect_layout_children_with_wrap(
         }
 
         DisplayInside::Table => {
-            let (table_context, tlayout_children) = build_table_context(doc, container_node_id);
+            let built = build_table_context(doc, container_node_id);
             #[allow(clippy::arc_with_non_send_sync)]
-            let data = SpecialElementData::TableRoot(Arc::new(table_context));
+            let data = SpecialElementData::TableRoot(Arc::new(built.context));
             doc.nodes[container_node_id]
                 .flags
                 .insert(NodeFlags::IS_TABLE_ROOT);
@@ -645,13 +654,10 @@ fn collect_layout_children_with_wrap(
                 .downcast_element_mut()
                 .unwrap()
                 .special_data = data;
-            if let Some(before) = doc.nodes[container_node_id].before() {
-                out.push(before, doc);
-            }
-            out.extend(&tlayout_children, doc);
-            if let Some(after) = doc.nodes[container_node_id].after() {
-                out.push(after, doc);
-            }
+            // pyro: the table's pseudo-elements are in its rows and cells (`table_fixup`), and
+            // the anonymous rows and cells it made are its own.
+            out.extend(&built.layout_children, doc);
+            out.anonymous_blocks.extend(built.anonymous);
         }
 
         // Flow, FlowRoot and TableCell, plus internal table displays (row,
@@ -837,7 +843,7 @@ fn sync_generated_children(
     true
 }
 
-fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
+pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
     let (before_style, after_style, before_node_id, after_node_id) = {
         let node = &doc.nodes[node_id];
 

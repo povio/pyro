@@ -494,11 +494,35 @@ impl ElementCx<'_, '_> {
                 ]
             })
             .collect();
+        // pyro: a part with a background image paints it (with its colour) cell by cell too,
+        // positioned against the part's own box (CSS 2.1 §17.5.1).
+        let has_image = |node_id: NodeId| -> bool {
+            self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                style
+                    .get_background()
+                    .background_image
+                    .0
+                    .iter()
+                    .any(|image| !matches!(image, ComputedImage::None))
+            })
+        };
+        let column_images: Vec<[bool; 2]> =
+            table.columns.iter().map(|col| [col.group.is_some_and(has_image), has_image(col.node_id)]).collect();
+        let row_images: Vec<[bool; 2]> =
+            table.rows.iter().map(|row| [row.group.is_some_and(has_image), has_image(row.node_id)]).collect();
         let has_color =
             |colors: &[[Option<Color>; 2]]| colors.iter().flatten().any(Option::is_some);
-        if !has_color(&column_colors) && !has_color(&row_colors) {
+        let any_image = |images: &[[bool; 2]]| images.iter().flatten().any(|image| *image);
+        if !has_color(&column_colors)
+            && !has_color(&row_colors)
+            && !any_image(&column_images)
+            && !any_image(&row_images)
+        {
             return;
         }
+        let part_rects = (any_image(&column_images) || any_image(&row_images))
+            .then(|| self.table_part_rects(table))
+            .flatten();
 
         let cell_rect = |cell_id: NodeId| -> Option<Rect> {
             let layout = self.context.dom.get_node(cell_id)?.final_layout();
@@ -530,13 +554,21 @@ impl ElementCx<'_, '_> {
         let after = gutter - before;
 
         for cell in &table.cells {
+            // A collapsed row (`visibility: collapse`) paints nothing.
+            if table.rows.get(cell.row as usize).is_some_and(|row| row.collapsed) {
+                continue;
+            }
             let no_colors = [None, None];
+            let no_images = [false, false];
             let column = column_colors
                 .get(cell.column as usize)
                 .unwrap_or(&no_colors);
             let row = row_colors.get(cell.row as usize).unwrap_or(&no_colors);
+            let column_image = column_images.get(cell.column as usize).unwrap_or(&no_images);
+            let row_image = row_images.get(cell.row as usize).unwrap_or(&no_images);
+            let images = column_image.iter().chain(row_image).any(|image| *image);
             let mut colors = column.iter().chain(row).flatten().peekable();
-            if colors.peek().is_none() {
+            if colors.peek().is_none() && !images {
                 continue;
             }
             let Some(mut rect) = cell_rect(cell.node_id) else {
@@ -553,10 +585,69 @@ impl ElementCx<'_, '_> {
             }
 
             let shape = rect.scale_from_origin(self.scale);
-            for color in colors {
-                scene.fill(Fill::NonZero, self.transform, *color, None, &shape);
+            if !images {
+                for color in colors {
+                    scene.fill(Fill::NonZero, self.transform, *color, None, &shape);
+                }
+                continue;
+            }
+            // Bottom to top: column group, column, row group, row.
+            let column_node = table.columns.get(cell.column as usize);
+            let row_node = table.rows.get(cell.row as usize);
+            let parts = [
+                (column_node.and_then(|col| col.group), column[0], column_image[0], PartKind::ColumnGroup),
+                (column_node.map(|col| col.node_id), column[1], column_image[1], PartKind::Column),
+                (row_node.and_then(|row| row.group), row[0], row_image[0], PartKind::RowGroup),
+                (row_node.map(|row| row.node_id), row[1], row_image[1], PartKind::Row),
+            ];
+            for (node_id, color, image, kind) in parts {
+                let Some(node_id) = node_id else { continue };
+                match (image, part_rects.as_ref()) {
+                    (true, Some(rects)) => {
+                        let part = rects.rect(table, node_id, kind, cell);
+                        self.draw_table_part_background(scene, node_id, part, &shape);
+                    }
+                    _ => {
+                        if let Some(color) = color {
+                            scene.fill(Fill::NonZero, self.transform, color, None, &shape);
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// pyro: where a table's rows and columns are (CSS px, the table's space), for the boxes of its
+    /// parts whose backgrounds are positioned against them.
+    fn table_part_rects(&self, table: &blitz_dom::TableContext) -> Option<TablePartRects> {
+        let grid_info = table.computed_grid_info.borrow();
+        let grid_info = grid_info.as_ref()?;
+        let top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
+        let columns: Vec<(f64, f64)> = super::PhysicalTracks::from_tracks(&grid_info.columns)
+            .iter()
+            .map(|track| (track.start as f64, track.end as f64))
+            .collect();
+        let rows: Vec<(f64, f64)> = super::PhysicalTracks::from_tracks(&grid_info.rows)
+            .iter()
+            .map(|track| (track.start as f64 + top, track.end as f64 + top))
+            .collect();
+        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows })
+    }
+
+    /// pyro: the background of a table part (`part`, the box its images are positioned against,
+    /// CSS px in the table's space) painted in `clip` (device px, the table's space): one cell.
+    fn draw_table_part_background(&self, scene: &mut impl PaintScene, node_id: NodeId, part: Rect, clip: &Rect) {
+        let Some(node) = self.context.dom.get_node(node_id) else { return };
+        if node.element_data().is_none() || node.primary_styles().is_none() {
+            return;
+        }
+        let mut layout = taffy::Layout::new();
+        layout.size = taffy::Size { width: part.width() as f32, height: part.height() as f32 };
+        let transform = self.transform * Affine::translate(Vec2::new(part.x0, part.y0) * self.scale);
+        let part_cx = self.context.element_cx(node, layout, transform, None);
+        scene.push_clip_layer(Fill::NonZero, self.transform, clip);
+        part_cx.draw_background(scene);
+        scene.pop_layer();
     }
 
     /// Whether the layer is positioned against the viewport
@@ -1334,5 +1425,57 @@ fn extend(offset: f64, length: f64) -> f64 {
         length - extend_length
     } else {
         -extend_length
+    }
+}
+
+/// pyro: a table part whose background is painted in its cells.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PartKind {
+    ColumnGroup,
+    Column,
+    RowGroup,
+    Row,
+}
+
+/// pyro: a table's column and row tracks (CSS px, the table's space): the boxes of its parts.
+struct TablePartRects {
+    columns: Vec<(f64, f64)>,
+    rows: Vec<(f64, f64)>,
+}
+
+impl TablePartRects {
+    /// The box of a part of `table`: a row or row group spans every column, a column or column
+    /// group every row, each over its own tracks.
+    fn rect(
+        &self,
+        table: &blitz_dom::TableContext,
+        node_id: NodeId,
+        kind: PartKind,
+        cell: &blitz_dom::TableCell,
+    ) -> Rect {
+        // From the start of the first track at `indices` to the end of the last.
+        fn span(tracks: &[(f64, f64)], mut indices: impl Iterator<Item = usize>) -> Option<(f64, f64)> {
+            let first = indices.next()?;
+            let last = indices.last().unwrap_or(first);
+            Some((tracks.get(first)?.0, tracks.get(last.min(tracks.len() - 1))?.1))
+        }
+        let all_columns = (self.columns[0].0, self.columns[self.columns.len() - 1].1);
+        let all_rows = (self.rows[0].0, self.rows[self.rows.len() - 1].1);
+        let (xs, ys) = match kind {
+            PartKind::Row => (all_columns, span(&self.rows, std::iter::once(cell.row as usize)).unwrap_or(all_rows)),
+            PartKind::RowGroup => {
+                let rows = table.rows.iter().enumerate().filter(|(_, row)| row.group == Some(node_id));
+                (all_columns, span(&self.rows, rows.map(|(at, _)| at)).unwrap_or(all_rows))
+            }
+            PartKind::Column => {
+                let columns = table.columns.iter().enumerate().filter(|(_, column)| column.node_id == node_id);
+                (span(&self.columns, columns.map(|(at, _)| at)).unwrap_or(all_columns), all_rows)
+            }
+            PartKind::ColumnGroup => {
+                let columns = table.columns.iter().enumerate().filter(|(_, column)| column.group == Some(node_id));
+                (span(&self.columns, columns.map(|(at, _)| at)).unwrap_or(all_columns), all_rows)
+            }
+        };
+        Rect::new(xs.0, ys.0, xs.1, ys.1)
     }
 }

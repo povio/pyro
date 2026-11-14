@@ -2086,6 +2086,25 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                             && resolved_border_colors(old) != resolved_border_colors(new)
                     }
                     _ => false,
+                }
+                // pyro: as does `visibility: collapse` coming or going on a row or row group
+                // (`TableRow::collapsed`: the row's track is taken away).
+                || match (&old_primary, new_primary) {
+                    (Some(old), Some(new)) if replaced => {
+                        use style::computed_values::visibility::T as Visibility;
+                        use style::values::specified::box_::DisplayInside;
+                        let (was, is) = (old.get_inherited_box().visibility, new.get_inherited_box().visibility);
+                        was != is
+                            && (was == Visibility::Collapse || is == Visibility::Collapse)
+                            && matches!(
+                                new.get_display().inside(),
+                                DisplayInside::TableRow
+                                    | DisplayInside::TableRowGroup
+                                    | DisplayInside::TableHeaderGroup
+                                    | DisplayInside::TableFooterGroup
+                            )
+                    }
+                    _ => false,
                 };
             drop(old_primary);
             if derive {

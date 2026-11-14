@@ -665,6 +665,19 @@ caption {
     text-align: center;
 }
 
+/* pyro: the anonymous table, row and cell boxes of CSS 2.1 §17.2.1 (layout/table_fixup.rs) */
+*|*::-servo-anonymous-table {
+    display: table;
+}
+
+*|*::-servo-anonymous-table-row {
+    display: table-row;
+}
+
+*|*::-servo-anonymous-table-cell {
+    display: table-cell;
+}
+
 table[align="center"]>caption {
     margin-inline-start: auto;
     margin-inline-end: auto;

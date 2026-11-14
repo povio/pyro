@@ -820,6 +820,50 @@ elements of one kind, through the references their content makes, as attributes 
 
 Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit tests here.
 
+## Table structure (WPT reftests)
+
+- `src/layout/table_fixup.rs` (new), `src/layout/construct.rs` (`collect_layout_children`), `src/layout/table.rs`
+  (`build_table_context`, `collect_table_cells`), `assets/default.css`: the anonymous table objects of CSS 2.1
+  §17.2.1 (css-tables-3 §3.3). Consecutive table parts among a block container's layout children (cells, rows,
+  row groups, columns, column groups, captions; not replaced elements, whose table display is inline content)
+  are wrapped in an anonymous table; a table's, row group's or row's children that are not its proper children
+  (text, inline and block boxes, nested tables, `::before`/`::after`) in anonymous rows or cells. White space
+  between table parts, or before or after one at the start or end, is dropped whatever `white-space` says (as in
+  Chromium); `display: contents` boxes are looked through; out-of-flow boxes stay the table's. The anonymous boxes
+  are slab nodes (`NodeData::AnonymousBlock`) styled as the UA sheet's `::-servo-anonymous-table`, `-row` and
+  `-cell` boxes from the box they are in, owned (`Node::anonymous_blocks`) by the box whose children they wrap;
+  their `children` are the DOM nodes they wrap. A table part's `::before`/`::after` are made as its children are
+  fixed up. A table, row group or row whose children are all proper ones (or white space, hidden or out of flow)
+  and that has no pseudo-element boxes is built from its children as they are, as before (no allocation, one
+  style read per child). Tables in a vertical writing mode keep the former construction (their stray children are
+  left out).
+- `src/layout/table.rs` (`offer_box`): a box without borders offers none to the collapsed borders (most rows,
+  groups and columns); the cells' grid areas are worked out once for the collapsed borders and their cells.
+- `src/layout/mod.rs` (`lay_out_table_captions`, `table_captions_min_width`), `src/layout/table.rs`
+  (`TableContext::captions`, `grid_box`): captions are laid out above (`caption-side: top`) and below the grid at
+  its width less their margins; the table is at least as wide as their min-content widths; its box is the
+  wrapper box and its grid moves down by the captions above it (`grid_box` tells paint where the table box proper
+  is). A table with captions does not keep its grid's last layout (`take_table_grid_state`).
+- `src/layout/table.rs`: collapsed borders are resolved before the columns get their widths, and a fixed table's
+  first-row cell width gives its column a border box with half of the collapsed borders beside it (CSS 2.1
+  §17.6.2); columns and column groups take part in conflict resolution (cell, row, row group, column, column
+  group, table); a collapsing table has no padding; a uniform collapsed table laid out as gutters and a separated
+  table (border-spacing as padding) take those out of a content-box table's lengths, which count half of the outer
+  borders and the spacing; a fixed table is never narrower than its columns' widths and the spacing between them;
+  a row or row group with `visibility: collapse` takes no height (`TableRow::collapsed`; `src/stylo.rs` makes the
+  change build the table again).
+- Incremental: a table with anonymous boxes, generated cells or rows, captions, rows or cells reached through
+  `display: contents`, or that is anonymous is built again on any change; `update_rows` builds the table again
+  when a changed row is anything but a row, or a group gains text, a non-row child or a pseudo-element.
+  `src/layout/damage.rs`: an anonymous table, row or cell's owner clears its layout cache and notes its cells as
+  changed (`clear_anonymous_table_box_caches`); its style is refreshed as the anonymous box it is, from its parent
+  (`refresh_anonymous_block_styles`); a `writing-mode` change builds the box again. `src/document.rs`: a freed
+  anonymous box leaves no `layout_parent`/`layout_child_of` pointing at it, and `drop_part_box` clears a part's.
+- `src/stylo_to_kurbo.rs`, `src/lib.rs`: `resolve_2d_transform_for_size` (blitz-paint transforms a row's cells by
+  the row's transform); `TableCell` and `TableContext` are exported.
+
+Tests: `table_structure` in pyro-render (each fails without its change); `mirror` covers the incremental paths.
+
 ## Ruby annotations and emphasis marks
 
 - `src/node/text.rs` (`TextAnnotation`, `TextAnnotationKind`, `can_take_emphasis_mark`), `src/layout/inline/build.rs`

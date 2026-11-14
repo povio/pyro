@@ -245,6 +245,18 @@ from the root of an upstream checkout at that commit) is the whole diff.
     `no-clip` (`BoxModelBox::NoClip`, the visible area): Stylo parses them for servo now (see
     `vendor/stylo/README.pyro.md`).
 
+- Table structure (WPT reftests; see blitz-dom's README):
+  - `src/render.rs` (`element_cx`): a table with captions paints its own box (background, borders, shadows,
+    outline) around its grid alone (`TableContext::grid_box`); `table_part_transform`: a cell is painted under its
+    row group's and row's transforms, each about the part's box (rows are transformable; their cells are the
+    table's children). A collapsed table whose cells hold half of the borders around them draws the borders after
+    its children (over the cells' backgrounds, as Chromium paints them).
+  - `src/render/border.rs`: a collapsed table with cells never draws its own border (its outer borders are the
+    collapsed ones that won there); the grid's borders are drawn below the captions above it.
+  - `src/render/background.rs` (`draw_table_row_backgrounds`): background images of column groups, columns, row
+    groups and rows are painted in each cell, positioned against the part's own box (`TablePartRects`), in that
+    order with their colours; a collapsed row (`visibility: collapse`) paints nothing.
+
 - Text decorations, emphasis marks and ruby (WPT reftest lane G):
   - `src/text.rs` (`flush_line_decorations`, `decoration_thickness`, `whole_css_px`, `StrutGeometry`): decoration
     lines are placed as Chromium places them, in whole CSS pixels from the baseline at any device scale (its

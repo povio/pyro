@@ -22,6 +22,16 @@ use style::{
 //   - Translate by the negated computed X, Y and Z values of transform-origin.
 //
 // <https://drafts.csswg.org/css-transforms-2/#ctm>
+/// pyro: [`resolve_2d_transform`] for a reference box of `width` by `height` CSS px at the origin
+/// (a table row's or row group's box, which blitz-paint transforms the cells by).
+pub fn resolve_2d_transform_for_size(box_styles: &BoxStyleStruct, width: f32, height: f32) -> Option<Affine> {
+    let reference_box = Rect::new(
+        euclid::default::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
+        euclid::default::Size2D::new(CSSPixelLength::new(width), CSSPixelLength::new(height)),
+    );
+    resolve_2d_transform(box_styles, reference_box)
+}
+
 pub fn resolve_2d_transform(
     box_styles: &BoxStyleStruct,
     reference_box: Rect<CSSPixelLength>,
