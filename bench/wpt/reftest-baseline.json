@@ -6466,7 +6466,7 @@
   "css/css-backgrounds/background-color-body-propagation-006.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/background-color-body-propagation-007.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/background-color-body-propagation-008.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
-  "css/css-backgrounds/background-color-body-propagation-009.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "css/css-backgrounds/background-color-body-propagation-009.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/background-color-body-propagation-010.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/background-color-clip.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/background-color-root-propagation-001.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"0e440bf2"},
