@@ -703,7 +703,7 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::Indeterminate => {
                 self.element_state().contains(ElementState::INDETERMINATE)
             }
-            NonTSPseudoClass::Lang(_) => false,
+            NonTSPseudoClass::Lang(ref lang) => self.match_element_lang(None, lang),
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
             NonTSPseudoClass::PlaceholderShown => {
@@ -1095,15 +1095,21 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn lang_attr(&self) -> Option<style::selector_parser::AttrValue> {
-        None
+        // pyro
+        crate::lang::own_lang(self).map(AtomString::from)
     }
 
     fn match_element_lang(
         &self,
-        _override_lang: Option<Option<style::selector_parser::AttrValue>>,
-        _value: &style::selector_parser::Lang,
+        override_lang: Option<Option<style::selector_parser::AttrValue>>,
+        value: &style::selector_parser::Lang,
     ) -> bool {
-        false
+        // pyro: the element's language (`crate::lang`), or the attribute a snapshot had.
+        match override_lang {
+            Some(Some(lang)) => crate::lang::range_matches(lang.as_ref(), value),
+            Some(None) => false,
+            None => crate::lang::language(self).is_some_and(|lang| crate::lang::range_matches(lang, value)),
+        }
     }
 
     fn is_html_document_body_element(&self) -> bool {

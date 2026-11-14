@@ -222,6 +222,11 @@ link by link. `about:blank` references are supported.
 
 As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
 
+- The browser runs as wptrunner runs Chrome (`chrome.py`, `--install-fonts`): text is drawn without antialiasing
+  (Chrome's `--enable-blink-features=NoFontAntialiasing`; pyro's `PYRO_TEXT_ANTIALIASING=off`, aliased glyphs only),
+  and Ahem is installed (`PYRO_FONTS=<wpt>/fonts/Ahem.ttf`, pyro's `--font`: the checkout's font file, nothing goes
+  into the system's font folders, locally or on the runners). `reftest.mjs` `reftestEnv` sets both; a pyro without
+  these options ignores them.
 - Test and references render in an 800x600 CSS px viewport at device scale factor 1 (a `<meta name=viewport-size>`
   sets another size), each in the browser under test.
 - The screenshot is taken after the load event, `document.fonts.ready` (after a forced layout: pyro requests a web font

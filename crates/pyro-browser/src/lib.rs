@@ -1130,16 +1130,30 @@ impl Browser {
             done(Err("no resource loader".into()));
             return;
         };
+        let environment = self.frame_document_encoding(frame);
         resource_loader.fetch(
             self,
             request,
             Box::new(move |_, result| {
                 done(result.and_then(|r| match r.status {
-                    200..=299 => Ok(r.body),
+                    200..=299 => Ok(r.render_body(environment.as_slice())),
                     status => Err(format!("HTTP {status}")),
                 }))
             }),
         );
+    }
+
+    /// The encoding `page`'s document was decoded with, the environment
+    /// encoding of the style sheets it imports ([`Resource::render_body`]).
+    pub fn document_encoding(&self, page: PageId) -> Option<String> {
+        self.frame_document_encoding(page.into())
+    }
+
+    /// [`Browser::document_encoding`] of `frame`'s document.
+    pub(crate) fn frame_document_encoding(&self, frame: FrameKey) -> Option<String> {
+        let page_dom = self.doc(frame)?.main_frame.page_dom.clone()?;
+        let dom = page_dom.dom.borrow();
+        dom.document_data(page_dom.document()).ok().map(|d| d.charset.to_owned())
     }
 
     /// Creates a page in context `context`.

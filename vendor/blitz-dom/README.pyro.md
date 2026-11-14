@@ -714,6 +714,56 @@ document, its line breaking and its min/max-content widths, uses the same opport
 inherits it. `BaseDocument::line_break_override` reads it back (pyro-render rebuilds a persistent document whose
 setting differs). Covered by `crates/pyro-render/tests/hyphen_digit_breaks.rs`.
 
+## `:lang()`
+
+`src/lang.rs` (new), `src/stylo.rs` (`match_non_ts_pseudo_class`, `lang_attr`, `match_element_lang`): upstream
+never matched `:lang()`. An element's language is the nearest inclusive ancestor's `xml:lang`, or `lang` on an
+HTML, SVG or MathML element, else the document's pragma-set default language (the `content` of the last
+`<meta http-equiv="content-language">` of its `<head>`, unless it lists several); a range matches by RFC 4647
+extended filtering, ASCII case-insensitively, as in Chromium (WPT css/CSS2/selectors/lang-*, syntax/
+case-sensitive-004). `lang_attr` gives Stylo the element's own attribute for invalidation; `:lang()` is a
+revalidation selector, so style sharing stays correct. The HTTP `Content-Language` header is not seen (the
+document's response headers do not reach the renderer). Covered by `crates/pyro-render/tests/lang_pseudo_class.rs`.
+
+## Tagged images in sRGB
+
+`src/icc.rs` (new), `src/net.rs` (`ImageHandler::parse`), `Cargo.toml` (`moxcms` 0.8, the image crate's own colour
+management library): a raster image's embedded ICC profile converts its pixels to sRGB when it is decoded (CSS
+Color 4, "Color spaces of tagged images"), as Chromium draws them for an sRGB screen (WPT css/css-color/
+tagged-images-*). `parse` decodes as `ImageReader::decode` does, keeping the decoder for `icc_profile()`. Each
+profile's transform is made once (32 kept); a profile that maps a probe of primary and gray ramps to itself
+within a level (an sRGB profile, which Skia leaves alone too) converts nothing, so sRGB-tagged images keep their
+exact pixels, and so do untagged ones. Profiles that are not RGB (CMYK, gray) are left out. Covered by
+`crates/pyro-render/tests/tagged_images.rs`.
+
+## Fonts for SVG text given at startup
+
+`src/util.rs` (`add_svg_font`, `FONT_DB`): fonts `add_svg_font` gave are loaded into usvg's font database, beside
+the system fonts, when it is made, so SVG text finds them by family name as if they were installed (pyro's
+`serve --font`, which the WPT reftest runner uses for Ahem). Call it before the first SVG is parsed. Covered by
+`crates/pyro-render/tests/startup_fonts.rs`.
+
+## Rotations by multiples of 90 degrees are exact
+
+`src/stylo_to_kurbo.rs` (`resolve_2d_transform`): the transform's coefficients that lie within 1e-9 of a whole number
+are made whole before the transform origin is applied, as Chromium computes a rotation by a multiple of 90 degrees
+exactly (`SinCosDegrees`). Stylo's `rotate(360deg)` came out with `b` and `c` of 2.4e-16, so the box was transformed:
+its text was not snapped to quarter pixels as untransformed text is, and was a few pixels off its reference, which
+the fuzzy limits of WPT css-transforms/transform-input-* hide while text is antialiased but not once it is aliased
+(the reftest runner's text). Now such a turn is no transform at all. Covered by
+`text_turned_by_a_whole_turn_draws_as_untransformed_text` in `crates/pyro-render/tests/text_aliasing.rs`.
+
+## SVG reference cycles usvg does not break
+
+`src/svg_refs.rs` (new), `src/util.rs` (`parse_svg_image`): usvg sets a clip path, mask or filter reference that
+closes a cycle of one or two elements to `none` (`fix_recursive_links`), but follows a longer cycle without end and
+overflows the stack, which ended the browser (WPT css/css-masking/clip-path-svg-content/clip-path-recursion-001.svg:
+`clip0`, `clip`, `clip2`). Before usvg parses a source that has `url(` and one of those properties, it is read with
+roxmltree (usvg's own), and every reference that closes a cycle (a back edge of a depth-first search over the
+elements of one kind, through the references their content makes, as attributes or `style` declarations) is set to
+`none`, as usvg treats a short cycle. Sources without a cycle are passed on as they are. Covered by
+`crates/pyro-render/tests/svg_reference_cycles.rs`.
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were

@@ -59,6 +59,8 @@ libc = "0.2"
 pyro-dom = { workspace = true }
 # Inflates PDF streams in the PDF tests.
 miniz_oxide = "0.8"
+# ICC profiles for the tagged image tests (the image crate's colour management library).
+moxcms = "0.8"
 
 [lints]
 workspace = true
@@ -66,3 +68,9 @@ workspace = true
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
+
+# `add_font_file` changes the process's fonts before their first use, which the
+# integration binary's tests make: its test runs in a process of its own.
+[[test]]
+name = "startup_fonts"
+path = "tests/startup_fonts.rs"
