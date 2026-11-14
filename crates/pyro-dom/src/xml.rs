@@ -351,7 +351,8 @@ struct Open {
     node: u32,
     /// Where its children are linked (`create`).
     target: u32,
-    /// An HTML `<script>` of the document: the builder stops at its end tag.
+    /// An HTML or SVG `<script>` of the document: the builder stops at its
+    /// end tag.
     script: bool,
     /// The parser holds a reference to it (it was open at a script).
     pinned: bool,
@@ -361,11 +362,13 @@ struct Open {
 ///
 /// The whole resource is validated first: a malformed one becomes a
 /// `parsererror` element and runs no script. Its nodes are then attached in
-/// document order up to the end tag of each HTML `<script>` of the document,
-/// where the builder stops until that script has run (HTML "parsing XML
-/// documents"). So a script does not find the content after it, and nothing
-/// after it loads or fires events before it has run: an `<iframe onload>`
-/// further down cannot call a function the scripts above have yet to define.
+/// document order up to the end tag of each HTML or SVG `<script>` of the
+/// document, where the builder stops until that script has run (HTML
+/// "parsing XML documents"; SVG 2 runs a parser-inserted script there too, as
+/// the HTML parser runs one in inline SVG). So a script does not find the
+/// content after it, and nothing after it loads or fires events before it has
+/// run: an `<iframe onload>` further down cannot call a function the scripts
+/// above have yet to define.
 pub(crate) struct Load {
     document: NodeId,
     /// The nodes not attached yet, in document order.
@@ -442,7 +445,12 @@ impl Load {
                 None => (document, document),
             };
             let (is_element, script) = match &node.kind {
-                NodeKind::Element(e) => (true, owner == document && e.is_html() && &*e.name.local == "script"),
+                NodeKind::Element(e) => (
+                    true,
+                    owner == document
+                        && (e.is_html() || &*e.name.ns == "http://www.w3.org/2000/svg")
+                        && &*e.name.local == "script",
+                ),
                 _ => (false, false),
             };
             let (id, target) = create(dom, node.kind, owner);

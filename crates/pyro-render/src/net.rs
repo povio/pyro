@@ -67,10 +67,12 @@ impl NetProvider for Provider {
         let ready = if inline {
             None
         } else {
+            // A sheet's text is decoded already: as UTF-8 behind a byte order
+            // mark, Blitz cannot decode it again by an `@charset` it starts with.
             self.sheets
                 .lock()
                 .ok()
-                .and_then(|s| s.get(&url).map(|text| Bytes::from(text.clone().into_bytes())))
+                .and_then(|s| s.get(&url).map(|text| Bytes::from(utf8_sheet(text))))
                 .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&url).cloned()))
         };
         if let Some(bytes) = ready {
@@ -101,6 +103,15 @@ impl NetProvider for Provider {
             }),
         );
     }
+}
+
+/// `text` as UTF-8 behind a byte order mark, which outranks every other
+/// source of a style sheet's encoding (CSS Syntax).
+fn utf8_sheet(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(text.len() + 3);
+    bytes.extend_from_slice(b"\xEF\xBB\xBF");
+    bytes.extend_from_slice(text.as_bytes());
+    bytes
 }
 
 pub(crate) struct Bridge {
