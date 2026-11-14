@@ -242,6 +242,31 @@ from the root of an upstream checkout at that commit) is the whole diff.
     colour syntax) is the peniko gradient's (stops were interpolated in sRGB whatever it said), and a gradient of
     one colour is filled with that colour (`linear-gradient(white, white)` came out a level short in places).
 
+- `clip-path` and masks on boxes for the WPT paint reftests (`css/css-masking/clip-path`, `clip-rule`,
+  `mask-image`), as CSS Masking, CSS Shapes and Chromium have them; covered by
+  `crates/pyro-render/tests/clip_path_mask.rs`:
+  - `src/render/clip_path.rs` (`element_clip`, `with_element_clip`), `src/render.rs` (`render_element`): a clip has
+    its fill rule (`polygon(evenodd, …)`, `path()` and `shape()` took `nonzero`), and a shape of no area clips
+    everything (an inside-out `rect()`, insets past the box, a zero radius: they clipped nothing). A box alone
+    (`clip-path: padding-box`) clips to its rounded edges, the inner radii for the padding and content boxes; the
+    margin box is the margin box (it was the border box), its radii grown by the margins as Blink's
+    `FloatRoundedRect::OutsetForShapeMargin` grows them (by the margin, times `1 + (r / margin - 1)³` where the radius
+    is smaller). A rounded box that is a whole ellipse is drawn as `circle()` and `ellipse()` are, as the box of
+    `border-radius: 50%` is drawn (WPT's references are such boxes). Basic shapes as CSS Shapes resolves them:
+    `inset()` (and `rect()`, `xywh()`) with its `round` radii, a `circle()` percentage of the reference box's
+    direction-agnostic size, an `ellipse()`'s side keywords in its own axis, `path()` data zoomed. `shape()`: a single
+    arc radius is of the direction-agnostic size, `cw` is SVG's sweep flag 1 (it was the other way round), the
+    rotation is in degrees (kurbo takes radians), and a degenerate arc is a line (it dropped the whole shape).
+  - `src/render/mask.rs`: `mask-mode: luminance` masks with the image's luminance (0.2125 R + 0.7154 G + 0.0721 B,
+    `feColorMatrix`'s `luminanceToAlpha`): the layer is recorded and each solid colour, gradient stop and image pixel
+    becomes black with that luminance times its alpha (exact unless translucent paints overlap; converted images are
+    kept for the next frame). The mask painting area is the largest `mask-clip` box with its radii (it was the border
+    box), everything visible for `mask-clip: no-clip`; each layer covers the whole area, its image cut to its own
+    clip box, so its compositing operator applies outside that box too. `src/render/background.rs`: `mask-clip` and
+    `mask-origin` take the SVG boxes (`fill-box` is the content box, `stroke-box` and `view-box` the border box) and
+    `no-clip` (`BoxModelBox::NoClip`, the visible area): Stylo parses them for servo now (see
+    `vendor/stylo/README.pyro.md`).
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/pyro-render/tests/mirror.rs`.

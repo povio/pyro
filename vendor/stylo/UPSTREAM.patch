@@ -206,7 +206,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-11 20:10:18
++++ b/properties/shorthands.rs	2026-11-14 13:56:06
 @@ -542,7 +542,6 @@
      }
  }
@@ -215,6 +215,27 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod container {
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
+@@ -3682,18 +3681,8 @@
+                     writer.item(repeat)?;
+                 }
+ 
+-                #[cfg(feature = "gecko")]
+-                {
+-                    if has_origin || (has_clip && *clip != Clip::NoClip) {
+-                        writer.item(origin)?;
+-                    }
+-                }
+-
+-                #[cfg(feature = "servo")]
+-                {
+-                    if has_origin || has_clip {
+-                        writer.item(origin)?;
+-                    }
++                if has_origin || (has_clip && *clip != Clip::NoClip) {
++                    writer.item(origin)?;
+                 }
+ 
+                 if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
 +++ b/properties/shorthands.toml	2026-11-11 20:10:18
@@ -758,8 +779,73 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/specified/background.rs b/values/specified/background.rs
 --- a/values/specified/background.rs	2026-11-11 19:55:57
-+++ b/values/specified/background.rs	2026-11-14 10:07:12
-@@ -369,6 +369,5 @@
++++ b/values/specified/background.rs	2026-11-14 15:14:02
+@@ -200,16 +200,12 @@
+     // TODO(emilio): We should expose the svg values in SpecifiedValueInfo or so but only for
+     // mask-clip... Maybe we need a newtype thing, or to rejigger the painting code / storage
+     // further.
+-    #[cfg(feature = "gecko")]
+     #[value_info(skip)]
+     FillBox,
+-    #[cfg(feature = "gecko")]
+     #[value_info(skip)]
+     StrokeBox,
+-    #[cfg(feature = "gecko")]
+     #[value_info(skip)]
+     ViewBox,
+-    #[cfg(feature = "gecko")]
+     #[value_info(skip)]
+     NoClip,
+     // TODO: text and border-area are supposed to combine in backgrounds-4...
+@@ -237,13 +233,9 @@
+             Self::BorderBox => ClipValidity::BOTH,
+             Self::PaddingBox => ClipValidity::BOTH,
+             Self::ContentBox => ClipValidity::BOTH,
+-            #[cfg(feature = "gecko")]
+             Self::FillBox => ClipValidity::MASK,
+-            #[cfg(feature = "gecko")]
+             Self::StrokeBox => ClipValidity::MASK,
+-            #[cfg(feature = "gecko")]
+             Self::ViewBox => ClipValidity::MASK,
+-            #[cfg(feature = "gecko")]
+             Self::NoClip => ClipValidity::MASK,
+             Self::Text => ClipValidity::BACKGROUND,
+             Self::BorderArea => ClipValidity::BACKGROUND,
+@@ -301,13 +293,10 @@
+     PaddingBox,
+     ContentBox,
+     // TODO(emilio): Same caveat as BackgroundClip regarding SpecifiedValueInfo.
+-    #[cfg(feature = "gecko")]
+     #[value_info(skip)]
+     FillBox,
+-    #[cfg(feature = "gecko")]
+     #[value_info(skip)]
+     StrokeBox,
+-    #[cfg(feature = "gecko")]
+     #[value_info(skip)]
+     ViewBox,
+ }
+@@ -320,7 +309,6 @@
+         input: &mut Parser,
+     ) -> Result<Self, ParseError> {
+         let origin = Self::parse(input)?;
+-        #[cfg(feature = "gecko")]
+         if matches!(origin, Self::FillBox | Self::StrokeBox | Self::ViewBox) {
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
+@@ -334,11 +322,8 @@
+             BackgroundOrigin::BorderBox => Self::BorderBox,
+             BackgroundOrigin::PaddingBox => Self::PaddingBox,
+             BackgroundOrigin::ContentBox => Self::ContentBox,
+-            #[cfg(feature = "gecko")]
+             BackgroundOrigin::FillBox => Self::FillBox,
+-            #[cfg(feature = "gecko")]
+             BackgroundOrigin::StrokeBox => Self::StrokeBox,
+-            #[cfg(feature = "gecko")]
+             BackgroundOrigin::ViewBox => Self::ViewBox,
+         }
+     }
+@@ -369,6 +354,5 @@
  pub enum ImageLayerAttachment {
      Scroll,
      Fixed,
