@@ -1,0 +1,60 @@
+name: Vendor patches
+
+# Checks that every vendored crate's UPSTREAM.patch is still the whole diff from its upstream
+# (scripts/vendor/regen-patch, bench/wpt/README.md "Merging main into a branch"), and tests the WPT baseline merge
+# driver. No cargo build: about 10 s on Linux.
+#
+# `--check --base REV` rebuilds each upstream from REV's committed patch and sources; the checked-out patch must apply to
+# it, reproduce the checked-out sources and reverse-apply to them. REV is the revision before the change: on a pull
+# request the checkout is GitHub's merge of the branch into its base, so HEAD^1, the base branch; on a push, the
+# commit the branch was at before it. A crate moved to a new upstream (its README.pyro.md title changed) can only be
+# checked against its own patch. A change that fixes a stale patch on the base branch changes the upstream, so it fails
+# here on purpose: say so in the pull request.
+
+on:
+  pull_request:
+    paths:
+      - vendor/**
+      - scripts/vendor/**
+      - bench/wpt/*.mjs
+      - .github/workflows/vendor-patches.yml
+  push:
+    branches: [main]
+    paths:
+      - vendor/**
+      - scripts/vendor/**
+      - bench/wpt/*.mjs
+      - .github/workflows/vendor-patches.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vendor-patches-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # HEAD^1
+      - uses: oven-sh/setup-bun@v2
+      - name: The revision before the change
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          rev=HEAD^1
+          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            git fetch --no-tags --depth=1 origin "$BEFORE"
+            rev=$BEFORE
+          fi
+          echo "rev=$rev" | tee -a "$GITHUB_OUTPUT"
+      - name: Every UPSTREAM.patch against the upstream before the change
+        run: scripts/vendor/regen-patch --check --all --base "${{ steps.base.outputs.rev }}"
+      - name: WPT baseline merge driver
+        run: bun test bench/wpt/merge-baseline.test.mjs
