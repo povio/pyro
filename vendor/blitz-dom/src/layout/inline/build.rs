@@ -17,7 +17,7 @@ use crate::{
     layout::list::BULLET_FONT_FAMILY,
     layout::replaced::is_inline_box_element,
     layout::text_transform::{CaseTransform, TextTransformer},
-    node::{ListItemLayout, ListItemLayoutPosition, Marker, TextBrush, TextLayout},
+    node::{FirstLetterSplit, ListItemLayout, ListItemLayoutPosition, Marker, TextBrush, TextLayout},
     stylo_to_parley,
 };
 
@@ -146,6 +146,9 @@ fn build_inline_layout_with(
     // collapses.
     let strut_build = strut;
     let strut = &mut { strut };
+    // pyro: the first letter the root's `::first-letter` styles (`layout::first_letter`).
+    let first_letter_split = text_layout.first_letter.clone();
+    let first_letter = first_letter_split.as_ref();
 
     if let Some(before_id) = root_node.before() {
         build_inline_layout_recursive(
@@ -156,6 +159,7 @@ fn build_inline_layout_with(
             &text_transform,
             text_nodes,
             strut,
+            first_letter,
         );
     }
     for child_id in root_node.children.iter().copied() {
@@ -167,6 +171,7 @@ fn build_inline_layout_with(
             &text_transform,
             text_nodes,
             strut,
+            first_letter,
         );
     }
     if let Some(after_id) = root_node.after() {
@@ -178,6 +183,7 @@ fn build_inline_layout_with(
             &text_transform,
             text_nodes,
             strut,
+            first_letter,
         );
     }
 
@@ -240,6 +246,7 @@ fn build_inline_layout_with(
         parent_text_transform: &CaseTransform,
         text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
         strut: &mut bool,
+        first_letter: Option<&FirstLetterSplit>,
     ) {
         let node = &nodes[node_id];
 
@@ -316,6 +323,7 @@ fn build_inline_layout_with(
                                 &text_transform,
                                 text_nodes,
                                 strut,
+                                first_letter,
                             ));
                         }
                         builder.pop_style_span();
@@ -388,6 +396,7 @@ fn build_inline_layout_with(
                                     &text_transform,
                                     text_nodes,
                                     strut,
+                                    first_letter,
                                 ));
                             }
 
@@ -400,6 +409,7 @@ fn build_inline_layout_with(
                                     &text_transform,
                                     text_nodes,
                                     strut,
+                                    first_letter,
                                 ));
                             }
                             if let Some(after_id) = node.after() {
@@ -411,6 +421,7 @@ fn build_inline_layout_with(
                                     &text_transform,
                                     text_nodes,
                                     strut,
+                                    first_letter,
                                 ));
                             }
 
@@ -449,10 +460,32 @@ fn build_inline_layout_with(
                 // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                 // dbg!(&data.content);
 
-                let text =
-                    text_transformer.transform(&data.content, parent_text_transform, builder);
                 let start = builder.text().len();
-                builder.push_text(text);
+                // pyro: the first letter in a span of the `::first-letter` style.
+                let letter = first_letter
+                    .filter(|split| split.text == node_id && data.content.get(split.range.clone()).is_some())
+                    .and_then(|split| Some((split, nodes.get(split.style_node)?.primary_styles()?.clone())));
+                match letter {
+                    Some((split, letter_style)) => {
+                        let content = &data.content;
+                        let head = &content[..split.range.start];
+                        let text = text_transformer.transform(head, parent_text_transform, builder);
+                        builder.push_text(text);
+                        builder.push_style_span(stylo_to_parley::style(split.style_node, &letter_style));
+                        let letter = &content[split.range.clone()];
+                        let text = text_transformer.transform(letter, &CaseTransform::from_style(&letter_style), builder);
+                        builder.push_text(text);
+                        builder.pop_style_span();
+                        let tail = &content[split.range.end..];
+                        let text = text_transformer.transform(tail, parent_text_transform, builder);
+                        builder.push_text(text);
+                    }
+                    None => {
+                        let text =
+                            text_transformer.transform(&data.content, parent_text_transform, builder);
+                        builder.push_text(text);
+                    }
+                }
                 text_nodes.push((node_id, start..builder.text().len()));
             }
             NodeData::Comment { .. } => {

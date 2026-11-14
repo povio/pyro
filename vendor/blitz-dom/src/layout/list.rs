@@ -22,6 +22,13 @@ pub(super) fn collect_list_item_children(
     node_id: NodeId,
 ) {
     let mut children = doc.nodes[node_id].children.clone();
+    // pyro: a `::before` or `::after` box is a list item too (`display: list-item`).
+    if let Some(before) = doc.nodes[node_id].before() {
+        children.insert(0, before);
+    }
+    if let Some(after) = doc.nodes[node_id].after() {
+        children.push(after);
+    }
     if reversed {
         children.reverse();
     }
@@ -92,10 +99,19 @@ fn node_list_item_child(
     let styles = node.primary_styles().unwrap();
     let list_style_type = styles.get_list_style_type();
     let list_style_position = styles.clone_list_style_position();
-    let marker = marker_for_style(list_style_type, index)?;
+    let mut marker = marker_for_style(list_style_type, index)?;
 
     let position = match list_style_position {
-        ListStylePosition::Inside => ListItemLayoutPosition::Inside,
+        ListStylePosition::Inside => {
+            // pyro: a symbol marker inside the item is drawn from the bundled bullet font, unless
+            // the page styles `::marker`: then it is text in the item's font, as Gecko draws it.
+            if let Marker::Char(symbol) = marker {
+                if styles_marker(doc, child_id, &styles) {
+                    marker = Marker::String(format!("{symbol} "));
+                }
+            }
+            ListItemLayoutPosition::Inside
+        }
         ListStylePosition::Outside => {
             let mut parley_style = stylo_to_parley::style(child_id, &styles);
 
@@ -138,6 +154,26 @@ fn node_list_item_child(
         position,
         content_box_subpixel_offset: taffy::Point::ZERO,
     })
+}
+
+/// pyro: whether a `::marker` rule matches the list item `node_id`.
+fn styles_marker(doc: &BaseDocument, node_id: NodeId, item_style: &style::properties::ComputedValues) -> bool {
+    use style::selector_parser::PseudoElement;
+    use style::shared_lock::StylesheetGuards;
+    use style::stylist::RuleInclusion;
+    let read_guard = doc.guard.read();
+    let guards = StylesheetGuards::same(&read_guard);
+    doc.stylist
+        .lazily_compute_pseudo_element_style::<&crate::Node>(
+            &guards,
+            &doc.nodes[node_id],
+            &PseudoElement::Marker,
+            RuleInclusion::All,
+            item_style,
+            true,
+            None,
+        )
+        .is_some()
 }
 
 // Determine the marker to render for a given list style type

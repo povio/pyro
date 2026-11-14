@@ -986,9 +986,10 @@ title {
     display: none;
 }
 
+/* pyro: as Chromium's UA sheet, `area` is hidden like the elements above, without
+ * `!important` (Gecko's), so a page can show it (`area { display: block }`). */
 area {
-    /* Don't give it frames other than its imageframe */
-    display: none ! important;
+    display: none;
 }
 
 iframe:fullscreen {

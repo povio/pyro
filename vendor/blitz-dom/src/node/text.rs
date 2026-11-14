@@ -62,6 +62,19 @@ pub struct TextLayout {
     /// `text-overflow: ellipsis` at the end of its lines: paint ends each line that overflows
     /// the content box with it.
     pub ellipsis: Option<Box<parley::layout::Layout<TextBrush>>>,
+    /// pyro: the first letter of the root's first line, styled by an element's
+    /// `::first-letter` (`layout::first_letter`), set before each build.
+    pub first_letter: Option<FirstLetterSplit>,
+}
+
+/// pyro: where an inline layout's first letter is: the bytes of a text node's content that an
+/// element's `::first-letter` styles, with the node that holds that style (the brush of the
+/// span the build wraps them in).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FirstLetterSplit {
+    pub text: NodeId,
+    pub range: std::ops::Range<usize>,
+    pub style_node: NodeId,
 }
 
 impl TextLayout {

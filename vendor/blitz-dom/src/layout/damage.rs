@@ -505,11 +505,18 @@ impl BaseDocument {
                 crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(*child));
             }
         }
-        if let Some(before_id) = before {
-            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(before_id));
-        }
-        if let Some(after_id) = after {
-            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(after_id));
+        for pseudo_id in [before, after].into_iter().flatten() {
+            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(pseudo_id));
+            // pyro: a pseudo-element's children are what its content generates (text, the box
+            // of a `content: url()` image), which no other walk reaches: an image's flags are
+            // cleared here, or the `mark_damaged` of its load would stop at its stale flag.
+            let mut index = 0;
+            while let Some(&child) = self.nodes.get(pseudo_id).and_then(|pseudo| pseudo.children.get(index)) {
+                if !self.nodes[child].is_text_node() {
+                    self.clear_damage_and_dirty_flags(child);
+                }
+                index += 1;
+            }
         }
 
         let node = &mut self.nodes[node_id];

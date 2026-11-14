@@ -714,6 +714,53 @@ document, its line breaking and its min/max-content widths, uses the same opport
 inherits it. `BaseDocument::line_break_override` reads it back (pyro-render rebuilds a persistent document whose
 setting differs). Covered by `crates/pyro-render/tests/hyphen_digit_breaks.rs`.
 
+## Generated content and pseudo-elements (WPT reftests)
+
+- `src/layout/first_letter.rs`, `src/layout/inline/build.rs`, `src/node/text.rs`, `src/node/element.rs`,
+  `src/resolve.rs`, `src/stylo.rs`, `src/document.rs`, `src/mutator.rs`: `::first-letter` is applied (it was
+  cascaded and never used). The first letter of a block container's first line is its first typographic letter
+  unit with the punctuation before and after it (Unicode Ps, Pe, Pi, Pf and Po, as CSS 2.1 and Chromium include);
+  collapsible white space before it stays outside, and white space that does not collapse (a no-break space)
+  is content before it, so there is no first letter (as in Gecko). A block passes its first line on to its first
+  in-flow block child, so the letter may be in a descendant block, an inline or a `::before`; the nearest block
+  container with a `::first-letter` style styles it; table cells, inline-blocks, floats and positioned boxes keep
+  their first line, out-of-flow boxes are passed over, and an atomic inline or a `<br>` first means no first
+  letter. The text keeps its node: before an inline root builds its inline layout (`resolve_deferred_tasks`),
+  `first_letter::split` finds the letter (`TextLayout::first_letter`) and the build wraps its bytes in a span of
+  the pseudo-element's style. The style lives on a node the originating element owns (`ElementData::
+  first_letter`, not in the tree, no damage), the span's brush, so paint reads its colour, background and
+  decorations as an inline's; its parent is the letter's text's parent, from which the style inherits (the rules
+  the cascade matched, cascaded again with that parent: CSS 2.1's fictional tag sequence). A `::first-letter`
+  style that came, went or changed in a style traversal builds the inline layout holding the letter again
+  (`first_letter::style_changed`). A floated first letter (a drop cap) is not supported and is left unstyled.
+- `src/layout/counters.rs`, `src/layout/construct.rs`, `src/resolve.rs`, `src/stylo.rs`, `src/mutator.rs`:
+  `content` generates counters, quotes and images (only strings were). Before damage propagates, a walk in tree
+  order applies `counter-reset`, `counter-increment` and `counter-set` (in that order, as Gecko does; a list
+  item increments `list-item`) and evaluates the `content` of each `::before`/`::after` that generates a box:
+  `counter()` and `counters()` in the predefined counter styles (numeric, alphabetic, additive, cyclic; an
+  unknown name or a value out of a style's range is decimal) and `open-quote`/`close-quote` at the document's
+  quote depth (`quotes: auto` is English's). A counter is visible to its element, its descendants and its
+  following siblings; one a sibling made is replaced; an element with no box (`display: none`, `display:
+  contents`) changes none. The walk runs once a traversal kept a `::before`/`::after` whose content reads a
+  counter or a quote (sticky), and only after a restyle changed what counters read of an element (its and its
+  pseudo-elements' counter properties, `content`, `display` and `quotes`: `CounterInputs`) or a child list
+  changed (`counters_dirty`); an owner whose content changed is damaged. `content: url()` makes an `img` box (an
+  inline replaced box inheriting from the pseudo-element) fetched as `<img>` is (`load_generated_image`).
+- `src/layout/construct.rs`: the pseudo-elements of an inline inside an inline are made (the walk read the
+  parent's display, so only an inline root's children had theirs).
+- `src/layout/damage.rs`: `clear_damage_and_dirty_flags` clears the flags of what a pseudo-element generates (an
+  image's box): `mark_damaged` from the image's load stopped at its stale flag, so it was never laid out.
+- `src/layout/list.rs`, `src/layout/construct.rs`: a `::before` or `::after` with `display: list-item` gets a
+  marker. An inside symbol marker is text in the item's font when the page styles `::marker` (as Gecko draws
+  it), the bundled bullet glyph otherwise. An inside marker that is text (a number, or such a symbol) makes a
+  line of its own in an item with no other content; an empty item's bullet-font symbol marker stays unpainted
+  (painting it exposes WPT `list-style-position-applies-to-015`, an empty item in a table caption, until table
+  captions render).
+- `assets/default.css`: `area` is `display: none` without Gecko's `!important`, as in Chromium.
+- `src/stylo.rs`: `<body text>` maps to `color` (a legacy colour value).
+
+Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit tests here.
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were

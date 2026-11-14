@@ -10,6 +10,7 @@ mod filter_drop_shadow;
 mod font_optical_sizing;
 mod font_unicode_range;
 mod fractional_scroll_overflow;
+mod generated_content;
 mod hyphen_digit_breaks;
 mod image_input_replaced;
 mod incremental_construction;
