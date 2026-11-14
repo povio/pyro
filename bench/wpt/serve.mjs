@@ -13,7 +13,13 @@ const PORT = Number(process.argv[3] ?? 9415);
 // upstream checkout works.
 const REPORT = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'testharnessreport.js'));
 const LOG = process.env.WPT_SERVE_LOG && fs.createWriteStream(process.env.WPT_SERVE_LOG, { flags: 'a' });
-const TYPES = { '.html': 'text/html', '.htm': 'text/html', '.xhtml': 'application/xhtml+xml', '.xml': 'application/xml', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.gif': 'image/gif', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.txt': 'text/plain', '.woff': 'font/woff', '.ttf': 'font/ttf' };
+const TYPES = {
+  '.html': 'text/html', '.htm': 'text/html', '.xhtml': 'application/xhtml+xml', '.xht': 'application/xhtml+xml', '.xml': 'application/xml',
+  '.xsl': 'application/xslt+xml', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
+  '.txt': 'text/plain', '.png': 'image/png', '.gif': 'image/gif', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml',
+  '.webp': 'image/webp', '.avif': 'image/avif', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf', '.otf': 'font/otf',
+};
 
 // The Python handlers this server answers as wptserve would, by path. Support files of pages in the subset request
 // them, which discovery does not see (it excludes a page only when the page itself names a .py file).
