@@ -153,6 +153,12 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
     /// inline axis). Screenshots keep the box's x.
     pub fractional_text_x: bool,
+    /// pyro: a flat element with a 3D transform and element children is drawn in a layer the
+    /// backend rasterizes in the element's own plane (`layers::local_raster_marker`), as Chromium
+    /// composites it. Screenshots only: printed output stays vector.
+    pub composite_3d: bool,
+    /// pyro: how many local-raster layers (`composite_3d`) the element painted is in.
+    pub(crate) local_raster_depth: std::cell::Cell<u32>,
 
     // Pre-computed `Scene`s for each CustomWidget
     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
@@ -206,6 +212,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             selection_ranges,
             backgrounds: true,
             fractional_text_x: false,
+            composite_3d: false,
+            local_raster_depth: std::cell::Cell::new(0),
             custom_widget_scenes,
         }
     }
@@ -621,6 +629,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
+        // pyro: a 3D transform hides the element and its content: its back face shows with
+        // `backface-visibility: hidden`, or it lies behind the viewer (`Node::set_transform`).
+        if node
+            .flags
+            .contains(blitz_dom::node::NodeFlags::TRANSFORM_HIDES)
+        {
+            return;
+        }
+
         let effects = styles.get_effects();
         let opacity = effects.opacity;
         if opacity == 0.0 {
@@ -777,6 +794,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             self.initial_x + self.width as f64,
             self.initial_y + self.height as f64,
         );
+        // pyro: in a local-raster layer the plane is rasterized a pixel or two past the frame, for
+        // the pixels at the frame's edges to sample; a group clipped to the viewport there cut
+        // through them, and its antialiased edge came out a fifth lighter along the edge of the
+        // screenshot. Past the frame the margin shows nothing.
+        let viewport = if self.local_raster_depth.get() > 0 { viewport.inflate(8.0, 8.0) } else { viewport };
         let blend_layer_pushed = self.layer_manager.maybe_push_layer(
             scene,
             isolate || blend != BlendMode::default(),
@@ -800,6 +822,31 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             Some(crate::layers::backdrop_root_marker()),
             None,
         );
+
+        // pyro: a flat element with a 3D transform and element children is rasterized in its own
+        // plane and drawn through its transform (`layers::local_raster_marker`), as Chromium
+        // composites it: edges its boxes share resolve in that plane, where its layout puts them
+        // on whole pixels. Drawn each through the transform, a child's edge over the element's
+        // took in what the element's edge let through, and a child blending there came out up to
+        // 6 levels off the same colours painted without a blend (WPT
+        // `mix-blend-mode-parent-with-3D-transform`). A box with no element in it shares no edge
+        // with another: it keeps its own edges, with none of a resampled image's rounding.
+        // Its own blend mode applies to that image; its effects, inside, in its plane.
+        let local_raster_pushed = self.composite_3d
+            && node.flags.contains(blitz_dom::node::NodeFlags::FLATTENS_3D)
+            && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()));
+        if local_raster_pushed {
+            scene.push_layer(
+                Fill::NonZero,
+                BlendMode::default(),
+                1.0,
+                cx.transform,
+                &Rect::new(-1e7, -1e7, 1e7, 1e7),
+                Some(crate::layers::local_raster_marker()),
+                None,
+            );
+            self.local_raster_depth.set(self.local_raster_depth.get() + 1);
+        }
 
         let paints_own_box = !node.is_inline_with_only_block_children();
 
@@ -860,6 +907,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             },
         );
 
+        if local_raster_pushed {
+            scene.pop_layer();
+            self.local_raster_depth.set(self.local_raster_depth.get() - 1);
+        }
         self.layer_manager
             .maybe_pop_layer(scene, backdrop_root_pushed);
         self.layer_manager
@@ -2230,16 +2281,20 @@ impl ElementCx<'_, '_> {
                 // the viewport and do not scroll with it, so cancel out the viewport
                 // scroll (applied in `paint_scene`). A fixed box contained by a
                 // transformed ancestor scrolls with it like any out-of-flow box.
+                // pyro: so does one lifted here from a containing block that is no
+                // layer root (a `backdrop-filter` box): it is placed by its offset.
                 let child = &self.context.dom.as_ref().tree()[*child_id];
+                let lifted = child.lifted_paint_offset(self.node.id);
                 let child_transform = if child.taffy_position() == taffy::Position::Fixed
                     && Some(self.node.id) == self.context.root_element_id
+                    && lifted.is_none()
                 {
                     let scroll = self.context.dom.as_ref().viewport_scroll();
                     parent_style_transform.pre_translate(kurbo::Vec2 {
                         x: scroll.x * self.scale,
                         y: scroll.y * self.scale,
                     })
-                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
+                } else if let Some(offset) = lifted {
                     parent_style_transform.pre_translate(kurbo::Vec2 {
                         x: offset.x as f64 * self.scale,
                         y: offset.y as f64 * self.scale,

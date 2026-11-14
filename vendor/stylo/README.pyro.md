@@ -72,7 +72,9 @@ crate (`diff -ruN`).
 - `properties/longhands.toml`, `values/specified/transform.rs`: `transform-box` is parsed and computed for servo too
   (upstream: gecko only), with all five boxes (upstream's servo parser took `border-box`, `fill-box` and
   `view-box`). blitz-dom resolves SVG elements' transforms in it (`vendor/blitz-dom/README.pyro.md`, "The page's
-  CSS on inline SVG"); nothing reads it for CSS boxes, whose reference box stays the border box.
+  CSS on inline SVG"), and a CSS box's transform, `transform-origin` and `perspective-origin` against the box it
+  names (`Node::transform_reference_box`: the content box for `content-box` and `fill-box`, the border box
+  otherwise; "3D transforms flattened").
 
 ## Text decorations and emphasis
 

@@ -81,7 +81,95 @@ bitflags! {
         /// row that is to be collected again from one whose colour, background or opacity
         /// changed. Set and cleared with `OWN_DAMAGE`.
         const OWN_LAYOUT_DAMAGE = 0b10000000;
+        /// pyro: its 3D transform hides the element and its content: it shows its back face
+        /// with `backface-visibility: hidden`, it lies behind the viewer, or its matrix has no
+        /// inverse. Set with the transform (`Node::set_transform`); paint skips the element.
+        const TRANSFORM_HIDES = 0b1_00000000;
+        /// pyro: the last transform pass gave this node's children a [`TransformContext`] (its
+        /// `perspective`, or its `transform-style: preserve-3d`), which their transforms
+        /// include: the next pass resolves them again, whatever their own damage
+        /// (`BaseDocument::resolve_transforms`).
+        const GIVES_3D_CONTEXT = 0b10_00000000;
+        /// pyro: its transform is a 3D matrix flattened into the plane of the screen and it is
+        /// flat (`transform-style: flat`): Chromium composites such an element, rasterized in its
+        /// own plane and then drawn through its transform, which blitz-paint asks the backend to
+        /// do (`layers::local_raster_marker`). Set with the transform (`Node::set_transform`).
+        const FLATTENS_3D = 0b100_00000000;
     }
+}
+
+/// pyro: what an element gives the 3D transforms of its children
+/// ([`Node::transform_context_for_children`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TransformContext {
+    /// Its perspective matrix (its `perspective`, about its `perspective-origin`), in its border
+    /// box's coordinates (CSS px).
+    pub perspective: Option<euclid::default::Transform3D<f64>>,
+    /// With `transform-style: preserve-3d`, its 3D rendering context, which its children share:
+    /// their planes are placed by its accumulated matrix composed with theirs, and so is which
+    /// face of theirs shows.
+    pub preserve_3d: Option<Context3D>,
+    /// Its scroll offset (CSS px): its children move by it, its perspective origin does not.
+    pub scroll: (f64, f64),
+}
+
+/// pyro: a 3D rendering context as an element of it gives it to its children
+/// ([`TransformContext::preserve_3d`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Context3D {
+    /// The element's accumulated 3D matrix: from its coordinates to those of the parent of the
+    /// context's root (CSS px).
+    pub accumulated: euclid::default::Transform3D<f64>,
+    /// The 2D affine that paint and layout queries compose for the element (its locations,
+    /// scroll offsets and transforms down from the parent of the context's root, CSS px): its
+    /// children's transforms are stored relative to it. Never singular (`regularize`).
+    pub base: Affine,
+}
+
+impl TransformContext {
+    /// Whether it gives anything (a perspective or a 3D rendering context).
+    pub fn gives(&self) -> bool {
+        self.perspective.is_some() || self.preserve_3d.is_some()
+    }
+}
+
+/// pyro: whether `backface-visibility: hidden` hides an element under the matrix `m`: its back
+/// face shows. (A `preserve-3d` element's children are planes of their own, which paint would
+/// hide with it: its caller does not ask.)
+fn back_face_hidden(
+    box_styles: &style::properties::generated::style_structs::Box,
+    m: &euclid::default::Transform3D<f64>,
+) -> bool {
+    box_styles.backface_visibility == style::computed_values::backface_visibility::T::Hidden
+        && crate::stylo_to_kurbo::is_back_face_visible(m)
+}
+
+/// pyro: `t` with a negligible thickness (1e-6) along a direction it collapses: the flattened
+/// transform of an edge-on plane of a 3D rendering context (`rotateX(90deg)`), whose children
+/// are placed relative to it ([`Context3D::base`]). What it paints itself stays invisible.
+fn regularize(t: Affine) -> Affine {
+    const THICKNESS: f64 = 1e-6;
+    let [a, b, c, d, e, f] = t.as_coeffs();
+    let (x_len, y_len) = (a.hypot(b), c.hypot(d));
+    if (a * d - b * c).abs() >= THICKNESS * x_len.max(y_len).max(1.0) {
+        return t;
+    }
+    if x_len == 0.0 && y_len == 0.0 {
+        Affine::new([THICKNESS, 0.0, 0.0, THICKNESS, e, f])
+    } else if x_len >= y_len {
+        // The y axis collapses (onto the x axis, or to a point): across the x axis instead.
+        Affine::new([a, b, -b / x_len * THICKNESS, a / x_len * THICKNESS, e, f])
+    } else {
+        Affine::new([d / y_len * THICKNESS, -c / y_len * THICKNESS, c, d, e, f])
+    }
+}
+
+/// A transform resolved in CSS pixels in device-pixel space (S * T * S^-1): translation
+/// components are scaled, linear components are not.
+fn to_device_px(t: Affine, scale: f32) -> Affine {
+    let scale = scale as f64;
+    let [m11, m12, m21, m22, m41, m42] = t.as_coeffs();
+    Affine::new([m11, m12, m21, m22, m41 * scale, m42 * scale])
 }
 
 impl NodeFlags {
@@ -486,24 +574,223 @@ impl Node {
         })
     }
 
-    pub fn set_transform(&mut self, scale: f32) -> Option<Affine> {
-        let transform = self.primary_styles().and_then(|s| {
-            let size = self.final_layout().size;
-            let reference_box = Rect::new(
-                Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
-                Size2D::new(
-                    CSSPixelLength::new(size.width),
-                    CSSPixelLength::new(size.height),
+    /// pyro: call after changing the scroll offset (`scroll_offset_mut`). The 3D transforms of
+    /// the children of an element with a perspective depend on its scroll offset (they move
+    /// under a perspective origin that does not), so a scrolled one is resolved again by the
+    /// next transform pass (`BaseDocument::resolve_transforms`).
+    pub fn scroll_offset_changed(&self) {
+        if self.flags.contains(NodeFlags::GIVES_3D_CONTEXT) {
+            self.mark_layout_changed(Some(self.id));
+        }
+    }
+
+    /// pyro: the reference box of the element's `transform`, `transform-origin` and
+    /// `perspective-origin` (CSS Transforms 1 `transform-box`), in its border box's coordinates
+    /// (CSS px): a CSS box's `content-box` and `fill-box` are its content box, the others its
+    /// border box.
+    fn transform_reference_box(
+        &self,
+        transform_box: style::values::computed::TransformBox,
+    ) -> euclid::default::Rect<CSSPixelLength> {
+        use style::values::computed::TransformBox;
+        let layout = self.final_layout();
+        let (origin, size) = match transform_box {
+            TransformBox::ContentBox | TransformBox::FillBox => (
+                (
+                    layout.border.left + layout.padding.left,
+                    layout.border.top + layout.padding.top,
                 ),
+                (layout.content_box_width(), layout.content_box_height()),
+            ),
+            TransformBox::BorderBox | TransformBox::StrokeBox | TransformBox::ViewBox => {
+                ((0.0, 0.0), (layout.size.width, layout.size.height))
+            }
+        };
+        Rect::new(
+            Point2D::new(CSSPixelLength::new(origin.0), CSSPixelLength::new(origin.1)),
+            Size2D::new(CSSPixelLength::new(size.0), CSSPixelLength::new(size.1)),
+        )
+    }
+
+    /// pyro: whether the element has `transform-style: preserve-3d`.
+    ///
+    /// The used value: a grouping property (CSS Transforms 2: `overflow` other than `visible`
+    /// and `clip`, `opacity` below 1, a `filter`, `clip-path` or mask, `isolation: isolate`,
+    /// a `mix-blend-mode`, paint containment) flattens the element's content first, so its
+    /// `transform-style` is `flat`.
+    pub(crate) fn is_preserve_3d(&self) -> bool {
+        use style::values::computed::Overflow;
+        use style::values::specified::box_::Contain;
+        let Some(s) = self.primary_styles() else {
+            return false;
+        };
+        let b = s.get_box();
+        let groups = |o: Overflow| !matches!(o, Overflow::Visible | Overflow::Clip);
+        b.transform_style == style::computed_values::transform_style::T::Preserve3d
+            && !groups(b.overflow_x)
+            && !groups(b.overflow_y)
+            && b.isolation != style::computed_values::isolation::T::Isolate
+            && s.get_effects().mix_blend_mode == style::computed_values::mix_blend_mode::T::Normal
+            && !b.slow_clone_contain().contains(Contain::PAINT)
+            && !self.applies_atomic_paint_effect()
+    }
+
+    /// pyro: what this element gives the 3D transforms of its children: its perspective, and
+    /// with `transform-style: preserve-3d` its 3D rendering context (`accumulated`, from
+    /// [`Self::set_transform`]).
+    pub fn transform_context_for_children(
+        &self,
+        accumulated: Option<Context3D>,
+    ) -> TransformContext {
+        let scroll = self.scroll_offset();
+        let mut context = TransformContext {
+            scroll: (scroll.x, scroll.y),
+            ..Default::default()
+        };
+        let Some(s) = self.primary_styles() else {
+            return context;
+        };
+        let box_styles = s.get_box();
+        if self.is_preserve_3d() {
+            context.preserve_3d = accumulated;
+        }
+        if !matches!(
+            box_styles.perspective,
+            style::values::generics::box_::GenericPerspective::None
+        ) {
+            let reference_box = self.transform_reference_box(box_styles.transform_box);
+            context.perspective =
+                crate::stylo_to_kurbo::resolve_perspective_matrix(box_styles, reference_box);
+        }
+        context
+    }
+
+    /// pyro: `parent`: what the element's parent gives its 3D transform
+    /// ([`Self::transform_context_for_children`]). Returns the transform, and the 3D rendering
+    /// context it gives its children ([`TransformContext::preserve_3d`]) when the element has
+    /// `transform-style: preserve-3d`.
+    pub fn set_transform(
+        &mut self,
+        scale: f32,
+        parent: &TransformContext,
+    ) -> (Option<Affine>, Option<Context3D>) {
+        use crate::stylo_to_kurbo::{Flattened, ResolvedTransform};
+        use euclid::default::Transform3D;
+        let mut hides = false;
+        let mut context = None;
+        let mut flattens = false;
+        let transform = self.primary_styles().and_then(|s| {
+            let layout = self.final_layout();
+            let size = (layout.size.width as f64, layout.size.height as f64);
+            let box_styles = s.get_box();
+            let reference_box = self.transform_reference_box(box_styles.transform_box);
+            let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);
+            let preserve_3d = self.is_preserve_3d();
+            flattens = matches!(resolved, ResolvedTransform::Spatial(_)) && !preserve_3d;
+            // A 2D transform of a flat element outside a 3D rendering context resolves as it
+            // always has.
+            if let ResolvedTransform::Flat(flat) = resolved
+                && parent.preserve_3d.is_none()
+                && !preserve_3d
+            {
+                return flat.map(|t| to_device_px(t, scale));
+            }
+            // The matrix from the element's coordinates to its parent's, under the parent's
+            // perspective (CSS Transforms 2: the accumulated 3D transformation matrix). The
+            // perspective is in the parent's coordinates, which the element's are offset from by
+            // its location less the parent's scroll (the perspective origin does not scroll).
+            let own = match &resolved {
+                ResolvedTransform::Spatial(m) => *m,
+                ResolvedTransform::Flat(Some(t)) => {
+                    let [a, b, c, d, e, f] = t.as_coeffs();
+                    Transform3D::new(
+                        a, b, 0.0, 0.0, c, d, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, e, f, 0.0, 1.0,
+                    )
+                }
+                ResolvedTransform::Flat(None) => Transform3D::identity(),
+            };
+            let (x, y) = (
+                layout.location.x as f64 - parent.scroll.0,
+                layout.location.y as f64 - parent.scroll.1,
             );
-            // Resolve the transform in CSS pixels, then convert it to device-pixel space
-            // (S * T * S^-1): translation components are scaled, linear components are not.
-            crate::resolve_2d_transform(s.get_box(), reference_box).map(|t| {
-                let scale = scale as f64;
-                let [m11, m12, m21, m22, m41, m42] = t.as_coeffs();
-                Affine::new([m11, m12, m21, m22, m41 * scale, m42 * scale])
-            })
+            let mut to_parent = own.then(&Transform3D::translation(x, y, 0.0));
+            if let Some(perspective) = &parent.perspective {
+                to_parent = to_parent.then(perspective);
+            }
+            if let ResolvedTransform::Spatial(m) = &resolved {
+                // An element whose matrix has no inverse is not rendered (`scale: 1 1 0`
+                // flattens to the identity).
+                hides = m.determinant() == 0.0;
+            }
+            let flat = match &parent.preserve_3d {
+                // In its parent's 3D rendering context the element's plane is the projection of
+                // its accumulated matrix, which the parent's matrix enters (a child turned 45deg
+                // in a parent turned 45deg is turned 90deg), stored relative to the parent's
+                // place. Which face shows is the accumulated matrix's too.
+                Some(shared) => {
+                    let accumulated = to_parent.then(&shared.accumulated);
+                    hides |= !preserve_3d && back_face_hidden(box_styles, &accumulated);
+                    match crate::stylo_to_kurbo::flatten_transform(&accumulated, size) {
+                        Flattened::Hidden => {
+                            hides = true;
+                            None
+                        }
+                        Flattened::Affine(place) => {
+                            let place = if preserve_3d {
+                                regularize(place)
+                            } else {
+                                place
+                            };
+                            if preserve_3d {
+                                context = Some(Context3D {
+                                    accumulated,
+                                    base: place,
+                                });
+                            }
+                            let relative =
+                                Affine::translate((-x, -y)) * shared.base.inverse() * place;
+                            let relative = crate::stylo_to_kurbo::snap(relative);
+                            (relative != Affine::IDENTITY).then_some(relative)
+                        }
+                    }
+                }
+                // pyro: a 3D transform is flattened into the plane of the screen, as browsers
+                // composite an element whose `transform-style` is `flat`, under its parent's
+                // perspective (seen from the front without one).
+                None => {
+                    hides |= !preserve_3d && back_face_hidden(box_styles, &to_parent);
+                    let flat = match resolved {
+                        ResolvedTransform::Flat(flat) => flat,
+                        ResolvedTransform::Spatial(_) => {
+                            let local = to_parent.then(&Transform3D::translation(-x, -y, 0.0));
+                            match crate::stylo_to_kurbo::flatten_transform(&local, size) {
+                                Flattened::Affine(affine) => {
+                                    (affine != Affine::IDENTITY).then_some(affine)
+                                }
+                                Flattened::Hidden => {
+                                    hides = true;
+                                    None
+                                }
+                            }
+                        }
+                    };
+                    // The root of a 3D rendering context: its children are placed relative to it.
+                    if preserve_3d && !hides {
+                        let own = regularize(flat.unwrap_or(Affine::IDENTITY));
+                        context = Some(Context3D {
+                            accumulated: to_parent,
+                            base: Affine::translate((x, y)) * own,
+                        });
+                        (own != Affine::IDENTITY).then_some(own)
+                    } else {
+                        flat
+                    }
+                }
+            };
+            flat.map(|t| to_device_px(t, scale))
         });
+        self.flags.set(NodeFlags::TRANSFORM_HIDES, hides);
+        self.flags.set(NodeFlags::FLATTENS_3D, flattens && !hides && transform.is_some());
 
         let slot = self.transform_mut();
         match (slot.as_deref_mut(), transform) {
@@ -511,7 +798,7 @@ impl Node {
             (None, Some(new)) => *slot = Some(Box::new(new)),
             (_, None) => *slot = None,
         }
-        transform
+        (transform, context)
     }
 
     pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
@@ -1616,6 +1903,16 @@ impl Node {
             || !matches!(box_style.rotate, Rotate::None)
             || !matches!(box_style.scale, Scale::None)
             || !matches!(box_style.translate, Translate::None)
+        {
+            return true;
+        }
+
+        // pyro: `perspective` other than `none` and `transform-style: preserve-3d` make a
+        // stacking context too (CSS Transforms 2), as they make a containing block.
+        if !matches!(
+            box_style.perspective,
+            style::values::generics::box_::GenericPerspective::None
+        ) || box_style.transform_style == style::computed_values::transform_style::T::Preserve3d
         {
             return true;
         }

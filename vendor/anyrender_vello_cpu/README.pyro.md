@@ -119,6 +119,22 @@ came out up to 97 levels off with clip paths everywhere). What is a group in CSS
 blending descendants, a mask, a text clip) pushes a layer in blitz-paint. Covered by the unit tests in
 `src/scene.rs`.
 
+## Layers rasterized in their own plane
+
+`src/scene.rs` (`draw_local_layer`, `is_local_raster_marker`, `local_raster_transform`, `painted_bounds`). A layer
+whose filter is blitz-paint's local-raster mark (a single offset by negative zero, which moves nothing) holds a flat
+element with a 3D transform and the elements in it. `replay` rasterizes its content, in a context of its own, in
+the plane the layer's transform maps to the frame, over what it paints there that shows in the frame
+(`painted_bounds`: a layer's clip cut to what the layer holds, as a blend's isolation layer has the viewport for a
+clip; a filter or backdrop layer keeps its clip), at the larger of the scales the transform gives its axes
+(Chromium's ideal contents scale for a layer; within 1e-4 of 1 it is 1), and draws the image through the transform,
+sampled bilinearly, as Chromium composites the element. A bound within 1e-4 px of a whole pixel is on it: the
+inverse's rounding put a box's edge a 1e-13th past its pixel, and the column added there was sampled into the edge.
+A plane seen edge-on or too large (past 8192 px a side or 16M px) is replayed as it
+is, and so is the content of a layer that captures a backdrop (a 3D transform makes no backdrop root, and a context
+of the element's own does not hold what lies beneath it). Covered by pyro-render's `transform_3d.rs` and the unit
+tests in `src/scene.rs`.
+
 ## Aliased glyphs
 
 `VelloCpuScenePainter::set_text_aliasing_threshold` (and `VelloCpuImageRenderer::set_text_aliasing_threshold`) draws

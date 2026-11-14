@@ -309,6 +309,74 @@ rebuilds, tables, rounding) read by pyro-render's profiling. The phase timers ru
 `phase_profile::set_timing(true)` (pyro-render's `profiling::enable`, turned on by `Pyro.geometryStats`,
 `Performance.enable` and `PYRO_GEOMETRY_PROFILE`) is on: `mark` is a no-op otherwise. The counters always count.
 
+## 3D transforms flattened
+
+Upstream dropped every transform whose matrix is not 2D: the element painted untransformed.
+
+- `src/stylo_to_kurbo.rs` (`resolve_transform`, `flatten_transform`, `is_back_face_visible`,
+  `resolve_perspective_matrix`): a 2D transformation matrix resolves as before; a 3D one (a 3D matrix of the
+  `transform` list, `translate` with a depth, `rotate` about another axis than z, `scale` with a z factor) is the
+  4x4 matrix in f64, `transform-origin`'s depth included, flattened onto the plane of the screen as browsers
+  composite an element whose `transform-style` is `flat`: the 3x3 matrix of rows and columns 1, 2 and 4.
+  - Where W does not vary over the box (no perspective, or a perspective with the box parallel to the
+    screen), that is an exact affine: `rotateY(60deg)` paints at half width, and a depth under a perspective
+    scales the box about the perspective origin.
+  - Otherwise (a rotation out of the plane under perspective) the affine closest to the projection at the
+    box's corners (least squares) stands in until a projective warp of a layer draws the trapezoid. It is
+    close for a box parallel-ish to the screen, and off by tens of pixels inside a large, steeply turned box.
+  - A box at or behind the viewer, or whose 4x4 matrix has no inverse (`scale: 1 1 0`), is not drawn.
+  - Coefficients within 1e-12 of 0 and ±1, and translations within 1e-9 px of a whole pixel, snap
+    (`snap`): `rotate(360deg)` left `sin` noise that made text skip its pixel snapping.
+- `src/node/node.rs` (`set_transform`, `transform_context_for_children`, `TransformContext`,
+  `transform_reference_box`, `scroll_offset_changed`, `NodeFlags::TRANSFORM_HIDES`,
+  `NodeFlags::GIVES_3D_CONTEXT`, `NodeFlags::FLATTENS_3D`):
+  - A 3D transform takes its parent's `perspective` (about its `perspective-origin`, which does not scroll),
+    offset by the box's location less the parent's scroll offset (CSS Transforms 2, the accumulated 3D
+    transformation matrix). Only the element's children in the DOM take it (WPT
+    `perspective-children-only-*`): not an out-of-flow box it contains further down.
+  - In a 3D rendering context (a parent with `transform-style: preserve-3d`) an element's plane is the
+    projection of its accumulated matrix, which the parent's enters (a child turned -60deg in a parent
+    turned 60deg faces the viewer at full width), stored relative to the parent's place
+    (`Context3D::base`), so paint and layout queries, which compose transforms down the tree, land on
+    it. A `preserve-3d` element whose plane is edge-on (`rotateX(90deg)`) keeps a negligible thickness
+    (`regularize`) so its children can still be placed relative to it. Its planes are not sorted by
+    depth: they paint in tree order.
+  - The used `transform-style` is `flat` under a grouping property (CSS Transforms 2: `overflow` other
+    than `visible` and `clip`, `opacity` below 1, a `filter`, `clip-path` or mask, `isolation: isolate`,
+    a `mix-blend-mode`, paint containment): `Node::is_preserve_3d`.
+  - `backface-visibility: hidden` with the back face showing (Chromium's `IsBackFaceVisible`: the cofactor
+    of m33 against the determinant) sets `TRANSFORM_HIDES`, which blitz-paint reads, as do a box behind the
+    viewer and a non-invertible matrix. In a 3D rendering context the accumulated matrix decides which face
+    shows (a card flip: a child turned 180deg in a parent turned 180deg faces the viewer). A `preserve-3d`
+    element itself is not hidden: its children are planes of their own, which paint would hide with it.
+  - `transform-box` picks the reference box: a CSS box's content box for `content-box` and `fill-box`, its
+    border box otherwise.
+  - A flat element whose transform is a 3D matrix flattened (drawn, not hidden) sets `NodeFlags::FLATTENS_3D`:
+    blitz-paint has such an element that holds elements rasterized in its own plane, as Chromium composites
+    it.
+- `src/resolve.rs` (`resolve_transforms`, `table_cells_overflow`, `ContainingTransform`): each box resolves its
+  transform with what its parent gives (`ContainingTransform::for_child`). While a parent gives its children a
+  perspective or a 3D rendering context (or stopped giving one in this pass) their transforms are resolved
+  again even when they are undamaged: they may have moved, or the parent changed. A scrolled parent that
+  gives one is marked (`Node::scroll_offset_changed`, called from `scrolling.rs` and pyro-render's mirror), so
+  the next pass reaches it.
+- `src/node/node.rs` (`is_stacking_context_root`): `perspective` and `transform-style: preserve-3d` make a
+  stacking context.
+- `src/layout/paint_tree.rs` (`build_paint_tree_impl`): a stacking context that is not positioned (a
+  transform, an opacity, a filter) paints as a positioned box with `z-index: 0` does (CSS 2.1 Appendix E step
+  8): above the in-flow content and floats, in tree order with the positioned boxes, where it painted with
+  the blocks. `z-index` applies to positioned boxes and to flex and grid items only: such a stacking context
+  keeps its place in tree order whatever its `z-index` (WPT `css/css-transforms/z-index-does-not-apply.html`).
+  pyro-dom's hit testing already ordered them so (`Layout::paint_step`). Positioned boxes a box that is no
+  layer root lays out (the anonymous block holding a positioned or filtered inline's out-of-flow boxes) are
+  lifted to the nearest layer root's positioned level, as in-flow positioned boxes are
+  (`attach_hoisted_past_parent`): they painted under the blocks after the inline (WPT
+  `filtered-inline-is-container`).
+
+Covered by `crates/pyro-render/tests/transform_3d.rs` (paint, a scrolled perspective, the card flip, a
+composed 3D rendering context, grouping properties, a filtered inline's positioned boxes, layout boxes), `crates/pyro-layout/tests/transform_3d.rs` (`getBoundingClientRect`, `elementFromPoint`) and the unit
+tests in `src/stylo_to_kurbo.rs`.
+
 ## Style changes for transitions
 
 - `src/stylo.rs`, `src/document.rs`: while `BaseDocument::set_track_style_changes(true)`, the style traversal

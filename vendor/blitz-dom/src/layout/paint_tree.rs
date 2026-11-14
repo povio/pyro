@@ -492,15 +492,37 @@ impl BaseDocument {
                     // out of tree order into the enclosing stacking context's
                     // z-sorted list (CSS 2.1 Appendix E).
                     let child = &self.nodes[child_id];
-                    let z_index = child.z_index();
+                    // pyro: `z-index` applies to positioned boxes and to flex and grid items
+                    // only (CSS 2 9.9.1): an in-flow stacking context that is neither (a
+                    // transform, an opacity) keeps its place in tree order whatever its value.
+                    let positioned = child
+                        .primary_styles()
+                        .is_some_and(|style| style.clone_position() != Position::Static);
+                    let z_index = if is_flex_or_grid || positioned {
+                        child.z_index()
+                    } else {
+                        0
+                    };
                     let paint_order = node_to_paint_order(child, is_flex_or_grid);
+                    // pyro: a stacking context that is not positioned (a transform, an opacity,
+                    // a filter) paints as a positioned box with `z-index: 0` does (CSS 2.1
+                    // Appendix E step 8; CSS Transforms 1, CSS Color 4 `opacity`): above the
+                    // in-flow content and floats, in tree order with the positioned boxes.
+                    let static_stacking_context = is_sc_root && !positioned;
                     if is_sc_root && z_index != 0 {
                         entries.push(HoistedPaintChild::new(child_id, z_index))
-                    } else if !is_layer_root && child.is_in_flow_positioned() {
+                    } else if !is_layer_root && (positioned || static_stacking_context) {
                         // Positioned boxes paint above all in-flow content of
                         // the nearest positioned (or clipping) ancestor, not just
                         // of their parent: lift them out of this static box.
+                        // pyro: out-of-flow ones too, which a box that is no layer
+                        // root lays out for a positioned or filtered inline (an
+                        // anonymous block).
                         entries.push(HoistedPaintChild::new(child_id, 0))
+                    } else if static_stacking_context {
+                        self.scratch
+                            .keyed_children
+                            .push(((2, paint_order.1), child_id));
                     } else {
                         self.scratch.keyed_children.push((paint_order, child_id));
                     }
@@ -525,12 +547,22 @@ impl BaseDocument {
                 while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                     && anchor == index
                 {
-                    self.attach_hoisted_past_parent(hoisted_id, is_flex_or_grid, &mut entries);
+                    self.attach_hoisted_past_parent(
+                        hoisted_id,
+                        is_flex_or_grid,
+                        is_layer_root,
+                        &mut entries,
+                    );
                     next_hoisted += 1;
                 }
             }
             for &(_, hoisted_id) in &hoisted_past_parent[next_hoisted..] {
-                self.attach_hoisted_past_parent(hoisted_id, is_flex_or_grid, &mut entries);
+                self.attach_hoisted_past_parent(
+                    hoisted_id,
+                    is_flex_or_grid,
+                    is_layer_root,
+                    &mut entries,
+                );
             }
 
             self.scratch.keyed_children[keyed_base..].sort_by_key(|&(paint_order, _)| paint_order);
@@ -685,10 +717,15 @@ impl BaseDocument {
     /// the enclosing stacking context like any other z-indexed positioned
     /// child, the rest join `paint_children` at the same paint level as other
     /// positioned boxes (the caller's stable sort keeps tree order).
+    ///
+    /// pyro: under a box that is no layer root (an anonymous block laying out
+    /// a positioned or filtered inline's out-of-flow boxes), they are lifted
+    /// to the nearest one's positioned level, as in-flow positioned boxes are.
     fn attach_hoisted_past_parent(
         &mut self,
         child_id: NodeId,
         is_flex_or_grid: bool,
+        is_layer_root: bool,
         entries: &mut ThinVec<HoistedPaintChild>,
     ) {
         self.build_paint_tree_impl(
@@ -702,6 +739,8 @@ impl BaseDocument {
         let z_index = self.nodes[child_id].z_index();
         if z_index != 0 {
             entries.push(HoistedPaintChild::new(child_id, z_index));
+        } else if !is_layer_root {
+            entries.push(HoistedPaintChild::new(child_id, 0));
         } else {
             let paint_order = node_to_paint_order(&self.nodes[child_id], is_flex_or_grid);
             self.scratch.keyed_children.push((paint_order, child_id));
@@ -730,16 +769,6 @@ impl Node {
                     || e.sub_doc_data().is_some()
                     || e.text_input_data().is_some()
             })
-    }
-
-    /// Whether this is a `position: relative` or `sticky` box.
-    fn is_in_flow_positioned(&self) -> bool {
-        self.primary_styles().is_some_and(|style| {
-            matches!(
-                style.clone_position(),
-                Position::Relative | Position::Sticky
-            )
-        })
     }
 
     /// The offset from the border box of `painter_id` at which this node is

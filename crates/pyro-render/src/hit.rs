@@ -217,14 +217,23 @@ impl Descent<'_> {
     }
 
     /// The bound of an in-tree box `id` (document CSS px): its border box
-    /// and hit overflow, transformed and grown by the tolerance.
+    /// and hit overflow, transformed and grown by the tolerance. A cell's
+    /// box also takes its share of collapsed borders (its gutters), as its
+    /// own box does in [`Self::visit`]: an out-of-flow cell, whose row does
+    /// not hold it, was culled at a point in its gutters.
     fn bound(&mut self, id: NodeId) -> Option<(Rect, bool)> {
         let (t, fixed) = self.transform(id)?;
         let l = self.doc.physical_unrounded_layout(id);
         let node = self.doc.get_node(id)?;
         let border = Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64);
         let local = border.union(node.hit_overflow().scale_from_origin(1.0 / self.scale));
-        Some((self.grown(t.transform_rect_bbox(local), &t), fixed))
+        let mut r = t.transform_rect_bbox(local);
+        if geometry::is_cell(self.doc, id) {
+            if let Some((gx, top, bottom)) = geometry::cell_gutters(self.doc, id) {
+                r = Rect::new(r.x0 - gx, r.y0 - top, r.x1 + gx, r.y1 + bottom);
+            }
+        }
+        Some((self.grown(r, &t), fixed))
     }
 
     fn visit(&mut self, id: NodeId) {
