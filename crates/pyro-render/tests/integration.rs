@@ -27,6 +27,7 @@ mod pdf_fidelity;
 mod pdf_variable_fonts;
 mod profiling_timers;
 mod render;
+mod sampled_animations;
 mod table_cell_height;
 mod table_cell_width;
 mod table_collapsed_borders;

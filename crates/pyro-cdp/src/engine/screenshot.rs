@@ -351,6 +351,8 @@ impl EngineHost {
                 })
                 .collect(),
             element_scroll: Some(s.element_scroll),
+            // CSS animations, transitions and Web Animations as they are now.
+            animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
         })
     }
 

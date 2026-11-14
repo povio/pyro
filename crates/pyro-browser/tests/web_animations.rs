@@ -1021,3 +1021,90 @@ fn review_misc2_fragment_navigation_reveals_until_found_with_beforematch() {
     }
     assert_eq!(quiet(&mut t, &root, 150), format!("beforematch:p {MISC2_RAN}"));
 }
+
+
+/// Animated values are in the cascade: computed styles read a CSS
+/// animation (paused, a negative delay putting it halfway) and a script
+/// animation where they are, and the base value once they are gone.
+#[test]
+fn computed_styles_read_css_and_script_animations() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '@keyframes fade { from { opacity: 0 } to { opacity: 1 } }' +
+           ' .fade { animation: fade 10s linear -5s paused }';
+         globalThis.a = document.body.appendChild(document.createElement('div'));
+         globalThis.b = document.body.appendChild(document.createElement('div'));
+         0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    assert_eq!(
+        eval(
+            &root,
+            // Read in the task that set the class: the flush starts it.
+            "a.className = 'fade';
+             const css = getComputedStyle(a).opacity;
+             globalThis.anim = b.animate([{ opacity: 0.2 }, { opacity: 0.6 }], { duration: 1000 });
+             anim.pause();
+             anim.currentTime = 250;
+             [css, getComputedStyle(b).opacity].join()"
+        ),
+        "0.5,0.3"
+    );
+    assert_eq!(eval(&root, "anim.cancel(); a.className = ''; [getComputedStyle(a).opacity, getComputedStyle(b).opacity].join()"), "1,1");
+}
+
+/// A transition whose element was never read before its style changed is
+/// still a transition (the frames after the element appeared styled it), and
+/// `getAnimations()` in the same task lists it: the reftests that wait on
+/// `document.getAnimations()[0]` right after a change.
+#[test]
+fn get_animations_lists_a_transition_started_in_the_same_task() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '.box { background-color: rgb(0, 200, 0); transition: background-color 1000s steps(2) -499.9s }';
+         globalThis.box = document.body.appendChild(document.createElement('div'));
+         box.className = 'box';
+         0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    assert_eq!(
+        eval(
+            &root,
+            "box.style.backgroundColor = 'rgb(200, 0, 0)';
+             const list = document.getAnimations();
+             [list.length, list[0] instanceof CSSTransition, list[0].transitionProperty,
+              list[0].effect.getTiming().easing, list[0].effect.getComputedTiming().fill].join()"
+        ),
+        "1,true,background-color,steps(2),backwards"
+    );
+}
+
+/// A paused CSS animation is a paused `CSSAnimation`, held where its delay
+/// put it; script seeking its object moves what the cascade shows.
+#[test]
+fn css_animation_objects_follow_play_state_and_script_control() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '@keyframes grow { from { width: 100px } to { width: 200px } }' +
+           ' .grow { animation: grow 1s linear -0.25s paused both }';
+         globalThis.box = document.body.appendChild(document.createElement('div'));
+         box.className = 'grow';
+         0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    assert_eq!(
+        eval(
+            &root,
+            "globalThis.anim = box.getAnimations()[0];
+             [anim.playState, anim.currentTime, anim.effect.getComputedTiming().fill, getComputedStyle(box).width].join()"
+        ),
+        "paused,0,both,125px"
+    );
+    assert_eq!(eval(&root, "anim.currentTime = 500; getComputedStyle(box).width"), "175px");
+}

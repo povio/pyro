@@ -530,7 +530,7 @@ impl Layout {
     pub fn synced_geometry_source(&self, dom: &Dom) -> Option<&Rc<dyn GeometrySource>> {
         let source = self.external.as_ref().filter(|s| s.active())?;
         let key = self.sync_key(dom);
-        if self.external_synced.get() != Some(key) || source.stale() {
+        if self.external_synced.get() != Some(key) || source.stale() || self.style.animations_changed() {
             self.style.before_recalc(dom);
             source.sync(dom, self);
             self.external_synced.set(Some(key));

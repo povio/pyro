@@ -846,6 +846,10 @@ pub struct StyleEngine {
     recalc_hooked_at: Cell<Option<ObservationStamp>>,
     /// [`Self::set_track_style_changes`].
     track_style_changes: Cell<bool>,
+    /// The page's animated values ([`Self::set_animation_source`]) and the
+    /// stamp of those the engine sampled last.
+    animation_source: RefCell<Option<crate::animation::SharedAnimationSource>>,
+    animation_synced: Cell<Option<u64>>,
     /// Debug builds: the last [`StyleEngine::author_sheets_key`] and a hash
     /// of the sheet texts it stood for, to check the key moves whenever the
     /// texts do.
@@ -916,6 +920,8 @@ impl StyleEngine {
             gecko_rules: RefCell::new(None),
             revisions: 0,
             track_style_changes: Cell::new(false),
+            animation_source: RefCell::new(None),
+            animation_synced: Cell::new(None),
             #[cfg(debug_assertions)]
             checked_key: RefCell::new(None),
             registered_properties: Vec::new(),
@@ -966,6 +972,32 @@ impl StyleEngine {
 
     pub fn track_style_changes(&self) -> bool {
         self.track_style_changes.get()
+    }
+
+    /// Makes `source` (the page's animations) what the layout engine samples
+    /// into its cascade at each sync; `None`: nothing is animated.
+    pub fn set_animation_source(&self, source: Option<crate::animation::SharedAnimationSource>) {
+        *self.animation_source.borrow_mut() = source;
+        self.animation_synced.set(None);
+    }
+
+    /// Whether the animated values changed since the engine last sampled
+    /// them ([`Self::take_animation_frame`]): it must sync again although the
+    /// document did not change.
+    pub fn animations_changed(&self) -> bool {
+        let Ok(source) = self.animation_source.try_borrow() else { return false };
+        let Some(source) = source.as_ref() else { return false };
+        Some(source.stamp()) != self.animation_synced.get()
+    }
+
+    /// The animated values for a sync of the layout engine, now; `None`
+    /// without an animation source.
+    pub fn take_animation_frame(&self) -> Option<crate::animation::AnimationFrame> {
+        let source = self.animation_source.try_borrow().ok()?.clone()?;
+        let stamp = source.stamp();
+        let frame = source.frame();
+        self.animation_synced.set(Some(stamp));
+        Some(frame)
     }
 
     /// The elements of this document whose computed style the engine
@@ -1050,6 +1082,12 @@ impl StyleEngine {
 
     /// The layout engine synced `dom` (styles and layout).
     pub fn engine_synced(&self, dom: &Dom) {
+        // An engine that samples no animations is not asked again for them.
+        if let Ok(source) = self.animation_source.try_borrow() {
+            if let Some(source) = source.as_ref() {
+                self.animation_synced.set(Some(source.stamp()));
+            }
+        }
         let stamp = self.observation_stamp(dom);
         if let Some((source, at)) = self.external.borrow_mut().as_mut() {
             *at = Some(stamp);
@@ -1080,7 +1118,7 @@ impl StyleEngine {
         let source = {
             let external = self.external.borrow();
             let (source, at) = external.as_ref()?;
-            if *at == Some(stamp) && !source.stale() {
+            if *at == Some(stamp) && !source.stale() && !self.animations_changed() {
                 return Some(stamp);
             }
             if !source.active() {

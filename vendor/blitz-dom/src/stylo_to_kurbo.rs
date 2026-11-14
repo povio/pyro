@@ -22,6 +22,13 @@ use style::{
 //   - Translate by the negated computed X, Y and Z values of transform-origin.
 //
 // <https://drafts.csswg.org/css-transforms-2/#ctm>
+/// pyro: [`resolve_2d_transform`] for an element without a box of its own (an SVG
+/// `<clipPath>` and its shapes): a zero reference box at the origin.
+pub fn resolve_2d_transform_without_box(box_styles: &BoxStyleStruct) -> Option<Affine> {
+    let zero = CSSPixelLength::new(0.0);
+    resolve_2d_transform(box_styles, Rect::new(euclid::default::Point2D::new(zero, zero), euclid::default::Size2D::new(zero, zero)))
+}
+
 pub fn resolve_2d_transform(
     box_styles: &BoxStyleStruct,
     reference_box: Rect<CSSPixelLength>,

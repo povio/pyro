@@ -73,10 +73,10 @@ use style_dom::ElementState;
 
 use style::values::computed::text::TextAlign as StyloTextAlign;
 
-struct LayoutThreadScope;
+pub(crate) struct LayoutThreadScope;
 
 impl LayoutThreadScope {
-    fn enter() -> Self {
+    pub(crate) fn enter() -> Self {
         style::thread_state::enter(ThreadState::LAYOUT);
         Self
     }
@@ -1012,6 +1012,8 @@ impl<'a> TElement for BlitzNode<'a> {
     fn may_have_animations(&self) -> bool {
         self.element_data()
             .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
+            // pyro: values the embedder samples in (`animation.rs`).
+            || crate::animation::has_sampled(self)
     }
 
     fn set_may_have_animations(&self) {
@@ -1023,6 +1025,10 @@ impl<'a> TElement for BlitzNode<'a> {
     fn has_animations(&self, context: &SharedStyleContext) -> bool {
         if !self.may_have_animations() {
             return false;
+        }
+        // pyro: sampled values keep the element out of style sharing.
+        if crate::animation::has_sampled(self) {
+            return true;
         }
         let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
         context
@@ -1058,6 +1064,10 @@ impl<'a> TElement for BlitzNode<'a> {
         &self,
         context: &SharedStyleContext,
     ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
+        // pyro: the values the embedder samples in (`animation.rs`).
+        if let Some(block) = crate::animation::sampled_rule(self, false) {
+            return Some(block);
+        }
         let opaque = TNode::opaque(&TElement::as_node(self));
         context.animations.get_animation_declarations(
             &AnimationSetKey::new_for_non_pseudo(opaque),
@@ -1070,6 +1080,9 @@ impl<'a> TElement for BlitzNode<'a> {
         &self,
         context: &SharedStyleContext,
     ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
+        if let Some(block) = crate::animation::sampled_rule(self, true) {
+            return Some(block);
+        }
         let opaque = TNode::opaque(&TElement::as_node(self));
         context.animations.get_transition_declarations(
             &AnimationSetKey::new_for_non_pseudo(opaque),

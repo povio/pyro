@@ -8,8 +8,10 @@
 //! ([`Screencasts::due`], as the driver's waiters notice DOM changes) from
 //! what a render snapshot is made of ([`Look`]): the render stamp (DOM and
 //! sheets), the viewport, the scroll positions, the hovered and focused
-//! elements and the canvas and video bitmaps. While those stay the same
-//! nothing is rendered. A frame is rendered as a screenshot is (the page's
+//! elements, the canvas and video bitmaps and the animated values (their
+//! state, and the clock while a CSS animation, transition or Web Animation
+//! moves: a frame per interval then). While those stay the same nothing is
+//! rendered. A frame is rendered as a screenshot is (the page's
 //! persistent document on the connection's render thread, `screenshot.rs`),
 //! scaled into `maxWidth` x `maxHeight` in the display list rather than
 //! after raster, and is dropped before raster when its display list hashes
@@ -139,6 +141,9 @@ struct Look {
     /// Canvas and video bitmaps: a changed one is a new `Arc` (held here,
     /// so its address is not reused by the next).
     bitmaps: Vec<(pyro_dom::NodeId, Arc<Vec<u8>>)>,
+    /// `PageDom::animation_stamp`: the animations' state, and the clock while
+    /// one moves.
+    animations: u64,
 }
 
 impl PartialEq for Look {
@@ -151,6 +156,7 @@ impl PartialEq for Look {
             && self.focused == other.focused
             && self.bitmaps.len() == other.bitmaps.len()
             && self.bitmaps.iter().zip(&other.bitmaps).all(|(a, b)| a.0 == b.0 && Arc::ptr_eq(&a.1, &b.1))
+            && self.animations == other.animations
     }
 }
 
@@ -166,6 +172,7 @@ fn look(browser: &Browser, pid: PageId) -> Option<Look> {
         hovered: v.hovered,
         focused: v.focused,
         bitmaps: v.canvases.into_iter().map(|(node, _, _, rgba)| (node, rgba)).collect(),
+        animations: dom.animation_stamp(),
     })
 }
 

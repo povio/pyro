@@ -7814,6 +7814,84 @@ mod screenshot {
         assert!((2..=6).contains(&fifth), "{fifth} frames in a second, every 5th");
     }
 
+    /// A screenshot shows animations where they are when it is taken: a CSS
+    /// animation held halfway (`paused`, a negative delay), a transition a
+    /// style change just started (a capture is a rendering opportunity, so it
+    /// starts the transition first), a script animation paused at a time, and
+    /// the base value once they are gone.
+    #[test]
+    fn capture_screenshot_shows_animations_where_they_are() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 300, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><style>body{margin:0;background:#fff} div{position:absolute;top:0;width:100px;height:100px}\
+             @keyframes fade{from{background-color:rgb(0,200,0)}to{background-color:rgb(200,0,0)}}\
+             #css{left:0;animation:fade 10s linear -5s paused}\
+             #tr{left:100px;background-color:rgb(0,0,200);transition:background-color 1000s cubic-bezier(0,1,1,0) -500s}\
+             #js{left:200px;background-color:rgb(0,0,0)}</style><div id=css></div><div id=tr></div><div id=js></div>",
+        );
+        h.run_for(50);
+        let set = "document.getElementById('tr').style.backgroundColor = 'rgb(200, 0, 200)';
+                   const a = document.getElementById('js').animate(
+                     [{ backgroundColor: 'rgb(0, 0, 0)' }, { backgroundColor: 'rgb(200, 200, 200)' }], 1000);
+                   a.pause(); a.currentTime = 250; 0";
+        h.page("Runtime.evaluate", eval_params(set));
+        let shot = |h: &mut Harness| {
+            let r = h.page("Page.captureScreenshot", json!({"format": "rgba"}));
+            let data = pyro_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap()).unwrap();
+            move |x: usize| -> [u8; 3] { [data[(50 * 300 + x) * 4], data[(50 * 300 + x) * 4 + 1], data[(50 * 300 + x) * 4 + 2]] }
+        };
+        let near = |got: [u8; 3], want: [u8; 3], what: &str| {
+            assert!(got.iter().zip(want).all(|(&g, w)| g.abs_diff(w) <= 2), "{what}: {got:?}, want {want:?}");
+        };
+        let at = shot(&mut h);
+        near(at(50), [100, 100, 0], "a paused CSS animation, halfway");
+        near(at(150), [100, 0, 200], "a transition, halfway (cubic-bezier(0, 1, 1, 0) flat at 0.5)");
+        near(at(250), [50, 50, 50], "a script animation paused at a quarter");
+        let gone = "document.getAnimations().forEach(a => a.cancel());
+                    document.getElementById('css').style.animation = 'none'; 0";
+        h.page("Runtime.evaluate", eval_params(gone));
+        h.run_for(50);
+        let at = shot(&mut h);
+        near(at(50), [255, 255, 255], "no animation: no background");
+        near(at(250), [0, 0, 0], "the script animation canceled");
+    }
+
+    /// A screencast follows a running animation: frames keep coming while it
+    /// moves although the DOM does not change, and stop once it is still.
+    #[test]
+    fn screencast_frames_follow_a_running_animation() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 100, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><style>body{margin:0}@keyframes fade{from{background-color:rgb(0,0,0)}to{background-color:rgb(250,250,250)}}\
+             div{width:100px;height:100px;animation:fade 400ms linear forwards}</style><div></div>",
+        );
+        let first = frame_after(&mut h, "Page.startScreencast", json!({"format": "png"}));
+        let mut shades = vec![pixel(&png_of(&first["params"]["data"]), 50, 50)[0]];
+        let mut id = first["params"]["sessionId"].clone();
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(1200) {
+            let frames = frames_after(&mut h, "Page.screencastFrameAck", json!({"sessionId": id}), 60);
+            for f in frames {
+                shades.push(pixel(&png_of(&f["params"]["data"]), 50, 50)[0]);
+                id = f["params"]["sessionId"].clone();
+            }
+        }
+        assert!(shades.len() >= 4, "a frame per interval while it runs: {shades:?}");
+        assert!(shades.windows(2).all(|w| w[0] <= w[1]), "lighter frame by frame: {shades:?}");
+        assert_eq!(*shades.last().unwrap(), 250, "it ends filled forwards: {shades:?}");
+        assert!(frames_after(&mut h, "Page.screencastFrameAck", json!({"sessionId": id}), 200).is_empty(), "still: no frame");
+    }
+
     /// pyro's raw capture formats (frames for ffmpeg, nothing encoded): `rgba` is the render
     /// as it is, `rgb24` drops alpha, `yuv420p` is I420. With an absolute `path` the frame is
     /// appended to that file and the reply's data is empty; the reply gives the frame's size,

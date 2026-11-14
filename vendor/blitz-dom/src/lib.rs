@@ -35,6 +35,8 @@ pub const BULLET_FONT: &[u8] = include_bytes!("../assets/moz-bullet-font.otf");
 ///
 /// This is the primary entry point for this crate.
 mod document;
+/// pyro: animated values the embedder samples into the cascade.
+pub mod animation;
 
 /// The nodes themsleves, and their data.
 pub mod node;
@@ -80,7 +82,7 @@ pub use resolved_style::{
     css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
 };
 pub use stylo_taffy::CopyStyleGetters;
-pub use stylo_to_kurbo::resolve_2d_transform;
+pub use stylo_to_kurbo::{resolve_2d_transform, resolve_2d_transform_without_box};
 
 pub mod net;
 pub mod util;

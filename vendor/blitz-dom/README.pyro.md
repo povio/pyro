@@ -260,6 +260,25 @@ rebuilds, tables, rounding) read by pyro-render's profiling. The phase timers ru
   transition events read them instead of scanning the document for elements that may transition on every
   style flush: the cost is the elements restyled, as in Chrome, where transitions start in style recalc.
 
+## Animated values the embedder samples into the cascade
+
+- `animation.rs` (new), `document.rs`, `node/element.rs`, `lib.rs`, `stylo.rs` (`animation_rule`,
+  `transition_rule`, `may_have_animations`, `has_animations`, `LayoutThreadScope`), `resolve.rs`: pyro keeps the
+  timing of CSS animations, CSS transitions and Web Animations itself (its UA sheet sets `animation` and
+  `transition` to `none !important`, so Stylo's servo animations never start) and hands the document, per element,
+  the keyframe effects in effect with their iteration progress (`BaseDocument::set_sampled_animations`). The
+  document resolves each effect's keyframes against the element's base style (its rules without the animations and
+  transitions levels, cascaded; a CSS animation's from the `@keyframes` rule Stylo finds for the element, so `em`,
+  `currentcolor`, `var()` and `inherit` resolve as for the element) and samples them as Web Animations samples a
+  keyframe effect: the effect's easing (with its before flag), neutral 0%/100% keyframes taking the underlying value,
+  the interval's keyframe easing, `add`/`accumulate`, values that do not interpolate flipping at the midpoint. The
+  values go on the element as two declaration blocks that `animation_rule` and `transition_rule` answer, so Stylo
+  cascades them at their levels, and an element with them is kept out of style sharing. An element is restyled only
+  when its values change; resolved keyframes are kept until the base rules or the parent's style change, checked
+  after each traversal, where the elements styled anew get their values and one more traversal
+  (`resolve_sampled_animations`). Pseudo-elements are not animated. Tests:
+  `crates/pyro-render/tests/sampled_animations.rs`.
+
 ## Inline layouts in vertical writing modes
 
 Layout keeps a vertical inline root's lines logical (x inline, y block). `Node::vertical_block_axis` says which
