@@ -103,8 +103,8 @@ element's transform and its box. The draw draws them in the box. An opaque, unfi
 before the group in place of what lies there (Chromium draws it with a source copy: where the root painted nothing,
 the page beneath shows, not the content under the box twice), and the group pushes nothing; a backdrop of one
 colour is a fill of that colour, and a box on whole pixels needs no clip (each rounded a level apart under clips in
-vello_cpu's u8 compositing). Scenes without a backdrop filter skip all of it. Covered by the unit tests in
-`src/backdrop.rs` and pyro-render's `backdrop_filter.rs`.
+vello_cpu's u8 compositing). Scenes without a backdrop filter skip all of it. Covered by pyro-render's
+`backdrop_filter.rs`.
 
 ## Clips that a blend mode blends through
 
