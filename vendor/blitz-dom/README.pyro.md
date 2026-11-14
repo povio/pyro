@@ -743,6 +743,16 @@ the system fonts, when it is made, so SVG text finds them by family name as if t
 `serve --font`, which the WPT reftest runner uses for Ahem). Call it before the first SVG is parsed. Covered by
 `crates/pyro-render/tests/startup_fonts.rs`.
 
+## Rotations by multiples of 90 degrees are exact
+
+`src/stylo_to_kurbo.rs` (`resolve_2d_transform`): the transform's coefficients that lie within 1e-9 of a whole number
+are made whole before the transform origin is applied, as Chromium computes a rotation by a multiple of 90 degrees
+exactly (`SinCosDegrees`). Stylo's `rotate(360deg)` came out with `b` and `c` of 2.4e-16, so the box was transformed:
+its text was not snapped to quarter pixels as untransformed text is, and was a few pixels off its reference, which
+the fuzzy limits of WPT css-transforms/transform-input-* hide while text is antialiased but not once it is aliased
+(the reftest runner's text). Now such a turn is no transform at all. Covered by
+`text_turned_by_a_whole_turn_draws_as_untransformed_text` in `crates/pyro-render/tests/text_aliasing.rs`.
+
 ## SVG reference cycles usvg does not break
 
 `src/svg_refs.rs` (new), `src/util.rs` (`parse_svg_image`): usvg sets a clip path, mask or filter reference that

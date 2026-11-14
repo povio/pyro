@@ -15220,6 +15220,24 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
          MediaData {
              media_type,
              viewport_size,
+diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/stylo_to_kurbo.rs
+--- a/packages/blitz-dom/src/stylo_to_kurbo.rs
++++ b/packages/blitz-dom/src/stylo_to_kurbo.rs
+@@ -119,6 +119,14 @@
+         resolved *= transform;
+     }
+ 
++    // pyro: coefficients a hair from whole numbers are whole, as Chromium's rotations by multiples
++    // of 90 degrees are exact (`SinCosDegrees`): `rotate(360deg)` is the identity, so its text is
++    // placed and snapped as untransformed text is (WPT css-transforms/transform-input-*).
++    resolved = Affine::new(resolved.as_coeffs().map(|v| {
++        let whole = v.round();
++        if (v - whole).abs() < 1e-9 { whole } else { v }
++    }));
++
+     resolved = origin_translation * resolved * origin_translation.inverse();
+ 
+     if resolved != Affine::IDENTITY {
 diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_refs.rs
 new file mode 100644
 --- /dev/null
