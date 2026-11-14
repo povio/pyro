@@ -10,6 +10,8 @@ mod serialize;
 mod stylo_data;
 #[cfg(feature = "svg")]
 mod svg;
+#[cfg(feature = "svg")]
+mod svg_css;
 mod text;
 
 pub use attributes::{Attribute, Attributes, PresentationalHints};
