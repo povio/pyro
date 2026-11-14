@@ -2,7 +2,8 @@
 
 `.github/workflows/wpt.yml` runs our WPT subset (the directories in `lib.mjs` `DEFAULT_DIRS`, ~2,800 pages) on every
 pull request and fails when coverage goes down. `baseline.json` records, per page, which subtests pass, whether the
-page completed, and how long it took.
+page completed, and how long it took. The same gate runs over WPT's reftests in the paint directories (9,341 pages,
+`reftest-baseline.json`): see [Reftests](#reftests), which also compares pyro's results with Chrome's.
 
 ## How a run works
 
@@ -171,3 +172,170 @@ The slowest pages are slow by design or by a known engine gap, not by the runner
   pages running beside the page that hung (above), before the runner ran them again; whether all of them were that
   is not known. The gate's 10 s bound and the reruns absorb the rest, since a page fails only if no run completes.
   If CI shows otherwise, an `allowIncomplete` pattern entry covers them.
+
+## Reftests
+
+WPT tests painting with reftests: a test page and one or more references that must render the same (`<link
+rel=match>`) or differently (`rel=mismatch`). `run.mjs --kind reftest` runs them and `gate.mjs ... --kind reftest`
+gates them as above: each reftest is reported as one subtest, `reftest`, so a reftest that passed in
+`reftest-baseline.json` must still pass in some run of it, an unrecorded pass fails as stale, and `reftest-flaky.json`
+(the format of `flaky.json`) lists what is not checked. Only passes are protected: a failing reftest's completion
+carries no coverage, so it may time out instead (an animation page whose `reftest-wait` outlasts a loaded runner did,
+four runs in a row) and a timed-out one that now completes and fails is no gain. Adding or widening a
+`reftest-flaky.json` entry, or dropping a baseline pass, needs the `wpt-accept-loss` label. The refreshed baseline is
+the `wpt-reftest-baseline` artifact:
+
+```sh
+gh run download <run-id> -n wpt-reftest-baseline -D bench/wpt     # writes bench/wpt/reftest-baseline.json
+```
+
+### What runs
+
+`lib.mjs` `discoverReftests()` classifies files as WPT's manifest does (`tools/manifest/sourcefile.py`): a markup file
+(`.html`, `.htm`, `.xht`, `.xhtml`, `.xml`, `.svg`) with a `match` or `mismatch` link is a reftest, unless it is a
+manual, visual, crash or print test, a testharness page, or under a `resources`, `support` or `tools` directory. The
+directories are `REFTEST_DIRS`: the paint directories and all of CSS2 (it costs about 50 s of the run). At the pinned
+revision they hold 9,341 reftests. wpt.fyi lists 9,352 in them: the same 9,341, and the 11 left out below for wptserve
+or testdriver.
+
+| directory | reftests | reference files | no reference | crash tests | manual | print | wptserve | testdriver |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| css/css-backgrounds | 732 | 406 | 104 | 14 | 0 | 0 | 1 | 0 |
+| css/css-text-decor | 337 | 251 | 13 | 9 | 65 | 0 | 0 | 1 |
+| css/filter-effects | 372 | 241 | 0 | 23 | 0 | 0 | 0 | 0 |
+| css/compositing | 60 | 56 | 11 | 6 | 0 | 0 | 0 | 0 |
+| css/css-masking | 494 | 238 | 4 | 6 | 0 | 0 | 8 | 0 |
+| css/css-color | 308 | 148 | 0 | 3 | 0 | 0 | 0 | 0 |
+| css/css-transforms | 797 | 311 | 4 | 28 | 1 | 0 | 0 | 0 |
+| css/CSS2 | 6,241 | 2,099 | 2,314 | 32 | 4 | 43 | 1 | 0 |
+| **all** | **9,341** | 3,750 | 2,450 | 121 | 70 | 43 | 10 | 1 |
+
+Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
+markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
+such as `interact`), print reftests, pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions,
+`pipe=`, Python handlers), and testdriver. Testharness pages in these directories (parsing, computed values) are not
+reftests and are not run here. A reference that has references of its own (155 tests) is compared one level deep, as
+wptrunner does at this revision (`ReftestTest.from_manifest`); it is a test of its own as well, so the chain is covered
+link by link. `about:blank` references are supported.
+
+### How a reftest is judged
+
+As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
+
+- Test and references render in an 800x600 CSS px viewport at device scale factor 1 (a `<meta name=viewport-size>`
+  sets another size), each in the browser under test.
+- The screenshot is taken after the load event, `document.fonts.ready` (after a forced layout: pyro requests a web font
+  when layout first needs it) and two animation frames. With `class="reftest-wait"` on the root element, the runner
+  fires `TestRendered` at it and waits for the class to go, two frames after each change of the root's attributes, up
+  to the page's timeout (`timeout` with the message `reftest-wait was not removed`).
+- Two renders are equal when no pixel differs in R, G or B. `<meta name=fuzzy content="[ref:]maxDifference=a-b;
+  totalPixels=c-d">` (names optional; a single value n means n-n) allows renders whose largest channel difference
+  and number of differing pixels fall in the inclusive ranges, or that do not differ at all when a range starts at 0.
+- A test passes when it equals at least one of its `match` references (if it has any) and none of its `mismatch`
+  references. The subtest's message gives each comparison: `== ref.html: 1234 px differ, max 255`.
+- References are cached by URL and viewport (48 renders per runner), as wptrunner caches screenshots.
+- pyro answers `Page.captureScreenshot` with `format: "rgba"` (no encoding); another browser's PNG is decoded.
+- A page whose browser died under it runs again alone. If it loses the browser again it is recorded as `crash` (at
+  the pinned revision `css/css-masking/clip-path-svg-content/clip-path-recursion-001.svg` crashes pyro); the pages that
+  ran beside it get their own results.
+
+`REFTEST_SHOTS=DIR` writes the renders of every failing test and its references to DIR as PNG.
+
+### CI
+
+The `reftest` job runs `gate.mjs run --kind reftest` in two shards on GitHub's `macos-15` runners, one page per CPU,
+and `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build` jobs (the
+browser, built on `lp-m1`) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support
+files; 171 MB). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
+`reftest-runner` (`lp-m1`: one shard there) and `reftest-args` (for example `--dirs css/CSS2 --no-rerun` to time a
+directory).
+
+Measured on this pull request's runs (all 9,341 reftests; a run without a baseline runs every page twice):
+
+| runner | shards x jobs | one pass | job, with setup | two passes agreed |
+|---|---|---:|---:|---|
+| `macos-15` (GitHub: M2 Pro, 5 vCPUs, 14 GB, macOS 15.8) | 2 x 5 | 53 s, 65 s | 2:04, 2:22 | every page |
+| `macos-15` | 3 x 5 | 34-37 s (70 s with the crash) | 1:28-2:35 | every page |
+| `lp-m1` (M1, 8 CPUs, 8 GB, macOS 26.7) | 1 x 8 | 72 s (9,300 pages), 115-131 s with the timeouts' tail | 4:55 | all but 5 pages, which a runner bug (since fixed) recorded as crashes |
+| `macos-15`, a pull request's gate run (baseline committed) | 2 x 5 | 35 s, 40 s | 0:52, 0:55 | (2 pages rerun) |
+
+The 11 pages that time out (15 s each) and the crash run last in a run without a baseline; a pull request's run skips
+them (nothing to protect), so its pass costs about what the first 9,300 pages do. The reftests run on `macos-15`:
+within each bootstrap run there the two passes agreed on every page, the runs differed only on two transition pages
+(below), and `lp-m1`'s results matched theirs on every other page but the two that runner bug recorded as crashes.
+So `macos-15` is as deterministic as the self-hosted runner. On `lp-m1`, which runs one job at a time and already
+queues the four testharness shards and the client job of every pull request, the reftests would add 2 to 5 minutes to
+each run's turn on it; on `macos-15` they run beside them, two jobs of 1 to 2.5 minutes (2 to 5 runner minutes per run,
+billed as macOS minutes). `reftest-runner: lp-m1` runs them there; the baseline was recorded on `macos-15`, and the
+runners agreed, but a timing-dependent page can still tell them apart.
+
+`lp-m1` has no `zstd`, so its Actions cache entries are gzip archives; a runner with `zstd` looks for another cache
+version and misses them. The reftest job restores the WPT checkout and the browser with a `PATH` that hides `zstd`,
+so both runners share the entries `lp-m1` saves.
+
+Flaky: `css/css-color/animation/opacity-animation-ending-correctly-001.html` and `-002.html` wait in `reftest-wait`
+for a 50 ms transition's end. -001 timed out in both passes of one of four runs; in the first gate run both timed out
+in their first run (10 s bound) and passed in all five reruns. They are not in `reftest-flaky.json` (that needs the
+`wpt-accept-loss` label): a run in which one times out every time fails the gate. The entry they would need:
+`"css/css-color/animation/opacity-animation-ending-correctly-*": {"reason": "...", "allowIncomplete": true}`.
+
+### pyro vs Chrome
+
+`chrome-compare.mjs` compares pyro's reftest results (the committed baseline, or a run's shard files) with Chrome's on
+[wpt.fyi](https://wpt.fyi), per directory, and lists the reftests Chrome passes and pyro fails by feature: the work
+queue for paint fixes. wpt.fyi has no Chrome stable run at the pinned revision; the script takes the stable run
+nearest to it in WPT's history (GitHub's compare API: `GH_TOKEN` raises the rate limit), with Firefox and Safari stable
+at that run's revision. `--canary` uses Chrome's experimental run at the exact revision instead, `--run ID` any run.
+
+```sh
+GH_TOKEN=$(gh auth token) bun bench/wpt/chrome-compare.mjs [shard files] [--md out.md] [--json out.json]
+```
+
+At the pinned revision (pyro: `reftest-baseline.json`; Chrome 157.0.8103.38 stable, wpt.fyi run 5478394868006912 at
+WPT 1eecaa0c30, 10 commits before the pin; Firefox 159.0.1 and Safari 27.2 stable at the same revision):
+
+| directory | reftests | pyro | Chrome | Firefox | Safari | Chrome passes, pyro fails | pyro passes, Chrome fails |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| css/css-backgrounds | 732 | 485 (66.3%) | 630 (86.1%) | 665 (90.8%) | 624 (85.2%) | 237 | 92 |
+| css/css-text-decor | 337 | 115 (34.1%) | 256 (76.0%) | 288 (85.5%) | 148 (43.9%) | 146 | 5 |
+| css/filter-effects | 372 | 175 (47.0%) | 340 (91.4%) | 319 (85.8%) | 262 (70.4%) | 173 | 8 |
+| css/compositing | 60 | 28 (46.7%) | 55 (91.7%) | 49 (81.7%) | 41 (68.3%) | 30 | 3 |
+| css/css-masking | 494 | 212 (42.9%) | 460 (93.1%) | 468 (94.7%) | 421 (85.2%) | 253 | 5 |
+| css/css-color | 308 | 272 (88.3%) | 300 (97.4%) | 298 (96.8%) | 284 (92.2%) | 29 | 1 |
+| css/css-transforms | 797 | 439 (55.1%) | 791 (99.2%) | 789 (99.0%) | 772 (96.9%) | 354 | 2 |
+| css/CSS2 | 6241 | 4694 (75.2%) | 6114 (98.0%) | 6103 (97.8%) | 5972 (95.7%) | 1470 | 50 |
+| **all** | 9341 | 6420 (68.7%) | 8946 (95.8%) | 8979 (96.1%) | 8524 (91.3%) | 2692 | 166 |
+
+A reftest passes in pyro when pyro renders the test like its reference; it can pass while pyro paints both wrong (a
+reference drawn with the same feature), which `bench/fidelity/paint.ts` checks against Chromium instead. The work
+queue, reftests Chrome passes and pyro fails, by feature (`chrome-compare.mjs` lists every one):
+
+Paint (the paint directories and CSS2's backgrounds, borders, colors, visufx, ui, zindex, zorder, stacking-context): 1334.
+
+| feature | reftests | examples |
+|---|---:|---|
+| clip-path | 158 | `clip-path-clip-nested-twice.svg`, `clip-path-clip-rule-003.svg`, `clip-path-clip-rule-004.svg` |
+| transforms: 2D | 117 | `css-transform-animate-translate-implied-y.html`, `css-transforms-transformlist.html`, `svg-document-styles-001.html` |
+| transforms: 3D | 114 | `3d-rendering-context-and-inline.html`, `3d-scene-with-iframe-001.html`, `3dtransform-and-filter-no-perspective-001.html` |
+| SVG filters (url(), fe*) | 86 | `effect-reference-add-hw-001.html`, `effect-reference-displacement-negative-scale-001.html`, `effect-reference-feimage-001.html` |
+| transform-origin, transform-box | 81 | `content-box-mutation-001.html`, `cssbox-content-box-001.html`, `cssbox-content-box-002.html` |
+| animations, transitions | 79 | `background-color-animation-custom-property.html`, `background-color-animation-custom-timing-function-reverse.html`, `background-color-animation-custom-timing-function.html` |
+| text-decoration | 68 | `ruby-text-decoration-01.html`, `text-decoration-inset-002.html`, `text-decoration-inset-003.html` |
+| border-image | 64 | `border-image-002.html`, `border-image-003.html`, `border-image-004.html` |
+| text-emphasis | 63 | `text-emphasis-color-property-001.html`, `text-emphasis-color-property-001a.html`, `text-emphasis-color-property-001b.html` |
+| mask | 62 | `clip-fixed-pos-transform-descendant-001.html`, `bad-mask-image-svg.html`, `mask-clip-1.html` |
+| borders | 54 | `background-position-subpixel-at-border.tentative.html`, `gradient-repeat-spaced-with-borders.html`, `ttwf-reftest-borderRadius.html` |
+| backgrounds (other) | 45 | `background-color-body-propagation-004.html`, `background-color-body-propagation-007.html`, `background-color-body-propagation-008.html` |
+| backdrop-filter | 40 | `backdrop-filter-3d-transform-perspective.html`, `backdrop-filter-backdrop-root-backdrop-filter.html`, `backdrop-filter-backdrop-root-clip-path-2.html` |
+| background-clip, background-origin | 36 | `background-clip-border-area-and-blend-mode.html`, `background-clip-content-box-with-border-radius-002.html`, `background-clip-content-box-with-border-radius-003.html` |
+| box-shadow | 35 | `box-shadow-041.html`, `box-shadow-042.html`, `box-shadow-border-radius-001.html` |
+| background-attachment | 29 | `background-attachment-350.html`, `background-attachment-353.html`, `background-attachment-local-hidden.html` |
+| background-position, background-repeat | 24 | `background-position-right-in-body.html`, `subpixel-position-center.tentative.html`, `background-repeat-round-2.html` |
+| mix-blend-mode | 23 | `mix-blend-mode-blended-element-overflow-scroll.html`, `mix-blend-mode-blended-element-with-transparent-pixels.html`, `mix-blend-mode-blended-with-3D-transform.html` |
+| colors (other) | 20 | `color-svg-visited.html`, `deprecated-sameas-018.html`, `deprecated-sameas-019.html` |
+| border-radius | 17 | `background-attachment-fixed-border-radius-offset.html`, `background-image-centered-with-border-radius.html`, `border-radius-001.xht` |
+
+17 more paint features have 119 between them. CSS2's other subdirectories account for the other 1,358: selectors 380
+(339 of them `first-letter-punctuation-*`), tables 199, normal-flow 127, lists 120 (counters and the `*-applies-to`
+pages), generated-content 105, text 101, bidi-text 55, positioning 48 and fewer elsewhere.
+
