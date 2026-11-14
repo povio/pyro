@@ -1022,12 +1022,6 @@ impl ElementCx<'_, '_> {
         Some((style, color, width, offset + width))
     }
 
-    /// The box the outline is drawn in, if it is drawn.
-    pub(crate) fn outline_bounds(&self) -> Option<Rect> {
-        let (.., outset) = self.outline_line()?;
-        Some(self.frame.border_box.inflate(outset.max(0.0), outset.max(0.0)))
-    }
-
     /// Draw the outline: a line of the outline's width around the border box
     /// moved out by `outline-offset` (in, when negative), its corners rounded
     /// as the border's are, drawn as Blink draws a border of that style
