@@ -1,5 +1,7 @@
 // WPT coverage gate: a subtest that passes in baseline.json must still pass, and a page that completed must still
-// complete. See bench/wpt/README.md.
+// complete. See bench/wpt/README.md. With --kind reftest (every command), the same gate over the paint reftests:
+// run.mjs --kind reftest reports each reftest as one subtest ("reftest"), the baseline is reftest-baseline.json, the
+// flaky list reftest-flaky.json and the CI artifact wpt-reftest-baseline.
 //
 //   bun bench/wpt/gate.mjs run --wpt DIR --bin PATH [--out FILE] [--jobs N] [--shard I/N] [--full]
 //                              [--dirs a,b] [--match RE] [--retest PREVIOUS.json] [--no-rerun] [--no-check]
@@ -39,8 +41,16 @@ const FLAGS = ['--full', '--no-rerun', '--no-check', '--replace', '--prune', '--
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
 const flag = (k) => argv.includes(k);
 const positional = () => argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1]?.startsWith('--') && !FLAGS.includes(argv[i - 1])));
-const BASELINE_FILE = path.resolve(opt('--baseline', path.join(HERE, 'baseline.json')));
-const FLAKY_FILE = path.resolve(opt('--flaky', path.join(HERE, 'flaky.json')));
+const KIND = opt('--kind', 'testharness');
+if (KIND !== 'testharness' && KIND !== 'reftest') { console.error(`gate.mjs: --kind ${KIND}: expected testharness or reftest`); process.exit(2); }
+const SUITE = KIND === 'reftest'
+  ? { title: 'WPT reftest gate', baseline: 'reftest-baseline.json', flaky: 'reftest-flaky.json', artifact: 'wpt-reftest-baseline' }
+  : { title: 'WPT coverage gate', baseline: 'baseline.json', flaky: 'flaky.json', artifact: 'wpt-baseline' };
+const BASELINE_FILE = path.resolve(opt('--baseline', path.join(HERE, SUITE.baseline)));
+const FLAKY_FILE = path.resolve(opt('--flaky', path.join(HERE, SUITE.flaky)));
+const B = path.basename(BASELINE_FILE), F = path.basename(FLAKY_FILE);
+// A reftest's coverage is its pass: whether a failing one completes is not checked (lib.mjs judge()).
+const JUDGE = KIND === 'reftest' ? { completion: false } : undefined;
 const WPT_REPO = 'https://github.com/web-platform-tests/wpt';
 const LABEL = 'wpt-accept-loss';
 // Reruns: each page whose first result differs runs at least RERUNS more times, more when few pages differ, so the
@@ -76,7 +86,7 @@ function run() {
   const full = flag('--full') || !baseline;
   const out = path.resolve(opt('--out', path.join(os.tmpdir(), `wpt-gate-${process.pid}.json`)));
   const jobs = Number(opt('--jobs', os.availableParallelism?.() ?? os.cpus().length));
-  const common = ['--wpt', wpt, '--bin', `gate=${path.resolve(bin)}`];
+  const common = ['--kind', KIND, '--wpt', wpt, '--bin', `gate=${path.resolve(bin)}`];
   if (baseline) common.push('--baseline', BASELINE_FILE);
   for (const k of ['--dirs', '--match', '--timeout', '--long-timeout', '--sample-encoding']) if (opt(k)) common.push(k, opt(k));
   if (flag('--reuse-context')) common.push('--reuse-context');
@@ -86,7 +96,7 @@ function run() {
   if (opt('--retest')) {
     if (!baseline) throw new Error('--retest needs a baseline');
     const prev = readJson(opt('--retest'));
-    const urls = prev.results.filter((t) => differs(judge(baseline.tests[t.url], [t], flaky))).map((t) => t.url);
+    const urls = prev.results.filter((t) => differs(judge(baseline.tests[t.url], [t], flaky, JUDGE))).map((t) => t.url);
     console.error(`retest: ${urls.length} page(s) in ${opt('--retest')} differ from the baseline`);
     const list = out + '.tests.json';
     writeJson(list, urls);
@@ -101,7 +111,7 @@ function run() {
   if (!flag('--no-rerun')) {
     if (!baseline) again = res.results.map((t) => t.url);
     else {
-      again = res.results.filter((t) => differs(judge(baseline.tests[t.url], [t], flaky))).map((t) => t.url);
+      again = res.results.filter((t) => differs(judge(baseline.tests[t.url], [t], flaky, JUDGE))).map((t) => t.url);
       copies = again.length > PAD_MAX ? 1 : Math.max(RERUNS, Math.ceil(jobs / again.length));
     }
   }
@@ -132,6 +142,8 @@ function load(files) {
   if (runs.length !== n || indexes.size !== n || ![...indexes].every((i) => i >= 0 && i < n)) {
     problems.push(`shards: expected ${Array.from({ length: n }, (_, i) => `${i}/${n}`).join(', ')}; got ${runs.map((r) => r.shard).join(', ')}`);
   }
+  const kinds = [...new Set(runs.map((r) => r.kind ?? 'testharness'))];
+  if (kinds.length > 1 || kinds[0] !== KIND) problems.push(`results of kind ${kinds.join(', ')} given to the ${KIND} gate (--kind)`);
   const revisions = [...new Set(runs.map((r) => r.wptRevision ?? null))];
   if (revisions.length > 1) problems.push(`shards ran different WPT revisions: ${revisions.join(', ')}`);
   const pages = new Map();
@@ -171,19 +183,19 @@ function check(files) {
   }
   const cmp = [...L.pages.values()].map(({ first, again }) => {
     const runs = [first, ...again];
-    return { ...judge(baseline?.tests[first.url], runs, flaky), runList: runs, t: runs[runs.length - 1], b: baseline?.tests[first.url] };
+    return { ...judge(baseline?.tests[first.url], runs, flaky, JUDGE), runList: runs, t: runs[runs.length - 1], b: baseline?.tests[first.url] };
   });
   const regressions = baseline ? cmp.filter(isRegression) : [];
   const improvements = baseline ? cmp.filter(isImprovement) : [];
   const unstable = cmp.filter((c) => c.unstable);
   const ignoredIncomplete = cmp.filter((c) => c.ignoredIncomplete);
   if (ignoredIncomplete.length > MAX_IGNORED_INCOMPLETE) {
-    problems.push(`${ignoredIncomplete.length} pages flaky.json allows not to complete did not complete in any run (more than ${MAX_IGNORED_INCOMPLETE} is not a flake): ${ignoredIncomplete.slice(0, 5).map((c) => c.url).join(', ')}`);
+    problems.push(`${ignoredIncomplete.length} pages ${F} allows not to complete did not complete in any run (more than ${MAX_IGNORED_INCOMPLETE} is not a flake): ${ignoredIncomplete.slice(0, 5).map((c) => c.url).join(', ')}`);
   }
-  // Coverage the base branch protects that this branch's baseline.json or flaky.json no longer does.
+  // Coverage the base branch protects that this branch's baseline or flaky list no longer does.
   const weakened = base && baseline ? weakening(base, baseline, readFlaky(opt('--base-flaky')), flaky) : [];
   const accepted = flag('--accept-loss');
-  if (weakened.length && !accepted) problems.push(`this branch's baseline.json or flaky.json drops coverage the base branch's protects (${weakened.length} page(s), listed below): label the pull request \`${LABEL}\` to accept that`);
+  if (weakened.length && !accepted) problems.push(`this branch's ${B} or ${F} drops coverage the base branch's protects (${weakened.length} page(s), listed below): label the pull request \`${LABEL}\` to accept that`);
   const reruns = cmp.filter((c) => c.runs > 1);
   const lost = regressions.reduce((a, c) => a + lostCount(c), 0);
   const gained = improvements.reduce((a, c) => a + c.gained.length, 0);
@@ -191,9 +203,9 @@ function check(files) {
   const sum = (k) => L.runs.reduce((a, r) => a + (r[k] ?? 0), 0);
 
   const verdict = problems.length || regressions.length ? 'fail' : !baseline ? (base ? 'rebaseline' : 'bootstrap') : improvements.length ? 'stale' : 'pass';
-  const download = RUN_URL ? `\`gh run download ${process.env.GITHUB_RUN_ID} -n wpt-baseline -D bench/wpt\`` : '`bun bench/wpt/gate.mjs update <results>`';
-  let md = `## WPT coverage gate: ${{ fail: 'FAIL', rebaseline: 'FAIL (no baseline for this WPT revision)', bootstrap: 'bootstrap', stale: 'FAIL (baseline is stale)', pass: 'pass' }[verdict]}\n\n`;
-  if (verdict === 'bootstrap') md += `No gate: ${why}. This run only reports; its \`wpt-baseline\` artifact is the baseline to commit (${download}).\n\n`;
+  const download = RUN_URL ? `\`gh run download ${process.env.GITHUB_RUN_ID} -n ${SUITE.artifact} -D bench/wpt\`` : '`bun bench/wpt/gate.mjs update <results>`';
+  let md = `## ${SUITE.title}: ${{ fail: 'FAIL', rebaseline: 'FAIL (no baseline for this WPT revision)', bootstrap: 'bootstrap', stale: 'FAIL (baseline is stale)', pass: 'pass' }[verdict]}\n\n`;
+  if (verdict === 'bootstrap') md += `No gate: ${why}. This run only reports; its \`${SUITE.artifact}\` artifact is the baseline to commit (${download}).\n\n`;
   if (verdict === 'rebaseline') md += `No gate: ${why}, but the base branch has a baseline (a WPT revision change, or a removed baseline). Every page ran twice; commit this run's baseline: ${download}. The next run then checks it against the base branch's (label \`${LABEL}\` to accept the passes it drops).\n\n`;
   md += `| | pages | passing subtests |\n|---|---:|---:|\n`;
   if (baseline) md += `| baseline (WPT ${baseline.wpt.revision.slice(0, 12)}) | ${Object.keys(baseline.tests).length} | ${before} |\n`;
@@ -204,12 +216,12 @@ function check(files) {
   md += `${L.full ? 'Every page' : 'Gate plan'}, ${L.runs.length} shard(s): wall ${walls}; CPU: browser ${sum('browserCpuS').toFixed(0)} s, runner ${sum('runnerCpuS').toFixed(0)} s; browser restarts ${sum('restarts')}.\n\n`;
   for (const p of problems) md += `- **${esc(p)}**\n`;
   if (weakened.length) {
-    md += `\n### Coverage this branch stops protecting (${weakened.length})\n\nCompared with the base branch's bench/wpt/baseline.json and flaky.json. ${accepted ? `Accepted: the pull request has the \`${LABEL}\` label.` : `An error unless the pull request has the \`${LABEL}\` label.`}\n\n`;
+    md += `\n### Coverage this branch stops protecting (${weakened.length})\n\nCompared with the base branch's bench/wpt/${B} and ${F}. ${accepted ? `Accepted: the pull request has the \`${LABEL}\` label.` : `An error unless the pull request has the \`${LABEL}\` label.`}\n\n`;
     for (const w of weakened.slice(0, 40)) md += `- ${esc(w.url)}: ${esc(w.what)}\n`;
     if (weakened.length > 40) md += `- …and ${weakened.length - 40} more\n`;
   }
   if (regressions.length) {
-    md += `\n### Regressions (${regressions.length} pages, −${lost} subtests)\n\nLost in every run of the page (each regression ran ${RERUNS} or more extra times). A page that is flaky for a known reason goes in bench/wpt/flaky.json, with the reason.\n\n| page | status | lost subtests |\n|---|---|---|\n`;
+    md += `\n### Regressions (${regressions.length} pages, −${lost} subtests)\n\nLost in every run of the page (each regression ran ${RERUNS} or more extra times). A page that is flaky for a known reason goes in bench/wpt/${F}, with the reason.\n\n| page | status | lost subtests |\n|---|---|---|\n`;
     regressions.sort((a, b) => b.broke - a.broke || b.setChanged - a.setChanged || lostCount(b) - lostCount(a));
     for (const c of regressions.slice(0, 50)) {
       const why = c.lost.slice(0, 5).map((n) => `${esc(n)} → ${statusIn(c.runList, n)}`);
@@ -222,17 +234,17 @@ function check(files) {
     if (regressions.some((c) => c.setChanged)) md += `\nA page whose subtest names changed on purpose: \`gh run download ${process.env.GITHUB_RUN_ID ?? '<run>'} -p 'wpt-shard-*' -D /tmp/wpt-run\`, then \`bun bench/wpt/gate.mjs update /tmp/wpt-run/*/*.json --replace --match '<page regex>'\`, commit, and label the pull request \`${LABEL}\`.\n`;
   }
   if (reruns.length && baseline) {
-    const recovered = reruns.filter((c) => !isRegression(c) && isRegression(judge(c.b, [c.runList[0]], flaky)));
+    const recovered = reruns.filter((c) => !isRegression(c) && isRegression(judge(c.b, [c.runList[0]], flaky, JUDGE)));
     md += `\nReran ${reruns.length} page(s) whose first result differed from the baseline (${Math.max(...L.runs.map((r) => r.rerunCopies ?? 0))}x at most); ${recovered.length} first-run regression(s) did not repeat${recovered.length ? ` (${recovered.slice(0, 10).map((c) => esc(c.url)).join(', ')})` : ''}.\n`;
   }
   if (unstable.length) {
-    md += `\n<details><summary>${unstable.length} page(s) whose runs disagreed (flaky.json candidates)</summary>\n\n`;
+    md += `\n<details><summary>${unstable.length} page(s) whose runs disagreed (${F} candidates)</summary>\n\n`;
     for (const c of unstable.slice(0, 40)) md += `- ${esc(c.url)}: ${c.runList.map((t) => `${t.status} ${passing(t).length}`).join(' / ')}\n`;
     md += `\n</details>\n`;
   }
   if (improvements.length) {
     md += `\n### Improvements (${improvements.length} pages, +${gained} subtests${improvements.some((c) => c.fixed) ? ', or now completing' : ''})\n\n`;
-    md += verdict === 'stale' ? `The baseline is stale: ${download}, then commit bench/wpt/baseline.json in this pull request.\n\n` : `Fix what fails first: no refreshed baseline is uploaded while the gate fails.\n\n`;
+    md += verdict === 'stale' ? `The baseline is stale: ${download}, then commit bench/wpt/${B} in this pull request.\n\n` : `Fix what fails first: no refreshed baseline is uploaded while the gate fails.\n\n`;
     for (const c of improvements.sort((a, b) => b.gained.length - a.gained.length).slice(0, 30)) md += `- ${esc(c.url)}: +${c.gained.length}${c.fixed ? ` (${c.was} → complete)` : ''}${c.isNew ? ' (new page)' : ''}\n`;
   }
   const slow = cmp.map((c) => c.runList[0]).sort((a, b) => (b.ms ?? 0) - (a.ms ?? 0)).slice(0, 10);
@@ -241,11 +253,11 @@ function check(files) {
   if (opt('--summary')) fs.appendFileSync(opt('--summary'), md + '\n');
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `verdict=${verdict}\n`);
   if (GH) {
-    for (const p of problems) console.log(`::error title=WPT gate::${ghEsc(p)}`);
-    for (const c of regressions.slice(0, 20)) console.log(`::error title=WPT regression::${ghEsc(`${c.url}: ${c.setChanged ? 'subtest names changed; ' : ''}${lostCount(c)} subtest(s) no longer pass${c.broke ? `; page ${c.was} → ${c.status}` : ''}`)}`);
-    if (verdict === 'stale') console.log(`::error title=WPT baseline is stale::${ghEsc(`${improvements.length} page(s) pass ${gained} more subtests (or now complete); commit the refreshed bench/wpt/baseline.json: ${download.replace(/`/g, '')}`)}`);
-    if (verdict === 'rebaseline') console.log(`::error title=WPT baseline missing::${ghEsc(`${why}; commit this run's baseline: ${download.replace(/`/g, '')}`)}`);
-    if (verdict === 'bootstrap') console.log(`::warning title=WPT gate bootstrap::${ghEsc(`No gate: ${why}.`)}`);
+    for (const p of problems) console.log(`::error title=${SUITE.title}::${ghEsc(p)}`);
+    for (const c of regressions.slice(0, 20)) console.log(`::error title=${KIND === 'reftest' ? 'WPT reftest regression' : 'WPT regression'}::${ghEsc(`${c.url}: ${c.setChanged ? 'subtest names changed; ' : ''}${lostCount(c)} subtest(s) no longer pass${c.broke ? `; page ${c.was} → ${c.status}` : ''}`)}`);
+    if (verdict === 'stale') console.log(`::error title=${SUITE.title}: baseline is stale::${ghEsc(`${improvements.length} page(s) pass ${gained} more subtests (or now complete); commit the refreshed bench/wpt/${B}: ${download.replace(/`/g, '')}`)}`);
+    if (verdict === 'rebaseline') console.log(`::error title=${SUITE.title}: baseline missing::${ghEsc(`${why}; commit this run's baseline: ${download.replace(/`/g, '')}`)}`);
+    if (verdict === 'bootstrap') console.log(`::warning title=${SUITE.title}: bootstrap::${ghEsc(`No gate: ${why}.`)}`);
     if (weakened.length && accepted) console.log(`::warning title=WPT coverage accepted::${ghEsc(`${weakened.length} page(s) lose protected coverage (label ${LABEL})`)}`);
   }
   if (verdict === 'fail' || verdict === 'stale' || verdict === 'rebaseline') process.exitCode = 1;
@@ -301,7 +313,7 @@ function update(files) {
       if (old) e.ms = newMs(old.ms, roundMs(con.ms ?? 0), ms);
       replaced++;
     } else if (old && wholePage(f)) continue;
-    else if (old && isRegression(judge(old, runs, flaky))) { kept.push(url); continue; }
+    else if (old && isRegression(judge(old, runs, flaky, JUDGE))) { kept.push(url); continue; }
     else e = mergeEntry(old, con, { ms, ignore: f?.subtests && new Set(f.subtests) });
     const d = delta(old, e);
     gained += d.gained; lost += d.lost;
@@ -373,7 +385,7 @@ function diff(sets) {
   }
   const common = [...sides[0].keys()].filter((u) => sides.every((m) => m.has(u))).length;
   console.log(`${pages} page(s) differ; ${common} in every set${sides.length === 2 ? `; subtests passing only in A: ${onlyA}, only in B: ${onlyB}` : ''}`);
-  if (flag('--suggest')) console.log(`\nflaky.json entries (replace each TODO with the reason):\n${JSON.stringify(suggest, null, 1)}`);
+  if (flag('--suggest')) console.log(`\n${F} entries (replace each TODO with the reason):\n${JSON.stringify(suggest, null, 1)}`);
 }
 
 try {
