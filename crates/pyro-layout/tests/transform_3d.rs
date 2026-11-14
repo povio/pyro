@@ -35,3 +35,34 @@ fn layout_queries_follow_flattened_3d_transforms() {
     assert_eq!(at(240.0, 240.0), p.describe(Some(near)));
     assert!(p.compare("flattened 3d transforms") >= 3);
 }
+
+/// An absolutely positioned cell of a collapsed table is reported with its share of the
+/// collapsed borders (gutters) beyond its layout box. Its row does not hold it, so the descent
+/// reaches it through its containing block, by a bound that left the gutters out: a point in them
+/// hit what lay below (a random page of `hit_index` met it once its table's `translate3d` took
+/// effect).
+#[test]
+fn an_out_of_flow_cell_is_hit_in_its_collapsed_border_gutters() {
+    for (label, table) in [("list-item table", "display:list-item;"), ("table", "")] {
+        let p = page(&format!(
+            "<!doctype html><html><head><style>
+              body {{ margin: 0; font: 13px/15px sans-serif }}
+              #under {{ position: absolute; left: 0; top: 0; width: 500px; height: 400px; background: #eee }}
+              table {{ margin-left: 200px; height: 125px; transform: translate(40px, -30px); border-collapse: collapse; {table} }}
+              #c {{ width: 200px; position: absolute; left: -137px; top: -87px; padding: 12px; border: 5px solid #888 }}
+            </style></head><body>
+            <div id=under></div><div style='height:300px'></div>
+            <table><tr><td id=c>cell</td></tr><tr><td>b</td><td>c</td></tr></table>
+            </body></html>"
+        ));
+        let c = p.id("c");
+        let r = p.layout.bounding_client_rect(&p.dom, c);
+        let at = |x, y| p.describe(p.layout.element_from_point_descent(&p.dom, x, y));
+        let scan = |x, y| p.describe(p.layout.element_from_point_scan(&p.dom, x, y));
+        // Just inside the reported box's edges, in the gutters.
+        for (x, y) in [(r.x + 1.0, r.y + 1.0), (r.x + r.width / 2.0, r.y + 0.5), (r.x + 0.5, r.y + r.height / 2.0)] {
+            assert_eq!(scan(x, y), p.describe(Some(c)), "{label}: scan at ({x}, {y}) of {r:?}");
+            assert_eq!(at(x, y), scan(x, y), "{label}: descent at ({x}, {y}) of {r:?}");
+        }
+    }
+}
