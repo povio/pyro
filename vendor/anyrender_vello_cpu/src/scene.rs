@@ -20,6 +20,10 @@ pub struct VelloCpuScenePainter {
     /// pyro: single-threaded contexts that filter layers are rendered in (one per level of
     /// nesting), kept from frame to frame. See [`crate::filters`].
     pub(crate) filter_contexts: Vec<vello_cpu::RenderContext>,
+    /// pyro: glyphs are drawn aliased, a pixel painted when the glyph covers at least this
+    /// much of it (out of 255), as Chromium draws text when WPT runs it without font
+    /// antialiasing. `None` (the default): antialiased.
+    pub(crate) text_aliasing_threshold: Option<u8>,
 }
 
 impl VelloCpuScenePainter {
@@ -43,7 +47,15 @@ impl VelloCpuScenePainter {
             resources: vello_cpu::Resources::new(),
             image_cache: ImageCache::new(config),
             filter_contexts: Vec::new(),
+            text_aliasing_threshold: None,
         }
+    }
+
+    /// pyro: draws glyphs aliased from now on, a pixel painted when the glyph covers at least
+    /// `threshold` of it (out of 255; vello_cpu's aliasing threshold), or antialiased (`None`,
+    /// the default). Other drawing stays antialiased.
+    pub fn set_text_aliasing_threshold(&mut self, threshold: Option<u8>) {
+        self.text_aliasing_threshold = threshold;
     }
 
     fn convert_paint(&mut self, paint: PaintRef<'_>) -> PaintType {
@@ -171,6 +183,16 @@ impl PaintScene for VelloCpuScenePainter {
         glyph_transform: Option<Affine>,
         glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
     ) {
+        // pyro: aliased glyphs, for this run only (`set_text_aliasing_threshold`), moved a
+        // 512th of a device pixel right and down: a pixel half covered at a glyph's left or top
+        // edge is then left out and one at its right or bottom edge painted, as Skia paints
+        // aliased paths (rounding a pixel centre on an edge down and right).
+        let transform = match self.text_aliasing_threshold {
+            Some(_) => Affine::translate((1.0 / 512.0, 1.0 / 512.0)) * transform,
+            None => transform,
+        };
+        self.render_ctx
+            .set_aliasing_threshold(self.text_aliasing_threshold);
         self.render_ctx.set_transform(transform);
         let paint = self.convert_paint(paint.into());
         self.render_ctx.set_paint(paint);
@@ -215,6 +237,7 @@ impl PaintScene for VelloCpuScenePainter {
                     }));
             }
         }
+        self.render_ctx.set_aliasing_threshold(None);
     }
     fn draw_box_shadow(
         &mut self,

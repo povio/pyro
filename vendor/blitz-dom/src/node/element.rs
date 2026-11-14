@@ -79,6 +79,9 @@ pub struct ElementData {
 
     pub mask_images: ThinVec<Option<ImageResourceData>>,
 
+    /// pyro: the `border-image-source` image (at most one entry).
+    pub border_images: ThinVec<Option<ImageResourceData>>,
+
     /// Parley text layout (elements with inline inner display mode only)
     pub inline_layout_data: Option<Box<TextLayout>>,
 
@@ -118,6 +121,10 @@ pub struct ElementData {
     // Pseudo element nodes
     pub before: Option<NodeId>,
     pub after: Option<NodeId>,
+    /// pyro: the node holding this element's `::first-letter` style, the brush of its first
+    /// letter in the inline layout that holds it (`layout::first_letter`). Not in the tree: no
+    /// children, no damage, its parent is the letter's text's parent.
+    pub first_letter: Option<NodeId>,
 
     /// Detailed layout information from the most recent layout (currently
     /// grid track sizing information for grid containers only). Used by
@@ -319,6 +326,7 @@ impl std::fmt::Debug for ElementData {
             .field("special_data", &self.special_data)
             .field("background_images", &self.background_images)
             .field("mask_images", &self.mask_images)
+            .field("border_images", &self.border_images)
             .field("inline_layout_data", &self.inline_layout_data)
             .field("list_item_data", &self.list_item_data)
             .field("template_contents", &self.template_contents)
@@ -345,6 +353,7 @@ impl Clone for ElementData {
             special_data: self.special_data.clone(),
             background_images: self.background_images.clone(),
             mask_images: self.mask_images.clone(),
+            border_images: self.border_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
             template_contents: self.template_contents,
@@ -361,6 +370,7 @@ impl Clone for ElementData {
             may_have_animations: AtomicBool::new(false),
             before: None,
             after: None,
+            first_letter: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -463,6 +473,7 @@ impl ElementData {
             template_contents: None,
             background_images: ThinVec::new(),
             mask_images: ThinVec::new(),
+            border_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
             selector_flags: Cell::new(ElementSelectorFlags::empty()),
@@ -475,6 +486,7 @@ impl ElementData {
             may_have_animations: AtomicBool::new(false),
             before: None,
             after: None,
+            first_letter: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,

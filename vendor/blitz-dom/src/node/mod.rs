@@ -30,6 +30,6 @@ pub(crate) use stylo_data::LayoutStyles;
 #[cfg(feature = "svg")]
 pub use svg::{SvgImageData, SvgIntrinsicDimensions};
 pub use text::{
-    can_take_emphasis_mark, GeneratedTextInputEvent, InputPlaceholder, TextAnnotation, TextAnnotationKind, TextBrush,
-    TextInputData, TextLayout,
+    can_take_emphasis_mark, FirstLetterSplit, GeneratedTextInputEvent, InputPlaceholder, TextAnnotation,
+    TextAnnotationKind, TextBrush, TextInputData, TextLayout,
 };

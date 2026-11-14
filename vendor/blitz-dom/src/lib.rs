@@ -63,6 +63,13 @@ mod resolved_style;
 /// Scrolling of nodes and the viewport, and scroll animations.
 mod scrolling;
 mod selection;
+/// pyro: the colour space of tagged images.
+mod icc;
+/// pyro: the language of an element, for `:lang()`.
+mod lang;
+/// pyro: SVG reference cycles usvg does not break.
+#[cfg(feature = "svg")]
+mod svg_refs;
 /// Implementations that interact with servo's style engine
 mod stylo;
 mod stylo_device;

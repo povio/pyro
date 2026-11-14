@@ -16,6 +16,8 @@
 // The reference renders are cached by URL and viewport (as wptrunner's screenshot cache), so a reference that many
 // tests share renders once per runner.
 
+import path from 'node:path';
+
 /** CDP screenshot of the viewport as raw RGBA. pyro answers format "rgba" without encoding; other browsers get PNG. */
 export async function capture(page, cdp) {
   try {
@@ -98,6 +100,12 @@ function settle(ms) {
 
 const VIEWPORT = { width: 800, height: 600 };
 export const REFTEST_CONTEXT = { viewport: VIEWPORT, deviceScaleFactor: 1 };
+
+/** The browser's environment for reftests, as wptrunner starts Chrome: text drawn without antialiasing
+ *  (`--enable-blink-features=NoFontAntialiasing`, wptrunner's chrome.py), and Ahem installed (`--install-fonts`), here
+ *  the WPT checkout's fonts/Ahem.ttf given to pyro (`--font`) rather than put in the system's font folders. Through
+ *  environment variables, which a pyro without these options ignores (an older binary in an A/B run). */
+export const reftestEnv = (wpt) => ({ PYRO_TEXT_ANTIALIASING: 'off', PYRO_FONTS: path.join(wpt, 'fonts', 'Ahem.ttf') });
 
 /** One page's render: navigate, settle (bounded by `deadline`, a Date.now() value), capture. */
 async function render(page, cdp, base, url, deadline) {

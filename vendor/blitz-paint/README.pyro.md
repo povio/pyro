@@ -157,7 +157,7 @@ from the root of an upstream checkout at that commit) is the whole diff.
     Chromium takes drop-shadow's third length as the blur's standard deviation (measured), where `text-shadow` and
     `box-shadow` take half of it. anyrender_vello_cpu applies `blur()` and `drop-shadow()` (see its README).
     Covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
-  - `src/text.rs` (`TextShadow`, `draw_shadows`, `stroke_text`, `flush_line_decorations`): `text-shadow`. Each glyph
+  - `src/text.rs` (`TextShadow`, `draw_shadow`, `stroke_text`, `flush_line_decorations`): `text-shadow`. Each glyph
     run draws its shadows, the last first, right before its glyphs (Chromium paints a text fragment's shadows right
     before it): the glyphs in the shadow's colour moved by its offset (the text's own colour does not matter:
     transparent text casts one), and a shadow with a blur radius inside a layer with a `blur()` of half the radius
@@ -165,6 +165,85 @@ from the root of an upstream checkout at that commit) is the whole diff.
     right after its shadows. Not drawn in a `background-clip: text` mask, in a recording paint (the PDF matches each
     glyph run to the text run recorded for it by its glyphs, which a shadow has too), nor in vertical writing modes
     (a shadow's offset is physical, and the lines are turned). Covered by `crates/pyro-render/tests/text_shadow.rs`.
+
+- Borders, backgrounds and shadows for the WPT paint reftests (`css/css-backgrounds`, `css/CSS2/backgrounds`,
+  `css/compositing`), as CSS Backgrounds 3 and Chromium paint them; covered by
+  `crates/pyro-render/tests/borders_backgrounds.rs`:
+  - `src/render/border_image.rs` (new), `src/render/border.rs`: `border-image`, drawn instead of the border's styles
+    when its image can be drawn (an image that did not load leaves them), as Blink's `NinePieceImageGrid` and
+    `NinePieceImagePainter` cut and lay it out: the border image area (the border box grown by
+    `border-image-outset`, on whole pixels), the sides' widths (`border-image-width`: numbers times the border
+    widths, `auto` the slice, rounded, all shrunk alike and rounded when opposite sides overlap), the slices clamped to the
+    image, the corners stretched, the sides and the middle (`fill`) tiled by `border-image-repeat` (`round` resized
+    to whole tiles, `repeat` centred, `space` with the space left over around the tiles, none when not one fits).
+    Raster images are cut into a brush per piece, so that sampling never reaches the next piece's pixels; a piece
+    without spacing is one repeating fill. SVG images (their own size, or the area's) and gradients (the area's
+    size) are drawn per tile. blitz-dom loads the `border-image-source` image (`border_images`).
+  - `src/render.rs` (`canvas_background_source`, `paint_element`, `paint_scene`), `src/render/background.rs`
+    (`draw_canvas_background`): the canvas background (CSS Backgrounds 3 §2.11.2). The root element's background,
+    or the body's when the root has none (Blink's `BackgroundTransfersToView`: an HTML root, its first `body`
+    child rendered, neither with containment), is painted over the whole canvas by the root element, first (under
+    its shadow) and in its effect group (opacity, filters and blend modes apply to it, as in Chromium) but not under
+    its own transform, its images positioned against the root element's untransformed boxes; neither element paints
+    it again, and their outset shadows are cut out of their boxes (an opaque background no longer covers them). It was the colour alone, painted
+    before the document at full strength, and the root and the body painted their backgrounds in their boxes too
+    (a translucent root colour twice, images only in the root's box, a `display: none` body's colour on the canvas).
+    A root with `visibility: hidden` leaves the colour to `paint_scene`, as before.
+  - `src/render/background.rs`: image tiles cover the whole background painting area: a repeating raster image
+    one fill over the clip box (it covered the positioning area and the part left and above of the image's
+    position, so a `border-box` clip left the right and bottom border areas empty) or over the canvas, and SVG
+    images repeat too (drawn once before); `space` repeats its pattern over the painting area and places a single
+    copy at its position; an axis that does not repeat clamps the image at its edge instead of wrapping the
+    opposite edge's pixels in; `repeat` and `round` stay one repeating fill (seams sampled across, as Chromium's
+    image shader samples them), while spaced tiles are drawn one by one, each clamped in both axes (Chromium's
+    picture shader of one image per cell). `background-clip: border-area` clips to the area the border paints (`border.rs`
+    `border_area_path`: each side with a style and a width, a `double` side's two lines, dotted and dashed marks
+    of a box with square corners). `background-attachment: local` on a scroll container positions and clips a
+    layer against the scrolled content (the padding box grown to the scrollable overflow, moved by the scroll
+    offset), cut to the padding box. `fixed` degrades to `scroll` under an identity transform (`translate(0)`),
+    an individual transform property and `will-change: transform` too.
+  - `src/render/box_shadow.rs`: a spread shadow's corner radii grow by the spec's spread formula (a radius smaller
+    than the spread grows by the spread times `1 - (1 - r / spread)³ (1 - coverage³)`, `coverage` the corner's
+    share of half the box, as WPT's `box-shadow-radius-generated-ref.html` computes it: a circle's shadow stays a
+    circle), each corner and axis on its own, and a shadow without blur is the exact shape; the average radius stays only for a blurred shadow with differing
+    corners (vello's blurred rectangle has one radius). Blurs use a standard deviation of half the blur radius in
+    device px (Chromium's `BlurRadiusToStdDev`); outset shadows had the radius in CSS px. Inset shadows: the hole
+    is the padding box with its own radii, shrunk by the spread; one without blur is a single even-odd fill in a
+    clip (no layers), their offset is scaled to device px, and a transparent shadow no longer ends the list.
+  - `src/kurbo_css/css_box.rs`: radii of the padding and content boxes that overflow their box are scaled to fit it
+    (Blink's `FloatRoundedRect::AdjustRadii`), their centres in the inner box's corners: the padding curve of a box
+    with one large corner (`border-radius: 100% 0 0 0`) left the box, and the border's inner edge with it.
+    `border.rs`: a uniform solid border is stroked as a `kurbo::RoundedRect` only when its radii fit one (kurbo
+    clamps a radius to half the smaller side, which such a corner exceeds: it was drawn with a much smaller one).
+  - `src/gradient.rs` (`to_peniko_gradient`), `src/render/background.rs` (`uniform_gradient_color`): a gradient's
+    colour interpolation method (`in hsl`, `in oklch longer hue`, and Stylo's Oklab default for stops in a modern
+    colour syntax) is the peniko gradient's (stops were interpolated in sRGB whatever it said), and a gradient of
+    one colour is filled with that colour (`linear-gradient(white, white)` came out a level short in places).
+
+- `clip-path` and masks on boxes for the WPT paint reftests (`css/css-masking/clip-path`, `clip-rule`,
+  `mask-image`), as CSS Masking, CSS Shapes and Chromium have them; covered by
+  `crates/pyro-render/tests/clip_path_mask.rs`:
+  - `src/render/clip_path.rs` (`element_clip`, `with_element_clip`), `src/render.rs` (`render_element`): a clip has
+    its fill rule (`polygon(evenodd, …)`, `path()` and `shape()` took `nonzero`), and a shape of no area clips
+    everything (an inside-out `rect()`, insets past the box, a zero radius: they clipped nothing). A box alone
+    (`clip-path: padding-box`) clips to its rounded edges, the inner radii for the padding and content boxes; the
+    margin box is the margin box (it was the border box), its radii grown by the margins as Blink's
+    `FloatRoundedRect::OutsetForShapeMargin` grows them (by the margin, times `1 + (r / margin - 1)³` where the radius
+    is smaller). A rounded box that is a whole ellipse is drawn as `circle()` and `ellipse()` are, as the box of
+    `border-radius: 50%` is drawn (WPT's references are such boxes). Basic shapes as CSS Shapes resolves them:
+    `inset()` (and `rect()`, `xywh()`) with its `round` radii, a `circle()` percentage of the reference box's
+    direction-agnostic size, an `ellipse()`'s side keywords in its own axis, `path()` data zoomed. `shape()`: a single
+    arc radius is of the direction-agnostic size, `cw` is SVG's sweep flag 1 (it was the other way round), the
+    rotation is in degrees (kurbo takes radians), and a degenerate arc is a line (it dropped the whole shape).
+  - `src/render/mask.rs`: `mask-mode: luminance` masks with the image's luminance (0.2125 R + 0.7154 G + 0.0721 B,
+    `feColorMatrix`'s `luminanceToAlpha`): the layer is recorded and each solid colour, gradient stop and image pixel
+    becomes black with that luminance times its alpha (exact unless translucent paints overlap; converted images are
+    kept for the next frame). The mask painting area is the largest `mask-clip` box with its radii (it was the border
+    box), everything visible for `mask-clip: no-clip`; each layer covers the whole area, its image cut to its own
+    clip box, so its compositing operator applies outside that box too. `src/render/background.rs`: `mask-clip` and
+    `mask-origin` take the SVG boxes (`fill-box` is the content box, `stroke-box` and `view-box` the border box) and
+    `no-clip` (`BoxModelBox::NoClip`, the visible area): Stylo parses them for servo now (see
+    `vendor/stylo/README.pyro.md`).
 
 - Text decorations, emphasis marks and ruby (WPT reftest lane G):
   - `src/text.rs` (`flush_line_decorations`, `decoration_thickness`, `whole_css_px`, `StrutGeometry`): decoration
