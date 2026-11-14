@@ -356,6 +356,26 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     pub text_wrap_mode: TextWrapMode,
     /// Whitespace collapsing and hanging behavior.
     pub white_space_collapse: WhiteSpaceCollapse,
+    /// pyro: room the span's text needs beyond its content area, over and under it, for what is
+    /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
+    /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
+    pub annotation_space: AnnotationSpace,
+}
+
+/// pyro: room beyond a span's content area, over and under it ([`TextStyle::annotation_space`]).
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct AnnotationSpace {
+    /// Over the content area.
+    pub over: f32,
+    /// Under the content area.
+    pub under: f32,
+}
+
+impl AnnotationSpace {
+    /// The room scaled by `scale`.
+    pub(crate) fn scale(self, scale: f32) -> Self {
+        Self { over: self.over * scale, under: self.under * scale }
+    }
 }
 
 impl<B: Brush> Default for TextStyle<'static, 'static, B> {
@@ -387,6 +407,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             overflow_wrap: OverflowWrap::default(),
             text_wrap_mode: TextWrapMode::default(),
             white_space_collapse: WhiteSpaceCollapse::default(),
+            annotation_space: AnnotationSpace::default(),
         }
     }
 }

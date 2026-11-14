@@ -157,7 +157,7 @@ from the root of an upstream checkout at that commit) is the whole diff.
     Chromium takes drop-shadow's third length as the blur's standard deviation (measured), where `text-shadow` and
     `box-shadow` take half of it. anyrender_vello_cpu applies `blur()` and `drop-shadow()` (see its README).
     Covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
-  - `src/text.rs` (`TextShadow`, `draw_shadows`, `stroke_text`, `flush_line_decorations`): `text-shadow`. Each glyph
+  - `src/text.rs` (`TextShadow`, `draw_shadow`, `stroke_text`, `flush_line_decorations`): `text-shadow`. Each glyph
     run draws its shadows, the last first, right before its glyphs (Chromium paints a text fragment's shadows right
     before it): the glyphs in the shadow's colour moved by its offset (the text's own colour does not matter:
     transparent text casts one), and a shadow with a blur radius inside a layer with a `blur()` of half the radius
@@ -244,6 +244,42 @@ from the root of an upstream checkout at that commit) is the whole diff.
     `mask-origin` take the SVG boxes (`fill-box` is the content box, `stroke-box` and `view-box` the border box) and
     `no-clip` (`BoxModelBox::NoClip`, the visible area): Stylo parses them for servo now (see
     `vendor/stylo/README.pyro.md`).
+
+- Text decorations, emphasis marks and ruby (WPT reftest lane G):
+  - `src/text.rs` (`flush_line_decorations`, `decoration_thickness`, `whole_css_px`, `StrutGeometry`): decoration
+    lines are placed as Chromium places them, in whole CSS pixels from the baseline at any device scale (its
+    `TextDecorationInfo`, measured row for row on seven fonts at nine sizes, at scales 1 and 3): an underline
+    `max(1, ceil(t / 2))` below the baseline (`t` the thickness: `auto` a tenth of the font size, a length floored,
+    `from-font` rounded), at the baseline plus `text-underline-offset` when one is given, under the rounded descent
+    for `under`; an overline resting on the rounded ascent (it was the OS/2 `usWinAscent`, several pixels high for
+    `system-ui`); a line-through centred two thirds of the ascent down from the text's top, rounded half down. A line
+    is `t` cut to whole CSS pixels thick. The inline root's decorations (and those of a block it is in), where the
+    root has no text of its own on the line, use the root's font (the line's strut), not a descendant run's.
+  - `src/text.rs` (`stroke_text`, `RunPaint`, `DecorationPhase`, `draw_shadow`): each line is painted in passes over
+    its glyph runs (collected once): the decorations and what each run is drawn with, then underlines and overlines,
+    the glyphs, and line-throughs (CSS 2 Appendix E; they were all drawn after the glyphs). Where a line's decorations
+    cast text shadows, the shadows go under all the line draws, a layer per shadow (WPT
+    `text-shadow/standards-decor-noblur*`); otherwise each run's shadows go right before its glyphs, as before.
+  - `src/text.rs` (`propagated_decorations`, `own_decoration`, `stops_propagation`): a block's decorations are drawn
+    on the text of its in-flow descendants (they were drawn only on the text of the inline root that set them):
+    an inline root takes those of its ancestors up to an out-of-flow box or an atomic inline (`display: contents`
+    passes them through), by DOM parent, cached per node slot for the paint.
+  - `src/text.rs` (`ink_gaps`, `glyph_intercept`, `is_cjk_char`): `text-decoration-skip-ink` (`auto`, the initial
+    value, and `all`), as Blink's `TextPainter::ClipDecorationLine` does it: an underline or overline leaves a gap
+    around the ink of each glyph inside the line's band (less half a pixel at each edge; Skia's `getIntercepts`, from
+    the glyph's outline), grown by the thickness (at most 13px) on each side, not around CJK glyphs for `auto`, its
+    edges on whole device pixels. Intercepts are cached by font, size, glyph and band. Line-throughs skip nothing.
+  - `src/text.rs` (`decoration_ink_reach`), `src/render.rs` (`render_element`): an inline root outside the clip
+    rectangle is still painted when its own decorations reach into it (`text-decoration-thickness: 4em`).
+  - `src/text.rs` (`draw_text_annotations`, `draw_annotation`, `draw_glyph_run`), `src/render.rs`
+    (`draw_inline_layout`, `draw_vertical_inline_layout`, `draw_text_mask`): blitz-dom's `TextAnnotation`s. A ruby
+    annotation is drawn over the part of its base on the line the base starts on, an emphasis mark over each character
+    of the element's glyph runs that takes one: the annotation's line centred over the base (white space left out),
+    the bottom of its content area on the top of the base's (the span content area of the base's style), or its top on
+    the bottom for `under`; an annotation of a base that already has one on that side goes outside it (nested ruby,
+    marks outside ruby). Annotations turn with their line in vertical writing modes, and a `background-clip: text`
+    mask holds them.
+  - Covered by `crates/pyro-render/tests/text_decoration_lines.rs` and `text_emphasis_ruby.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

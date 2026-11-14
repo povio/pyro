@@ -62,6 +62,9 @@ pub struct TextLayout {
     /// `text-overflow: ellipsis` at the end of its lines: paint ends each line that overflows
     /// the content box with it.
     pub ellipsis: Option<Box<parley::layout::Layout<TextBrush>>>,
+    /// pyro: text drawn over or under stretches of this text (ruby annotations, emphasis marks).
+    /// Empty for almost every inline root.
+    pub annotations: Vec<TextAnnotation>,
     /// pyro: the first letter of the root's first line, styled by an element's
     /// `::first-letter` (`layout::first_letter`), set before each build.
     pub first_letter: Option<FirstLetterSplit>,
@@ -75,6 +78,53 @@ pub struct FirstLetterSplit {
     pub text: NodeId,
     pub range: std::ops::Range<usize>,
     pub style_node: NodeId,
+}
+
+/// pyro: text drawn over (or under) a stretch of an inline root's text, as a ruby annotation is
+/// drawn over its base: its own layout of one line, whose content area (ascent to descent) is
+/// drawn against the base's content area, centred over the base. A ruby annotation (`<rt>`) and the
+/// emphasis marks of `text-emphasis` (which CSS draws "exactly as if each character was assigned
+/// the mark as its ruby annotation text") are both drawn this way, by blitz-paint's
+/// `draw_text_annotations`. The annotation does not take part in the root's lines: it adds no
+/// width to its base nor height to its line.
+#[derive(Clone)]
+pub struct TextAnnotation {
+    /// The `<rt>` element, or the element whose own text the marks emphasize.
+    pub node_id: NodeId,
+    pub kind: TextAnnotationKind,
+    /// Under the base (the line-under side: `ruby-position: under`, `text-emphasis-position:
+    /// under`, or `left` in a vertical writing mode), not over it.
+    pub under: bool,
+    /// The annotation's text on one line: the `<rt>`'s content in its style, or one emphasis mark
+    /// in the element's font at half its size.
+    pub layout: Box<parley::layout::Layout<TextBrush>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TextAnnotationKind {
+    /// A ruby annotation of the root's text in `base` (a byte range of [`TextLayout::text`]).
+    Ruby { base: std::ops::Range<usize> },
+    /// `text-emphasis`: the layout (one mark) is drawn over each character of the element's own
+    /// glyph runs that takes a mark ([`can_take_emphasis_mark`]).
+    Emphasis,
+}
+
+/// pyro: whether `text-emphasis` draws a mark over a character (CSS Text Decoration 3, 3.1):
+/// not over word separators, white space (Unicode `Z*`), control and format characters and
+/// unassigned code points (`Cc`, `Cf`, `Cn`), nor punctuation (`P*`).
+pub fn can_take_emphasis_mark(c: char) -> bool {
+    use icu_properties::props::{GeneralCategory, GeneralCategoryGroup};
+    use icu_properties::CodePointMapData;
+    if matches!(c, '\u{1361}' | '\u{10100}' | '\u{10101}' | '\u{1039F}' | '\u{1091F}') {
+        return false;
+    }
+    let category = CodePointMapData::<GeneralCategory>::new().get(c);
+    !(GeneralCategoryGroup::Separator.contains(category)
+        || GeneralCategoryGroup::Punctuation.contains(category)
+        || matches!(
+            category,
+            GeneralCategory::Control | GeneralCategory::Format | GeneralCategory::Unassigned
+        ))
 }
 
 impl TextLayout {
