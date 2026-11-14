@@ -58,7 +58,11 @@ fn cycle_closing_references(
     let elements: Vec<roxmltree::Node<'_, '_>> = doc
         .descendants()
         .filter(|n| {
-            n.is_element() && n.tag_name().name() == tag && n.tag_name().namespace() == Some(SVG_NS)
+            // As usvg reads them: in the SVG namespace or none (blitz serializes an inline
+            // `<svg>` without `xmlns`).
+            n.is_element()
+                && n.tag_name().name() == tag
+                && matches!(n.tag_name().namespace(), None | Some(SVG_NS))
         })
         .collect();
     if elements.is_empty() {

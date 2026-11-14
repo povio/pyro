@@ -15242,7 +15242,7 @@ diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_ref
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/svg_refs.rs
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,185 @@
 +//! pyro: SVG sources whose clip path, mask or filter references form a cycle longer than usvg
 +//! breaks. usvg sets a reference that closes a cycle of one or two elements to `none`
 +//! (`fix_recursive_links`), but follows a longer one without end and overflows the stack
@@ -15303,7 +15303,11 @@ new file mode 100644
 +    let elements: Vec<roxmltree::Node<'_, '_>> = doc
 +        .descendants()
 +        .filter(|n| {
-+            n.is_element() && n.tag_name().name() == tag && n.tag_name().namespace() == Some(SVG_NS)
++            // As usvg reads them: in the SVG namespace or none (blitz serializes an inline
++            // `<svg>` without `xmlns`).
++            n.is_element()
++                && n.tag_name().name() == tag
++                && matches!(n.tag_name().namespace(), None | Some(SVG_NS))
 +        })
 +        .collect();
 +    if elements.is_empty() {
