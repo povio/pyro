@@ -322,13 +322,17 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - Covered by `crates/pyro-render/tests/text_decoration_lines.rs` and `text_emphasis_ruby.rs`.
 - Inline fragments and text painting (WPT reftest lane G2); covered by `crates/pyro-render/tests/inline_fragments.rs`:
   - `src/text.rs` (`line_insets`, `decoration_span`, `own_decoration`): `text-decoration-inset` applies at a
-    decorating box's ends: with `box-decoration-break: slice` (the initial value) the start inset in the box's first
-    fragment (the first line it has text on) and the end inset in its last, with `clone` both in every fragment (they
+    decorating box's ends: with `box-decoration-break: slice` (the initial value) the insets cut the box's fragments
+    (the lines it has text on) laid side by side as one strip, the start inset from the start of its first fragment
+    and the end inset from the end of its last, what is longer than a fragment carrying into the next (WPT
+    `text-decoration-inset-percentage-slice-multiline`); with `clone` both at the ends of every fragment (they
     applied at both ends of every line). Percentages are of the box's whole decoration line (its runs on all its
     lines, with its inline padding and borders), or of the fragment's for `clone` (they were of the line's runs). `auto`
     is a twelfth and a half of the font size, at least 1px (Stylo's servo value; it was no inset). The start is on the
-    right in a right-to-left box. `stroke_text` takes the whole layout to find a box's lines; without it (an input's
-    text, a marker, the ellipsis) each line is the whole box, as before.
+    right in a right-to-left box. `stroke_text` takes the whole layout to find a box's lines (kept in
+    `DrawTextContext::spans` while the same layout is drawn line by line); without it (an input's text, a marker, the
+    ellipsis) each line is the whole box, as before. Vertical writing modes are left to lane L: the padding and
+    borders counted are the physical left and right ones, not the inline axis's.
   - `src/text.rs` (`stroke_text`, `hanging_start`): white space hanging at the end of a left-to-right line is not
     decorated, nor counted in a box's decoration line (Chromium removes it): the line ends where the last run ends,
     less the hanging advance.
@@ -340,12 +344,14 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/text.rs` (`flush_line_decorations`, `LineDecoration::segments`): a line's decorations are painted outermost
     box first, an inner box's line over an outer box's (the order of Chromium's applied decorations; it was the
     reverse), and each run under a decoration casts its own shadows on its part of the line, in pieces of runs with
-    the same shadow cut on whole pixels (they cast the first run's; WPT `text-shadow/decorations-multiple-zorder`).
+    the same shadow cut on whole pixels, none where a run has no shadow at that index (they cast the first run's;
+    WPT `text-shadow/decorations-multiple-zorder`).
   - `src/text.rs` (`draw_inline_text_mask`, `DrawTextContext::only_within`, `InlineTextMask`), `src/render.rs`
     (`draw_inline_boxes`, `draw_text_mask`): `background-clip: text` on an inline box (not atomic) masks with the
     glyphs of its own text and its descendants', drawn where its inline root draws them (line tops, layout-unit x),
     in each fragment's border box; the mask was empty. A block's mask is placed as its text is drawn and cut by
-    `text-overflow: ellipsis` as the text is (`stroke_inline_text`, which `draw_inline_layout` shares).
+    `text-overflow: ellipsis` as the text is (`stroke_inline_text`, which `draw_inline_layout` shares), and so is an
+    inline box's (`InlineTextMask::cut`). An inline box's mask does not hold ruby annotations or emphasis marks yet.
   - `src/render.rs` (`draw_inline_boxes`): a box sliced across lines that has box shadows or background images
     paints them as those of the whole box, its fragments laid side by side in line order (right to left for a
     right-to-left box), each fragment its piece: the background and the inner shadows in the fragment's border box,

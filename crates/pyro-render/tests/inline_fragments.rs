@@ -125,6 +125,22 @@ fn a_percentage_inset_is_of_the_whole_box() {
     assert!(near(line.1 - line.0, 2.0 * ch), "{line:?}, ch {ch}");
 }
 
+/// A sliced box's insets cut its fragments laid side by side as one strip: an inset longer than
+/// the first fragment carries into the next. 5ch over three lines of 4ch leave the first and last
+/// undecorated and inset the middle one by 1ch at each end.
+#[test]
+fn a_sliced_inset_longer_than_a_fragment_carries_into_the_next() {
+    let style = "color:transparent;text-decoration-color:#00f;text-underline-offset:6px";
+    let plain = render(&format!("<p><u style='{style}'>0000 0000 0000</u></p>"));
+    let inset = render(&format!("<p><u style='{style};text-decoration-inset:5ch'>0000 0000 0000</u></p>"));
+    let middle = extent(&plain, 40, 80, blue).unwrap();
+    let ch = (middle.1 - middle.0) as f64 / 4.0;
+    assert_eq!(extent(&inset, 0, 40, blue), None, "the first line is all inset");
+    assert_eq!(extent(&inset, 80, 120, blue), None, "the last line is all inset");
+    let cut = extent(&inset, 40, 80, blue).expect("the middle line keeps 2ch");
+    assert!(near(cut.0, middle.0 as f64 + ch) && near(cut.1, middle.1 as f64 - ch), "{cut:?} vs {middle:?}");
+}
+
 /// `text-decoration-inset: auto` insets each end by a twelfth and a half of the font size (at
 /// least 1px): a line two adjacent boxes draw is broken between them.
 #[test]
@@ -170,6 +186,22 @@ fn a_decoration_casts_each_runs_shadow_and_inner_lines_go_on_top() {
     let y = (0..40).find(|&y| (line.0..line.1).any(|x| blue(pixel(&img, x, y)) || red(pixel(&img, x, y)))).unwrap();
     assert!(red(pixel(&img, line.1 - 3, y)), "{:?}", pixel(&img, line.1 - 3, y));
     assert!(blue(pixel(&img, line.0 + 2, y)), "{:?}", pixel(&img, line.0 + 2, y));
+}
+
+/// A run without a shadow casts none on its part of a decoration line, even where the run next to
+/// it is the only one with a shadow (that one's shadow is not the whole line's).
+#[test]
+fn a_run_without_a_shadow_casts_none_on_its_part_of_the_line() {
+    let img = render(
+        "<div style='margin-left:40px'><u style='color:transparent;text-decoration-color:#00f;text-underline-offset:6px;\
+         text-decoration-thickness:2px;text-decoration-skip-ink:none'>0000 <span style='text-shadow:0 6px #f00'>0000</span></u></div>",
+    );
+    let line = extent(&img, 0, 40, blue).unwrap();
+    // The decoration's shadow: the lowest red row, 6px under the line.
+    let y = (0..40).rev().find(|&y| (line.0..line.1).any(|x| red(pixel(&img, x, y)))).expect("a shadow");
+    let (left, right) = (pixel(&img, line.0 + 2, y), pixel(&img, line.1 - 3, y));
+    assert!(red(right), "the shadowed run's part: {right:?}");
+    assert_eq!(left, [255, 255, 255], "no shadow under the run without one");
 }
 
 /// An inline box with `background-clip: text` shows its background through its own glyphs, as
@@ -224,4 +256,22 @@ fn a_sliced_box_shows_the_whole_boxs_background_image() {
     let (end_of_first, start_of_second) = (pixel(&img, first.1 - 1, y)[0], pixel(&img, second.0, y + 40)[0]);
     assert!(start_of_second > 100, "the second fragment starts mid-gradient: {start_of_second}");
     assert!(end_of_first.abs_diff(start_of_second) < 12, "{end_of_first} then {start_of_second}");
+}
+
+/// The glyphs `text-overflow: ellipsis` cuts from a line are not in an inline box's
+/// `background-clip: text` mask either: the background shows in as many pixels as the box's text
+/// in that colour draws.
+#[test]
+fn an_inline_text_mask_is_cut_by_the_ellipsis() {
+    let page = |span: &str| {
+        render(&format!(
+            "<div style='margin-left:40px;width:6ch;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#fff'>\
+             <span style='{span}'>0000000000000</span></div>"
+        ))
+    };
+    let clipped = page("background:#00f;background-clip:text;color:transparent");
+    let drawn = page("color:#00f");
+    let ink = |img: &RgbaImage| extent(img, 0, 40, blue).map_or(0, |(x0, x1)| x1 - x0);
+    let (a, b) = (ink(&clipped), ink(&drawn));
+    assert!(b > 0 && a.abs_diff(b) <= 1, "{a} px wide of background, {b} of text");
 }

@@ -1279,13 +1279,6 @@ struct ElementCx<'dom, 'a> {
     custom_widget_scene: Option<&'a Scene>,
 }
 
-/// Converts parley BoundingBox into peniko Rect
-/// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
-/// (without its hanging white space) overflows the content box `width` wide (device px) by more
-/// than a layout unit (1/64 CSS px at `scale`) loses the atoms that do not fit beside the
-/// ellipsis at its end edge, and the ellipsis follows the last atom kept (at the line's start
-/// when none is). Returns the cut and the ellipsis's x (layout coordinates), `None` for a line
-/// that fits.
 /// Strokes an inline root's text, each line cut where `text-overflow: ellipsis` cuts it (with the
 /// ellipsis drawn after what it keeps). pyro: shared by `draw_inline_layout` and the
 /// `background-clip: text` mask (`draw_text_mask`), which must cut its glyphs alike. `context` has
@@ -1359,6 +1352,12 @@ fn stroke_inline_text(
     }
 }
 
+/// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
+/// (without its hanging white space) overflows the content box `width` wide (device px) by more
+/// than a layout unit (1/64 CSS px at `scale`) loses the atoms that do not fit beside the
+/// ellipsis at its end edge, and the ellipsis follows the last atom kept (at the line's start
+/// when none is). Returns the cut and the ellipsis's x (layout coordinates), `None` for a line
+/// that fits.
 fn truncate_line(
     line: &parley::Line<'_, blitz_dom::node::TextBrush>,
     ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
@@ -1685,16 +1684,14 @@ impl ElementCx<'_, '_> {
             return;
         }
 
-        // An element's first and last fragment, and how wide its fragments before each are
-        // (device px): with `box-decoration-break: slice` its fragments are pieces of one box.
-        let mut ends: HashMap<NodeId, (usize, usize)> = HashMap::new();
-        let mut before: Vec<f32> = Vec::with_capacity(fragments.len());
-        let mut widths: HashMap<NodeId, f32> = HashMap::new();
+        // An element's first and last fragment, and how wide its fragments are together (device
+        // px): with `box-decoration-break: slice` its fragments are pieces of one box.
+        let mut ends: HashMap<NodeId, (usize, usize, f32)> = HashMap::new();
         for (index, fragment) in fragments.iter().enumerate() {
-            ends.entry(fragment.node).and_modify(|ends| ends.1 = index).or_insert((index, index));
-            let width = widths.entry(fragment.node).or_insert(0.0);
-            before.push(*width);
-            *width += fragment.x1 - fragment.x0;
+            let width = fragment.x1 - fragment.x0;
+            ends.entry(fragment.node)
+                .and_modify(|ends| (ends.1, ends.2) = (index, ends.2 + width))
+                .or_insert((index, index, width));
         }
         let mut order: Vec<usize> = (0..fragments.len()).collect();
         order.sort_by_key(|&index| (fragments[index].line, fragments[index].depth));
@@ -1713,7 +1710,8 @@ impl ElementCx<'_, '_> {
             let Some(style) = node.primary_styles() else {
                 continue;
             };
-            let (starts, ends) = (ends[&fragment.node].0 == index, ends[&fragment.node].1 == index);
+            let (first, last, total) = ends[&fragment.node];
+            let (starts, ends) = (first == index, last == index);
             let rtl = style.clone_direction() == Direction::Rtl;
             let (left, right) = if rtl { (ends, starts) } else { (starts, ends) };
             // pyro: a box sliced across lines (`box-decoration-break: slice`, the initial value)
@@ -1734,7 +1732,12 @@ impl ElementCx<'_, '_> {
                         .any(|image| !matches!(image, GenericImage::None))))
             .then(|| {
                 let width = fragment.x1 - fragment.x0;
-                let (earlier, later) = (before[index], widths[&fragment.node] - before[index] - width);
+                let earlier: f32 = fragments[first..index]
+                    .iter()
+                    .filter(|other| other.node == fragment.node)
+                    .map(|other| other.x1 - other.x0)
+                    .sum();
+                let later = total - earlier - width;
                 if rtl { (later, earlier) } else { (earlier, later) }
             });
             let (border, padding) = (style.get_border(), style.get_padding());
@@ -1832,6 +1835,14 @@ impl ElementCx<'_, '_> {
                     *clip == style::properties::generated::longhands::background_clip::single_value::computed_value::T::Text
                 });
                 if text_clip {
+                    // The glyphs `text-overflow: ellipsis` cuts from the line are not in the mask
+                    // either (`stroke_inline_text`).
+                    let cut = self.element.inline_layout_data.as_ref().and_then(|text_layout| {
+                        let ellipsis = text_layout.ellipsis.as_deref()?;
+                        let line = layout.get(fragment.line)?;
+                        let width = self.node.unrounded_layout().content_box_width() * scale;
+                        truncate_line(&line, ellipsis, width, scale, layout.is_rtl()).map(|(cut, _)| cut)
+                    });
                     self.context.draw_text_context.borrow_mut().inline_mask = Some(crate::text::InlineTextMask {
                         element: fragment.node,
                         root,
@@ -1839,6 +1850,7 @@ impl ElementCx<'_, '_> {
                         tops,
                         text_shift,
                         line: fragment.line,
+                        cut,
                     });
                 }
                 match &whole {
