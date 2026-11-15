@@ -83,6 +83,9 @@ pub struct SvgImageData {
     /// pyro: the source of an inline `<svg>` without a `viewBox`, whose content
     /// is laid out in its CSS box (see [`Self::sized`]).
     pub inline_source: Option<Arc<str>>,
+    /// pyro: the document an SVG image was loaded from, which an inline `<svg>` with CSS
+    /// `mask-image` layers of it embeds (`svg_css`).
+    pub source: Option<Arc<[u8]>>,
 }
 
 impl SvgImageData {
@@ -114,6 +117,7 @@ impl SvgImageData {
             tree: Arc::new(tree),
             intrinsic_dimensions: SvgIntrinsicDimensions::from_xmltree(&doc),
             inline_source: None,
+            source: None,
         })
     }
 
@@ -281,9 +285,11 @@ impl crate::BaseDocument {
             next = node.parent;
         }
         let source = self.with_svg_sprites(root?.svg_source());
+        // pyro: `content` in a group anyrender_svg knows a box's reference by (its masks of
+        // opaque shapes are drawn as the shapes).
         let document = format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
-             width=\"{width}\" height=\"{height}\"><defs>{source}</defs>{content}</svg>"
+             width=\"{width}\" height=\"{height}\"><defs>{source}</defs><g id=\"__pyro_box_reference\">{content}</g></svg>"
         );
         crate::util::parse_svg_image(document.as_bytes()).ok()
     }

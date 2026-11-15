@@ -116,6 +116,17 @@ fn an_inline_box_runs_down_its_line() {
     assert_close(boxes(&html, &["s"])[0], [622.0, 66.25, 640.0, 142.75]);
 }
 
+/// `sideways-lr` lines run up from the bottom of the box, their first line on the left: a span's box is where its
+/// text is painted (Chrome 157's `getBoundingClientRect`).
+#[cfg(target_os = "macos")]
+#[test]
+fn an_inline_box_runs_up_its_line_in_sideways_lr() {
+    let html = format!(
+        "{FONT}<div style='position:absolute;left:560px;top:20px;width:80px;height:200px;writing-mode:sideways-lr'>Some <span id=s>inline span</span> text</div>"
+    );
+    assert_close(boxes(&html, &["s"])[0], [560.0, 97.25, 578.0, 173.75]);
+}
+
 #[test]
 fn the_box_of_vertical_text_is_as_tall_as_its_text_and_as_wide_as_its_lines() {
     let html = format!(

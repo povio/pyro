@@ -96,7 +96,7 @@ fn text(frames: &[(f64, &str)], progress: f64, easing: Option<&str>) -> Effect {
 }
 
 fn frame(key: u64, transitions: Vec<Effect>, animations: Vec<Effect>) -> AnimationFrame {
-    vec![(key, ElementEffects { transitions, animations })]
+    vec![(key, ElementEffects { transitions, animations, current: Vec::new() })]
 }
 
 const BOX: &str = "<!doctype html><style>body{margin:0;background:#fff} #target{width:100px;height:100px;background-color:rgb(0,200,0)}\
@@ -212,4 +212,32 @@ fn an_opacity_animation_in_effect_makes_a_backdrop_root() {
     let fade = text(&[(0.0, "opacity: 0"), (1.0, "opacity: 1")], 1.0, None);
     let img = render(&mut r, &snap, frame(key, vec![], vec![fade]));
     assert_near(pixel(&img, 50, 50), [0, 255, 255], "in effect at its end: a backdrop root");
+}
+
+/// An animation of a property that makes a stacking context makes its element one while it is
+/// current, in its delay too, where it gives no value (Web Animations' `will-change` side effect;
+/// WPT `individual-transform/stacking-context-001`): the element then paints with the positioned
+/// boxes, over the earlier fixed box. Without the animation it is in-flow content, under it.
+#[test]
+fn an_animation_in_its_delay_makes_a_stacking_context() {
+    const PAGE: &str = "<!doctype html><style>body{margin:0;background:#fff}\
+        #back{position:fixed;top:50px;width:100px;height:100px;background:rgb(0,128,0)}\
+        #target{width:100px;height:100px;background:rgb(0,0,255)}\
+        @keyframes scale{from,to{scale:1}} @keyframes color{to{background:red}}</style>\
+        <div id=back></div><div id=target></div>";
+    let (snap, key) = page(PAGE);
+    let mut r = Renderer::new();
+    let img = render(&mut r, &snap, Vec::new());
+    assert_near(pixel(&img, 50, 75), [0, 128, 0], "no animation: under the fixed box");
+    let current = |name: &str| {
+        vec![(key, ElementEffects { transitions: vec![], animations: vec![], current: vec![css(name, None, 0.0)] })]
+    };
+    let img = render(&mut r, &snap, current("scale"));
+    assert_near(pixel(&img, 50, 75), [0, 0, 255], "a `scale` animation in its delay: over it");
+    assert_near(pixel(&img, 50, 25), [0, 0, 255], "and no value: its own colour");
+    let img = render(&mut r, &snap, current("color"));
+    assert_near(pixel(&img, 50, 75), [0, 128, 0], "a colour animation in its delay: under it");
+    assert_near(pixel(&img, 50, 25), [0, 0, 255], "with no value");
+    let img = render(&mut r, &snap, Vec::new());
+    assert_near(pixel(&img, 50, 75), [0, 128, 0], "the animation gone: under it again");
 }

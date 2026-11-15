@@ -559,6 +559,13 @@ impl BaseDocument {
                     let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
                     (start - height - end_x, start)
                 };
+                // pyro: `sideways-lr` lines run up from the content box's bottom, their end padding
+                // (a scroll container's) the top one.
+                if stylo_taffy::WritingModeExt::line_left_is_bottom(self.nodes[node_id].layout_data().writing_mode) {
+                    let bottom = (l.size.height - l.border.bottom - l.padding.bottom) as f64 * scale;
+                    let end_top = if scrolls { l.padding.top as f64 * scale } else { 0.0 };
+                    return Some((Rect::new(b0, bottom - width - end_top, b1, bottom), width > 0.0 || height > 0.0));
+                }
                 Rect::new(b0, top, b1, top + width + end_y)
             }
         };

@@ -242,6 +242,12 @@ impl FilterPlan {
         self.graph.is_some()
     }
 
+    /// pyro: whether the filter reads `feImage` contents drawn in its layer (see
+    /// [`crate::graph::IMAGE_SOURCE`]).
+    pub(crate) fn reads_images(&self) -> bool {
+        self.graph.as_ref().is_some_and(Graph::reads_images)
+    }
+
     /// The colour functions of a filter of nothing else, when they keep the alpha and map each
     /// colour without reading its alpha: the content of a layer in one colour is then drawn in
     /// that colour's image instead ([`map_color`]), without rendering it apart.
@@ -308,6 +314,7 @@ impl FilterPlan {
     pub(crate) fn render(
         &self,
         mut pixels: Pixmap,
+        images: &[Option<Pixmap>],
         region: PixelRect,
         uniform: Option<AlphaColor<Srgb>>,
     ) -> Vec<FilteredImage> {
@@ -318,7 +325,7 @@ impl FilterPlan {
             return Vec::new();
         }
         if let Some(graph) = &self.graph {
-            return vec![FilteredImage::scaled(graph.render(pixels, region), origin, 1)];
+            return vec![FilteredImage::scaled(graph.render(pixels, images, region), origin, 1)];
         }
         let mut scratch = Vec::new();
         match self.steps[..] {
@@ -791,6 +798,45 @@ pub(crate) fn blur(data: &mut [u8], scratch: &mut Vec<u8>, w: usize, h: usize, c
     // ... and the columns in `data`.
 }
 
+/// pyro: [`blur`] of a deviation `sx` along the rows and `sy` along the columns (`feGaussianBlur`
+/// of two deviations), each axis as `blur` does it.
+pub(crate) fn blur_xy(data: &mut [u8], scratch: &mut Vec<u8>, w: usize, h: usize, channels: usize, sx: f64, sy: f64) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    if sx == sy {
+        blur(data, scratch, w, h, channels, sx);
+        return;
+    }
+    scratch.clear();
+    scratch.resize(data.len(), 0);
+    if sx > 0.0 {
+        if sx < 2.0 {
+            convolve_rows(data, scratch, w, h, channels, &gaussian_kernel(sx));
+            data.copy_from_slice(scratch);
+        } else {
+            for (i, &(lo, hi)) in box_windows(sx).iter().enumerate() {
+                let (src, dst) = if i % 2 == 0 { (&*data, &mut **scratch) } else { (&**scratch, &mut *data) };
+                box_rows(src, dst, w, h, channels, lo, hi);
+            }
+            // Three passes left the rows in `scratch`.
+            data.copy_from_slice(scratch);
+        }
+    }
+    if sy > 0.0 {
+        if sy < 2.0 {
+            convolve_cols(data, scratch, w, h, channels, &gaussian_kernel(sy));
+            data.copy_from_slice(scratch);
+        } else {
+            for (i, &(lo, hi)) in box_windows(sy).iter().enumerate() {
+                let (src, dst) = if i % 2 == 0 { (&*data, &mut **scratch) } else { (&**scratch, &mut *data) };
+                box_cols(src, dst, w, h, channels, lo, hi);
+            }
+            data.copy_from_slice(scratch);
+        }
+    }
+}
+
 /// The three box windows (pixels before, pixels after) approximating a Gaussian of `sigma`: of an
 /// odd `d`, three centred on the pixel; of an even one, one centred on the edge before the pixel,
 /// one on the edge after it, and one of `d + 1` centred on it.
@@ -1004,7 +1050,7 @@ mod tests {
         let out = PixelRect { x0: 0, y0: 0, x1: 20, y1: 20 };
         assert_eq!(plan.source_region(out), PixelRect { x0: -8, y0: -16, x1: 20, y1: 20 });
         assert_eq!(plan.factor(), 1);
-        let images = plan.render(square(20, 20, 2..6, 2..6), out, None);
+        let images = plan.render(square(20, 20, 2..6, 2..6), &[], out, None);
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].transform, Affine::translate((8.0, 16.0)));
         assert!(!images[0].smooth);
@@ -1025,7 +1071,7 @@ mod tests {
         );
         let plan = FilterPlan::new(&filter, Affine::IDENTITY).unwrap();
         let out = PixelRect { x0: 0, y0: 0, x1: 20, y1: 20 };
-        let images = plan.render(square(20, 20, 2..6, 2..6), out, None);
+        let images = plan.render(square(20, 20, 2..6, 2..6), &[], out, None);
         assert_eq!(images.len(), 1);
         let image = &images[0].pixels;
         assert_eq!(px(image, 3, 3), [255, 255, 255, 255]);
@@ -1121,7 +1167,7 @@ mod tests {
         assert_eq!(plan.source_region(out), out, "a colour reads its own pixel");
         let mut pixels = Pixmap::new(3, 1);
         pixels.data_as_u8_slice_mut().copy_from_slice(&[64, 0, 0, 128, 255, 255, 0, 255, 0, 0, 0, 0]);
-        let images = plan.render(pixels, out, None);
+        let images = plan.render(pixels, &[], out, None);
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].pixels.data_as_u8_slice(), &[64, 128, 128, 128, 0, 0, 255, 255, 0, 0, 0, 0]);
         assert!(!images[0].smooth);
@@ -1135,7 +1181,7 @@ mod tests {
         let plan = color([brightness, invert(1.0)].into_iter());
         let mut pixels = Pixmap::new(1, 1);
         pixels.data_as_u8_slice_mut().copy_from_slice(&[255, 0, 0, 255]);
-        let images = plan.render(pixels, PixelRect { x0: 0, y0: 0, x1: 1, y1: 1 }, None);
+        let images = plan.render(pixels, &[], PixelRect { x0: 0, y0: 0, x1: 1, y1: 1 }, None);
         assert_eq!(images[0].pixels.data_as_u8_slice(), &[0, 255, 255, 255]);
     }
 

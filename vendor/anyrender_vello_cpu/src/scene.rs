@@ -354,6 +354,14 @@ impl VelloCpuScenePainter {
                 i += 1;
                 continue;
             }
+            // pyro: an `feImage`'s content, which only its filter layer's graph reads
+            // (`draw_filtered_layer`): drawn nowhere else.
+            if let RenderCommand::PushLayer(layer) = &commands[i]
+                && layer.filter.as_deref().and_then(crate::graph::image_source_marker).is_some()
+            {
+                i = matching_pop(commands, i) + 1;
+                continue;
+            }
             if let RenderCommand::PushLayer(layer) = &commands[i]
                 && layer.filter.as_deref().is_some_and(is_local_raster_marker)
             {
@@ -550,6 +558,30 @@ impl VelloCpuScenePainter {
         self.render_ctx.reset_paint_transform();
     }
 
+    /// pyro: `commands` rendered into a single-threaded context of `width` by `height` of their own,
+    /// `to_offscreen` mapping the frame's device pixels to its pixels.
+    fn render_offscreen(
+        &mut self,
+        commands: &[RenderCommand],
+        width: u16,
+        height: u16,
+        to_offscreen: Affine,
+        transform: Affine,
+    ) -> Pixmap {
+        let mut ctx = self.offscreen_context(width, height);
+        std::mem::swap(&mut self.render_ctx, &mut ctx);
+        let frame_to_ctx = self.frame_to_ctx;
+        self.frame_to_ctx = to_offscreen * frame_to_ctx;
+        self.replay(commands, to_offscreen * transform);
+        self.frame_to_ctx = frame_to_ctx;
+        std::mem::swap(&mut self.render_ctx, &mut ctx);
+        let mut pixels = Pixmap::new(width, height);
+        ctx.flush();
+        ctx.render(&mut pixels, &mut self.resources);
+        self.filter_contexts.push(ctx);
+        pixels
+    }
+
     /// pyro: a filter layer. Its commands are rendered into a single-threaded context of their own,
     /// over the pixels its filter reads to produce what the layer's clip shows of the frame (at a
     /// reduced size for a large blur: [`FilterPlan::factor`]), the filter makes images of them
@@ -596,24 +628,37 @@ impl VelloCpuScenePainter {
         ) else {
             return;
         };
-        let mut ctx = self.offscreen_context(width, height);
-        std::mem::swap(&mut self.render_ctx, &mut ctx);
         let to_offscreen = Affine::scale(1.0 / f64::from(factor))
             * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)));
-        let frame_to_ctx = self.frame_to_ctx;
-        self.frame_to_ctx = to_offscreen * frame_to_ctx;
-        self.replay(inner, to_offscreen * transform);
-        self.frame_to_ctx = frame_to_ctx;
-        std::mem::swap(&mut self.render_ctx, &mut ctx);
-        let mut pixels = Pixmap::new(width, height);
-        ctx.flush();
-        ctx.render(&mut pixels, &mut self.resources);
-        self.filter_contexts.push(ctx);
+        let pixels = self.render_offscreen(inner, width, height, to_offscreen, transform);
+        // pyro: the content of the filter's `feImage`s, the layers in it that hold them (see
+        // `crate::graph::IMAGE_SOURCE`), each rendered over the same pixels.
+        let mut sources: Vec<Option<Pixmap>> = Vec::new();
+        if plan.reads_images() {
+            let mut j = 0;
+            while j < inner.len() {
+                let end = match &inner[j] {
+                    RenderCommand::PushLayer(_) | RenderCommand::PushClipLayer(_) => matching_pop(inner, j),
+                    _ => j,
+                };
+                if let RenderCommand::PushLayer(marker) = &inner[j]
+                    && let Some(k) = marker.filter.as_deref().and_then(crate::graph::image_source_marker)
+                    && k < 64
+                {
+                    if sources.len() <= k {
+                        sources.resize_with(k + 1, || None);
+                    }
+                    let content = &inner[j + 1..end];
+                    sources[k] = Some(self.render_offscreen(content, width, height, to_offscreen, transform));
+                }
+                j = end + 1;
+            }
+        }
         // A blur of glyphs in one colour (a text shadow's) blurs their alpha alone, as the blur mask
         // filter Chromium draws text shadows with does; anything else is blurred in all four
         // channels, as its blur filter does (a box was a level off with an invisible command in
         // another colour beside it: WPT's filtered-inline-applies-to-block).
-        let images = plan.render(pixels, region, uniform_color(inner, true));
+        let images = plan.render(pixels, &sources, region, uniform_color(inner, true));
 
         // An opaque layer of the normal blend mode whose clip is a rectangle of whole device pixels
         // needs no layer of its own: the images are drawn inside `out`, the clip there, and the

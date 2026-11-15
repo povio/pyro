@@ -1851,6 +1851,29 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: damages the outermost `<svg>` around SVG element `node_id`, so that its box (and the
+    /// SVG source it is drawn from) is built again.
+    #[cfg(feature = "svg")]
+    fn damage_inline_svg_root(&mut self, node_id: NodeId) {
+        let mut root = None;
+        let mut next = Some(node_id);
+        while let Some(id) = next {
+            let Some(node) = self.get_node(id) else { break };
+            let Some(element) = node.element_data() else { break };
+            if element.name.ns != markup5ever::ns!(svg) {
+                break;
+            }
+            if element.name.local == local_name!("svg") {
+                root = Some(id);
+            }
+            next = node.parent;
+        }
+        if let Some(node) = root.and_then(|id| self.get_node_mut(id)) {
+            node.clear_layout_cache();
+            node.insert_damage(ALL_DAMAGE);
+        }
+    }
+
     /// Cache a loaded image and apply it to all nodes waiting on it
     /// (`<img>` elements, `background-image` layers and `mask-image` layers).
     fn apply_loaded_image(&mut self, url: &str, image: ImageData) {
@@ -1907,6 +1930,12 @@ impl BaseDocument {
                     if matches!(image_type, ImageType::ListStyle(_)) {
                         node.clear_layout_cache();
                         node.insert_damage(ALL_DAMAGE);
+                    }
+                    // pyro: an inline `<svg>` is drawn from a source written with its elements'
+                    // mask images (`svg_css`): its box is built again with the image.
+                    #[cfg(feature = "svg")]
+                    if matches!(image_type, ImageType::Mask(_)) {
+                        self.damage_inline_svg_root(node_id);
                     }
                 }
             }
