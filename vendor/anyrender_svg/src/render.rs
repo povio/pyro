@@ -14,7 +14,14 @@ pub(crate) struct Ctx {
     /// The device-space area the output can show. Offscreen rasters (masks,
     /// pattern tiles) cover no more than it.
     pub(crate) cull: Rect,
+    /// Inside the content a CSS box's `mask-image: url(#m)` or `clip-path: url(#c)` draws
+    /// (blitz-dom `svg_reference_document` wraps it in a group of id [`BOX_REFERENCE`]).
+    pub(crate) box_reference: bool,
 }
+
+/// pyro: the id of the group around the content of an SVG document blitz-dom makes for a CSS
+/// box's reference to a `<mask>` or `<clipPath>` (`BaseDocument::svg_reference_document`).
+pub(crate) const BOX_REFERENCE: &str = "__pyro_box_reference";
 
 /// pyro: the most device pixels an offscreen raster (a mask, a pattern tile)
 /// gets; a larger one is rendered at a lower resolution and scaled up.
@@ -153,11 +160,62 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     }
 }
 
+/// pyro: the Porter-Duff operator a group made for a CSS mask layer (blitz-dom `svg_css`) is
+/// composited with onto the layers below it, which its id names (`__pyro_compose_srcout_1`).
+pub(crate) fn compose_marker(id: &str) -> Option<Compose> {
+    let rest = id.strip_prefix("__pyro_compose_")?;
+    let operator = rest.split('_').next()?;
+    Some(match operator {
+        "srcover" => Compose::SrcOver,
+        "srcout" => Compose::SrcOut,
+        "srcin" => Compose::SrcIn,
+        "xor" => Compose::Xor,
+        "pluslighter" => Compose::PlusLighter,
+        _ => return None,
+    })
+}
+
 /// pyro: a group with its clip path, mask, opacity and blend mode, applied in
 /// that order (as resvg does) to its rendered children: a clip path with one
 /// shape is a clip layer; any other clip path and every mask is a `DestIn`
-/// layer over the children in an isolated layer.
+/// layer over the children in an isolated layer. A CSS mask layer's group
+/// ([`compose_marker`]) is composited with its operator, over all that the
+/// output shows (an operator that clears what it does not cover must cover it).
 fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+    scene: &mut S,
+    g: &usvg::Group,
+    base: Affine,
+    transform: Affine,
+    global_transform: Affine,
+    error_handler: &mut F,
+    ctx: &Ctx,
+) {
+    let marked;
+    let ctx = if g.id() == BOX_REFERENCE {
+        marked = Ctx { box_reference: true, ..*ctx };
+        &marked
+    } else {
+        ctx
+    };
+    match compose_marker(g.id()) {
+        Some(compose) if compose != Compose::SrcOver => {
+            scene.push_layer(
+                Fill::NonZero,
+                BlendMode::new(Mix::Normal, compose),
+                1.0,
+                Affine::IDENTITY,
+                &ctx.cull,
+                None,
+                None,
+            );
+            render_group_node_inner(scene, g, base, transform, global_transform, error_handler, ctx);
+            scene.pop_layer();
+        }
+        _ => render_group_node_inner(scene, g, base, transform, global_transform, error_handler, ctx),
+    }
+}
+
+fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     scene: &mut S,
     g: &usvg::Group,
     base: Affine,
@@ -170,7 +228,7 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     let mix = util::to_mix(g.blend_mode());
     // The group's user space (its own `transform` included) in the scene.
     let ts = global_transform * transform;
-    let filters = filter_layers(g);
+    let filters = filter_layers(g, ts);
 
     let clip_shapes = g.clip_path().and_then(|clip| clip_shapes(clip, ts));
     let simple_clip = clip_shapes
@@ -189,11 +247,7 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     // within its clip path's and mask's bounds and what the output shows.
     let mut layer_rect = Rect::ZERO;
     if needs_layer {
-        let bounding_box = g.layer_bounding_box();
-        let rect = Rect::from_origin_size(
-            (bounding_box.x() as f64, bounding_box.y() as f64),
-            (bounding_box.width() as f64, bounding_box.height() as f64),
-        );
+        let rect = layer_bounds(g).unwrap_or(Rect::ZERO);
         layer_rect = ts.transform_rect_bbox(rect).inflate(2.0, 2.0);
         if let Some(clip) = complex_clip {
             layer_rect = layer_rect.intersect(clip_bounds(clip, ts).inflate(1.0, 1.0));
@@ -282,7 +336,7 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
         apply_clip(scene, clip, ts, layer_rect);
     }
     if let Some(mask) = mask {
-        apply_mask(scene, mask, ts, layer_rect);
+        apply_mask(scene, mask, ts, layer_rect, ctx.box_reference);
     }
 
     if needs_layer {
@@ -293,26 +347,155 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     }
 }
 
-/// pyro: the group's filters, the first applied first (a tainted result taints the source of
-/// the next); none when one has a primitive anyrender_vello_cpu does not do (the group is then
-/// drawn unfiltered, as before; see `crate::filter`).
-fn filter_layers(g: &usvg::Group) -> Vec<crate::filter::FilterGraph> {
+/// pyro: the group's filters as layers, the first applied first (a tainted result taints the
+/// source of the next); none when one has a primitive anyrender_vello_cpu does not do (the group
+/// is then drawn unfiltered, as before; see `crate::filter`). A CSS filter function
+/// (`drop-shadow()`, `blur()`, ...) has no filter region ([`crate::filter::FilterGraph::bounded`]):
+/// its layer reaches as far as its effect does on what the filters before it made, from what the
+/// children draw and two device pixels around it (`ts` maps the group's user space to the scene):
+/// a layer clipped at the content's edge would cut its anti-aliased pixels.
+fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<crate::filter::FilterGraph> {
+    if g.filters().is_empty() {
+        return Vec::new();
+    }
+    let scale = ts.determinant().abs().sqrt();
+    let margin = if scale > 1e-6 { 2.0 / scale } else { 0.0 };
+    let mut reach = children_bounds(g).map(|r| r.inflate(margin, margin));
     let mut tainted = false;
     g.filters()
         .iter()
         .map(|filter| {
             let notes = |index| crate::filter::notes(filter.id(), index);
-            let graph = crate::filter::FilterGraph::new(filter, &notes, tainted)?;
+            let mut graph = crate::filter::FilterGraph::new(filter, &notes, tainted)?;
             tainted = graph.tainted;
+            match function_kind(g, filter) {
+                Some(kind) => {
+                    reach = reach.map(|r| function_reach(kind, r));
+                    graph.region = reach.unwrap_or(Rect::ZERO);
+                    graph.bounded = false;
+                }
+                None => reach = Some(graph.region),
+            }
             Some(graph)
         })
         .collect::<Option<Vec<_>>>()
         .unwrap_or_default()
 }
 
+fn to_rect(r: usvg::NonZeroRect) -> Rect {
+    Rect::new(r.left() as f64, r.top() as f64, r.right() as f64, r.bottom() as f64)
+}
+
+/// pyro: the primitive of `filter` when usvg made it for a CSS filter function on `g`
+/// (`filter="drop-shadow(...)"`, `filter: blur(...)`) rather than from a `<filter>`: one
+/// primitive whose result is named `result` (a `<filter>`'s unnamed results are `result1`,
+/// `result2`, ...), over the whole filter region, which is `g`'s bounding box widened by half
+/// on each side (a blur, a drop shadow) or by a tenth (the others), usvg's stand-in for the
+/// region a filter function does not have.
+fn function_kind<'a>(g: &usvg::Group, filter: &'a usvg::filter::Filter) -> Option<&'a usvg::filter::Kind> {
+    use usvg::filter::Kind;
+    let [primitive] = filter.primitives() else {
+        return None;
+    };
+    if primitive.result() != "result" || primitive.rect() != filter.rect() {
+        return None;
+    }
+    let bbox = g.bounding_box();
+    let (w, h) = (bbox.width() as f64, bbox.height() as f64);
+    if !(w > 0.0 && h > 0.0) {
+        return None;
+    }
+    let widen = match primitive.kind() {
+        Kind::DropShadow(_) | Kind::GaussianBlur(_) => 0.5,
+        Kind::ColorMatrix(_) | Kind::ComponentTransfer(_) => 0.1,
+        _ => return None,
+    };
+    let expected = Rect::new(
+        bbox.left() as f64 - w * widen,
+        bbox.top() as f64 - h * widen,
+        bbox.right() as f64 + w * widen,
+        bbox.bottom() as f64 + h * widen,
+    );
+    let region = to_rect(filter.rect());
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-3 * (1.0 + a.abs().max(b.abs()));
+    (near(region.x0, expected.x0)
+        && near(region.y0, expected.y0)
+        && near(region.x1, expected.x1)
+        && near(region.y1, expected.y1))
+    .then(|| primitive.kind())
+}
+
+/// pyro: where a CSS filter function draws, given where its input does: a drop shadow adds the
+/// input moved by its offset, a blur spreads it by three standard deviations (and a pixel), a
+/// colour function keeps it.
+fn function_reach(kind: &usvg::filter::Kind, input: Rect) -> Rect {
+    use usvg::filter::Kind;
+    match kind {
+        Kind::DropShadow(shadow) => {
+            let (sx, sy) = (shadow.std_dev_x().get() as f64, shadow.std_dev_y().get() as f64);
+            let shadow_rect = (input + kurbo::Vec2::new(shadow.dx() as f64, shadow.dy() as f64))
+                .inflate(3.0 * sx + 1.0, 3.0 * sy + 1.0);
+            input.union(shadow_rect)
+        }
+        Kind::GaussianBlur(blur) => input.inflate(
+            3.0 * blur.std_dev_x().get() as f64 + 1.0,
+            3.0 * blur.std_dev_y().get() as f64 + 1.0,
+        ),
+        _ => input,
+    }
+}
+
+/// pyro: whether a CSS filter function filters `g` or a group in it (see [`function_kind`]).
+fn has_function_filter(g: &usvg::Group) -> bool {
+    g.filters().iter().any(|filter| function_kind(g, filter).is_some())
+        || g.children().iter().any(|node| match node {
+            Node::Group(child) => has_function_filter(child),
+            _ => false,
+        })
+}
+
+/// pyro: the bounds of what `g`'s children draw (their layers, as usvg's layer bounding box
+/// has them), in `g`'s user space; `None` when they draw nothing.
+fn children_bounds(g: &usvg::Group) -> Option<Rect> {
+    let mut bounds: Option<Rect> = None;
+    for node in g.children() {
+        let rect = match node {
+            Node::Group(child) => {
+                let Some(rect) = layer_bounds(child) else {
+                    continue;
+                };
+                util::to_affine(&child.transform()).transform_rect_bbox(rect)
+            }
+            node => {
+                let r = node.stroke_bounding_box();
+                Rect::new(r.left() as f64, r.top() as f64, r.right() as f64, r.bottom() as f64)
+            }
+        };
+        bounds = Some(bounds.map_or(rect, |b| b.union(rect)));
+    }
+    bounds
+}
+
+/// pyro: `g`'s layer bounding box in its own user space: usvg's, except that a CSS filter
+/// function in it reaches as far as its effect does (usvg gives it the bounding box widened by
+/// half: a `drop-shadow(50px 0)` on a 50 px wide shape was cut off at 25 px).
+fn layer_bounds(g: &usvg::Group) -> Option<Rect> {
+    if !has_function_filter(g) {
+        return Some(to_rect(g.layer_bounding_box()));
+    }
+    let mut bounds = children_bounds(g);
+    for filter in g.filters() {
+        bounds = match function_kind(g, filter) {
+            Some(kind) => bounds.map(|r| function_reach(kind, r)),
+            None => Some(to_rect(filter.rect())),
+        };
+    }
+    bounds
+}
+
 /// pyro: `g`'s children in its filters' layers (`ts` maps the group's user space to the scene),
 /// the first filter innermost, clipped to its filter region when they reach past it (SVG's
-/// source graphic stops there).
+/// source graphic stops there; a CSS filter function has no region).
 #[allow(clippy::too_many_arguments)]
 fn render_filtered<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     scene: &mut S,
@@ -327,7 +510,7 @@ fn render_filtered<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     for graph in filters.iter().rev() {
         graph.push_layer(scene, ts);
     }
-    let clip = filters.first().map(|graph| graph.region).filter(|region| {
+    let clip = filters.first().filter(|graph| graph.bounded).map(|graph| graph.region).filter(|region| {
         let content = g.stroke_bounding_box();
         let content = Rect::new(
             content.left() as f64,
@@ -422,6 +605,22 @@ fn fill_clip_shapes<S: PaintScene>(
         );
     }
     true
+}
+
+/// pyro: whether `path` (in the space `ts` maps to the scene) is a filled axis-aligned rectangle
+/// without a stroke whose scene bounds hold those of the clip shape `clip` (under `clip_ts`).
+fn rect_holds(path: &Path, ts: Affine, clip_ts: Affine, clip: &BezPath) -> bool {
+    if path.fill().is_none() || path.stroke().is_some() {
+        return false;
+    }
+    let path_ts = ts * util::to_affine(&path.abs_transform());
+    let [_, b, c, _, _, _] = path_ts.as_coeffs();
+    let Some(rect) = (b == 0.0 && c == 0.0).then(|| path_rect(&util::to_bez_path(path))).flatten() else {
+        return false;
+    };
+    let rect = path_ts.transform_rect_bbox(rect);
+    let bounds = clip_ts.transform_rect_bbox(clip.bounding_box());
+    rect.x0 <= bounds.x0 + 0.01 && rect.y0 <= bounds.y0 + 0.01 && rect.x1 >= bounds.x1 - 0.01 && rect.y1 >= bounds.y1 - 0.01
 }
 
 /// pyro: the rectangle `path` is (four axis-aligned sides, closed), if it is one.
@@ -617,10 +816,16 @@ fn draw_clip_shapes<S: PaintScene>(
 /// its content (within its rectangle) is rendered offscreen at the scene's
 /// resolution over `rect`, turned into coverage by luminance or alpha, and
 /// drawn into a `DestIn` layer covering `rect`. A mask on the mask element
-/// multiplies the content too (as in resvg).
-fn apply_mask<S: PaintScene>(scene: &mut S, mask: &usvg::Mask, ts: Affine, rect: Rect) {
+/// multiplies the content too (as in resvg). A CSS box's mask (`box_reference`)
+/// of opaque shapes is drawn as the shapes instead ([`fill_mask_shapes`]): a box's
+/// reference is compared with the shapes a page draws (WPT `mask-image-3a`), where
+/// SVG content's masks are compared with masks of other descriptions of a shape,
+/// whose edges the raster's supersampling brings within their tolerance (WPT
+/// `mask-*-content-clip-transform`: a circle as `r="25"` scaled by 2 and as
+/// `r="5000"` by 0.01 are up to 39 levels apart drawn directly).
+fn apply_mask<S: PaintScene>(scene: &mut S, mask: &usvg::Mask, ts: Affine, rect: Rect, box_reference: bool) {
     if let Some(nested) = mask.mask() {
-        apply_mask(scene, nested, ts, rect);
+        apply_mask(scene, nested, ts, rect, box_reference);
     }
     scene.push_layer(
         Fill::NonZero,
@@ -631,10 +836,188 @@ fn apply_mask<S: PaintScene>(scene: &mut S, mask: &usvg::Mask, ts: Affine, rect:
         None,
         None,
     );
-    if let Some((image, image_ts)) = mask_image(mask, ts, rect) {
-        scene.draw_image(image.as_ref(), image_ts);
+    if !(box_reference && fill_mask_shapes(scene, mask, ts, rect)) {
+        if let Some((image, image_ts)) = mask_image(mask, ts, rect) {
+            scene.draw_image(image.as_ref(), image_ts);
+        }
     }
     scene.pop_layer();
+}
+
+/// pyro: what a mask of opaque shapes draws (see [`fill_mask_shapes`]): a shape, or shapes in a
+/// group clipped by a clip path of one shape (its rule, its transform to the scene, its path).
+enum MaskItem<'a> {
+    Path(&'a Path),
+    Clipped((Fill, Affine, BezPath), Vec<MaskItem<'a>>),
+}
+
+/// pyro: a mask whose content is shapes in one opaque colour, all inside the mask's rectangle (in
+/// groups without effects, or clipped by a clip path of one shape), drawn into the current
+/// (`DestIn`) layer as those shapes filled and stroked opaque, in a layer of the colour's mask
+/// value (its luminance, or 1 for `mask-type: alpha`), and so with the coverage the same shapes
+/// have when a page draws them (a reference's `<circle>` for a masked box): a raster of the mask
+/// flattens curves at its own resolution, up to 52 levels apart at a circle's edge. `false`
+/// (nothing drawn) for any other mask. `ts` maps the mask's user space to the scene.
+fn fill_mask_shapes<S: PaintScene>(
+    scene: &mut S,
+    mask: &usvg::Mask,
+    ts: Affine,
+    rect: Rect,
+) -> bool {
+    fn collect<'a>(
+        group: &'a usvg::Group,
+        ts: Affine,
+        out: &mut Vec<MaskItem<'a>>,
+        paths: &mut Vec<&'a Path>,
+    ) -> bool {
+        for node in group.children() {
+            match node {
+                Node::Path(path) => {
+                    if path.is_visible() && (path.fill().is_some() || path.stroke().is_some()) {
+                        out.push(MaskItem::Path(path));
+                        paths.push(path);
+                    }
+                }
+                Node::Group(g) => {
+                    #[allow(deprecated)]
+                    let plain = g.opacity().get() == 1.0
+                        && g.mask().is_none()
+                        && g.filters().is_empty()
+                        && g.blend_mode() == usvg::BlendMode::Normal
+                        && !g.isolate()
+                        && compose_marker(g.id()).is_none();
+                    if !plain {
+                        return false;
+                    }
+                    match g.clip_path() {
+                        None => {
+                            if !collect(g, ts, out, paths) {
+                                return false;
+                            }
+                        }
+                        Some(clip) => {
+                            let g_ts = ts * util::to_affine(&g.abs_transform());
+                            let Some(mut shapes) = clip_shapes(clip, g_ts).filter(|s| s.len() == 1)
+                            else {
+                                return false;
+                            };
+                            let mut inner = Vec::new();
+                            if !collect(g, ts, &mut inner, paths) {
+                                return false;
+                            }
+                            out.push(MaskItem::Clipped(shapes.remove(0), inner));
+                        }
+                    }
+                }
+                Node::Text(text) => {
+                    if !collect(text.flattened(), ts, out, paths) {
+                        return false;
+                    }
+                }
+                Node::Image(_) => return false,
+            }
+        }
+        true
+    }
+    // Fills are given in scene coordinates: the rasterizer flattens a path in its own
+    // coordinates, so one shape described at two scales (`r="25"` scaled by 2, `r="5000"` by
+    // 0.01) came out up to 39 levels apart at its edge (WPT `mask-*-content-clip-transform`).
+    fn draw<S: PaintScene>(scene: &mut S, items: &[MaskItem<'_>], ts: Affine) {
+        for item in items {
+            match item {
+                MaskItem::Path(path) => {
+                    let path_ts = ts * util::to_affine(&path.abs_transform());
+                    let shape = util::to_bez_path(path);
+                    if let Some(fill) = path.fill() {
+                        let rule = match fill.rule() {
+                            usvg::FillRule::NonZero => Fill::NonZero,
+                            usvg::FillRule::EvenOdd => Fill::EvenOdd,
+                        };
+                        scene.fill(rule, Affine::IDENTITY, Color::BLACK, None, &(path_ts * shape.clone()));
+                    }
+                    if let Some(stroke) = path.stroke() {
+                        scene.stroke(&util::to_stroke(stroke), path_ts, Color::BLACK, None, &shape);
+                    }
+                }
+                MaskItem::Clipped((rule, clip_ts, clip), inner) => {
+                    // A filled rectangle holding the clip shape: the shape filled (a fill's edge,
+                    // as a reference drawing the shape has it; a clip layer's is its own).
+                    if let [MaskItem::Path(path)] = &inner[..] {
+                        if rect_holds(path, ts, *clip_ts, clip) {
+                            scene.fill(*rule, Affine::IDENTITY, Color::BLACK, None, &(*clip_ts * clip.clone()));
+                            continue;
+                        }
+                    }
+                    let clip = *clip_ts * clip.clone();
+                    scene.push_layer(*rule, BlendMode::default(), 1.0, Affine::IDENTITY, &clip, None, None);
+                    draw(scene, inner, ts);
+                    scene.pop_layer();
+                }
+            }
+        }
+    }
+    let mut items = Vec::new();
+    let mut paths = Vec::new();
+    if !collect(mask.root(), ts, &mut items, &mut paths) || paths.is_empty() {
+        return false;
+    }
+    // One opaque colour for every fill and stroke.
+    let mut color = None;
+    for path in &paths {
+        let paints = [
+            path.fill().map(|f| (f.paint(), f.opacity())),
+            path.stroke().map(|s| (s.paint(), s.opacity())),
+        ];
+        for (paint, opacity) in paints.into_iter().flatten() {
+            let usvg::Paint::Color(c) = paint else {
+                return false;
+            };
+            if opacity.get() < 1.0 || color.is_some_and(|known| known != *c) {
+                return false;
+            }
+            color = Some(*c);
+        }
+    }
+    let Some(color) = color else {
+        return false;
+    };
+    // Inside the mask's rectangle, which would clip them.
+    let mask_rect = to_rect(mask.rect());
+    let inside = paths.iter().all(|path| {
+        let b = path.abs_stroke_bounding_box();
+        b.left() as f64 >= mask_rect.x0 - 1e-3
+            && b.top() as f64 >= mask_rect.y0 - 1e-3
+            && b.right() as f64 <= mask_rect.x1 + 1e-3
+            && b.bottom() as f64 <= mask_rect.y1 + 1e-3
+    });
+    if !inside {
+        return false;
+    }
+    // The raster's mask value of the colour (see `mask_image`).
+    let value = if mask.kind() == usvg::MaskType::Luminance {
+        (2125 * color.red as u32 + 7154 * color.green as u32 + 721 * color.blue as u32 + 5000) / 10000
+    } else {
+        255
+    };
+    if value == 0 {
+        return true;
+    }
+    if value < 255 {
+        scene.push_layer(
+            Fill::NonZero,
+            Mix::Normal,
+            value as f32 / 255.0,
+            Affine::IDENTITY,
+            &rect,
+            None,
+            None,
+        );
+    }
+    draw(scene, &items, ts);
+    if value < 255 {
+        scene.pop_layer();
+    }
+    true
 }
 
 /// pyro: `mask` rendered over the whole-pixel scene rectangle `rect`, as a
@@ -665,6 +1048,7 @@ fn mask_image(mask: &usvg::Mask, ts: Affine, rect: Rect) -> Option<(ImageBrush, 
     let (rw, rh) = (width * ss, height * ss);
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, rw as f64, rh as f64),
+        box_reference: false,
     };
     let pixels = rasterize(rw, rh, |painter| {
         painter.push_clip_layer(Fill::NonZero, to_raster * ts, &mask_rect);
@@ -778,6 +1162,7 @@ fn pattern_brush(
     let content_ts = Affine::scale_non_uniform(width as f64 / tile_w, height as f64 / tile_h);
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, width as f64, height as f64),
+        box_reference: false,
     };
     let pixels = rasterize(width, height, |painter| {
         let mut no_errors: fn(&mut Scene, &Node) = |_, _| {};

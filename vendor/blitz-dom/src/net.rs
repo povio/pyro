@@ -705,7 +705,11 @@ impl ImageHandler {
         let svg_err = {
             use crate::util::parse_svg_image;
             match parse_svg_image(&bytes) {
-                Ok(svg) => return Ok(Resource::Svg(self.kind, svg)),
+                Ok(mut svg) => {
+                    // pyro: kept for inline SVG that masks with it (`svg_css`).
+                    svg.source = Some(std::sync::Arc::from(&bytes[..]));
+                    return Ok(Resource::Svg(self.kind, svg));
+                }
                 Err(e) => e.to_string(),
             }
         };

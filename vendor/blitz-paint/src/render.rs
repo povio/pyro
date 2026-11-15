@@ -2457,8 +2457,10 @@ impl ElementCx<'_, '_> {
         // pyro: whether the `<svg>` declares its size (a `width` and a `height`, or a `viewBox`).
         let declared = svg.intrinsic_dimensions.view_box.is_some()
             || (svg.intrinsic_dimensions.width.is_some() && svg.intrinsic_dimensions.height.is_some());
-        // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box.
-        let sized = svg.sized(width / self.scale as f32, height / self.scale as f32);
+        // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
+        // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
+        let units = self.scale as f32 * self.style.effective_zoom.value();
+        let sized = svg.sized(width / units, height / units);
         let svg = sized.as_ref().unwrap_or(svg);
         let svg_size = svg.tree.size();
 
@@ -2511,8 +2513,8 @@ impl ElementCx<'_, '_> {
         };
         let mut viewport = self.frame.content_box;
         if !declared {
-            viewport.x1 = viewport.x1.max(viewport.x0 + 300.0 * self.scale);
-            viewport.y1 = viewport.y1.max(viewport.y0 + 150.0 * self.scale);
+            viewport.x1 = viewport.x1.max(viewport.x0 + 300.0 * f64::from(units));
+            viewport.y1 = viewport.y1.max(viewport.y0 + 150.0 * f64::from(units));
         }
         self.context.layer_manager.maybe_with_layer(
             scene,
@@ -2531,12 +2533,30 @@ impl ElementCx<'_, '_> {
                     x_offset.px(),
                     y_offset.px(),
                     |scene| {
+                        // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what
+                        // blends in it blends with nothing under the image.
+                        let isolate = self.element.name.local != local_name!("svg")
+                            && anyrender_svg::has_blend_modes(&svg.tree);
+                        if isolate {
+                            scene.push_layer(
+                                Fill::NonZero,
+                                BlendMode::default(),
+                                1.0,
+                                self.transform,
+                                &self.frame.content_box_path(),
+                                None,
+                                None,
+                            );
+                        }
                         // pyro: with what the document knows of its filters (tainted primitives).
                         match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
                             Some(notes) => {
                                 anyrender_svg::render_svg_tree_with_notes(scene, &svg.tree, transform, notes)
                             }
                             None => anyrender_svg::render_svg_tree(scene, &svg.tree, transform),
+                        }
+                        if isolate {
+                            scene.pop_layer();
                         }
                     },
                 );

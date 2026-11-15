@@ -92,8 +92,12 @@ pub(crate) fn notes(id: &str, index: usize) -> PrimitiveNotes {
 pub struct FilterGraph {
     /// The graph, in the filter's user space.
     pub filter: Arc<Filter>,
-    /// The filter region, in its user space.
+    /// The filter region, in its user space: the layer's clip (for a CSS filter function, which
+    /// has none, the reach its painter gives it).
     pub region: Rect,
+    /// Whether `region` is a filter region (a `<filter>`'s, which also stops its source graphic)
+    /// rather than the reach of a CSS filter function.
+    pub bounded: bool,
     /// Whether the filter's result is tainted (a filter after it in a list then reads a tainted
     /// source).
     pub tainted: bool,
@@ -121,6 +125,7 @@ impl FilterGraph {
                 f64::from(region.right()),
                 f64::from(region.bottom()),
             ),
+            bounded: true,
             tainted,
             source: filter.clone(),
             images,
