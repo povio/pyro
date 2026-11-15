@@ -267,7 +267,7 @@ fn svg_filter_regions_under_an_opacity_ancestor() {
 /// usvg names the second and later uses of an `objectBoundingBox` filter (the default units)
 /// `filterN`: the notes of the `<filter>` reach those uses too (a `currentcolor` map stays tainted
 /// on both rectangles), and a `<filter href>` template's primitives give the notes of the filter
-/// using it.
+/// using it (a template no element uses itself, of another colour than `f`'s).
 #[test]
 fn a_filter_used_twice_or_through_a_template_keeps_its_taint() {
     let img = render(
@@ -278,7 +278,11 @@ fn a_filter_used_twice_or_through_a_template_keeps_its_taint() {
              <feFlood flood-color='currentcolor' style='color: rgb(0%, 100%, 50%)'/>
              <feDisplacementMap in='SourceGraphic' xChannelSelector='G' yChannelSelector='B' scale='100'/>
            </filter>
-           <filter id='t' href='#f' filterUnits='userSpaceOnUse' x='0' y='100' width='300' height='100'/>
+           <filter id='base' color-interpolation-filters='sRGB'>
+             <feFlood flood-color='currentcolor' style='color: rgb(0%, 100%, 51%)'/>
+             <feDisplacementMap in='SourceGraphic' xChannelSelector='G' yChannelSelector='B' scale='100'/>
+           </filter>
+           <filter id='t' href='#base' filterUnits='userSpaceOnUse' x='0' y='100' width='300' height='100'/>
            <rect width='100' height='100' fill='url(#g)' filter='url(#f)'/>
            <rect x='150' width='100' height='100' fill='url(#g)' filter='url(#f)'/>
            <rect y='100' width='100' height='100' fill='url(#g)' filter='url(#t)'/>
