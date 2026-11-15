@@ -122,13 +122,16 @@ impl ElementCx<'_, '_> {
     pub(super) fn draw_border_image(&self, scene: &mut impl PaintScene) -> bool {
         let border = self.style.get_border();
         // pyro: a `filter()` source is the image it filters, drawn in a layer with the filters
-        // over the border image area.
-        let (source_image, filter) = crate::filters::image_filter(
-            &border.border_image_source,
-            self.scale,
-            &self.style.clone_color(),
-            self.dom,
-        );
+        // over the border image area. Other sources (almost every element: `none`) cost nothing.
+        let (source_image, filter) = match &border.border_image_source {
+            GenericImage::Filter(_) => crate::filters::image_filter(
+                &border.border_image_source,
+                self.scale,
+                &self.style.clone_color(),
+                self.dom,
+            ),
+            source => (source, None),
+        };
         let source = match source_image {
             GenericImage::None => return false,
             GenericImage::Gradient(gradient) => Source::Gradient(gradient),

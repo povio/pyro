@@ -544,7 +544,11 @@ from the root of an upstream checkout at that commit) is the whole diff.
   innermost first) over the layer's painting area, or over the border image area for a border image: a
   `drop-shadow()` stays inside that area. The filters apply to the image as drawn, after scaling, in device pixels
   (WPT css/filter-effects/filter-function/filter-function-002, -003, the gradient pages). Tiled layers are filtered
-  as one image, not tile by tile. Covered by `crates/pyro-render/tests/filter_image_function.rs`.
+  as one image, not tile by tile, and the result is not cut to the image's own size: WebKit filters each image in
+  its own rect, so there a `drop-shadow()` or blur of an image smaller than its painting area (or of one tile)
+  stops at the image's edge, while here it spreads up to the area's edge. No WPT page tells them apart (each sizes
+  its image to the area). `draw_border_image` looks for filters only when the source is a `filter()`. Covered by
+  `crates/pyro-render/tests/filter_image_function.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

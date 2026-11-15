@@ -340,9 +340,17 @@ impl Image {
     }
 
     /// Provides an alternate method for parsing, but forbidding `none`
-    ///
-    /// pyro: and `filter()` images (`content`), which blitz-dom does not generate.
     pub fn parse_forbid_none(
+        context: &ParserContext,
+        input: &mut Parser,
+    ) -> Result<Image, ParseError> {
+        Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
+    }
+
+    /// pyro: [`Self::parse_forbid_none`] without `filter()` images (`content`), which blitz-dom
+    /// does not generate. Registered custom properties of `<image>` syntax keep `filter()`, as
+    /// `background-image` does.
+    pub fn parse_for_content(
         context: &ParserContext,
         input: &mut Parser,
     ) -> Result<Image, ParseError> {
@@ -351,6 +359,21 @@ impl Image {
             input,
             CorsMode::None,
             ParseImageFlags::FORBID_NONE | ParseImageFlags::FORBID_FILTER,
+        )
+    }
+
+    /// pyro: without `filter()` images (`list-style-image`, also through `list-style`), as
+    /// Chromium and Gecko parse them (neither has `filter()`): blitz-dom draws a marker image
+    /// as it is, so a `filter()` marker would draw its image unfiltered.
+    pub fn parse_without_filter(
+        context: &ParserContext,
+        input: &mut Parser,
+    ) -> Result<Image, ParseError> {
+        Self::parse_with_cors_mode(
+            context,
+            input,
+            CorsMode::None,
+            ParseImageFlags::FORBID_FILTER,
         )
     }
 

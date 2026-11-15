@@ -1296,6 +1296,7 @@ enabled_in = "chrome"
 [list-style-image]
 type = "Image"
 initial = "computed::Image::None"
+parse_method = "parse_without_filter"
 struct = "list"
 animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"

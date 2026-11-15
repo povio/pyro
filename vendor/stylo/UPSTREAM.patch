@@ -204,7 +204,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-14 18:55:29
++++ b/properties/longhands.toml	2026-11-15 09:44:05
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -221,7 +221,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,11 +489,28 @@
+@@ -491,9 +489,26 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -235,23 +235,29 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
  [caption-side]
- type = "table::CaptionSide"
- initial = "computed::table::CaptionSide::Top"
-@@ -2117,7 +2132,6 @@
+@@ -1281,6 +1296,7 @@
+ [list-style-image]
+ type = "Image"
+ initial = "computed::Image::None"
++parse_method = "parse_without_filter"
+ struct = "list"
+ animation_type = "discrete"
+ spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
+@@ -2117,7 +2133,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -259,7 +265,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2635,7 +2649,6 @@
+@@ -2635,7 +2650,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -267,7 +273,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2678,7 @@
+@@ -2665,6 +2679,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -275,7 +281,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3694,6 +3708,7 @@
+@@ -3694,6 +3709,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -1083,6 +1089,18 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
+diff -ruN a/values/specified/counters.rs b/values/specified/counters.rs
+--- a/values/specified/counters.rs	2026-11-11 19:55:57
++++ b/values/specified/counters.rs	2026-11-15 09:17:37
+@@ -165,7 +165,7 @@
+         let mut alt_start = None;
+         loop {
+             if alt_start.is_none()
+-                && let Ok(image) = input.try_parse(|i| Image::parse_forbid_none(context, i))
++                && let Ok(image) = input.try_parse(|i| Image::parse_for_content(context, i))
+             {
+                 items.push(generics::ContentItem::Image(image));
+                 continue;
 diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
 --- a/values/specified/effects.rs	2026-11-11 19:55:57
 +++ b/values/specified/effects.rs	2026-11-14 18:55:29
@@ -1135,7 +1153,7 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 --- a/values/specified/image.rs	2026-11-11 19:55:57
-+++ b/values/specified/image.rs	2026-11-15 07:03:49
++++ b/values/specified/image.rs	2026-11-15 10:11:12
 @@ -38,7 +38,8 @@
  
  /// Specified values for an image according to CSS-IMAGES.
@@ -1220,7 +1238,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      pub fn parse_with_cors_anonymous(
          context: &ParserContext,
          input: &mut Parser,
-@@ -288,16 +335,23 @@
+@@ -288,7 +335,7 @@
              context,
              input,
              CorsMode::Anonymous,
@@ -1229,14 +1247,19 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          )
      }
  
-     /// Provides an alternate method for parsing, but forbidding `none`
-+    ///
-+    /// pyro: and `filter()` images (`content`), which blitz-dom does not generate.
-     pub fn parse_forbid_none(
-         context: &ParserContext,
+@@ -298,8 +345,38 @@
          input: &mut Parser,
      ) -> Result<Image, ParseError> {
--        Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
+         Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
++    }
++
++    /// pyro: [`Self::parse_forbid_none`] without `filter()` images (`content`), which blitz-dom
++    /// does not generate. Registered custom properties of `<image>` syntax keep `filter()`, as
++    /// `background-image` does.
++    pub fn parse_for_content(
++        context: &ParserContext,
++        input: &mut Parser,
++    ) -> Result<Image, ParseError> {
 +        Self::parse_with_cors_mode(
 +            context,
 +            input,
@@ -1245,7 +1268,24 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 +        )
      }
  
++    /// pyro: without `filter()` images (`list-style-image`, also through `list-style`), as
++    /// Chromium and Gecko parse them (neither has `filter()`): blitz-dom draws a marker image
++    /// as it is, so a `filter()` marker would draw its image unfiltered.
++    pub fn parse_without_filter(
++        context: &ParserContext,
++        input: &mut Parser,
++    ) -> Result<Image, ParseError> {
++        Self::parse_with_cors_mode(
++            context,
++            input,
++            CorsMode::None,
++            ParseImageFlags::FORBID_FILTER,
++        )
++    }
++
      /// Provides an alternate method for parsing, but only for urls.
+     pub fn parse_only_url(
+         context: &ParserContext,
 diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
 --- a/values/specified/transform.rs	2026-11-11 19:55:57
 +++ b/values/specified/transform.rs	2026-11-14 18:55:29
