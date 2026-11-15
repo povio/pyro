@@ -227,6 +227,7 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
         easing: text(at(14)?)?.map(|e| std::sync::Arc::from(e.as_str())),
         composite: pyro_dom::animation::Composite::parse(&at(15)?.to_string()?).unwrap_or_default(),
         gone: num(16)? != 0.0,
+        marker: num(17)? != 0.0,
     })
 }
 

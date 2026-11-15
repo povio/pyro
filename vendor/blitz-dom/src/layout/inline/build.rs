@@ -409,12 +409,21 @@ fn build_inline_layout_with(
     // Render position-inside list items
     if let Some(ListItemLayout {
         marker,
+        style_node,
         position: ListItemLayoutPosition::Inside,
         ..
     }) = root_node
         .element_data()
         .and_then(|el| el.list_item_data.as_deref())
     {
+        // pyro: in the item's `::marker` style, when a rule styles the marker.
+        let styled = style_node
+            .and_then(|id| nodes.get(id).and_then(|node| node.primary_styles().map(|style| (id, style))))
+            .map(|(id, style)| stylo_to_parley::style(id, &style));
+        if let Some(style) = &styled {
+            builder.push_style_span(style.clone());
+        }
+        let parley_style = styled.as_ref().unwrap_or(&parley_style);
         match marker {
             // Bullet glyphs live in the bundled bullet font. The position-outside
             // path already asks for it; without the same span here a marker like
@@ -445,6 +454,9 @@ fn build_inline_layout_with(
                 builder.push_text("\u{a0}");
                 builder.pop_style_span();
             }
+        }
+        if styled.is_some() {
+            builder.pop_style_span();
         }
     };
     // The marker is a separate box, so words in the content don't continue from it.

@@ -274,6 +274,7 @@ pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_rend
                     transitions: el.transitions.iter().map(effect).collect(),
                     animations: el.animations.iter().map(effect).collect(),
                     current: el.current.iter().map(effect).collect(),
+                    marker: el.marker.iter().map(effect).collect(),
                 },
             )
         })

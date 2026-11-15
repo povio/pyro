@@ -228,6 +228,8 @@ impl crate::document::BaseDocument {
             }
             self.first_letter_changed
                 .extend(std::mem::take(traverser.first_letter_changed.get_mut().unwrap()));
+            self.marker_items_restyled
+                .extend(std::mem::take(traverser.marker_items_restyled.get_mut().unwrap()));
             if traverser.first_line_styles.into_inner() {
                 self.first_line_styles = true;
             }
@@ -898,6 +900,22 @@ impl<'a> TElement for BlitzNode<'a> {
 
     type TraversalChildrenIterator = Traverser<'a>;
 
+    // pyro: the box of an element's `::before` or `::after` is that pseudo-element: the rules of
+    // `::before::marker` / `::after::marker` are looked up for it (`layout::list`).
+    fn implemented_pseudo_element(&self) -> Option<PseudoElement> {
+        if !matches!(self.data, NodeData::AnonymousBlock(_)) {
+            return None;
+        }
+        let parent = &self.tree()[self.parent?];
+        if parent.before() == Some(self.id) {
+            Some(PseudoElement::Before)
+        } else if parent.after() == Some(self.id) {
+            Some(PseudoElement::After)
+        } else {
+            None
+        }
+    }
+
     fn as_node(&self) -> Self::ConcreteNode {
         self
     }
@@ -1148,6 +1166,14 @@ impl<'a> TElement for BlitzNode<'a> {
             && attr.0.bytes().any(|b| b.is_ascii_uppercase()))
         .then(|| markup5ever::LocalName::from(attr.0.to_ascii_lowercase()));
         let name = lowered.as_ref().unwrap_or(&attr.0);
+        // pyro: for a pseudo-element's box (the marker style of a `::before` or `::after` list
+        // item is cascaded on it), the attribute of its originating element.
+        if matches!(self.data, NodeData::AnonymousBlock(_))
+            && let Some(parent) = self.parent.map(|id| &self.tree()[id])
+            && (parent.before() == Some(self.id) || parent.after() == Some(self.id))
+        {
+            return parent.get_attr(attr, ns);
+        }
         self.attrs()?
             .iter()
             .find(|a| a.name.local == *name && a.name.ns == ns.0)
@@ -1923,6 +1949,8 @@ pub struct RecalcStyle<'a> {
     /// pyro: the elements whose `::first-letter` style this traversal changed
     /// (`layout::first_letter::style_changed`).
     first_letter_changed: Mutex<Vec<NodeId>>,
+    /// pyro: restyled list items with a `::marker` style node (`layout::list::item_restyled`).
+    marker_items_restyled: Mutex<Vec<NodeId>>,
     /// pyro: an element styled in this traversal kept a `::first-line` style, and the elements
     /// whose `::first-line` style it changed (`layout::first_line::style_changed`).
     first_line_styles: std::sync::atomic::AtomicBool,
@@ -1949,6 +1977,7 @@ impl<'a> RecalcStyle<'a> {
             track_style_changes: false,
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
             first_letter_changed: Mutex::new(Vec::new()),
+            marker_items_restyled: Mutex::new(Vec::new()),
             first_line_styles: std::sync::atomic::AtomicBool::new(false),
             first_line_changed: Mutex::new(Vec::new()),
             generated_counters: std::sync::atomic::AtomicBool::new(false),
@@ -2255,6 +2284,10 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 style.clone_position() == style::computed_values::position::T::Sticky
             }) {
                 self.sticky_nodes.lock().unwrap().push(el.id);
+            }
+
+            if el.element_data().is_some_and(|element| element.marker_style.is_some()) {
+                self.marker_items_restyled.lock().unwrap().push(el.id);
             }
 
             // One empty check for an element without eager pseudo styles.

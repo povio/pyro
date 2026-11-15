@@ -1832,3 +1832,23 @@ Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs` and the WPT pa
 - `src/mutator.rs`: an `<embed>` loads the image its `src` names, as an `<img>` does.
 
 Covered by `crates/pyro-render/tests/object_view_box_embed.rs`.
+
+## `::marker` (WPT round 3, lane I)
+
+- `src/layout/list.rs`: a list item's marker takes its `::marker` style. The style (lazily cascaded, only when
+  a rule matches) is kept on a node of its own (`ElementData::marker_style`, `ListItemLayout::style_node`), the
+  brush of the marker's text, so paint reads its colour, font and shadows; inside markers are a span of it
+  (`inline/build.rs`). `content`: `none` leaves no marker, strings, `counter(list-item)` and quotes replace it
+  (other counters and images keep the `list-style` marker). The outside marker's line preserves its white space
+  (the suffix space of `1. ` takes room, as `white-space: pre` in the UA sheet gives it).
+- `src/stylo.rs`, `src/layout/list.rs` (`item_restyled`), `src/layout/counters.rs`: a restyled list item with
+  a marker style node refreshes it (the marker inherits from the item); a changed `content` rebuilds the list's
+  markers.
+- `src/stylo.rs` (`implemented_pseudo_element`, `get_attr`): the box of a `::before` / `::after` is that
+  pseudo-element for selector matching, so `::after::marker` rules reach the marker of a pseudo-element's list
+  item, and `attr()` there reads the originating element.
+- `src/animation.rs`, `src/node/element.rs`: `ElementEffects::marker`: the animations in effect on an element's
+  `::marker` (`Element.animate` with `pseudoElement: '::marker'`) are sampled like the element's own and
+  cascaded onto the marker's style (`ElementData::sampled_marker`, `Stylist::compute_for_declarations`).
+
+Covered by `crates/pyro-render/tests/marker_pseudo.rs`.

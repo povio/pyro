@@ -542,6 +542,9 @@ pub struct BaseDocument {
     /// pyro: elements whose `::first-letter` style a style traversal changed, for the next
     /// resolve (`layout::first_letter::style_changed`).
     pub(crate) first_letter_changed: Vec<NodeId>,
+    /// pyro: the list items with a `::marker` style node the last style traversal restyled
+    /// (`layout::list::item_restyled`).
+    pub(crate) marker_items_restyled: Vec<NodeId>,
     /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
     /// roots look for the style of their first line (`layout::first_line`).
     pub(crate) first_line_styles: bool,
@@ -766,6 +769,7 @@ impl BaseDocument {
             generated_before_after: false,
             first_letter_styles: false,
             first_letter_changed: Vec::new(),
+            marker_items_restyled: Vec::new(),
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
@@ -1306,6 +1310,10 @@ impl BaseDocument {
             // pyro: the node holding its `::first-letter` style.
             if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter) {
                 self.remove_node_from_tree(first_letter);
+            }
+            // pyro: its `::marker` style.
+            if let Some(marker_style) = node.element_data().and_then(|element| element.marker_style) {
+                self.remove_node_from_tree(marker_style);
             }
             // pyro: and its `::first-line` style.
             if let Some(first_line) = node.element_data().and_then(|element| element.first_line) {

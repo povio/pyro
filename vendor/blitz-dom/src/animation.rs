@@ -128,15 +128,23 @@ pub struct ElementEffects {
     /// properties they animate act as if `will-change` named them (Web Animations 1, "side
     /// effects of animation"), as those of the effects in effect do.
     pub current: Vec<Effect>,
+    /// pyro: animations in effect on the element's `::marker` (a list item's): their values go
+    /// into the marker's style (`ElementData::sampled_marker`, `layout::list`), not the element's.
+    pub marker: Vec<Effect>,
 }
 
 impl ElementEffects {
     pub fn is_empty(&self) -> bool {
-        self.transitions.is_empty() && self.animations.is_empty() && self.current.is_empty()
+        self.transitions.is_empty() && self.animations.is_empty() && self.current.is_empty() && self.marker.is_empty()
     }
 
     /// pyro: every effect, in effect or only current.
     fn all(&self) -> impl Iterator<Item = &Effect> {
+        self.own().chain(&self.marker)
+    }
+
+    /// pyro: the effects on the element itself.
+    fn own(&self) -> impl Iterator<Item = &Effect> {
         self.animations.iter().chain(&self.transitions).chain(&self.current)
     }
 }
@@ -172,6 +180,8 @@ struct ElementState {
 struct Sampled {
     animations: Option<AnimationValueMap>,
     transitions: Option<AnimationValueMap>,
+    /// pyro: the values of the effects on the element's `::marker`.
+    marker: Option<AnimationValueMap>,
     /// pyro: an effect animates a property that makes a stacking context
     /// (`ElementData::animation_stacking_context`).
     stacking_context: bool,
@@ -249,6 +259,7 @@ impl BaseDocument {
                 let sampled = Sampled {
                     animations: element.sampled.animations.clone(),
                     transitions: element.sampled.transitions.clone(),
+                    marker: element.sampled.marker.clone(),
                     stacking_context: element.sampled.stacking_context,
                 };
                 self.apply_sampled(id, sampled);
@@ -391,6 +402,7 @@ impl BaseDocument {
             let sampled = Sampled {
                 animations: element.sampled.animations.clone(),
                 transitions: element.sampled.transitions.clone(),
+                marker: element.sampled.marker.clone(),
                 stacking_context: element.sampled.stacking_context,
             };
             self.apply_sampled(*id, sampled);
@@ -414,6 +426,24 @@ impl BaseDocument {
             })
         };
         let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
+        let marker = block(sampled.marker);
+        let Some(data) = node.element_data_mut() else {
+            return;
+        };
+        // pyro: the marker's values: the list the item is in builds its markers again.
+        if data.sampled_marker.is_some() || marker.is_some() {
+            data.sampled_marker = marker;
+            let list = node.parent.unwrap_or(id);
+            for target in [id, list] {
+                if let Some(node) = self.nodes.get_mut(target) {
+                    node.insert_damage(crate::layout::damage::ALL_DAMAGE);
+                    node.mark_damaged();
+                }
+            }
+        }
+        let Some(node) = self.nodes.get_mut(id) else {
+            return;
+        };
         let Some(data) = node.element_data_mut() else {
             return;
         };
@@ -744,7 +774,7 @@ fn sample(
         LonghandId::MixBlendMode,
         LonghandId::Isolation,
     ];
-    let stacking_context = element.effects.all().any(|effect| {
+    let stacking_context = element.effects.own().any(|effect| {
         element.resolved.iter().find(|(k, _)| *k == effect.keyframes).is_some_and(|(_, resolved)| {
             resolved.properties.iter().any(|(property, _)| {
                 matches!(property.as_borrowed(), PropertyDeclarationId::Longhand(id) if STACKING.contains(&id))
@@ -754,6 +784,7 @@ fn sample(
     Sampled {
         animations: level(&element.effects.animations, easings),
         transitions: level(&element.effects.transitions, easings),
+        marker: level(&element.effects.marker, easings),
         stacking_context,
     }
 }

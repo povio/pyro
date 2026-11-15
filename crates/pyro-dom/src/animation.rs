@@ -88,6 +88,9 @@ pub struct ElementAnimations {
     /// `will-change` named them (Web Animations 1, "side effects of animation"), so one that
     /// makes a stacking context makes the element one meanwhile.
     pub current: Vec<Effect>,
+    /// Script animations in effect on the element's `::marker` (`pseudoElement: '::marker'`), in
+    /// composite order: their values go into the marker's style.
+    pub marker: Vec<Effect>,
 }
 
 /// The document's animated elements at one moment.

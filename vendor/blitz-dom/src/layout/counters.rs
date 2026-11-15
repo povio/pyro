@@ -246,7 +246,7 @@ impl Walk {
 
 /// The quotes at `depth` (the last pair beyond the list's end; none for `quotes: none`). `auto`
 /// is English's (Chromium's default).
-fn quote(style: &ComputedValues, depth: usize) -> Option<(String, String)> {
+pub(super) fn quote(style: &ComputedValues, depth: usize) -> Option<(String, String)> {
     match &style.get_list().quotes {
         Quotes::QuoteList(list) => {
             let pairs = &list.0;
@@ -267,6 +267,9 @@ impl BaseDocument {
     pub(crate) fn resolve_generated_content(&mut self) {
         for node_id in std::mem::take(&mut self.first_letter_changed) {
             super::first_letter::style_changed(self, node_id);
+        }
+        for node_id in std::mem::take(&mut self.marker_items_restyled) {
+            super::list::item_restyled(self, node_id);
         }
         for node_id in std::mem::take(&mut self.first_line_changed) {
             super::first_line::style_changed(self, node_id);

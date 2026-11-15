@@ -205,6 +205,12 @@ how the colour serializes. Test: `a_colour_with_a_missing_component_makes_the_gr
 `none` or one rectangle, animated discretely. blitz-dom reads it (`util::object_view_box`). Tests:
 `crates/pyro-render/tests/object_view_box_embed.rs`.
 
+## `::before::marker`, `::after::marker` (WPT round 3, lane I)
+
+`servo/selector_parser.rs`: `PseudoElement::valid_after_before_or_after` (`::marker`) and `is_before_or_after`,
+so the selectors parse (CSS Pseudo-Elements 4 § 4.1); the stylist already keeps such rules by pseudo-element
+chain. blitz-dom answers `implemented_pseudo_element` for the boxes (its README).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

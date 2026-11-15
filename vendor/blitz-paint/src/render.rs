@@ -3125,6 +3125,7 @@ impl ElementCx<'_, '_> {
             marker,
             position: ListItemLayoutPosition::Outside(layout),
             content_box_subpixel_offset,
+            ..
         }) = self.list_item
         {
             // Right align and pad the bullet when rendering outside
@@ -3236,7 +3237,9 @@ impl ElementCx<'_, '_> {
         let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
         let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
         let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
-        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, self.node.id));
+        // pyro: in the colour of the item's `::marker` style, when a rule styles the marker.
+        let styled = self.list_item.and_then(|item| item.style_node).unwrap_or(self.node.id);
+        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, styled));
         match symbol {
             '•' => scene.fill(Fill::NonZero, self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect)),
             '◦' => {

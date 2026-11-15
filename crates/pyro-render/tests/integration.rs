@@ -35,6 +35,7 @@ mod inline_fragments;
 mod inline_leftovers;
 mod inline_relative_position;
 mod inline_svg_viewport;
+mod marker_pseudo;
 mod text_box_trim;
 mod input_percentage_min_content;
 mod input_placeholder;

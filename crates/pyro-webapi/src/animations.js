@@ -908,7 +908,10 @@
       if (!e) return;
       a.key = reportKey();
     }
-    const target = e && e.keyframe && e.pseudo === null ? e.target : null;
+    // (An effect on a list item's `::marker` is reported with the item, flagged: the engine
+    // samples it into the marker's style. Other pseudo-elements' effects show nothing.)
+    const marker = !!e && e.pseudo === '::marker';
+    const target = e && e.keyframe && (e.pseudo === null || marker) ? e.target : null;
     const timing = e && computedTimingOf(e);
     const inEffect = timing && timing.activeTime !== null;
     const coming = a.pending !== null || playStateOf(a) === 'running';
@@ -935,7 +938,7 @@
       target, a.css !== undefined ? a.cssId : -1, frames, a.startTime, a.holdTime, a.rate, origin,
       t.delay, t.endDelay, t.fill === 'auto' ? 'none' : t.fill, t.iterationStart, t.iterations,
       iterationDuration(t), t.direction, t.easing.text === 'linear' ? null : t.easing.text, e.composite,
-      gone ? 1 : 0,
+      gone ? 1 : 0, marker ? 1 : 0,
     ]);
   }
 

@@ -132,6 +132,9 @@ pub struct ElementData {
     /// pyro: the animated values the embedder samples into this element's
     /// cascade at the animations and transitions levels (`animation.rs`).
     pub sampled_animations: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    /// pyro: the sampled values of the animations on the element's `::marker`
+    /// (`ElementEffects::marker`): cascaded onto the marker's style (`layout::list`).
+    pub sampled_marker: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     pub sampled_transitions: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     /// pyro: an animation of this element that is current or in effect animates a property that
     /// makes a stacking context, which makes the element one (`animation.rs`).
@@ -147,6 +150,9 @@ pub struct ElementData {
     /// pyro: the node holding this element's `::first-line` style, whose parent is the inline
     /// root holding the first line it styles (`layout::first_line`). Not in the tree.
     pub first_line: Option<NodeId>,
+    /// pyro: the node holding this list item's `::marker` style, the brush of its marker's text
+    /// (`layout::list`). Not in the tree; its parent is the item.
+    pub marker_style: Option<NodeId>,
 
     /// Detailed layout information from the most recent layout (currently
     /// grid track sizing information for grid containers only). Used by
@@ -413,12 +419,14 @@ impl Clone for ElementData {
             damaged_descendants: AtomicBool::new(true),
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
+            sampled_marker: None,
             sampled_transitions: None,
             animation_stacking_context: false,
             before: None,
             after: None,
             first_letter: None,
             first_line: None,
+            marker_style: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -537,12 +545,14 @@ impl ElementData {
             damaged_descendants: AtomicBool::new(true),
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
+            sampled_marker: None,
             sampled_transitions: None,
             animation_stacking_context: false,
             before: None,
             after: None,
             first_letter: None,
             first_line: None,
+            marker_style: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -1119,6 +1129,9 @@ impl std::fmt::Debug for SpecialElementData {
 #[derive(Clone)]
 pub struct ListItemLayout {
     pub marker: Marker,
+    /// pyro: the node holding the item's `::marker` style (`ElementData::marker_style`), when a
+    /// rule styles the marker: its text is that node's (colour, font, shadows).
+    pub style_node: Option<NodeId>,
     pub position: ListItemLayoutPosition,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel

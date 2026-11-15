@@ -658,8 +658,25 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-15 15:12:22
-@@ -376,6 +376,9 @@
++++ b/servo/selector_parser.rs	2026-11-15 23:53:06
+@@ -116,6 +116,16 @@
+     fn parses_as_element_backed(&self) -> bool {
+         matches!(self, Self::DetailsContent)
+     }
++
++    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
++    // of a `::before` or `::after` box that is a list item.
++    fn valid_after_before_or_after(&self) -> bool {
++        matches!(self, Self::Marker)
++    }
++
++    fn is_before_or_after(&self) -> bool {
++        matches!(self, Self::Before | Self::After)
++    }
+ }
+ 
+ /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
+@@ -376,6 +386,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -669,19 +686,19 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -439,6 +442,11 @@
-         if let Lang(ref lang) = *self {
-             dest.write_str(":lang(")?;
+@@ -441,6 +454,11 @@
              serialize_identifier(lang, dest)?;
-+            return dest.write_char(')');
-+        }
+             return dest.write_char(')');
+         }
 +        if let Dir(ref dir) = *self {
 +            dest.write_str(":dir(")?;
 +            serialize_identifier(dir, dest)?;
-             return dest.write_char(')');
-         }
++            return dest.write_char(')');
++        }
  
-@@ -485,7 +493,7 @@
+         dest.write_str(match *self {
+             Self::Active => ":active",
+@@ -485,7 +503,7 @@
              Self::UserValid => ":user-valid",
              Self::Valid => ":valid",
              Self::Visited => ":visited",
@@ -690,7 +707,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -531,7 +539,7 @@
+@@ -531,7 +549,7 @@
              Self::UserValid => ElementState::USER_VALID,
              Self::Valid => ElementState::VALID,
              Self::Visited => ElementState::VISITED,
@@ -699,7 +716,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -697,6 +705,9 @@
+@@ -697,6 +715,9 @@
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
              },

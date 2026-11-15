@@ -808,3 +808,6 @@ Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
 - `src/render.rs` (`draw_image`, `draw_svg`): `object-view-box`: the view box is what `object-fit` and
   `object-position` fit and place; the content around it is drawn at the view box's scale where the content box
   has room. Covered by `crates/pyro-render/tests/object_view_box_embed.rs`.
+
+- `src/render.rs` (`draw_marker_symbol`): a disc, circle or square marker is drawn in the colour of the item's
+  `::marker` style (`ListItemLayout::style_node`).
