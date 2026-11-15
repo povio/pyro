@@ -12,6 +12,7 @@ mod graph;
 /// pyro: see the `graph` module (an SVG filter primitive's subregion).
 pub use graph::CROP_IMAGE as FILTER_CROP_IMAGE;
 mod filters;
+mod occlusion;
 
 pub use image_cache::ImageCacheConfig;
 pub use image_renderer::VelloCpuImageRenderer;

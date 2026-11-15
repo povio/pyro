@@ -35,6 +35,9 @@ pub struct VelloCpuScenePainter {
     /// much of it (out of 255), as Chromium draws text when WPT runs it without font
     /// antialiasing. `None` (the default): antialiased.
     pub(crate) text_aliasing_threshold: Option<u8>,
+    /// pyro: whether a replay leaves out work that shows in no pixel (see [`crate::occlusion`]);
+    /// tests turn it off to compare.
+    pub(crate) occlusion: bool,
 }
 
 impl VelloCpuScenePainter {
@@ -64,6 +67,7 @@ impl VelloCpuScenePainter {
             backdrops: Vec::new(),
             frame_to_ctx: Affine::IDENTITY,
             text_aliasing_threshold: None,
+            occlusion: true,
         }
     }
 
@@ -421,6 +425,50 @@ impl VelloCpuScenePainter {
                     command => self.replay_command(command, transform, None),
                 }
                 i += 3;
+                continue;
+            }
+            // Box shadows under the opaque fill after them: shaded only where it leaves them
+            // showing (see `crate::occlusion`). Not inside a clip path, which would let them show
+            // through the fill's pixels at its edge.
+            if self.occlusion
+                && matches!(commands[i], RenderCommand::BoxShadow(_))
+                && !self.clip_paths.contains(&Pushed::ClipPath)
+            {
+                let end = crate::occlusion::shadow_run_end(commands, i);
+                if let Some(clip) = commands.get(end).and_then(|cover| {
+                    crate::occlusion::shadow_clip(&commands[i..end], cover, transform)
+                }) {
+                    self.render_ctx.set_transform(Affine::IDENTITY);
+                    self.render_ctx.set_fill_rule(Fill::EvenOdd);
+                    self.render_ctx.push_clip_path(&clip);
+                    for command in &commands[i..end] {
+                        self.replay_command(command, transform, None);
+                    }
+                    self.render_ctx.pop_clip();
+                    i = end;
+                    continue;
+                }
+            }
+            // Sibling clip layers drawn in fewer layers (see `crate::occlusion`). Not where clips
+            // become clip paths (a blend inside) or a backdrop filter reads the layers open.
+            if self.occlusion
+                && !self.blending
+                && !self.backdrop_filters
+                && matches!(commands[i], RenderCommand::PushClipLayer(_))
+                && let Some((groups, end)) =
+                    crate::occlusion::clip_layer_groups(commands, i, transform)
+            {
+                for group in groups {
+                    self.render_ctx.set_transform(Affine::IDENTITY);
+                    self.render_ctx.set_fill_rule(Fill::NonZero);
+                    self.render_ctx.push_clip_layer(&group.clip);
+                    self.clip_paths.push(Pushed::Layer);
+                    for (push, pop) in group.members {
+                        self.replay(&commands[push + 1..pop], transform);
+                    }
+                    self.pop_layer();
+                }
+                i = end;
                 continue;
             }
             match &commands[i] {
@@ -782,7 +830,7 @@ fn contains(rect: PixelRect, bounds: Rect, frame: PixelRect) -> bool {
 
 /// pyro: the device pixels `commands` (under `transform`) can paint, conservatively: a layer's by
 /// its clip, a glyph run's by its glyph origins with ems around them; `None` when they paint none.
-fn content_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
+pub(crate) fn content_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
     let mut bounds: Option<Rect> = None;
     let mut i = 0;
     while i < commands.len() {
@@ -877,7 +925,7 @@ fn blends_inside(commands: &[RenderCommand], push: usize) -> bool {
 }
 
 /// The index of the `PopLayer` that closes the layer pushed at `push` (the end when none does).
-fn matching_pop(commands: &[RenderCommand], push: usize) -> usize {
+pub(crate) fn matching_pop(commands: &[RenderCommand], push: usize) -> usize {
     let mut depth = 0usize;
     for (i, command) in commands.iter().enumerate().skip(push) {
         match command {

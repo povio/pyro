@@ -1,6 +1,6 @@
 //! SVG image data and CSS intrinsic sizing for SVG.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use usvg::roxmltree;
 
@@ -83,7 +83,18 @@ pub struct SvgImageData {
     /// pyro: the source of an inline `<svg>` without a `viewBox`, whose content
     /// is laid out in its CSS box (see [`Self::sized`]).
     pub inline_source: Option<Arc<str>>,
+    /// pyro: what [`Self::sized`] parsed lately, by source and size, shared by
+    /// this image's clones (each element showing it): a repaint parses none of
+    /// them again.
+    sized_cache: Arc<Mutex<Vec<SizedEntry>>>,
 }
+
+/// pyro: a tree [`SvgImageData::sized`] parsed: the source it parsed (the
+/// `inline_source` it was given), the size (`f32` bits) and the result.
+type SizedEntry = (Arc<str>, (u32, u32), Option<SvgImageData>);
+
+/// pyro: how many sizes of one image [`SvgImageData::sized`] keeps.
+const SIZED_CACHE_ENTRIES: usize = 8;
 
 impl SvgImageData {
     /// Parse an SVG image from raw data, capturing both the rendered
@@ -114,6 +125,7 @@ impl SvgImageData {
             tree: Arc::new(tree),
             intrinsic_dimensions: SvgIntrinsicDimensions::from_xmltree(&doc),
             inline_source: None,
+            sized_cache: Arc::default(),
         })
     }
 
@@ -122,14 +134,32 @@ impl SvgImageData {
     /// CSS px and percentages (a `<use>` of a `<symbol>` sized `100%` by default)
     /// resolve against the box. Parsed alone, usvg resolves them against
     /// 100x100 and then shrinks the tree to its content's bounds, which drew
-    /// sprite icons too large. `None` for other images, or an empty box.
+    /// sprite icons too large. `None` for other images, or an empty box. The
+    /// last few trees are kept: an image is drawn at the same sizes frame after
+    /// frame (each tile of a background, each icon).
     pub fn sized(&self, width: f32, height: f32) -> Option<SvgImageData> {
-        let source = self.inline_source.as_deref()?;
+        let source = self.inline_source.as_ref()?;
         if !(width > 0.0 && height > 0.0) {
             return None;
         }
-        let source = with_root_size(source, width, height)?;
-        crate::util::parse_svg_image(source.as_bytes()).ok()
+        let size = (width.to_bits(), height.to_bits());
+        let mut cache = self
+            .sized_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((_, _, svg)) = cache
+            .iter()
+            .find(|(parsed, key, _)| *key == size && Arc::ptr_eq(parsed, source))
+        {
+            return svg.clone();
+        }
+        let svg = with_root_size(source, width, height)
+            .and_then(|sized| crate::util::parse_svg_image(sized.as_bytes()).ok());
+        if cache.len() == SIZED_CACHE_ENTRIES {
+            cache.remove(0);
+        }
+        cache.push((source.clone(), size, svg.clone()));
+        svg
     }
 
     /// The intrinsic width in CSS px, present only when the root `<svg>`
@@ -444,7 +474,8 @@ fn with_root_attrs(source: &str, set: &[(&str, String)]) -> Option<String> {
 
 #[cfg(test)]
 mod sized_tests {
-    use super::with_root_size;
+    use super::{SIZED_CACHE_ENTRIES, SvgImageData, with_root_size};
+    use std::sync::Arc;
 
     #[test]
     fn the_root_gets_the_box_size_and_keeps_its_other_attributes() {
@@ -453,5 +484,49 @@ mod sized_tests {
             with_root_size(source, 16.0, 20.5).unwrap(),
             r#"<svg width="16" height="20.5" xmlns="http://www.w3.org/2000/svg" stroke-width="1.8" class="a>b"><rect width="50%"/></svg>"#
         );
+    }
+
+    /// An image drawn again at a size it was drawn at gets the tree parsed then, in every clone
+    /// (each element showing the image); another size, or another source, is parsed anew.
+    #[test]
+    fn a_size_is_parsed_once_for_every_clone() {
+        let source = r#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" stroke="red" stroke-width="10%"/></svg>"#;
+        let svg = SvgImageData::from_data(source.as_bytes(), &usvg::Options::default())
+            .unwrap()
+            .for_url(source.as_bytes(), "https://example.com/a.svg");
+        assert!(svg.inline_source.is_some());
+        let clone = svg.clone();
+        let first = svg.sized(40.0, 30.0).unwrap();
+        assert_eq!(
+            (first.tree.size().width(), first.tree.size().height()),
+            (40.0, 30.0)
+        );
+        assert!(Arc::ptr_eq(
+            &first.tree,
+            &clone.sized(40.0, 30.0).unwrap().tree
+        ));
+        let other = svg.sized(80.0, 30.0).unwrap();
+        assert!(!Arc::ptr_eq(&first.tree, &other.tree));
+        assert_eq!(other.tree.size().width(), 80.0);
+        // A source set later is not answered with the trees of the one before.
+        let mut changed = svg.clone();
+        changed.inline_source = Some(source.replace("red", "blue").into());
+        assert!(!Arc::ptr_eq(
+            &first.tree,
+            &changed.sized(40.0, 30.0).unwrap().tree
+        ));
+        assert!(Arc::ptr_eq(
+            &first.tree,
+            &svg.sized(40.0, 30.0).unwrap().tree
+        ));
+        // Only the last few sizes are kept.
+        for width in 1..=SIZED_CACHE_ENTRIES {
+            svg.sized(width as f32, 1.0);
+        }
+        assert!(!Arc::ptr_eq(
+            &first.tree,
+            &svg.sized(40.0, 30.0).unwrap().tree
+        ));
+        assert!(svg.sized(0.0, 30.0).is_none());
     }
 }
