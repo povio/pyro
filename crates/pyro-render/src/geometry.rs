@@ -36,6 +36,10 @@ pub struct LayoutBox {
     pub client_height: f64,
     pub scroll_width: f64,
     pub scroll_height: f64,
+    /// Whether it scrolls from the end of the horizontal and the vertical axis (its scroll
+    /// origin there: `direction: rtl`, `row-reverse`, `column-reverse`, `wrap-reverse`), to
+    /// negative offsets.
+    pub scroll_reversed: [bool; 2],
     /// Inside (or itself) a `position: fixed` box.
     pub fixed: bool,
     /// Border and padding widths: top, right, bottom, left.
@@ -296,6 +300,21 @@ impl Geometry {
         let client_height = (l.size.height - l.border.top - l.border.bottom - l.scrollbar_size.height).max(0.0) as f64;
         // Scrollable overflow is kept in device px.
         let o = node.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64());
+        // A box whose scroll origin is at the end of an axis (Taffy's scrollable overflow carries
+        // it: `direction: rtl`, `row-reverse`, `column-reverse`, `wrap-reverse`) scrolls over the
+        // overflow on its start side, from the padding box's end edge; one at the start, over
+        // the overflow on its end side.
+        let reversed = node.final_layout().scrollable_overflow_rect.is_reversed();
+        let scroll_width = if reversed.x {
+            client_width.max((l.size.width - l.border.right) as f64 - o.x0)
+        } else {
+            client_width.max(o.x1 - l.border.left as f64)
+        };
+        let scroll_height = if reversed.y {
+            client_height.max((l.size.height - l.border.bottom) as f64 - o.y0)
+        } else {
+            client_height.max(o.y1 - l.border.top as f64)
+        };
         Some(LayoutBox {
             x: rect.x0,
             y: rect.y0,
@@ -303,8 +322,9 @@ impl Geometry {
             height: rect.height(),
             client_width,
             client_height,
-            scroll_width: client_width.max(o.x1 - l.border.left as f64),
-            scroll_height: client_height.max(o.y1 - l.border.top as f64),
+            scroll_width,
+            scroll_height,
+            scroll_reversed: [reversed.x, reversed.y],
             fixed,
             border: [l.border.top, l.border.right, l.border.bottom, l.border.left].map(f64::from),
             padding: [l.padding.top, l.padding.right, l.padding.bottom, l.padding.left].map(f64::from),
@@ -353,6 +373,7 @@ impl Geometry {
             client_height: unit(b.client_height),
             scroll_width: unit(b.scroll_width),
             scroll_height: unit(b.scroll_height),
+            scroll_reversed: b.scroll_reversed,
             fixed: b.fixed,
             border: b.border.map(unit),
             padding: b.padding.map(unit),

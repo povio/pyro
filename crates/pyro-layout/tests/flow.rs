@@ -2747,9 +2747,9 @@ fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
         } else {
             p.layout.window_scroll_to(&p.dom, None, Some(pre));
         }
-        let before = (p.layout.scroll_y(), p.layout.scroll_top(s));
+        let before = (p.layout.scroll_y(), p.layout.scroll_top(s) as u32);
         let moved = p.layout.scroll_into_view_if_needed_targets(&p.dom, t);
-        let after = (p.layout.scroll_y(), p.layout.scroll_top(s));
+        let after = (p.layout.scroll_y(), p.layout.scroll_top(s) as u32);
         assert_eq!([after.0, after.1], [window, scroller], "{name}");
         assert_eq!(moved.is_empty(), before == after, "{name}: targets report exactly the moved scrollers");
     }
@@ -3421,7 +3421,7 @@ fn scroll_anchoring_keeps_the_visible_content_in_place_like_chromium() {
     };
     let one = scroller("sc", 200, &items(20, "i"), "");
     // (name, scroller style, scrollTop, change on #id, Chromium scrollTop)
-    let cases: [(&str, &str, i32, &str, &str, u32); 6] = [
+    let cases: [(&str, &str, i32, &str, &str, i32); 6] = [
         ("grow above", "", 300, "i2", "height:150px", 400),
         ("shrink above", "", 300, "i2", "height:20px", 270),
         ("grow below", "", 300, "i15", "height:150px", 300),

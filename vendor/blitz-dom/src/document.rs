@@ -1475,6 +1475,15 @@ impl BaseDocument {
         &self.url
     }
 
+    /// pyro: what a link's `href` resolves against, and the document's own URL (without a
+    /// fragment), which links to it are visited at (`ElementData::flush_link_visited`).
+    pub(crate) fn link_urls(&self) -> (url::Url, url::Url) {
+        let base: url::Url = (*self.url).clone();
+        let mut document = base.clone();
+        document.set_fragment(None);
+        (base, document)
+    }
+
     /// Iterate over the author stylesheets (from `<style>` and `<link>` nodes)
     /// currently associated with this document
     pub fn author_stylesheets(&self) -> impl Iterator<Item = &DocumentStyleSheet> {

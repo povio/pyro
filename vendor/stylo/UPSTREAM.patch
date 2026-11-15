@@ -1,3 +1,48 @@
+diff -ruN a/device/servo.rs b/device/servo.rs
+--- a/device/servo.rs	2026-11-14 22:08:19
++++ b/device/servo.rs	2026-11-14 22:08:19
+@@ -400,15 +400,17 @@
+                 | SystemColor::Activeborder
+                 | SystemColor::Inactiveborder
+                 | SystemColor::Threeddarkshadow
++                // pyro: ThreeDHighlight and ThreeDLightShadow are ButtonBorder too (CSS Color 4
++                // §6.2; upstream mapped them to ButtonFace).
++                | SystemColor::Threedhighlight
++                | SystemColor::Threedlightshadow
+                 | SystemColor::Threedshadow
+                 | SystemColor::Windowframe => srgb(255, 255, 255),
+                 SystemColor::Buttonface
+                 // Deprecated system colors (CSS Color 4) mapped to Buttonface.
+                 | SystemColor::Buttonhighlight
+                 | SystemColor::Buttonshadow
+-                | SystemColor::Threedface
+-                | SystemColor::Threedhighlight
+-                | SystemColor::Threedlightshadow => srgb(107, 107, 107),
++                | SystemColor::Threedface => srgb(107, 107, 107),
+                 SystemColor::Buttontext => srgb(245, 245, 245),
+                 SystemColor::Canvas
+                 // Deprecated system colors (CSS Color 4) mapped to Canvas.
+@@ -450,15 +452,17 @@
+                 | SystemColor::Activeborder
+                 | SystemColor::Inactiveborder
+                 | SystemColor::Threeddarkshadow
++                // pyro: ThreeDHighlight and ThreeDLightShadow are ButtonBorder too (CSS Color 4
++                // §6.2; upstream mapped them to ButtonFace).
++                | SystemColor::Threedhighlight
++                | SystemColor::Threedlightshadow
+                 | SystemColor::Threedshadow
+                 | SystemColor::Windowframe => srgb(169, 169, 169),
+                 SystemColor::Buttonface
+                 // Deprecated system colors (CSS Color 4) mapped to Buttonface.
+                 | SystemColor::Buttonhighlight
+                 | SystemColor::Buttonshadow
+-                | SystemColor::Threedface
+-                | SystemColor::Threedhighlight
+-                | SystemColor::Threedlightshadow => srgb(220, 220, 220),
++                | SystemColor::Threedface => srgb(220, 220, 220),
+                 SystemColor::Buttontext => srgb(0, 0, 0),
+                 SystemColor::Canvas
+                 // Deprecated system colors (CSS Color 4) mapped to Canvas.
 diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
 --- a/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
 +++ b/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
@@ -104,6 +149,14 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-user-modify",
      "-webkit-margin-before",
      "-webkit-margin-after",
+@@ -86,7 +84,6 @@
+     "-webkit-mask-repeat-y",
+     "user-zoom",
+     "min-zoom",
+-    "-webkit-box-decoration-break",
+     "orientation",
+     "max-zoom",
+     "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
 +++ b/properties/data.py	2026-11-11 20:10:18
@@ -151,7 +204,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-14 18:55:29
++++ b/properties/longhands.toml	2026-11-15 02:27:49
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -168,7 +221,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +489,26 @@
+@@ -491,11 +489,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -182,20 +235,22 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -591,7 +606,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -244,7 +299,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3770,7 +3781,6 @@
+@@ -3694,6 +3705,7 @@
+ [box-decoration-break]
+ struct = "border"
+ spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
++extra_prefixes = ["webkit"]
+ animation_type = "discrete"
+ affects = "layout"
+ type = "BoxDecorationBreak"
+@@ -3770,7 +3782,6 @@
  
  [column-fill]
  struct = "column"

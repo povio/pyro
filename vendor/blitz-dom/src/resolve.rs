@@ -400,6 +400,22 @@ impl BaseDocument {
             self.nodes[node_id].column_fragments().is_some().then(|| std::mem::replace(&mut overflow, Rect::ZERO));
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
+        // pyro: a scroll container's padding surrounds its in-flow content (CSS Overflow 3 §2.2;
+        // Blink's `ScrollableOverflowCalculator::Result`; Taffy's
+        // `compute_scrollable_overflow_contribution`, whose overflow the local background's area
+        // uses): each in-flow child's border box grown by the padding and the child's margin, so
+        // that scrolled to the end, the end padding is in view after the content. It was not
+        // here: `scrollWidth` and `scrollHeight` were short by the end padding, and a
+        // `content-box` local background reached the scrollport's edge at the end (WPT
+        // `local-attachment-content-box-scroll`).
+        // The root's and a propagated `body`'s overflow is the viewport's.
+        let scroll_padding = (self.nodes[node_id].primary_styles().is_some_and(|s| {
+            use style::values::computed::Overflow;
+            let scrolls = |o: Overflow| !matches!(o, Overflow::Visible | Overflow::Clip);
+            scrolls(s.clone_overflow_x()) || scrolls(s.clone_overflow_y())
+        }) && node_id != self.root_element().id
+            && !self.body_overflow_goes_to_viewport(node_id))
+        .then_some(layout.padding);
 
         // pyro: a table's cells, transformed again only where its grid placed them or
         // they changed since the last pass (`TableContext::placed`); the others' overflow stands.
@@ -419,6 +435,9 @@ impl BaseDocument {
                 let child_rect_in_self =
                     crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all, child));
                 overflow = unite_overflow(overflow, child_rect_in_self);
+                if let Some(padding) = scroll_padding {
+                    overflow = unite_overflow(overflow, self.padded_inflow_box(child_id, padding, scale));
+                }
             }
         }
         let hoisted_children = std::mem::take(&mut *self.nodes[node_id].hoisted_children.borrow_mut());
@@ -446,6 +465,9 @@ impl BaseDocument {
             let child = contents.for_child(&self.nodes[pseudo]);
             let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(pseudo, resolve_all, child));
             overflow = unite_overflow(overflow, child_rect_in_self);
+            if let Some(padding) = scroll_padding {
+                overflow = unite_overflow(overflow, self.padded_inflow_box(pseudo, padding, scale));
+            }
         }
 
         // pyro: the lines of an inline formatting context are
@@ -466,6 +488,26 @@ impl BaseDocument {
 
         let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
         placement((scaled_x, scaled_y), transform.as_ref())(contribution)
+    }
+
+    /// pyro: an in-flow child's border box in its scroll container (device px), grown on each
+    /// side by the container's `padding` and the child's margin there (not below zero), the
+    /// child's part of the container's scrollable overflow with the end padding after it. Its
+    /// transform is left out, as Blink and Taffy leave it out of the in-flow bounds.
+    fn padded_inflow_box(&self, child_id: NodeId, padding: taffy::Rect<f32>, scale: f64) -> Rect {
+        let child = self.transform_pass_layout(child_id);
+        let pad = |padding: f32, margin: f32| (padding + margin).max(0.0) as f64;
+        let (x, y) = (child.location.x as f64, child.location.y as f64);
+        let (w, h) = (child.size.width as f64, child.size.height as f64);
+        if !(w > 0.0 && h > 0.0) {
+            return Rect::ZERO;
+        }
+        Rect::new(
+            (x - pad(padding.left, child.margin.left)) * scale,
+            (y - pad(padding.top, child.margin.top)) * scale,
+            (x + w + pad(padding.right, child.margin.right)) * scale,
+            (y + h + pad(padding.bottom, child.margin.bottom)) * scale,
+        )
     }
 
     /// pyro: whether `node_id` is `position: fixed`.
