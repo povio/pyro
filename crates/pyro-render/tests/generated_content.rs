@@ -7,6 +7,10 @@
 //!   atomic inline before the text means there is no first letter.
 //! - `counter()`, `counters()` and quotes in `content` are evaluated in tree order, with counter
 //!   scopes (a counter ends with the parent of the element that made it) and counter styles.
+//! - List markers: a `list-style-image` marker ends 7px before the item, its bottom on the first
+//!   line's baseline; an inside marker of an item of blocks is a line before them; an item without
+//!   content has the line its outside marker sits on; an outside marker goes with a line floats
+//!   move.
 use std::sync::Arc;
 
 use pyro_render::*;
@@ -227,4 +231,46 @@ fn a_page_can_show_area_and_color_its_body_text() {
         "<style>area::before{content:'nohref'}</style><map><area alt=''></map>",
     );
     matches("<body text=green>x</body>", "<body style='color:green'>x</body>", "<body>x</body>");
+}
+
+#[test]
+fn an_image_marker_ends_7px_before_the_item_on_its_first_baseline() {
+    // The image arrives after the item was built: its load lays the item out again.
+    matches(
+        &format!("<style>div{{list-style-image:url(\"{SQUARE}\")}}</style><div style='display:list-item;margin-left:40px'>Text</div>"),
+        &format!("<div style='margin-left:13px'><img src=\"{SQUARE}\" style='margin-right:7px'>Text</div>"),
+        "<div style='display:list-item;margin-left:40px;list-style:none'>Text</div>",
+    );
+}
+
+#[test]
+fn an_inside_marker_is_a_line_before_block_content() {
+    matches(
+        "<ol style='list-style-position:inside;margin:0;padding:0'><li><div>Text</div></li></ol>",
+        "<div>1. </div><div>Text</div>",
+        "<ol style='list-style:none inside;margin:0;padding:0'><li><div>Text</div></li></ol>",
+    );
+}
+
+#[test]
+fn an_empty_item_has_the_line_of_its_outside_marker() {
+    // Its marker on that line's baseline, and the next box after the line.
+    matches(
+        "<ol style='margin:0 0 0 40px;padding:0'><li></li></ol><div>Text</div>",
+        "<ol style='margin:0 0 0 40px;padding:0'><li>&nbsp;</li></ol><div>Text</div>",
+        "<ol style='margin:0 0 0 40px;padding:0;list-style:none'><li></li></ol><div>Text</div>",
+    );
+}
+
+#[test]
+fn an_outside_marker_goes_with_the_line_a_float_moves() {
+    // A number and a symbol (they are painted apart), beside a float as tall as both lines.
+    let float = "<div style='float:left;width:60px;height:60px'></div>";
+    let lists = |margin: &str, style: &str| {
+        format!(
+            "{float}<ol style='margin:0 0 0 {margin};padding:0;{style}'><li>Text</li></ol>\
+             <ul style='margin:0 0 0 {margin};padding:0;list-style-type:square;{style}'><li>Text</li></ul>"
+        )
+    };
+    matches(&lists("0", ""), &lists("60px", ""), &lists("0", "list-style:none"));
 }

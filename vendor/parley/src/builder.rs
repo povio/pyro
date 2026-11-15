@@ -271,6 +271,22 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
         self.lcx.tree_style_builder.push_text(text);
     }
 
+    /// pyro: pushes a bidi formatting character (U+202A to U+202E, U+2066 to U+2069) that the
+    /// start or the end of an inline element's `unicode-bidi` stands for, in the current span. It
+    /// is no content to white space processing: white space collapses across it, and pending
+    /// white space that is kept goes before it.
+    pub fn push_bidi_control(&mut self, control: char) {
+        debug_assert!(crate::resolve::tree::is_bidi_control(control));
+        self.lcx.tree_style_builder.push_bidi_control(control);
+    }
+
+    /// pyro: pushes the strut of an inline box that holds nothing (U+2061, an invisible
+    /// zero-width character with the current span's style), so that the box's font and line
+    /// height take part in its line's height. It is no content to white space processing.
+    pub fn push_empty_box_strut(&mut self) {
+        self.lcx.tree_style_builder.push_empty_box_strut();
+    }
+
     /// Returns the pushed text so far, after whitespace processing, but excluding any trailing
     /// collapsible whitespace.
     ///

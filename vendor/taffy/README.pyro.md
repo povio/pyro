@@ -179,6 +179,13 @@ creates it in `compute_inner_in_new_bfc` (not inlined) instead of in the frame o
 that every block pays for. About 0.3 KB less per level (blitz-dom's README has the whole picture). No
 behaviour change.
 
+## A block container's last baseline
+
+`compute/block.rs` (`perform_final_layout_on_in_flow_children`): a block container's last baseline is the last
+baseline of its last in-flow child that has one, moved with `align-content` as the first is; only the first was
+set, so an inline-block (whose baseline is its last line box's, CSS 2.1 § 10.8.1) sat on its first line. Covered by
+`crates/pyro-render/tests/block_in_inline.rs`.
+
 ## Moving from v0.15.1 to main
 
 The local commit was cherry-picked onto main (base `v0.15.1`, a release branch). Upstream has none of the
