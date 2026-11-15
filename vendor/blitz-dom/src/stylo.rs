@@ -1478,15 +1478,18 @@ impl Node {
         }
 
         /// pyro: an SVG presentation attribute's value parsed as the CSS
-        /// property's value (`property` is its name).
-        fn parse_svg_presentation_attr(property: &str, value: &str) -> Option<PropertyDeclaration> {
+        /// property's value (`property` is its name): the declarations of a
+        /// shorthand's longhands (`overflow`), or the longhand's.
+        fn parse_svg_presentation_attr(property: &str, value: &str) -> Vec<PropertyDeclaration> {
             use style::properties::{PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
             use style::stylesheets::{CssRuleType, Origin};
             use style_traits::ParsingMode;
 
-            let property = PropertyId::parse_enabled_for_all_content(property).ok()?;
+            let Ok(property) = PropertyId::parse_enabled_for_all_content(property) else {
+                return Vec::new();
+            };
             let mut declarations = SourcePropertyDeclaration::default();
-            parse_one_declaration_into(
+            let parsed = parse_one_declaration_into(
                 &mut declarations,
                 property,
                 value,
@@ -1498,9 +1501,11 @@ impl Node {
                 ParsingMode::ALLOW_UNITLESS_LENGTH,
                 style::context::QuirksMode::NoQuirks,
                 CssRuleType::Style,
-            )
-            .ok()?;
-            declarations.drain().declarations.next()
+            );
+            match parsed {
+                Ok(()) => declarations.drain().declarations.collect(),
+                Err(_) => Vec::new(),
+            }
         }
 
         // `<input type=image>` is the only input type that is replaced
@@ -1523,12 +1528,16 @@ impl Node {
             // pyro: an SVG element's `clip-path` and `transform-origin` attributes are
             // the CSS properties' presentation attributes (a basic shape, CSS lengths
             // and keywords): blitz-dom's SVG serializer (`node/svg_css.rs`) writes their
-            // computed values for usvg, which knows neither form.
+            // computed values for usvg, which knows neither form. Its `overflow` is the
+            // property's too: `overflow="visible"` on an inline `<svg>` overrides the UA
+            // sheet's `hidden` (its viewport clip, blitz-paint's `draw_svg`).
             if elem.name.ns == ns!(svg)
                 && attr.name.ns == ns!()
-                && (*name == local_name!("clip-path") || *name == local_name!("transform-origin"))
+                && (*name == local_name!("clip-path")
+                    || *name == local_name!("transform-origin")
+                    || *name == local_name!("overflow"))
             {
-                if let Some(declaration) = parse_svg_presentation_attr(&**name, value) {
+                for declaration in parse_svg_presentation_attr(&**name, value) {
                     push_style(declaration);
                 }
             }

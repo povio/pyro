@@ -28,7 +28,7 @@ use crate::{
 
 use super::{
     counters::Piece, damage::ALL_DAMAGE, list::collect_list_item_children,
-    replaced::is_inline_box_element, table::build_table_context,
+    replaced::is_inline_box, table::build_table_context,
 };
 
 const DUMMY_NAME: QualName = qual_name!("div", html);
@@ -567,6 +567,15 @@ fn collect_layout_children_with_wrap(
                 return;
             }
 
+        }
+
+        // pyro: an `<object>` showing an image is replaced content (`replaced::is_image_object`):
+        // its children, the fallback, generate no boxes.
+        if crate::layout::replaced::is_image_object(el) {
+            doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
+                doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+            });
+            return;
         }
 
         #[cfg(feature = "svg")]
@@ -1623,9 +1632,7 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                         });
                     }
                     (DisplayOutside::Inline, DisplayInside::Flow) => {
-                        let tag_name = &element_data.name.local;
-
-                        if is_inline_box_element(tag_name) {
+                        if is_inline_box(element_data) {
                             layout_children.push(node_id);
                         } else {
                             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);

@@ -15,7 +15,7 @@ use stylo_taffy::CopyStyleGetters;
 use crate::{
     NodeData,
     layout::list::BULLET_FONT_FAMILY,
-    layout::replaced::is_inline_box_element,
+    layout::replaced::is_inline_box,
     layout::text_transform::{CaseTransform, TextTransformer},
     node::{
         FirstLetterSplit, ListItemLayout, ListItemLayoutPosition, Marker, TextAnnotation, TextAnnotationKind, TextBrush,
@@ -743,7 +743,7 @@ fn build_inline_layout_with(
                     (DisplayOutside::Inline, DisplayInside::Flow) => {
                         let tag_name = &element_data.name.local;
 
-                        if is_inline_box_element(tag_name) {
+                        if is_inline_box(element_data) {
                             if box_kind == InlineBoxKind::InFlow {
                                 bidi_scan.atomic_boxes += 1;
                                 text_transformer.word_break(builder);

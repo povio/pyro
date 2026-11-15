@@ -2615,7 +2615,7 @@ impl Node {
             return false;
         };
         if self.flags.is_inline_root()
-            || crate::layout::replaced::is_inline_box_element(&element.name.local)
+            || crate::layout::replaced::is_inline_box(element)
         {
             return false;
         }

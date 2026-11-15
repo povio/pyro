@@ -212,10 +212,8 @@ from the root of an upstream checkout at that commit) is the whole diff.
     light source and which is a real `feFlood`. A tree filter is the `<filter>` of its id in the `<svg>` (else in
     the document) whose primitives it has; usvg names the second and later uses of an `objectBoundingBox` filter
     `filterN`, and those take the notes of the uses with the same primitives and colours. A `<filter href>`
-    template's primitives are read through the reference. What its filters make past its box is cut off at the
-    content box (an `<svg>`'s `overflow: hidden`), at least 300 x 150 CSS px from its corner when it declares no
-    size (its box here is its content's, where Chromium's is that), unless the `<svg>` declares `overflow: visible`
-    (its attribute or its `style`; pyro's UA sheet has no `svg:not(:root) { overflow: hidden }`). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
+    template's primitives are read through the reference. What its filters make past its box is cut off by its
+    viewport clip (below). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
   - `src/layers.rs` (`blend_isolation`), `src/render.rs` (`render_element`): a stacking context that holds an element
     with a `mix-blend-mode` (its nearest ancestor that is one, the root element's at the latest) is painted as an
     isolated group, as Chromium isolates one: the element blends with what the context painted, not with what lies
@@ -593,6 +591,21 @@ from the root of an upstream checkout at that commit) is the whole diff.
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/pyro-render/tests/mirror.rs`.
+
+## The SVG viewport clip
+
+`src/render.rs` (`draw_svg`, `with_replaced_content_clip`, `ReplacedClip`, `content_edge_is_rounded`,
+`should_clip_node`): an SVG's content is cut at its viewport as Chromium cuts it (`LayoutSVGRoot::ShouldApplyViewportClip`,
+`ReplacedPainter`): an inline `<svg>` unless its `overflow` is `visible` (blitz-dom's UA sheet now has Chromium's
+`svg:not(:root) { overflow: hidden }`, and `overflow="visible"` is the presentation attribute), an SVG image always.
+The cut is the content box (`overflow-clip-margin: content-box`) along the content edge's curve, so a rounded
+`<svg>` is cut at its corners. It is a layer only where it cuts: the tree's layer bounds (strokes and filter regions
+included) reach past the content box, or the content edge is rounded; an icon that fits pays nothing. An inline
+`<svg>` with `overflow: visible` is not cut at all (Chromium skips its clip). `should_clip_node` leaves an SVG's
+`overflow` to `draw_svg`: the padding box clip it pushed for every overflowing element would cut at the wrong box
+and push a layer for every icon. Train 4's sniffing of the `overflow` attribute and `style` for filter output, and
+its 300 x 150 floor for an `<svg>` without a size, are gone with it. WPT CSS2 `absolute-replaced-width-002` and 28
+other `svg:svg` pages; covered by `crates/pyro-render/tests/svg_viewport_clip.rs`.
 
 ## Moving from 0.3.0-beta.4 to main
 

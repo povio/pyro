@@ -551,6 +551,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             !display.is_inline_flow() && !is_internal_table_box_other_than_cell
         };
         let element = node.element_data();
+        // pyro: an SVG clips its content at its viewport itself, at its content box and only
+        // where the content reaches past it (`ElementCx::draw_svg`).
+        let svg = element.is_some_and(|e| matches!(e.image_data(), Some(blitz_dom::node::ImageData::Svg(_))));
         self.root_element_id != Some(node.id)
             && (element.and_then(|e| e.raster_image_data()).is_some()
                 || element.and_then(|e| e.sub_doc_data()).is_some()
@@ -559,6 +562,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 // pyro: `overflow` on `body` is the viewport's, not body's.
                 || ((!matches!(box_style.overflow_x, Overflow::Visible)
                     || !matches!(box_style.overflow_y, Overflow::Visible))
+                    && !svg
                     && !self.dom.as_ref().body_overflow_goes_to_viewport(node.id)))
     }
 
@@ -1544,6 +1548,19 @@ fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> pe
             alpha: 1.0,
         },
     }
+}
+
+/// pyro: when replaced content is cut at its content box (`ElementCx::with_replaced_content_clip`).
+#[derive(Clone, Copy)]
+#[cfg_attr(not(feature = "svg"), allow(dead_code))]
+enum ReplacedClip {
+    /// Not at all: an inline `<svg>` with `overflow: visible`.
+    Never,
+    /// Always: an SVG's content reaches past its viewport, or its content edge is rounded.
+    Always,
+    /// Where its object-fit rect overflows the box, or its content edge is rounded inside the
+    /// padding box (a rounded padding box clips the rest).
+    Fit,
 }
 
 /// A context of loaded and hot data to draw the element from
@@ -2978,9 +2995,6 @@ impl ElementCx<'_, '_> {
 
         let width = self.frame.content_box.width() as f32;
         let height = self.frame.content_box.height() as f32;
-        // pyro: whether the `<svg>` declares its size (a `width` and a `height`, or a `viewBox`).
-        let declared = svg.intrinsic_dimensions.view_box.is_some()
-            || (svg.intrinsic_dimensions.width.is_some() && svg.intrinsic_dimensions.height.is_some());
         // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
         // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
         let units = self.scale as f32 * self.style.effective_zoom.value();
@@ -3026,83 +3040,95 @@ impl ElementCx<'_, '_> {
         let viewport = svg_viewport_affine(svg, paint_size.width, paint_size.height);
         let transform = (self.transform * viewport).then_translate(Vec2 { x, y });
 
-        // pyro: what an SVG filter makes past the viewport is cut off at the content box, as the
-        // `overflow: hidden` an `<svg>` has cuts it (a flood or a displacement reaches past the
-        // content), when the filter regions reach past the tree's viewport. An `<svg>` that does
-        // not declare its size is 300 x 150 CSS px in Chromium, where its box here is its
-        // content's: the cut is at least that far from the box's corner.
-        // Not when the `<svg>` declares `overflow: visible` (its attribute or its `style`): its
-        // filters then show past its box (an icon's glow), as on a page without the UA's
-        // `svg:not(:root) { overflow: hidden }`, which pyro's sheet does not have.
-        let overflow_visible = {
-            let visible = |v: &str| v.trim().trim_end_matches("!important").trim().eq_ignore_ascii_case("visible");
-            self.element.attr(local_name!("overflow")).is_some_and(visible)
-                || self.element.attr(local_name!("style")).is_some_and(|style| {
-                    style
-                        .split(';')
-                        .filter_map(|d| d.split_once(':'))
-                        .any(|(name, value)| name.trim().eq_ignore_ascii_case("overflow") && visible(value))
-                })
+        // pyro: the viewport clip, as Chromium has it (`LayoutSVGRoot::ShouldApplyViewportClip`,
+        // `ReplacedPainter`): an inline `<svg>` clips its content unless its `overflow` is
+        // `visible` (the UA sheet's `svg:not(:root) { overflow: hidden }`; `overflow="visible"`
+        // is its presentation attribute), an SVG image always. The cut is the content box
+        // (`overflow-clip-margin: content-box`), along the content edge's curve. It is a layer
+        // only where it cuts something: the content (its strokes and filter regions too) reaches
+        // past the box, or the content edge is rounded. An inline `<svg>` that does not clip is
+        // not cut at all (no object-fit or rounded cut either: Chromium skips its clip).
+        let clip = if self.element.name.local == local_name!("svg") && {
+            let b = self.style.get_box();
+            matches!(b.overflow_x, Overflow::Visible) && matches!(b.overflow_y, Overflow::Visible)
+        } {
+            ReplacedClip::Never
+        } else {
+            let content = self.frame.content_box;
+            if content.is_zero_area() {
+                return;
+            }
+            let bounds = svg.tree.root().abs_layer_bounding_box();
+            let ink = (Affine::translate((x, y)) * viewport).transform_rect_bbox(Rect::new(
+                bounds.left().into(),
+                bounds.top().into(),
+                bounds.right().into(),
+                bounds.bottom().into(),
+            ));
+            // A hundredth of a device pixel of float noise from the viewport transform.
+            let e = 0.01;
+            let past = ink.x0 < content.x0 - e
+                || ink.y0 < content.y0 - e
+                || ink.x1 > content.x1 + e
+                || ink.y1 > content.y1 + e;
+            if past || self.content_edge_is_rounded() {
+                ReplacedClip::Always
+            } else {
+                ReplacedClip::Fit
+            }
         };
-        let filter_overflow = !overflow_visible && !svg.tree.filters().is_empty() && {
-            let (bounds, size) = (svg.tree.root().abs_layer_bounding_box(), svg.tree.size());
-            bounds.left() < 0.0 || bounds.top() < 0.0 || bounds.right() > size.width() || bounds.bottom() > size.height()
-        };
-        let mut viewport = self.frame.content_box;
-        if !declared {
-            viewport.x1 = viewport.x1.max(viewport.x0 + 300.0 * f64::from(units));
-            viewport.y1 = viewport.y1.max(viewport.y0 + 150.0 * f64::from(units));
-        }
-        self.context.layer_manager.maybe_with_layer(
+        self.with_replaced_content_clip(
             scene,
-            filter_overflow,
-            BlendMode::default(),
-            1.0,
-            self.transform,
-            &viewport,
-            None,
-            None,
+            container_size,
+            paint_size,
+            x_offset.px(),
+            y_offset.px(),
+            clip,
             |scene| {
-                self.with_replaced_content_clip(
-                    scene,
-                    container_size,
-                    paint_size,
-                    x_offset.px(),
-                    y_offset.px(),
-                    |scene| {
-                        // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what
-                        // blends in it blends with nothing under the image.
-                        let isolate = self.element.name.local != local_name!("svg")
-                            && anyrender_svg::has_blend_modes(&svg.tree);
-                        if isolate {
-                            scene.push_layer(
-                                Fill::NonZero,
-                                BlendMode::default(),
-                                1.0,
-                                self.transform,
-                                &self.frame.content_box_path(),
-                                None,
-                                None,
-                            );
-                        }
-                        // pyro: with what the document knows of its filters (tainted primitives).
-                        match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
-                            Some(notes) => {
-                                anyrender_svg::render_svg_tree_with_notes(scene, &svg.tree, transform, notes)
-                            }
-                            None => anyrender_svg::render_svg_tree(scene, &svg.tree, transform),
-                        }
-                        if isolate {
-                            scene.pop_layer();
-                        }
-                    },
-                );
+                // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what
+                // blends in it blends with nothing under the image.
+                let isolate = self.element.name.local != local_name!("svg")
+                    && anyrender_svg::has_blend_modes(&svg.tree);
+                if isolate {
+                    scene.push_layer(
+                        Fill::NonZero,
+                        BlendMode::default(),
+                        1.0,
+                        self.transform,
+                        &self.frame.content_box_path(),
+                        None,
+                        None,
+                    );
+                }
+                // pyro: with what the document knows of its filters (tainted primitives).
+                match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
+                    Some(notes) => {
+                        anyrender_svg::render_svg_tree_with_notes(scene, &svg.tree, transform, notes)
+                    }
+                    None => anyrender_svg::render_svg_tree(scene, &svg.tree, transform),
+                }
+                if isolate {
+                    scene.pop_layer();
+                }
             },
         );
     }
 
+    /// pyro: whether a corner of the content box is rounded: its radii exceed the border and
+    /// padding there (the content edge's curve, CSS Backgrounds 3 §5.3).
+    fn content_edge_is_rounded(&self) -> bool {
+        let (r, b, p) = (self.frame.border_radii, self.frame.border_width, self.frame.padding_width);
+        let i = kurbo::Insets::new(b.x0 + p.x0, b.y0 + p.y0, b.x1 + p.x1, b.y1 + p.y1);
+        let rounded = |r: kurbo::Vec2, x: f64, y: f64| r.x > x && r.y > y;
+        rounded(r.top_left, i.x0, i.y0)
+            || rounded(r.top_right, i.x1, i.y0)
+            || rounded(r.bottom_right, i.x1, i.y1)
+            || rounded(r.bottom_left, i.x0, i.y1)
+    }
+
     /// Clip replaced content to the content box when its object-fit/object-position
     /// rect overflows it.
+    /// pyro: or as `clip` says (see [`ReplacedClip`]).
     fn with_replaced_content_clip<S: PaintScene>(
         &self,
         scene: &mut S,
@@ -3110,6 +3136,7 @@ impl ElementCx<'_, '_> {
         paint_size: taffy::Size<f32>,
         x_offset: f32,
         y_offset: f32,
+        clip: ReplacedClip,
         paint: impl FnOnce(&mut S),
     ) {
         let overflows = x_offset < 0.0
@@ -3119,18 +3146,17 @@ impl ElementCx<'_, '_> {
         // pyro: replaced content is cut to the content edge's curve (CSS Backgrounds 3 §5.3),
         // which lies inside the padding box's clip once a border or padding is set: a corner
         // whose radii both exceed the border and padding there is still rounded.
-        let inset = |i: kurbo::Insets| i.x0 != 0.0 || i.y0 != 0.0 || i.x1 != 0.0 || i.y1 != 0.0;
-        let (r, b, p) = (self.frame.border_radii, self.frame.border_width, self.frame.padding_width);
-        let i = kurbo::Insets::new(b.x0 + p.x0, b.y0 + p.y0, b.x1 + p.x1, b.y1 + p.y1);
-        let rounded = |r: kurbo::Vec2, x: f64, y: f64| r.x > x && r.y > y;
-        let rounded_content = inset(i)
-            && (rounded(r.top_left, i.x0, i.y0)
-                || rounded(r.top_right, i.x1, i.y0)
-                || rounded(r.bottom_right, i.x1, i.y1)
-                || rounded(r.bottom_left, i.x0, i.y1));
+        let b = (self.frame.border_width, self.frame.padding_width);
+        let inset = b.0.x0 + b.1.x0 != 0.0 || b.0.y0 + b.1.y0 != 0.0 || b.0.x1 + b.1.x1 != 0.0 || b.0.y1 + b.1.y1 != 0.0;
+        let rounded_content = inset && self.content_edge_is_rounded();
+        let push = match clip {
+            ReplacedClip::Never => false,
+            ReplacedClip::Always => true,
+            ReplacedClip::Fit => overflows || rounded_content,
+        };
         self.context.layer_manager.maybe_with_layer(
             scene,
-            overflows || rounded_content,
+            push,
             BlendMode::default(),
             1.0,
             self.transform,
@@ -3187,6 +3213,7 @@ impl ElementCx<'_, '_> {
                 paint_size,
                 x_offset.px(),
                 y_offset.px(),
+                ReplacedClip::Fit,
                 |scene| {
                     scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
                 },

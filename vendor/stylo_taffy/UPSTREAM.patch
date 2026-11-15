@@ -12,7 +12,45 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      }
  }
  
-@@ -249,6 +253,9 @@
+@@ -166,12 +170,28 @@
+ impl<T: Deref<Target = ComputedValues>> From<TaffyStyloStyle<T>> for taffy::Style<Atom> {
+     fn from(value: TaffyStyloStyle<T>) -> Self {
+         let mut style = convert::to_taffy_style(&value.style);
++        style.overflow = replaced_overflow(style.overflow, value.flags);
+         value.layout_wm().transpose_style(&mut style);
+         style.item_is_replaced = value.flags.contains(StyleFlags::IS_REPLACED);
+         style
+     }
+ }
+ 
++/// pyro: the `overflow` of a replaced element (the UA sheet's `hidden` on an inline `<svg>`) only
++/// clips its content, at its content box, in paint: it is no scroll container, so as a flex or
++/// grid item its automatic minimum size stays its content size, and it starts no formatting
++/// context, as in Chromium. A clipping value is `clip` here, which taffy treats so.
++#[inline]
++fn replaced_overflow(overflow: taffy::Point<taffy::Overflow>, flags: StyleFlags) -> taffy::Point<taffy::Overflow> {
++    if !flags.contains(StyleFlags::IS_REPLACED) {
++        return overflow;
++    }
++    overflow.map(|o| match o {
++        taffy::Overflow::Visible => taffy::Overflow::Visible,
++        _ => taffy::Overflow::Clip,
++    })
++}
++
+ // CoreStyle impl
+ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> {
+     type CustomIdent = Atom;
+@@ -215,7 +235,7 @@
+             x: convert::overflow(box_styles.overflow_x),
+             y: convert::overflow(box_styles.overflow_y),
+         };
+-        self.layout_wm().logical_point(overflow)
++        self.layout_wm().logical_point(replaced_overflow(overflow, self.flags))
+     }
+ 
+     #[inline]
+@@ -249,6 +269,9 @@
  
      #[inline]
      fn size(&self) -> taffy::Size<taffy::Dimension> {
@@ -22,7 +60,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::dimension(&position_styles.width),
-@@ -258,6 +265,9 @@
+@@ -258,6 +281,9 @@
  
      #[inline]
      fn min_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
@@ -32,7 +70,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::min_size(&position_styles.min_width),
-@@ -267,6 +277,9 @@
+@@ -267,6 +293,9 @@
  
      #[inline]
      fn max_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
@@ -42,7 +80,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::max_size(&position_styles.max_width),
-@@ -282,6 +295,9 @@
+@@ -282,6 +311,9 @@
  
      #[inline]
      fn margin(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
@@ -52,7 +90,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let margin_styles = self.style.get_margin();
          self.rect(taffy::Rect {
              left: convert::margin(&margin_styles.margin_left),
-@@ -293,6 +309,9 @@
+@@ -293,6 +325,9 @@
  
      #[inline]
      fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -62,7 +100,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let padding_styles = self.style.get_padding();
          if let Some(basis) = self.percent_basis() {
              let resolve = |value: &stylo::LengthPercentage| {
-@@ -318,6 +337,9 @@
+@@ -318,6 +353,9 @@
  
      #[inline]
      fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {

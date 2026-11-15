@@ -5,6 +5,8 @@
 @namespace url(http://www.w3.org/1999/xhtml);
 /* set default namespace to HTML */
 @namespace xul url(http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul);
+/* pyro: for the `svg|svg` rule below. */
+@namespace svg url(http://www.w3.org/2000/svg);
 
 @font-face {
     font-family: -moz-bullet-font;
@@ -946,6 +948,14 @@ frameset {
 
 frame {
     border-radius: 0 ! important;
+}
+
+/* pyro: an inline <svg> clips its content at its viewport, as Chromium's UA sheet
+ * has it (svg.css). The clip is blitz-paint's (`draw_svg`), at the content box
+ * (`overflow-clip-margin: content-box`); in layout the overflow of a replaced
+ * element is ignored (stylo_taffy). */
+svg|svg:not(:root) {
+    overflow: hidden;
 }
 
 iframe {

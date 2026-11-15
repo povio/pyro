@@ -33,7 +33,7 @@ use style::{
 };
 use stylo_taffy::CopyStyleGetters;
 
-use super::replaced::is_inline_box_element;
+use super::replaced::is_inline_box;
 use crate::{node::FirstLetterSplit, BaseDocument, ElementData, Node, NodeData};
 
 const GENERAL_CATEGORY: CodePointMapDataBorrowed<'static, GeneralCategory> = CodePointMapData::<GeneralCategory>::new();
@@ -191,7 +191,7 @@ fn find_letter(doc: &BaseDocument, root: NodeId) -> Option<(NodeId, std::ops::Ra
                     (DisplayOutside::None, DisplayInside::Contents) => {
                         node.children.iter().find_map(|&child| crate::util::ensure_stack(|| walk(doc, child)))
                     }
-                    (DisplayOutside::Inline, DisplayInside::Flow) if !is_inline_box_element(&element.name.local) => {
+                    (DisplayOutside::Inline, DisplayInside::Flow) if !is_inline_box(element) => {
                         node.before()
                             .into_iter()
                             .chain(node.children.iter().copied())
