@@ -807,7 +807,9 @@ impl Node {
             return context;
         };
         let box_styles = s.get_box();
-        if self.is_preserve_3d() {
+        // pyro: an anonymous box (a table wrapper, row group or row around a cell) passes on the
+        // 3D rendering context it is in, as Chromium's do (`accumulated` is its parent's there).
+        if self.is_preserve_3d() || self.is_anonymous() {
             context.preserve_3d = accumulated;
         }
         if !matches!(
@@ -843,7 +845,10 @@ impl Node {
             let box_styles = s.get_box();
             let reference_box = self.transform_reference_box(box_styles.transform_box);
             let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);
-            let preserve_3d = self.is_preserve_3d();
+            // pyro: an anonymous box has no `transform-style` of its own: it is in its parent's
+            // 3D rendering context, if any, and passes it on (CSS Transforms 2 WPT
+            // transform-table-011: anonymous table boxes around a preserve-3d cell).
+            let preserve_3d = self.is_preserve_3d() || (self.is_anonymous() && parent.preserve_3d.is_some());
             flattens = matches!(resolved, ResolvedTransform::Spatial(_)) && !preserve_3d;
             // A 2D transform of a flat element outside a 3D rendering context resolves as it
             // always has.

@@ -383,12 +383,21 @@ impl BaseDocument {
         self.nodes[node_id].layout_data_mut().hit_stale = true;
         // pyro: what this box gives the transforms of its children: they are resolved again
         // while it gives them a perspective or a 3D rendering context, and once more after.
+        // pyro: an anonymous box stands for the box it is in: the boxes it lays out are that
+        // box's children in the DOM (an anonymous table's cells, an anonymous block's inline-blocks;
+        // WPT css-transforms `transform-table-011`).
+        let mut owner = node_id;
+        while self.nodes[owner].is_anonymous()
+            && let Some(parent) = self.nodes[owner].parent
+        {
+            owner = parent;
+        }
         let contents = {
             let node = &mut self.nodes[node_id];
             let context = node.transform_context_for_children(accumulated);
             let refresh = context.gives() || node.flags.contains(NodeFlags::GIVES_3D_CONTEXT);
             node.flags.set(NodeFlags::GIVES_3D_CONTEXT, context.gives());
-            ContainingTransform { context, refresh, parent: Some(node_id) }
+            ContainingTransform { context, refresh, parent: Some(owner) }
         };
 
         // pyro: the scrollable overflow starts at the padding box
