@@ -203,10 +203,19 @@ impl Geometry {
     /// `id`'s border box to the document and whether it is in a fixed box:
     /// composed down its containing-block chain, root first.
     pub(crate) fn transform(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool)> {
+        self.transform_and_planes(doc, id).map(|(t, fixed, _)| (t, fixed))
+    }
+
+    /// [`Self::transform`], and whether a plane on the chain is placed by its homography (drawn
+    /// through a perspective, or in a context element placed so; then [`Self::projective`] places
+    /// the box).
+    fn transform_and_planes(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool, bool)> {
         let mut chain = Vec::new();
+        let mut projective = false;
         let mut cur = Some(id);
         while let Some(i) = cur {
             let node = doc.get_node(i)?;
+            projective |= node.plane_3d().is_some_and(is_projective_plane);
             chain.push(node);
             cur = node.containing_block();
         }
@@ -234,7 +243,51 @@ impl Geometry {
             t = base * placement(doc, node, scale);
             parent = Some(node);
         }
-        Some((t, fixed))
+        Some((t, fixed, projective))
+    }
+
+    /// pyro (lane H2): `id`'s border box to the document as a homography (CSS px), when a plane
+    /// on its containing-block chain is placed by its homography (`Plane3D::places_by_local`): a 2D
+    /// transform only stands in for such a plane, and a layout query reports the box where paint
+    /// draws it: each such plane is composed by its homography (`Plane3D::local`, into its parent's
+    /// coordinates as this chain places the parent). `None` otherwise (the chain's affine is exact).
+    pub(crate) fn projective(&self, doc: &BaseDocument, id: NodeId) -> Option<Homography> {
+        let mut chain = Vec::new();
+        let mut projective = false;
+        let mut cur = Some(id);
+        while let Some(i) = cur {
+            let node = doc.get_node(i)?;
+            projective |= node.plane_3d().is_some_and(is_projective_plane);
+            chain.push(node);
+            cur = node.containing_block();
+        }
+        if !projective {
+            return None;
+        }
+        let scale = doc.viewport().scale_f64();
+        let mut t = Homography::IDENTITY;
+        let mut parent: Option<&blitz_dom::Node> = None;
+        for node in chain.into_iter().rev() {
+            let base = match parent {
+                Some(p) => {
+                    let scroll = p.scroll_offset();
+                    t.then_affine_before(Affine::translate((-scroll.x, -scroll.y)))
+                }
+                None => Homography::IDENTITY,
+            };
+            let location = doc.physical_unrounded_layout(node.id).location;
+            let origin = base.then_affine_before(Affine::translate((location.x as f64, location.y as f64)));
+            let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
+                let [a, b, c, d, e, f] = t.as_coeffs();
+                Affine::new([a, b, c, d, e / scale, f / scale])
+            });
+            t = match node.plane_3d().filter(|plane| is_projective_plane(plane)) {
+                Some(plane) => origin.mul(&Homography(plane.local)),
+                None => origin.then_affine_before(own),
+            };
+            parent = Some(node);
+        }
+        Some(t)
     }
 
     /// pyro: the border box of `id` in the columns of the nearest multi-column container on its
@@ -297,12 +350,15 @@ impl Geometry {
             let (_, fixed) = self.transform(doc, id)?;
             return Some(LayoutBox { fixed, ..LayoutBox::default() });
         }
-        let (t, fixed) = self.transform(doc, id)?;
+        let (t, fixed, projective) = self.transform_and_planes(doc, id)?;
         let l = doc.physical_unrounded_layout(id);
+        let border = Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64);
+        // pyro (lane H2): a box in a plane drawn through a perspective is where paint draws it;
         // pyro: a box in columns is the union of its pieces in them.
-        let rect = self
-            .columns_box(doc, id)
-            .unwrap_or_else(|| t.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64)));
+        let rect = match projective.then(|| self.projective(doc, id)).flatten() {
+            Some(h) => h.bbox(border).unwrap_or(Rect::ZERO),
+            None => self.columns_box(doc, id).unwrap_or_else(|| t.transform_rect_bbox(border)),
+        };
         let client_width = (l.size.width - l.border.left - l.border.right - l.scrollbar_size.width).max(0.0) as f64;
         let client_height = (l.size.height - l.border.top - l.border.bottom - l.scrollbar_size.height).max(0.0) as f64;
         // Scrollable overflow is kept in device px.
@@ -1353,4 +1409,62 @@ fn first_cell(doc: &BaseDocument, id: NodeId) -> Option<NodeId> {
         }
     }
     None
+}
+
+/// pyro (lane H2): whether layout queries place a plane by its homography (`Plane3D::local`):
+/// paint draws it through a perspective, or it is in a context element placed so.
+pub(crate) fn is_projective_plane(plane: &blitz_dom::node::Plane3D) -> bool {
+    plane.places_by_local
+}
+
+/// pyro (lane H2): a homography of the plane, row-major: a point (x, y) maps to (X / W, Y / W)
+/// with `(X, Y, W) = H (x, y, 1)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Homography(pub(crate) [f64; 9]);
+
+impl Homography {
+    pub(crate) const IDENTITY: Homography = Homography([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+
+    fn mul(&self, next: &Homography) -> Homography {
+        let (a, b) = (&self.0, &next.0);
+        Homography(std::array::from_fn(|i| {
+            let (row, col) = (i / 3, i % 3);
+            (0..3).map(|k| a[row * 3 + k] * b[k * 3 + col]).sum()
+        }))
+    }
+
+    /// `self` with `t` applied first.
+    pub(crate) fn then_affine_before(&self, t: Affine) -> Homography {
+        let [a, b, c, d, e, f] = t.as_coeffs();
+        self.mul(&Homography([a, c, e, b, d, f, 0.0, 0.0, 1.0]))
+    }
+
+    /// The bounds of `rect`'s projection, its part behind the viewer cut away; `None` when nothing
+    /// of it is in front.
+    pub(crate) fn bbox(&self, rect: Rect) -> Option<Rect> {
+        const MIN_W: f64 = 1e-6;
+        let m = &self.0;
+        let apply =
+            |x: f64, y: f64| [m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5], m[6] * x + m[7] * y + m[8]];
+        let corners =
+            [(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x1, rect.y1), (rect.x0, rect.y1)].map(|(x, y)| apply(x, y));
+        let mut bounds: Option<Rect> = None;
+        let mut add = |x: f64, y: f64| {
+            let p = Rect::new(x, y, x, y);
+            bounds = Some(bounds.map_or(p, |b| b.union(p)));
+        };
+        for i in 0..4 {
+            let (a, b) = (corners[i], corners[(i + 1) % 4]);
+            if a[2] >= MIN_W {
+                add(a[0] / a[2], a[1] / a[2]);
+            }
+            if (a[2] >= MIN_W) != (b[2] >= MIN_W) {
+                let t = (MIN_W - a[2]) / (b[2] - a[2]);
+                add((a[0] + (b[0] - a[0]) * t) / MIN_W, (a[1] + (b[1] - a[1]) * t) / MIN_W);
+            }
+        }
+        // A plane reaching towards the horizon is bounded where layout can hold it.
+        const LIMIT: f64 = 1e7;
+        bounds.map(|b| Rect::new(b.x0.max(-LIMIT), b.y0.max(-LIMIT), b.x1.min(LIMIT), b.y1.min(LIMIT)))
+    }
 }

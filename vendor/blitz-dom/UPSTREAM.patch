@@ -16865,7 +16865,17 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
      /// Detailed layout information from the most recent layout (currently
      /// grid track sizing information for grid containers only). Used by
-@@ -143,6 +159,29 @@
+@@ -129,6 +145,9 @@
+     /// Layout output state (`None` until layout first writes to this node).
+     pub layout_data: Option<Box<LayoutData>>,
+     pub transform: Option<Box<Affine>>,
++    /// pyro (lane H2): the plane paint draws the element in through its 4x4 matrix, when it is
++    /// one (`Node::set_transform`).
++    pub plane_3d: Option<Box<super::Plane3D>>,
+ }
+ 
+ /// Taffy layout output state (cache, layouts, scroll offset and overflow).
+@@ -143,6 +162,29 @@
      pub final_layout: Layout,
      pub scroll_offset: crate::Point<f64>,
      pub scrollable_overflow: KurboRect,
@@ -16895,7 +16905,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
      /// recorded by the layout pass for CSSOM geometry lookups.
      #[cfg(feature = "writing-mode")]
-@@ -157,6 +196,12 @@
+@@ -157,6 +199,12 @@
              final_layout: Layout::new(),
              scroll_offset: crate::Point::ZERO,
              scrollable_overflow: KurboRect::ZERO,
@@ -16908,7 +16918,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              #[cfg(feature = "writing-mode")]
              writing_mode: stylo_taffy::WritingMode::empty(),
          }
-@@ -295,6 +340,8 @@
+@@ -295,6 +343,8 @@
              .field("special_data", &self.special_data)
              .field("background_images", &self.background_images)
              .field("mask_images", &self.mask_images)
@@ -16917,7 +16927,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              .field("inline_layout_data", &self.inline_layout_data)
              .field("list_item_data", &self.list_item_data)
              .field("template_contents", &self.template_contents)
-@@ -321,6 +368,8 @@
+@@ -321,6 +371,8 @@
              special_data: self.special_data.clone(),
              background_images: self.background_images.clone(),
              mask_images: self.mask_images.clone(),
@@ -16926,7 +16936,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              inline_layout_data: self.inline_layout_data.clone(),
              list_item_data: self.list_item_data.clone(),
              template_contents: self.template_contents,
-@@ -335,8 +384,12 @@
+@@ -335,12 +387,17 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
@@ -16939,7 +16949,12 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              detailed_layout_info: taffy::DetailedLayoutInfo::None,
              display_constructed_as: StyloDisplay::Block,
              layout_data: None,
-@@ -439,6 +492,8 @@
+             transform: None,
++            plane_3d: None,
+         }
+     }
+ }
+@@ -439,6 +496,8 @@
              template_contents: None,
              background_images: ThinVec::new(),
              mask_images: ThinVec::new(),
@@ -16948,7 +16963,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
              stylo_element_data: Default::default(),
              selector_flags: Cell::new(ElementSelectorFlags::empty()),
-@@ -449,8 +504,12 @@
+@@ -449,12 +508,17 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
@@ -16961,7 +16976,12 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              detailed_layout_info: taffy::DetailedLayoutInfo::None,
              display_constructed_as: StyloDisplay::Block,
              layout_data: None,
-@@ -470,6 +529,12 @@
+             transform: None,
++            plane_3d: None,
+         };
+         data.flush_is_focussable();
+         data.flush_link_state();
+@@ -470,6 +534,12 @@
          {
              data.element_state.insert(ElementState::CHECKED);
          }
@@ -16974,7 +16994,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
          // The element state needs to be modified if the element can be disabled.
          if data.can_be_disabled() {
-@@ -529,6 +594,23 @@
+@@ -529,6 +599,23 @@
          }
      }
  
@@ -16998,7 +17018,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn flush_open_state(&mut self) {
          let is_open = matches!(
              self.name.local,
-@@ -648,6 +730,24 @@
+@@ -648,6 +735,24 @@
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
@@ -17023,7 +17043,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      #[cfg(feature = "file-input")]
      pub fn file_data(&self) -> Option<&FileData> {
          match &self.special_data {
-@@ -966,6 +1066,9 @@
+@@ -966,6 +1071,9 @@
  pub enum Marker {
      Char(char),
      String(String),
@@ -17073,7 +17093,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  use super::{Attribute, DocumentData, ElementData, LayoutData};
  
  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-@@ -60,9 +60,131 @@
+@@ -60,9 +60,224 @@
          const IS_IN_DOCUMENT = 0b00000100;
          /// Whether the node is an inline box whose in-flow content is block-level only
          const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
@@ -17154,6 +17174,99 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    /// scroll offsets and transforms down from the parent of the context's root, CSS px): its
 +    /// children's transforms are stored relative to it. Never singular (`regularize`).
 +    pub base: Affine,
++    /// pyro (lane H2): the element that established the context (the root of the 3D
++    /// rendering context), and its location in its parent less the parent's scroll (CSS px):
++    /// the planes of the context are given relative to its untransformed border box
++    /// ([`Plane3D::matrix`]).
++    pub root: NodeId,
++    pub root_offset: (f64, f64),
++    /// pyro (lane H2): where layout queries place the element when not by `base`: the
++    /// homography (row-major, CSS px) from its coordinates to the context's that its plane's
++    /// [`Plane3D::local`] composes to ([`Plane3D::places_by_local`]). Its children's are given
++    /// relative to it.
++    pub frame: Option<[f64; 9]>,
++}
++
++/// pyro (lane H2): a plane blitz-paint draws through its 4x4 matrix rather than through the
++/// 2D transform the node keeps for layout queries (`Node::transform`, the flattened stand-in):
++/// an element of a 3D rendering context (sorted by depth with the context's other planes), or a
++/// flat element whose 3D transform maps it projectively (a rotation out of the plane under
++/// perspective).
++#[derive(Clone, Copy, Debug)]
++pub struct Plane3D {
++    /// The root of its 3D rendering context; for a flat element outside one, the element itself.
++    pub root: NodeId,
++    /// From the element's border box (CSS px) to the root's untransformed border box (CSS px,
++    /// the root at its place in its parent before its own transform), in euclid's row-vector
++    /// convention: Z is the depth (towards the viewer), W the perspective divisor.
++    pub matrix: euclid::default::Transform3D<f64>,
++    /// What the element paints itself is not drawn (`backface-visibility: hidden` on a
++    /// `preserve-3d` element showing its back face); the planes of its children still are.
++    pub own_hidden: bool,
++    /// The plane as layout queries place it in place of the 2D stand-in (`Node::transform`): a
++    /// homography (row-major, `(X, Y, W) = H (x, y, 1)`, CSS px) from the border box to the
++    /// coordinates the stand-in maps it into (the box's untransformed place in its parent's, the
++    /// parent as layout queries place it).
++    pub local: [f64; 9],
++    /// Layout queries place the box by [`Self::local`] rather than by the stand-in: W varies over
++    /// the plane, or the context element it is in is placed by its own, and the plane does not
++    /// cross the viewer's plane.
++    pub places_by_local: bool,
++    /// The plane crosses the viewer's plane: paint draws the part in front of it; layout keeps the
++    /// box at its untransformed place (its projection has no bounds), and print, which draws the
++    /// stand-ins, leaves it out.
++    pub crosses_viewer: bool,
++}
++
++impl Plane3D {
++    /// Whether W varies over the plane: paint draws it through a perspective.
++    pub fn is_projective(&self) -> bool {
++        varies_w(&self.matrix)
++    }
++}
++
++/// pyro (lane H2): whether W varies over a plane under `m` ([`Plane3D::is_projective`]).
++fn varies_w(m: &euclid::default::Transform3D<f64>) -> bool {
++    m.m14.abs() + m.m24.abs() > 1e-12 * m.m44.abs()
++}
++
++/// pyro (lane H2): the homography of a 4x4 matrix's projection onto the plane of the screen
++/// (rows and columns 1, 2 and 4), row-major.
++fn projection_homography(m: &euclid::default::Transform3D<f64>) -> [f64; 9] {
++    [m.m11, m.m21, m.m41, m.m12, m.m22, m.m42, m.m14, m.m24, m.m44]
++}
++
++/// pyro (lane H2): the homography of a 2D affine, row-major.
++fn affine_homography(a: Affine) -> [f64; 9] {
++    let [a11, a21, a12, a22, a13, a23] = a.as_coeffs();
++    [a11, a12, a13, a21, a22, a23, 0.0, 0.0, 1.0]
++}
++
++/// pyro (lane H2): `a * b` (`b` applied first).
++fn homography_mul(a: &[f64; 9], b: &[f64; 9]) -> [f64; 9] {
++    std::array::from_fn(|i| {
++        let (r, c) = (i / 3, i % 3);
++        (0..3).map(|k| a[r * 3 + k] * b[k * 3 + c]).sum()
++    })
++}
++
++/// pyro (lane H2): the inverse of a homography, `None` for a singular one.
++fn homography_inverse(m: &[f64; 9]) -> Option<[f64; 9]> {
++    let cofactor =
++        |r0: usize, r1: usize, c0: usize, c1: usize| m[r0 * 3 + c0] * m[r1 * 3 + c1] - m[r0 * 3 + c1] * m[r1 * 3 + c0];
++    let adjugate = [
++        cofactor(1, 2, 1, 2),
++        -cofactor(0, 2, 1, 2),
++        cofactor(0, 1, 1, 2),
++        -cofactor(1, 2, 0, 2),
++        cofactor(0, 2, 0, 2),
++        -cofactor(0, 1, 0, 2),
++        cofactor(1, 2, 0, 1),
++        -cofactor(0, 2, 0, 1),
++        cofactor(0, 1, 0, 1),
++    ];
++    let determinant = m[0] * adjugate[0] + m[1] * adjugate[3] + m[2] * adjugate[6];
++    (determinant.is_finite() && determinant != 0.0).then(|| adjugate.map(|v| v / determinant))
 +}
 +
 +impl TransformContext {
@@ -17205,7 +17318,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  impl NodeFlags {
      #[inline(always)]
      pub fn is_inline_root(&self) -> bool {
-@@ -84,6 +206,7 @@
+@@ -84,6 +299,7 @@
          self.remove(Self::IS_INLINE_ROOT);
          self.remove(Self::IS_TABLE_ROOT);
          self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
@@ -17213,7 +17326,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -101,6 +224,11 @@
+@@ -101,6 +317,11 @@
      pub layout_parent: Cell<Option<NodeId>>,
      /// A separate child list that includes anonymous collections of inline elements
      pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
@@ -17225,7 +17338,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
      /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
      /// `Layout.location` of these boxes is relative to this node's border box.
-@@ -239,19 +367,6 @@
+@@ -239,19 +460,6 @@
          }
      }
  
@@ -17245,7 +17358,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn cache(&self) -> &Cache {
          &self.layout_data().cache
-@@ -267,9 +382,23 @@
+@@ -267,9 +475,23 @@
          &self.layout_data().unrounded_layout
      }
  
@@ -17272,7 +17385,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      #[inline]
-@@ -302,6 +431,17 @@
+@@ -302,6 +524,17 @@
          &mut self.layout_data_mut().scrollable_overflow
      }
  
@@ -17290,7 +17403,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Style data from stylo, if this node kind carries it (element or document
      /// nodes). Returns `None` for text/comment nodes.
      #[inline]
-@@ -417,6 +557,7 @@
+@@ -417,6 +650,7 @@
              parent: None,
              children: ThinVec::new(),
              layout_parent: Cell::new(None),
@@ -17298,7 +17411,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              oof_containing_block: Cell::new(None),
              layout_children: RefCell::new(None),
              hoisted_children: RefCell::new(ThinVec::new()),
-@@ -425,30 +566,245 @@
+@@ -425,30 +659,418 @@
              stacking_context: None,
              sc_contribution_cache: RefCell::new(ThinVec::new()),
  
@@ -17371,6 +17484,55 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        )
 +    }
 +
++    /// pyro (lane H2): the plane paint draws the element in through its 4x4 matrix
++    /// ([`Plane3D`]), if it is one.
++    #[inline]
++    pub fn plane_3d(&self) -> Option<&Plane3D> {
++        match &self.data {
++            NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.plane_3d.as_deref(),
++            _ => None,
++        }
++    }
++
++    /// pyro (lane H2): `hit` (device px, the node's coordinates; a hit-test bound) in its
++    /// parent's coordinates, the node at `location` (device px): through its 2D transform, and for
++    /// a plane paint draws through a perspective (`Plane3D::local`) through its homography as
++    /// well. Hit testing culls a subtree by this bound: it holds both where the plane is drawn and
++    /// where the stand-in puts what is placed by it (an inline element's fragments, a table row).
++    pub fn hit_bound_in_parent(&self, location: (f64, f64), scale: f64, hit: KurboRect) -> KurboRect {
++        let placed = match self.transform().as_deref() {
++            Some(t) => (Affine::translate(location) * *t).transform_rect_bbox(hit),
++            None => hit + kurbo::Vec2::new(location.0, location.1),
++        };
++        let Some(plane) = self.plane_3d().filter(|plane| plane.places_by_local) else {
++            return placed;
++        };
++        const MIN_W: f64 = 1e-6;
++        const LIMIT: f64 = 1e7;
++        let h = &plane.local;
++        let corners = [(hit.x0, hit.y0), (hit.x1, hit.y0), (hit.x1, hit.y1), (hit.x0, hit.y1)].map(|(x, y)| {
++            let (x, y) = (x / scale, y / scale);
++            [h[0] * x + h[1] * y + h[2], h[3] * x + h[4] * y + h[5], h[6] * x + h[7] * y + h[8]]
++        });
++        let mut bounds = placed;
++        let mut add = |x: f64, y: f64| {
++            let (x, y) =
++                ((x * scale).clamp(-LIMIT, LIMIT) + location.0, (y * scale).clamp(-LIMIT, LIMIT) + location.1);
++            bounds = bounds.union(KurboRect::new(x, y, x, y));
++        };
++        for i in 0..4 {
++            let (a, b) = (corners[i], corners[(i + 1) % 4]);
++            if a[2] >= MIN_W {
++                add(a[0] / a[2], a[1] / a[2]);
++            }
++            if (a[2] >= MIN_W) != (b[2] >= MIN_W) {
++                let t = (MIN_W - a[2]) / (b[2] - a[2]);
++                add((a[0] + (b[0] - a[0]) * t) / MIN_W, (a[1] + (b[1] - a[1]) * t) / MIN_W);
++            }
++        }
++        bounds
++    }
++
 +    /// pyro: whether the element has `transform-style: preserve-3d`.
 +    ///
 +    /// The used value: a grouping property (CSS Transforms 2: `overflow` other than `visible`
@@ -17438,6 +17600,8 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        let mut hides = false;
 +        let mut context = None;
 +        let mut flattens = false;
++        let mut plane: Option<Plane3D> = None;
++        let id = self.id;
 +        let transform = self.primary_styles().and_then(|s| {
 +            let layout = self.final_layout();
 +            let size = (layout.size.width as f64, layout.size.height as f64);
@@ -17488,6 +17652,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                // flattens to the identity).
 +                hides = m.determinant() == 0.0;
 +            }
++            let spatial = matches!(resolved, ResolvedTransform::Spatial(_));
 +            let flat = match &parent.preserve_3d {
 +                // In its parent's 3D rendering context the element's plane is the projection of
 +                // its accumulated matrix, which the parent's matrix enters (a child turned 45deg
@@ -17496,21 +17661,84 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                Some(shared) => {
 +                    let accumulated = to_parent.then(&shared.accumulated);
 +                    hides |= !preserve_3d && back_face_hidden(box_styles, &accumulated);
-+                    match crate::stylo_to_kurbo::flatten_transform(&accumulated, size) {
++                    // pyro (lane H2): an element of the context that Chromium gives a transform
++                    // node of its own (a transform, `will-change: transform`, `preserve-3d`,
++                    // `backface-visibility: hidden`) is a plane of it, sorted by depth with the
++                    // others, and shows or hides by its own face (WPT
++                    // `composited-under-rotateY-180deg-preserve-3d`). The rest paints in the plane
++                    // of the element it is in, in paint order.
++                    let makes_plane = !box_styles.transform.0.is_empty()
++                        || box_styles
++                            .will_change
++                            .bits
++                            .intersects(style::values::specified::box_::WillChangeBits::TRANSFORM)
++                        || !matches!(box_styles.translate, style::values::computed::Translate::None)
++                        || !matches!(box_styles.rotate, style::values::computed::Rotate::None)
++                        || !matches!(box_styles.scale, style::values::computed::Scale::None)
++                        || preserve_3d
++                        || box_styles.backface_visibility
++                            == style::computed_values::backface_visibility::T::Hidden;
++                    let at = Affine::translate((x, y));
++                    // pyro (lane H2): where layout queries put the parent (its frame: from its
++                    // coordinates to the context's, those of the root's parent), less the box's
++                    // location: a box at its untransformed place in the parent is there.
++                    let parent_frame = shared.frame.unwrap_or_else(|| affine_homography(shared.base));
++                    let to_parent_place = homography_inverse(&parent_frame)
++                        .map(|inverse| homography_mul(&affine_homography(at.inverse()), &inverse));
++                    let mut crosses_viewer = false;
++                    let mut by_local = false;
++                    let mut frame = None;
++                    let flat = match crate::stylo_to_kurbo::flatten_transform(&accumulated, size) {
 +                        Flattened::Hidden => {
 +                            hides = true;
 +                            None
 +                        }
++                        // pyro (lane H2): a box crossing the viewer's plane is drawn through its
++                        // matrix (paint cuts it there); its projection has no bounds, so layout
++                        // keeps it at its untransformed place in its parent, as before it was drawn.
++                        Flattened::Crossing => {
++                            crosses_viewer = true;
++                            if preserve_3d {
++                                context = Some(Context3D {
++                                    accumulated,
++                                    base: shared.base * at,
++                                    frame: shared.frame.map(|f| homography_mul(&f, &affine_homography(at))),
++                                    root: shared.root,
++                                    root_offset: shared.root_offset,
++                                });
++                            }
++                            None
++                        }
++                        // An element that is no plane paints in its parent's plane at its place
++                        // there (paint draws that plane through its matrix): no transform.
++                        Flattened::Affine(_) if !makes_plane => None,
 +                        Flattened::Affine(place) => {
 +                            let place = if preserve_3d {
 +                                regularize(place)
 +                            } else {
 +                                place
 +                            };
++                            // A plane of a context its parent's frame is a homography of, or one W
++                            // varies over, is placed by its homography for layout queries
++                            // (`Plane3D::local`); its frame is that homography. The 2D transform
++                            // stays the stand-in paint records it with.
++                            by_local = !hides
++                                && to_parent_place.is_some()
++                                && (shared.frame.is_some() || varies_w(&accumulated));
++                            if by_local {
++                                frame = Some(if varies_w(&accumulated) {
++                                    projection_homography(&accumulated)
++                                } else {
++                                    affine_homography(place)
++                                });
++                            }
 +                            if preserve_3d {
 +                                context = Some(Context3D {
 +                                    accumulated,
 +                                    base: place,
++                                    frame,
++                                    root: shared.root,
++                                    root_offset: shared.root_offset,
 +                                });
 +                            }
 +                            let relative =
@@ -17518,17 +17746,38 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                            let relative = crate::stylo_to_kurbo::snap(relative);
 +                            (relative != Affine::IDENTITY).then_some(relative)
 +                        }
++                    };
++                    if makes_plane && !hides {
++                        let (rx, ry) = shared.root_offset;
++                        // Into the parent's coordinates as layout queries place the parent.
++                        let own_frame = frame.unwrap_or_else(|| projection_homography(&accumulated));
++                        let local = homography_mul(
++                            &to_parent_place.unwrap_or_else(|| {
++                                affine_homography(Affine::translate((-x, -y)) * shared.base.inverse())
++                            }),
++                            &own_frame,
++                        );
++                        plane = Some(Plane3D {
++                            root: shared.root,
++                            matrix: accumulated.then(&Transform3D::translation(-rx, -ry, 0.0)),
++                            own_hidden: preserve_3d && back_face_hidden(box_styles, &accumulated),
++                            local,
++                            places_by_local: by_local,
++                            crosses_viewer,
++                        });
 +                    }
++                    flat
 +                }
 +                // pyro: a 3D transform is flattened into the plane of the screen, as browsers
 +                // composite an element whose `transform-style` is `flat`, under its parent's
 +                // perspective (seen from the front without one).
 +                None => {
 +                    hides |= !preserve_3d && back_face_hidden(box_styles, &to_parent);
++                    let local = to_parent.then(&Transform3D::translation(-x, -y, 0.0));
++                    let mut crosses_viewer = false;
 +                    let flat = match resolved {
 +                        ResolvedTransform::Flat(flat) => flat,
 +                        ResolvedTransform::Spatial(_) => {
-+                            let local = to_parent.then(&Transform3D::translation(-x, -y, 0.0));
 +                            match crate::stylo_to_kurbo::flatten_transform(&local, size) {
 +                                Flattened::Affine(affine) => {
 +                                    (affine != Affine::IDENTITY).then_some(affine)
@@ -17537,18 +17786,48 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                                    hides = true;
 +                                    None
 +                                }
++                                // pyro (lane H2): drawn through its matrix; layout keeps the
++                                // untransformed box (see the context case above).
++                                Flattened::Crossing => {
++                                    crosses_viewer = true;
++                                    None
++                                }
 +                            }
 +                        }
 +                    };
++                    let by_local = !crosses_viewer && varies_w(&local);
 +                    // The root of a 3D rendering context: its children are placed relative to it.
 +                    if preserve_3d && !hides {
 +                        let own = regularize(flat.unwrap_or(Affine::IDENTITY));
 +                        context = Some(Context3D {
 +                            accumulated: to_parent,
 +                            base: Affine::translate((x, y)) * own,
++                            frame: by_local.then(|| projection_homography(&to_parent)),
++                            root: id,
++                            root_offset: (x, y),
++                        });
++                        plane = Some(Plane3D {
++                            root: id,
++                            matrix: local,
++                            own_hidden: back_face_hidden(box_styles, &to_parent),
++                            local: projection_homography(&local),
++                            places_by_local: by_local,
++                            crosses_viewer,
 +                        });
 +                        (own != Affine::IDENTITY).then_some(own)
 +                    } else {
++                        // pyro (lane H2): a flat element its 3D transform maps projectively is
++                        // drawn through its matrix; `flat` stands in for layout queries.
++                        if spatial && !hides && crate::stylo_to_kurbo::is_projective(&local, size) {
++                            plane = Some(Plane3D {
++                                root: id,
++                                matrix: local,
++                                own_hidden: false,
++                                local: projection_homography(&local),
++                                places_by_local: by_local,
++                                crosses_viewer,
++                            });
++                        }
 +                        flat
 +                    }
 +                }
@@ -17557,10 +17836,17 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          });
 +        self.flags.set(NodeFlags::TRANSFORM_HIDES, hides);
 +        self.flags.set(NodeFlags::FLATTENS_3D, flattens && !hides && transform.is_some());
++        if let Some(data) = self.element_data_mut() {
++            match (data.plane_3d.as_deref_mut(), plane) {
++                (Some(existing), Some(new)) => *existing = new,
++                (None, Some(new)) => data.plane_3d = Some(Box::new(new)),
++                (_, None) => data.plane_3d = None,
++            }
++        }
  
          let slot = self.transform_mut();
          match (slot.as_deref_mut(), transform) {
-@@ -456,7 +812,7 @@
+@@ -456,7 +1078,7 @@
              (None, Some(new)) => *slot = Some(Box::new(new)),
              (_, None) => *slot = None,
          }
@@ -17569,7 +17855,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
-@@ -489,7 +845,21 @@
+@@ -489,7 +1111,21 @@
          )
      }
  
@@ -17591,7 +17877,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let style = self.primary_styles();
          let style = style.as_ref();
  
-@@ -521,7 +891,7 @@
+@@ -521,7 +1157,7 @@
                      self.children
                          .iter()
                          .copied()
@@ -17600,7 +17886,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  } else {
                      false
                  }
-@@ -537,6 +907,26 @@
+@@ -537,6 +1173,26 @@
              .contains(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN)
      }
  
@@ -17627,7 +17913,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_whitespace_node(&self) -> bool {
          match &self.data {
              NodeData::Text(data) => data.content.chars().all(|c| c.is_ascii_whitespace()),
-@@ -633,6 +1023,56 @@
+@@ -633,6 +1289,56 @@
              .is_some_and(|flag| flag.load(Ordering::Relaxed))
      }
  
@@ -17684,7 +17970,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Clears the damaged_descendants flag on this node.
      pub fn unset_damaged_descendants(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
-@@ -649,6 +1089,8 @@
+@@ -649,6 +1355,8 @@
      pub fn mark_damaged(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
              if flag.swap(true, Ordering::Relaxed) {
@@ -17693,7 +17979,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return;
              }
          }
-@@ -659,6 +1101,8 @@
+@@ -659,6 +1367,8 @@
              // because all further ancestors must also have it set
              if let Some(flag) = parent.damaged_descendants_flag() {
                  if flag.swap(true, Ordering::Relaxed) {
@@ -17702,7 +17988,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      break;
                  }
              }
-@@ -666,6 +1110,55 @@
+@@ -666,6 +1376,55 @@
          }
      }
  
@@ -17758,7 +18044,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      // pub fn damage_mut(&mut self) -> Option<&mut RestyleDamage> {
      //     self.stylo_element_data
      //         .get_mut()
-@@ -761,8 +1254,8 @@
+@@ -761,8 +1520,8 @@
  
      pub fn focus(&mut self, shell_provider: Arc<dyn ShellProvider>) {
          if let Some(data) = self.element_data_mut() {
@@ -17769,7 +18055,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
          self.mark_ancestors_dirty();
  
-@@ -864,7 +1357,9 @@
+@@ -864,7 +1623,9 @@
              .and_then(|el| el.text_input_data())
          {
              if !input_data.is_multiline {
@@ -17780,7 +18066,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  let input_height = input_data.editor.try_layout().unwrap().height() / scale as f32;
                  let y_offset = ((content_box_height - input_height) / 2.0).max(0.0);
  
-@@ -1061,6 +1556,11 @@
+@@ -1061,6 +1822,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -17792,7 +18078,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,12 +1661,14 @@
+@@ -1161,12 +1927,14 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -17809,7 +18095,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  flags |= stylo_taffy::StyleFlags::IS_REPLACED;
              }
              if el.name.local == local_name!("button") {
-@@ -1179,6 +1681,9 @@
+@@ -1179,6 +1947,9 @@
                  flags |= inline_layout.span_cb_flags;
              }
          }
@@ -17819,7 +18105,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          #[cfg(feature = "writing-mode")]
          {
-@@ -1192,6 +1697,74 @@
+@@ -1192,6 +1963,74 @@
          }
      }
  
@@ -17894,7 +18180,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,6 +1807,19 @@
+@@ -1234,6 +2073,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -17914,7 +18200,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +1876,7 @@
+@@ -1290,7 +2142,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -17923,7 +18209,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1358,10 +1944,27 @@
+@@ -1358,10 +2210,27 @@
              return true;
          }
  
@@ -17951,7 +18237,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,6 +1972,20 @@
+@@ -1369,6 +2238,20 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -17972,7 +18258,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // TODO: contain
  
          false
-@@ -1500,11 +2117,15 @@
+@@ -1500,11 +2383,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -17988,7 +18274,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2154,7 @@
+@@ -1533,6 +2420,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -17996,7 +18282,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2181,7 @@
+@@ -1559,7 +2447,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -18005,7 +18291,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2196,18 @@
+@@ -1574,12 +2462,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -18026,7 +18312,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2218,7 @@
+@@ -1590,7 +2484,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -18035,7 +18321,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2233,7 @@
+@@ -1605,7 +2499,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -18044,7 +18330,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1741,8 +2369,13 @@
+@@ -1741,8 +2635,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -18059,7 +18345,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2451,28 @@
+@@ -1818,8 +2717,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -18090,7 +18376,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +2530,36 @@
+@@ -1877,11 +2796,36 @@
                  }
              }
  
@@ -21492,7 +21778,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
 -                let child_rect_in_self = self.resolve_transforms(child_id, resolve_all);
 -                overflow = overflow.union(child_rect_in_self);
-+                let child = contents.for_child(&self.nodes[child_id]);
++                let child = contents.for_child(&self.nodes, &self.nodes[child_id]);
 +                let child_rect_in_self =
 +                    crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all, child));
 +                overflow = unite_overflow(overflow, child_rect_in_self);
@@ -21511,7 +21797,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              }
 -            let child_rect_in_self = self.resolve_transforms(child_id, resolve_all);
 -            overflow = overflow.union(child_rect_in_self);
-+            let child = contents.for_child(&self.nodes[child_id]);
++            let child = contents.for_child(&self.nodes, &self.nodes[child_id]);
 +            let child_rect_in_self =
 +                crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all, child));
 +            // pyro: a box fixed to the viewport is not in the
@@ -21529,7 +21815,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              }
 -            let child_rect_in_self = self.resolve_transforms(pseudo, resolve_all);
 -            overflow = overflow.union(child_rect_in_self);
-+            let child = contents.for_child(&self.nodes[pseudo]);
++            let child = contents.for_child(&self.nodes, &self.nodes[pseudo]);
 +            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(pseudo, resolve_all, child));
 +            overflow = unite_overflow(overflow, child_rect_in_self);
 +            if let Some(padding) = scroll_padding {
@@ -21650,8 +21936,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        };
 +        Some((lines, width > 0.0 || height > 0.0))
 +    }
- 
--        full.transform_rect_bbox(overflow)
++
 +    /// pyro: brings every box's hit bound (`LayoutData::hit_overflow`)
 +    /// up to date with the last resolve: the boxes the transform passes since
 +    /// the last call computed again (`LayoutData::hit_stale`) and their tables'
@@ -21697,7 +21982,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        if !self.nodes[node_id].layout_data().hit_stale {
 +            let node = &self.nodes[node_id];
 +            let hit = self.overflow_contribution(node_id, *node.hit_overflow(), layout.size, scale);
-+            return placement((location.x, location.y), node.transform().as_deref())(hit);
++            return node.hit_bound_in_parent((location.x, location.y), scale, hit);
 +        }
 +
 +        let mut hit = padding_box(&layout, scale);
@@ -21768,9 +22053,10 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        data.hit_stale = false;
 +        let node = &self.nodes[node_id];
 +        let hit = self.overflow_contribution(node_id, hit, layout.size, scale);
-+        placement((location.x, location.y), node.transform().as_deref())(hit)
++        node.hit_bound_in_parent((location.x, location.y), scale, hit)
 +    }
-+
+ 
+-        full.transform_rect_bbox(overflow)
 +    /// pyro: what a box adds to its parent's scrollable overflow
 +    /// (its own coordinates): its border box, plus its own scrollable overflow
 +    /// on the axes it does not clip. A scroll container keeps its content's
@@ -22107,7 +22393,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "writing-mode")]
          state.physicalise_and_round_layout(root_element_id);
          #[cfg(not(feature = "writing-mode"))]
-@@ -466,3 +1080,616 @@
+@@ -466,3 +1080,643 @@
          // taffy::print_tree(self, root_node_id)
      }
  }
@@ -22153,7 +22439,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        match again {
 +            Some(again) => {
 +                for index in again {
-+                    let cell = contents.for_child(&self.nodes[ctx.cells[index].node_id]);
++                    let cell = contents.for_child(&self.nodes, &self.nodes[ctx.cells[index].node_id]);
 +                    overflow[index] = crate::util::ensure_stack(|| {
 +                        self.resolve_transforms(ctx.cells[index].node_id, resolve_all, cell)
 +                    });
@@ -22162,7 +22448,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            None => {
 +                overflow.clear();
 +                for cell in &ctx.cells {
-+                    let containing = contents.for_child(&self.nodes[cell.node_id]);
++                    let containing = contents.for_child(&self.nodes, &self.nodes[cell.node_id]);
 +                    overflow.push(crate::util::ensure_stack(|| {
 +                        self.resolve_transforms(cell.node_id, resolve_all, containing)
 +                    }));
@@ -22289,8 +22575,35 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    /// What `child` gets. Only the element's children in the DOM take its perspective and 3D
 +    /// rendering context (WPT `perspective-children-only-*`): an out-of-flow box it contains
 +    /// further down does not.
-+    fn for_child(&self, child: &crate::Node) -> ContainingTransform {
-+        if self.parent.is_some() && child.parent == self.parent {
++    ///
++    /// pyro (lane H2): a parent without a box of its own passes it on. A `display: contents`
++    /// element's children are the children of its parent's box here (WPT
++    /// `transform3d-preserve3d-014`); a table's cells are laid out by the table, through rows and
++    /// row groups that have no box in Blitz, which pass the table's 3D rendering context on when
++    /// they have `transform-style: preserve-3d` themselves (WPT `transform-table-009`, `-010`) and
++    /// end it otherwise (`-007`, `-008`).
++    fn for_child(&self, nodes: &crate::NodeTree, child: &crate::Node) -> ContainingTransform {
++        use style::values::specified::box_::Display;
++        let mut parent = child.parent;
++        while let Some(id) = parent
++            && Some(id) != self.parent
++            && let Some(node) = nodes.get(id)
++            && let Some(style) = node.primary_styles()
++        {
++            let display = style.get_box().display;
++            let boxless_table_part = [
++                Display::TableRow,
++                Display::TableRowGroup,
++                Display::TableHeaderGroup,
++                Display::TableFooterGroup,
++            ]
++            .contains(&display);
++            if !(display.is_contents() || (boxless_table_part && node.is_preserve_3d())) {
++                break;
++            }
++            parent = node.parent;
++        }
++        if self.parent.is_some() && parent == self.parent {
 +            *self
 +        } else {
 +            ContainingTransform {
@@ -25028,7 +25341,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
      });
  
      let mut resolved = Affine::IDENTITY;
-@@ -119,11 +161,348 @@
+@@ -119,11 +161,431 @@
          resolved *= transform;
      }
  
@@ -25197,6 +25510,10 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +    Affine(Affine),
 +    /// It lies behind the viewer: nothing of it is drawn.
 +    Hidden,
++    /// pyro (lane H2): it crosses the viewer's plane: the part in front of the viewer is drawn
++    /// (blitz-paint draws it through the 4x4 matrix, `Node::plane_3d`, cut there). Its projection
++    /// has no bounds, so no 2D affine stands in for it: layout keeps its untransformed box.
++    Crossing,
 +}
 +
 +/// pyro: flattens `m` onto the plane z = 0, as a browser composites an element whose content
@@ -25209,8 +25526,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +/// stands in, so the box takes about the place and size of its true projection.
 +pub fn flatten_transform(m: &Transform3D<f64>, size: (f64, f64)) -> Flattened {
 +    let (w, h) = (size.0.max(1.0), size.1.max(1.0));
-+    // A W that varies by less than this over the box moves no point by a visible amount.
-+    let projective = (m.m14.abs() * w + m.m24.abs() * h) > 1e-9 * m.m44.abs();
++    let projective = is_projective(m, size);
 +    if !projective {
 +        if !(m.m44 > 0.0) {
 +            return Flattened::Hidden;
@@ -25241,7 +25557,13 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +        project(0.0, h),
 +        project(w, h),
 +    ) else {
-+        return Flattened::Hidden;
++        // pyro (lane H2): a box that crosses the viewer's plane shows the part in front of it
++        // (`Flattened::Crossing`). A box wholly behind the viewer shows nothing.
++        return if clipped_projection(m, (w, h)).len() < 3 {
++            Flattened::Hidden
++        } else {
++            Flattened::Crossing
++        };
 +    };
 +    // Least squares over the four corners of a w x h box: each column of the linear part is
 +    // the mean difference across the box along that axis, the translation puts the box's
@@ -25263,6 +25585,49 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +        mean.1 - a.1 * w / 2.0 - c.1 * h / 2.0,
 +    );
 +    Flattened::Affine(Affine::new([a.0, a.1, c.0, c.1, e.0, e.1]))
++}
++
++/// pyro (lane H2): whether `m` maps a box of `size` (CSS px) to the screen projectively: W varies
++/// over the box (a rotation out of the plane under perspective), so no 2D affine draws it.
++pub fn is_projective(m: &Transform3D<f64>, size: (f64, f64)) -> bool {
++    let (w, h) = (size.0.max(1.0), size.1.max(1.0));
++    // A W that varies by less than this over the box moves no point by a visible amount.
++    (m.m14.abs() * w + m.m24.abs() * h) > 1e-9 * m.m44.abs()
++}
++
++/// pyro (lane H2): the smallest W a point may have and be drawn: the plane is clipped there
++/// (Chromium's `gfx::kEpsilon`-style clipping of quads that cross the viewer's plane).
++pub const MIN_W: f64 = 1e-5;
++
++/// pyro (lane H2): the projection of a box of `size` (CSS px) under `m`, the part behind the
++/// viewer (W below [`MIN_W`]) cut away first: a convex polygon in the plane of the screen, empty
++/// when nothing of the box is in front of the viewer.
++pub fn clipped_projection(m: &Transform3D<f64>, size: (f64, f64)) -> Vec<(f64, f64)> {
++    let corners = [(0.0, 0.0), (size.0, 0.0), (size.0, size.1), (0.0, size.1)];
++    let homogeneous: Vec<[f64; 3]> = corners
++        .iter()
++        .map(|&(x, y)| {
++            [
++                x * m.m11 + y * m.m21 + m.m41,
++                x * m.m12 + y * m.m22 + m.m42,
++                x * m.m14 + y * m.m24 + m.m44,
++            ]
++        })
++        .collect();
++    let mut out = Vec::with_capacity(6);
++    for i in 0..homogeneous.len() {
++        let (a, b) = (homogeneous[i], homogeneous[(i + 1) % homogeneous.len()]);
++        let (a_in, b_in) = (a[2] >= MIN_W, b[2] >= MIN_W);
++        if a_in {
++            out.push((a[0] / a[2], a[1] / a[2]));
++        }
++        if a_in != b_in {
++            let t = (MIN_W - a[2]) / (b[2] - a[2]);
++            let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
++            out.push((p[0] / MIN_W, p[1] / MIN_W));
++        }
++    }
++    out
 +}
 +
 +/// pyro: whether the back face of a box under `m` faces the viewer, as Chromium decides it
@@ -25379,6 +25744,37 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +        );
 +        assert!((top.x - 50.0).abs() < 1e-9, "{top:?}");
 +        assert!(!close(a, flat));
++    }
++
++    /// pyro (lane H2): a box laid down under a perspective whose far side reaches past the viewer
++    /// shows the part in front of the viewer (it was hidden): it crosses the viewer's plane, which
++    /// no 2D affine stands in for, and it is projective (blitz-paint draws it through its matrix).
++    #[test]
++    fn a_box_crossing_the_viewer_shows_the_part_in_front() {
++        // perspective(100px) seen from 50px above the box's top edge; the box turned 90deg about
++        // that edge, its far side 100px towards the viewer (W = 0 there).
++        let perspective = Transform3D::translation(-50.0, 50.0, 0.0)
++            .then(&Transform3D::perspective(100.0))
++            .then(&Transform3D::translation(50.0, -50.0, 0.0));
++        let crossing = [90.0, -90.0]
++            .into_iter()
++            .map(|deg| Transform3D::rotation(1.0, 0.0, 0.0, euclid::Angle::degrees(deg)).then(&perspective))
++            .find(|m| 100.0 * m.m24 + m.m44 < 1e-9)
++            .expect("one of the turns brings the far edge to the viewer");
++        assert!(is_projective(&crossing, (100.0, 100.0)));
++        let visible = clipped_projection(&crossing, (100.0, 100.0));
++        assert!(visible.len() >= 3, "{visible:?}");
++        // The near edge stays on the top edge; the cut edge lies far below it.
++        assert!(visible.iter().any(|&(_, y)| y.abs() < 1e-9), "{visible:?}");
++        assert!(visible.iter().any(|&(_, y)| y > 1e5), "{visible:?}");
++        assert_eq!(flatten_transform(&crossing, (100.0, 100.0)), Flattened::Crossing);
++        // Turned and moved past the viewer it lies wholly behind: hidden.
++        let behind = Transform3D::rotation(0.0, 1.0, 0.0, euclid::Angle::degrees(30.0))
++            .then(&Transform3D::translation(0.0, 0.0, 300.0))
++            .then(&Transform3D::perspective(100.0));
++        assert!(is_projective(&behind, (100.0, 100.0)));
++        assert!(clipped_projection(&behind, (100.0, 100.0)).is_empty());
++        assert_eq!(flatten_transform(&behind, (100.0, 100.0)), Flattened::Hidden);
      }
  }
 diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/stylo_to_parley.rs

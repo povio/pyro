@@ -322,6 +322,10 @@ pub enum Flattened {
     Affine(Affine),
     /// It lies behind the viewer: nothing of it is drawn.
     Hidden,
+    /// pyro (lane H2): it crosses the viewer's plane: the part in front of the viewer is drawn
+    /// (blitz-paint draws it through the 4x4 matrix, `Node::plane_3d`, cut there). Its projection
+    /// has no bounds, so no 2D affine stands in for it: layout keeps its untransformed box.
+    Crossing,
 }
 
 /// pyro: flattens `m` onto the plane z = 0, as a browser composites an element whose content
@@ -334,8 +338,7 @@ pub enum Flattened {
 /// stands in, so the box takes about the place and size of its true projection.
 pub fn flatten_transform(m: &Transform3D<f64>, size: (f64, f64)) -> Flattened {
     let (w, h) = (size.0.max(1.0), size.1.max(1.0));
-    // A W that varies by less than this over the box moves no point by a visible amount.
-    let projective = (m.m14.abs() * w + m.m24.abs() * h) > 1e-9 * m.m44.abs();
+    let projective = is_projective(m, size);
     if !projective {
         if !(m.m44 > 0.0) {
             return Flattened::Hidden;
@@ -366,7 +369,13 @@ pub fn flatten_transform(m: &Transform3D<f64>, size: (f64, f64)) -> Flattened {
         project(0.0, h),
         project(w, h),
     ) else {
-        return Flattened::Hidden;
+        // pyro (lane H2): a box that crosses the viewer's plane shows the part in front of it
+        // (`Flattened::Crossing`). A box wholly behind the viewer shows nothing.
+        return if clipped_projection(m, (w, h)).len() < 3 {
+            Flattened::Hidden
+        } else {
+            Flattened::Crossing
+        };
     };
     // Least squares over the four corners of a w x h box: each column of the linear part is
     // the mean difference across the box along that axis, the translation puts the box's
@@ -388,6 +397,49 @@ pub fn flatten_transform(m: &Transform3D<f64>, size: (f64, f64)) -> Flattened {
         mean.1 - a.1 * w / 2.0 - c.1 * h / 2.0,
     );
     Flattened::Affine(Affine::new([a.0, a.1, c.0, c.1, e.0, e.1]))
+}
+
+/// pyro (lane H2): whether `m` maps a box of `size` (CSS px) to the screen projectively: W varies
+/// over the box (a rotation out of the plane under perspective), so no 2D affine draws it.
+pub fn is_projective(m: &Transform3D<f64>, size: (f64, f64)) -> bool {
+    let (w, h) = (size.0.max(1.0), size.1.max(1.0));
+    // A W that varies by less than this over the box moves no point by a visible amount.
+    (m.m14.abs() * w + m.m24.abs() * h) > 1e-9 * m.m44.abs()
+}
+
+/// pyro (lane H2): the smallest W a point may have and be drawn: the plane is clipped there
+/// (Chromium's `gfx::kEpsilon`-style clipping of quads that cross the viewer's plane).
+pub const MIN_W: f64 = 1e-5;
+
+/// pyro (lane H2): the projection of a box of `size` (CSS px) under `m`, the part behind the
+/// viewer (W below [`MIN_W`]) cut away first: a convex polygon in the plane of the screen, empty
+/// when nothing of the box is in front of the viewer.
+pub fn clipped_projection(m: &Transform3D<f64>, size: (f64, f64)) -> Vec<(f64, f64)> {
+    let corners = [(0.0, 0.0), (size.0, 0.0), (size.0, size.1), (0.0, size.1)];
+    let homogeneous: Vec<[f64; 3]> = corners
+        .iter()
+        .map(|&(x, y)| {
+            [
+                x * m.m11 + y * m.m21 + m.m41,
+                x * m.m12 + y * m.m22 + m.m42,
+                x * m.m14 + y * m.m24 + m.m44,
+            ]
+        })
+        .collect();
+    let mut out = Vec::with_capacity(6);
+    for i in 0..homogeneous.len() {
+        let (a, b) = (homogeneous[i], homogeneous[(i + 1) % homogeneous.len()]);
+        let (a_in, b_in) = (a[2] >= MIN_W, b[2] >= MIN_W);
+        if a_in {
+            out.push((a[0] / a[2], a[1] / a[2]));
+        }
+        if a_in != b_in {
+            let t = (MIN_W - a[2]) / (b[2] - a[2]);
+            let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            out.push((p[0] / MIN_W, p[1] / MIN_W));
+        }
+    }
+    out
 }
 
 /// pyro: whether the back face of a box under `m` faces the viewer, as Chromium decides it
@@ -504,5 +556,36 @@ mod tests {
         );
         assert!((top.x - 50.0).abs() < 1e-9, "{top:?}");
         assert!(!close(a, flat));
+    }
+
+    /// pyro (lane H2): a box laid down under a perspective whose far side reaches past the viewer
+    /// shows the part in front of the viewer (it was hidden): it crosses the viewer's plane, which
+    /// no 2D affine stands in for, and it is projective (blitz-paint draws it through its matrix).
+    #[test]
+    fn a_box_crossing_the_viewer_shows_the_part_in_front() {
+        // perspective(100px) seen from 50px above the box's top edge; the box turned 90deg about
+        // that edge, its far side 100px towards the viewer (W = 0 there).
+        let perspective = Transform3D::translation(-50.0, 50.0, 0.0)
+            .then(&Transform3D::perspective(100.0))
+            .then(&Transform3D::translation(50.0, -50.0, 0.0));
+        let crossing = [90.0, -90.0]
+            .into_iter()
+            .map(|deg| Transform3D::rotation(1.0, 0.0, 0.0, euclid::Angle::degrees(deg)).then(&perspective))
+            .find(|m| 100.0 * m.m24 + m.m44 < 1e-9)
+            .expect("one of the turns brings the far edge to the viewer");
+        assert!(is_projective(&crossing, (100.0, 100.0)));
+        let visible = clipped_projection(&crossing, (100.0, 100.0));
+        assert!(visible.len() >= 3, "{visible:?}");
+        // The near edge stays on the top edge; the cut edge lies far below it.
+        assert!(visible.iter().any(|&(_, y)| y.abs() < 1e-9), "{visible:?}");
+        assert!(visible.iter().any(|&(_, y)| y > 1e5), "{visible:?}");
+        assert_eq!(flatten_transform(&crossing, (100.0, 100.0)), Flattened::Crossing);
+        // Turned and moved past the viewer it lies wholly behind: hidden.
+        let behind = Transform3D::rotation(0.0, 1.0, 0.0, euclid::Angle::degrees(30.0))
+            .then(&Transform3D::translation(0.0, 0.0, 300.0))
+            .then(&Transform3D::perspective(100.0));
+        assert!(is_projective(&behind, (100.0, 100.0)));
+        assert!(clipped_projection(&behind, (100.0, 100.0)).is_empty());
+        assert_eq!(flatten_transform(&behind, (100.0, 100.0)), Flattened::Hidden);
     }
 }

@@ -1366,7 +1366,9 @@ impl Renderer {
     pub fn element_fragments(&self, page: u64, key: u64) -> Option<Vec<[f64; 4]>> {
         let m = self.mirrors.get(&page)?;
         let (g, id) = (self.geometry.get(&page)?, m.node(key)?);
-        if !g.in_layout_tree(&m.doc, id) {
+        // pyro (lane H2): a box in a plane drawn through a perspective is reported whole, where
+        // paint draws it (`Geometry::laid_out`).
+        if !g.in_layout_tree(&m.doc, id) || g.projective(&m.doc, id).is_some() {
             return None;
         }
         let pieces = g.columns_pieces(&m.doc, id)?;
