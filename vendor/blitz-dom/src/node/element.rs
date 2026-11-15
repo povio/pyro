@@ -181,6 +181,9 @@ pub struct LayoutData {
     pub collapsed_border: Option<[f32; 4]>,
     /// pyro: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
     pub table_cell_index: u32,
+    /// pyro: how far down a table cell's content is laid out in its box: its row's baseline less its
+    /// own, for a cell aligned on its row's baseline (`NodeFlags::HAS_TABLE_BASELINE_OFFSET`).
+    pub table_baseline_offset: f32,
     /// pyro: a multi-column container's columns, from its last layout (`layout::multicol`). Read
     /// through `Node::column_fragments`, which ignores them once the box's style makes it no
     /// multi-column container.
@@ -204,6 +207,7 @@ impl LayoutData {
             rounded_from: None,
             collapsed_border: None,
             table_cell_index: u32::MAX,
+            table_baseline_offset: 0.0,
             columns: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),

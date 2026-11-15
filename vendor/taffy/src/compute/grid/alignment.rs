@@ -96,6 +96,8 @@ pub(super) fn align_and_position_item(
     containing_block_size: Size<f32>,
     container_alignment_styles: InBothAbsAxis<AlignItems>,
     baseline_shim: f32,
+    // pyro: a fixed table's cell, as wide as its columns (`GridItem::width_unfloored`)
+    width_unfloored: bool,
     direction: Direction,
     #[cfg(feature = "content_size")] padding_box_inset: Rect<f32>,
     #[cfg(feature = "content_size")] overflow_container: &ScrollableOverflowContainer,
@@ -152,13 +154,16 @@ pub(super) fn align_and_position_item(
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
-    let min_size = style
+    let mut min_size = style
         .min_size()
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
         .maybe_add(box_sizing_adjustment)
         .or(padding_border_size.map(Some))
         .maybe_max(padding_border_size)
         .maybe_apply_aspect_ratio(aspect_ratio);
+    if width_unfloored {
+        min_size.width = None;
+    }
     let max_size = style
         .max_size()
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))

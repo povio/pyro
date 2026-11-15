@@ -193,6 +193,30 @@ baseline of its last in-flow child that has one, moved with `align-content` as t
 set, so an inline-block (whose baseline is its last line box's, CSS 2.1 § 10.8.1) sat on its first line. Covered by
 `crates/pyro-render/tests/block_in_inline.rs`.
 
+## Table cells aligned on their row's baseline
+
+`compute/grid/table_baseline.rs` (new), `compute/grid/mod.rs`, `compute/grid/types/grid_item.rs` and `tree/traits.rs`
+(`table_has_baseline_cells`, `table_cell_is_baseline_aligned`, `table_cell_baseline`,
+`set_table_cell_baseline_offset`, all defaulting to none): in a table's grid, the cells aligned on their row's baseline
+(`vertical-align: baseline`, CSS 2.1 §17.5.3; spanning one row) are laid out at their columns' width before the rows
+are sized (again after a re-run of column sizing). In a row with two or more of them, each one's baseline (the tree's
+`table_cell_baseline`: its content's first baseline, else the bottom of its content box when it has content); the
+row's is the lowest, and each cell's
+`baseline_shim` the row's less its own (a cell with neither takes no part). The shim counts in the row's height as a
+margin does, but the cell is positioned as any other, filling its row: the tree moves its content down by the shim
+inside it (`set_table_cell_baseline_offset`, called before each cell's final layout, 0 for the cells without a
+shim), as Chromium's intrinsic padding does. blitz-dom hands a table with such cells its `TableGridState` back
+only while nothing in it changed (a change may move other cells' baselines).
+Covered by `baseline_cells_share_their_rows_baseline` in `crates/pyro-render/tests/table_parts.rs`.
+
+## Fixed-layout cells narrower than their padding
+
+`compute/grid/mod.rs`, `compute/grid/alignment.rs` (`align_and_position_item`'s `width_unfloored`),
+`compute/grid/types/grid_item.rs` and `tree/traits.rs` (`table_cells_narrower_than_padding`, default false): the
+cells of a table that answers true (blitz-dom: the fixed table layout algorithm) are as wide as their columns, even
+where those are narrower than the cells' horizontal padding and borders: their width is not floored at them (as in
+Chromium; `fixed_table_cells_can_be_narrower_than_their_padding` in `table_parts.rs`).
+
 ## Moving from v0.15.1 to main
 
 The local commit was cherry-picked onto main (base `v0.15.1`, a release branch). Upstream has none of the
