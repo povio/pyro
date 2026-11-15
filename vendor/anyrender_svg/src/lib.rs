@@ -63,6 +63,35 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
 /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`].
 ///
 /// This will draw a red box over (some) unsupported elements.
+pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform: Affine) {
+    render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
+}
+
+/// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
+///
+/// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
+pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+    scene: &mut S,
+    svg: &usvg::Tree,
+    transform: Affine,
+    error_handler: &mut F,
+) {
+    // pyro: the tree's viewport in the scene bounds offscreen rasters.
+    let size = svg.size();
+    let viewport = kurbo::Rect::new(0.0, 0.0, size.width() as f64, size.height() as f64);
+    let ctx = render::Ctx {
+        cull: transform.transform_rect_bbox(viewport),
+    };
+    render::render_group(
+        scene,
+        svg.root(),
+        Affine::IDENTITY,
+        transform,
+        error_handler,
+        &ctx,
+    );
+}
+
 /// pyro: whether a group of `svg` (or of an SVG image in it) blends with what is under it
 /// (`mix-blend-mode`, `plus-lighter` included): an SVG image is an isolated group, which its
 /// painter draws it in then.
@@ -82,36 +111,6 @@ pub fn has_blend_modes(svg: &usvg::Tree) -> bool {
         })
     }
     group(svg.root())
-}
-
-pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform: Affine) {
-    render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
-}
-
-/// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
-///
-/// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
-pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
-    scene: &mut S,
-    svg: &usvg::Tree,
-    transform: Affine,
-    error_handler: &mut F,
-) {
-    // pyro: the tree's viewport in the scene bounds offscreen rasters.
-    let size = svg.size();
-    let viewport = kurbo::Rect::new(0.0, 0.0, size.width() as f64, size.height() as f64);
-    let ctx = render::Ctx {
-        cull: transform.transform_rect_bbox(viewport),
-        box_reference: false,
-    };
-    render::render_group(
-        scene,
-        svg.root(),
-        Affine::IDENTITY,
-        transform,
-        error_handler,
-        &ctx,
-    );
 }
 
 #[cfg(test)]

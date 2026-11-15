@@ -13221,20 +13221,25 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,7 +705,11 @@
+@@ -624,7 +705,16 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
 -                Ok(svg) => return Ok(Resource::Svg(self.kind, svg)),
 +                Ok(mut svg) => {
-+                    // pyro: kept for inline SVG that masks with it (`svg_css`).
-+                    svg.source = Some(std::sync::Arc::from(&bytes[..]));
++                    // pyro: kept for inline SVG that masks with it (`svg_css`), up to a size: an
++                    // image of any kind can be a mask image (the cache is by URL), and most never
++                    // are; a larger one leaves the SVG element it masks unmasked.
++                    const MAX_KEPT_SOURCE: usize = 256 << 10;
++                    if bytes.len() <= MAX_KEPT_SOURCE {
++                        svg.source = Some(std::sync::Arc::from(&bytes[..]));
++                    }
 +                    return Ok(Resource::Svg(self.kind, svg));
 +                }
                  Err(e) => e.to_string(),
              }
          };
-@@ -649,6 +734,62 @@
+@@ -649,6 +739,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -15007,7 +15012,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,1972 @@
+@@ -0,0 +1,2070 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -15327,10 +15332,12 @@ new file mode 100644
 +        return None;
 +    };
 +    let c = shadow.color.resolve_to_absolute(&text.color).as_color_color().to_rgba8();
++    // In CSS px without the `zoom` Stylo's computed lengths have (see [`filter_value`]).
++    let zoom = f64::from(style.effective_zoom.value());
 +    Some(TextShadow {
-+        dx: shadow.horizontal.px() as f64,
-+        dy: shadow.vertical.px() as f64,
-+        deviation: shadow.blur.px() as f64 / 2.0,
++        dx: f64::from(shadow.horizontal.px()) / zoom,
++        dy: f64::from(shadow.vertical.px()) / zoom,
++        deviation: f64::from(shadow.blur.px()) / zoom / 2.0,
 +        color: [c.r, c.g, c.b, c.a],
 +        root,
 +    })
@@ -15346,6 +15353,18 @@ new file mode 100644
 +    color: [u8; 4],
 +    /// The `<text>`.
 +    root: NodeId,
++}
++
++/// Whether a `<g>` written around `node` (or next to it) is drawn as `node` would be: its parent
++/// is a container that draws its children in order. Not in a `<switch>` (which would choose the
++/// `<g>`, without `node`'s conditions, over `node`), a `<clipPath>` (which drops it), a `<text>`
++/// or a gradient.
++fn in_group_container(node: &Node) -> bool {
++    let Some(parent) = node.parent.and_then(|id| node.tree()[id].element_data()) else {
++        return false;
++    };
++    parent.name.ns == ns!(svg)
++        && matches!(&*parent.name.local, "svg" | "g" | "a" | "symbol" | "defs" | "mask" | "pattern" | "marker")
 +}
 +
 +/// An element's own fill (or stroke) as usvg reads it: from author CSS (which is written for it)
@@ -15395,32 +15414,26 @@ new file mode 100644
 +    }
 +}
 +
-+/// A `drop-shadow()` usvg reads: its colour resolved to `rgba()` (usvg knows neither
-+/// `currentcolor` nor `color-mix()`), its third length the standard deviation (as usvg, and
-+/// Chromium, take it).
++/// A `drop-shadow()` usvg reads: its colour resolved to `#rrggbbaa` (usvg knows neither
++/// `currentcolor` nor `color-mix()`, and a colour function's parentheses would end the value in
++/// a `style` attribute: [`nested_parentheses`]), its third length the standard deviation (as
++/// usvg, and Chromium, take it). The lengths are in CSS px, as SVG user units are.
 +fn drop_shadow_function(
-+    x: f32,
-+    y: f32,
-+    deviation: f32,
++    x: f64,
++    y: f64,
++    deviation: f64,
 +    color: &style::values::computed::Color,
 +    current_color: &style::color::AbsoluteColor,
 +) -> String {
 +    use crate::util::ToColorColor as _;
 +    let c = color.resolve_to_absolute(current_color).as_color_color().to_rgba8();
-+    format!(
-+        "drop-shadow({}px {}px {}px rgba({}, {}, {}, {}))",
-+        num(x as f64),
-+        num(y as f64),
-+        num(deviation as f64),
-+        c.r,
-+        c.g,
-+        c.b,
-+        num(c.a as f64 / 255.0)
-+    )
++    format!("drop-shadow({}px {}px {}px #{:02x}{:02x}{:02x}{:02x})", num(x), num(y), num(deviation), c.r, c.g, c.b, c.a)
 +}
 +
 +/// An element's computed `filter` for usvg: `url()`s as their fragment, drop shadows with
 +/// their colours resolved ([`drop_shadow_function`]), the other functions as CSS writes them.
++/// Lengths in CSS px without the element's `zoom` (Stylo's computed lengths have it; the
++/// resolved value does not): the `<svg>`'s box scales its user units by it.
 +fn filter_value(style: &ComputedValues) -> String {
 +    use style::computed_values::filter::single_value::T as Filter;
 +    let current_color = style.clone_color();
@@ -15428,21 +15441,43 @@ new file mode 100644
 +    if filters.is_empty() {
 +        return "none".to_string();
 +    }
++    let zoom = f64::from(style.effective_zoom.value());
++    let unzoom = |px: f32| f64::from(px) / zoom;
 +    filters
 +        .iter()
 +        .map(|filter| match filter {
 +            Filter::DropShadow(shadow) => drop_shadow_function(
-+                shadow.horizontal.px(),
-+                shadow.vertical.px(),
-+                shadow.blur.px(),
++                unzoom(shadow.horizontal.px()),
++                unzoom(shadow.vertical.px()),
++                unzoom(shadow.blur.px()),
 +                &shadow.color,
 +                &current_color,
 +            ),
++            Filter::Blur(length) => format!("blur({}px)", num(unzoom(length.0.px()))),
 +            Filter::Url(_) => local_urls(&filter.to_css_string()),
 +            filter => filter.to_css_string(),
 +        })
 +        .collect::<Vec<_>>()
 +        .join(" ")
++}
++
++/// Whether `value` has parentheses in parentheses (`drop-shadow(rgb(0, 0, 0) 1px 1px)`): usvg's
++/// `style` attribute tokenizer ends a function at its first `)`, and drops the declaration.
++fn nested_parentheses(value: &str) -> bool {
++    let mut depth = 0usize;
++    for c in value.chars() {
++        match c {
++            '(' => {
++                depth += 1;
++                if depth > 1 {
++                    return true;
++                }
++            }
++            ')' => depth = depth.saturating_sub(1),
++            _ => {}
++        }
++    }
++    false
 +}
 +
 +/// The fragment of a lone `url(...)` value (`url(#a)`, `url("#a")`, `url(doc.svg#a)`).
@@ -15580,7 +15615,12 @@ new file mode 100644
 +    fn write_element(&mut self, node: &Node, data: &ElementData, nesting: usize) {
 +        // A `<text>`'s `text-shadow`: a copy of it before it, moved by the offset and painted
 +        // in the shadow's colour ([`text_shadow`]).
-+        if nesting > 0 && self.shadow_copy.is_none() && data.name.ns == ns!(svg) && &*data.name.local == "text" {
++        if nesting > 0
++            && self.shadow_copy.is_none()
++            && data.name.ns == ns!(svg)
++            && &*data.name.local == "text"
++            && in_group_container(node)
++        {
 +            let shadow = node.primary_styles().and_then(|style| text_shadow(&style, node.id));
 +            if let Some(shadow) = shadow.filter(|shadow| shadow.color[3] > 0) {
 +                let _ = write!(self.out, "<g transform=\"translate({} {})\"", num(shadow.dx), num(shadow.dy));
@@ -15628,18 +15668,18 @@ new file mode 100644
 +        let mut declarations = String::new();
 +        let mut temp_id = None;
 +        if let (Some(style), true) = (&styles, is_svg) {
-+            // `filter` is written as the attribute: usvg's `style` tokenizer ends a value at
-+            // the first `)`, which cut `drop-shadow(rgb(0, 128, 0) 50px 0px)` short and left
-+            // the element unfiltered.
++            // `filter` is a declaration of the `style` attribute (which wins over the `<svg>`'s
++            // own style sheets, as the page's value does), or the attribute when it has
++            // parentheses in parentheses, which usvg's `style` tokenizer cannot read
++            // ([`nested_parentheses`]).
 +            if !is_root && author.contains(&LonghandId::Filter) {
-+                let value = Some(filter_value(style));
-+                if let Some(value) = value {
-+                    let value = match current_color.as_deref().and_then(|c| replace_current_color(&value, c)) {
-+                        Some(replaced) => replaced,
-+                        None => value,
-+                    };
-+                    rewrites.push(Rewrite { name: "filter", value: Some(value), in_style: false });
-+                }
++                let value = filter_value(style);
++                let value = match current_color.as_deref().and_then(|c| replace_current_color(&value, c)) {
++                    Some(replaced) => replaced,
++                    None => value,
++                };
++                let in_style = !nested_parentheses(&value);
++                rewrites.push(Rewrite { name: "filter", value: Some(value), in_style });
 +            }
 +            for &(id, name) in STYLE_PROPERTIES {
 +                // The root's box effects (`opacity`, `display`, `filter`, ...) are
@@ -15723,6 +15763,7 @@ new file mode 100644
 +        // composites with the operator its id names.
 +        let plus_lighter = is_svg
 +            && !is_root
++            && in_group_container(node)
 +            && author.contains(&LonghandId::MixBlendMode)
 +            && styles.as_ref().is_some_and(|style| {
 +                style.get_effects().mix_blend_mode == style::computed_values::mix_blend_mode::T::PlusLighter
@@ -16019,7 +16060,16 @@ new file mode 100644
 +            // the plane: exactly when the element stays parallel to it (a depth under a
 +            // perspective is a scale about the perspective origin).
 +            ResolvedTransform::Spatial(m) => {
++                // The attribute's transform first, as above, when CSS sets no `transform`.
++                let attr = match attr_transform {
++                    Some(attr) if !author.contains(&LonghandId::Transform) => {
++                        let [a, b, c, d, e, f] = attr.as_coeffs();
++                        euclid::default::Transform3D::new_2d(a, b, c, d, e, f)
++                    }
++                    _ => euclid::default::Transform3D::identity(),
++                };
 +                let mut m = euclid::default::Transform3D::translation(-ox, -oy, 0.0)
++                    .then(&attr)
 +                    .then(&m)
 +                    .then(&euclid::default::Transform3D::translation(ox, oy, 0.0));
 +                if let (true, Some(perspective)) = (under_root, self.root_perspective) {
@@ -16232,8 +16282,10 @@ new file mode 100644
 +            let fragment = url_fragment(&local_urls(&image.to_css_string()))?;
 +            (this.element_named(&fragment) == Some("mask")).then_some(fragment)
 +        };
++        // One such reference is usvg's own `mask`, whose region keeps a stroke past the fill box
++        // (a `mask-mode` other than `match-source` is not applied to a `<mask>` either way).
 +        if let [image] = &images[..] {
-+            if mode(0) == MaskMode::MatchSource && local_mask(self, image).is_some() {
++            if local_mask(self, image).is_some() {
 +                return false;
 +            }
 +        }
@@ -16249,14 +16301,24 @@ new file mode 100644
 +                    Some(fragment) => LayerSource::Mask(fragment),
 +                    None => match data.mask_images.get(i).and_then(Option::as_ref) {
 +                        Some(resource) if resource.status == Status::Ok => match &resource.image {
-+                            ImageData::Svg(image) => match &image.source {
++                            ImageData::Svg(loaded) => match &loaded.source {
++                                // A `<mask>` of another document (`url(sprite.svg#m)`), which this
++                                // does not resolve: the element is left unmasked, as before. As
++                                // the layer's image, the document would mask by what it draws
++                                // (nothing, for a sprite).
++                                Some(source)
++                                    if url_fragment(&image.to_css_string())
++                                        .is_some_and(|id| document_has_mask(source, &id)) =>
++                                {
++                                    return false;
++                                }
 +                                Some(source) => LayerSource::Svg {
 +                                    source: source.clone(),
-+                                    width: image.intrinsic_width().map(f64::from),
-+                                    height: image.intrinsic_height().map(f64::from),
-+                                    ratio: match (image.intrinsic_width(), image.intrinsic_height()) {
++                                    width: loaded.intrinsic_width().map(f64::from),
++                                    height: loaded.intrinsic_height().map(f64::from),
++                                    ratio: match (loaded.intrinsic_width(), loaded.intrinsic_height()) {
 +                                        (Some(w), Some(h)) if h > 0.0 => Some(f64::from(w / h)),
-+                                        _ => image.viewbox_aspect_ratio().map(f64::from),
++                                        _ => loaded.viewbox_aspect_ratio().map(f64::from),
 +                                    },
 +                                },
 +                                None => return false,
@@ -16363,7 +16425,10 @@ new file mode 100644
 +                        resolve(position.1, origin.height() - tile_h),
 +                        repeat.1,
 +                    );
-+                    if xs.len() * ys.len() > 4096 {
++                    let (Some(xs), Some(ys)) = (xs, ys) else {
++                        return false;
++                    };
++                    if xs.len() * ys.len() > MAX_AXIS_TILES {
 +                        return false;
 +                    }
 +                    // The tile, defined once.
@@ -16452,6 +16517,18 @@ new file mode 100644
 +        rewrites.push(Rewrite { name: "mask", value: Some(format!("url(#{mask_id})")), in_style: true });
 +        true
 +    }
++}
++
++/// Whether the SVG document `source` has a `<mask>` of id `id`.
++fn document_has_mask(source: &[u8], id: &str) -> bool {
++    use usvg::roxmltree;
++    let Ok(text) = std::str::from_utf8(source) else {
++        return false;
++    };
++    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
++    roxmltree::Document::parse_with_options(text, options).is_ok_and(|doc| {
++        doc.descendants().any(|node| node.tag_name().name() == "mask" && node.attribute("id") == Some(id))
++    })
 +}
 +
 +/// A CSS mask layer's image (see [`Writer::css_mask_rewrite`]).
@@ -16602,9 +16679,14 @@ new file mode 100644
 +    Some((w, h))
 +}
 +
++/// The most tiles a mask layer has along one axis ([`axis_tiles`]); more leave the element to
++/// [`Writer::mask_rewrite`].
++const MAX_AXIS_TILES: usize = 4096;
++
 +/// Where a mask layer's tiles start along one axis: the positioning area starts at `start` and
 +/// is `length` long, the painted area runs from `from` to `to`, a tile is `tile` long, the
-+/// position (resolved against the area less a tile) is `offset`.
++/// position (resolved against the area less a tile) is `offset`. `None` for more than
++/// [`MAX_AXIS_TILES`] tiles.
 +fn axis_tiles(
 +    start: f64,
 +    length: f64,
@@ -16613,30 +16695,36 @@ new file mode 100644
 +    tile: f64,
 +    offset: f64,
 +    repeat: style::values::specified::background::BackgroundRepeatKeyword,
-+) -> Vec<f64> {
++) -> Option<Vec<f64>> {
 +    use style::values::specified::background::BackgroundRepeatKeyword as Repeat;
-+    let repeated = |first: f64, period: f64| -> Vec<f64> {
-+        let mut x = first - ((first - from) / period).ceil() * period;
-+        let mut out = Vec::new();
-+        while x < to && out.len() <= 4096 {
-+            if x + tile > from {
-+                out.push(x);
-+            }
-+            x += period;
++    // Counted before any is placed: a period below the float spacing at `from` would not move
++    // a tile on (`1000 + 1e-14 == 1000`).
++    let repeated = |first: f64, period: f64| -> Option<Vec<f64>> {
++        if !(period > 0.0 && period.is_finite()) {
++            return None;
 +        }
-+        out
++        let x0 = first - ((first - from) / period).ceil() * period;
++        let count = ((to - x0) / period).ceil();
++        if !(count.is_finite() && count <= (MAX_AXIS_TILES + 1) as f64) {
++            return None;
++        }
++        let tiles: Vec<f64> = (0..count.max(0.0) as usize)
++            .map(|k| x0 + k as f64 * period)
++            .filter(|&x| x < to && x + tile > from)
++            .collect();
++        (tiles.len() <= MAX_AXIS_TILES).then_some(tiles)
 +    };
 +    match repeat {
-+        Repeat::NoRepeat => vec![start + offset],
++        Repeat::NoRepeat => Some(vec![start + offset]),
 +        Repeat::Repeat | Repeat::Round => repeated(start + offset, tile),
 +        Repeat::Space => {
 +            let n = (length / tile + 1e-9).floor();
 +            if n >= 2.0 {
 +                repeated(start, tile + (length - n * tile) / (n - 1.0))
 +            } else if n >= 1.0 {
-+                vec![start + offset]
++                Some(vec![start + offset])
 +            } else {
-+                Vec::new()
++                Some(Vec::new())
 +            }
 +        }
 +    }
@@ -16962,7 +17050,8 @@ new file mode 100644
 +
 +#[cfg(test)]
 +mod tests {
-+    use super::{local_urls, num};
++    use super::{MAX_AXIS_TILES, axis_tiles, local_urls, num};
++    use style::values::specified::background::BackgroundRepeatKeyword as Repeat;
 +
 +    #[test]
 +    fn urls_keep_their_fragment() {
@@ -16978,6 +17067,20 @@ new file mode 100644
 +        assert_eq!(num(-0.0000001), "0");
 +        assert_eq!(num(0.5), "0.5");
 +        assert_eq!(num(123.4567891), "123.456789");
++    }
++
++    /// A mask tile shorter than the float spacing at its position (`1000 + 1e-14 == 1000`) is
++    /// too many tiles, not a loop that never moves on.
++    #[test]
++    fn tiles_below_the_float_spacing_are_too_many() {
++        for repeat in [Repeat::Repeat, Repeat::Round, Repeat::Space] {
++            assert_eq!(axis_tiles(1000.0, 10.0, 1000.0, 1010.0, 1e-14, 0.0, repeat), None);
++            assert_eq!(axis_tiles(10.0, 10.0, 10.0, 20.0, 1e-16, 0.0, repeat), None);
++        }
++        let tiles = axis_tiles(0.0, 100.0, -5.0, 100.0, 10.0, 0.0, Repeat::Repeat).unwrap();
++        assert_eq!(tiles, (-1..10).map(|k| f64::from(k) * 10.0).collect::<Vec<_>>());
++        let many = axis_tiles(0.0, 1.0, 0.0, MAX_AXIS_TILES as f64 + 1.0, 1.0, 0.0, Repeat::Repeat);
++        assert_eq!(many, None);
 +    }
 +}
 diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/text.rs

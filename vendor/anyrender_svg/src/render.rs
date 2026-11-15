@@ -15,14 +15,30 @@ pub(crate) struct Ctx {
     /// The device-space area the output can show. Offscreen rasters (masks,
     /// pattern tiles) cover no more than it.
     pub(crate) cull: Rect,
-    /// Inside the content a CSS box's `mask-image: url(#m)` or `clip-path: url(#c)` draws
-    /// (blitz-dom `svg_reference_document` wraps it in a group of id [`BOX_REFERENCE`]).
-    pub(crate) box_reference: bool,
 }
 
 /// pyro: the id of the group around the content of an SVG document blitz-dom makes for a CSS
 /// box's reference to a `<mask>` or `<clipPath>` (`BaseDocument::svg_reference_document`).
 pub(crate) const BOX_REFERENCE: &str = "__pyro_box_reference";
+
+std::thread_local! {
+    /// pyro: whether the render is inside a CSS box's reference content ([`BOX_REFERENCE`]),
+    /// outside the offscreen rasters drawn for it ([`rasterize`]). Not a field of [`Ctx`], so
+    /// that code building a `Ctx` from its `cull` alone stays as it is.
+    static IN_BOX_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// pyro: runs `f` with [`IN_BOX_REFERENCE`] set to `value`, restoring it after (on unwind too).
+fn with_box_reference<R>(value: bool, f: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            IN_BOX_REFERENCE.with(|flag| flag.set(self.0));
+        }
+    }
+    let _restore = Restore(IN_BOX_REFERENCE.with(|flag| flag.replace(value)));
+    f()
+}
 
 /// pyro: the most device pixels an offscreen raster (a mask, a pattern tile)
 /// gets; a larger one is rendered at a lower resolution and scaled up.
@@ -191,13 +207,11 @@ fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     error_handler: &mut F,
     ctx: &Ctx,
 ) {
-    let marked;
-    let ctx = if g.id() == BOX_REFERENCE {
-        marked = Ctx { box_reference: true, ..*ctx };
-        &marked
-    } else {
-        ctx
-    };
+    if g.id() == BOX_REFERENCE && !IN_BOX_REFERENCE.with(|flag| flag.get()) {
+        return with_box_reference(true, || {
+            render_group_node(scene, g, base, transform, global_transform, error_handler, ctx)
+        });
+    }
     match compose_marker(g.id()) {
         Some(compose) if compose != Compose::SrcOver => {
             scene.push_layer(
@@ -337,7 +351,7 @@ fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
         apply_clip(scene, clip, ts, layer_rect);
     }
     if let Some(mask) = mask {
-        apply_mask(scene, mask, ts, layer_rect, ctx.box_reference);
+        apply_mask(scene, mask, ts, layer_rect);
     }
 
     if needs_layer {
@@ -353,14 +367,29 @@ fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
 /// the reach of a CSS filter function, which has none.
 type FilterLayer = (Arc<Filter>, Rect, bool);
 
-/// pyro: the group's filters, each with its filter region (in the group's user space), the
-/// first applied first; none when one has a primitive anyrender_vello_cpu does not do (the
-/// group is then drawn unfiltered, as before; see `crate::filter`). A CSS filter function
-/// (`drop-shadow()`, `blur()`, ...) has no filter region: its layer reaches as far as its
-/// effect does on what the filters before it made, from what the children draw and two device
-/// pixels around it (`ts` maps the group's user space to the scene): a layer clipped at the
-/// content's edge would cut its anti-aliased pixels.
+/// pyro: the group's filters, each with its layer's region ([`filter_regions`]), the first
+/// applied first; none when one has a primitive anyrender_vello_cpu does not do (the group is
+/// then drawn unfiltered, as before; see `crate::filter`).
 fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<FilterLayer> {
+    g.filters()
+        .iter()
+        .zip(filter_regions(g, ts))
+        .map(|(filter, (region, bounded))| {
+            crate::filter::convert(filter).map(|graph| (Arc::new(graph), region, bounded))
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
+}
+
+/// pyro: where each of the group's filters draws, the first applied first: its layer's region
+/// (in the group's user space), and whether that is a `<filter>`'s filter region (`true`: the
+/// source graphic stops there too) rather than the reach of a CSS filter function
+/// (`drop-shadow()`, `blur()`, ...: [`function_kind`]), which has no region. Its layer reaches as
+/// far as its effect does on what the filters before it made, from what the children draw and
+/// two device pixels around it (`ts` maps the group's user space to the scene): a layer clipped
+/// at the content's edge would cut its anti-aliased pixels, and usvg's stand-in region (the
+/// bounding box widened by half) cut a `drop-shadow(50px 0)` of a 50 px wide shape at 25 px.
+fn filter_regions(g: &usvg::Group, ts: Affine) -> Vec<(Rect, bool)> {
     if g.filters().is_empty() {
         return Vec::new();
     }
@@ -369,22 +398,18 @@ fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<FilterLayer> {
     let mut reach = children_bounds(g).map(|r| r.inflate(margin, margin));
     g.filters()
         .iter()
-        .map(|filter| {
-            let (region, bounded) = match function_kind(g, filter) {
-                Some(kind) => {
-                    reach = reach.map(|r| function_reach(kind, r));
-                    (reach.unwrap_or(Rect::ZERO), false)
-                }
-                None => {
-                    let region = to_rect(filter.rect());
-                    reach = Some(region);
-                    (region, true)
-                }
-            };
-            crate::filter::convert(filter).map(|graph| (Arc::new(graph), region, bounded))
+        .map(|filter| match function_kind(g, filter) {
+            Some(kind) => {
+                reach = reach.map(|r| function_reach(kind, r));
+                (reach.unwrap_or(Rect::ZERO), false)
+            }
+            None => {
+                let region = to_rect(filter.rect());
+                reach = Some(region);
+                (region, true)
+            }
         })
-        .collect::<Option<Vec<_>>>()
-        .unwrap_or_default()
+        .collect()
 }
 
 fn to_rect(r: usvg::NonZeroRect) -> Rect {
@@ -392,13 +417,23 @@ fn to_rect(r: usvg::NonZeroRect) -> Rect {
 }
 
 /// pyro: the primitive of `filter` when usvg made it for a CSS filter function on `g`
-/// (`filter="drop-shadow(...)"`, `filter: blur(...)`) rather than from a `<filter>`: one
-/// primitive whose result is named `result` (a `<filter>`'s unnamed results are `result1`,
-/// `result2`, ...), over the whole filter region, which is `g`'s bounding box widened by half
-/// on each side (a blur, a drop shadow) or by a tenth (the others), usvg's stand-in for the
-/// region a filter function does not have.
+/// (`filter="drop-shadow(...)"`, `filter: blur(...)`) rather than from a `<filter>`, as usvg
+/// makes those (usvg keeps no mark of it): an id it generated (`filter1`, `filter2`, ...; a
+/// `<filter>` keeps its own, unless it is read again for another bounding box), one primitive
+/// whose result is named `result` (a `<filter>`'s unnamed results are `result1`, `result2`,
+/// ...), over the whole filter region, which is `g`'s bounding box widened by half on each side
+/// (a blur, a drop shadow) or by a tenth (the others), usvg's stand-in for the region a filter
+/// function does not have. A `<filter>` with all of these (an author's `result="result"` and
+/// that region) is taken for a function, which only changes where its layer ends.
 fn function_kind<'a>(g: &usvg::Group, filter: &'a usvg::filter::Filter) -> Option<&'a usvg::filter::Kind> {
     use usvg::filter::Kind;
+    let generated = filter
+        .id()
+        .strip_prefix("filter")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    if !generated {
+        return None;
+    }
     let [primitive] = filter.primitives() else {
         return None;
     };
@@ -830,16 +865,16 @@ fn draw_clip_shapes<S: PaintScene>(
 /// its content (within its rectangle) is rendered offscreen at the scene's
 /// resolution over `rect`, turned into coverage by luminance or alpha, and
 /// drawn into a `DestIn` layer covering `rect`. A mask on the mask element
-/// multiplies the content too (as in resvg). A CSS box's mask (`box_reference`)
+/// multiplies the content too (as in resvg). A CSS box's mask ([`IN_BOX_REFERENCE`])
 /// of opaque shapes is drawn as the shapes instead ([`fill_mask_shapes`]): a box's
 /// reference is compared with the shapes a page draws (WPT `mask-image-3a`), where
 /// SVG content's masks are compared with masks of other descriptions of a shape,
 /// whose edges the raster's supersampling brings within their tolerance (WPT
 /// `mask-*-content-clip-transform`: a circle as `r="25"` scaled by 2 and as
 /// `r="5000"` by 0.01 are up to 39 levels apart drawn directly).
-fn apply_mask<S: PaintScene>(scene: &mut S, mask: &usvg::Mask, ts: Affine, rect: Rect, box_reference: bool) {
+fn apply_mask<S: PaintScene>(scene: &mut S, mask: &usvg::Mask, ts: Affine, rect: Rect) {
     if let Some(nested) = mask.mask() {
-        apply_mask(scene, nested, ts, rect, box_reference);
+        apply_mask(scene, nested, ts, rect);
     }
     scene.push_layer(
         Fill::NonZero,
@@ -850,6 +885,7 @@ fn apply_mask<S: PaintScene>(scene: &mut S, mask: &usvg::Mask, ts: Affine, rect:
         None,
         None,
     );
+    let box_reference = IN_BOX_REFERENCE.with(|flag| flag.get());
     if !(box_reference && fill_mask_shapes(scene, mask, ts, rect)) {
         if let Some((image, image_ts)) = mask_image(mask, ts, rect) {
             scene.draw_image(image.as_ref(), image_ts);
@@ -1062,7 +1098,6 @@ fn mask_image(mask: &usvg::Mask, ts: Affine, rect: Rect) -> Option<(ImageBrush, 
     let (rw, rh) = (width * ss, height * ss);
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, rw as f64, rh as f64),
-        box_reference: false,
     };
     let pixels = rasterize(rw, rh, |painter| {
         painter.push_clip_layer(Fill::NonZero, to_raster * ts, &mask_rect);
@@ -1128,7 +1163,8 @@ fn raster_size(width: f64, height: f64) -> Option<(u32, u32, f64)> {
 fn rasterize(width: u32, height: u32, draw: impl FnOnce(&mut Scene)) -> Vec<u8> {
     use anyrender::ImageRenderer;
     let mut scene = Scene::new();
-    draw(&mut scene);
+    // pyro: an offscreen raster is drawn as SVG content draws it, in a box's reference too.
+    with_box_reference(false, || draw(&mut scene));
     let mut renderer = VelloCpuImageRenderer::with_threads(width, height, 0);
     let mut pixels = Vec::new();
     renderer.render_to_vec(|painter| painter.append_scene(scene, Affine::IDENTITY), &mut pixels);
@@ -1176,7 +1212,6 @@ fn pattern_brush(
     let content_ts = Affine::scale_non_uniform(width as f64 / tile_w, height as f64 / tile_h);
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, width as f64, height as f64),
-        box_reference: false,
     };
     let pixels = rasterize(width, height, |painter| {
         let mut no_errors: fn(&mut Scene, &Node) = |_, _| {};
