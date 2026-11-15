@@ -2126,6 +2126,7 @@ impl ElementCx<'_, '_> {
                         Some(&text_layout.text),
                         &mut draw_text_context,
                         None,
+                        Some(&text_layout.layout),
                     );
                 }
                 draw_text_context.text_shift = 0.0;
