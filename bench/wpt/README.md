@@ -292,14 +292,14 @@ As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
 
 ### CI
 
-The `reftest` job runs `gate.mjs run --kind reftest` in two shards on GitHub's `macos-15` runners, one page per CPU,
-and `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build` jobs (the
+The `reftest` job runs `gate.mjs run --kind reftest` in one shard on the self-hosted `lp-m1`, one page per CPU, and
+`reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build` jobs (the
 browser, built on `lp-m1`) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support
 files; 171 MB). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
-`reftest-runner` (`lp-m1`: one shard there) and `reftest-args` (for example `--dirs css/CSS2 --no-rerun` to time a
-directory).
+`reftest-runner` (`macos-15`: two shards on GitHub's hosted runners, billed as macOS minutes) and `reftest-args` (for
+example `--dirs css/CSS2 --no-rerun` to time a directory).
 
-Measured on this pull request's runs (all 9,341 reftests; a run without a baseline runs every page twice):
+Measured on the pull request that added the job (all 9,341 reftests; a run without a baseline runs every page twice):
 
 | runner | shards x jobs | one pass | job, with setup | two passes agreed |
 |---|---|---:|---:|---|
@@ -309,14 +309,13 @@ Measured on this pull request's runs (all 9,341 reftests; a run without a baseli
 | `macos-15`, a pull request's gate run (baseline committed) | 2 x 5 | 35 s, 40 s | 0:52, 0:55 | (2 pages rerun) |
 
 The 11 pages that time out (15 s each) and the crash run last in a run without a baseline; a pull request's run skips
-them (nothing to protect), so its pass costs about what the first 9,300 pages do. The reftests run on `macos-15`:
-within each bootstrap run there the two passes agreed on every page, the runs differed only on two transition pages
-(below), and `lp-m1`'s results matched theirs on every other page but the two that runner bug recorded as crashes.
-So `macos-15` is as deterministic as the self-hosted runner. On `lp-m1`, which runs one job at a time and already
-queues the four testharness shards and the client job of every pull request, the reftests would add 2 to 5 minutes to
-each run's turn on it; on `macos-15` they run beside them, two jobs of 1 to 2.5 minutes (2 to 5 runner minutes per run,
-billed as macOS minutes). `reftest-runner: lp-m1` runs them there; the baseline was recorded on `macos-15`, and the
-runners agreed, but a timing-dependent page can still tell them apart.
+them (nothing to protect), so its pass costs about what the first 9,300 pages do. Within each bootstrap run on
+`macos-15` the two passes agreed on every page, the runs differed only on two transition pages (below), and `lp-m1`'s
+results matched theirs on every other page but the two that runner bug recorded as crashes. The job ran on `macos-15`
+until every macOS job moved to `lp-m1`: there it adds 2 to 5 minutes to each run's turn on a runner that runs one job
+at a time and already queues the four testharness shards and the client job of every pull request, where `macos-15`
+ran two jobs of 1 to 2.5 minutes beside them (2 to 5 runner minutes per run, billed as macOS minutes). The baseline
+was first recorded on `macos-15`; the runners agreed, but a timing-dependent page can still tell them apart.
 
 `lp-m1` has no `zstd`, so its Actions cache entries are gzip archives; a runner with `zstd` looks for another cache
 version and misses them. The reftest job restores the WPT checkout and the browser with a `PATH` that hides `zstd`,

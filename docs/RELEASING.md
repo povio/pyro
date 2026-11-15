@@ -6,7 +6,9 @@ Push a tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) on the commit to release. The
 `publish-npm.yml` workflow then does everything below without local work:
 
 - stamps the versions from the tag;
-- builds the standard browsers and comparison workers for ARM64 and Intel;
+- builds the standard browsers and comparison workers for ARM64 and Intel (every
+  macOS job runs on the self-hosted Apple Silicon runner `lp-m1`; the Intel build
+  is cross-compiled there and runs under Rosetta 2);
 - builds the fork variant against the patched JavaScriptCore (`jsc.yml`, which
   restores it from the Actions cache, or builds it on a miss);
 - builds Linux x64 and arm64 against the Linux build of the same patched
@@ -25,15 +27,15 @@ Linux binaries therefore do not include source-line debug information. The
 combined npm tarball must fit the workflow's 150 MiB compressed-size budget;
 this guards package growth but does not guarantee registry acceptance.
 
-A cold JavaScriptCore build takes about 7 minutes on a hosted runner (measured on
-the first run). `jsc.yml` rebuilds on `main` whenever the patches or
-`scripts/jsc/build.sh` change, so a tag normally finds the build cached.
+A cold JavaScriptCore build takes about 7 minutes (measured on the first run).
+`jsc.yml` rebuilds on `main` whenever the patches or `scripts/jsc/build.sh`
+change, so a tag normally finds the build cached.
 
 The npm package's arm64 browser is the fork build, with the patched
 JavaScriptCore linked into it; its Intel browser is the standard build. Every release archive's client therefore carries the fork browser, but
 launches the browser of its own archive first.
-Intel binaries are inspected in CI but never executed (no Rosetta on the
-runners).
+The Intel browser runs in CI under Rosetta 2 (its build's checks and the npm
+smoke test with x64 Node and Bun), not on Intel hardware.
 
 The rest of this document is what those scripts do, and the manual procedure
 for a release built outside CI.

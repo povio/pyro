@@ -45,23 +45,27 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Both on the self-hosted Apple Silicon runner (label lp-m1): the Intel build is
+  # cross-compiled there and runs under Rosetta 2.
   build:
     needs: release
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
-            arch: arm64
+          - arch: arm64
             target: aarch64-apple-darwin
-          - runner: macos-15-intel
-            arch: x64
+            lipo: arm64
+          - arch: x64
             target: x86_64-apple-darwin
-    runs-on: ${{ matrix.runner }}
+            lipo: x86_64
+    runs-on: lp-m1
     timeout-minutes: 60
     env:
       PYRO_JSC: system
       MACOSX_DEPLOYMENT_TARGET: '14.0'
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -69,11 +73,23 @@ jobs:
           name: release-manifests
           path: .
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --no-self-update
-      # libjpeg-turbo's x86-64 SIMD is assembled with NASM (without it the JPEG encoder builds as plain C).
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add --toolchain stable "$RUST_TARGET"
+      # The Intel browser's checks below run it, which needs Rosetta 2 on the runner.
+      - name: Check Rosetta 2
+        if: matrix.arch == 'x64'
+        run: |
+          arch -x86_64 /usr/bin/true || {
+            echo "::error::Rosetta 2 is not installed on this runner: sudo softwareupdate --install-rosetta --agree-to-license"
+            exit 1
+          }
+      # OpenH264's x86-64 assembly (the default h264 feature) is assembled with NASM; without it, plain C.
       - name: Install NASM
         if: matrix.arch == 'x64'
-        run: brew install nasm
+        run: command -v nasm >/dev/null || brew install nasm
       - name: Build browser with rendering, and the comparison worker
         env:
           RUST_TARGET: ${{ matrix.target }}
@@ -81,10 +97,12 @@ jobs:
       - name: Verify and stage binary
         env:
           ARCH: ${{ matrix.arch }}
+          LIPO_ARCH: ${{ matrix.lipo }}
           RUST_TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.release.outputs.version }}
         run: |
           binary="target/$RUST_TARGET/release/pyro"
+          lipo -archs "$binary" | grep -qx "$LIPO_ARCH"
           codesign --verify --strict "$binary"
           codesign -d --entitlements - "$binary" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
           otool -L "$binary"
@@ -121,10 +139,13 @@ jobs:
   # comparison worker is a plain release build).
   fork:
     needs: [release, jsc]
-    runs-on: macos-15
+    # The self-hosted Apple Silicon runner (label lp-m1), as pgo.yml.
+    runs-on: lp-m1
     timeout-minutes: 150
     env:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -143,6 +164,9 @@ jobs:
         run: |
           export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
           mkdir -p "$(dirname "$PYRO_JSC_DIR")"
+          # The runner keeps its home between jobs, and the jsc job leaves this build there: replace it with the
+          # artifact the release ships (mv would move the artifact inside it, or fail once it is there).
+          rm -rf "$PYRO_JSC_DIR"
           mv patched-jsc "$PYRO_JSC_DIR"
           cargo +stable build --locked --release --package pyro-render
           cp target/aarch64-apple-darwin/release-pgo/pyro target/release/pyro
@@ -192,7 +216,7 @@ jobs:
   # The JavaScriptCore source asset and the notices the fork archive ships.
   jsc-source:
     needs: release
-    runs-on: macos-15
+    runs-on: lp-m1
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -264,39 +288,90 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The installed package on each platform. macOS runs on the self-hosted Apple
+  # Silicon runner (label lp-m1): the Intel leg with x64 Node and Bun under
+  # Rosetta 2, so the package picks its darwin-x64 browser (by process.arch).
+  # The macOS arm64 and both Linux browsers are fork builds; the macOS Intel one
+  # uses system JavaScriptCore.
   smoke:
     needs: package
+    name: smoke (${{ matrix.runner }}, ${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - runner: lp-m1
+            arch: arm64
+            fork: true
+          - runner: lp-m1
+            arch: x64
+            fork: false
+          - runner: ubuntu-24.04
+            arch: x64
+            fork: true
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            fork: true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - name: Check Rosetta 2
+        if: runner.os == 'macOS' && matrix.arch == 'x64'
+        run: |
+          arch -x86_64 /usr/bin/true || {
+            echo "::error::Rosetta 2 is not installed on this runner: sudo softwareupdate --install-rosetta --agree-to-license"
+            exit 1
+          }
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+          architecture: ${{ matrix.arch }}
           package-manager-cache: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
+      # setup-bun installs the runner's own architecture into ~/.bun, which the
+      # self-hosted runner keeps between jobs: the x64 Bun goes to this job's
+      # temporary directory instead (emptied at the start and end of each job).
+      - name: x64 Bun
+        if: runner.os == 'macOS' && matrix.arch == 'x64'
+        env:
+          BUN_VERSION: '1.4.0'
+        run: |
+          asset=bun-darwin-x64-baseline
+          dir="$RUNNER_TEMP/bun-x64"
+          mkdir -p "$dir"
+          cd "$dir"
+          base="https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION"
+          curl -fsSLO --retry 3 "$base/$asset.zip"
+          curl -fsSLO --retry 3 "$base/SHASUMS256.txt"
+          grep " $asset.zip\$" SHASUMS256.txt > "$asset.sha256"
+          shasum -a 256 -c "$asset.sha256"
+          unzip -q "$asset.zip"
+          echo "$dir/$asset" >> "$GITHUB_PATH"
       - uses: actions/download-artifact@v4
         with:
           name: npm-package
           path: npm-package
       - name: Test installed CLI and API with Node and Bun
+        env:
+          ARCH: ${{ matrix.arch }}
+          FORK: ${{ matrix.fork }}
         run: |
+          # The leg tests the browser of its architecture only if Node and Bun run as that architecture.
+          node_arch="$(node -p process.arch)"
+          bun_arch="$(bun -e 'console.log(process.arch)')"
+          if [[ "$node_arch" != "$ARCH" || "$bun_arch" != "$ARCH" ]]; then
+            echo "::error::Node runs as $node_arch and Bun as $bun_arch, not $ARCH"
+            exit 1
+          fi
           mkdir "$RUNNER_TEMP/npm-smoke"
           cd "$RUNNER_TEMP/npm-smoke"
           npm init -y
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
           ./node_modules/.bin/pyro version
-          # The macOS arm64 and both Linux browsers are fork builds; the macOS
-          # Intel one uses system JavaScriptCore.
-          want=false
-          [[ "$(uname -m)" == arm64 || "$(uname -s)" == Linux ]] && want=true
-          ./node_modules/.bin/pyro version | grep -q "fork: $want"
+          ./node_modules/.bin/pyro version | grep -q "fork: $FORK"
           node "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
           bun "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
 
@@ -305,7 +380,7 @@ jobs:
   # builds above and tested from their extracted form before upload.
   github-release:
     needs: [release, build, fork, linux, jsc, jsc-source, package, smoke]
-    runs-on: macos-15
+    runs-on: lp-m1
     timeout-minutes: 45
     permissions:
       contents: write
