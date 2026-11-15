@@ -133,3 +133,86 @@ fn a_faded_group_composites_its_content_first() {
     }
     assert_eq!(pixel(&img, 1.0, 350, 50), [255; 3]);
 }
+
+/// An inline element's `opacity` fades all of its fragments as one group (WPT
+/// `t32-opacity-offscreen-multiple-boxes-1-c`): where its two lines' boxes overlap (lines closer
+/// than the text is tall), the result is as faded as elsewhere. It was not faded at all, and the
+/// overlap of two areas was painted at full strength under the group.
+#[test]
+fn an_inline_elements_opacity_fades_its_fragments_as_one_group() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='font:20px/10px monospace'><span style='opacity:.4;background:#00f;color:#00f'>XXXXX<br>XXXXX</span></div>",
+            scale,
+        );
+        let faded = over_white([0, 0, 255], 0.4);
+        assert_near(pixel(&img, scale, 5, 10), faded, &format!("where the lines overlap, scale {scale}"));
+        assert_near(pixel(&img, scale, 5, 1), faded, &format!("the first line, scale {scale}"));
+        assert_near(pixel(&img, scale, 5, 22), faded, &format!("the second line, scale {scale}"));
+        assert_eq!(pixel(&img, scale, 300, 10), [255; 3], "beside them, scale {scale}");
+    }
+}
+
+/// An absolutely positioned box whose containing block is above its parent (here the initial
+/// containing block) paints in tree order among the positioned boxes and the stacking contexts
+/// without a `z-index` lifted to the same level (CSS 2.1 Appendix E step 8): above the earlier
+/// ones and under the later ones. It was painted after all of them (WPT
+/// `clip-path-reference-restore`, `clip-path-path-with-zoom-001`, `canvas-change-opacity`).
+#[test]
+fn an_out_of_flow_box_paints_in_tree_order_with_lifted_stacking_contexts() {
+    const RED: &str = "position:absolute;left:0;top:0;width:100px;height:200px;background:#f00";
+    for effect in
+        ["opacity:.999", "clip-path:inset(0)", "transform:translate(0)", "position:relative", "filter:invert(0)"]
+    {
+        let img = render(
+            &format!(
+                "<div><div style='height:100px;background:#00f;{effect}'></div>\
+                 <div style='{RED}'></div>\
+                 <div style='height:100px;background:#0f0;{effect}'></div></div>"
+            ),
+            1.0,
+        );
+        assert_near(pixel(&img, 1.0, 50, 50), [255.0, 0.0, 0.0], &format!("{effect}: the box over the earlier one"));
+        assert_near(pixel(&img, 1.0, 50, 150), [0.0, 255.0, 0.0], &format!("{effect}: the later one over the box"));
+        assert_near(pixel(&img, 1.0, 150, 50), [0.0, 0.0, 255.0], &format!("{effect}: the earlier one"));
+    }
+}
+
+/// Such a box inside a stacking context its containing block lies outside of (here an `isolation`
+/// wrapper; the box paints with the context) takes its place in tree order among the context's
+/// positioned level too (WPT `mix-blend-mode-root-element-group`): it was painted after all of the
+/// context's content.
+#[test]
+fn an_out_of_flow_box_moved_into_a_stacking_context_paints_in_tree_order() {
+    const RED: &str = "position:absolute;left:0;top:0;width:100px;height:200px;background:#f00";
+    for (wrapper, effect) in [("isolation:isolate", "opacity:.999"), ("opacity:.999", "position:relative")] {
+        let img = render(
+            &format!(
+                "<div style='{wrapper}'><div style='height:100px;background:#00f;{effect}'></div>\
+                 <div style='{RED}'></div>\
+                 <div style='height:100px;background:#0f0;{effect}'></div></div>"
+            ),
+            1.0,
+        );
+        let what = format!("{wrapper}, {effect}");
+        assert_near(pixel(&img, 1.0, 50, 50), [255.0, 0.0, 0.0], &format!("{what}: the box over the earlier one"));
+        assert_near(pixel(&img, 1.0, 50, 150), [0.0, 255.0, 0.0], &format!("{what}: the later one over the box"));
+    }
+}
+
+/// Neighbouring faded inline elements meet inside a pixel column (each one's areas are snapped out
+/// to whole device pixels): the column was painted in both elements' passes, darker than either.
+#[test]
+fn neighbouring_faded_inline_elements_paint_their_shared_pixel_once() {
+    const SPAN: &str = "opacity:.5;background:#00f;padding-left:10.5px";
+    let img = render(
+        &format!(
+            "<div style='font:20px/30px monospace'><span style='{SPAN}'></span><span style='{SPAN}'></span>x</div>"
+        ),
+        1.0,
+    );
+    let faded = over_white([0, 0, 255], 0.5);
+    for x in [5, 10, 15] {
+        assert_near(pixel(&img, 1.0, x, 15), faded, &format!("at x {x}"));
+    }
+}

@@ -140,7 +140,7 @@ impl VelloCpuScenePainter {
         let input = if region == out { backdrop.clone() } else { mirrored(&backdrop, out, region) };
         let ctx_to_frame = self.frame_to_ctx.inverse();
         let mut images: Vec<(Arc<Pixmap>, Affine)> = plan
-            .render(input, region, None)
+            .render(input, &[], region, None)
             .into_iter()
             .map(|image| (Arc::new(image.pixels), ctx_to_frame * image.transform))
             .collect();

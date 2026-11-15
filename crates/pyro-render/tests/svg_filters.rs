@@ -107,14 +107,12 @@ fn empty_shapes_render_no_filter_but_empty_groups_do() {
     assert_eq!(pixel(&img, 50, 50), [255, 0, 0], "an empty group");
 }
 
-/// A filter with a primitive the renderer does not do (`feTurbulence`), or one usvg could not
-/// read (`feConvolveMatrix` of a zero divisor, which it replaces with a transparent flood), is
-/// left out: the content is drawn unfiltered, as before (WPT feconvolve-divisor).
+/// A filter with a primitive the renderer does not do (`feDropShadow` of two deviations), or one
+/// usvg could not read (an `feImage` of an image it could not load, which it replaces with a
+/// transparent flood), is left out: the content is drawn unfiltered, as before.
 #[test]
 fn unsupported_primitives_leave_the_filter_out() {
-    for primitive in
-        ["<feTurbulence baseFrequency='0.05'/>", "<feConvolveMatrix kernelMatrix='1 1 1 1 1 1 1 1 1' divisor='0'/>"]
-    {
+    for primitive in ["<feDropShadow stdDeviation='1 2'/>", "<feImage href='missing.png'/>"] {
         let img = render(&format!(
             "<svg width='300' height='200' style='display:block'><filter id='f'>{primitive}</filter>
              <rect width='100' height='100' fill='#0f0' filter='url(#f)'/></svg>"

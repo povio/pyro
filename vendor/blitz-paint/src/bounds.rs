@@ -29,8 +29,10 @@ fn layer_bounds(commands: &[RenderCommand], at: &mut usize) -> Option<Rect> {
             RenderCommand::PushLayer(layer) => {
                 let clip = layer.transform.transform_rect_bbox(layer.clip.bounding_box());
                 let inner = layer_bounds(commands, at);
-                // A filter spreads the content (a blur, a shadow's offset); a backdrop filter
-                // paints the whole clip.
+                // A filter spreads the content (a blur, a shadow's offset); a backdrop filter,
+                // and a filter that paints where its input is transparent (an SVG graph's flood,
+                // turbulence, tile or colour matrix adding alpha: `stays_with_input`), paint the
+                // whole clip, whatever the content (an empty element's filter region).
                 let inner = match (&layer.filter, inner) {
                     (Some(filter), Some(inner)) => {
                         // The filter's reach in scene units: the layer transform's linear part (its
@@ -45,7 +47,8 @@ fn layer_bounds(commands: &[RenderCommand], at: &mut usize) -> Option<Rect> {
                     }
                     (_, inner) => inner,
                 };
-                let inner = if layer.backdrop_filter.is_some() { Some(clip) } else { inner };
+                let fills = layer.filter.as_deref().is_some_and(|filter| !stays_with_input(filter));
+                let inner = if layer.backdrop_filter.is_some() || fills { Some(clip) } else { inner };
                 inner.map(|inner| inner.intersect(clip))
             }
             RenderCommand::PushClipLayer(layer) => {
@@ -87,6 +90,28 @@ fn layer_bounds(commands: &[RenderCommand], at: &mut usize) -> Option<Rect> {
         bounds = union(bounds, painted.filter(|r| r.width() > 0.0 && r.height() > 0.0));
     }
     bounds
+}
+
+/// pyro: whether `filter` draws only within its expansion of where its input draws: each node is
+/// a blur, an offset, a drop shadow, or a colour function that keeps transparent black transparent
+/// (a matrix whose alpha row adds nothing, an alpha transfer mapping 0 to 0). CSS filter functions
+/// are; an SVG filter graph with a flood, turbulence, a tile, an image, a displacement, morphology
+/// or a composite may draw anywhere in its region.
+pub(crate) fn stays_with_input(filter: &anyrender::Filter) -> bool {
+    use anyrender::filters::FilterEffect;
+    use anyrender::filters::component_transfer::TransferFunction;
+    filter.nodes().iter().all(|node| match &node.effect {
+        FilterEffect::GaussianBlur(_) | FilterEffect::Offset(_) | FilterEffect::DropShadow(_) => true,
+        FilterEffect::ColorMatrix(m) => m.0[19] <= 0.0,
+        FilterEffect::ComponentTransfer(t) => match &t.alpha_function {
+            TransferFunction::Identity => true,
+            TransferFunction::Table(values) => values.first().is_none_or(|v| *v <= 0.0),
+            TransferFunction::Discrete(values) => values.first().is_none_or(|v| *v <= 0.0),
+            TransferFunction::Linear(f) => f.intercept <= 0.0,
+            TransferFunction::Gamma(f) => f.offset <= 0.0,
+        },
+        _ => false,
+    })
 }
 
 /// pyro: when `commands` draw a single shape (one fill, stroke or box shadow of a solid colour,
@@ -156,6 +181,33 @@ mod tests {
         scene.fill(Fill::NonZero, moved, BLACK, None, &Rect::new(0.0, 0.0, 100.0, 60.0));
         scene.pop_layer();
         assert_eq!(scene_bounds(&scene.commands), Some(Rect::new(110.0, 90.0, 220.0, 160.0)));
+    }
+
+    /// A filter that paints where its content is not (a flood, a colour matrix adding alpha)
+    /// covers its whole clip, with no content at all too (an empty element's SVG filter region);
+    /// a colour function that keeps transparent black transparent does not.
+    #[test]
+    fn a_filter_painting_past_its_content_bounds_its_clip() {
+        use anyrender::filters::color_transformation::ColorMatrix;
+        use anyrender::filters::{Filter, FilterEffect};
+        let clip = Rect::new(-10.0, -10.0, 90.0, 90.0);
+        let layer = |effect: FilterEffect, content: bool| {
+            let mut scene = Scene::new();
+            let filter = Some(std::sync::Arc::new(Filter::single(effect)));
+            scene.push_layer(Fill::NonZero, Mix::Normal, 1.0, Affine::IDENTITY, &clip, filter, None);
+            if content {
+                scene.fill(Fill::NonZero, Affine::IDENTITY, BLACK, None, &Rect::new(0.0, 0.0, 10.0, 10.0));
+            }
+            scene.pop_layer();
+            scene_bounds(&scene.commands)
+        };
+        assert_eq!(layer(FilterEffect::Flood(BLACK), false), Some(clip));
+        assert_eq!(layer(FilterEffect::Flood(BLACK), true), Some(clip));
+        let mut adds_alpha = ColorMatrix::opacity(1.0);
+        adds_alpha.0[19] = 0.2;
+        assert_eq!(layer(FilterEffect::ColorMatrix(adds_alpha), false), Some(clip));
+        assert_eq!(layer(FilterEffect::ColorMatrix(ColorMatrix::opacity(0.5)), false), None);
+        assert_eq!(layer(FilterEffect::blur(2.0), true), Some(Rect::new(-6.0, -6.0, 16.0, 16.0)));
     }
 
     #[test]

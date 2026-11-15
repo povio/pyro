@@ -1,6 +1,6 @@
 diff --git b/src/backdrop.rs b/src/backdrop.rs
 new file mode 100644
-index 0000000..d72d1a9
+index 0000000..986881c
 --- /dev/null
 +++ b/src/backdrop.rs
 @@ -0,0 +1,285 @@
@@ -146,7 +146,7 @@ index 0000000..d72d1a9
 +        let input = if region == out { backdrop.clone() } else { mirrored(&backdrop, out, region) };
 +        let ctx_to_frame = self.frame_to_ctx.inverse();
 +        let mut images: Vec<(Arc<Pixmap>, Affine)> = plan
-+            .render(input, region, None)
++            .render(input, &[], region, None)
 +            .into_iter()
 +            .map(|image| (Arc::new(image.pixels), ctx_to_frame * image.transform))
 +            .collect();
@@ -290,10 +290,10 @@ index 0000000..d72d1a9
 +    }
 +}
 diff --git a/src/filters.rs b/src/filters.rs
-index fd573d2..61fe4d6 100644
+index fd573d2..69b6b45 100644
 --- a/src/filters.rs
 +++ b/src/filters.rs
-@@ -1,63 +1,1155 @@
+@@ -1,63 +1,1201 @@
 -use std::sync::Arc;
 -
 -use anyrender::{
@@ -599,6 +599,12 @@ index fd573d2..61fe4d6 100644
 +        self.graph.is_some()
 +    }
 +
++    /// pyro: whether the filter reads `feImage` contents drawn in its layer (see
++    /// [`crate::graph::IMAGE_SOURCE`]).
++    pub(crate) fn reads_images(&self) -> bool {
++        self.graph.as_ref().is_some_and(Graph::reads_images)
++    }
++
 +    /// The colour functions of a filter of nothing else, when they keep the alpha and map each
 +    /// colour without reading its alpha: the content of a layer in one colour is then drawn in
 +    /// that colour's image instead ([`map_color`]), without rendering it apart.
@@ -655,6 +661,7 @@ index fd573d2..61fe4d6 100644
 +    pub(crate) fn render(
 +        &self,
 +        mut pixels: Pixmap,
++        images: &[Option<Pixmap>],
 +        region: PixelRect,
 +        uniform: Option<AlphaColor<Srgb>>,
 +    ) -> Vec<FilteredImage> {
@@ -665,7 +672,7 @@ index fd573d2..61fe4d6 100644
 +            return Vec::new();
 +        }
 +        if let Some(graph) = &self.graph {
-+            return vec![FilteredImage::scaled(graph.render(pixels, region), origin, 1)];
++            return vec![FilteredImage::scaled(graph.render(pixels, images, region), origin, 1)];
 +        }
 +        let mut scratch = Vec::new();
 +        match self.steps[..] {
@@ -1138,6 +1145,45 @@ index fd573d2..61fe4d6 100644
 +    // ... and the columns in `data`.
 +}
 +
++/// pyro: [`blur`] of a deviation `sx` along the rows and `sy` along the columns (`feGaussianBlur`
++/// of two deviations), each axis as `blur` does it.
++pub(crate) fn blur_xy(data: &mut [u8], scratch: &mut Vec<u8>, w: usize, h: usize, channels: usize, sx: f64, sy: f64) {
++    if w == 0 || h == 0 {
++        return;
++    }
++    if sx == sy {
++        blur(data, scratch, w, h, channels, sx);
++        return;
++    }
++    scratch.clear();
++    scratch.resize(data.len(), 0);
++    if sx > 0.0 {
++        if sx < 2.0 {
++            convolve_rows(data, scratch, w, h, channels, &gaussian_kernel(sx));
++            data.copy_from_slice(scratch);
++        } else {
++            for (i, &(lo, hi)) in box_windows(sx).iter().enumerate() {
++                let (src, dst) = if i % 2 == 0 { (&*data, &mut **scratch) } else { (&**scratch, &mut *data) };
++                box_rows(src, dst, w, h, channels, lo, hi);
++            }
++            // Three passes left the rows in `scratch`.
++            data.copy_from_slice(scratch);
++        }
++    }
++    if sy > 0.0 {
++        if sy < 2.0 {
++            convolve_cols(data, scratch, w, h, channels, &gaussian_kernel(sy));
++            data.copy_from_slice(scratch);
++        } else {
++            for (i, &(lo, hi)) in box_windows(sy).iter().enumerate() {
++                let (src, dst) = if i % 2 == 0 { (&*data, &mut **scratch) } else { (&**scratch, &mut *data) };
++                box_cols(src, dst, w, h, channels, lo, hi);
++            }
++            data.copy_from_slice(scratch);
++        }
++    }
++}
++
 +/// The three box windows (pixels before, pixels after) approximating a Gaussian of `sigma`: of an
 +/// odd `d`, three centred on the pixel; of an even one, one centred on the edge before the pixel,
 +/// one on the edge after it, and one of `d + 1` centred on it.
@@ -1351,7 +1397,7 @@ index fd573d2..61fe4d6 100644
 +        let out = PixelRect { x0: 0, y0: 0, x1: 20, y1: 20 };
 +        assert_eq!(plan.source_region(out), PixelRect { x0: -8, y0: -16, x1: 20, y1: 20 });
 +        assert_eq!(plan.factor(), 1);
-+        let images = plan.render(square(20, 20, 2..6, 2..6), out, None);
++        let images = plan.render(square(20, 20, 2..6, 2..6), &[], out, None);
 +        assert_eq!(images.len(), 1);
 +        assert_eq!(images[0].transform, Affine::translate((8.0, 16.0)));
 +        assert!(!images[0].smooth);
@@ -1372,7 +1418,7 @@ index fd573d2..61fe4d6 100644
 +        );
 +        let plan = FilterPlan::new(&filter, Affine::IDENTITY).unwrap();
 +        let out = PixelRect { x0: 0, y0: 0, x1: 20, y1: 20 };
-+        let images = plan.render(square(20, 20, 2..6, 2..6), out, None);
++        let images = plan.render(square(20, 20, 2..6, 2..6), &[], out, None);
 +        assert_eq!(images.len(), 1);
 +        let image = &images[0].pixels;
 +        assert_eq!(px(image, 3, 3), [255, 255, 255, 255]);
@@ -1468,7 +1514,7 @@ index fd573d2..61fe4d6 100644
 +        assert_eq!(plan.source_region(out), out, "a colour reads its own pixel");
 +        let mut pixels = Pixmap::new(3, 1);
 +        pixels.data_as_u8_slice_mut().copy_from_slice(&[64, 0, 0, 128, 255, 255, 0, 255, 0, 0, 0, 0]);
-+        let images = plan.render(pixels, out, None);
++        let images = plan.render(pixels, &[], out, None);
 +        assert_eq!(images.len(), 1);
 +        assert_eq!(images[0].pixels.data_as_u8_slice(), &[64, 128, 128, 128, 0, 0, 255, 255, 0, 0, 0, 0]);
 +        assert!(!images[0].smooth);
@@ -1482,7 +1528,7 @@ index fd573d2..61fe4d6 100644
 +        let plan = color([brightness, invert(1.0)].into_iter());
 +        let mut pixels = Pixmap::new(1, 1);
 +        pixels.data_as_u8_slice_mut().copy_from_slice(&[255, 0, 0, 255]);
-+        let images = plan.render(pixels, PixelRect { x0: 0, y0: 0, x1: 1, y1: 1 }, None);
++        let images = plan.render(pixels, &[], PixelRect { x0: 0, y0: 0, x1: 1, y1: 1 }, None);
 +        assert_eq!(images[0].pixels.data_as_u8_slice(), &[0, 255, 255, 255]);
 +    }
 +
@@ -1512,10 +1558,10 @@ index fd573d2..61fe4d6 100644
  }
 diff --git b/src/graph.rs b/src/graph.rs
 new file mode 100644
-index 0000000..9f9fcd6
+index 0000000..14bf552
 --- /dev/null
 +++ b/src/graph.rs
-@@ -0,0 +1,621 @@
+@@ -0,0 +1,1105 @@
 +//! pyro: filters that are no chain: an SVG `<filter>`'s primitives, which read the source graphic,
 +//! its alpha and each other's results. [`Graph`] holds them as nodes, each computed over one region
 +//! of device pixels: the part of the filter region (the layer's clip) that the output needs.
@@ -1533,22 +1579,72 @@ index 0000000..9f9fcd6
 +//! `feComponentTransfer` into linearRGB and its result goes back to sRGB through another, and the
 +//! colour functions of a row are applied to each pixel in one go ([`color_ops`]), as Skia composes
 +//! colour filters.
++//!
++//! The other primitives ([`crate::primitives`]) take what anyrender's types cannot say as these
++//! conventions:
++//!
++//! - `feTile` (`FilterEffect::Tile`) tiles the rectangle of the crop node it reads (its input's
++//!   subregion); read from anything else it passes its input on.
++//! - `feConvolveMatrix` (`FilterEffect::ConvolveMatrix`): `size` is the number of columns, and
++//!   `values` holds the kernel, row by row, then the number of rows, the target's x and y and the
++//!   edge mode (0 duplicate, 1 wrap, 2 none); without those four, the kernel is square, its target
++//!   its centre and its edge mode duplicate.
++//! - The lighting primitives read the lighting colour as the colour of the `Flood` node that is their
++//!   second input.
++//! - `Image` nodes of the ids below the crop's: an `feImage`'s content ([`IMAGE_SOURCE`]), a blur of
++//!   two deviations ([`BLUR_XY`]), `feMorphology` of two radii ([`MORPHOLOGY`]) and `feTurbulence`
++//!   ([`TURBULENCE`]), their parameters in the transform.
 +
 +use anyrender::Filter;
 +use anyrender::filters::component_transfer::TransferFunction;
 +use anyrender::filters::composite::CompositeOperator;
-+use anyrender::filters::{FilterEffect, FilterInput, FilterSource};
-+use kurbo::{Affine, Rect};
++use anyrender::filters::displacement::ColorChannel;
++use anyrender::filters::lighting::LightSource;
++use anyrender::filters::morphology::MorphologyOperator;
++use anyrender::filters::{ExternalImageSource, FilterEffect, FilterInput, FilterSource};
++use kurbo::{Affine, Point, Rect};
 +use peniko::Mix;
 +use peniko::color::{AlphaColor, Srgb};
 +use vello_cpu::Pixmap;
 +
-+use crate::filters::{ColorOp, PixelRect, blur, color_ops, div255, drop_shadow, reach};
++use crate::filters::{ColorOp, PixelRect, blur, blur_xy, color_ops, div255, drop_shadow, reach};
++use crate::primitives::{self, Convolution, Edge, Light, Lighting, Turbulence};
 +
 +/// pyro: the image id of an `Image` filter node that stands for a crop of its input to the
 +/// rectangle `[x0, y0, x1, y1, ..]` of its transform, in the filter's space: a primitive's
 +/// subregion (see the module's documentation).
 +pub const CROP_IMAGE: u32 = u32::MAX;
++
++/// pyro: the image id of an `Image` filter node (no input) that is the content of the filter
++/// layer's `feImage` number `k` (`[k, 0, ..]` in its transform). That content is drawn in the filter
++/// layer, before what the filter applies to, as a layer of opacity 0 whose filter is one such node
++/// of the transform `[k, 1, ..]` ([`image_source_marker`]): replayed, it is rendered apart for the
++/// graph; any other painter draws it invisible.
++pub const IMAGE_SOURCE: u32 = u32::MAX - 1;
++/// pyro: an `Image` filter node that is a Gaussian blur of its input of deviations `[x, y, ..]` (the
++/// filter's units).
++pub const BLUR_XY: u32 = u32::MAX - 2;
++/// pyro: an `Image` filter node that is `feMorphology` of its input: `[radius x, radius y, 1 to
++/// dilate or 0 to erode, ..]` (the filter's units).
++pub const MORPHOLOGY: u32 = u32::MAX - 3;
++/// pyro: an `Image` filter node (no input) that is `feTurbulence`: `[base frequency x, y, octaves,
++/// seed, 1 for fractal noise or 0 for turbulence, ..]`.
++pub const TURBULENCE: u32 = u32::MAX - 4;
++
++/// pyro: which `feImage` a layer is the content of (see [`IMAGE_SOURCE`]), if it is one.
++pub(crate) fn image_source_marker(filter: &Filter) -> Option<usize> {
++    match filter.nodes() {
++        [node] => match &node.effect {
++            FilterEffect::Image(ExternalImageSource { image_id: IMAGE_SOURCE, transform: Some([k, marker, ..]) })
++                if *marker == 1.0 =>
++            {
++                Some(k.max(0.0) as usize)
++            }
++            _ => None,
++        },
++        _ => None,
++    }
++}
 +
 +/// What a node reads.
 +#[derive(Clone, Copy, Debug, PartialEq)]
@@ -1587,6 +1683,34 @@ index 0000000..9f9fcd6
 +    },
 +    /// The input with everything outside the rectangle (device pixels) cleared.
 +    Crop(PixelRect),
++    /// `feImage` number `k`'s content.
++    Image(usize),
++    /// A blur of two deviations (device px).
++    BlurXY {
++        sx: f64,
++        sy: f64,
++    },
++    /// `feMorphology` of radii in device px.
++    Morphology {
++        rx: usize,
++        ry: usize,
++        dilate: bool,
++    },
++    /// `feTile` of the rectangle (device pixels).
++    Tile(PixelRect),
++    /// `feDisplacementMap` of the first input by the second: the user-space displacement `scale *
++    /// (C - 0.5)` of channels `x` and `y` mapped to device pixels by `m`.
++    Displace {
++        m: [f64; 4],
++        scale: f64,
++        x: usize,
++        y: usize,
++    },
++    Convolve(Box<Convolution>),
++    /// `feTurbulence`, evaluated at the user-space points `to_user` maps device pixels to.
++    Turbulence(Box<Turbulence>, Affine),
++    /// A lighting primitive, its light in device pixels.
++    Lighting(Box<Lighting>),
 +}
 +
 +#[derive(Clone, Debug)]
@@ -1601,7 +1725,13 @@ index 0000000..9f9fcd6
 +    nodes: Vec<Node>,
 +    /// How far (device px) the output reads from each of its pixels, along any path.
 +    reach: i32,
++    /// Whether the output reads an `feImage`'s content.
++    images: bool,
 +}
++
++/// How far a node whose pixels may come from anywhere in its input reads (`feTile`): what the
++/// layer's clip holds, up to this.
++const FAR: i32 = 4096;
 +
 +impl Graph {
 +    /// `filter` under `transform` (the layer's, to device pixels), or `None` when a node the
@@ -1692,13 +1822,100 @@ index 0000000..9f9fcd6
 +                FilterEffect::Composite(operator) => {
 +                    (Op::Composite(*operator), [Some(primary), Some(input(&node.inputs.secondary)?)])
 +                }
-+                FilterEffect::Blend(mix) if separable(*mix) => {
-+                    (Op::Blend(*mix), [Some(primary), Some(input(&node.inputs.secondary)?)])
-+                }
++                FilterEffect::Blend(mix) => (Op::Blend(*mix), [Some(primary), Some(input(&node.inputs.secondary)?)]),
 +                FilterEffect::Image(image) if image.image_id == CROP_IMAGE => {
 +                    let [x0, y0, x1, y1, ..] = image.transform?;
 +                    let rect = Rect::new(f64::from(x0), f64::from(y0), f64::from(x1), f64::from(y1));
 +                    (Op::Crop(PixelRect::around(transform.transform_rect_bbox(rect))), [Some(primary), None])
++                }
++                FilterEffect::Image(image) if image.image_id == IMAGE_SOURCE => {
++                    let k = image.transform.map_or(0.0, |t| t[0]);
++                    (Op::Image(k.max(0.0) as usize), [None, None])
++                }
++                FilterEffect::Image(image) if image.image_id == BLUR_XY => {
++                    let [x, y, ..] = image.transform?;
++                    let (sx, sy) = axis_scales(transform);
++                    let (sx, sy) = (f64::from(x.max(0.0)) * sx, f64::from(y.max(0.0)) * sy);
++                    let op = if sx > 0.0 || sy > 0.0 { Op::BlurXY { sx, sy } } else { Op::Pass };
++                    (op, [Some(primary), None])
++                }
++                FilterEffect::Image(image) if image.image_id == MORPHOLOGY => {
++                    let [x, y, dilate, ..] = image.transform?;
++                    (morphology(transform, f64::from(x), f64::from(y), dilate != 0.0)?, [Some(primary), None])
++                }
++                FilterEffect::Morphology(m) => {
++                    let r = f64::from(m.radius);
++                    (morphology(transform, r, r, m.operator == MorphologyOperator::Dilate)?, [Some(primary), None])
++                }
++                FilterEffect::Image(image) if image.image_id == TURBULENCE => {
++                    let [fx, fy, octaves, seed, fractal, ..] = image.transform?;
++                    if transform.determinant().abs() < 1e-12 {
++                        return None;
++                    }
++                    let t = Turbulence {
++                        base_frequency: (f64::from(fx.max(0.0)), f64::from(fy.max(0.0))),
++                        octaves: octaves.clamp(0.0, 24.0) as u32,
++                        seed: seed as i32,
++                        fractal_noise: fractal != 0.0,
++                    };
++                    (Op::Turbulence(Box::new(t), transform.inverse()), [None, None])
++                }
++                FilterEffect::Tile => {
++                    // The rectangle of the crop it reads, its input's subregion.
++                    let op = match primary {
++                        Input::Node(k) => match graph[k].op {
++                            Op::Crop(rect) => Op::Tile(rect),
++                            _ => Op::Pass,
++                        },
++                        _ => Op::Pass,
++                    };
++                    (op, [Some(primary), None])
++                }
++                FilterEffect::DisplacementMap(map) => {
++                    let channel = |c: ColorChannel| match c {
++                        ColorChannel::Red => 0,
++                        ColorChannel::Green => 1,
++                        ColorChannel::Blue => 2,
++                        ColorChannel::Alpha => 3,
++                    };
++                    let op = Op::Displace {
++                        m: [a, b, c, d],
++                        scale: f64::from(map.scale),
++                        x: channel(map.x_channel),
++                        y: channel(map.y_channel),
++                    };
++                    (op, [Some(primary), Some(input(&node.inputs.secondary)?)])
++                }
++                FilterEffect::ConvolveMatrix(kernel) => (convolution(kernel)?, [Some(primary), None]),
++                FilterEffect::DiffuseLighting(_) | FilterEffect::SpecularLighting(_) => {
++                    // The lighting colour: the flood that is the second input.
++                    let color = match node.inputs.secondary {
++                        Some(FilterInput::Result(id)) => match &nodes.get(usize::from(id.0))?.effect {
++                            FilterEffect::Flood(color) => color.to_rgba8(),
++                            _ => return None,
++                        },
++                        _ => return None,
++                    };
++                    let (light, surface_scale, constant, specular_exponent) = match &node.effect {
++                        FilterEffect::DiffuseLighting(l) => {
++                            (&l.light_source, l.surface_scale, l.diffuse_constant, None)
++                        }
++                        FilterEffect::SpecularLighting(l) => (
++                            &l.light_source,
++                            l.surface_scale,
++                            l.specular_constant,
++                            Some(f64::from(l.specular_exponent)),
++                        ),
++                        _ => unreachable!(),
++                    };
++                    let lighting = Lighting {
++                        light: light_in_device(light, transform)?,
++                        surface_scale: f64::from(surface_scale),
++                        constant: f64::from(constant),
++                        specular_exponent,
++                        color: [color.r, color.g, color.b],
++                    };
++                    (Op::Lighting(Box::new(lighting)), [Some(primary), None])
 +                }
 +                _ => return None,
 +            };
@@ -1738,15 +1955,30 @@ index 0000000..9f9fcd6
 +                .max()
 +                .unwrap_or(0);
 +            let moved = |dx: f64, dy: f64| dx.abs().max(dy.abs()).ceil() as i32 + 1;
-+            let own = match node.op {
-+                Op::Blur { sigma } => reach(sigma),
-+                Op::Offset { dx, dy } => moved(dx, dy),
-+                Op::DropShadow { dx, dy, sigma, .. } => reach(sigma) + moved(dx, dy),
++            let own = match &node.op {
++                Op::Blur { sigma } => reach(*sigma),
++                Op::BlurXY { sx, sy } => reach(sx.max(*sy)),
++                Op::Offset { dx, dy } => moved(*dx, *dy),
++                Op::DropShadow { dx, dy, sigma, .. } => reach(*sigma) + moved(*dx, *dy),
++                Op::Morphology { rx, ry, .. } => (*rx.max(ry)).min(FAR as usize) as i32,
++                Op::Tile(_) => FAR,
++                Op::Displace { m, scale, .. } => {
++                    let half = scale.abs() / 2.0;
++                    moved(half * (m[0].abs() + m[2].abs()), half * (m[1].abs() + m[3].abs())).min(FAR)
++                }
++                Op::Convolve(k) => k.columns.max(k.rows).min(FAR as usize) as i32,
++                Op::Lighting(_) => 1,
 +                _ => 0,
 +            };
-+            reaches[i] = read.saturating_add(own);
++            reaches[i] = read.saturating_add(own).min(FAR);
 +        }
-+        Some(Self { reach: reaches[last], nodes: graph })
++        let images = graph.iter().any(|node| matches!(node.op, Op::Image(_)));
++        Some(Self { reach: reaches[last], nodes: graph, images })
++    }
++
++    /// Whether the graph reads the content of `feImage`s (see [`IMAGE_SOURCE`]).
++    pub(crate) fn reads_images(&self) -> bool {
++        self.images
 +    }
 +
 +    /// The pixels of the source the output over `out` reads.
@@ -1754,8 +1986,9 @@ index 0000000..9f9fcd6
 +        PixelRect { x0: out.x0 - self.reach, y0: out.y0 - self.reach, x1: out.x1 + self.reach, y1: out.y1 + self.reach }
 +    }
 +
-+    /// The output over `region`, from `source`: the layer's content (premultiplied RGBA) there.
-+    pub(crate) fn render(&self, source: Pixmap, region: PixelRect) -> Pixmap {
++    /// The output over `region`, from `source`: the layer's content (premultiplied RGBA) there, and
++    /// `images`, the content of its `feImage`s there (by number; transparent where missing).
++    pub(crate) fn render(&self, source: Pixmap, images: &[Option<Pixmap>], region: PixelRect) -> Pixmap {
 +        let (w, h) = (source.width(), source.height());
 +        let mut uses = uses(&self.nodes);
 +        let last = self.nodes.len() - 1;
@@ -1819,12 +2052,7 @@ index 0000000..9f9fcd6
 +                }
 +                Op::Crop(rect) => {
 +                    let mut pixels = read(node.inputs[0], &results);
-+                    let keep = PixelRect {
-+                        x0: rect.x0 - region.x0,
-+                        y0: rect.y0 - region.y0,
-+                        x1: rect.x1 - region.x0,
-+                        y1: rect.y1 - region.y0,
-+                    };
++                    let keep = local(*rect, region);
 +                    for (y, row) in pixels.data_as_u8_slice_mut().chunks_exact_mut(wu * 4).enumerate() {
 +                        let y = y as i32;
 +                        for (x, px) in row.chunks_exact_mut(4).enumerate() {
@@ -1835,6 +2063,42 @@ index 0000000..9f9fcd6
 +                        }
 +                    }
 +                    pixels
++                }
++                Op::Image(k) => match images.get(*k) {
++                    Some(Some(pixels)) if pixels.width() == w && pixels.height() == h => pixels.clone(),
++                    _ => Pixmap::new(w, h),
++                },
++                Op::BlurXY { sx, sy } => {
++                    let mut pixels = read(node.inputs[0], &results);
++                    blur_xy(pixels.data_as_u8_slice_mut(), &mut scratch, wu, hu, 4, *sx, *sy);
++                    pixels
++                }
++                Op::Morphology { rx, ry, dilate } => {
++                    let mut pixels = read(node.inputs[0], &results);
++                    primitives::morphology(&mut pixels, *rx, *ry, *dilate);
++                    pixels
++                }
++                Op::Tile(rect) => primitives::tile(&read(node.inputs[0], &results), local(*rect, region)),
++                Op::Displace { m, scale, x, y } => {
++                    let map = read(node.inputs[1], &results);
++                    primitives::displace(&read(node.inputs[0], &results), &map, *m, *scale, *x, *y)
++                }
++                Op::Convolve(k) => primitives::convolve(&read(node.inputs[0], &results), k),
++                Op::Turbulence(t, to_user) => {
++                    let origin = Affine::translate((f64::from(region.x0), f64::from(region.y0)));
++                    primitives::turbulence(w, h, t, *to_user * origin)
++                }
++                Op::Lighting(l) => {
++                    let mut l = (**l).clone();
++                    let (ox, oy) = (f64::from(region.x0), f64::from(region.y0));
++                    match &mut l.light {
++                        Light::Distant(_) => {}
++                        Light::Point(at) | Light::Spot { at, .. } => {
++                            at[0] -= ox;
++                            at[1] -= oy;
++                        }
++                    }
++                    primitives::lighting(&read(node.inputs[0], &results), &l)
 +                }
 +            };
 +            for input in node.inputs.iter().flatten() {
@@ -1866,9 +2130,125 @@ index 0000000..9f9fcd6
 +    uses
 +}
 +
-+/// Whether `feBlend` does `mix` here: the separable modes.
++/// Whether `mix` is a separable blend mode (one channel at a time).
 +fn separable(mix: Mix) -> bool {
 +    !matches!(mix, Mix::Hue | Mix::Saturation | Mix::Color | Mix::Luminosity)
++}
++
++/// `rect` (device pixels) in the pixels of `region`.
++fn local(rect: PixelRect, region: PixelRect) -> PixelRect {
++    PixelRect { x0: rect.x0 - region.x0, y0: rect.y0 - region.y0, x1: rect.x1 - region.x0, y1: rect.y1 - region.y0 }
++}
++
++/// How much `transform` scales lengths along the filter's x and y axes.
++fn axis_scales(transform: Affine) -> (f64, f64) {
++    let [a, b, c, d, _, _] = transform.as_coeffs();
++    (a.hypot(b), c.hypot(d))
++}
++
++/// `feMorphology` of radii `rx`, `ry` (the filter's units) in device pixels: the radius vector
++/// mapped by the transform, rounded (as Skia rounds it), at most 256; a negative radius or one that
++/// is not finite does nothing to the graph (`None`).
++fn morphology(transform: Affine, rx: f64, ry: f64, dilate: bool) -> Option<Op> {
++    if !(rx >= 0.0 && ry >= 0.0 && rx.is_finite() && ry.is_finite()) {
++        return None;
++    }
++    let [a, b, c, d, _, _] = transform.as_coeffs();
++    let x = (a * rx).abs() + (c * ry).abs();
++    let y = (b * rx).abs() + (d * ry).abs();
++    let r = |v: f64| (v + 0.5).floor().clamp(0.0, 256.0) as usize;
++    Some(Op::Morphology { rx: r(x), ry: r(y), dilate })
++}
++
++/// `feConvolveMatrix` from its node (see the module's documentation), or `None` when it is not
++/// one this backend can do.
++fn convolution(kernel: &anyrender::filters::convolution::ConvolutionKernel) -> Option<Op> {
++    let columns = kernel.size as usize;
++    if columns == 0 || columns > 64 {
++        return None;
++    }
++    let values = &kernel.values;
++    // The extra values first (`order="4 3"`: 12 + 4 values could also pass for a 4 x 4 kernel), a
++    // square kernel of its own otherwise.
++    let extra = values
++        .len()
++        .checked_sub(4)
++        .filter(|&extra| extra % columns == 0 && values[extra] >= 0.0 && values[extra] as usize * columns == extra);
++    let (rows, target_x, target_y, edge) = if let Some(extra) = extra {
++        let [rows, tx, ty, edge] = values[extra..] else { return None };
++        let edge = match edge as i32 {
++            0 => Edge::Duplicate,
++            1 => Edge::Wrap,
++            _ => Edge::None,
++        };
++        (rows as usize, tx as usize, ty as usize, edge)
++    } else if values.len() == columns * columns {
++        (columns, columns / 2, columns / 2, Edge::Duplicate)
++    } else {
++        return None;
++    };
++    if rows == 0 || rows > 64 || rows * columns > values.len() || target_x >= columns || target_y >= rows {
++        return None;
++    }
++    if !(kernel.divisor.is_finite() && kernel.divisor != 0.0 && kernel.bias.is_finite()) {
++        return None;
++    }
++    Some(Op::Convolve(Box::new(Convolution {
++        columns,
++        rows,
++        kernel: values[..rows * columns].to_vec(),
++        target_x,
++        target_y,
++        divisor: kernel.divisor,
++        bias: kernel.bias,
++        edge,
++        preserve_alpha: kernel.preserve_alpha,
++    })))
++}
++
++/// A lighting primitive's light source in device pixels: positions mapped by `transform`, heights
++/// scaled by its mean scale (as Skia scales a light's z).
++fn light_in_device(light: &LightSource, transform: Affine) -> Option<Light> {
++    let (sx, sy) = axis_scales(transform);
++    let sz = ((sx * sx + sy * sy) / 2.0).sqrt();
++    let point = |x: f32, y: f32, z: f32| {
++        let p = transform * Point::new(f64::from(x), f64::from(y));
++        [p.x, p.y, f64::from(z) * sz]
++    };
++    Some(match light {
++        LightSource::Distant(l) => {
++            // Whole turns taken out first: -45 and 315 degrees light alike to the last bit (WPT
++            // azimuth-and-elevation).
++            let angle = |degrees: f32| f64::from(degrees).rem_euclid(360.0).to_radians();
++            let (azimuth, elevation) = (angle(l.azimuth), angle(l.elevation));
++            // The direction turned as the user space is (a mirror flips it).
++            let v = [azimuth.cos() * elevation.cos(), azimuth.sin() * elevation.cos()];
++            let [a, b, c, d, _, _] = transform.as_coeffs();
++            let (x, y) = (a * v[0] + c * v[1], b * v[0] + d * v[1]);
++            let length = x.hypot(y);
++            let (x, y) = if length > 0.0 {
++                let planar = (v[0] * v[0] + v[1] * v[1]).sqrt();
++                (x / length * planar, y / length * planar)
++            } else {
++                (0.0, 0.0)
++            };
++            Light::Distant([x, y, elevation.sin()])
++        }
++        LightSource::Point(l) => Light::Point(point(l.x, l.y, l.z)),
++        LightSource::Spot(l) => {
++            let at = point(l.x, l.y, l.z);
++            let towards = point(l.points_at_x, l.points_at_y, l.points_at_z);
++            let v = [towards[0] - at[0], towards[1] - at[1], towards[2] - at[2]];
++            let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
++            let direction = if length > 0.0 { [v[0] / length, v[1] / length, v[2] / length] } else { v };
++            Light::Spot {
++                at,
++                direction,
++                exponent: f64::from(l.specular_exponent),
++                cone: l.limiting_cone_angle.map(|angle| f64::from(angle).to_radians().cos()),
++            }
++        }
++    })
 +}
 +
 +/// `pixels` moved by `(dx, dy)` device px: each output pixel the input at (x - dx, y - dy),
@@ -1967,18 +2347,25 @@ index 0000000..9f9fcd6
 +    }
 +}
 +
-+/// `feBlend`: `top` (the first input) blended over `bottom` (the second) by a separable `mix`,
-+/// into `top`: Compositing and Blending's formula on premultiplied values.
++/// `feBlend`: `top` (the first input) blended over `bottom` (the second) by `mix`, into `top`:
++/// Compositing and Blending's formula on premultiplied values.
 +fn blend(top: &mut Pixmap, bottom: &Pixmap, mix: Mix) {
 +    for (s, b) in top.data_as_u8_slice_mut().chunks_exact_mut(4).zip(bottom.data_as_u8_slice().chunks_exact(4)) {
 +        let (sa, ba) = (f32::from(s[3]) / 255.0, f32::from(b[3]) / 255.0);
 +        let alpha = sa + ba - sa * ba;
 +        let mut out = [0.0f32; 4];
++        let unpremultiplied = |p: &[u8], a: f32| -> [f32; 3] {
++            std::array::from_fn(|c| if a > 0.0 { (f32::from(p[c]) / 255.0 / a).min(1.0) } else { 0.0 })
++        };
++        let (cs, cb) = (unpremultiplied(s, sa), unpremultiplied(b, ba));
++        let mixed: [f32; 3] = if separable(mix) {
++            std::array::from_fn(|c| mix_channel(mix, cb[c], cs[c]))
++        } else {
++            mix_colors(mix, cb, cs)
++        };
 +        for c in 0..3 {
 +            let (sp, bp) = (f32::from(s[c]) / 255.0, f32::from(b[c]) / 255.0);
-+            let cs = if sa > 0.0 { (sp / sa).min(1.0) } else { 0.0 };
-+            let cb = if ba > 0.0 { (bp / ba).min(1.0) } else { 0.0 };
-+            out[c] = sp * (1.0 - ba) + bp * (1.0 - sa) + sa * ba * mix_channel(mix, cb, cs);
++            out[c] = sp * (1.0 - ba) + bp * (1.0 - sa) + sa * ba * mixed[c];
 +        }
 +        out[3] = alpha;
 +        for c in 0..4 {
@@ -2039,10 +2426,44 @@ index 0000000..9f9fcd6
 +    }
 +}
 +
++/// A non-separable blend mode of the backdrop `cb` and the source `cs` (unpremultiplied RGB), as
++/// Compositing and Blending defines them.
++fn mix_colors(mix: Mix, cb: [f32; 3], cs: [f32; 3]) -> [f32; 3] {
++    let lum = |c: [f32; 3]| 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
++    let clip = |c: [f32; 3]| {
++        let l = lum(c);
++        let n = c[0].min(c[1]).min(c[2]);
++        let x = c[0].max(c[1]).max(c[2]);
++        let mut c = c;
++        if n < 0.0 && l - n > 0.0 {
++            c = c.map(|v| l + (v - l) * l / (l - n));
++        }
++        if x > 1.0 && x - l > 0.0 {
++            c = c.map(|v| l + (v - l) * (1.0 - l) / (x - l));
++        }
++        c
++    };
++    let set_lum = |c: [f32; 3], l: f32| {
++        let d = l - lum(c);
++        clip(c.map(|v| v + d))
++    };
++    let sat = |c: [f32; 3]| c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2]);
++    let set_sat = |c: [f32; 3], s: f32| {
++        let (max, min) = (c[0].max(c[1]).max(c[2]), c[0].min(c[1]).min(c[2]));
++        if max > min { c.map(|v| (v - min) * s / (max - min)) } else { [0.0; 3] }
++    };
++    match mix {
++        Mix::Hue => set_lum(set_sat(cs, sat(cb)), lum(cb)),
++        Mix::Saturation => set_lum(set_sat(cb, sat(cs)), lum(cb)),
++        Mix::Color => set_lum(cs, lum(cb)),
++        _ => set_lum(cb, lum(cs)),
++    }
++}
++
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
-+    use anyrender::filters::{ExternalImageSource, FilterInputs};
++    use anyrender::filters::FilterInputs;
 +    use peniko::color::palette;
 +
 +    fn pixmap(w: u16, h: u16, color: [u8; 4]) -> Pixmap {
@@ -2072,7 +2493,7 @@ index 0000000..9f9fcd6
 +        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
 +        let mut source = Pixmap::new(10, 10);
 +        source.data_as_u8_slice_mut()[..4].copy_from_slice(&[255, 0, 0, 255]);
-+        let out = graph.render(source, REGION);
++        let out = graph.render(source, &[], REGION);
 +        assert_eq!(at(&out, 0, 0), [0, 255, 0, 255]);
 +        assert_eq!(at(&out, 1, 0), [0; 4]);
 +    }
@@ -2100,7 +2521,7 @@ index 0000000..9f9fcd6
 +        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
 +        let mut source = Pixmap::new(10, 10);
 +        source.data_as_u8_slice_mut()[..4].copy_from_slice(&[255, 0, 0, 255]);
-+        let out = graph.render(source, REGION);
++        let out = graph.render(source, &[], REGION);
 +        assert_eq!(at(&out, 2, 1), [255, 0, 0, 255], "the source, moved");
 +        assert_eq!(at(&out, 0, 0), [0; 4], "nothing left behind");
 +        assert_eq!(at(&out, 4, 5), [0; 4], "the flood, cropped");
@@ -2122,11 +2543,14 @@ index 0000000..9f9fcd6
 +        );
 +        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
 +        assert_eq!(graph.nodes.iter().filter(|n| matches!(n.op, Op::Color(_))).count(), 1);
-+        let out = graph.render(pixmap(10, 10, [10, 20, 30, 255]), REGION);
++        let out = graph.render(pixmap(10, 10, [10, 20, 30, 255]), &[], REGION);
 +        assert_eq!(at(&out, 3, 3), [10, 20, 30, 255]);
-+        // Turbulence is not done here: no graph, the layer is drawn unfiltered.
++        // A background image is not done here: no graph, the layer is drawn unfiltered.
 +        let mut filter = Filter::empty();
-+        filter.add(FilterEffect::Tile, FilterInputs::NONE);
++        filter.add(
++            FilterEffect::Offset(kurbo::Vec2::ZERO),
++            FilterInputs::single(FilterInput::Source(FilterSource::BackgroundImage)),
++        );
 +        assert!(Graph::new(&filter, Affine::IDENTITY).is_none());
 +    }
 +
@@ -2135,6 +2559,112 @@ index 0000000..9f9fcd6
 +        let mut top = pixmap(1, 1, [255, 128, 0, 255]);
 +        blend(&mut top, &pixmap(1, 1, [128, 128, 128, 255]), Mix::Multiply);
 +        assert_eq!(at(&top, 0, 0), [128, 64, 0, 255]);
++    }
++
++    /// pyro: the luminosity mode keeps the backdrop's colour at the source's luminosity.
++    #[test]
++    fn blend_luminosity() {
++        let mut top = pixmap(1, 1, [255, 255, 255, 255]);
++        blend(&mut top, &pixmap(1, 1, [255, 0, 0, 255]), Mix::Luminosity);
++        assert_eq!(at(&top, 0, 0), [255, 255, 255, 255]);
++        let mut top = pixmap(1, 1, [0, 0, 0, 255]);
++        blend(&mut top, &pixmap(1, 1, [255, 0, 0, 255]), Mix::Luminosity);
++        assert_eq!(at(&top, 0, 0), [0, 0, 0, 255]);
++    }
++
++    /// pyro: `feTile` tiles the rectangle of the crop it reads; a lighting node takes its colour from
++    /// the flood that is its second input; an `feImage` node reads the image given for it.
++    #[test]
++    fn tiles_lighting_and_images() {
++        let mut filter = Filter::empty();
++        let cropped = filter.add(
++            FilterEffect::Image(ExternalImageSource {
++                image_id: CROP_IMAGE,
++                transform: Some([0.0, 0.0, 2.0, 10.0, 0.0, 0.0]),
++            }),
++            FilterInputs::single(FilterInput::Source(FilterSource::SourceGraphic)),
++        );
++        filter.add(FilterEffect::Tile, FilterInputs::single(FilterInput::Result(cropped)));
++        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
++        let mut source = Pixmap::new(10, 10);
++        source.data_as_u8_slice_mut()[4..8].copy_from_slice(&[0, 0, 255, 255]);
++        let out = graph.render(source, &[], REGION);
++        assert_eq!(at(&out, 7, 0), [0, 0, 255, 255], "column 1 repeats every 2");
++        assert_eq!(at(&out, 8, 0), [0; 4]);
++
++        let mut filter = Filter::empty();
++        let color = filter.add(FilterEffect::Flood(AlphaColor::from_rgb8(0, 255, 128)), FilterInputs::NONE);
++        filter.add(
++            FilterEffect::DiffuseLighting(anyrender::filters::lighting::DiffuseLightingFilter {
++                surface_scale: 1.0,
++                diffuse_constant: 1.0,
++                kernel_unit_length: 1.0,
++                light_source: LightSource::Distant(anyrender::filters::lighting::DistantLightSource {
++                    azimuth: 0.0,
++                    elevation: 90.0,
++                }),
++            }),
++            FilterInputs::dual(FilterInput::Source(FilterSource::SourceGraphic), FilterInput::Result(color)),
++        );
++        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
++        let out = graph.render(pixmap(10, 10, [0, 0, 0, 255]), &[], REGION);
++        assert_eq!(at(&out, 5, 5), [0, 255, 128, 255]);
++
++        let mut filter = Filter::empty();
++        filter.add(
++            FilterEffect::Image(ExternalImageSource {
++                image_id: IMAGE_SOURCE,
++                transform: Some([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
++            }),
++            FilterInputs::NONE,
++        );
++        let graph = Graph::new(&filter, Affine::IDENTITY).unwrap();
++        assert!(graph.reads_images());
++        let out = graph.render(Pixmap::new(10, 10), &[None, Some(pixmap(10, 10, [0, 128, 0, 255]))], REGION);
++        assert_eq!(at(&out, 9, 9), [0, 128, 0, 255]);
++    }
++
++    /// pyro: a displacement in a scaled user space moves by the scaled amount (WPT
++    /// fedisplacementmap-non-uniform-transform-001).
++    #[test]
++    fn displacement_under_a_scale() {
++        let mut filter = Filter::empty();
++        let map = filter.add(FilterEffect::Flood(AlphaColor::from_rgb8(255, 255, 0)), FilterInputs::NONE);
++        filter.add(
++            FilterEffect::DisplacementMap(anyrender::filters::displacement::DisplacementMapFilter {
++                scale: 4.0,
++                x_channel: ColorChannel::Red,
++                y_channel: ColorChannel::Green,
++            }),
++            FilterInputs::dual(FilterInput::Source(FilterSource::SourceGraphic), FilterInput::Result(map)),
++        );
++        let graph = Graph::new(&filter, Affine::scale_non_uniform(2.0, 1.0)).unwrap();
++        let mut source = Pixmap::new(10, 10);
++        let i = (3 * 10 + 6) * 4;
++        source.data_as_u8_slice_mut()[i..i + 4].copy_from_slice(&[0, 0, 255, 255]);
++        // User (2, 2) is device (4, 2): the pixel at (2, 1) reads (6, 3).
++        let out = graph.render(source, &[], REGION);
++        assert_eq!(at(&out, 2, 1), [0, 0, 255, 255]);
++    }
++
++    /// A kernel of 4 columns and 3 rows with its extra values (rows, target, edge) is 16 values,
++    /// as many as a square 4 x 4 kernel: the extra values are read first.
++    #[test]
++    fn a_kernel_of_four_columns_and_three_rows() {
++        let kernel = |values: Vec<f32>| anyrender::filters::convolution::ConvolutionKernel {
++            size: 4,
++            values,
++            divisor: 1.0,
++            bias: 0.0,
++            preserve_alpha: false,
++        };
++        let mut values = vec![1.0; 12];
++        values.extend([3.0, 1.0, 2.0, 1.0]);
++        let Some(Op::Convolve(k)) = convolution(&kernel(values)) else { panic!() };
++        assert_eq!((k.columns, k.rows, k.target_x, k.target_y, k.kernel.len()), (4, 3, 1, 2, 12));
++        assert!(matches!(k.edge, Edge::Wrap));
++        let Some(Op::Convolve(k)) = convolution(&kernel(vec![1.0; 16])) else { panic!() };
++        assert_eq!((k.columns, k.rows, k.target_x, k.target_y), (4, 4, 2, 2), "a square kernel alone");
 +    }
 +}
 diff --git a/src/image_renderer.rs b/src/image_renderer.rs
@@ -2193,10 +2723,10 @@ index 619d5d4..6352428 100644
  
      fn reset(&mut self) {
 diff --git a/src/lib.rs b/src/lib.rs
-index 5bc2e2c..b764840 100644
+index 5bc2e2c..9638d38 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -7,7 +7,10 @@ mod image_renderer;
+@@ -7,8 +7,18 @@ mod image_renderer;
  mod scene;
  mod window_renderer;
  
@@ -2205,11 +2735,665 @@ index 5bc2e2c..b764840 100644
 +mod graph;
 +/// pyro: see the `graph` module (an SVG filter primitive's subregion).
 +pub use graph::CROP_IMAGE as FILTER_CROP_IMAGE;
++/// pyro: see the `graph` module (the `Image` nodes for what anyrender's filter types cannot say:
++/// an `feImage`'s content, a blur of two deviations, `feMorphology` of two radii, `feTurbulence`).
++pub use graph::{
++    BLUR_XY as FILTER_BLUR_XY, IMAGE_SOURCE as FILTER_IMAGE_SOURCE, MORPHOLOGY as FILTER_MORPHOLOGY,
++    TURBULENCE as FILTER_TURBULENCE,
++};
  mod filters;
++mod primitives;
  
  pub use image_cache::ImageCacheConfig;
+ pub use image_renderer::VelloCpuImageRenderer;
+diff --git b/src/primitives.rs b/src/primitives.rs
+new file mode 100644
+index 0000000..71bbce1
+--- /dev/null
++++ b/src/primitives.rs
+@@ -0,0 +1,640 @@
++// Copyright 2020 the Resvg Authors (turbulence and the lighting normals, from resvg 0.48 `filter/`)
++// SPDX-License-Identifier: Apache-2.0 OR MIT
++
++//! pyro: the pixel work of the SVG filter primitives the graph ([`crate::graph`]) does besides the
++//! colour, blur, offset and compositing ones: `feDisplacementMap`, `feTile`, `feMorphology`,
++//! `feConvolveMatrix`, `feTurbulence` and the two lighting primitives, on premultiplied RGBA
++//! pixmaps of one region of device pixels. Each follows what Chromium's (Skia's) filter does where
++//! the two differ from the spec's reference code: `feTurbulence` and the lighting normals are
++//! resvg's ports of the spec's code (resvg is Apache-2.0 OR MIT, as this crate).
++
++use vello_cpu::Pixmap;
++
++use crate::filters::{PixelRect, div255};
++
++/// A pixmap's size as `usize`s.
++fn size(p: &Pixmap) -> (usize, usize) {
++    (usize::from(p.width()), usize::from(p.height()))
++}
++
++/// The unpremultiplied channels of a premultiplied pixel (Skia's `SkUnPreMultiply`: rounded, 0
++/// where it is transparent).
++pub(crate) fn unpremultiply(px: [u8; 4]) -> [u8; 4] {
++    let a = u32::from(px[3]);
++    match a {
++        0 => [0; 4],
++        255 => px,
++        _ => {
++            let c = |v: u8| ((u32::from(v) * 255 + a / 2) / a).min(255) as u8;
++            [c(px[0]), c(px[1]), c(px[2]), px[3]]
++        }
++    }
++}
++
++/// `feDisplacementMap`: each pixel of the result is the pixel of `src` its displacement lands on
++/// (nearest, transparent beyond `src`), as Skia's displacement filter samples it. The
++/// displacement is `scale * (C / 255 - 0.5)` of the map's unpremultiplied channels `x` and `y`
++/// (0 red, 1 green, 2 blue, 3 alpha), in the filter's user space, which `m` (`[a, b, c, d]`, the
++/// linear part of the transform to device pixels) maps to device pixels.
++pub(crate) fn displace(src: &Pixmap, map: &Pixmap, m: [f64; 4], scale: f64, x: usize, y: usize) -> Pixmap {
++    let (w, h) = size(src);
++    let mut out = Pixmap::new(src.width(), src.height());
++    let s = src.data_as_u8_slice();
++    let d = out.data_as_u8_slice_mut();
++    let shift = |v: u8| scale * (f64::from(v) / 255.0 - 0.5);
++    for (i, px) in map.data_as_u8_slice().chunks_exact(4).enumerate() {
++        let c = unpremultiply([px[0], px[1], px[2], px[3]]);
++        let (ux, uy) = (shift(c[x]), shift(c[y]));
++        let (dx, dy) = (m[0] * ux + m[2] * uy, m[1] * ux + m[3] * uy);
++        let (px_x, px_y) = ((i % w) as f64, (i / w) as f64);
++        // The nearest pixel to the displaced centre.
++        let sx = (px_x + 0.5 + dx).floor();
++        let sy = (px_y + 0.5 + dy).floor();
++        if sx < 0.0 || sy < 0.0 || sx >= w as f64 || sy >= h as f64 {
++            continue;
++        }
++        let j = (sy as usize * w + sx as usize) * 4;
++        d[i * 4..i * 4 + 4].copy_from_slice(&s[j..j + 4]);
++    }
++    out
++}
++
++/// `feTile`: `rect` (pixels of `src`, the input's subregion) repeated over the whole pixmap, a
++/// copy of it starting at its own position.
++pub(crate) fn tile(src: &Pixmap, rect: PixelRect) -> Pixmap {
++    let (w, h) = size(src);
++    let mut out = Pixmap::new(src.width(), src.height());
++    let (tw, th) = (i64::from(rect.width()), i64::from(rect.height()));
++    if tw <= 0 || th <= 0 {
++        return out;
++    }
++    let s = src.data_as_u8_slice();
++    let d = out.data_as_u8_slice_mut();
++    let columns: Vec<Option<usize>> = (0..w as i64)
++        .map(|x| {
++            let sx = i64::from(rect.x0) + (x - i64::from(rect.x0)).rem_euclid(tw);
++            (0..w as i64).contains(&sx).then_some(sx as usize)
++        })
++        .collect();
++    for y in 0..h as i64 {
++        let sy = i64::from(rect.y0) + (y - i64::from(rect.y0)).rem_euclid(th);
++        if !(0..h as i64).contains(&sy) {
++            continue;
++        }
++        let (row, line) = (y as usize * w * 4, sy as usize * w * 4);
++        for (x, sx) in columns.iter().enumerate() {
++            if let Some(sx) = sx {
++                d[row + x * 4..row + x * 4 + 4].copy_from_slice(&s[line + sx * 4..line + sx * 4 + 4]);
++            }
++        }
++    }
++    out
++}
++
++/// `feMorphology`: each channel's minimum (erode) or maximum (dilate) over the `2 rx + 1` by
++/// `2 ry + 1` pixels around each pixel, the window cut to the pixmap (as Skia's morphology filter
++/// cuts it to its input), in a pass along the rows then one along the columns.
++pub(crate) fn morphology(pixels: &mut Pixmap, rx: usize, ry: usize, dilate: bool) {
++    let (w, h) = size(pixels);
++    if w == 0 || h == 0 {
++        return;
++    }
++    let pick = |a: u8, b: u8| if dilate { a.max(b) } else { a.min(b) };
++    let data = pixels.data_as_u8_slice_mut();
++    let mut line = Vec::new();
++    if rx > 0 {
++        for row in data.chunks_exact_mut(w * 4) {
++            line.clear();
++            line.extend_from_slice(row);
++            for x in 0..w {
++                let (lo, hi) = (x.saturating_sub(rx), (x + rx).min(w - 1));
++                for c in 0..4 {
++                    let mut v = line[lo * 4 + c];
++                    for k in lo + 1..=hi {
++                        v = pick(v, line[k * 4 + c]);
++                    }
++                    row[x * 4 + c] = v;
++                }
++            }
++        }
++    }
++    if ry > 0 {
++        let source = data.to_vec();
++        for y in 0..h {
++            let (lo, hi) = (y.saturating_sub(ry), (y + ry).min(h - 1));
++            let out = &mut data[y * w * 4..(y + 1) * w * 4];
++            out.copy_from_slice(&source[lo * w * 4..(lo + 1) * w * 4]);
++            for k in lo + 1..=hi {
++                for (o, &v) in out.iter_mut().zip(&source[k * w * 4..(k + 1) * w * 4]) {
++                    *o = pick(*o, v);
++                }
++            }
++        }
++    }
++}
++
++/// How `feConvolveMatrix` reads past the pixmap's edges.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Edge {
++    /// The nearest edge pixel.
++    Duplicate,
++    /// The pixels of the opposite edge.
++    Wrap,
++    /// Transparent black.
++    None,
++}
++
++/// An `feConvolveMatrix` in device pixels.
++#[derive(Clone, Debug)]
++pub(crate) struct Convolution {
++    pub columns: usize,
++    pub rows: usize,
++    /// Row by row, as the element lists it.
++    pub kernel: Vec<f32>,
++    pub target_x: usize,
++    pub target_y: usize,
++    pub divisor: f32,
++    pub bias: f32,
++    pub edge: Edge,
++    pub preserve_alpha: bool,
++}
++
++/// `feConvolveMatrix`, as Chromium has Skia's matrix convolution do it: the kernel turned half a
++/// turn (the spec's formula), sums over bytes (0..255) times `1 / divisor` plus `bias * 255`,
++/// clamped (the colour to the alpha) and rounded; with `preserveAlpha` the colours are convolved
++/// unpremultiplied and the pixel keeps its alpha.
++pub(crate) fn convolve(src: &Pixmap, k: &Convolution) -> Pixmap {
++    let (w, h) = size(src);
++    let mut out = Pixmap::new(src.width(), src.height());
++    if w == 0 || h == 0 || k.kernel.len() != k.columns * k.rows || k.divisor == 0.0 {
++        return out;
++    }
++    let pixels: Vec<[u8; 4]> = src
++        .data_as_u8_slice()
++        .chunks_exact(4)
++        .map(|p| {
++            let p = [p[0], p[1], p[2], p[3]];
++            if k.preserve_alpha { unpremultiply(p) } else { p }
++        })
++        .collect();
++    let gain = 1.0 / k.divisor;
++    let bias = k.bias * 255.0;
++    let at = |x: isize, y: isize| -> Option<[u8; 4]> {
++        let (x, y) = match k.edge {
++            Edge::None if x < 0 || y < 0 || x >= w as isize || y >= h as isize => return None,
++            Edge::None => (x, y),
++            Edge::Duplicate => (x.clamp(0, w as isize - 1), y.clamp(0, h as isize - 1)),
++            Edge::Wrap => (x.rem_euclid(w as isize), y.rem_euclid(h as isize)),
++        };
++        Some(pixels[y as usize * w + x as usize])
++    };
++    let d = out.data_as_u8_slice_mut();
++    for y in 0..h {
++        for x in 0..w {
++            let mut sums = [0.0f32; 4];
++            for j in 0..k.rows {
++                for i in 0..k.columns {
++                    // The spec's kernel[orderX - i - 1][orderY - j - 1] at the source pixel
++                    // (x - targetX + i, y - targetY + j).
++                    let weight = k.kernel[(k.rows - 1 - j) * k.columns + (k.columns - 1 - i)];
++                    if weight == 0.0 {
++                        continue;
++                    }
++                    let sx = x as isize - k.target_x as isize + i as isize;
++                    let sy = y as isize - k.target_y as isize + j as isize;
++                    if let Some(p) = at(sx, sy) {
++                        for c in 0..4 {
++                            sums[c] += weight * f32::from(p[c]);
++                        }
++                    }
++                }
++            }
++            // Computed in floats and rounded once, as Skia's convolution shader stores it (WPT
++            // feconvolve-region: a bias of 0.5 over blue is 128, not 127).
++            let value = |sum: f32, max: f32| (sum * gain + bias).clamp(0.0, max);
++            let px = &mut d[(y * w + x) * 4..(y * w + x) * 4 + 4];
++            if k.preserve_alpha {
++                let a = pixels[y * w + x][3];
++                for c in 0..3 {
++                    px[c] = (value(sums[c], 255.0) * f32::from(a) / 255.0 + 0.5) as u8;
++                }
++                px[3] = a;
++            } else {
++                let a = value(sums[3], 255.0);
++                for c in 0..3 {
++                    px[c] = (value(sums[c], a) + 0.5) as u8;
++                }
++                px[3] = (a + 0.5) as u8;
++            }
++        }
++    }
++    out
++}
++
++/// `feTurbulence`'s parameters.
++#[derive(Clone, Debug)]
++pub(crate) struct Turbulence {
++    pub base_frequency: (f64, f64),
++    pub octaves: u32,
++    pub seed: i32,
++    pub fractal_noise: bool,
++}
++
++/// `feTurbulence` over a pixmap of `w` by `h`: the pixel `(x, y)` is the noise at the user-space
++/// point `to_user` maps `(x, y)` to (the pixel's corner, as resvg evaluates it), the spec's
++/// reference code (resvg's port). The result is premultiplied.
++pub(crate) fn turbulence(w: u16, h: u16, t: &Turbulence, to_user: kurbo::Affine) -> Pixmap {
++    let mut out = Pixmap::new(w, h);
++    let (lattice, gradient) = noise::init(t.seed);
++    let d = out.data_as_u8_slice_mut();
++    for (i, px) in d.chunks_exact_mut(4).enumerate() {
++        let (x, y) = ((i % usize::from(w)) as f64, (i / usize::from(w)) as f64);
++        let p = to_user * kurbo::Point::new(x, y);
++        let mut rgba = [0u8; 4];
++        for (channel, v) in rgba.iter_mut().enumerate() {
++            let n = noise::turbulence(channel, p.x, p.y, t, &lattice, &gradient);
++            let n = if t.fractal_noise { (n * 255.0 + 255.0) / 2.0 } else { n * 255.0 };
++            *v = (n.clamp(0.0, 255.0) + 0.5) as u8;
++        }
++        let a = u32::from(rgba[3]);
++        for c in 0..3 {
++            px[c] = div255(u32::from(rgba[c]) * a) as u8;
++        }
++        px[3] = rgba[3];
++    }
++    out
++}
++
++/// The spec's (and resvg's) noise.
++mod noise {
++    use super::Turbulence;
++
++    const RAND_M: i32 = 2147483647; // 2**31 - 1
++    const RAND_A: i32 = 16807; // 7**5; primitive root of m
++    const RAND_Q: i32 = 127773; // m / a
++    const RAND_R: i32 = 2836; // m % a
++    const B_SIZE: usize = 0x100;
++    const B_SIZE_32: i32 = 0x100;
++    const B_LEN: usize = B_SIZE + B_SIZE + 2;
++    const BM: i32 = 0xff;
++    const PERLIN_N: i32 = 0x1000;
++
++    pub(super) fn init(mut seed: i32) -> (Vec<usize>, Vec<Vec<[f64; 2]>>) {
++        let mut lattice = vec![0; B_LEN];
++        let mut gradient = vec![vec![[0.0; 2]; B_LEN]; 4];
++        if seed <= 0 {
++            seed = -(seed % (RAND_M - 1)) + 1;
++        }
++        if seed > RAND_M - 1 {
++            seed = RAND_M - 1;
++        }
++        for g in gradient.iter_mut() {
++            for (i, l) in lattice.iter_mut().enumerate().take(B_SIZE) {
++                *l = i;
++                for j in 0..2 {
++                    seed = random(seed);
++                    g[i][j] = f64::from((seed % (B_SIZE_32 + B_SIZE_32)) - B_SIZE_32) / f64::from(B_SIZE_32);
++                }
++                let s = (g[i][0] * g[i][0] + g[i][1] * g[i][1]).sqrt();
++                if s != 0.0 {
++                    g[i][0] /= s;
++                    g[i][1] /= s;
++                }
++            }
++        }
++        for i in (1..B_SIZE).rev() {
++            let k = lattice[i];
++            seed = random(seed);
++            let j = (seed % B_SIZE_32) as usize;
++            lattice[i] = lattice[j];
++            lattice[j] = k;
++        }
++        for i in 0..B_SIZE + 2 {
++            lattice[B_SIZE + i] = lattice[i];
++            for g in gradient.iter_mut() {
++                g[B_SIZE + i] = g[i];
++            }
++        }
++        (lattice, gradient)
++    }
++
++    fn random(seed: i32) -> i32 {
++        let mut result = RAND_A * (seed % RAND_Q) - RAND_R * (seed / RAND_Q);
++        if result <= 0 {
++            result += RAND_M;
++        }
++        result
++    }
++
++    pub(super) fn turbulence(
++        channel: usize,
++        x: f64,
++        y: f64,
++        t: &Turbulence,
++        lattice: &[usize],
++        gradient: &[Vec<[f64; 2]>],
++    ) -> f64 {
++        let (mut x, mut y) = (x * t.base_frequency.0, y * t.base_frequency.1);
++        let mut sum = 0.0;
++        let mut ratio = 1.0;
++        for _ in 0..t.octaves {
++            let n = noise2(channel, x, y, lattice, gradient);
++            sum += if t.fractal_noise { n } else { n.abs() } / ratio;
++            x *= 2.0;
++            y *= 2.0;
++            ratio *= 2.0;
++        }
++        sum
++    }
++
++    fn noise2(channel: usize, x: f64, y: f64, lattice: &[usize], gradient: &[Vec<[f64; 2]>]) -> f64 {
++        let t = x + f64::from(PERLIN_N);
++        let bx0 = (t as i32) & BM;
++        let bx1 = (bx0 + 1) & BM;
++        let rx0 = t - t as i64 as f64;
++        let rx1 = rx0 - 1.0;
++        let t = y + f64::from(PERLIN_N);
++        let by0 = (t as i32) & BM;
++        let by1 = (by0 + 1) & BM;
++        let ry0 = t - t as i64 as f64;
++        let ry1 = ry0 - 1.0;
++        let i = lattice[bx0 as usize];
++        let j = lattice[bx1 as usize];
++        let b00 = lattice[i + by0 as usize];
++        let b10 = lattice[j + by0 as usize];
++        let b01 = lattice[i + by1 as usize];
++        let b11 = lattice[j + by1 as usize];
++        let sx = s_curve(rx0);
++        let sy = s_curve(ry0);
++        let g = &gradient[channel];
++        let u = rx0 * g[b00][0] + ry0 * g[b00][1];
++        let v = rx1 * g[b10][0] + ry0 * g[b10][1];
++        let a = lerp(sx, u, v);
++        let u = rx0 * g[b01][0] + ry1 * g[b01][1];
++        let v = rx1 * g[b11][0] + ry1 * g[b11][1];
++        let b = lerp(sx, u, v);
++        lerp(sy, a, b)
++    }
++
++    fn s_curve(t: f64) -> f64 {
++        t * t * (3.0 - 2.0 * t)
++    }
++
++    fn lerp(t: f64, a: f64, b: f64) -> f64 {
++        a + t * (b - a)
++    }
++}
++
++/// A light source in device pixels of the pixmap lit (`z` scaled as the plane is).
++#[derive(Clone, Debug)]
++pub(crate) enum Light {
++    /// The unit vector towards the light.
++    Distant([f64; 3]),
++    Point([f64; 3]),
++    Spot {
++        at: [f64; 3],
++        /// The unit vector the light points in.
++        direction: [f64; 3],
++        exponent: f64,
++        /// The cosine of the limiting cone's angle, if it has one.
++        cone: Option<f64>,
++    },
++}
++
++/// `feDiffuseLighting` or `feSpecularLighting` in device pixels.
++#[derive(Clone, Debug)]
++pub(crate) struct Lighting {
++    pub light: Light,
++    pub surface_scale: f64,
++    /// `kd` or `ks`.
++    pub constant: f64,
++    /// `None` for diffuse lighting, else the specular exponent.
++    pub specular_exponent: Option<f64>,
++    /// The lighting colour (bytes, in the primitive's colour space).
++    pub color: [u8; 3],
++}
++
++/// The lighting primitives over the alpha of `src` as a height map: the surface normal from Sobel
++/// kernels (the spec's, its edge ones at the pixmap's edges; resvg's port), the light's colour times
++/// `N.L` (diffuse, opaque) or `N.H ^ exponent` (specular, its alpha the largest of its colours).
++pub(crate) fn lighting(src: &Pixmap, l: &Lighting) -> Pixmap {
++    let (w, h) = size(src);
++    let mut out = Pixmap::new(src.width(), src.height());
++    if w == 0 || h == 0 {
++        return out;
++    }
++    let alpha: Vec<i32> = src.data_as_u8_slice().chunks_exact(4).map(|p| i32::from(p[3])).collect();
++    let a = |x: usize, y: usize| alpha[y * w + x];
++    let d = out.data_as_u8_slice_mut();
++    for y in 0..h {
++        for x in 0..w {
++            let ((fx, fy), (nx, ny)) = normal(&a, x, y, w, h);
++            let surface =
++                [-(nx as f64) * l.surface_scale / 255.0 * fx, -(ny as f64) * l.surface_scale / 255.0 * fy, 1.0];
++            let z = f64::from(a(x, y)) / 255.0 * l.surface_scale;
++            let to_light = match &l.light {
++                Light::Distant(v) => *v,
++                Light::Point(at) | Light::Spot { at, .. } => {
++                    normalized([at[0] - x as f64, at[1] - y as f64, at[2] - z])
++                }
++            };
++            let color = light_color(l, to_light);
++            let n = normalized(surface);
++            let factor = match l.specular_exponent {
++                None => l.constant * dot(n, to_light),
++                Some(exponent) => {
++                    let half = normalized([to_light[0], to_light[1], to_light[2] + 1.0]);
++                    let n_dot_h = dot(n, half);
++                    l.constant * if exponent == 1.0 { n_dot_h } else { n_dot_h.max(0.0).powf(exponent) }
++                }
++            };
++            let c = |v: f64| (v * factor).clamp(0.0, 255.0).round() as u8;
++            let rgb = [c(color[0]), c(color[1]), c(color[2])];
++            let px = &mut d[(y * w + x) * 4..(y * w + x) * 4 + 4];
++            match l.specular_exponent {
++                None => px.copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]),
++                Some(_) => px.copy_from_slice(&[rgb[0], rgb[1], rgb[2], rgb[0].max(rgb[1]).max(rgb[2])]),
++            }
++        }
++    }
++    out
++}
++
++fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
++    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
++}
++
++fn normalized(v: [f64; 3]) -> [f64; 3] {
++    let length = dot(v, v).sqrt();
++    if length == 0.0 { v } else { [v[0] / length, v[1] / length, v[2] / length] }
++}
++
++/// The light's colour reaching a point in the direction `to_light` (unit) from it: a spot light's
++/// falls off with the angle to its direction, and past its cone (smoothly over 0.016 of the cosine,
++/// as Skia's spot light) it is black.
++fn light_color(l: &Lighting, to_light: [f64; 3]) -> [f64; 3] {
++    let color = l.color.map(f64::from);
++    let Light::Spot { direction, exponent, cone, .. } = &l.light else {
++        return color;
++    };
++    let cos = -dot(to_light, *direction);
++    if cos <= 0.0 {
++        return [0.0; 3];
++    }
++    const ANTI_ALIAS: f64 = 0.016;
++    let mut scale = cos.powf(*exponent);
++    if let Some(outer) = *cone {
++        if cos < outer {
++            return [0.0; 3];
++        }
++        if cos < outer + ANTI_ALIAS {
++            scale *= (cos - outer) / ANTI_ALIAS;
++        }
++    }
++    color.map(|c| c * scale)
++}
++
++/// The Sobel normal at `(x, y)` of a `w` by `h` height map: its factors and its two sums (the
++/// spec's kernels, its edge and corner ones where the map ends). A map of fewer than two pixels
++/// along a side is flat along it.
++fn normal(a: &impl Fn(usize, usize) -> i32, x: usize, y: usize, w: usize, h: usize) -> ((f64, f64), (i32, i32)) {
++    if w < 2 || h < 2 {
++        return ((0.0, 0.0), (0, 0));
++    }
++    // The kernels at the edges are the interior one with the missing row or column replaced by
++    // the centre's, and factors that make up for it.
++    let (left, right) = (x > 0, x + 1 < w);
++    let (top, bottom) = (y > 0, y + 1 < h);
++    let at = |dx: isize, dy: isize| a((x as isize + dx) as usize, (y as isize + dy) as usize);
++    // Horizontal: the column right minus the column left (the centre where one is missing),
++    // weighted 1, 2, 1 down the rows present.
++    let column = |dx: isize| {
++        let mut sum = 2 * at(dx, 0);
++        if top {
++            sum += at(dx, -1);
++        }
++        if bottom {
++            sum += at(dx, 1);
++        }
++        sum
++    };
++    let row = |dy: isize| {
++        let mut sum = 2 * at(0, dy);
++        if left {
++            sum += at(-1, dy);
++        }
++        if right {
++            sum += at(1, dy);
++        }
++        sum
++    };
++    let nx = column(if right { 1 } else { 0 }) - column(if left { -1 } else { 0 });
++    let ny = row(if bottom { 1 } else { 0 }) - row(if top { -1 } else { 0 });
++    // The spec's factors: 1/4 inside, 1/3 along an edge (2/3 at a corner) across the edge's
++    // direction, 1/2 along it.
++    let sobel = |both: bool, other_both: bool| match (both, other_both) {
++        (true, true) => 1.0 / 4.0,
++        (true, false) => 1.0 / 3.0,
++        (false, true) => 1.0 / 2.0,
++        (false, false) => 2.0 / 3.0,
++    };
++    ((sobel(left && right, top && bottom), sobel(top && bottom, left && right)), (nx, ny))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn pixmap(w: u16, h: u16, f: impl Fn(usize, usize) -> [u8; 4]) -> Pixmap {
++        let mut p = Pixmap::new(w, h);
++        for (i, px) in p.data_as_u8_slice_mut().chunks_exact_mut(4).enumerate() {
++            px.copy_from_slice(&f(i % usize::from(w), i / usize::from(w)));
++        }
++        p
++    }
++
++    fn at(p: &Pixmap, x: usize, y: usize) -> [u8; 4] {
++        let i = (y * usize::from(p.width()) + x) * 4;
++        p.data_as_u8_slice()[i..i + 4].try_into().unwrap()
++    }
++
++    /// A map of green 255, blue 128 at scale 10 moves each pixel by (+5, ~0): the pixel 5 right.
++    #[test]
++    fn displacement_reads_the_pixel_the_map_points_at() {
++        let src = pixmap(10, 2, |x, _| [x as u8, 0, 0, 255]);
++        let map = pixmap(10, 2, |_, _| [0, 255, 128, 255]);
++        let out = displace(&src, &map, [1.0, 0.0, 0.0, 1.0], 10.0, 1, 2);
++        assert_eq!(at(&out, 0, 0), [5, 0, 0, 255]);
++        assert_eq!(at(&out, 4, 1), [9, 0, 0, 255]);
++        assert_eq!(at(&out, 5, 0), [0; 4], "past the source: transparent");
++        // A mirrored user space moves the other way.
++        let out = displace(&src, &map, [-1.0, 0.0, 0.0, 1.0], 10.0, 1, 2);
++        assert_eq!(at(&out, 9, 0), [4, 0, 0, 255]);
++    }
++
++    #[test]
++    fn a_tile_repeats_its_rectangle_from_its_own_position() {
++        let src = pixmap(6, 1, |x, _| [x as u8, 0, 0, 255]);
++        let out = tile(&src, PixelRect { x0: 2, y0: 0, x1: 4, y1: 1 });
++        let row: Vec<u8> = (0..6).map(|x| at(&out, x, 0)[0]).collect();
++        assert_eq!(row, [2, 3, 2, 3, 2, 3]);
++    }
++
++    #[test]
++    fn dilation_and_erosion_by_a_radius() {
++        let mut p = pixmap(7, 7, |x, y| if (x, y) == (3, 3) { [0, 0, 255, 255] } else { [0; 4] });
++        morphology(&mut p, 1, 2, true);
++        assert_eq!(at(&p, 4, 5), [0, 0, 255, 255]);
++        assert_eq!(at(&p, 5, 3), [0; 4]);
++        morphology(&mut p, 1, 1, false);
++        assert_eq!(at(&p, 3, 3), [0, 0, 255, 255]);
++        assert_eq!(at(&p, 4, 3), [0; 4]);
++    }
++
++    /// WPT feconvolve-region: a box of nine ones over blue with a bias of 0.5: blue plus half grey
++    /// inside, half-transparent white (premultiplied 128s) outside.
++    #[test]
++    fn a_convolution_with_a_bias() {
++        let src =
++            pixmap(9, 9, |x, y| if (3..6).contains(&x) && (3..6).contains(&y) { [0, 0, 255, 255] } else { [0; 4] });
++        let k = Convolution {
++            columns: 3,
++            rows: 3,
++            kernel: vec![1.0; 9],
++            target_x: 1,
++            target_y: 1,
++            divisor: 9.0,
++            bias: 0.5,
++            edge: Edge::Duplicate,
++            preserve_alpha: false,
++        };
++        let out = convolve(&src, &k);
++        assert_eq!(at(&out, 4, 4), [128, 128, 255, 255]);
++        assert_eq!(at(&out, 0, 0), [128, 128, 128, 128]);
++    }
++
++    /// A flat surface under a light straight above: the lighting colour itself.
++    #[test]
++    fn a_flat_surface_lit_from_above() {
++        let src = pixmap(4, 4, |_, _| [0, 0, 0, 255]);
++        let mut l = Lighting {
++            light: Light::Distant([0.0, 0.0, 1.0]),
++            surface_scale: 1.0,
++            constant: 1.0,
++            specular_exponent: None,
++            color: [0, 255, 128],
++        };
++        assert_eq!(at(&lighting(&src, &l), 0, 3), [0, 255, 128, 255]);
++        l.specular_exponent = Some(1.0);
++        assert_eq!(at(&lighting(&src, &l), 2, 2), [0, 255, 128, 255]);
++    }
++
++    /// Turbulence of no frequency is transparent; fractal noise of none is half grey.
++    #[test]
++    fn noise_of_no_frequency() {
++        let mut t = Turbulence { base_frequency: (0.0, 0.0), octaves: 1, seed: 0, fractal_noise: false };
++        assert_eq!(at(&turbulence(2, 2, &t, kurbo::Affine::IDENTITY), 1, 1), [0; 4]);
++        t.fractal_noise = true;
++        assert_eq!(at(&turbulence(2, 2, &t, kurbo::Affine::IDENTITY), 1, 1), [64, 64, 64, 128]);
++    }
++}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..ae67d50 100644
+index 1b09a33..5f1c20f 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,11 +1,14 @@
@@ -2408,7 +3592,7 @@ index 1b09a33..ae67d50 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +287,672 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +287,717 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -2477,6 +3661,14 @@ index 1b09a33..ae67d50 100644
 +                self.clip_paths.push(Pushed::ClipPath);
 +                open.push((i, false));
 +                i += 1;
++                continue;
++            }
++            // pyro: an `feImage`'s content, which only its filter layer's graph reads
++            // (`draw_filtered_layer`): drawn nowhere else.
++            if let RenderCommand::PushLayer(layer) = &commands[i]
++                && layer.filter.as_deref().and_then(crate::graph::image_source_marker).is_some()
++            {
++                i = matching_pop(commands, i) + 1;
 +                continue;
 +            }
 +            if let RenderCommand::PushLayer(layer) = &commands[i]
@@ -2675,6 +3867,30 @@ index 1b09a33..ae67d50 100644
 +        self.render_ctx.reset_paint_transform();
 +    }
 +
++    /// pyro: `commands` rendered into a single-threaded context of `width` by `height` of their own,
++    /// `to_offscreen` mapping the frame's device pixels to its pixels.
++    fn render_offscreen(
++        &mut self,
++        commands: &[RenderCommand],
++        width: u16,
++        height: u16,
++        to_offscreen: Affine,
++        transform: Affine,
++    ) -> Pixmap {
++        let mut ctx = self.offscreen_context(width, height);
++        std::mem::swap(&mut self.render_ctx, &mut ctx);
++        let frame_to_ctx = self.frame_to_ctx;
++        self.frame_to_ctx = to_offscreen * frame_to_ctx;
++        self.replay(commands, to_offscreen * transform);
++        self.frame_to_ctx = frame_to_ctx;
++        std::mem::swap(&mut self.render_ctx, &mut ctx);
++        let mut pixels = Pixmap::new(width, height);
++        ctx.flush();
++        ctx.render(&mut pixels, &mut self.resources);
++        self.filter_contexts.push(ctx);
++        pixels
++    }
++
 +    /// pyro: a filter layer. Its commands are rendered into a single-threaded context of their own,
 +    /// over the pixels its filter reads to produce what the layer's clip shows of the frame (at a
 +    /// reduced size for a large blur: [`FilterPlan::factor`]), the filter makes images of them
@@ -2716,24 +3932,37 @@ index 1b09a33..ae67d50 100644
 +        ) else {
 +            return;
 +        };
-+        let mut ctx = self.offscreen_context(width, height);
-+        std::mem::swap(&mut self.render_ctx, &mut ctx);
 +        let to_offscreen = Affine::scale(1.0 / f64::from(factor))
 +            * Affine::translate((-f64::from(region.x0), -f64::from(region.y0)));
-+        let frame_to_ctx = self.frame_to_ctx;
-+        self.frame_to_ctx = to_offscreen * frame_to_ctx;
-+        self.replay(inner, to_offscreen * transform);
-+        self.frame_to_ctx = frame_to_ctx;
-+        std::mem::swap(&mut self.render_ctx, &mut ctx);
-+        let mut pixels = Pixmap::new(width, height);
-+        ctx.flush();
-+        ctx.render(&mut pixels, &mut self.resources);
-+        self.filter_contexts.push(ctx);
++        let pixels = self.render_offscreen(inner, width, height, to_offscreen, transform);
++        // pyro: the content of the filter's `feImage`s, the layers in it that hold them (see
++        // `crate::graph::IMAGE_SOURCE`), each rendered over the same pixels.
++        let mut sources: Vec<Option<Pixmap>> = Vec::new();
++        if plan.reads_images() {
++            let mut j = 0;
++            while j < inner.len() {
++                let end = match &inner[j] {
++                    RenderCommand::PushLayer(_) | RenderCommand::PushClipLayer(_) => matching_pop(inner, j),
++                    _ => j,
++                };
++                if let RenderCommand::PushLayer(marker) = &inner[j]
++                    && let Some(k) = marker.filter.as_deref().and_then(crate::graph::image_source_marker)
++                    && k < 64
++                {
++                    if sources.len() <= k {
++                        sources.resize_with(k + 1, || None);
++                    }
++                    let content = &inner[j + 1..end];
++                    sources[k] = Some(self.render_offscreen(content, width, height, to_offscreen, transform));
++                }
++                j = end + 1;
++            }
++        }
 +        // A blur of glyphs in one colour (a text shadow's) blurs their alpha alone, as the blur mask
 +        // filter Chromium draws text shadows with does; anything else is blurred in all four
 +        // channels, as its blur filter does (a box was a level off with an invisible command in
 +        // another colour beside it: WPT's filtered-inline-applies-to-block).
-+        let images = plan.render(pixels, region, uniform_color(inner, true));
++        let images = plan.render(pixels, &sources, region, uniform_color(inner, true));
 +
 +        // An opaque layer of the normal blend mode whose clip is a rectangle of whole device pixels
 +        // needs no layer of its own: the images are drawn inside `out`, the clip there, and the
@@ -3081,7 +4310,7 @@ index 1b09a33..ae67d50 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1029,197 @@ mod clip_rule_tests {
+@@ -292,4 +1074,197 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

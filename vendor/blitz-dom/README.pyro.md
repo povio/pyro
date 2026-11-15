@@ -154,9 +154,50 @@ attributes and the `<style>` sheets inside the SVG, but never saw the page's she
   `<g>`'s filter still renders.
 - Fill and stroke boxes are the elements' bounding boxes from usvg: when an element needs one, the subtree is
   written twice, the first time with ids on those elements, and parsed (cached) for them.
+- `filter` is written in the `style` attribute (which wins over the `<svg>`'s own `<style>` sheets in usvg, as the
+  page's value does), with drop shadows' colours resolved to `#rrggbbaa` (usvg knows neither `currentcolor` nor
+  `color-mix()`, and its `style` tokenizer ends a function at its first `)`, which cut `drop-shadow(rgb(0, 128, 0)
+  50px 0px 0px)` short and left the element unfiltered); a value that still has parentheses in parentheses is
+  written as the attribute. Its lengths, and a text shadow's, are divided by the element's `zoom` (Stylo's computed
+  lengths have it; user units are scaled by the `<svg>`'s box).
+- A `<text>`'s `text-shadow` (one shadow) is a copy of the text written before it, in a group moved by the
+  offset (and blurred by half the blur radius), whose fills and strokes that are not `none` are the shadow's
+  colour, their opacities times its alpha: Chromium draws a text shadow as the text painted again, which a
+  reference drawing the text twice matches to the level (a drop shadow of the text was 2 levels off at its
+  edges; WPT `css-text-decor/text-shadow/svg-*`). Not in a `<switch>` (which would choose the copy, without the
+  text's conditions) or a `<clipPath>` (which drops groups): only where the parent draws its children in order
+  (`in_group_container`), as for the `plus-lighter` group below.
+- `clip-path` and `mask` references (attributes or CSS) to an element of the `<svg>` that is no `<clipPath>` or
+  `<mask>` are written as `none`: such a reference is ignored (CSS Masking), where usvg left the element out (WPT
+  `clip-path-invalid-reference`, `mask-invalid-reference`). A `transform`, `patternTransform` or
+  `gradientTransform` attribute that is no transform list in SVG's grammar (a comma that separates nothing:
+  `rotate(90,)`, which svgtypes reads) is ignored, as in Chromium (WPT `svg-external-styles-014`).
+- CSS mask layers on an SVG element (other than one `url(#mask)` of the `<svg>`, which stays usvg's `mask` whatever
+  its `mask-mode`, so that its region keeps a stroke past the fill box, and a `url(doc.svg#m)` naming a `<mask>` of
+  another document, which is not resolved and leaves the element unmasked) become a `<mask>` made for it: SVG
+  images (embedded as `data:` URLs from the document they were loaded from, `SvgImageData::source`, which `net.rs`
+  keeps for documents of up to 256 KiB) and linear gradients (as `<linearGradient>`s) as tiles placed by
+  `mask-size`, `mask-position`, `mask-repeat` (`repeat`, `space`, `round`, `no-repeat`) and `mask-origin`, clipped
+  to `mask-clip`, in SVG's boxes (`content-box` and `padding-box` are the fill box, `border-box` the stroke box,
+  `view-box`, `no-clip`); a reference to a `<mask>` as a white rectangle over the fill box under it; a luminance
+  layer as the alpha of a white rectangle under a luminance `<mask>` of its tiles; each layer above the bottom one
+  in a group whose id names its `mask-composite` operator (`__pyro_compose_srcout_1`), which anyrender_svg
+  composites with it. An image that failed to load is a transparent layer (as the only layer it leaves the element
+  unmasked, as in Chromium: WPT `bad-mask-image-svg-2`). More than 4,096 tiles along an axis (counted before any
+  is placed: a tile below the float spacing at its position never moved on) or in all leave the element unmasked,
+  as do raster images and other gradients, as before. `document.rs` (`apply_loaded_image`): a mask image that
+  loads for an SVG element damages its outermost `<svg>`, whose source is written again with it (WPT
+  `css-masking/mask-image` `mask-clip-*`, `mask-repeat-*-svg`, `mask-position-*`, `mask-composite-2d`,
+  `mask-mode-e`, `bad-mask-image-svg`).
+- `mix-blend-mode: plus-lighter`, which usvg does not know, wraps the element in a group whose id names the
+  operator (`__pyro_compose_pluslighter_1`).
+- A 3D transform (`stylo_to_kurbo::resolve_transform`'s `Spatial`) about its origin, and for the root's children
+  the root's `perspective`, is flattened into the plane (`flatten_transform`): exactly for an element that stays
+  parallel to it, as a depth under a perspective is a scale about its origin (WPT `perspective-svg-child-*`). The
+  `transform` attribute applies first when CSS sets no `transform` (only `rotate: y 30deg`, say), as in 2D.
 
 Stylo computes `transform-box` for servo too since this change (see `vendor/stylo/README.pyro.md`). Tests
-`crates/pyro-render/tests/svg_content.rs`.
+`crates/pyro-render/tests/svg_content.rs` and `svg_css_effects.rs`.
 
 ## `<br>` as inline text
 
@@ -372,6 +413,20 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
   lifted to the nearest layer root's positioned level, as in-flow positioned boxes are
   (`attach_hoisted_past_parent`): they painted under the blocks after the inline (WPT
   `filtered-inline-is-container`).
+- `src/layout/paint_tree.rs` (`place_hoisted`, `tree_order_place`, `precedes_in_tree_order`): an out-of-flow box
+  its containing block lists past its layout parent takes its place in tree order among what the same layout
+  child's subtree lifted to that level (positioned boxes, stacking contexts without a `z-index`), where it was
+  appended after all of them (CSS 2.1 Appendix E step 8; WPT `clip-path-reference-restore`,
+  `clip-path-path-with-zoom-001`, `canvas-change-opacity`, `position-relative-016`).
+  `restore_out_of_flow_stacking_owners`: one without a `z-index` moved into a stacking context its containing block
+  lies outside of joins that context's `paint_children` at its positioned level in tree order (and
+  `StackingContext::positioned_level`, for `hoisted_content_bbox`), where it was painted after the context's
+  content (WPT `mix-blend-mode-root-element-group`). The search first compares with the last box of the same level
+  (in tree order already, the usual case: no search, no allocation). `paint_tree_snapshot` (the debug check that
+  the incremental tree equals a fresh build) compares `positioned_level` too. Paint order is covered by
+  `crates/pyro-render/tests/opacity_group.rs`. `src/node/node.rs` (`hit`): an out-of-flow child placed so is hit
+  where it is painted (`lifted_paint_offset`), under a window scroll too: covered by
+  `a_fixed_box_moved_into_a_stacking_context_is_hit_where_it_is_painted` in `crates/pyro-render/src/lib.rs`.
 
 Covered by `crates/pyro-render/tests/transform_3d.rs` (paint, a scrolled perspective, the card flip, a
 composed 3D rendering context, grouping properties, a filtered inline's positioned boxes, layout boxes), `crates/pyro-layout/tests/transform_3d.rs` (`getBoundingClientRect`, `elementFromPoint`) and the unit
@@ -409,6 +464,13 @@ tests in `src/stylo_to_kurbo.rs`.
   `backdrop-filter`, `mix-blend-mode`, `clip-path`, `mask-image`): Web Animations has the element act as though it
   had `will-change` of it, and blitz-paint marks it a backdrop root (WPT
   `backdrop-filter-backdrop-root-animation-in-effect`).
+- `animation.rs` (`ElementEffects::current`, `Sampled::stacking_context`), `node/element.rs`
+  (`animation_stacking_context`), `node/node.rs` (`is_stacking_context_root`): an animation that is current (in its
+  delay too, where the embedder lists it under `current`: it gives no value) or in effect, of a property that makes
+  a stacking context (`opacity`, the transforms, `perspective`, `filter`, `backdrop-filter`, `clip-path`,
+  `mask-image`, `mix-blend-mode`, `isolation`), makes its element one, as Web Animations' `will-change` side effect
+  has it (WPT `individual-transform/stacking-context-001`). A change of it damages the element
+  (`REBUILD_STACKING_CONTEXT`). Tests: `crates/pyro-render/tests/sampled_animations.rs`.
 
 ## Inline layouts in vertical writing modes
 
@@ -419,6 +481,14 @@ way its block axis runs; paint turns the lines, and these read them physically:
 - `src/node/node.rs` (`inline_fragment_boxes`): inline boxes' rects and `offsetLeft`/`offsetTop`.
 - `src/layout/writing_mode.rs`: `physical_unrounded_layout` for callers outside this crate (`unrounded_layout` is in
   the writing mode of the box that placed the node); `physical_unrounded_geometry` is public for paint.
+
+`sideways-lr` lines run bottom to top from the content box's bottom, their line-over side on the left (paint turns
+them counterclockwise): `inline_fragment_boxes` and the lines' overflow (`line_bounds`, a scroll container's end
+padding the top one) mirror the inline axis there, and an emphasis mark's `right` is under the line. Inline layout
+itself still runs top to bottom in `sideways-lr`: atomic inlines (their own boxes), the static positions of
+out-of-flow boxes and floats are placed top to bottom, so a line beside a float, which takes its slot from the top,
+is painted from the bottom where the float is (a known gap for inline layout: mirror the slots and boxes when
+`line_left_is_bottom`).
 
 `Node::text_offset_at_point` (hit testing) still takes logical coordinates.
 
@@ -923,6 +993,15 @@ elements of one kind, through the references their content makes, as attributes 
 `none`, as usvg treats a short cycle. Sources without a cycle are passed on as they are. Covered by
 `crates/pyro-render/tests/svg_reference_cycles.rs`.
 
+Two more rewrites there make usvg read a filter as Chromium does (both unit-tested in `src/svg_refs.rs`, and in
+`crates/pyro-render/tests/svg_filter_primitives.rs`):
+
+- A `filter` that is one `url(#id)` naming no element is set to `none`: Chromium draws the element unfiltered (the
+  filter chain is ignored), where usvg leaves the element out (WPT css/filter-effects/filter-invalid).
+- `default_zero_divisors`: an `feConvolveMatrix` whose `divisor` is zero gets the default divisor, the sum of its
+  kernel's values (1 when that is zero), as in Chromium; usvg stands a transparent flood in for such a primitive
+  (WPT feconvolve-divisor).
+
 ## SVG elements referenced from a box's CSS
 
 `src/node/svg.rs` (`BaseDocument::svg_reference_document`): blitz-paint applies `clip-path: url(#c)` and
@@ -930,7 +1009,8 @@ elements of one kind, through the references their content makes, as attributes 
 for usvg: the outermost `<svg>` around the element, serialized as inline SVG is (`svg_source`, sprites resolved), in
 `<defs>` (none of it drawn, all of it referenceable), and content that references the element in a viewport of the
 given size (percentages in the element's content resolve against it), parsed by `util::parse_svg_image` (its fonts,
-its reference-cycle breaking). See blitz-paint's README.
+its reference-cycle breaking). The content is in a group of id `__pyro_box_reference`, by which anyrender_svg draws
+a box's masks of opaque shapes as the shapes (see its README). See blitz-paint's README.
 
 ## SVG images by URL: `<view>` fragments, images without a size
 

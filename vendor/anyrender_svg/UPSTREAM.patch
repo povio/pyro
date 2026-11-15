@@ -15,39 +15,225 @@ index 14aded4..862cfe1 100644
  optional = true
 diff --git b/src/filter.rs b/src/filter.rs
 new file mode 100644
-index 0000000..bdcbf18
+index 0000000..073d561
 --- /dev/null
 +++ b/src/filter.rs
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,1033 @@
 +// Copyright 2024 the Vello Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
 +//! pyro: SVG filters (usvg's) as anyrender filter graphs, which anyrender_vello_cpu applies to a
 +//! filter layer's content (its `graph` module: the output is the last node, a subregion is a crop
-+//! node). Primitives it does not do (`feImage`, `feTile`, `feTurbulence`, `feMorphology`,
-+//! `feConvolveMatrix`, `feDisplacementMap`, lighting, a blur of two deviations) leave the whole
-+//! filter out: the group is drawn unfiltered, as before.
++//! node, and the conventions it documents for what anyrender's filter types cannot say). A filter
++//! with a primitive it does not do (`feDropShadow` of two deviations, a primitive usvg could not
++//! read) is left out: the group is drawn unfiltered, as before.
 +//!
 +//! Each primitive works in its `color-interpolation-filters` space, as Chromium's filters do: an
 +//! input in the other space is read through a `feComponentTransfer` converting it (sRGB tables),
 +//! a value converted back is the value it came from, a flood is drawn in the space of whatever
-+//! reads it, and the output is converted to sRGB. `feOffset` moves its input as it is.
++//! reads it, and the output is converted to sRGB. `feOffset`, `feTile` and the input that
++//! `feDisplacementMap` moves are taken as they are; `feImage` is sRGB.
++//!
++//! Tainted primitives (Filter Effects, "tainted filter primitives"): a flood, drop shadow or
++//! lighting colour computed from `currentcolor` (which a `:visited` link's colour can be) is
++//! tainted, and so is every result made from a tainted one. usvg resolves `currentcolor`, so the
++//! caller says which primitives are tainted ([`PrimitiveNotes`]). An `feDisplacementMap` whose map
++//! is tainted passes its input on unmoved, as Chromium's does: the map may not move pixels.
 +
 +use std::collections::HashMap;
++use std::sync::Arc;
 +
-+use anyrender::Filter;
 +use anyrender::filters::color_transformation::ColorMatrix;
 +use anyrender::filters::component_transfer::{
 +    ComponentTransferFilter, GammaTransferFunction, LinearTransferFunction, TransferFunction,
 +};
 +use anyrender::filters::composite::{ArithmeticCompositeOperator, CompositeOperator};
++use anyrender::filters::convolution::ConvolutionKernel;
++use anyrender::filters::displacement::{ColorChannel, DisplacementMapFilter};
++use anyrender::filters::lighting::{
++    DiffuseLightingFilter, DistantLightSource, LightSource, PointLightSource, SpecularLightingFilter, SpotLightSource,
++};
++use anyrender::filters::morphology::{MorphologyFilter, MorphologyOperator};
 +use anyrender::filters::{ExternalImageSource, FilterEffect, FilterId, FilterInput, FilterInputs, FilterSource};
-+use kurbo::Vec2;
++use anyrender::{Filter, PaintScene};
++use kurbo::{Affine, Rect, Vec2};
 +use peniko::color::AlphaColor;
++use peniko::{BlendMode, Fill};
 +use usvg::filter::{self as svg, ColorInterpolation, ColorMatrixKind, Input, Kind};
 +
-+/// The image id anyrender_vello_cpu reads as a crop of its input.
-+use anyrender_vello_cpu::FILTER_CROP_IMAGE as CROP_IMAGE;
++/// The image ids anyrender_vello_cpu reads as a crop of its input, an `feImage`'s content, a blur
++/// of two deviations, `feMorphology` of two radii and `feTurbulence`.
++use anyrender_vello_cpu::{
++    FILTER_BLUR_XY as BLUR_XY, FILTER_CROP_IMAGE as CROP_IMAGE, FILTER_IMAGE_SOURCE as IMAGE_SOURCE,
++    FILTER_MORPHOLOGY as MORPHOLOGY, FILTER_TURBULENCE as TURBULENCE,
++};
++
++/// pyro: what the document knows of a filter primitive that usvg's tree does not keep.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct PrimitiveNotes {
++    /// Its colour (`flood-color`, `lighting-color`) is computed from `currentcolor`.
++    pub tainted: bool,
++    /// It is a lighting primitive without a light source: its result is transparent black (usvg
++    /// stands a transparent flood in for it, which otherwise means a primitive it could not read).
++    pub no_light: bool,
++    /// It is an `feFlood` element: a transparent black flood is that, not usvg's stand-in for a
++    /// primitive it could not read (Figma's `<feFlood flood-opacity="0" result="BackgroundImageFix"/>`).
++    pub flood: bool,
++}
++
++/// pyro: what the document knows of the primitives of the filters of a tree (by the `<filter>`'s
++/// id, then by primitive), for [`crate::render_svg_tree_with_notes`].
++pub type FilterNotes = std::collections::HashMap<String, Vec<PrimitiveNotes>>;
++
++std::thread_local! {
++    /// The notes of the tree being rendered.
++    static NOTES: std::cell::RefCell<Option<FilterNotes>> = const { std::cell::RefCell::new(None) };
++}
++
++/// Runs `f` with `notes` as the notes of the filters it renders (the previous ones restored after).
++pub(crate) fn with_notes<R>(notes: FilterNotes, f: impl FnOnce() -> R) -> R {
++    let previous = NOTES.with(|n| n.replace(Some(notes)));
++    let result = f();
++    NOTES.with(|n| *n.borrow_mut() = previous);
++    result
++}
++
++/// What the document knows of primitive `index` of the filter `id` (nothing when it was not told).
++pub(crate) fn notes(id: &str, index: usize) -> PrimitiveNotes {
++    NOTES.with(|n| {
++        n.borrow()
++            .as_ref()
++            .and_then(|notes| notes.get(id))
++            .and_then(|notes| notes.get(index).copied())
++            .unwrap_or_default()
++    })
++}
++
++/// pyro: an SVG filter (usvg's) as an anyrender filter graph: a layer clipped to the filter
++/// region, its filter the graph, holding the content the filter applies to and, before it, what
++/// its `feImage`s draw ([`FilterGraph::push_layer`]).
++#[derive(Clone, Debug)]
++pub struct FilterGraph {
++    /// The graph, in the filter's user space.
++    pub filter: Arc<Filter>,
++    /// The filter region, in its user space: the layer's clip (for a CSS filter function, which
++    /// has none, the reach its painter gives it).
++    pub region: Rect,
++    /// Whether `region` is a filter region (a `<filter>`'s, which also stops its source graphic)
++    /// rather than the reach of a CSS filter function.
++    pub bounded: bool,
++    /// Whether the filter's result is tainted (a filter after it in a list then reads a tainted
++    /// source).
++    pub tainted: bool,
++    source: Arc<svg::Filter>,
++    /// The `feImage` primitives the graph reads (their indices), by their number in it.
++    images: Vec<usize>,
++}
++
++impl FilterGraph {
++    /// `filter` as a graph, or `None` when it has a primitive anyrender_vello_cpu does not do.
++    /// `notes` says what the document knows of its primitives (by index); `source_tainted`,
++    /// whether the source graphic is tainted (a filter list's earlier functions made it so).
++    pub fn new(
++        filter: &Arc<svg::Filter>,
++        notes: &dyn Fn(usize) -> PrimitiveNotes,
++        source_tainted: bool,
++    ) -> Option<Self> {
++        let region = filter.rect();
++        let (graph, images, tainted) = convert(filter, notes, source_tainted)?;
++        Some(Self {
++            filter: Arc::new(graph),
++            region: Rect::new(
++                f64::from(region.left()),
++                f64::from(region.top()),
++                f64::from(region.right()),
++                f64::from(region.bottom()),
++            ),
++            bounded: true,
++            tainted,
++            source: filter.clone(),
++            images,
++        })
++    }
++
++    /// How far the graph's output can lie from the content it reads, in its user space: a rect
++    /// around the origin (as `Filter::expansion_rect`, but the sum of every node's reach: an
++    /// offset, a blur, a displacement's half scale, a morphology radius, a kernel), and whether it
++    /// has an `feTile`, which reads its input anywhere in the region. For culling.
++    pub fn reach(&self) -> (Rect, bool) {
++        let mut tiles = false;
++        let reach = self.filter.nodes().iter().fold(Rect::ZERO, |sum, node| {
++            let around = |r: f64| Rect::new(-r, -r, r, r);
++            let own = match &node.effect {
++                FilterEffect::DisplacementMap(d) => around(f64::from(d.scale.abs()) / 2.0),
++                FilterEffect::Morphology(m) => around(f64::from(m.radius.abs())),
++                FilterEffect::ConvolveMatrix(k) => {
++                    let rows = k.values.len() / k.size.max(1) as usize;
++                    around(k.size.max(rows as u32) as f64)
++                }
++                FilterEffect::DiffuseLighting(_) | FilterEffect::SpecularLighting(_) => around(1.0),
++                FilterEffect::Tile => {
++                    tiles = true;
++                    Rect::ZERO
++                }
++                FilterEffect::Image(image) => match (image.image_id, image.transform) {
++                    (BLUR_XY, Some([x, y, ..])) => around(3.0 * f64::from(x.abs().max(y.abs()))),
++                    (MORPHOLOGY, Some([x, y, ..])) => around(f64::from(x.abs().max(y.abs()))),
++                    _ => Rect::ZERO,
++                },
++                effect => effect.expansion_rect(),
++            };
++            Rect::new(sum.x0 + own.x0, sum.y0 + own.y0, sum.x1 + own.x1, sum.y1 + own.y1)
++        });
++        (reach, tiles)
++    }
++
++    /// Pushes the filter's layer under `transform` (the filter's user space to the scene's) and
++    /// draws what its `feImage`s show, each in a layer of its own that only the graph reads (see
++    /// anyrender_vello_cpu's `FILTER_IMAGE_SOURCE`). The content to filter follows, then a pop.
++    pub fn push_layer<S: PaintScene>(&self, scene: &mut S, transform: Affine) {
++        scene.push_layer(
++            Fill::NonZero,
++            BlendMode::default(),
++            1.0,
++            transform,
++            &self.region,
++            Some(self.filter.clone()),
++            None,
++        );
++        for (k, &index) in self.images.iter().enumerate() {
++            let primitive = &self.source.primitives()[index];
++            let Kind::Image(image) = primitive.kind() else { continue };
++            scene.push_layer(
++                Fill::NonZero,
++                BlendMode::default(),
++                0.0,
++                transform,
++                &self.region,
++                Some(Arc::new(Filter::single(FilterEffect::Image(ExternalImageSource {
++                    image_id: IMAGE_SOURCE,
++                    transform: Some([k as f32, 1.0, 0.0, 0.0, 0.0, 0.0]),
++                })))),
++                None,
++            );
++            // At the subregion's corner: an image fills the subregion (usvg laid it out at the
++            // origin), and an element is drawn from there, as Blink places it (`FEImage`: WPT
++            // feimage-element-ref-geometry).
++            let sub = primitive.rect();
++            let base = Affine::translate((f64::from(sub.x()), f64::from(sub.y())));
++            let ctx = crate::render::Ctx { cull: transform.transform_rect_bbox(self.region) };
++            crate::render::render_group(
++                scene,
++                image.root(),
++                base,
++                transform,
++                &mut crate::util::default_error_handler,
++                &ctx,
++            );
++            scene.pop_layer();
++        }
++    }
++}
 +
 +#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 +enum Space {
@@ -83,6 +269,15 @@ index 0000000..bdcbf18
 +    Flood(usize, [f32; 4], Option<[f32; 4]>),
 +}
 +
++/// A result as a later primitive reads it: its value, its subregion (`[x0, y0, x1, y1]`) and
++/// whether it is tainted.
++#[derive(Clone, Copy, Debug)]
++struct Read {
++    value: Value,
++    subregion: [f32; 4],
++    tainted: bool,
++}
++
 +struct Builder {
 +    filter: Filter,
 +    /// Values converted to a space, by the value and the space.
@@ -101,15 +296,24 @@ index 0000000..bdcbf18
 +    /// `key` cropped to `crop` (`[x0, y0, x1, y1]`), if there is one.
 +    fn cropped(&mut self, key: Key, crop: Option<[f32; 4]>) -> Key {
 +        match crop {
-+            Some([x0, y0, x1, y1]) => self.add(
-+                FilterEffect::Image(ExternalImageSource {
-+                    image_id: CROP_IMAGE,
-+                    transform: Some([x0, y0, x1, y1, 0.0, 0.0]),
-+                }),
-+                FilterInputs::single(key.into()),
-+            ),
++            Some(rect) => self.crop(key, rect),
 +            None => key,
 +        }
++    }
++
++    fn crop(&mut self, key: Key, [x0, y0, x1, y1]: [f32; 4]) -> Key {
++        self.add(
++            FilterEffect::Image(ExternalImageSource {
++                image_id: CROP_IMAGE,
++                transform: Some([x0, y0, x1, y1, 0.0, 0.0]),
++            }),
++            FilterInputs::single(key.into()),
++        )
++    }
++
++    /// An `Image` node of one of anyrender_vello_cpu's ids, with its parameters.
++    fn op(&mut self, id: u32, params: [f32; 6], inputs: FilterInputs) -> Key {
++        self.add(FilterEffect::Image(ExternalImageSource { image_id: id, transform: Some(params) }), inputs)
 +    }
 +
 +    /// `value` with its colours in `space`.
@@ -137,10 +341,7 @@ index 0000000..bdcbf18
 +                    return key;
 +                }
 +                let [r, g, b, a] = color;
-+                let [r, g, b] = match space {
-+                    Space::Srgb => [r, g, b],
-+                    Space::Linear => [to_linear(r), to_linear(g), to_linear(b)],
-+                };
++                let [r, g, b] = in_space([r, g, b], space);
 +                let flood = self.add(FilterEffect::Flood(AlphaColor::new([r, g, b, a])), FilterInputs::NONE);
 +                let key = self.cropped(flood, crop);
 +                self.floods.insert((index, space), key);
@@ -159,46 +360,71 @@ index 0000000..bdcbf18
 +    }
 +}
 +
-+/// `filter` as an anyrender filter graph, or `None` when a primitive is one anyrender_vello_cpu
-+/// does not do.
-+pub(crate) fn convert(filter: &svg::Filter) -> Option<Filter> {
++/// An sRGB colour's channels in `space`.
++fn in_space([r, g, b]: [f32; 3], space: Space) -> [f32; 3] {
++    match space {
++        Space::Srgb => [r, g, b],
++        Space::Linear => [to_linear(r), to_linear(g), to_linear(b)],
++    }
++}
++
++/// `filter` as an anyrender filter graph, the `feImage` primitives it reads (their indices) and
++/// whether its result is tainted; `None` when a primitive is one anyrender_vello_cpu does not do.
++fn convert(
++    filter: &svg::Filter,
++    notes: &dyn Fn(usize) -> PrimitiveNotes,
++    source_tainted: bool,
++) -> Option<(Filter, Vec<usize>, bool)> {
 +    let region = filter.rect();
++    let whole = [region.left(), region.top(), region.right(), region.bottom()];
 +    let mut b =
 +        Builder { filter: Filter::empty(), converted: HashMap::new(), origins: HashMap::new(), floods: HashMap::new() };
-+    let mut results: Vec<(&str, Value)> = Vec::new();
++    let mut results: Vec<(&str, Read)> = Vec::new();
++    let mut images: Vec<usize> = Vec::new();
 +    for (index, primitive) in filter.primitives().iter().enumerate() {
 +        let space = match primitive.color_interpolation() {
 +            ColorInterpolation::SRGB => Space::Srgb,
 +            ColorInterpolation::LinearRGB => Space::Linear,
 +        };
++        let note = notes(index);
++        let source =
++            Read { value: Value::Pixels(Key::Source, Some(Space::Srgb)), subregion: whole, tainted: source_tainted };
 +        // A name refers to the latest result of that name before the primitive (usvg makes a
 +        // missing one the previous result, or the source).
 +        let lookup = |input: &Input| match input {
-+            Input::SourceGraphic => Value::Pixels(Key::Source, Some(Space::Srgb)),
-+            Input::SourceAlpha => Value::Pixels(Key::SourceAlpha, None),
-+            Input::Reference(name) => results
-+                .iter()
-+                .rev()
-+                .find(|(result, _)| result == name)
-+                .map_or(Value::Pixels(Key::Source, Some(Space::Srgb)), |(_, value)| *value),
++            Input::SourceGraphic => source,
++            Input::SourceAlpha => Read { value: Value::Pixels(Key::SourceAlpha, None), ..source },
++            Input::Reference(name) => {
++                results.iter().rev().find(|(result, _)| result == name).map_or(source, |(_, read)| *read)
++            }
 +        };
 +        // The subregion, where it leaves part of the filter region out.
 +        let sub = primitive.rect();
++        let subregion = [sub.left(), sub.top(), sub.right(), sub.bottom()];
 +        let crop = (sub.left() > region.left() + 1e-3
 +            || sub.top() > region.top() + 1e-3
 +            || sub.right() < region.right() - 1e-3
 +            || sub.bottom() < region.bottom() - 1e-3)
-+            .then(|| [sub.left(), sub.top(), sub.right(), sub.bottom()]);
++            .then_some(subregion);
++        let mut tainted = note.tainted;
 +        let value = match primitive.kind() {
 +            // usvg stands a transparent black flood in for a primitive it could not read
-+            // (`feConvolveMatrix` of a zero divisor, lighting without a light source): the filter
-+            // is left out, as one of a primitive anyrender_vello_cpu does not do.
-+            Kind::Flood(flood) if flood.opacity().get() == 0.0 && flood.color() == usvg::Color::black() => {
++            // (`feConvolveMatrix` of a zero divisor, an `feImage` it could not load, lighting without
++            // a light source): the filter is left out, as one of a primitive anyrender_vello_cpu
++            // does not do; but lighting without a light is transparent black, as in Chromium.
++            Kind::Flood(flood)
++                if flood.opacity().get() == 0.0
++                    && flood.color() == usvg::Color::black()
++                    && !note.no_light
++                    && !note.flood =>
++            {
 +                return None;
 +            }
 +            Kind::Flood(flood) => Value::Flood(index, color(flood.color(), flood.opacity().get()), crop),
 +            Kind::Offset(offset) => {
-+                let (input, from) = b.read_as_is(lookup(offset.input()), space);
++                let input = lookup(offset.input());
++                tainted |= input.tainted;
++                let (input, from) = b.read_as_is(input.value, space);
 +                let moved = b.add(
 +                    FilterEffect::Offset(Vec2::new(f64::from(offset.dx()), f64::from(offset.dy()))),
 +                    FilterInputs::single(input.into()),
@@ -206,7 +432,9 @@ index 0000000..bdcbf18
 +                Value::Pixels(b.cropped(moved, crop), from)
 +            }
 +            Kind::ColorMatrix(matrix) => {
-+                let input = b.read(lookup(matrix.input()), space);
++                let input = lookup(matrix.input());
++                tainted |= input.tainted;
++                let input = b.read(input.value, space);
 +                let node = b.add(
 +                    FilterEffect::ColorMatrix(ColorMatrix(color_matrix(matrix.kind())?)),
 +                    FilterInputs::single(input.into()),
@@ -214,7 +442,9 @@ index 0000000..bdcbf18
 +                Value::Pixels(b.cropped(node, crop), Some(space))
 +            }
 +            Kind::ComponentTransfer(transfer) => {
-+                let input = b.read(lookup(transfer.input()), space);
++                let input = lookup(transfer.input());
++                tainted |= input.tainted;
++                let input = b.read(input.value, space);
 +                let node = b.add(
 +                    FilterEffect::ComponentTransfer(ComponentTransferFilter {
 +                        red_function: transfer_function(transfer.func_r()),
@@ -228,11 +458,14 @@ index 0000000..bdcbf18
 +            }
 +            Kind::GaussianBlur(blur) => {
 +                let (x, y) = (blur.std_dev_x().get(), blur.std_dev_y().get());
-+                if x != y {
-+                    return None;
-+                }
-+                let input = b.read(lookup(blur.input()), space);
-+                let node = b.add(FilterEffect::blur(x), FilterInputs::single(input.into()));
++                let input = lookup(blur.input());
++                tainted |= input.tainted;
++                let input = b.read(input.value, space);
++                let node = if x == y {
++                    b.add(FilterEffect::blur(x), FilterInputs::single(input.into()))
++                } else {
++                    b.op(BLUR_XY, [x, y, 0.0, 0.0, 0.0, 0.0], FilterInputs::single(input.into()))
++                };
 +                Value::Pixels(b.cropped(node, crop), Some(space))
 +            }
 +            Kind::DropShadow(shadow) => {
@@ -240,12 +473,11 @@ index 0000000..bdcbf18
 +                if x != y {
 +                    return None;
 +                }
-+                let input = b.read(lookup(shadow.input()), space);
++                let input = lookup(shadow.input());
++                tainted |= input.tainted;
++                let input = b.read(input.value, space);
 +                let [r, g, bl, a] = color(shadow.color(), shadow.opacity().get());
-+                let [r, g, bl] = match space {
-+                    Space::Srgb => [r, g, bl],
-+                    Space::Linear => [to_linear(r), to_linear(g), to_linear(bl)],
-+                };
++                let [r, g, bl] = in_space([r, g, bl], space);
 +                let node = b.add(
 +                    FilterEffect::drop_shadow(shadow.dx(), shadow.dy(), x, AlphaColor::new([r, g, bl, a])),
 +                    FilterInputs::single(input.into()),
@@ -256,7 +488,9 @@ index 0000000..bdcbf18
 +            Kind::Merge(merge) => {
 +                let mut merged: Option<Key> = None;
 +                for input in merge.inputs() {
-+                    let top = b.read(lookup(input), space);
++                    let input = lookup(input);
++                    tainted |= input.tainted;
++                    let top = b.read(input.value, space);
 +                    merged = Some(match merged {
 +                        None => top,
 +                        Some(under) => b.add(
@@ -271,8 +505,10 @@ index 0000000..bdcbf18
 +                }
 +            }
 +            Kind::Composite(composite) => {
-+                let top = b.read(lookup(composite.input1()), space);
-+                let under = b.read(lookup(composite.input2()), space);
++                let (top, under) = (lookup(composite.input1()), lookup(composite.input2()));
++                tainted |= top.tainted || under.tainted;
++                let top = b.read(top.value, space);
++                let under = b.read(under.value, space);
 +                let operator = match composite.operator() {
 +                    svg::CompositeOperator::Over => CompositeOperator::Over,
 +                    svg::CompositeOperator::In => CompositeOperator::In,
@@ -287,36 +523,194 @@ index 0000000..bdcbf18
 +                Value::Pixels(b.cropped(node, crop), Some(space))
 +            }
 +            Kind::Blend(blend) => {
-+                if matches!(
-+                    blend.mode(),
-+                    usvg::BlendMode::Hue
-+                        | usvg::BlendMode::Saturation
-+                        | usvg::BlendMode::Color
-+                        | usvg::BlendMode::Luminosity
-+                ) {
-+                    return None;
-+                }
-+                let top = b.read(lookup(blend.input1()), space);
-+                let under = b.read(lookup(blend.input2()), space);
++                let (top, under) = (lookup(blend.input1()), lookup(blend.input2()));
++                tainted |= top.tainted || under.tainted;
++                let top = b.read(top.value, space);
++                let under = b.read(under.value, space);
 +                let node = b.add(
 +                    FilterEffect::Blend(crate::util::to_mix(blend.mode())),
 +                    FilterInputs::dual(top.into(), under.into()),
 +                );
 +                Value::Pixels(b.cropped(node, crop), Some(space))
 +            }
-+            _ => return None,
++            // The map moves the input as it is; read through a tainted map, the input passes on
++            // unmoved.
++            Kind::DisplacementMap(displacement) => {
++                let (input, map) = (lookup(displacement.input1()), lookup(displacement.input2()));
++                // Tainted when an input is (Blink's taint check runs over all inputs), the map too.
++                tainted |= input.tainted || map.tainted;
++                if map.tainted {
++                    input.value
++                } else {
++                    let (moved, from) = b.read_as_is(input.value, space);
++                    let map = b.read(map.value, space);
++                    let channel = |c: svg::ColorChannel| match c {
++                        svg::ColorChannel::R => ColorChannel::Red,
++                        svg::ColorChannel::G => ColorChannel::Green,
++                        svg::ColorChannel::B => ColorChannel::Blue,
++                        svg::ColorChannel::A => ColorChannel::Alpha,
++                    };
++                    let node = b.add(
++                        FilterEffect::DisplacementMap(DisplacementMapFilter {
++                            scale: displacement.scale(),
++                            x_channel: channel(displacement.x_channel_selector()),
++                            y_channel: channel(displacement.y_channel_selector()),
++                        }),
++                        FilterInputs::dual(moved.into(), map.into()),
++                    );
++                    Value::Pixels(b.cropped(node, crop), from)
++                }
++            }
++            // The input's subregion repeated: a crop to it, which the tile reads its rectangle from.
++            Kind::Tile(tile) => {
++                let input = lookup(tile.input());
++                tainted |= input.tainted;
++                let (key, from) = b.read_as_is(input.value, space);
++                let cropped = b.crop(key, input.subregion);
++                let node = b.add(FilterEffect::Tile, FilterInputs::single(cropped.into()));
++                Value::Pixels(b.cropped(node, crop), from)
++            }
++            Kind::Morphology(morphology) => {
++                let input = lookup(morphology.input());
++                tainted |= input.tainted;
++                let input = b.read(input.value, space);
++                let (rx, ry) = (morphology.radius_x().get(), morphology.radius_y().get());
++                let dilate = morphology.operator() == svg::MorphologyOperator::Dilate;
++                let node = if rx == ry {
++                    let operator = if dilate { MorphologyOperator::Dilate } else { MorphologyOperator::Erode };
++                    b.add(
++                        FilterEffect::Morphology(MorphologyFilter { operator, radius: rx }),
++                        FilterInputs::single(input.into()),
++                    )
++                } else {
++                    b.op(
++                        MORPHOLOGY,
++                        [rx, ry, f32::from(u8::from(dilate)), 0.0, 0.0, 0.0],
++                        FilterInputs::single(input.into()),
++                    )
++                };
++                Value::Pixels(b.cropped(node, crop), Some(space))
++            }
++            Kind::ConvolveMatrix(convolve) => {
++                let input = lookup(convolve.input());
++                tainted |= input.tainted;
++                let input = b.read(input.value, space);
++                let m = convolve.matrix();
++                let mut values: Vec<f32> = m.data().to_vec();
++                let edge = match convolve.edge_mode() {
++                    svg::EdgeMode::Duplicate => 0.0,
++                    svg::EdgeMode::Wrap => 1.0,
++                    svg::EdgeMode::None => 2.0,
++                };
++                values.extend([m.rows() as f32, m.target_x() as f32, m.target_y() as f32, edge]);
++                let node = b.add(
++                    FilterEffect::ConvolveMatrix(ConvolutionKernel {
++                        size: m.columns(),
++                        values,
++                        divisor: convolve.divisor().get(),
++                        bias: convolve.bias(),
++                        preserve_alpha: convolve.preserve_alpha(),
++                    }),
++                    FilterInputs::single(input.into()),
++                );
++                Value::Pixels(b.cropped(node, crop), Some(space))
++            }
++            Kind::Turbulence(turbulence) => {
++                let fractal = turbulence.kind() == svg::TurbulenceKind::FractalNoise;
++                let node = b.op(
++                    TURBULENCE,
++                    [
++                        turbulence.base_frequency_x().get(),
++                        turbulence.base_frequency_y().get(),
++                        turbulence.num_octaves() as f32,
++                        turbulence.seed() as f32,
++                        f32::from(u8::from(fractal)),
++                        0.0,
++                    ],
++                    FilterInputs::NONE,
++                );
++                Value::Pixels(b.cropped(node, crop), Some(space))
++            }
++            // The input's alpha is the surface; the lighting colour is a flood (in the primitive's
++            // space) the node reads as its second input.
++            Kind::DiffuseLighting(lighting) => {
++                let input = lookup(lighting.input());
++                tainted |= input.tainted;
++                let (surface, _) = b.read_as_is(input.value, space);
++                let color = lighting_color(&mut b, lighting.lighting_color(), space);
++                let node = b.add(
++                    FilterEffect::DiffuseLighting(DiffuseLightingFilter {
++                        surface_scale: lighting.surface_scale(),
++                        diffuse_constant: lighting.diffuse_constant(),
++                        kernel_unit_length: 1.0,
++                        light_source: light_source(lighting.light_source()),
++                    }),
++                    FilterInputs::dual(surface.into(), color.into()),
++                );
++                Value::Pixels(b.cropped(node, crop), Some(space))
++            }
++            Kind::SpecularLighting(lighting) => {
++                let input = lookup(lighting.input());
++                tainted |= input.tainted;
++                let (surface, _) = b.read_as_is(input.value, space);
++                let color = lighting_color(&mut b, lighting.lighting_color(), space);
++                let node = b.add(
++                    FilterEffect::SpecularLighting(SpecularLightingFilter {
++                        surface_scale: lighting.surface_scale(),
++                        specular_constant: lighting.specular_constant(),
++                        specular_exponent: lighting.specular_exponent(),
++                        kernel_unit_length: 1.0,
++                        light_source: light_source(lighting.light_source()),
++                    }),
++                    FilterInputs::dual(surface.into(), color.into()),
++                );
++                Value::Pixels(b.cropped(node, crop), Some(space))
++            }
++            Kind::Image(_) => {
++                let k = images.len();
++                images.push(index);
++                let node = b.op(IMAGE_SOURCE, [k as f32, 0.0, 0.0, 0.0, 0.0, 0.0], FilterInputs::NONE);
++                Value::Pixels(b.cropped(node, crop), Some(Space::Srgb))
++            }
 +        };
-+        results.push((primitive.result(), value));
++        results.push((primitive.result(), Read { value, subregion, tainted }));
 +    }
 +    let (_, output) = *results.last()?;
-+    let output = b.read(output, Space::Srgb);
++    let output_tainted = output.tainted;
++    let output = b.read(output.value, Space::Srgb);
 +    // The output is the last node: anything else (the source, an earlier node) is passed through
 +    // one more.
 +    let nodes = b.filter.nodes().len();
 +    if nodes == 0 || output != Key::Node((nodes - 1) as u16) {
 +        b.add(FilterEffect::Offset(Vec2::ZERO), FilterInputs::single(output.into()));
 +    }
-+    Some(b.filter)
++    Some((b.filter, images, output_tainted))
++}
++
++/// A lighting colour as the flood node that carries it (opaque, in `space`).
++fn lighting_color(b: &mut Builder, color: usvg::Color, space: Space) -> Key {
++    let [r, g, bl, _] = self::color(color, 1.0);
++    let [r, g, bl] = in_space([r, g, bl], space);
++    b.add(FilterEffect::Flood(AlphaColor::new([r, g, bl, 1.0])), FilterInputs::NONE)
++}
++
++fn light_source(light: svg::LightSource) -> LightSource {
++    match light {
++        svg::LightSource::DistantLight(l) => {
++            LightSource::Distant(DistantLightSource { azimuth: l.azimuth, elevation: l.elevation })
++        }
++        svg::LightSource::PointLight(l) => LightSource::Point(PointLightSource { x: l.x, y: l.y, z: l.z }),
++        svg::LightSource::SpotLight(l) => LightSource::Spot(SpotLightSource {
++            x: l.x,
++            y: l.y,
++            z: l.z,
++            points_at_x: l.points_at_x,
++            points_at_y: l.points_at_y,
++            points_at_z: l.points_at_z,
++            specular_exponent: l.specular_exponent.get(),
++            limiting_cone_angle: l.limiting_cone_angle,
++        }),
++    }
 +}
 +
 +/// An unpremultiplied sRGB colour with its opacity.
@@ -443,7 +837,7 @@ index 0000000..bdcbf18
 +                </filter>
 +                <rect width="100" height="100" fill="red" filter="url(#f)"/></svg>"#,
 +        );
-+        let filter = convert(&first_filter(&tree)).unwrap();
++        let filter = graph(&first_filter(&tree)).unwrap();
 +        assert_eq!(filter.nodes().len(), 2);
 +        assert!(matches!(filter.nodes()[0].effect, FilterEffect::ColorMatrix(_)));
 +        assert!(matches!(filter.nodes()[1].effect, FilterEffect::ComponentTransfer(_)));
@@ -462,7 +856,7 @@ index 0000000..bdcbf18
 +                </filter>
 +                <rect width="50" height="50" fill="red" filter="url(#f)"/></svg>"#,
 +        );
-+        let filter = convert(&first_filter(&tree)).unwrap();
++        let filter = graph(&first_filter(&tree)).unwrap();
 +        let kinds: Vec<&str> = filter
 +            .nodes()
 +            .iter()
@@ -479,15 +873,40 @@ index 0000000..bdcbf18
 +        assert_eq!(kinds, ["offset", "flood", "convert", "composite", "convert"]);
 +    }
 +
++    /// The graph alone, with nothing known of the primitives.
++    fn graph(filter: &std::sync::Arc<svg::Filter>) -> Option<Filter> {
++        convert(filter, &|_| PrimitiveNotes::default(), false).map(|(filter, ..)| filter)
++    }
++
++    /// The kinds of a graph's nodes, by short names.
++    fn kinds(filter: &Filter) -> Vec<&'static str> {
++        filter
++            .nodes()
++            .iter()
++            .map(|n| match &n.effect {
++                FilterEffect::Flood(_) => "flood",
++                FilterEffect::Offset(_) => "offset",
++                FilterEffect::DisplacementMap(_) => "displace",
++                FilterEffect::Tile => "tile",
++                FilterEffect::Image(image) if image.image_id == CROP_IMAGE => "crop",
++                FilterEffect::Image(image) if image.image_id == IMAGE_SOURCE => "image",
++                FilterEffect::Image(image) if image.image_id == TURBULENCE => "turbulence",
++                FilterEffect::DiffuseLighting(_) => "diffuse",
++                _ => "other",
++            })
++            .collect()
++    }
++
 +    /// Unsupported primitives leave the filter out; a subregion becomes a crop.
 +    #[test]
 +    fn unsupported_primitives_and_subregions() {
++        // usvg's stand-in for a primitive it could not read (a zero divisor).
 +        let tree = parse(
 +            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
-+                <filter id="f"><feTurbulence baseFrequency="0.1"/></filter>
++                <filter id="f"><feConvolveMatrix kernelMatrix="1 0 0 0 0 0 0 0 0" divisor="0"/></filter>
 +                <rect width="50" height="50" fill="red" filter="url(#f)"/></svg>"#,
 +        );
-+        assert!(convert(&first_filter(&tree)).is_none());
++        assert!(graph(&first_filter(&tree)).is_none());
 +        let tree = parse(
 +            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
 +                <filter id="f" filterUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
@@ -495,18 +914,149 @@ index 0000000..bdcbf18
 +                </filter>
 +                <rect width="50" height="50" fill="red" filter="url(#f)"/></svg>"#,
 +        );
-+        let filter = convert(&first_filter(&tree)).unwrap();
++        let filter = graph(&first_filter(&tree)).unwrap();
 +        let last = filter.nodes().last().unwrap();
 +        let FilterEffect::Image(image) = &last.effect else { panic!("{last:?}") };
 +        assert_eq!(image.image_id, CROP_IMAGE);
 +        assert_eq!(image.transform, Some([10.0, 10.0, 30.0, 30.0, 0.0, 0.0]));
 +    }
++
++    /// WPT tainting-*: a displacement map moves the source by an untainted map; through a map a
++    /// `currentcolor` flood made (tainted), it passes the source on unmoved, and a tainted result
++    /// stays tainted through the primitives after it.
++    #[test]
++    fn a_tainted_map_displaces_nothing() {
++        let tree = parse(
++            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
++                <filter id="f" color-interpolation-filters="sRGB">
++                  <feFlood flood-color="rgb(0, 255, 128)"/>
++                  <feGaussianBlur stdDeviation="0"/>
++                  <feDisplacementMap in="SourceGraphic" xChannelSelector="G" yChannelSelector="B" scale="100"/>
++                </filter>
++                <rect width="100" height="100" fill="green" filter="url(#f)"/></svg>"#,
++        );
++        let filter = first_filter(&tree);
++        let moved = graph(&filter).unwrap();
++        assert!(kinds(&moved).contains(&"displace"), "{:?}", kinds(&moved));
++        let tainted_flood = |index: usize| PrimitiveNotes { tainted: index == 0, ..Default::default() };
++        let (unmoved, _, tainted) = convert(&filter, &tainted_flood, false).unwrap();
++        assert!(!kinds(&unmoved).contains(&"displace"), "{:?}", kinds(&unmoved));
++        assert!(tainted, "the result of a tainted map is tainted, as Blink's");
++        // A tainted source (a filter list's `drop-shadow(currentcolor)` before it) taints the result.
++        let (_, _, tainted) = convert(&filter, &|_| PrimitiveNotes::default(), true).unwrap();
++        assert!(tainted);
++    }
++
++    /// `feTile` reads its input cropped to the input's subregion; `feImage`, `feTurbulence` and the
++    /// lighting primitives (their colour a flood they read) are nodes of their own.
++    #[test]
++    fn tiles_images_noise_and_lighting() {
++        let tree = parse(
++            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
++                <filter id="f" filterUnits="userSpaceOnUse" x="0" y="0" width="100" height="100" color-interpolation-filters="sRGB">
++                  <feFlood flood-color="green" width="5" height="5"/>
++                  <feTile/>
++                </filter>
++                <rect width="100" height="100" fill="red" filter="url(#f)"/></svg>"#,
++        );
++        let filter = graph(&first_filter(&tree)).unwrap();
++        assert_eq!(kinds(&filter), ["flood", "crop", "crop", "tile"]);
++        let tree = parse(
++            r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
++                <rect id="r" width="10" height="10" fill="blue"/>
++                <filter id="f" color-interpolation-filters="sRGB">
++                  <feImage href="#r" result="image"/>
++                  <feTurbulence baseFrequency="0.05"/>
++                  <feDiffuseLighting in="image" lighting-color="red"><feDistantLight elevation="45"/></feDiffuseLighting>
++                </filter>
++                <rect width="100" height="100" fill="red" filter="url(#f)"/></svg>"##,
++        );
++        let (filter, images, _) = convert(&first_filter(&tree), &|_| PrimitiveNotes::default(), false).unwrap();
++        assert_eq!(kinds(&filter), ["image", "turbulence", "flood", "diffuse"]);
++        assert_eq!(images, [0]);
++    }
++
++    /// An SVG rendered as the page is (recorded, then replayed by anyrender_vello_cpu): RGBA bytes.
++    fn raster(svg: &str, width: u32, height: u32) -> Vec<u8> {
++        use anyrender::ImageRenderer as _;
++        let tree = parse(svg);
++        let mut scene = anyrender::Scene::new();
++        crate::render_svg_tree(&mut scene, &tree, kurbo::Affine::IDENTITY);
++        let mut renderer = anyrender_vello_cpu::VelloCpuImageRenderer::with_threads(width, height, 0);
++        let mut pixels = Vec::new();
++        renderer.render_to_vec(|painter| painter.append_scene(scene, kurbo::Affine::IDENTITY), &mut pixels);
++        pixels
++    }
++
++    fn px(pixels: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
++        pixels[(y * width + x) * 4..(y * width + x) * 4 + 4].try_into().unwrap()
++    }
++
++    /// `feImage` of an element draws it in the filtered element's user space (WPT
++    /// feImage-with-hidden-container-defs), of an SVG image fills the subregion (WPT
++    /// feimage-svg-resolution); what it draws shows only through the filter.
++    #[test]
++    fn images_draw_through_the_filter() {
++        let pixels = raster(
++            r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
++                <defs><g id="img"><rect x="50" width="50" height="100" fill="#008000"/></g>
++                  <filter filterUnits="userSpaceOnUse" id="flt" x="0" y="0" width="100" height="100">
++                    <feImage href="#img"/></filter></defs>
++                <rect filter="url(#flt)" width="100" height="100"/></svg>"##,
++            100,
++            100,
++        );
++        assert_eq!(px(&pixels, 100, 75, 50), [0, 128, 0, 255]);
++        assert_eq!(px(&pixels, 100, 25, 50), [0; 4], "the rect is replaced");
++        let pixels = raster(
++            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
++                <filter id="f" filterUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
++                  <feImage href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' width='2' height='2'>&lt;rect x='1' width='1' height='2' fill='green'/>&lt;/svg>"/>
++                </filter>
++                <rect width="100" height="100" filter="url(#f)"/></svg>"#,
++            100,
++            100,
++        );
++        assert_eq!(px(&pixels, 100, 75, 50), [0, 128, 0, 255]);
++        assert_eq!(px(&pixels, 100, 25, 50), [0; 4]);
++    }
++
++    /// A hidden element's filter still fills its region (WPT svg-visibility-hidden-element-with-filter-003).
++    #[test]
++    fn a_hidden_text_fills_its_filter_region() {
++        let pixels = raster(
++            r#"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150">
++                <filter id="f" filterUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
++                  <feFlood flood-color="green"/></filter>
++                <text fill="red" x="20" y="20" visibility="hidden" filter="url(#f)">SVGText</text></svg>"#,
++            300,
++            150,
++        );
++        assert_eq!(px(&pixels, 300, 95, 95), [0, 128, 0, 255]);
++    }
++
++    /// Lighting without a light source is transparent black (Chromium) when the document says so;
++    /// usvg's stand-in alone still leaves the filter out.
++    #[test]
++    fn lighting_without_a_light() {
++        let tree = parse(
++            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
++                <filter id="f" color-interpolation-filters="sRGB"><feDiffuseLighting lighting-color="blue"/></filter>
++                <rect width="100" height="100" fill="red" filter="url(#f)"/></svg>"#,
++        );
++        let filter = first_filter(&tree);
++        assert!(graph(&filter).is_none());
++        let no_light = |_| PrimitiveNotes { no_light: true, ..Default::default() };
++        let (graph, ..) = convert(&filter, &no_light, false).unwrap();
++        let FilterEffect::Flood(color) = &graph.nodes()[0].effect else { panic!() };
++        assert_eq!(color.components[3], 0.0);
++    }
 +}
 diff --git a/src/lib.rs b/src/lib.rs
-index 3370fa2..a0cd074 100644
+index 3370fa2..86bf9d8 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -21,6 +21,7 @@
+@@ -21,10 +21,13 @@
  #![cfg_attr(test, allow(unused_crate_dependencies))] // Some dev dependencies are only used in tests
  
  mod error;
@@ -514,7 +1064,31 @@ index 3370fa2..a0cd074 100644
  mod render;
  mod util;
  
-@@ -75,12 +76,19 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+ pub use error::Error;
++/// pyro: SVG filters as anyrender filter graphs (see `filter`).
++pub use filter::{FilterGraph, FilterNotes, PrimitiveNotes};
+ pub use usvg;
+ 
+ use anyrender::PaintScene;
+@@ -66,6 +69,17 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
+     render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
+ }
+ 
++/// pyro: [`render_svg_tree`], with what the document knows of the tree's filter primitives that
++/// usvg does not keep (which are tainted: see [`PrimitiveNotes`]).
++pub fn render_svg_tree_with_notes<S: PaintScene>(
++    scene: &mut S,
++    svg: &usvg::Tree,
++    transform: Affine,
++    notes: FilterNotes,
++) {
++    filter::with_notes(notes, || render_svg_tree(scene, svg, transform));
++}
++
+ /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
+ ///
+ /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
+@@ -75,15 +89,43 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      error_handler: &mut F,
  ) {
@@ -534,7 +1108,31 @@ index 3370fa2..a0cd074 100644
      );
  }
  
-@@ -106,9 +114,13 @@ mod tests {
++/// pyro: whether a group of `svg` (or of an SVG image in it) blends with what is under it
++/// (`mix-blend-mode`, `plus-lighter` included): an SVG image is an isolated group, which its
++/// painter draws it in then.
++pub fn has_blend_modes(svg: &usvg::Tree) -> bool {
++    fn group(g: &usvg::Group) -> bool {
++        g.children().iter().any(|node| match node {
++            usvg::Node::Group(child) => {
++                child.blend_mode() != usvg::BlendMode::Normal
++                    || render::compose_marker(child.id()).is_some()
++                    || group(child)
++            }
++            usvg::Node::Image(image) => match image.kind() {
++                usvg::ImageKind::SVG(tree) => group(tree.root()),
++                _ => false,
++            },
++            _ => false,
++        })
++    }
++    group(svg.root())
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -106,9 +148,13 @@ mod tests {
              .iter()
              .find_map(|command| match command {
                  RenderCommand::PushLayer(layer) => Some(layer.fill),
@@ -549,7 +1147,7 @@ index 3370fa2..a0cd074 100644
      }
  
      #[test]
-@@ -134,6 +146,87 @@ mod tests {
+@@ -134,6 +180,87 @@ mod tests {
          );
      }
  
@@ -638,19 +1236,18 @@ index 3370fa2..a0cd074 100644
      fn fill_rule_does_not_control_clipping() {
          assert_eq!(clip_rule("", r#"fill-rule="evenodd""#), Fill::NonZero);
 diff --git a/src/render.rs b/src/render.rs
-index 2e9e1c4..78ee6a1 100644
+index 2e9e1c4..4de71c5 100644
 --- a/src/render.rs
 +++ b/src/render.rs
-@@ -2,92 +2,51 @@
+@@ -2,92 +2,73 @@
  // SPDX-License-Identifier: Apache-2.0 OR MIT
  
  use crate::util;
 -use anyrender::PaintScene;
 -use kurbo::{Affine, BezPath};
 -use peniko::{BlendMode, Fill};
-+use anyrender::{Filter, Paint, PaintScene, Scene};
++use anyrender::{Paint, PaintScene, Scene};
 +use anyrender_vello_cpu::VelloCpuImageRenderer;
-+use std::sync::Arc;
 +use kurbo::{Affine, BezPath, Rect, Shape};
 +use peniko::{BlendMode, Blob, Color, Compose, Fill, ImageBrush, ImageData, Mix};
  use usvg::{Node, Path};
@@ -661,6 +1258,29 @@ index 2e9e1c4..78ee6a1 100644
 +    /// The device-space area the output can show. Offscreen rasters (masks,
 +    /// pattern tiles) cover no more than it.
 +    pub(crate) cull: Rect,
++}
++
++/// pyro: the id of the group around the content of an SVG document blitz-dom makes for a CSS
++/// box's reference to a `<mask>` or `<clipPath>` (`BaseDocument::svg_reference_document`).
++pub(crate) const BOX_REFERENCE: &str = "__pyro_box_reference";
++
++std::thread_local! {
++    /// pyro: whether the render is inside a CSS box's reference content ([`BOX_REFERENCE`]),
++    /// outside the offscreen rasters drawn for it ([`rasterize`]). Not a field of [`Ctx`], so
++    /// that code building a `Ctx` from its `cull` alone stays as it is.
++    static IN_BOX_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
++}
++
++/// pyro: runs `f` with [`IN_BOX_REFERENCE`] set to `value`, restoring it after (on unwind too).
++fn with_box_reference<R>(value: bool, f: impl FnOnce() -> R) -> R {
++    struct Restore(bool);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            IN_BOX_REFERENCE.with(|flag| flag.set(self.0));
++        }
++    }
++    let _restore = Restore(IN_BOX_REFERENCE.with(|flag| flag.replace(value)));
++    f()
 +}
 +
 +/// pyro: the most device pixels an offscreen raster (a mask, a pattern tile)
@@ -767,7 +1387,7 @@ index 2e9e1c4..78ee6a1 100644
              }
              usvg::Node::Path(path) => {
                  if !path.is_visible() {
-@@ -98,12 +57,44 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -98,12 +79,44 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  let transform = global_transform * transform;
                  match path.paint_order() {
                      usvg::PaintOrder::FillAndStroke => {
@@ -816,7 +1436,7 @@ index 2e9e1c4..78ee6a1 100644
                      }
                  }
              }
-@@ -124,7 +115,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -124,7 +137,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                                  continue;
                              };
                              let image = util::into_image(decoded_image, img.rendering_mode());
@@ -825,7 +1445,7 @@ index 2e9e1c4..78ee6a1 100644
                              scene.draw_image(image.as_ref(), image_ts);
                          }
  
-@@ -141,26 +132,702 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -141,24 +154,1092 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                              transform,
                              global_transform,
                              error_handler,
@@ -854,11 +1474,60 @@ index 2e9e1c4..78ee6a1 100644
 +    }
 +}
 +
++/// pyro: the Porter-Duff operator a group made for a CSS mask layer (blitz-dom `svg_css`) is
++/// composited with onto the layers below it, which its id names (`__pyro_compose_srcout_1`).
++pub(crate) fn compose_marker(id: &str) -> Option<Compose> {
++    let rest = id.strip_prefix("__pyro_compose_")?;
++    let operator = rest.split('_').next()?;
++    Some(match operator {
++        "srcover" => Compose::SrcOver,
++        "srcout" => Compose::SrcOut,
++        "srcin" => Compose::SrcIn,
++        "xor" => Compose::Xor,
++        "pluslighter" => Compose::PlusLighter,
++        _ => return None,
++    })
++}
++
 +/// pyro: a group with its clip path, mask, opacity and blend mode, applied in
 +/// that order (as resvg does) to its rendered children: a clip path with one
 +/// shape is a clip layer; any other clip path and every mask is a `DestIn`
-+/// layer over the children in an isolated layer.
++/// layer over the children in an isolated layer. A CSS mask layer's group
++/// ([`compose_marker`]) is composited with its operator, over all that the
++/// output shows (an operator that clears what it does not cover must cover it).
 +fn render_group_node<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
++    scene: &mut S,
++    g: &usvg::Group,
++    base: Affine,
++    transform: Affine,
++    global_transform: Affine,
++    error_handler: &mut F,
++    ctx: &Ctx,
++) {
++    if g.id() == BOX_REFERENCE && !IN_BOX_REFERENCE.with(|flag| flag.get()) {
++        return with_box_reference(true, || {
++            render_group_node(scene, g, base, transform, global_transform, error_handler, ctx)
++        });
++    }
++    match compose_marker(g.id()) {
++        Some(compose) if compose != Compose::SrcOver => {
++            scene.push_layer(
++                Fill::NonZero,
++                BlendMode::new(Mix::Normal, compose),
++                1.0,
++                Affine::IDENTITY,
++                &ctx.cull,
++                None,
++                None,
++            );
++            render_group_node_inner(scene, g, base, transform, global_transform, error_handler, ctx);
++            scene.pop_layer();
++        }
++        _ => render_group_node_inner(scene, g, base, transform, global_transform, error_handler, ctx),
++    }
++}
++
++fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
 +    scene: &mut S,
 +    g: &usvg::Group,
 +    base: Affine,
@@ -871,7 +1540,7 @@ index 2e9e1c4..78ee6a1 100644
 +    let mix = util::to_mix(g.blend_mode());
 +    // The group's user space (its own `transform` included) in the scene.
 +    let ts = global_transform * transform;
-+    let filters = filter_layers(g);
++    let filters = filter_layers(g, ts);
 +
 +    let clip_shapes = g.clip_path().and_then(|clip| clip_shapes(clip, ts));
 +    let simple_clip = clip_shapes
@@ -890,11 +1559,7 @@ index 2e9e1c4..78ee6a1 100644
 +    // within its clip path's and mask's bounds and what the output shows.
 +    let mut layer_rect = Rect::ZERO;
 +    if needs_layer {
-+        let bounding_box = g.layer_bounding_box();
-+        let rect = Rect::from_origin_size(
-+            (bounding_box.x() as f64, bounding_box.y() as f64),
-+            (bounding_box.width() as f64, bounding_box.height() as f64),
-+        );
++        let rect = layer_bounds(g).unwrap_or(Rect::ZERO);
 +        layer_rect = ts.transform_rect_bbox(rect).inflate(2.0, 2.0);
 +        if let Some(clip) = complex_clip {
 +            layer_rect = layer_rect.intersect(clip_bounds(clip, ts).inflate(1.0, 1.0));
@@ -994,52 +1659,197 @@ index 2e9e1c4..78ee6a1 100644
 +    }
 +}
 +
-+/// pyro: the group's filters, each with its filter region (in the group's user space), the
-+/// first applied first; none when one has a primitive anyrender_vello_cpu does not do (the
-+/// group is then drawn unfiltered, as before; see `crate::filter`).
-+fn filter_layers(g: &usvg::Group) -> Vec<(Arc<Filter>, Rect)> {
++/// pyro: the group's filters as graphs, each with its layer's region ([`filter_regions`]:
++/// `FilterGraph::region` and `bounded`), the first applied first (a tainted result taints the
++/// source of the next); none when one has a primitive anyrender_vello_cpu does not do (the group
++/// is then drawn unfiltered, as before; see `crate::filter`).
++fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<crate::filter::FilterGraph> {
++    let mut tainted = false;
 +    g.filters()
 +        .iter()
-+        .map(|filter| {
-+            let region = filter.rect();
-+            let region = Rect::new(
-+                region.left() as f64,
-+                region.top() as f64,
-+                region.right() as f64,
-+                region.bottom() as f64,
-+            );
-+            crate::filter::convert(filter).map(|graph| (Arc::new(graph), region))
++        .zip(filter_regions(g, ts))
++        .map(|(filter, (region, bounded))| {
++            let notes = |index| crate::filter::notes(filter.id(), index);
++            let mut graph = crate::filter::FilterGraph::new(filter, &notes, tainted)?;
++            tainted = graph.tainted;
++            graph.region = region;
++            graph.bounded = bounded;
++            Some(graph)
 +        })
 +        .collect::<Option<Vec<_>>>()
 +        .unwrap_or_default()
 +}
 +
++/// pyro: where each of the group's filters draws, the first applied first: its layer's region
++/// (in the group's user space), and whether that is a `<filter>`'s filter region (`true`: the
++/// source graphic stops there too) rather than the reach of a CSS filter function
++/// (`drop-shadow()`, `blur()`, ...: [`function_kind`]), which has no region. Its layer reaches as
++/// far as its effect does on what the filters before it made, from what the children draw and
++/// two device pixels around it (`ts` maps the group's user space to the scene): a layer clipped
++/// at the content's edge would cut its anti-aliased pixels, and usvg's stand-in region (the
++/// bounding box widened by half) cut a `drop-shadow(50px 0)` of a 50 px wide shape at 25 px.
++fn filter_regions(g: &usvg::Group, ts: Affine) -> Vec<(Rect, bool)> {
++    if g.filters().is_empty() {
++        return Vec::new();
++    }
++    let scale = ts.determinant().abs().sqrt();
++    let margin = if scale > 1e-6 { 2.0 / scale } else { 0.0 };
++    let mut reach = children_bounds(g).map(|r| r.inflate(margin, margin));
++    g.filters()
++        .iter()
++        .map(|filter| match function_kind(g, filter) {
++            Some(kind) => {
++                reach = reach.map(|r| function_reach(kind, r));
++                (reach.unwrap_or(Rect::ZERO), false)
++            }
++            None => {
++                let region = to_rect(filter.rect());
++                reach = Some(region);
++                (region, true)
++            }
++        })
++        .collect()
++}
++
++fn to_rect(r: usvg::NonZeroRect) -> Rect {
++    Rect::new(r.left() as f64, r.top() as f64, r.right() as f64, r.bottom() as f64)
++}
++
++/// pyro: the primitive of `filter` when usvg made it for a CSS filter function on `g`
++/// (`filter="drop-shadow(...)"`, `filter: blur(...)`) rather than from a `<filter>`, as usvg
++/// makes those (usvg keeps no mark of it): an id it generated (`filter1`, `filter2`, ...; a
++/// `<filter>` keeps its own, unless it is read again for another bounding box), one primitive
++/// whose result is named `result` (a `<filter>`'s unnamed results are `result1`, `result2`,
++/// ...), over the whole filter region, which is `g`'s bounding box widened by half on each side
++/// (a blur, a drop shadow) or by a tenth (the others), usvg's stand-in for the region a filter
++/// function does not have. A `<filter>` with all of these (an author's `result="result"` and
++/// that region) is taken for a function, which only changes where its layer ends.
++fn function_kind<'a>(g: &usvg::Group, filter: &'a usvg::filter::Filter) -> Option<&'a usvg::filter::Kind> {
++    use usvg::filter::Kind;
++    let generated = filter
++        .id()
++        .strip_prefix("filter")
++        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
++    if !generated {
++        return None;
++    }
++    let [primitive] = filter.primitives() else {
++        return None;
++    };
++    if primitive.result() != "result" || primitive.rect() != filter.rect() {
++        return None;
++    }
++    let bbox = g.bounding_box();
++    let (w, h) = (bbox.width() as f64, bbox.height() as f64);
++    if !(w > 0.0 && h > 0.0) {
++        return None;
++    }
++    let widen = match primitive.kind() {
++        Kind::DropShadow(_) | Kind::GaussianBlur(_) => 0.5,
++        Kind::ColorMatrix(_) | Kind::ComponentTransfer(_) => 0.1,
++        _ => return None,
++    };
++    let expected = Rect::new(
++        bbox.left() as f64 - w * widen,
++        bbox.top() as f64 - h * widen,
++        bbox.right() as f64 + w * widen,
++        bbox.bottom() as f64 + h * widen,
++    );
++    let region = to_rect(filter.rect());
++    let near = |a: f64, b: f64| (a - b).abs() <= 1e-3 * (1.0 + a.abs().max(b.abs()));
++    (near(region.x0, expected.x0)
++        && near(region.y0, expected.y0)
++        && near(region.x1, expected.x1)
++        && near(region.y1, expected.y1))
++    .then(|| primitive.kind())
++}
++
++/// pyro: where a CSS filter function draws, given where its input does: a drop shadow adds the
++/// input moved by its offset, a blur spreads it by three standard deviations (and a pixel), a
++/// colour function keeps it.
++fn function_reach(kind: &usvg::filter::Kind, input: Rect) -> Rect {
++    use usvg::filter::Kind;
++    match kind {
++        Kind::DropShadow(shadow) => {
++            let (sx, sy) = (shadow.std_dev_x().get() as f64, shadow.std_dev_y().get() as f64);
++            let shadow_rect = (input + kurbo::Vec2::new(shadow.dx() as f64, shadow.dy() as f64))
++                .inflate(3.0 * sx + 1.0, 3.0 * sy + 1.0);
++            input.union(shadow_rect)
++        }
++        Kind::GaussianBlur(blur) => input.inflate(
++            3.0 * blur.std_dev_x().get() as f64 + 1.0,
++            3.0 * blur.std_dev_y().get() as f64 + 1.0,
++        ),
++        _ => input,
++    }
++}
++
++/// pyro: whether a CSS filter function filters `g` or a group in it (see [`function_kind`]).
++fn has_function_filter(g: &usvg::Group) -> bool {
++    g.filters().iter().any(|filter| function_kind(g, filter).is_some())
++        || g.children().iter().any(|node| match node {
++            Node::Group(child) => has_function_filter(child),
++            _ => false,
++        })
++}
++
++/// pyro: the bounds of what `g`'s children draw (their layers, as usvg's layer bounding box
++/// has them), in `g`'s user space; `None` when they draw nothing.
++fn children_bounds(g: &usvg::Group) -> Option<Rect> {
++    let mut bounds: Option<Rect> = None;
++    for node in g.children() {
++        let rect = match node {
++            Node::Group(child) => {
++                let Some(rect) = layer_bounds(child) else {
++                    continue;
++                };
++                util::to_affine(&child.transform()).transform_rect_bbox(rect)
++            }
++            node => {
++                let r = node.stroke_bounding_box();
++                Rect::new(r.left() as f64, r.top() as f64, r.right() as f64, r.bottom() as f64)
++            }
++        };
++        bounds = Some(bounds.map_or(rect, |b| b.union(rect)));
++    }
++    bounds
++}
++
++/// pyro: `g`'s layer bounding box in its own user space: usvg's, except that a CSS filter
++/// function in it reaches as far as its effect does (usvg gives it the bounding box widened by
++/// half: a `drop-shadow(50px 0)` on a 50 px wide shape was cut off at 25 px).
++fn layer_bounds(g: &usvg::Group) -> Option<Rect> {
++    if !has_function_filter(g) {
++        return Some(to_rect(g.layer_bounding_box()));
++    }
++    let mut bounds = children_bounds(g);
++    for filter in g.filters() {
++        bounds = match function_kind(g, filter) {
++            Some(kind) => bounds.map(|r| function_reach(kind, r)),
++            None => Some(to_rect(filter.rect())),
++        };
++    }
++    bounds
++}
++
 +/// pyro: `g`'s children in its filters' layers (`ts` maps the group's user space to the scene),
 +/// the first filter innermost, clipped to its filter region when they reach past it (SVG's
-+/// source graphic stops there).
++/// source graphic stops there; a CSS filter function has no region).
 +#[allow(clippy::too_many_arguments)]
 +fn render_filtered<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
 +    scene: &mut S,
 +    g: &usvg::Group,
 +    base: Affine,
 +    ts: Affine,
-+    filters: &[(Arc<Filter>, Rect)],
++    filters: &[crate::filter::FilterGraph],
 +    global_transform: Affine,
 +    error_handler: &mut F,
 +    ctx: &Ctx,
 +) {
-+    for (filter, region) in filters.iter().rev() {
-+        scene.push_layer(
-+            Fill::NonZero,
-+            BlendMode::default(),
-+            1.0,
-+            ts,
-+            region,
-+            Some(filter.clone()),
-+            None,
-+        );
++    for graph in filters.iter().rev() {
++        graph.push_layer(scene, ts);
 +    }
-+    let clip = filters.first().map(|(_, region)| *region).filter(|region| {
++    let clip = filters.first().filter(|graph| graph.bounded).map(|graph| graph.region).filter(|region| {
 +        let content = g.stroke_bounding_box();
 +        let content = Rect::new(
 +            content.left() as f64,
@@ -1134,6 +1944,22 @@ index 2e9e1c4..78ee6a1 100644
 +        );
 +    }
 +    true
++}
++
++/// pyro: whether `path` (in the space `ts` maps to the scene) is a filled axis-aligned rectangle
++/// without a stroke whose scene bounds hold those of the clip shape `clip` (under `clip_ts`).
++fn rect_holds(path: &Path, ts: Affine, clip_ts: Affine, clip: &BezPath) -> bool {
++    if path.fill().is_none() || path.stroke().is_some() {
++        return false;
++    }
++    let path_ts = ts * util::to_affine(&path.abs_transform());
++    let [_, b, c, _, _, _] = path_ts.as_coeffs();
++    let Some(rect) = (b == 0.0 && c == 0.0).then(|| path_rect(&util::to_bez_path(path))).flatten() else {
++        return false;
++    };
++    let rect = path_ts.transform_rect_bbox(rect);
++    let bounds = clip_ts.transform_rect_bbox(clip.bounding_box());
++    rect.x0 <= bounds.x0 + 0.01 && rect.y0 <= bounds.y0 + 0.01 && rect.x1 >= bounds.x1 - 0.01 && rect.y1 >= bounds.y1 - 0.01
 +}
 +
 +/// pyro: the rectangle `path` is (four axis-aligned sides, closed), if it is one.
@@ -1321,15 +2147,21 @@ index 2e9e1c4..78ee6a1 100644
 +                None => draw_clip_shapes(scene, g, clip_ts, rect),
 +            },
 +            Node::Image(_) => {}
-         }
-     }
- }
- 
++        }
++    }
++}
++
 +/// pyro: multiplies what was drawn in the current (isolated) layer by `mask`:
 +/// its content (within its rectangle) is rendered offscreen at the scene's
 +/// resolution over `rect`, turned into coverage by luminance or alpha, and
 +/// drawn into a `DestIn` layer covering `rect`. A mask on the mask element
-+/// multiplies the content too (as in resvg).
++/// multiplies the content too (as in resvg). A CSS box's mask ([`IN_BOX_REFERENCE`])
++/// of opaque shapes is drawn as the shapes instead ([`fill_mask_shapes`]): a box's
++/// reference is compared with the shapes a page draws (WPT `mask-image-3a`), where
++/// SVG content's masks are compared with masks of other descriptions of a shape,
++/// whose edges the raster's supersampling brings within their tolerance (WPT
++/// `mask-*-content-clip-transform`: a circle as `r="25"` scaled by 2 and as
++/// `r="5000"` by 0.01 are up to 39 levels apart drawn directly).
 +fn apply_mask<S: PaintScene>(scene: &mut S, mask: &usvg::Mask, ts: Affine, rect: Rect) {
 +    if let Some(nested) = mask.mask() {
 +        apply_mask(scene, nested, ts, rect);
@@ -1343,10 +2175,189 @@ index 2e9e1c4..78ee6a1 100644
 +        None,
 +        None,
 +    );
-+    if let Some((image, image_ts)) = mask_image(mask, ts, rect) {
-+        scene.draw_image(image.as_ref(), image_ts);
-+    }
++    let box_reference = IN_BOX_REFERENCE.with(|flag| flag.get());
++    if !(box_reference && fill_mask_shapes(scene, mask, ts, rect)) {
++        if let Some((image, image_ts)) = mask_image(mask, ts, rect) {
++            scene.draw_image(image.as_ref(), image_ts);
+         }
+     }
 +    scene.pop_layer();
++}
++
++/// pyro: what a mask of opaque shapes draws (see [`fill_mask_shapes`]): a shape, or shapes in a
++/// group clipped by a clip path of one shape (its rule, its transform to the scene, its path).
++enum MaskItem<'a> {
++    Path(&'a Path),
++    Clipped((Fill, Affine, BezPath), Vec<MaskItem<'a>>),
++}
++
++/// pyro: a mask whose content is shapes in one opaque colour, all inside the mask's rectangle (in
++/// groups without effects, or clipped by a clip path of one shape), drawn into the current
++/// (`DestIn`) layer as those shapes filled and stroked opaque, in a layer of the colour's mask
++/// value (its luminance, or 1 for `mask-type: alpha`), and so with the coverage the same shapes
++/// have when a page draws them (a reference's `<circle>` for a masked box): a raster of the mask
++/// flattens curves at its own resolution, up to 52 levels apart at a circle's edge. `false`
++/// (nothing drawn) for any other mask. `ts` maps the mask's user space to the scene.
++fn fill_mask_shapes<S: PaintScene>(
++    scene: &mut S,
++    mask: &usvg::Mask,
++    ts: Affine,
++    rect: Rect,
++) -> bool {
++    fn collect<'a>(
++        group: &'a usvg::Group,
++        ts: Affine,
++        out: &mut Vec<MaskItem<'a>>,
++        paths: &mut Vec<&'a Path>,
++    ) -> bool {
++        for node in group.children() {
++            match node {
++                Node::Path(path) => {
++                    if path.is_visible() && (path.fill().is_some() || path.stroke().is_some()) {
++                        out.push(MaskItem::Path(path));
++                        paths.push(path);
++                    }
++                }
++                Node::Group(g) => {
++                    #[allow(deprecated)]
++                    let plain = g.opacity().get() == 1.0
++                        && g.mask().is_none()
++                        && g.filters().is_empty()
++                        && g.blend_mode() == usvg::BlendMode::Normal
++                        && !g.isolate()
++                        && compose_marker(g.id()).is_none();
++                    if !plain {
++                        return false;
++                    }
++                    match g.clip_path() {
++                        None => {
++                            if !collect(g, ts, out, paths) {
++                                return false;
++                            }
++                        }
++                        Some(clip) => {
++                            let g_ts = ts * util::to_affine(&g.abs_transform());
++                            let Some(mut shapes) = clip_shapes(clip, g_ts).filter(|s| s.len() == 1)
++                            else {
++                                return false;
++                            };
++                            let mut inner = Vec::new();
++                            if !collect(g, ts, &mut inner, paths) {
++                                return false;
++                            }
++                            out.push(MaskItem::Clipped(shapes.remove(0), inner));
++                        }
++                    }
++                }
++                Node::Text(text) => {
++                    if !collect(text.flattened(), ts, out, paths) {
++                        return false;
++                    }
++                }
++                Node::Image(_) => return false,
++            }
++        }
++        true
++    }
++    // Fills are given in scene coordinates: the rasterizer flattens a path in its own
++    // coordinates, so one shape described at two scales (`r="25"` scaled by 2, `r="5000"` by
++    // 0.01) came out up to 39 levels apart at its edge (WPT `mask-*-content-clip-transform`).
++    fn draw<S: PaintScene>(scene: &mut S, items: &[MaskItem<'_>], ts: Affine) {
++        for item in items {
++            match item {
++                MaskItem::Path(path) => {
++                    let path_ts = ts * util::to_affine(&path.abs_transform());
++                    let shape = util::to_bez_path(path);
++                    if let Some(fill) = path.fill() {
++                        let rule = match fill.rule() {
++                            usvg::FillRule::NonZero => Fill::NonZero,
++                            usvg::FillRule::EvenOdd => Fill::EvenOdd,
++                        };
++                        scene.fill(rule, Affine::IDENTITY, Color::BLACK, None, &(path_ts * shape.clone()));
++                    }
++                    if let Some(stroke) = path.stroke() {
++                        scene.stroke(&util::to_stroke(stroke), path_ts, Color::BLACK, None, &shape);
++                    }
++                }
++                MaskItem::Clipped((rule, clip_ts, clip), inner) => {
++                    // A filled rectangle holding the clip shape: the shape filled (a fill's edge,
++                    // as a reference drawing the shape has it; a clip layer's is its own).
++                    if let [MaskItem::Path(path)] = &inner[..] {
++                        if rect_holds(path, ts, *clip_ts, clip) {
++                            scene.fill(*rule, Affine::IDENTITY, Color::BLACK, None, &(*clip_ts * clip.clone()));
++                            continue;
++                        }
++                    }
++                    let clip = *clip_ts * clip.clone();
++                    scene.push_layer(*rule, BlendMode::default(), 1.0, Affine::IDENTITY, &clip, None, None);
++                    draw(scene, inner, ts);
++                    scene.pop_layer();
++                }
++            }
++        }
++    }
++    let mut items = Vec::new();
++    let mut paths = Vec::new();
++    if !collect(mask.root(), ts, &mut items, &mut paths) || paths.is_empty() {
++        return false;
++    }
++    // One opaque colour for every fill and stroke.
++    let mut color = None;
++    for path in &paths {
++        let paints = [
++            path.fill().map(|f| (f.paint(), f.opacity())),
++            path.stroke().map(|s| (s.paint(), s.opacity())),
++        ];
++        for (paint, opacity) in paints.into_iter().flatten() {
++            let usvg::Paint::Color(c) = paint else {
++                return false;
++            };
++            if opacity.get() < 1.0 || color.is_some_and(|known| known != *c) {
++                return false;
++            }
++            color = Some(*c);
++        }
++    }
++    let Some(color) = color else {
++        return false;
++    };
++    // Inside the mask's rectangle, which would clip them.
++    let mask_rect = to_rect(mask.rect());
++    let inside = paths.iter().all(|path| {
++        let b = path.abs_stroke_bounding_box();
++        b.left() as f64 >= mask_rect.x0 - 1e-3
++            && b.top() as f64 >= mask_rect.y0 - 1e-3
++            && b.right() as f64 <= mask_rect.x1 + 1e-3
++            && b.bottom() as f64 <= mask_rect.y1 + 1e-3
++    });
++    if !inside {
++        return false;
++    }
++    // The raster's mask value of the colour (see `mask_image`).
++    let value = if mask.kind() == usvg::MaskType::Luminance {
++        (2125 * color.red as u32 + 7154 * color.green as u32 + 721 * color.blue as u32 + 5000) / 10000
++    } else {
++        255
++    };
++    if value == 0 {
++        return true;
++    }
++    if value < 255 {
++        scene.push_layer(
++            Fill::NonZero,
++            Mix::Normal,
++            value as f32 / 255.0,
++            Affine::IDENTITY,
++            &rect,
++            None,
++            None,
++        );
++    }
++    draw(scene, &items, ts);
++    if value < 255 {
++        scene.pop_layer();
++    }
++    true
 +}
 +
 +/// pyro: `mask` rendered over the whole-pixel scene rectangle `rect`, as a
@@ -1442,7 +2453,8 @@ index 2e9e1c4..78ee6a1 100644
 +fn rasterize(width: u32, height: u32, draw: impl FnOnce(&mut Scene)) -> Vec<u8> {
 +    use anyrender::ImageRenderer;
 +    let mut scene = Scene::new();
-+    draw(&mut scene);
++    // pyro: an offscreen raster is drawn as SVG content draws it, in a box's reference too.
++    with_box_reference(false, || draw(&mut scene));
 +    let mut renderer = VelloCpuImageRenderer::with_threads(width, height, 0);
 +    let mut pixels = Vec::new();
 +    renderer.render_to_vec(|painter| painter.append_scene(scene, Affine::IDENTITY), &mut pixels);
@@ -1526,12 +2538,10 @@ index 2e9e1c4..78ee6a1 100644
 +            .map(|(image, ts)| (Paint::Image(image), ts)),
 +        paint => util::to_brush(paint, opacity),
 +    }
-+}
-+
+ }
+ 
  fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
-     scene: &mut S,
-     error_handler: &mut F,
-@@ -168,9 +835,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -168,9 +1249,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -1546,7 +2556,7 @@ index 2e9e1c4..78ee6a1 100644
              scene.fill(
                  match fill.rule() {
                      usvg::FillRule::NonZero => Fill::NonZero,
-@@ -181,7 +852,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -181,7 +1266,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -1555,7 +2565,7 @@ index 2e9e1c4..78ee6a1 100644
              error_handler(scene, node);
          }
      }
-@@ -194,9 +865,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -194,9 +1279,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -1571,7 +2581,7 @@ index 2e9e1c4..78ee6a1 100644
              let conv_stroke = util::to_stroke(stroke);
              scene.stroke(
                  &conv_stroke,
-@@ -205,7 +881,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -205,7 +1295,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
