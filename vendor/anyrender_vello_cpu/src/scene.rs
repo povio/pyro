@@ -35,6 +35,9 @@ pub struct VelloCpuScenePainter {
     /// much of it (out of 255), as Chromium draws text when WPT runs it without font
     /// antialiasing. `None` (the default): antialiased.
     pub(crate) text_aliasing_threshold: Option<u8>,
+    /// pyro: whether a replay leaves out work that shows in no pixel (see [`crate::occlusion`]);
+    /// tests turn it off to compare.
+    pub(crate) occlusion: bool,
 }
 
 impl VelloCpuScenePainter {
@@ -64,6 +67,7 @@ impl VelloCpuScenePainter {
             backdrops: Vec::new(),
             frame_to_ctx: Affine::IDENTITY,
             text_aliasing_threshold: None,
+            occlusion: true,
         }
     }
 
@@ -454,6 +458,28 @@ impl VelloCpuScenePainter {
                 }
                 i += 3;
                 continue;
+            }
+            // Box shadows under the opaque fill after them: shaded only where it leaves them
+            // showing (see `crate::occlusion`). Not inside a clip path, which would let them show
+            // through the fill's pixels at its edge.
+            if self.occlusion
+                && matches!(commands[i], RenderCommand::BoxShadow(_))
+                && !self.clip_paths.contains(&Pushed::ClipPath)
+            {
+                let end = crate::occlusion::shadow_run_end(commands, i);
+                if let Some(clip) = commands.get(end).and_then(|cover| {
+                    crate::occlusion::shadow_clip(&commands[i..end], cover, transform)
+                }) {
+                    self.render_ctx.set_transform(Affine::IDENTITY);
+                    self.render_ctx.set_fill_rule(Fill::EvenOdd);
+                    self.render_ctx.push_clip_path(&clip);
+                    for command in &commands[i..end] {
+                        self.replay_command(command, transform, None);
+                    }
+                    self.render_ctx.pop_clip();
+                    i = end;
+                    continue;
+                }
             }
             match &commands[i] {
                 RenderCommand::PushLayer(_) => {
