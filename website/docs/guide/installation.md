@@ -155,7 +155,7 @@ Paths given to the server, such as `--static` directories or file uploads given 
 
 ## CI
 
-The package's own release workflow tests the packed tarball on GitHub-hosted `macos-15`, `macos-15-intel`, `ubuntu-24.04` and `ubuntu-24.04-arm` runners, with Node 22 and Bun. Those images work without extra setup. On GitHub Actions:
+The package's own release workflow tests the packed tarball with Node 22 and Bun on GitHub-hosted `ubuntu-24.04`, `ubuntu-24.04-arm` and `macos-15-intel` runners and on an Apple silicon Mac. GitHub-hosted `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15` and `macos-15-intel` images work without extra setup. On GitHub Actions:
 
 ```yaml
 jobs:

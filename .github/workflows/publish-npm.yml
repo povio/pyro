@@ -45,23 +45,28 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Both on the self-hosted Apple Silicon runner (label lp-m1): the Intel build is
+  # cross-compiled there. lp-m1 has no Rosetta 2, so the Intel browser first runs
+  # in the smoke job, on GitHub's Intel runner.
   build:
     needs: release
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
-            arch: arm64
+          - arch: arm64
             target: aarch64-apple-darwin
-          - runner: macos-15-intel
-            arch: x64
+            lipo: arm64
+          - arch: x64
             target: x86_64-apple-darwin
-    runs-on: ${{ matrix.runner }}
+            lipo: x86_64
+    runs-on: lp-m1
     timeout-minutes: 60
     env:
       PYRO_JSC: system
       MACOSX_DEPLOYMENT_TARGET: '14.0'
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -69,11 +74,30 @@ jobs:
           name: release-manifests
           path: .
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --no-self-update
-      # libjpeg-turbo's x86-64 SIMD is assembled with NASM (without it the JPEG encoder builds as plain C).
-      - name: Install NASM
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add --toolchain stable "$RUST_TARGET"
+      # libjpeg-turbo's x86-64 SIMD and OpenH264's x86-64 assembly are assembled with NASM; without it both build as
+      # plain C, with no error. lp-m1 has neither NASM nor Homebrew: build the release Homebrew's formula pins (same
+      # checksum), a host tool, into this job's temporary directory.
+      - name: NASM
         if: matrix.arch == 'x64'
-        run: brew install nasm
+        env:
+          NASM_VERSION: '3.02'
+          NASM_SHA256: 87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO --retry 3 "https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.xz"
+          echo "$NASM_SHA256  nasm-$NASM_VERSION.tar.xz" > nasm.sha256
+          shasum -a 256 -c nasm.sha256
+          tar -xJf "nasm-$NASM_VERSION.tar.xz"
+          cd "nasm-$NASM_VERSION"
+          ./configure --quiet
+          make -j"$(sysctl -n hw.ncpu)" nasm
+          ./nasm -v
+          echo "$PWD" >> "$GITHUB_PATH"
       - name: Build browser with rendering, and the comparison worker
         env:
           RUST_TARGET: ${{ matrix.target }}
@@ -81,15 +105,28 @@ jobs:
       - name: Verify and stage binary
         env:
           ARCH: ${{ matrix.arch }}
+          LIPO_ARCH: ${{ matrix.lipo }}
           RUST_TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.release.outputs.version }}
         run: |
           binary="target/$RUST_TARGET/release/pyro"
+          lipo -archs "$binary" | grep -qx "$LIPO_ARCH"
           codesign --verify --strict "$binary"
           codesign -d --entitlements - "$binary" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
           otool -L "$binary"
-          "$binary" version | grep -Fx "pyro $VERSION"
-          "$binary" eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
+          # NASM's output is in the binary, not the plain C the build scripts fall back to with no error:
+          # libjpeg-turbo's AVX2 colour conversion and OpenH264's SSSE3 deblocking.
+          if [ "$ARCH" = x64 ]; then
+            nm "$binary" > "$RUNNER_TEMP/symbols.txt"
+            for symbol in '_jsimd_rgb_ycc_convert_avx2$' '_DeblockLumaLt4V_ssse3$'; do
+              grep -qE " [Tt] $symbol" "$RUNNER_TEMP/symbols.txt" || { echo "::error::$symbol is missing: built without NASM?"; exit 1; }
+            done
+          fi
+          # The Intel browser cannot run here (no Rosetta 2); the smoke job's Intel leg runs it.
+          if [ "$ARCH" = arm64 ]; then
+            "$binary" version | grep -Fx "pyro $VERSION"
+            "$binary" eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
+          fi
           mkdir -p "native/darwin-$ARCH"
           cp "$binary" "native/darwin-$ARCH/pyro"
           comparator="target/$RUST_TARGET/release/pyro-snapshot-compare"
@@ -121,10 +158,13 @@ jobs:
   # comparison worker is a plain release build).
   fork:
     needs: [release, jsc]
-    runs-on: macos-15
+    # The self-hosted Apple Silicon runner (label lp-m1), as pgo.yml.
+    runs-on: lp-m1
     timeout-minutes: 150
     env:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
+      # That Mac's newest SDK is one its linker cannot read; see jsc.yml.
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -143,6 +183,9 @@ jobs:
         run: |
           export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
           mkdir -p "$(dirname "$PYRO_JSC_DIR")"
+          # The runner keeps its home between jobs, and the jsc job leaves this build there: replace it with the
+          # artifact the release ships (mv would move the artifact inside it, or fail once it is there).
+          rm -rf "$PYRO_JSC_DIR"
           mv patched-jsc "$PYRO_JSC_DIR"
           cargo +stable build --locked --release --package pyro-render
           cp target/aarch64-apple-darwin/release-pgo/pyro target/release/pyro
@@ -192,7 +235,7 @@ jobs:
   # The JavaScriptCore source asset and the notices the fork archive ships.
   jsc-source:
     needs: release
-    runs-on: macos-15
+    runs-on: lp-m1
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -264,12 +307,30 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The installed package on each platform: macOS arm64 on the self-hosted Apple
+  # Silicon runner (label lp-m1), macOS Intel on GitHub's Intel runner (lp-m1 has
+  # no Rosetta 2, and this is the first job that runs the cross-compiled Intel
+  # browser). The macOS arm64 and both Linux browsers are fork builds; the macOS
+  # Intel one uses system JavaScriptCore.
   smoke:
     needs: package
+    name: smoke (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - runner: lp-m1
+            arch: arm64
+            fork: true
+          - runner: macos-15-intel
+            arch: x64
+            fork: false
+          - runner: ubuntu-24.04
+            arch: x64
+            fork: true
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            fork: true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
@@ -286,17 +347,27 @@ jobs:
           name: npm-package
           path: npm-package
       - name: Test installed CLI and API with Node and Bun
+        env:
+          ARCH: ${{ matrix.arch }}
+          FORK: ${{ matrix.fork }}
+          # npm caches the installed tarball (about 150 MB): in the job's temporary directory, not lp-m1's home.
+          npm_config_cache: ${{ runner.temp }}/npm-cache
         run: |
+          # The package picks its browser by process.arch: the leg tests its own architecture only if both run as it.
+          node_arch="$(node -p process.arch)"
+          bun_arch="$(bun -e 'console.log(process.arch)')"
+          if [[ "$node_arch" != "$ARCH" || "$bun_arch" != "$ARCH" ]]; then
+            echo "::error::Node runs as $node_arch and Bun as $bun_arch, not $ARCH"
+            exit 1
+          fi
           mkdir "$RUNNER_TEMP/npm-smoke"
           cd "$RUNNER_TEMP/npm-smoke"
           npm init -y
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
+          version="$(node -p 'require("./node_modules/@povio/pyro/package.json").version')"
           ./node_modules/.bin/pyro version
-          # The macOS arm64 and both Linux browsers are fork builds; the macOS
-          # Intel one uses system JavaScriptCore.
-          want=false
-          [[ "$(uname -m)" == arm64 || "$(uname -s)" == Linux ]] && want=true
-          ./node_modules/.bin/pyro version | grep -q "fork: $want"
+          ./node_modules/.bin/pyro version | grep -Fx "pyro $version"
+          ./node_modules/.bin/pyro version | grep -q "fork: $FORK"
           node "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
           bun "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
 
@@ -305,7 +376,7 @@ jobs:
   # builds above and tested from their extracted form before upload.
   github-release:
     needs: [release, build, fork, linux, jsc, jsc-source, package, smoke]
-    runs-on: macos-15
+    runs-on: lp-m1
     timeout-minutes: 45
     permissions:
       contents: write

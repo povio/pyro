@@ -32,7 +32,7 @@ The browser does not. Run it on macOS or Linux (a Linux VM or WSL 2 with glibc 2
 
 ## Does it work in CI?
 
-Yes. GitHub-hosted `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15` and `macos-15-intel` runners run the package without extra setup; the project's release workflow tests on all four. Containers need glibc 2.39+ and fonts. See [CI recipes](/e2e/ci) and [Installation](/guide/installation#ci).
+Yes. GitHub-hosted `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15` and `macos-15-intel` runners run the package without extra setup. The project's release workflow tests it on both Ubuntu images, `macos-15-intel` and an Apple silicon Mac. Containers need glibc 2.39+ and fonts. See [CI recipes](/e2e/ci) and [Installation](/guide/installation#ci).
 
 ## Is there a headed mode?
 

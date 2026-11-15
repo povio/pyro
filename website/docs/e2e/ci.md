@@ -11,7 +11,7 @@ Running the native suite in CI needs Bun, the package, your app's build, and usu
 | `macos-15` (Apple silicon) | Bundled macOS arm64 build | Yes |
 | `macos-15-intel` | Bundled macOS x64 build | No: every page boots its profile |
 
-The Linux builds need glibc 2.39 or newer: Ubuntu 24.04 has it, Ubuntu 22.04 does not. The project's own release pipeline smoke-tests the package on exactly these four runners.
+The Linux builds need glibc 2.39 or newer: Ubuntu 24.04 has it, Ubuntu 22.04 does not. The project's own release pipeline smoke-tests the package on the Ubuntu and `macos-15-intel` runners, and on an Apple silicon Mac for the arm64 build.
 
 ## A complete workflow
 
