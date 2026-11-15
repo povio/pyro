@@ -180,8 +180,29 @@ impl VelloCpuScenePainter {
             return;
         }
         // The plane's pixels: its content's whole pixels, at a lower scale when there are too many.
-        let region =
+        let mut region =
             PixelRect::around(bounds.inflate(-crate::scene::WHOLE_PIXEL_SLACK, -crate::scene::WHOLE_PIXEL_SLACK));
+        // Only those the target's pixels show, when all of it sees the plane in front of the viewer
+        // (then it maps back to a convex quad), with margin for the bilinear taps.
+        let target_rect = target.to_rect();
+        let back = [
+            (target_rect.x0, target_rect.y0),
+            (target_rect.x1, target_rect.y0),
+            (target_rect.x1, target_rect.y1),
+            (target_rect.x0, target_rect.y1),
+        ]
+        .map(|(x, y)| from_frame.apply(x, y));
+        if back.iter().all(|p| p[2] >= MIN_W) {
+            let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+            for p in back {
+                let (x, y) = (p[0] / p[2], p[1] / p[2]);
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+            }
+            let shown = Rect::new(x0, y0, x1, y1).inflate(2.0, 2.0);
+            if shown.is_finite() {
+                region = region.intersect(PixelRect::around(shown));
+            }
+        }
         if region.is_empty() {
             return;
         }

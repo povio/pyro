@@ -719,11 +719,12 @@ pub(crate) fn painted_bounds(commands: &[RenderCommand], transform: Affine) -> O
                 }
             }
             // A filter layer, a backdrop and a projective layer (`crate::projective`, its content in
-            // the plane's pixels) paint their clip.
+            // the plane's pixels) paint their clip. A layer with no filter effects (blitz-paint's
+            // backdrop-root mark, pyro lane H2) or an aliased clip paints only what it holds.
             RenderCommand::PushLayer(layer)
-                if (layer.filter.is_some()
-                    && !layer.filter.as_deref().is_some_and(crate::projective::is_aliased_clip_marker))
-                    || layer.backdrop_filter.is_some() =>
+                if layer.filter.as_deref().is_some_and(|filter| {
+                    !filter.nodes().is_empty() && !crate::projective::is_aliased_clip_marker(filter)
+                }) || layer.backdrop_filter.is_some() =>
             {
                 let clip = (transform * layer.transform).transform_rect_bbox(layer.clip.bounding_box());
                 i = matching_pop(commands, i);

@@ -156,7 +156,7 @@ impl Descent<'_> {
         self.transform_and_planes(id).map(|(t, fixed, _)| (t, fixed))
     }
 
-    /// [`Self::transform`], and whether a plane drawn through a perspective is on `id`'s
+    /// [`Self::transform`], and whether a plane placed by its homography is on `id`'s
     /// containing-block chain (pyro, lane H2: its box is then where `Geometry::projective` puts it).
     fn transform_and_planes(&mut self, id: NodeId) -> Option<(Affine, bool, bool)> {
         if let Some(t) = self.transforms.get(&id) {

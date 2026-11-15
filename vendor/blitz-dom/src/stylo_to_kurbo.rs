@@ -312,6 +312,10 @@ pub enum Flattened {
     Affine(Affine),
     /// It lies behind the viewer: nothing of it is drawn.
     Hidden,
+    /// pyro (lane H2): it crosses the viewer's plane: the part in front of the viewer is drawn
+    /// (blitz-paint draws it through the 4x4 matrix, `Node::plane_3d`, cut there). Its projection
+    /// has no bounds, so no 2D affine stands in for it: layout keeps its untransformed box.
+    Crossing,
 }
 
 /// pyro: flattens `m` onto the plane z = 0, as a browser composites an element whose content
@@ -356,20 +360,12 @@ pub fn flatten_transform(m: &Transform3D<f64>, size: (f64, f64)) -> Flattened {
         project(w, h),
     ) else {
         // pyro (lane H2): a box that crosses the viewer's plane shows the part in front of it
-        // (blitz-paint draws that part through the 4x4 matrix, `Node::plane_3d`); the stand-in
-        // spans the bounds of that part's projection, limited to a size layout queries and paint
-        // culling can use. A box wholly behind the viewer shows nothing.
-        let visible = clipped_projection(m, (w, h));
-        if visible.len() < 3 {
-            return Flattened::Hidden;
-        }
-        const LIMIT: f64 = 1e5;
-        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-        for (x, y) in visible {
-            let (x, y) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
-            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
-        }
-        return Flattened::Affine(Affine::new([(x1 - x0) / w, 0.0, 0.0, (y1 - y0) / h, x0, y0]));
+        // (`Flattened::Crossing`). A box wholly behind the viewer shows nothing.
+        return if clipped_projection(m, (w, h)).len() < 3 {
+            Flattened::Hidden
+        } else {
+            Flattened::Crossing
+        };
     };
     // Least squares over the four corners of a w x h box: each column of the linear part is
     // the mean difference across the box along that axis, the translation puts the box's
@@ -553,8 +549,8 @@ mod tests {
     }
 
     /// pyro (lane H2): a box laid down under a perspective whose far side reaches past the viewer
-    /// shows the part in front of the viewer: the stand-in spans that part's projection (it was
-    /// hidden), and the box is projective (blitz-paint draws it through its matrix).
+    /// shows the part in front of the viewer (it was hidden): it crosses the viewer's plane, which
+    /// no 2D affine stands in for, and it is projective (blitz-paint draws it through its matrix).
     #[test]
     fn a_box_crossing_the_viewer_shows_the_part_in_front() {
         // perspective(100px) seen from 50px above the box's top edge; the box turned 90deg about
@@ -573,9 +569,13 @@ mod tests {
         // The near edge stays on the top edge; the cut edge lies far below it.
         assert!(visible.iter().any(|&(_, y)| y.abs() < 1e-9), "{visible:?}");
         assert!(visible.iter().any(|&(_, y)| y > 1e5), "{visible:?}");
-        let Flattened::Affine(stand_in) = flatten_transform(&crossing, (100.0, 100.0)) else {
-            panic!("hidden")
-        };
-        assert_eq!(stand_in * kurbo::Point::new(0.0, 0.0), kurbo::Point::new(-1e5, 0.0));
+        assert_eq!(flatten_transform(&crossing, (100.0, 100.0)), Flattened::Crossing);
+        // Turned and moved past the viewer it lies wholly behind: hidden.
+        let behind = Transform3D::rotation(0.0, 1.0, 0.0, euclid::Angle::degrees(30.0))
+            .then(&Transform3D::translation(0.0, 0.0, 300.0))
+            .then(&Transform3D::perspective(100.0));
+        assert!(is_projective(&behind, (100.0, 100.0)));
+        assert!(clipped_projection(&behind, (100.0, 100.0)).is_empty());
+        assert_eq!(flatten_transform(&behind, (100.0, 100.0)), Flattened::Hidden);
     }
 }

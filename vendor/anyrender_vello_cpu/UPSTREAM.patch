@@ -2214,10 +2214,10 @@ index 5bc2e2c..6fbc4ba 100644
  pub use image_renderer::VelloCpuImageRenderer;
 diff --git b/src/projective.rs b/src/projective.rs
 new file mode 100644
-index 0000000..6cd9a85
+index 0000000..be15ba9
 --- /dev/null
 +++ b/src/projective.rs
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,359 @@
 +//! pyro (lane H2): projective layers. A plane that a 3D transform maps to the screen through a
 +//! perspective (a rotation out of the plane under `perspective`) becomes a trapezoid, which no 2D
 +//! affine draws. blitz-paint draws such a plane as a layer marked with its homography: the layer's
@@ -2400,8 +2400,29 @@ index 0000000..6cd9a85
 +            return;
 +        }
 +        // The plane's pixels: its content's whole pixels, at a lower scale when there are too many.
-+        let region =
++        let mut region =
 +            PixelRect::around(bounds.inflate(-crate::scene::WHOLE_PIXEL_SLACK, -crate::scene::WHOLE_PIXEL_SLACK));
++        // Only those the target's pixels show, when all of it sees the plane in front of the viewer
++        // (then it maps back to a convex quad), with margin for the bilinear taps.
++        let target_rect = target.to_rect();
++        let back = [
++            (target_rect.x0, target_rect.y0),
++            (target_rect.x1, target_rect.y0),
++            (target_rect.x1, target_rect.y1),
++            (target_rect.x0, target_rect.y1),
++        ]
++        .map(|(x, y)| from_frame.apply(x, y));
++        if back.iter().all(|p| p[2] >= MIN_W) {
++            let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
++            for p in back {
++                let (x, y) = (p[0] / p[2], p[1] / p[2]);
++                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
++            }
++            let shown = Rect::new(x0, y0, x1, y1).inflate(2.0, 2.0);
++            if shown.is_finite() {
++                region = region.intersect(PixelRect::around(shown));
++            }
++        }
 +        if region.is_empty() {
 +            return;
 +        }
@@ -2557,7 +2578,7 @@ index 0000000..6cd9a85
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..0079d91 100644
+index 1b09a33..d94e4bd 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,11 +1,14 @@
@@ -2756,7 +2777,7 @@ index 1b09a33..0079d91 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +287,702 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +287,703 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -3192,11 +3213,12 @@ index 1b09a33..0079d91 100644
 +                }
 +            }
 +            // A filter layer, a backdrop and a projective layer (`crate::projective`, its content in
-+            // the plane's pixels) paint their clip.
++            // the plane's pixels) paint their clip. A layer with no filter effects (blitz-paint's
++            // backdrop-root mark, pyro lane H2) or an aliased clip paints only what it holds.
 +            RenderCommand::PushLayer(layer)
-+                if (layer.filter.is_some()
-+                    && !layer.filter.as_deref().is_some_and(crate::projective::is_aliased_clip_marker))
-+                    || layer.backdrop_filter.is_some() =>
++                if layer.filter.as_deref().is_some_and(|filter| {
++                    !filter.nodes().is_empty() && !crate::projective::is_aliased_clip_marker(filter)
++                }) || layer.backdrop_filter.is_some() =>
 +            {
 +                let clip = (transform * layer.transform).transform_rect_bbox(layer.clip.bounding_box());
 +                i = matching_pop(commands, i);
@@ -3459,7 +3481,7 @@ index 1b09a33..0079d91 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1059,197 @@ mod clip_rule_tests {
+@@ -292,4 +1060,197 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

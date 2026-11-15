@@ -130,6 +130,11 @@ pub struct Context3D {
     /// ([`Plane3D::matrix`]).
     pub root: NodeId,
     pub root_offset: (f64, f64),
+    /// pyro (lane H2): where layout queries place the element when not by `base`: the
+    /// homography (row-major, CSS px) from its coordinates to the context's that its plane's
+    /// [`Plane3D::local`] composes to ([`Plane3D::places_by_local`]). Its children's are given
+    /// relative to it.
+    pub frame: Option<[f64; 9]>,
 }
 
 /// pyro (lane H2): a plane blitz-paint draws through its 4x4 matrix rather than through the
@@ -150,17 +155,29 @@ pub struct Plane3D {
     pub own_hidden: bool,
     /// The plane as layout queries place it in place of the 2D stand-in (`Node::transform`): a
     /// homography (row-major, `(X, Y, W) = H (x, y, 1)`, CSS px) from the border box to the
-    /// coordinates the stand-in maps it into (the box's untransformed place in its parent's).
+    /// coordinates the stand-in maps it into (the box's untransformed place in its parent's, the
+    /// parent as layout queries place it).
     pub local: [f64; 9],
+    /// Layout queries place the box by [`Self::local`] rather than by the stand-in: W varies over
+    /// the plane, or the context element it is in is placed by its own, and the plane does not
+    /// cross the viewer's plane.
+    pub places_by_local: bool,
+    /// The plane crosses the viewer's plane: paint draws the part in front of it; layout keeps the
+    /// box at its untransformed place (its projection has no bounds), and print, which draws the
+    /// stand-ins, leaves it out.
+    pub crosses_viewer: bool,
 }
 
 impl Plane3D {
-    /// Whether W varies over the plane: paint draws it through a perspective, and layout queries
-    /// place it by [`Self::local`].
+    /// Whether W varies over the plane: paint draws it through a perspective.
     pub fn is_projective(&self) -> bool {
-        let m = &self.matrix;
-        m.m14.abs() + m.m24.abs() > 1e-12 * m.m44.abs()
+        varies_w(&self.matrix)
     }
+}
+
+/// pyro (lane H2): whether W varies over a plane under `m` ([`Plane3D::is_projective`]).
+fn varies_w(m: &euclid::default::Transform3D<f64>) -> bool {
+    m.m14.abs() + m.m24.abs() > 1e-12 * m.m44.abs()
 }
 
 /// pyro (lane H2): the homography of a 4x4 matrix's projection onto the plane of the screen
@@ -169,14 +186,37 @@ fn projection_homography(m: &euclid::default::Transform3D<f64>) -> [f64; 9] {
     [m.m11, m.m21, m.m41, m.m12, m.m22, m.m42, m.m14, m.m24, m.m44]
 }
 
-/// pyro (lane H2): `h` with the affine `a` applied after it.
-fn affine_after(a: Affine, h: [f64; 9]) -> [f64; 9] {
+/// pyro (lane H2): the homography of a 2D affine, row-major.
+fn affine_homography(a: Affine) -> [f64; 9] {
     let [a11, a21, a12, a22, a13, a23] = a.as_coeffs();
-    let rows = [[a11, a12, a13], [a21, a22, a23], [0.0, 0.0, 1.0]];
+    [a11, a12, a13, a21, a22, a23, 0.0, 0.0, 1.0]
+}
+
+/// pyro (lane H2): `a * b` (`b` applied first).
+fn homography_mul(a: &[f64; 9], b: &[f64; 9]) -> [f64; 9] {
     std::array::from_fn(|i| {
         let (r, c) = (i / 3, i % 3);
-        (0..3).map(|k| rows[r][k] * h[k * 3 + c]).sum()
+        (0..3).map(|k| a[r * 3 + k] * b[k * 3 + c]).sum()
     })
+}
+
+/// pyro (lane H2): the inverse of a homography, `None` for a singular one.
+fn homography_inverse(m: &[f64; 9]) -> Option<[f64; 9]> {
+    let cofactor =
+        |r0: usize, r1: usize, c0: usize, c1: usize| m[r0 * 3 + c0] * m[r1 * 3 + c1] - m[r0 * 3 + c1] * m[r1 * 3 + c0];
+    let adjugate = [
+        cofactor(1, 2, 1, 2),
+        -cofactor(0, 2, 1, 2),
+        cofactor(0, 1, 1, 2),
+        -cofactor(1, 2, 0, 2),
+        cofactor(0, 2, 0, 2),
+        -cofactor(0, 1, 0, 2),
+        cofactor(1, 2, 0, 1),
+        -cofactor(0, 2, 0, 1),
+        cofactor(0, 1, 0, 1),
+    ];
+    let determinant = m[0] * adjugate[0] + m[1] * adjugate[3] + m[2] * adjugate[6];
+    (determinant.is_finite() && determinant != 0.0).then(|| adjugate.map(|v| v / determinant))
 }
 
 impl TransformContext {
@@ -685,7 +725,7 @@ impl Node {
             Some(t) => (Affine::translate(location) * *t).transform_rect_bbox(hit),
             None => hit + kurbo::Vec2::new(location.0, location.1),
         };
-        let Some(plane) = self.plane_3d().filter(|plane| plane.is_projective()) else {
+        let Some(plane) = self.plane_3d().filter(|plane| plane.places_by_local) else {
             return placed;
         };
         const MIN_W: f64 = 1e-6;
@@ -835,31 +875,6 @@ impl Node {
                 Some(shared) => {
                     let accumulated = to_parent.then(&shared.accumulated);
                     hides |= !preserve_3d && back_face_hidden(box_styles, &accumulated);
-                    let flat = match crate::stylo_to_kurbo::flatten_transform(&accumulated, size) {
-                        Flattened::Hidden => {
-                            hides = true;
-                            None
-                        }
-                        Flattened::Affine(place) => {
-                            let place = if preserve_3d {
-                                regularize(place)
-                            } else {
-                                place
-                            };
-                            if preserve_3d {
-                                context = Some(Context3D {
-                                    accumulated,
-                                    base: place,
-                                    root: shared.root,
-                                    root_offset: shared.root_offset,
-                                });
-                            }
-                            let relative =
-                                Affine::translate((-x, -y)) * shared.base.inverse() * place;
-                            let relative = crate::stylo_to_kurbo::snap(relative);
-                            (relative != Affine::IDENTITY).then_some(relative)
-                        }
-                    };
                     // pyro (lane H2): an element of the context that Chromium gives a transform
                     // node of its own (a transform, `will-change: transform`, `preserve-3d`,
                     // `backface-visibility: hidden`) is a plane of it, sorted by depth with the
@@ -877,19 +892,92 @@ impl Node {
                         || preserve_3d
                         || box_styles.backface_visibility
                             == style::computed_values::backface_visibility::T::Hidden;
+                    let at = Affine::translate((x, y));
+                    // pyro (lane H2): where layout queries put the parent (its frame: from its
+                    // coordinates to the context's, those of the root's parent), less the box's
+                    // location: a box at its untransformed place in the parent is there.
+                    let parent_frame = shared.frame.unwrap_or_else(|| affine_homography(shared.base));
+                    let to_parent_place = homography_inverse(&parent_frame)
+                        .map(|inverse| homography_mul(&affine_homography(at.inverse()), &inverse));
+                    let mut crosses_viewer = false;
+                    let mut by_local = false;
+                    let mut frame = None;
+                    let flat = match crate::stylo_to_kurbo::flatten_transform(&accumulated, size) {
+                        Flattened::Hidden => {
+                            hides = true;
+                            None
+                        }
+                        // pyro (lane H2): a box crossing the viewer's plane is drawn through its
+                        // matrix (paint cuts it there); its projection has no bounds, so layout
+                        // keeps it at its untransformed place in its parent, as before it was drawn.
+                        Flattened::Crossing => {
+                            crosses_viewer = true;
+                            if preserve_3d {
+                                context = Some(Context3D {
+                                    accumulated,
+                                    base: shared.base * at,
+                                    frame: shared.frame.map(|f| homography_mul(&f, &affine_homography(at))),
+                                    root: shared.root,
+                                    root_offset: shared.root_offset,
+                                });
+                            }
+                            None
+                        }
+                        // An element that is no plane paints in its parent's plane at its place
+                        // there (paint draws that plane through its matrix): no transform.
+                        Flattened::Affine(_) if !makes_plane => None,
+                        Flattened::Affine(place) => {
+                            let place = if preserve_3d {
+                                regularize(place)
+                            } else {
+                                place
+                            };
+                            // A plane of a context its parent's frame is a homography of, or one W
+                            // varies over, is placed by its homography for layout queries
+                            // (`Plane3D::local`); its frame is that homography. The 2D transform
+                            // stays the stand-in paint records it with.
+                            by_local = !hides
+                                && to_parent_place.is_some()
+                                && (shared.frame.is_some() || varies_w(&accumulated));
+                            if by_local {
+                                frame = Some(if varies_w(&accumulated) {
+                                    projection_homography(&accumulated)
+                                } else {
+                                    affine_homography(place)
+                                });
+                            }
+                            if preserve_3d {
+                                context = Some(Context3D {
+                                    accumulated,
+                                    base: place,
+                                    frame,
+                                    root: shared.root,
+                                    root_offset: shared.root_offset,
+                                });
+                            }
+                            let relative =
+                                Affine::translate((-x, -y)) * shared.base.inverse() * place;
+                            let relative = crate::stylo_to_kurbo::snap(relative);
+                            (relative != Affine::IDENTITY).then_some(relative)
+                        }
+                    };
                     if makes_plane && !hides {
                         let (rx, ry) = shared.root_offset;
-                        // Into the parent's coordinates as the stand-in is: from the root's parent's
-                        // through the parent's place, less the box's location.
-                        let local = affine_after(
-                            Affine::translate((-x, -y)) * shared.base.inverse(),
-                            projection_homography(&accumulated),
+                        // Into the parent's coordinates as layout queries place the parent.
+                        let own_frame = frame.unwrap_or_else(|| projection_homography(&accumulated));
+                        let local = homography_mul(
+                            &to_parent_place.unwrap_or_else(|| {
+                                affine_homography(Affine::translate((-x, -y)) * shared.base.inverse())
+                            }),
+                            &own_frame,
                         );
                         plane = Some(Plane3D {
                             root: shared.root,
                             matrix: accumulated.then(&Transform3D::translation(-rx, -ry, 0.0)),
                             own_hidden: preserve_3d && back_face_hidden(box_styles, &accumulated),
                             local,
+                            places_by_local: by_local,
+                            crosses_viewer,
                         });
                     }
                     flat
@@ -900,6 +988,7 @@ impl Node {
                 None => {
                     hides |= !preserve_3d && back_face_hidden(box_styles, &to_parent);
                     let local = to_parent.then(&Transform3D::translation(-x, -y, 0.0));
+                    let mut crosses_viewer = false;
                     let flat = match resolved {
                         ResolvedTransform::Flat(flat) => flat,
                         ResolvedTransform::Spatial(_) => {
@@ -911,15 +1000,23 @@ impl Node {
                                     hides = true;
                                     None
                                 }
+                                // pyro (lane H2): drawn through its matrix; layout keeps the
+                                // untransformed box (see the context case above).
+                                Flattened::Crossing => {
+                                    crosses_viewer = true;
+                                    None
+                                }
                             }
                         }
                     };
+                    let by_local = !crosses_viewer && varies_w(&local);
                     // The root of a 3D rendering context: its children are placed relative to it.
                     if preserve_3d && !hides {
                         let own = regularize(flat.unwrap_or(Affine::IDENTITY));
                         context = Some(Context3D {
                             accumulated: to_parent,
                             base: Affine::translate((x, y)) * own,
+                            frame: by_local.then(|| projection_homography(&to_parent)),
                             root: id,
                             root_offset: (x, y),
                         });
@@ -928,6 +1025,8 @@ impl Node {
                             matrix: local,
                             own_hidden: back_face_hidden(box_styles, &to_parent),
                             local: projection_homography(&local),
+                            places_by_local: by_local,
+                            crosses_viewer,
                         });
                         (own != Affine::IDENTITY).then_some(own)
                     } else {
@@ -939,6 +1038,8 @@ impl Node {
                                 matrix: local,
                                 own_hidden: false,
                                 local: projection_homography(&local),
+                                places_by_local: by_local,
+                                crosses_viewer,
                             });
                         }
                         flat

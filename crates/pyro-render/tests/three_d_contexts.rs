@@ -22,6 +22,10 @@ const FUCHSIA: [u8; 3] = [255, 0, 255];
 const SILVER: [u8; 3] = [192, 192, 192];
 
 fn render(body: &str, scale: f64) -> RgbaImage {
+    render_area(body, scale, Area::Viewport).unwrap()
+}
+
+fn render_area(body: &str, scale: f64, area: Area) -> Result<RgbaImage, String> {
     let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
     let snapshot = Snapshot {
         html: format!("<!doctype html><body style='margin:0;background:#fff'>{body}"),
@@ -31,7 +35,7 @@ fn render(body: &str, scale: f64) -> RgbaImage {
         device_scale_factor: scale,
         ..Default::default()
     };
-    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0
+    Renderer::new().render(&snapshot, area, Backend::Cpu, &fetcher).map(|r| r.0).map_err(|e| format!("{e:?}"))
 }
 
 /// The pixel at CSS px (x, y).
@@ -84,6 +88,25 @@ fn an_untransformed_box_paints_in_its_parents_plane() {
         assert_eq!(pixel(&img, scale, 130.0, 175.0), FUCHSIA, "scale {scale}");
         assert_eq!(pixel(&img, scale, 210.0, 175.0), SILVER, "scale {scale}");
         assert_eq!(pixel(&img, scale, 175.0, 225.0), BLUE, "scale {scale}");
+    }
+}
+
+/// An untransformed box in a plane drawn through a perspective is drawn at its layout place in
+/// that plane: a box 40px in from the corner of a card turned 50deg about y under a perspective of
+/// 500px spans x = 157.5 to 212.5 (the card's homography of its box). The affine that stood in for
+/// the box's own projection, composed with the inverse of the card's, put it 8px to the right.
+#[test]
+fn an_untransformed_box_paints_at_its_place_in_a_plane_under_perspective() {
+    let page = "<div style='position:absolute;left:0;top:0;width:400px;height:300px;perspective:500px'>\
+        <div style='position:absolute;left:100px;top:50px;width:200px;height:200px;background:green;\
+        transform-style:preserve-3d;transform:rotateY(50deg)'>\
+        <div style='position:absolute;left:40px;top:40px;width:80px;height:80px;background:blue'></div></div></div>";
+    for scale in [1.0, 2.0] {
+        let img = render(page, scale);
+        for (x, y, color) in [(161.0, 128.0, BLUE), (154.0, 128.0, GREEN), (209.0, 130.0, BLUE), (216.0, 130.0, GREEN)]
+        {
+            assert_eq!(pixel(&img, scale, x, y), color, "({x}, {y}), scale {scale}");
+        }
     }
 }
 
@@ -146,6 +169,12 @@ fn a_plane_crossing_the_viewer_shows_its_part_in_front() {
             assert_eq!(pixel(&img, scale, 10.0, 290.0), GREEN, "{style} scale {scale}");
             assert_eq!(pixel(&img, scale, 200.0, 140.0), WHITE, "{style} scale {scale}");
         }
+        // Its projection has no bounds: the page keeps the untransformed box's size (550px tall),
+        // where a stand-in spanning the projection made it 1e5 px tall, past what a full-page
+        // screenshot draws.
+        let full = render_area(&page, 1.0, Area::FullPage).expect("a full-page screenshot");
+        assert!(full.height <= 600, "{style} {}", full.height);
+        assert_eq!(pixel(&full, 1.0, 200.0, 250.0), GREEN, "{style} full page");
     }
 }
 

@@ -389,11 +389,21 @@ from the root of an upstream checkout at that commit) is the whole diff.
   bounds in its plane through its 4x4 matrix, cut at the viewer's plane), sorted by a BSP tree as viz's `BspTree`
   sorts a 3D sorting context (the first polygon splits the others by its plane; coplanar ones keep paint order;
   one crossing a plane is split and each piece drawn clipped to it). A chunk whose plane keeps W constant is drawn
-  through the affine of its matrix (its commands as recorded when that is the stand-in); one whose W varies is a
-  projective layer for anyrender_vello_cpu (`projective_marker`: six offsets carrying the homography; its content
-  in the plane's own pixels, its clip the projection's bounds), which `scene_bounds` takes as its clip. A plane met
-  inside a clip or layer of another stays there, flattened. `backface-visibility: hidden` on a `preserve-3d`
-  element showing its back hides its own chunks. Print (`composite_3d` false) gets the sorting with the stand-ins.
+  through the affine of its matrix (its commands as recorded when that is the stand-in). One whose W varies is
+  drawn through its homography: when it holds only fills in one solid colour and clips (`project_commands`), each
+  path is flattened, cut at the viewer's plane, divided by W and snapped to a 1/1024 px grid (the same plane reached
+  by another product of matrices lands on the same pixels); otherwise it is a projective layer for
+  anyrender_vello_cpu (`projective_marker`: six offsets carrying the homography; its content in the plane's own
+  pixels, its clip the projection's bounds), which `scene_bounds` takes as its clip. A plane that reads a backdrop
+  and cannot be projected keeps its stand-in (the raster has no backdrop). The cut of a split piece is a clip layer
+  with anyrender_vello_cpu's aliased mark (`aliased_clip_marker`); without the mark (another backend) it is an
+  ordinary clip. A plane met inside a clip or layer of another stays there, flattened into that plane (the affine
+  closest to the map between the two planes, `flattened_into`). An element of a context that is no plane paints in
+  its parent's plane at its layout place (blitz-dom gives it no transform). A plane drawn through a perspective
+  skips the local-raster layer above: the projective layer rasterizes it in its plane already.
+  `backface-visibility: hidden` on a `preserve-3d` element showing its back hides its own chunks. Print
+  (`composite_3d` false) gets the sorting with the stand-ins, their polygons where the stand-ins put them; a plane
+  crossing the viewer's plane has no stand-in and is left out there.
   WPT `transform3d-sorting-*`, `preserve3d-and-flattening-*`, `css-transform-3d-transform-style`,
   `perspective-split-by-zero-w`, `transform-3d-rotateY-stair-*`. Covered by
   `crates/pyro-render/tests/three_d_contexts.rs` and the unit tests in `src/render/three_d.rs`.

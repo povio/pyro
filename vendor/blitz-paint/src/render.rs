@@ -859,7 +859,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Its own blend mode applies to that image; its effects, inside, in its plane.
         let local_raster_pushed = self.composite_3d
             && node.flags.contains(blitz_dom::node::NodeFlags::FLATTENS_3D)
-            && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()));
+            && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()))
+            // pyro (lane H2): a plane drawn through a perspective is rasterized in its plane already.
+            && !(self.three_d.depth.get() > 0 && node.plane_3d().is_some_and(|plane| plane.is_projective()));
         if local_raster_pushed {
             scene.push_layer(
                 Fill::NonZero,

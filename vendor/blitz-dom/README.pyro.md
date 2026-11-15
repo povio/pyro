@@ -322,10 +322,11 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
     screen), that is an exact affine: `rotateY(60deg)` paints at half width, and a depth under a perspective
     scales the box about the perspective origin.
   - Otherwise (a rotation out of the plane under perspective) the affine closest to the projection at the
-    box's corners (least squares) stands in for layout queries and culling; blitz-paint draws the trapezoid
-    through the 4x4 matrix (`Plane3D`, below). For a box that crosses the viewer's plane the stand-in spans
-    the bounds of the projection of the part in front of the viewer (`clipped_projection`, cut at W =
-    `MIN_W`), held to ±1e5 px.
+    box's corners (least squares) stands in for culling and scrollable overflow; blitz-paint draws the
+    trapezoid through the 4x4 matrix and layout queries place it by its homography (`Plane3D`, below). A box
+    that crosses the viewer's plane (`Flattened::Crossing`, the part in front of it non-empty: `clipped_projection`,
+    cut at W = `MIN_W`) is drawn through its matrix too; its projection has no bounds, so layout keeps its
+    untransformed box (no transform), and print, which draws stand-ins, leaves it out.
   - A box wholly at or behind the viewer, or whose 4x4 matrix has no inverse (`scale: 1 1 0`), is not drawn.
   - Coefficients within 1e-12 of 0 and ±1, and translations within 1e-9 px of a whole pixel, snap
     (`snap`): `rotate(360deg)` left `sin` noise that made text skip its pixel snapping.
@@ -387,25 +388,30 @@ tests in `src/stylo_to_kurbo.rs`.
   planes of their own, each with its 4x4 matrix from its border box to the untransformed border box of the root of
   its 3D rendering context (CSS px, depth and perspective divisor kept):
   - every element of a 3D rendering context that Chromium gives a transform node: a transform property (even an
-    identity one), `transform-style: preserve-3d`, `backface-visibility: hidden`. The other elements of a context
-    paint in the plane of the element they are in, in paint order (WPT `preserve3d-and-flattening-*`);
+    identity one), one of `translate`, `rotate`, `scale`, `will-change: transform`, `transform-style: preserve-3d`,
+    `backface-visibility: hidden`. The other elements of a context paint in the plane of the element they are in,
+    in paint order, at their layout place there: they get no transform (WPT `preserve3d-and-flattening-*`);
   - the root of a context (a `preserve-3d` element whose parent gives it no context): its matrix is its own;
   - a flat element outside a context whose 3D transform maps it projectively (`is_projective`: W varies over
     the box).
   blitz-paint sorts a context's planes by depth and draws projective ones through a perspective warp; the 2D
   transform (`Node::transform`) stays the stand-in that layout queries compose.
-- `src/node/node.rs` (`Plane3D::local`, `Plane3D::is_projective`, `Node::hit_bound_in_parent`), `src/resolve.rs`
-  (`resolve_hit_overflow`): a plane drawn through a perspective also carries the homography that places it where
-  the 2D stand-in would (into its untransformed place in its parent's coordinates), which pyro-render's layout
-  queries compose instead of the stand-in. A box's hit-test bound in its parent holds both that projection and the
-  stand-in's placement (what is placed by the stand-in, inline fragments and table rows, stays inside it), so hit
-  testing culls nothing paint draws. Scrollable overflow keeps the stand-in.
+- `src/node/node.rs` (`Plane3D::local`, `Plane3D::places_by_local`, `Context3D::frame`,
+  `Node::hit_bound_in_parent`), `src/resolve.rs` (`resolve_hit_overflow`): a plane drawn through a perspective, and
+  any plane of a context element placed so, also carries the homography that places it in its parent's
+  coordinates as layout queries place the parent (the parent's frame: its own homography, or its 2D stand-in when
+  it has none), which pyro-render's layout queries compose instead of the stand-in. The chain of a context's
+  planes so composes to each plane's own projection, the perspective applied once. A box's hit-test bound in its
+  parent holds both that projection and the stand-in's placement (what is placed by the stand-in, inline fragments
+  and table rows, stays inside it), so hit testing culls nothing paint draws. Scrollable overflow keeps the
+  stand-in. A plane crossing the viewer's plane is not placed so (`Plane3D::crosses_viewer`).
 - `src/resolve.rs` (`ContainingTransform::for_child`): a parent without a box passes its parent's perspective and
   3D rendering context on: a `display: contents` element always (WPT `transform3d-preserve3d-014`), a table row or
   row group (Blitz lays a table's cells out in the table's grid) when its own `transform-style` is `preserve-3d`
   (WPT `transform-table-009`, `-010`); one that is not ends the context (`-007`, `-008`).
 
-Covered by `crates/pyro-render/tests/three_d_contexts.rs` and the unit tests in `src/stylo_to_kurbo.rs`.
+Covered by `crates/pyro-render/tests/three_d_contexts.rs`, `crates/pyro-layout/tests/transform_3d.rs` and the unit
+tests in `src/stylo_to_kurbo.rs`.
 
 ## Style changes for transitions
 

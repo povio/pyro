@@ -141,11 +141,19 @@ tests in `src/scene.rs`.
 `painted_bounds`), lane H2. A layer whose filter carries a homography (six offsets: the first by negative zero,
 then the matrix's columns' pairs and its last row) holds a plane drawn through a perspective: its commands are in
 the plane's own pixels, the homography maps them to the layer's space. `replay` rasterizes them in a context of
-their own over what they paint (at a lower scale past 16M px), and each frame pixel inside the layer's clip and the
-plane's projection samples that raster bilinearly at the plane point the inverse homography gives its centre;
-where that point is behind the viewer (W <= 0) nothing is drawn, as Chromium clips a quad at W = 0. The result is
-drawn pixel for pixel. `painted_bounds` takes such a layer as its clip. Covered by the unit tests in
-`src/projective.rs` and pyro-render's `three_d_contexts.rs`.
+their own over what they paint (only the part the target pixels show when all of them see the plane in front of
+the viewer, at a lower scale past 16M px), and each frame pixel inside the layer's clip and the plane's projection
+samples that raster bilinearly at the plane point the inverse homography gives its centre; where that point is
+behind the viewer (W <= 0) nothing is drawn, as Chromium clips a quad at W = 0. The result is drawn pixel for
+pixel. `painted_bounds` takes such a layer as its clip.
+
+A second mark, `projective::is_aliased_clip_marker` (a layer whose filter is a single offset by `(0, -0)`, which
+moves nothing), is a clip layer `replay` rasterizes aliased (`set_aliasing_threshold`): blitz-paint clips the pieces
+of a plane split where planes of a 3D rendering context cross with it, so that two pieces share each pixel along
+the cut without a seam, as viz draws the interior edges of split quads. `painted_bounds` takes what such a layer
+holds, and what a layer whose filter has no effects holds (blitz-paint's backdrop-root mark, which paints nothing
+of its own: as its clip it made a plane's raster region the size of the whole recording space). Covered by the unit
+tests in `src/projective.rs` and pyro-render's `three_d_contexts.rs`.
 
 ## Aliased glyphs
 

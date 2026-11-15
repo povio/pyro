@@ -137,8 +137,9 @@ impl Geometry {
         self.transform_and_planes(doc, id).map(|(t, fixed, _)| (t, fixed))
     }
 
-    /// [`Self::transform`], and whether a plane on the chain is drawn through a perspective
-    /// (then [`Self::projective`] places the box).
+    /// [`Self::transform`], and whether a plane on the chain is placed by its homography (drawn
+    /// through a perspective, or in a context element placed so; then [`Self::projective`] places
+    /// the box).
     fn transform_and_planes(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool, bool)> {
         let mut chain = Vec::new();
         let mut projective = false;
@@ -178,10 +179,10 @@ impl Geometry {
     }
 
     /// pyro (lane H2): `id`'s border box to the document as a homography (CSS px), when a plane
-    /// on its containing-block chain is drawn through a perspective (`Node::plane_3d`): a 2D
+    /// on its containing-block chain is placed by its homography (`Plane3D::places_by_local`): a 2D
     /// transform only stands in for such a plane, and a layout query reports the box where paint
-    /// draws it: each such plane is composed by its homography (`Plane3D::local`, into the frame
-    /// the stand-in maps into). `None` otherwise (the chain's affine is exact).
+    /// draws it: each such plane is composed by its homography (`Plane3D::local`, into its parent's
+    /// coordinates as this chain places the parent). `None` otherwise (the chain's affine is exact).
     pub(crate) fn projective(&self, doc: &BaseDocument, id: NodeId) -> Option<Homography> {
         let mut chain = Vec::new();
         let mut projective = false;
@@ -1234,9 +1235,10 @@ fn first_cell(doc: &BaseDocument, id: NodeId) -> Option<NodeId> {
     None
 }
 
-/// pyro (lane H2): whether paint draws a plane through a perspective (W varies over it).
+/// pyro (lane H2): whether layout queries place a plane by its homography (`Plane3D::local`):
+/// paint draws it through a perspective, or it is in a context element placed so.
 pub(crate) fn is_projective_plane(plane: &blitz_dom::node::Plane3D) -> bool {
-    plane.is_projective()
+    plane.places_by_local
 }
 
 /// pyro (lane H2): a homography of the plane, row-major: a point (x, y) maps to (X / W, Y / W)

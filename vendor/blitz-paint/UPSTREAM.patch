@@ -1376,10 +1376,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -288,6 +313,149 @@
-         }
-     }
- 
+@@ -284,8 +309,151 @@
+                     self.initial_x,
+                     self.initial_y,
+                 );
++            }
++        }
++    }
++
 +    /// pyro: the canvas, in scene space: the viewport, or the root element's box where that is
 +    /// larger.
 +    fn canvas_rect(&self) -> Rect {
@@ -1430,7 +1434,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                || !self.rendered(id)
 +            {
 +                continue;
-+            }
+             }
 +            self.paint_backdrop(scene, id);
 +            // The root element paints where the document pass would have
 +            // put it (`render_element` applies its own location, transform
@@ -1493,7 +1497,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let visible_color = color.alpha > 0.0 && self.backgrounds;
 +        if opacity <= 0.0 || (!visible_color && backdrop_filter.is_none()) {
 +            return;
-+        }
+         }
 +        let rect = Rect::new(
 +            self.initial_x,
 +            self.initial_y,
@@ -1521,11 +1525,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            },
 +        );
-+    }
-+
+     }
+ 
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
-         let location = node.final_layout().location;
-         parent
 @@ -317,8 +485,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
@@ -1701,7 +1703,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
              scene,
              css_clip_rect.is_some(),
-@@ -566,40 +808,96 @@
+@@ -566,40 +808,98 @@
          // Use the viewport in scene coordinates so outlines, shadows and overflowing
          // descendants are not clipped to the element's border box.
          let blend = convert_blend_mode(effects.mix_blend_mode);
@@ -1777,7 +1779,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // Its own blend mode applies to that image; its effects, inside, in its plane.
 +        let local_raster_pushed = self.composite_3d
 +            && node.flags.contains(blitz_dom::node::NodeFlags::FLATTENS_3D)
-+            && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()));
++            && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()))
++            // pyro (lane H2): a plane drawn through a perspective is rasterized in its plane already.
++            && !(self.three_d.depth.get() > 0 && node.plane_3d().is_some_and(|plane| plane.is_projective()));
 +        if local_raster_pushed {
 +            scene.push_layer(
 +                Fill::NonZero,
@@ -1819,7 +1823,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,112 +906,220 @@
+@@ -608,112 +908,220 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -2133,7 +2137,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn render_node(
          &self,
          scene: &mut impl PaintScene,
-@@ -724,9 +1130,11 @@
+@@ -724,9 +1132,11 @@
          let node = &self.dom.as_ref().tree()[node_id];
  
          match &node.data {
@@ -2147,7 +2151,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -784,6 +1192,55 @@
+@@ -784,6 +1194,55 @@
      }
  }
  
@@ -2203,7 +2207,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
      match image_rendering {
          ImageRendering::Auto => peniko::ImageQuality::Medium,
-@@ -836,7 +1293,118 @@
+@@ -836,7 +1295,118 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -2323,11 +2327,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -963,12 +1531,374 @@
-                     None,
+@@ -964,11 +1534,373 @@
                      &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
                  );
-+            }
+             }
 +        }
 +    }
 +
@@ -2488,8 +2491,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        }
 +                    }
 +                }
-             }
-         }
++            }
++        }
 +        if fragments.is_empty() {
 +            return;
 +        }
@@ -2686,7 +2689,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            cx.draw_border(scene);
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
-+        }
+         }
      }
  
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
@@ -2698,7 +2701,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let text_layout = self.element
                  .inline_layout_data
                  .as_ref()
-@@ -976,6 +1906,11 @@
+@@ -976,6 +1908,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -2710,7 +2713,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +1919,22 @@
+@@ -984,23 +1921,22 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -2742,7 +2745,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,18 +1942,186 @@
+@@ -1008,18 +1944,186 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -2931,7 +2934,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1030,9 +2132,15 @@
+@@ -1030,9 +2134,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -2949,7 +2952,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +2155,65 @@
+@@ -1047,7 +2157,65 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -3015,7 +3018,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +2244,7 @@
+@@ -1078,6 +2246,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -3023,7 +3026,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +2253,15 @@
+@@ -1086,10 +2255,15 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -3039,7 +3042,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1114,14 +2286,25 @@
+@@ -1114,14 +2288,25 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -3068,7 +3071,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1145,11 +2328,92 @@
+@@ -1145,13 +2330,94 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -3080,9 +3083,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                None,
 +                None,
              );
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -3126,7 +3129,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let Some(child) = child else { break };
 +            top += child.final_layout().location.y;
 +            node = child;
-         }
++        }
 +        // The baseline from the item's content box top, in CSS px.
 +        let baseline = match &first_line {
 +            Some((node, text, line)) => {
@@ -3158,10 +3161,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
 +        }
-     }
- 
++    }
++
      fn draw_children(
-@@ -1183,16 +2447,20 @@
+         &self,
+         scene: &mut impl PaintScene,
+@@ -1183,16 +2449,20 @@
                  // the viewport and do not scroll with it, so cancel out the viewport
                  // scroll (applied in `paint_scene`). A fixed box contained by a
                  // transformed ancestor scrolls with it like any out-of-flow box.
@@ -3183,7 +3188,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      parent_style_transform.pre_translate(kurbo::Vec2 {
                          x: offset.x as f64 * self.scale,
                          y: offset.y as f64 * self.scale,
-@@ -1232,6 +2500,9 @@
+@@ -1232,6 +2502,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -3193,7 +3198,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1299,9 +2570,21 @@
+@@ -1299,9 +2572,21 @@
              || y_offset < 0.0
              || x_offset + paint_size.width > container_size.width
              || y_offset + paint_size.height > container_size.height;
@@ -3216,7 +3221,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1466,3 +2749,29 @@
+@@ -1466,3 +2751,29 @@
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
  }
@@ -8149,7 +8154,7 @@ diff --git a/packages/blitz-paint/src/render/three_d.rs b/packages/blitz-paint/s
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/three_d.rs
-@@ -0,0 +1,932 @@
+@@ -0,0 +1,1052 @@
 +//! pyro (lane H2): 3D rendering contexts and planes drawn through a perspective.
 +//!
 +//! blitz-dom gives each element that paints as a plane of its own its 4x4 matrix
@@ -8163,7 +8168,9 @@ new file mode 100644
 +//!   painted inside another, a marker records the place.
 +//! - The recordings are cut into chunks at the markers, in paint order: what a plane paints before
 +//!   a child plane, the child (and its own chunks), what the plane paints after it. A plane met
-+//!   inside a clip or a layer of another stays in it (drawn flat with its stand-in).
++//!   inside a clip or a layer of another stays in it, flattened into that plane (`flattened_into`).
++//! - An element of a context that is no plane paints in the plane of the element it is in, at its
++//!   layout place there (blitz-dom gives it no transform).
 +//! - Each chunk is a polygon in 3D (its content's bounds in its plane, through its matrix, cut at
 +//!   the viewer's plane): the polygons are sorted back to front with a BSP tree, as Chromium's
 +//!   compositor sorts the quads of a 3D sorting context (viz `BspTree`): a polygon crossing another's
@@ -8173,7 +8180,9 @@ new file mode 100644
 +//!   (anyrender_vello_cpu `projective`) with the plane's homography. A split piece is clipped to
 +//!   its polygon.
 +//!
-+//! Printed output (`composite_3d` false) keeps the stand-ins and gets the sorting only.
++//! Printed output (`composite_3d` false) keeps the stand-ins and gets the sorting only (the
++//! polygons of stand-ins are where the stand-ins put them); a plane crossing the viewer's plane has
++//! no stand-in and is left out there.
 +
 +use std::cell::{Cell, RefCell};
 +use std::sync::Arc;
@@ -8214,6 +8223,8 @@ new file mode 100644
 +    /// From the element's own device px to the scene's, with depth (Z) and perspective (W).
 +    matrix: M4,
 +    own_hidden: bool,
++    /// It crosses the viewer's plane (`Plane3D::crosses_viewer`): it has no stand-in.
++    crosses_viewer: bool,
 +    commands: Vec<RenderCommand>,
 +}
 +
@@ -8392,6 +8403,7 @@ new file mode 100644
 +            recorded,
 +            matrix: M4::device(plane, self.scale, collector.origin),
 +            own_hidden: plane.own_hidden,
++            crosses_viewer: plane.crosses_viewer,
 +            commands: recording.commands,
 +        }));
 +        collector.planes.len() - 1
@@ -8406,8 +8418,14 @@ new file mode 100644
 +            self.initial_y,
 +            self.initial_x + self.width as f64,
 +            self.initial_y + self.height as f64,
-+        )
-+        .inflate(64.0, 64.0);
++        );
++        // Inside another plane's recording the scene is that plane's stand-in space, not where it
++        // is drawn: a projective layer keeps a viewport's size of margin on each side.
++        let viewport = if self.three_d.depth.get() > 0 {
++            viewport.inflate(self.width as f64, self.height as f64)
++        } else {
++            viewport.inflate(64.0, 64.0)
++        };
 +
 +        let mut prepared: Vec<Chunk> = Vec::new();
 +        let mut polygons: Vec<bsp::Polygon> = Vec::new();
@@ -8419,11 +8437,18 @@ new file mode 100644
 +            }
 +            let local = transformed(&commands, recorded.inverse());
 +            let Some(bounds) = crate::bounds::scene_bounds(&local) else { continue };
-+            let draw = match matrix.flat(bounds) {
++            let (draw, local) = match matrix.flat(bounds) {
 +                Some(None) => continue,
-+                Some(Some(affine)) if close(affine, recorded) => Draw::AsRecorded,
-+                Some(Some(affine)) => Draw::Affine(affine),
-+                None if !self.composite_3d => Draw::AsRecorded,
++                Some(Some(affine)) if close(affine, recorded) => (Draw::AsRecorded, local),
++                Some(Some(affine)) => (Draw::Affine(affine), local),
++                // Print keeps the stand-ins; a plane crossing the viewer has none and is left out,
++                // as it was before planes were drawn through their matrices.
++                None if !self.composite_3d => {
++                    if record.crosses_viewer {
++                        continue;
++                    }
++                    (Draw::StandIn, local)
++                }
 +                None => {
 +                    let h = matrix.homography();
 +                    // Plain fills and clips are projected as paths: exact edges, antialiased once, as
@@ -8432,24 +8457,9 @@ new file mode 100644
 +                    // element (not in the plane's own pixels; a 3D transform makes no backdrop root),
 +                    // keeps the stand-in when it cannot be projected.
 +                    if let Some(projected) = project_commands(&local, &h, bounds) {
-+                        prepared.push(Chunk { original: Vec::new(), local: projected, draw: Draw::Vector });
-+                        let corners = [
-+                            (bounds.x0, bounds.y0),
-+                            (bounds.x1, bounds.y0),
-+                            (bounds.x1, bounds.y1),
-+                            (bounds.x0, bounds.y1),
-+                        ];
-+                        let homogeneous: Vec<[f64; 4]> = corners.iter().map(|&(x, y)| matrix.apply(x, y)).collect();
-+                        let points = clip_w(&homogeneous);
-+                        if points.len() >= 3 {
-+                            polygons.push(bsp::Polygon::new(points, prepared.len() - 1, prepared.len() - 1));
-+                        } else {
-+                            prepared.pop();
-+                        }
-+                        continue;
-+                    }
-+                    if reads_backdrop(&commands) {
-+                        Draw::AsRecorded
++                        (Draw::Vector, projected)
++                    } else if reads_backdrop(&commands) && !record.crosses_viewer {
++                        (Draw::StandIn, local)
 +                    } else {
 +                        let projected = project(&h, bounds);
 +                        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
@@ -8460,20 +8470,35 @@ new file mode 100644
 +                        if projected.len() < 3 || !(clip.width() > 0.0 && clip.height() > 0.0) {
 +                            continue;
 +                        }
-+                        Draw::Projective(h, clip)
++                        (Draw::Projective(h, clip), local)
 +                    }
 +                }
 +            };
-+            // The polygon: the content's bounds in the plane, cut at the viewer's plane, projected.
++            // The polygon: the content's bounds in the plane, cut at the viewer's plane, projected;
++            // for a stand-in, where the stand-in puts them (at the plane's depths), so that a split
++            // cuts what is drawn.
 +            let corners =
 +                [(bounds.x0, bounds.y0), (bounds.x1, bounds.y0), (bounds.x1, bounds.y1), (bounds.x0, bounds.y1)];
-+            let homogeneous: Vec<[f64; 4]> = corners.iter().map(|&(x, y)| matrix.apply(x, y)).collect();
-+            let points = clip_w(&homogeneous);
++            let points = match draw {
++                Draw::StandIn => corners
++                    .iter()
++                    .map(|&(x, y)| {
++                        let [_, _, z, w] = matrix.apply(x, y);
++                        let p = recorded * Point::new(x, y);
++                        [p.x, p.y, z / w.max(MIN_W)]
++                    })
++                    .collect(),
++                _ => {
++                    let homogeneous: Vec<[f64; 4]> = corners.iter().map(|&(x, y)| matrix.apply(x, y)).collect();
++                    clip_w(&homogeneous)
++                }
++            };
 +            if points.len() < 3 {
 +                continue;
 +            }
 +            polygons.push(bsp::Polygon::new(points, prepared.len(), prepared.len()));
-+            prepared.push(Chunk { original: commands, local, draw });
++            let original = if matches!(draw, Draw::AsRecorded | Draw::StandIn) { commands } else { Vec::new() };
++            prepared.push(Chunk { original, local, draw });
 +        }
 +        let ordered = if polygons.len() == 1 { polygons } else { bsp::back_to_front(polygons) };
 +        for piece in ordered {
@@ -8499,7 +8524,9 @@ new file mode 100644
 +                }
 +            }
 +            match &chunk.draw {
-+                Draw::AsRecorded => scene.append_scene(scene_of(chunk.original.clone()), Affine::IDENTITY),
++                Draw::AsRecorded | Draw::StandIn => {
++                    scene.append_scene(scene_of(chunk.original.clone()), Affine::IDENTITY)
++                }
 +                Draw::Affine(affine) => scene.append_scene(scene_of(chunk.local.clone()), *affine),
 +                Draw::Vector => scene.append_scene(scene_of(chunk.local.clone()), Affine::IDENTITY),
 +                Draw::Projective(h, clip) => {
@@ -8583,7 +8610,7 @@ new file mode 100644
 +
 +/// A chunk of a context, ready to draw.
 +struct Chunk {
-+    /// Its commands as Blitz recorded them.
++    /// Its commands as Blitz recorded them (kept only when drawn so).
 +    original: Vec<RenderCommand>,
 +    /// The same in the plane's own device px.
 +    local: Vec<RenderCommand>,
@@ -8593,6 +8620,9 @@ new file mode 100644
 +enum Draw {
 +    /// As recorded: the stand-in is the plane's affine.
 +    AsRecorded,
++    /// As recorded, where the stand-in only approximates the plane (print, or a backdrop filter in
++    /// a plane drawn through a perspective that cannot be projected).
++    StandIn,
 +    /// Its local commands through this affine.
 +    Affine(Affine),
 +    /// Its local commands in a projective layer with this homography, clipped to this rect.
@@ -8717,7 +8747,7 @@ new file mode 100644
 +                }
 +                expand(planes, child, chunks);
 +            } else {
-+                inline(planes, child, &mut current);
++                inline(planes, child, index, &mut current);
 +            }
 +            continue;
 +        }
@@ -8733,21 +8763,86 @@ new file mode 100644
 +    }
 +}
 +
-+/// Appends the recording of plane `index` to `out` as it is, its own markers too: a plane painted
-+/// inside a clip or a layer of another stays there, flattened.
-+fn inline(planes: &mut [Option<PlaneRecord>], index: usize, out: &mut Vec<RenderCommand>) {
++/// Appends the recording of plane `index` to `out`, its own markers' planes too: a plane painted
++/// inside a clip or a layer of the plane `into` stays there, flattened into that plane (see
++/// [`flattened_into`]).
++fn inline(planes: &mut [Option<PlaneRecord>], index: usize, into: usize, out: &mut Vec<RenderCommand>) {
 +    let Some(commands) = planes.get_mut(index).and_then(|p| p.as_mut()).map(|p| std::mem::take(&mut p.commands)) else {
 +        return;
 +    };
++    let mut own = Vec::with_capacity(commands.len());
 +    let mut commands = commands.into_iter();
 +    while let Some(command) = commands.next() {
 +        if let Some(child) = marker_index(&command) {
 +            commands.next();
-+            inline(planes, child, out);
++            inline(planes, child, index, &mut own);
 +        } else {
-+            out.push(command);
++            own.push(command);
 +        }
 +    }
++    match flattened_into(planes, index, into, &own) {
++        Some(t) => out.extend(transformed(&own, t)),
++        None => out.extend(own),
++    }
++}
++
++/// The affine that moves the recording `commands` of plane `index` (painted with its stand-in) to
++/// where it lies in the plane `into`, as that plane's recording has it: the map from the one plane
++/// to the other (exact when it is affine, the affine closest to it at the content's corners when a
++/// perspective lies between them), between their stand-ins. `None` when it is the identity or
++/// there is none.
++fn flattened_into(planes: &[Option<PlaneRecord>], index: usize, into: usize, commands: &[RenderCommand]) -> Option<Affine> {
++    let (plane, outer) = (planes.get(index)?.as_ref()?, planes.get(into)?.as_ref()?);
++    if !(plane.recorded.determinant().abs() > 1e-12) {
++        return None;
++    }
++    let bounds = crate::bounds::scene_bounds(&transformed(commands, plane.recorded.inverse()))?;
++    let g = mul3(&inverse3(&outer.matrix.homography())?, &plane.matrix.homography());
++    let project = |x: f64, y: f64| {
++        let w = g[6] * x + g[7] * y + g[8];
++        (w >= MIN_W).then(|| ((g[0] * x + g[1] * y + g[2]) / w, (g[3] * x + g[4] * y + g[5]) / w))
++    };
++    let (x0, y0, x1, y1) = (bounds.x0, bounds.y0, bounds.x1.max(bounds.x0 + 1.0), bounds.y1.max(bounds.y0 + 1.0));
++    let (p00, p10, p01, p11) = (project(x0, y0)?, project(x1, y0)?, project(x0, y1)?, project(x1, y1)?);
++    // Least squares over the four corners, as blitz-dom's `flatten_transform`.
++    let (w, h) = (x1 - x0, y1 - y0);
++    let a = ((p10.0 + p11.0 - p00.0 - p01.0) / (2.0 * w), (p10.1 + p11.1 - p00.1 - p01.1) / (2.0 * w));
++    let c = ((p01.0 + p11.0 - p00.0 - p10.0) / (2.0 * h), (p01.1 + p11.1 - p00.1 - p10.1) / (2.0 * h));
++    let mean = ((p00.0 + p10.0 + p01.0 + p11.0) / 4.0, (p00.1 + p10.1 + p01.1 + p11.1) / 4.0);
++    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
++    let e = (mean.0 - a.0 * cx - c.0 * cy, mean.1 - a.1 * cx - c.1 * cy);
++    let between = Affine::new([a.0, a.1, c.0, c.1, e.0, e.1]);
++    let t = outer.recorded * between * plane.recorded.inverse();
++    // An edge-on plane has no map to speak of: the recording stays as it is.
++    let usable = t.as_coeffs().iter().all(|v| v.is_finite() && v.abs() < 1e7) && t.determinant().abs() > 1e-9;
++    (usable && !close(t, Affine::IDENTITY)).then_some(t)
++}
++
++/// `a * b` of row-major 3x3 matrices (`b` applied first).
++fn mul3(a: &[f64; 9], b: &[f64; 9]) -> [f64; 9] {
++    std::array::from_fn(|i| {
++        let (r, c) = (i / 3, i % 3);
++        (0..3).map(|k| a[r * 3 + k] * b[k * 3 + c]).sum()
++    })
++}
++
++/// The inverse of a row-major 3x3 matrix, `None` for a singular one.
++fn inverse3(m: &[f64; 9]) -> Option<[f64; 9]> {
++    let cofactor =
++        |r0: usize, r1: usize, c0: usize, c1: usize| m[r0 * 3 + c0] * m[r1 * 3 + c1] - m[r0 * 3 + c1] * m[r1 * 3 + c0];
++    let adjugate = [
++        cofactor(1, 2, 1, 2),
++        -cofactor(0, 2, 1, 2),
++        cofactor(0, 1, 1, 2),
++        -cofactor(1, 2, 0, 2),
++        cofactor(0, 2, 0, 2),
++        -cofactor(0, 1, 0, 2),
++        cofactor(1, 2, 0, 1),
++        -cofactor(0, 2, 0, 1),
++        cofactor(0, 1, 0, 1),
++    ];
++    let determinant = m[0] * adjugate[0] + m[1] * adjugate[3] + m[2] * adjugate[6];
++    (determinant.is_finite() && determinant != 0.0).then(|| adjugate.map(|v| v / determinant))
 +}
 +
 +/// Whether `commands` draw a backdrop filter.
@@ -8977,7 +9072,9 @@ new file mode 100644
 +                        let (da, db) = (distances[i] * sign, distances[(i + 1) % n] * sign);
 +                        if da >= 0.0 {
 +                            points.push(a);
-+                            cut.push(if db < 0.0 { da == 0.0 } else { polygon.cut[i] });
++                            // The edge from a point on the plane runs along the new cut; from
++                            // one off it, it goes on along edge i (cut where that was).
++                            cut.push(if db < 0.0 { da == 0.0 || polygon.cut[i] } else { polygon.cut[i] });
 +                        }
 +                        if (da > 0.0 && db < 0.0) || (da < 0.0 && db > 0.0) {
 +                            let t = da / (da - db);
@@ -9079,6 +9176,34 @@ new file mode 100644
 +                assert!((at[0] - 5.0).abs() < 1e-9 && along[0].abs() < 1e-9, "{piece:?}");
 +            }
 +            assert!(sorted[1].cuts().next().is_none());
++        }
++
++        /// A piece cut once and cut again across its first cut keeps both cuts: the edge of the
++        /// first cut it keeps part of stays a cut.
++        #[test]
++        fn a_piece_cut_twice_keeps_both_cuts() {
++            let piece = |polygon: Polygon, plane: Plane, front: bool| match classify(&plane, polygon) {
++                Side::Both(a, b) => {
++                    if front {
++                        a
++                    } else {
++                        b
++                    }
++                }
++                _ => panic!("not split"),
++            };
++            // The square split at x = 5, then the left piece split at y = 5.
++            let square = square(0.0, 0);
++            let left = piece(square, Plane { normal: [-1.0, 0.0, 0.0], d: 5.0 }, true);
++            assert!(left.points.iter().all(|p| p[0] <= 5.0));
++            let corner = piece(left, Plane { normal: [0.0, -1.0, 0.0], d: 5.0 }, true);
++            assert!(corner.points.iter().all(|p| p[0] <= 5.0 && p[1] <= 5.0), "{corner:?}");
++            let mut cuts: Vec<_> = corner
++                .cuts()
++                .map(|(at, along)| if along[0].abs() < 1e-9 { ('x', at[0]) } else { ('y', at[1]) })
++                .collect();
++            cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
++            assert_eq!(cuts, [('x', 5.0), ('y', 5.0)], "{corner:?}");
 +        }
 +    }
 +}
