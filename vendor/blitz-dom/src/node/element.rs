@@ -121,6 +121,9 @@ pub struct ElementData {
     /// cascade at the animations and transitions levels (`animation.rs`).
     pub sampled_animations: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     pub sampled_transitions: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    /// pyro: an animation of this element that is current or in effect animates a property that
+    /// makes a stacking context, which makes the element one (`animation.rs`).
+    pub animation_stacking_context: bool,
 
     // Pseudo element nodes
     pub before: Option<NodeId>,
@@ -374,6 +377,7 @@ impl Clone for ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_transitions: None,
+            animation_stacking_context: false,
             before: None,
             after: None,
             first_letter: None,
@@ -492,6 +496,7 @@ impl ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_transitions: None,
+            animation_stacking_context: false,
             before: None,
             after: None,
             first_letter: None,

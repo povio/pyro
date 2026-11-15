@@ -343,6 +343,24 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
+- `src/render.rs` (`render_element`), `src/layers.rs` (`filter_reach`, `filter_source_area`): culling counts what
+  an element's `filter` moves or spreads (the sum of its primitives' reaches, a drop shadow's offset, a blur): an
+  element out of view whose shadow is in view is painted, and so is content a clip leaves out of view that the
+  filter brings into it (its descendants are culled against the clip grown back by the reach). WPT
+  `filters-drop-shadow-003`, `drop-shadow-clipped-001`; covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
+- `src/render/background.rs` (`draw_background_layers`): `background-blend-mode`. Each image layer is drawn in a
+  layer of its blend mode, and an element with one that is not `normal` paints its background in an isolated group
+  (not blending with what lies behind it). Covered by `crates/pyro-render/tests/mix_blend_mode.rs`.
+- `src/render/clip_path.rs` (`draw_inline_effects`, `paints_alone`, `disjoint_rects`): inline elements (not
+  atomic) with `opacity` or `backdrop-filter` join those with a clip path or a mask: the layout is painted in their
+  areas in a group of their opacity (all fragments as one group), over their backdrop filtered in their fragments'
+  border boxes (snapped as `draw_inline_boxes` snaps them). Only when no inline ancestor between the element and its
+  inline root paints a box there (a background, a border, a shadow), which the group would take in. The areas go out
+  to whole device pixels around the snapped boxes, and the layout outside them is clipped by pieces that do not
+  overlap (overlapping areas, lines closer than their text is tall, were painted twice), inside the layout's ink
+  (recorded first, `bounds::scene_bounds`) rather than the whole visible area (a frame-sized clip layer). WPT
+  `t32-opacity-offscreen-multiple-boxes-1-c`/`2-c`, `backdrop-filter-inline-positioning`; covered by
+  `crates/pyro-render/tests/opacity_group.rs` and `backdrop_filter.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

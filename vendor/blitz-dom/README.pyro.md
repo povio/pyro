@@ -372,6 +372,16 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
   lifted to the nearest layer root's positioned level, as in-flow positioned boxes are
   (`attach_hoisted_past_parent`): they painted under the blocks after the inline (WPT
   `filtered-inline-is-container`).
+- `src/layout/paint_tree.rs` (`place_hoisted`, `tree_order_place`, `precedes_in_tree_order`): an out-of-flow box
+  its containing block lists past its layout parent takes its place in tree order among what the same layout
+  child's subtree lifted to that level (positioned boxes, stacking contexts without a `z-index`), where it was
+  appended after all of them (CSS 2.1 Appendix E step 8; WPT `clip-path-reference-restore`,
+  `clip-path-path-with-zoom-001`, `canvas-change-opacity`, `position-relative-016`).
+  `restore_out_of_flow_stacking_owners`: one without a `z-index` moved into a stacking context its containing block
+  lies outside of joins that context's `paint_children` at its positioned level in tree order (and
+  `StackingContext::positioned_level`, for `hoisted_content_bbox`), where it was painted after the context's
+  content (WPT `mix-blend-mode-root-element-group`). `src/node/node.rs` (`hit`): an out-of-flow child placed so
+  is hit where it is painted (`lifted_paint_offset`). Covered by `crates/pyro-render/tests/opacity_group.rs`.
 
 Covered by `crates/pyro-render/tests/transform_3d.rs` (paint, a scrolled perspective, the card flip, a
 composed 3D rendering context, grouping properties, a filtered inline's positioned boxes, layout boxes), `crates/pyro-layout/tests/transform_3d.rs` (`getBoundingClientRect`, `elementFromPoint`) and the unit
@@ -409,6 +419,13 @@ tests in `src/stylo_to_kurbo.rs`.
   `backdrop-filter`, `mix-blend-mode`, `clip-path`, `mask-image`): Web Animations has the element act as though it
   had `will-change` of it, and blitz-paint marks it a backdrop root (WPT
   `backdrop-filter-backdrop-root-animation-in-effect`).
+- `animation.rs` (`ElementEffects::current`, `Sampled::stacking_context`), `node/element.rs`
+  (`animation_stacking_context`), `node/node.rs` (`is_stacking_context_root`): an animation that is current (in its
+  delay too, where the embedder lists it under `current`: it gives no value) or in effect, of a property that makes
+  a stacking context (`opacity`, the transforms, `perspective`, `filter`, `backdrop-filter`, `clip-path`,
+  `mask-image`, `mix-blend-mode`, `isolation`), makes its element one, as Web Animations' `will-change` side effect
+  has it (WPT `individual-transform/stacking-context-001`). A change of it damages the element
+  (`REBUILD_STACKING_CONTEXT`). Tests: `crates/pyro-render/tests/sampled_animations.rs`.
 
 ## Inline layouts in vertical writing modes
 

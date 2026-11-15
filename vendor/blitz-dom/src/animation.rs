@@ -124,11 +124,20 @@ pub struct Effect {
 pub struct ElementEffects {
     pub transitions: Vec<Effect>,
     pub animations: Vec<Effect>,
+    /// pyro: animations that are current but not in effect (in their delay): no values, but the
+    /// properties they animate act as if `will-change` named them (Web Animations 1, "side
+    /// effects of animation"), as those of the effects in effect do.
+    pub current: Vec<Effect>,
 }
 
 impl ElementEffects {
     pub fn is_empty(&self) -> bool {
-        self.transitions.is_empty() && self.animations.is_empty()
+        self.transitions.is_empty() && self.animations.is_empty() && self.current.is_empty()
+    }
+
+    /// pyro: every effect, in effect or only current.
+    fn all(&self) -> impl Iterator<Item = &Effect> {
+        self.animations.iter().chain(&self.transitions).chain(&self.current)
     }
 }
 
@@ -163,6 +172,9 @@ struct ElementState {
 struct Sampled {
     animations: Option<AnimationValueMap>,
     transitions: Option<AnimationValueMap>,
+    /// pyro: an effect animates a property that makes a stacking context
+    /// (`ElementData::animation_stacking_context`).
+    stacking_context: bool,
 }
 
 /// What resolved keyframes depend on besides their declarations.
@@ -210,14 +222,7 @@ impl BaseDocument {
             }
             let mut element = state.elements.remove(&id).unwrap_or_default();
             element.effects = effects;
-            element.resolved.retain(|(k, _)| {
-                element
-                    .effects
-                    .animations
-                    .iter()
-                    .chain(&element.effects.transitions)
-                    .any(|e| e.keyframes == *k)
-            });
+            element.resolved.retain(|(k, _)| element.effects.all().any(|e| e.keyframes == *k));
             next.insert(id, element);
         }
         // Elements without effects any more lose their values.
@@ -229,12 +234,7 @@ impl BaseDocument {
         for id in ids {
             let element = state.elements.get_mut(&id).unwrap();
             let resolved = element.base.is_some()
-                && element
-                    .effects
-                    .animations
-                    .iter()
-                    .chain(&element.effects.transitions)
-                    .all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes));
+                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes));
             if !resolved {
                 // Resolved against the style the next traversal computes.
                 state.pending = true;
@@ -249,6 +249,7 @@ impl BaseDocument {
                 let sampled = Sampled {
                     animations: element.sampled.animations.clone(),
                     transitions: element.sampled.transitions.clone(),
+                    stacking_context: element.sampled.stacking_context,
                 };
                 self.apply_sampled(id, sampled);
             }
@@ -362,13 +363,7 @@ impl BaseDocument {
                     element.resolved.clear();
                 }
                 let base = element.base.clone().unwrap();
-                let effects: Vec<Keyframes> = element
-                    .effects
-                    .animations
-                    .iter()
-                    .chain(&element.effects.transitions)
-                    .map(|e| e.keyframes.clone())
-                    .collect();
+                let effects: Vec<Keyframes> = element.effects.all().map(|e| e.keyframes.clone()).collect();
                 for keyframes in effects {
                     if element.resolved.iter().any(|(k, _)| *k == keyframes) {
                         continue;
@@ -396,6 +391,7 @@ impl BaseDocument {
             let sampled = Sampled {
                 animations: element.sampled.animations.clone(),
                 transitions: element.sampled.transitions.clone(),
+                stacking_context: element.sampled.stacking_context,
             };
             self.apply_sampled(*id, sampled);
         }
@@ -421,8 +417,21 @@ impl BaseDocument {
         let Some(data) = node.element_data_mut() else {
             return;
         };
+        // pyro: the element becomes or stops being a stacking context: its paint lists change.
+        let stacking_changed = data.animation_stacking_context != sampled.stacking_context;
+        data.animation_stacking_context = sampled.stacking_context;
         let had = data.sampled_animations.is_some() || data.sampled_transitions.is_some();
         let has = animations.is_some() || transitions.is_some();
+        if stacking_changed {
+            node.insert_damage(style::selector_parser::RestyleDamage::REBUILD_STACKING_CONTEXT);
+            node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+            if !had && !has {
+                return;
+            }
+        }
+        let Some(data) = node.element_data_mut() else {
+            return;
+        };
         if !had && !has {
             return;
         }
@@ -719,9 +728,33 @@ fn sample(
         }
         Some(map)
     };
+    // pyro: the properties that make a stacking context when not at their initial value (Web
+    // Animations' `will-change` side effect makes one for any value).
+    const STACKING: [LonghandId; 12] = [
+        LonghandId::Opacity,
+        LonghandId::Transform,
+        LonghandId::Translate,
+        LonghandId::Rotate,
+        LonghandId::Scale,
+        LonghandId::Perspective,
+        LonghandId::Filter,
+        LonghandId::BackdropFilter,
+        LonghandId::ClipPath,
+        LonghandId::MaskImage,
+        LonghandId::MixBlendMode,
+        LonghandId::Isolation,
+    ];
+    let stacking_context = element.effects.all().any(|effect| {
+        element.resolved.iter().find(|(k, _)| *k == effect.keyframes).is_some_and(|(_, resolved)| {
+            resolved.properties.iter().any(|(property, _)| {
+                matches!(property.as_borrowed(), PropertyDeclarationId::Longhand(id) if STACKING.contains(&id))
+            })
+        })
+    });
     Sampled {
         animations: level(&element.effects.animations, easings),
         transitions: level(&element.effects.transitions, easings),
+        stacking_context,
     }
 }
 

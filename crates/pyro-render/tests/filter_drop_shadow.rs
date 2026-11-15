@@ -163,3 +163,30 @@ fn a_blurred_box_is_blurred_alike_beside_other_commands() {
     let green = |img: &RgbaImage, x: usize| img.data[(50 * img.width as usize + x) * 4 + 1];
     assert!(green(&test, 8) > 128 && green(&test, 8) < 255, "{}", green(&test, 8));
 }
+
+/// A drop shadow's offset brings into view what lies outside it: an element out of the viewport
+/// (WPT `filters-drop-shadow-003`), and content an ancestor's `overflow` clips away (WPT
+/// `drop-shadow-clipped-001`). Culling left out the element, and the content the shadow is made of.
+#[test]
+fn a_drop_shadow_of_what_is_out_of_view_is_painted() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='position:relative;left:-1000px;top:-1000px;width:60px;height:60px;background:#fff;filter:drop-shadow(1040px 1040px 0 #000)'></div>",
+            200,
+            160,
+            scale,
+        );
+        assert_eq!(red(&img, scale, 70, 70), 0, "the shadow of a box out of view, scale {scale}");
+        assert_eq!(red(&img, scale, 30, 30), 0x88, "above its shadow, scale {scale}");
+        let img = render(
+            "<div style='overflow:hidden;width:100px;height:100px'><div style='filter:drop-shadow(-105px 0 0 #000)'>\
+             <div style='position:relative;left:105px;width:50px;height:50px;background:#fff'></div></div></div>",
+            200,
+            160,
+            scale,
+        );
+        assert_eq!(red(&img, scale, 25, 25), 0, "the shadow of clipped content, scale {scale}");
+        assert_eq!(red(&img, scale, 25, 75), 0x88, "below it, scale {scale}");
+        assert_eq!(red(&img, scale, 125, 25), 0x88, "the content, clipped, scale {scale}");
+    }
+}

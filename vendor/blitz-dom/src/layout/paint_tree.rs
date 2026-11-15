@@ -141,6 +141,10 @@ pub struct StackingContext {
     /// `(geometry generation, bounding box of the hoisted children)`, see
     /// [`Self::hoisted_content_bbox`].
     hoisted_content_bbox: Cell<(u64, Rect<f32>)>,
+    /// pyro: out-of-flow boxes without a `z-index` whose containing block lies outside this
+    /// context, painted at its positioned level from its `paint_children`
+    /// (`restore_out_of_flow_stacking_owners`): in [`Self::hoisted_content_bbox`] too.
+    pub(crate) positioned_level: ThinVec<HoistedPaintChild>,
 }
 
 impl StackingContext {
@@ -150,6 +154,7 @@ impl StackingContext {
             children,
             negative_z_count: 0,
             hoisted_content_bbox: Cell::new((0, Rect::ZERO)),
+            positioned_level: ThinVec::new(),
         };
         sc.sort();
         sc
@@ -192,7 +197,7 @@ impl StackingContext {
 
         // Children dropped by a DOM mutation since the last `resolve` yield
         // `None` and are left out, like hit testing skips them.
-        let mut rects = self.children.iter().filter_map(child_rect);
+        let mut rects = self.children.iter().chain(&self.positioned_level).filter_map(child_rect);
         let mut area = rects.next().unwrap_or(Rect::ZERO);
         for pos in rects {
             area.left = area.left.min(pos.left);
@@ -343,12 +348,39 @@ impl BaseDocument {
             node.sc_contribution_cache.get_mut().retain(|child| !ids.contains(&child.node_id));
             if let Some(sc) = node.stacking_context.as_mut() {
                 sc.children.retain(|child| !ids.contains(&child.node_id));
+                sc.positioned_level.retain(|child| !ids.contains(&child.node_id));
                 sc.sort();
                 sc.hoisted_content_bbox.set((0, Rect::ZERO));
             }
         }
         for (id, target) in moves {
             let z = self.nodes[id].z_index();
+            // pyro: one without a `z-index` joins the context's positioned level in its
+            // `paint_children`, in tree order (CSS 2.1 Appendix E step 8), not after it: a blending
+            // box there must see the earlier ones under it (WPT `mix-blend-mode-root-element-group`).
+            if z == 0 && self.nodes[target].stacking_context.is_some() {
+                let mut paint_children = self.nodes[target].paint_children.borrow_mut().take().unwrap_or_default();
+                let flex_or_grid = self.nodes[target]
+                    .display_style()
+                    .is_some_and(|display| matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid));
+                let mut at = paint_children.len();
+                while at > 0 {
+                    let other = &self.nodes[paint_children[at - 1]];
+                    let positioned_level = other.primary_styles().is_some_and(|s| s.clone_position() != Position::Static)
+                        || self.is_paint_stacking_context_root(other.id, flex_or_grid);
+                    if !positioned_level || self.precedes_in_tree_order(other.id, id) {
+                        break;
+                    }
+                    at -= 1;
+                }
+                paint_children.insert(at, id);
+                *self.nodes[target].paint_children.borrow_mut() = Some(paint_children);
+                if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
+                    sc.positioned_level.push(HoistedPaintChild::new(id, 0));
+                    sc.hoisted_content_bbox.set((0, Rect::ZERO));
+                }
+                continue;
+            }
             if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
                 sc.children.push(HoistedPaintChild::new(id, z));
                 sc.sort();
@@ -477,6 +509,9 @@ impl BaseDocument {
             let keyed_base = self.scratch.keyed_children.len();
 
             for (index, &child_id) in children.iter().enumerate() {
+                // pyro: where this child's group starts in both lists (see `place_hoisted`).
+                let keyed_group = self.scratch.keyed_children.len();
+                let entries_group = entries.len();
                 if owned_here(self, child_id) {
                     let is_sc_root = self.is_paint_stacking_context_root(child_id, is_flex_or_grid);
                     let first_entry = entries.len();
@@ -547,12 +582,14 @@ impl BaseDocument {
                 while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                     && anchor == index
                 {
+                    let keyed_before = self.scratch.keyed_children.len();
                     self.attach_hoisted_past_parent(
                         hoisted_id,
                         is_flex_or_grid,
                         is_layer_root,
                         &mut entries,
                     );
+                    self.place_hoisted(keyed_before, keyed_group, entries_group, &mut entries);
                     next_hoisted += 1;
                 }
             }
@@ -744,6 +781,99 @@ impl BaseDocument {
         } else {
             let paint_order = node_to_paint_order(&self.nodes[child_id], is_flex_or_grid);
             self.scratch.keyed_children.push((paint_order, child_id));
+        }
+    }
+
+    /// pyro: puts the out-of-flow box `attach_hoisted_past_parent` just placed last in one of the
+    /// lists in tree order among what the same layout child's subtree placed in that list at the
+    /// same paint level (`keyed_group..` and `entries_group..`): the positioned boxes and stacking
+    /// contexts lifted out of it. Appended after them, an absolutely positioned box painted under
+    /// a later sibling's `clip-path` or `opacity` box although it comes first (CSS 2.1 Appendix E
+    /// step 8: "in tree order"; WPT `clip-path-reference-restore`).
+    fn place_hoisted(
+        &mut self,
+        keyed_before: usize,
+        keyed_group: usize,
+        entries_group: usize,
+        entries: &mut ThinVec<HoistedPaintChild>,
+    ) {
+        if self.scratch.keyed_children.len() > keyed_before {
+            let mut keyed = std::mem::take(&mut self.scratch.keyed_children);
+            let at = self.tree_order_place(&keyed[keyed_group..], |&(key, id)| (key, id));
+            keyed[keyed_group + at..].rotate_right(1);
+            self.scratch.keyed_children = keyed;
+        } else if entries.len() > entries_group {
+            let at = self.tree_order_place(&entries[entries_group..], |c| ((c.z_index, 0), c.node_id));
+            entries[entries_group + at..].rotate_right(1);
+        }
+    }
+
+    /// pyro: where the last item of `items` goes among the others: before the first of those at
+    /// its paint level (`item` gives the level and the node) that comes after it in tree order.
+    /// Those are in tree order already (each subtree lists them so), so a binary search finds it.
+    /// Items of other levels stay where they are (the paint sort orders the levels).
+    fn tree_order_place<T>(&self, items: &[T], item: impl Fn(&T) -> ((i32, i32), NodeId)) -> usize {
+        let Some((last, rest)) = items.split_last() else { return 0 };
+        let (level, id) = item(last);
+        let same: Vec<usize> = (0..rest.len()).filter(|&index| item(&rest[index]).0 == level).collect();
+        let before = same.partition_point(|&index| self.precedes_in_tree_order(item(&rest[index]).1, id));
+        same.get(before).copied().unwrap_or(rest.len())
+    }
+
+    /// pyro: whether `a` comes before `b` in tree order, `::before` first in its element and
+    /// `::after` last. A box no DOM child list holds (an anonymous block) sorts after its
+    /// parent's children.
+    fn precedes_in_tree_order(&self, a: NodeId, b: NodeId) -> bool {
+        let parent = |id: NodeId| self.nodes.get(id).and_then(|node| node.parent);
+        let depth = |mut id: NodeId| {
+            let mut depth = 0usize;
+            while let Some(p) = parent(id) {
+                depth += 1;
+                id = p;
+            }
+            depth
+        };
+        let (mut a, mut b) = (a, b);
+        let (mut depth_a, mut depth_b) = (depth(a), depth(b));
+        // An ancestor comes before its descendants.
+        while depth_a > depth_b {
+            a = parent(a).unwrap();
+            depth_a -= 1;
+            if a == b {
+                return false;
+            }
+        }
+        while depth_b > depth_a {
+            b = parent(b).unwrap();
+            depth_b -= 1;
+            if a == b {
+                return true;
+            }
+        }
+        if a == b {
+            return false;
+        }
+        loop {
+            match (parent(a), parent(b)) {
+                (Some(pa), Some(pb)) if pa == pb => {
+                    let node = &self.nodes[pa];
+                    let index = |id: NodeId| {
+                        if node.before() == Some(id) {
+                            0
+                        } else if node.after() == Some(id) {
+                            usize::MAX
+                        } else {
+                            node.children.iter().position(|&c| c == id).map_or(usize::MAX - 1, |i| i + 1)
+                        }
+                    };
+                    return index(a) < index(b);
+                }
+                (Some(pa), Some(pb)) => {
+                    a = pa;
+                    b = pb;
+                }
+                _ => return false,
+            }
         }
     }
 }
