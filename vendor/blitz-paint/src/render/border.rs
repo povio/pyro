@@ -741,7 +741,6 @@ impl ElementCx<'_, '_> {
         path
     }
 
-    /// The border width (in device pixels) of a single edge.
     /// pyro: a border with square corners whose sides are all solid and opaque, in more than one
     /// colour, painted as Blink's `BoxBorderPainter` paints it, by overdraw: the sides go in its
     /// order (top, bottom, right, left), and a side reaches into a corner in full when the side
@@ -833,6 +832,7 @@ impl ElementCx<'_, '_> {
         true
     }
 
+    /// The border width (in device pixels) of a single edge.
     fn edge_width(&self, edge: Edge) -> f64 {
         match edge {
             Edge::Top => self.frame.border_width.y0,

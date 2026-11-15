@@ -181,6 +181,40 @@ fn a_background_does_not_bleed_through_a_rounded_border() {
     }
 }
 
+/// Under a side narrower than two device pixels the background keeps to the outer edge (the
+/// background's inset edge and the border's two antialiased edges would share pixels, and what
+/// is under the box showed through between them: WPT `filter-effects/blur-clip-border-radius`):
+/// a 1px rounded border leaves the background's antialiased edge outside it at scale 1. At
+/// scale 2 the same border is two device pixels wide, and the background is cut as under any
+/// other rounded border (a 1px Tailwind `rounded border` on a DSF 2 screen).
+#[test]
+fn a_one_pixel_rounded_border_shrinks_the_background_from_two_device_pixels() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='position:absolute;left:20px;top:20px;width:80px;height:80px;border:1px solid #fff;border-radius:20px;background:#000'></div>",
+            scale,
+        );
+        // The pixels of the top-left corner outside the border's outer curve (radius 20
+        // around (40, 40)).
+        let mut darkest = 255;
+        let n = (20.0 * scale) as usize;
+        for py in 0..n {
+            for px in 0..n {
+                let (x, y) = (20.0 + (px as f64 + 0.5) / scale, 20.0 + (py as f64 + 0.5) / scale);
+                if ((x - 40.0).powi(2) + (y - 40.0).powi(2)).sqrt() <= 20.0 {
+                    continue;
+                }
+                darkest = darkest.min(pixel(&img, scale, x, y)[0]);
+            }
+        }
+        if scale == 1.0 {
+            assert!(darkest < 240, "the background reaches the outer edge at scale 1 ({darkest})");
+        } else {
+            assert!(darkest >= 253, "a seam {darkest} levels dark, scale {scale}");
+        }
+    }
+}
+
 /// Replaced content is cut to the content edge's curve (WPT `border-radius-clip-001`): with a
 /// border and padding inside a 50% radius, the image's corners are outside the content circle
 /// (radius 50 around (80, 80)) though inside the padding box's (radius 60). The image was cut to
@@ -238,7 +272,10 @@ fn border_corners_between_colours_do_not_let_the_background_through() {
 
 /// A link to the document itself is visited, as the page a browser shows is in its history (WPT
 /// `css-color/currentcolor-004`, `color-mix-currentcolor-visited`, `href=""`): `:visited` rules
-/// apply to it and `:link` rules do not. Other links stay unvisited. No link was visited.
+/// apply to it, after `:link` rules, which still match it as they match every link in
+/// Chromium's regular style. Other links stay unvisited. Inside `:has()` every link is
+/// unvisited, as in Chromium (WPT `css/selectors/has-visited.html`,
+/// `invalidation/link-pseudo-in-has.html`). No link was visited.
 #[test]
 fn a_link_to_the_document_itself_is_visited() {
     let img = render(
@@ -247,4 +284,19 @@ fn a_link_to_the_document_itself_is_visited() {
     );
     assert_near(pixel(&img, 1.0, 10.0, 10.0), GREEN, "href=\"\"");
     assert_near(pixel(&img, 1.0, 10.0, 30.0), RED, "another page");
+
+    // A `:link` rule that is not about colour still applies to the visited link.
+    let img = render(
+        "<style>a{display:block;width:40px;height:20px;background:red}a:link{background:green}</style><a href=''></a>",
+        1.0,
+    );
+    assert_near(pixel(&img, 1.0, 10.0, 10.0), GREEN, "a:link on href=\"\"");
+
+    // `:has(> :link)` matches around it, `:has(> :visited)` does not.
+    let img = render(
+        "<style>p{margin:0;width:40px;height:20px}.l:has(> :link){background:green}.v:has(> :visited){background:red}</style><p class=l><a href=''></a></p><p class=v><a href=''></a></p>",
+        1.0,
+    );
+    assert_near(pixel(&img, 1.0, 10.0, 10.0), GREEN, ":has(> :link)");
+    assert_near(pixel(&img, 1.0, 10.0, 30.0), WHITE, ":has(> :visited)");
 }

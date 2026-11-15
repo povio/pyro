@@ -948,13 +948,22 @@ generalizes `with_root_size`. Tests: `an_svg_view_fragment_shows_the_view` and
 ## Links to the document itself are visited
 
 `src/node/element.rs` (`ElementData::flush_link_visited`), `src/mutator.rs` (`create_element`, `set_attribute_impl`,
-`clear_attribute_impl`), `src/document.rs` (`link_urls`), `src/stylo.rs`: a link whose `href` resolves to the
-document's own URL (fragment aside) has `ElementState::VISITED` instead of `UNVISITED`, and `:visited` matches by it,
-as the page a browser shows is in its history (WPT `css-color/currentcolor-004`, `color-mix-currentcolor-visited`,
-`css-backgrounds/background-image-gradient-currentcolor-visited`: `href=""`). `:visited` matched nothing. There is no
-history, so other links stay unvisited, and the user agent sheet keeps one link colour (`a[href]`): only a page's own
-`:visited` rules change what such a link looks like, and they apply in full rather than to colours alone. Test:
-`a_link_to_the_document_itself_is_visited` in pyro-render's `background_images_and_edges.rs`.
+`clear_attribute_impl`: on an `href` change), `src/document.rs` (`link_urls`), `src/stylo.rs`: a link whose `href`
+resolves to the document's own URL (fragment aside) has `ElementState::VISITED` instead of `UNVISITED`, and `:visited`
+matches by it, as the page a browser shows is in its history (WPT `css-color/currentcolor-004`,
+`color-mix-currentcolor-visited`, `css-backgrounds/background-image-gradient-currentcolor-visited`: `href=""`).
+`:visited` matched nothing. `:link` matches every link, visited or not, as it does for Chromium's regular style
+(Chromium takes only colours from the visited style), so a page's `:link` rules keep applying to such a link and its
+`:visited` rules win where they come later or are more specific. Inside `:has()` `:visited` matches nothing, as
+Chromium treats every link there as unvisited (`MatchingContext::relative_selector_anchor`; WPT
+`css/selectors/invalidation/link-pseudo-in-has.html`, `css/selectors/has-visited.html`). There is no history, so other
+links stay unvisited, and the user agent sheet keeps one link colour (`a[href]`): only a page's own `:visited` rules
+change what such a link looks like. Limits: Stylo here computes no separate visited style
+(`visited_styles_enabled: false`), so those rules apply in full rather than to colours alone, `getComputedStyle`
+reports them (Chromium reports the unvisited values), a `:link` rule after a `:visited` one of the same specificity
+wins, and the state is decided when the element is created or its `href` changes, not again when `pushState` changes
+the document's URL. Tests: `a_link_to_the_document_itself_is_visited` in pyro-render's `background_images_and_edges.rs`,
+`a_link_to_the_document_is_a_link_and_unvisited_inside_has` in `src/stylo.rs`.
 
 ## A scroll container's end padding in its scrollable overflow
 

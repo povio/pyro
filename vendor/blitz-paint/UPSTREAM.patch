@@ -1363,13 +1363,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -285,7 +305,150 @@
-                     self.initial_y,
-                 );
-             }
-+        }
-+    }
-+
+@@ -288,6 +308,149 @@
+         }
+     }
+ 
 +    /// pyro: the canvas, in scene space: the viewport, or the root element's box where that is
 +    /// larger.
 +    fn canvas_rect(&self) -> Rect {
@@ -1472,7 +1469,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            || style.get_inherited_box().visibility != StyloVisibility::Visible
 +        {
 +            return;
-         }
++        }
 +        let effects = style.get_effects();
 +        let opacity = effects.opacity;
 +        let color = style
@@ -1511,9 +1508,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            },
 +        );
-     }
- 
++    }
++
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
+         let location = node.final_layout().location;
+         parent
 @@ -317,8 +480,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
@@ -2089,13 +2088,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -781,7 +1164,56 @@
-             devtools: self.dom.devtools(),
-             custom_widget_scene,
-         }
-+    }
-+}
-+
+@@ -784,6 +1167,55 @@
+     }
+ }
+ 
 +/// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's
 +/// `LayoutBox::BackgroundTransfersToView` decides it: the root element, unless it is an HTML
 +/// `html` element without a background of its own, when it is its first `body` child, if that
@@ -2141,11 +2137,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    let display = body_style.get_box().display;
 +    if display.is_none() || display.is_contents() || contained(&body_style) {
 +        return Some(root.id);
-     }
++    }
 +    Some(body.id)
- }
- 
++}
++
  fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
+     match image_rendering {
+         ImageRendering::Auto => peniko::ImageQuality::Medium,
 @@ -837,6 +1269,45 @@
  }
  
@@ -2192,11 +2190,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -966,9 +1437,264 @@
-             }
+@@ -967,8 +1438,263 @@
          }
      }
-+
+ 
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -2262,7 +2259,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    || style.get_outline().outline_width.0.to_f64_px() != 0.0
 +            })
 +        };
- 
++
 +        // The inline elements a style's content is in, innermost first, each with the style it
 +        // made (a `display: contents` element or a `<br>` inside it shares its brush).
 +        let mut chain: Vec<(NodeId, u16)> = Vec::new();
@@ -2866,7 +2863,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1145,10 +2163,90 @@
+@@ -1145,13 +2163,93 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -2877,9 +2874,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  &mut draw_text_context,
 +                None,
              );
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -2954,9 +2951,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
-         }
-     }
- 
++        }
++    }
++
+     fn draw_children(
+         &self,
+         scene: &mut impl PaintScene,
 @@ -1183,16 +2281,20 @@
                  // the viewport and do not scroll with it, so cancel out the viewport
                  // scroll (applied in `paint_scene`). A fixed box contained by a
@@ -2989,15 +2989,22 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1299,9 +2404,14 @@
+@@ -1299,9 +2404,21 @@
              || y_offset < 0.0
              || x_offset + paint_size.width > container_size.width
              || y_offset + paint_size.height > container_size.height;
 +        // pyro: replaced content is cut to the content edge's curve (CSS Backgrounds 3 §5.3),
-+        // which lies inside the padding box's clip once a border or padding is set.
++        // which lies inside the padding box's clip once a border or padding is set: a corner
++        // whose radii both exceed the border and padding there is still rounded.
 +        let inset = |i: kurbo::Insets| i.x0 != 0.0 || i.y0 != 0.0 || i.x1 != 0.0 || i.y1 != 0.0;
-+        let rounded_content = self.frame.has_border_radius()
-+            && (inset(self.frame.border_width) || inset(self.frame.padding_width));
++        let (r, b, p) = (self.frame.border_radii, self.frame.border_width, self.frame.padding_width);
++        let i = kurbo::Insets::new(b.x0 + p.x0, b.y0 + p.y0, b.x1 + p.x1, b.y1 + p.y1);
++        let rounded = |r: kurbo::Vec2, x: f64, y: f64| r.x > x && r.y > y;
++        let rounded_content = inset(i)
++            && (rounded(r.top_left, i.x0, i.y0)
++                || rounded(r.top_right, i.x1, i.y0)
++                || rounded(r.bottom_right, i.x1, i.y1)
++                || rounded(r.bottom_left, i.x0, i.y1));
          self.context.layer_manager.maybe_with_layer(
              scene,
 -            overflows,
@@ -3005,10 +3012,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1466,3 +2576,29 @@
+@@ -1465,4 +2582,30 @@
+     };
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
- }
++}
 +
 +/// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.
 +#[derive(Clone, Copy)]
@@ -3019,7 +3027,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    is_text_input: bool,
 +    content_position: Point,
 +    child_clip_rect: Rect,
-+}
+ }
 +
 +/// pyro: an element's opacity and filter layer ([`BlitzDomPainter::paint_effect_group`]).
 +struct EffectLayer {
@@ -3121,7 +3129,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
              // There is no `mask-attachment` property
              attachment: StyloBackgroundAttachment::Scroll,
-@@ -129,37 +147,149 @@
+@@ -129,37 +147,151 @@
  
  impl ElementCx<'_, '_> {
      pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
@@ -3190,11 +3198,9 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
          let background_clip: BoxModelBox = last_clip.into();
 -        let background_clip_path = self.box_path(background_clip);
-+        // pyro: Chromium's bleed avoidance for a rounded box whose border hides its edge.
-+        let shrunk_border_box = canvas
-+            .is_none()
-+            .then(|| self.bleed_avoiding_border_box(style))
-+            .flatten();
++        // pyro: Chromium's bleed avoidance for a rounded box whose border hides its edge, worked
++        // out when a layer cut to the border box paints.
++        let shrunk_border_box = std::cell::OnceCell::new();
 +        let clip_path = |clip: BoxModelBox,
 +                         border_area: bool,
 +                         attachment: StyloBackgroundAttachment| {
@@ -3202,17 +3208,15 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                (Some(canvas), _) => canvas.to_path(0.1),
 +                (None, Some(local)) => local.box_path(clip),
 +                (None, None) if border_area => self.border_area_path(),
-+                (None, None) => match (clip, &shrunk_border_box) {
-+                    (BoxModelBox::BorderBox, Some(shrunk)) => shrunk.clone(),
++                (None, None) => match clip {
++                    BoxModelBox::BorderBox => shrunk_border_box
++                        .get_or_init(|| self.bleed_avoiding_border_box(style))
++                        .clone()
++                        .unwrap_or_else(|| self.box_path(clip)),
 +                    _ => self.box_path(clip),
 +                },
 +            }
 +        };
-+        let background_clip_path = clip_path(
-+            background_clip,
-+            last_clip == StyloBackgroundClip::BorderArea,
-+            last_attachment,
-+        );
  
          // Draw background color (if any)
 -        let mut text_run = last_clip == StyloBackgroundClip::Text;
@@ -3227,6 +3231,12 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            .resolve_to_absolute(&current_color)
 +            .as_srgb_color();
 +        if bg_color != Color::TRANSPARENT {
++            // pyro: the colour's clip only when there is a colour.
++            let background_clip_path = clip_path(
++                background_clip,
++                last_clip == StyloBackgroundClip::BorderArea,
++                last_attachment,
++            );
 +            let local_color = local_cx(last_attachment).is_some();
 +            if local_color {
 +                scene.push_clip_layer(
@@ -3279,7 +3289,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              self.context.layer_manager.maybe_with_layer(
                  scene,
                  true,
-@@ -170,15 +300,153 @@
+@@ -170,15 +302,153 @@
                  None,
                  None,
                  |scene| {
@@ -3293,9 +3303,9 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
          if text_run {
              self.end_text_clip_group(scene);
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: the border box that `background-clip: border-box` layers are cut to under a rounded
 +    /// border that hides the background's edge, as Chromium paints it
 +    /// (`BoxDecorationData::ComputeBleedAvoidance`, `kBackgroundBleedShrinkBackground`): every
@@ -3361,7 +3371,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            }
 +            // A double border under 3px is drawn solid (Blink's `BorderEdge::EffectiveStyle`).
 +            double |= side_style == BorderStyle::Double && width >= 3.0 * self.scale;
-+        }
+         }
 +        let fraction = if double { 1.0 / 6.0 } else { 0.5 };
 +        let insets = kurbo::Insets::new(
 +            widths.x0 * fraction,
@@ -3385,8 +3395,8 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            radii,
 +        );
 +        Some(shrunk.border_box_path())
-+    }
-+
+     }
+ 
 +    /// pyro: this element's boxes as a `background-attachment: local` layer sees them on a scroll
 +    /// container: those of its scrolled content, the padding box grown to the scrollable overflow
 +    /// and moved by the scroll offset, without corner radii (the padding box, which clips the
@@ -3434,7 +3444,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Starts an isolated group for `background-clip: text` layers; layers drawn
      /// until [`end_text_clip_group`](Self::end_text_clip_group) are clipped to text.
      fn begin_text_clip_group(&self, scene: &mut impl PaintScene) {
-@@ -217,6 +485,7 @@
+@@ -217,6 +487,7 @@
              BoxModelBox::BorderBox => self.frame.border_box_path(),
              BoxModelBox::PaddingBox => self.frame.padding_box_path(),
              BoxModelBox::ContentBox => self.frame.content_box_path(),
@@ -3442,7 +3452,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -226,20 +495,36 @@
+@@ -226,20 +497,36 @@
              BoxModelBox::BorderBox => self.frame.border_box,
              BoxModelBox::PaddingBox => self.frame.padding_box,
              BoxModelBox::ContentBox => self.frame.content_box,
@@ -3482,7 +3492,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -373,19 +658,6 @@
+@@ -373,19 +660,6 @@
          }
      }
  
@@ -3502,7 +3512,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,23 +682,43 @@
+@@ -410,23 +684,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -3551,7 +3561,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +731,10 @@
+@@ -439,14 +733,10 @@
              return;
          }
  
@@ -3569,7 +3579,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +749,7 @@
+@@ -461,7 +751,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -3578,7 +3588,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +764,77 @@
+@@ -476,29 +766,77 @@
              return;
          }
  
@@ -3670,7 +3680,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,11 +845,7 @@
+@@ -509,11 +847,7 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -3683,7 +3693,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let image_width = image_data.width as f64;
          let image_height = image_data.height as f64;
-@@ -527,76 +859,125 @@
+@@ -527,76 +861,125 @@
  
          let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
          let bg_size = bg_size * self.scale;
@@ -3849,7 +3859,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
-@@ -629,23 +1010,50 @@
+@@ -629,23 +1012,50 @@
              bg_size.height,
          );
  
@@ -3913,7 +3923,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
-@@ -681,35 +1089,84 @@
+@@ -681,35 +1091,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -4018,7 +4028,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +1332,64 @@
+@@ -875,48 +1334,64 @@
      stride: f64,
  }
  
@@ -4112,7 +4122,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +1431,24 @@
+@@ -958,11 +1433,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -4142,7 +4152,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +1472,16 @@
+@@ -986,6 +1474,16 @@
      (count, stride)
  }
  
@@ -4697,7 +4707,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -338,10 +696,143 @@
+@@ -338,7 +696,140 @@
              }
              scene.fill(Fill::NonZero, self.transform, color, None, &path);
              start = next;
@@ -4742,11 +4752,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                }
 +                _ => path.extend(&self.frame.border_edge_shape(edge)),
 +            }
-         }
++        }
 +        path
-     }
- 
-     /// The border width (in device pixels) of a single edge.
++    }
++
 +    /// pyro: a border with square corners whose sides are all solid and opaque, in more than one
 +    /// colour, painted as Blink's `BoxBorderPainter` paints it, by overdraw: the sides go in its
 +    /// order (top, bottom, right, left), and a side reaches into a corner in full when the side
@@ -4783,7 +4792,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let present: SmallVec<[Color; 4]> = colors.iter().flatten().copied().collect();
 +        if present.len() < 2 || present.iter().all(|c| *c == present[0]) {
 +            return false;
-+        }
+         }
 +        let bb = self.frame.border_box;
 +        let w = self.frame.border_width;
 +        // Blink's side order for sides of one opacity and style (`kSidePriority`).
@@ -4836,11 +4845,9 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            painted[i] = true;
 +        }
 +        true
-+    }
-+
-     fn edge_width(&self, edge: Edge) -> f64 {
-         match edge {
-             Edge::Top => self.frame.border_width.y0,
+     }
+ 
+     /// The border width (in device pixels) of a single edge.
 @@ -351,163 +842,152 @@
          }
      }

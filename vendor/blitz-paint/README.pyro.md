@@ -371,6 +371,12 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/render.rs` (`with_replaced_content_clip`): replaced content of a box with a border radius and a border or
     padding is cut to the content edge's curve (CSS Backgrounds 3 §5.3); the padding box's clip around it was the
     only one (WPT `border-radius-clip-001`).
+  - `src/render/border.rs` (`draw_square_solid_sides_overdrawn`): a border with square corners whose sides are all
+    solid and opaque, in more than one colour, is painted by overdraw as Blink's `BoxBorderPainter` paints it: the
+    sides go in its order (top, bottom, right, left), a side reaches into a corner in full unless a side of another
+    colour was painted there before it (then it stops at the corner's diagonal), so the later side's antialiased
+    diagonal lies over the earlier side's colour. As two trapezoids, both diagonals were antialiased over the
+    background, which showed through between them (WPT `CSS2/border-seams-001`).
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

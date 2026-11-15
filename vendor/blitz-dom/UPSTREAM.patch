@@ -12105,7 +12105,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  }
                  Ok(())
              }
-@@ -320,12 +334,57 @@
+@@ -320,12 +334,59 @@
          }
      }
  
@@ -12153,7 +12153,9 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +    }
 +
 +    fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
-+        let (base, document) = self.doc.link_urls();
++        // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
++        // `href` change only.
++        let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          if node_is_in_document {
              self.doc.snapshot_node(node_id, &name.local);
@@ -12163,7 +12165,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -357,6 +416,9 @@
+@@ -357,6 +418,9 @@
          }
  
          element.attrs.set(name.clone(), value);
@@ -12173,15 +12175,17 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if node_is_in_document {
              devtools!(
                  self,
-@@ -380,6 +442,7 @@
+@@ -380,6 +444,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
-+            element.flush_link_visited(&base, &document);
++            if let Some((base, document)) = &link_urls {
++                element.flush_link_visited(base, document);
++            }
          }
  
          if name.local == local_name!("open") {
-@@ -440,7 +503,16 @@
+@@ -440,7 +507,16 @@
  
          if (tag, attr) == tag_and_attr!("input", "checked") {
              set_input_checked_state(element, value.to_string());
@@ -12199,7 +12203,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -456,11 +528,27 @@
+@@ -456,11 +532,29 @@
      }
  
      pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
@@ -12217,7 +12221,9 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +    }
 +
 +    fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
-+        let (base, document) = self.doc.link_urls();
++        // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
++        // `href` change only.
++        let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          if node_is_in_document {
              self.doc.snapshot_node(node_id, &name.local);
@@ -12227,7 +12233,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -483,6 +571,9 @@
+@@ -483,6 +577,9 @@
          if !had_attr {
              return;
          }
@@ -12237,15 +12243,17 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.mutations_occurred |= node_is_in_document;
          if node_is_in_document {
              devtools!(
-@@ -522,6 +613,7 @@
+@@ -522,6 +619,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
-+            element.flush_link_visited(&base, &document);
++            if let Some((base, document)) = &link_urls {
++                element.flush_link_visited(base, document);
++            }
          }
  
          if name.local == local_name!("open") {
-@@ -602,6 +694,8 @@
+@@ -602,6 +702,8 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
@@ -12254,7 +12262,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          // Process the subtree *before* severing the parent link so that
          // interaction state referencing removed nodes can retarget to the
-@@ -614,11 +708,12 @@
+@@ -614,11 +716,12 @@
          if let Some(parent_id) = node.parent.take() {
              self.mutations_occurred |= node_is_in_document;
              let parent = &mut self.doc.nodes[parent_id];
@@ -12269,7 +12277,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -639,6 +734,9 @@
+@@ -639,6 +742,9 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
@@ -12279,7 +12287,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          self.process_removed_subtree(node_id);
  
-@@ -648,13 +746,14 @@
+@@ -648,13 +754,14 @@
          // Update child_idx values
          if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
              let parent = &mut self.doc.nodes[parent_id];
@@ -12296,7 +12304,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -668,13 +767,19 @@
+@@ -668,13 +775,19 @@
      }
  
      pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
@@ -12317,7 +12325,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          for child_id in children {
-@@ -697,6 +802,52 @@
+@@ -697,6 +810,52 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
@@ -12370,7 +12378,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -748,27 +899,47 @@
+@@ -748,27 +907,47 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -12431,7 +12439,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +947,43 @@
+@@ -776,18 +955,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
@@ -12478,7 +12486,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +995,30 @@
+@@ -799,10 +1003,30 @@
                          .find(is_element);
                  }
              }
@@ -12510,7 +12518,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,7 +1094,24 @@
+@@ -878,7 +1102,24 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
@@ -12535,7 +12543,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &self.doc.nodes[child_id];
              if child.contains_focus() {
                  focus_within_old_chain = Some(self.doc.maybe_node_element_ancestors(child.parent));
-@@ -892,12 +1125,13 @@
+@@ -892,12 +1133,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -12551,7 +12559,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1145,29 @@
+@@ -911,19 +1153,29 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -12584,7 +12592,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,12 +1182,46 @@
+@@ -938,12 +1190,46 @@
                  );
              }
  
@@ -12631,7 +12639,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          // Transfer :focus-within from the old ancestor chain to the new one (the
          // shared prefix stays). If the subtree left the document, the focus was
-@@ -975,6 +1253,23 @@
+@@ -975,6 +1261,23 @@
          self.maybe_record_node(parent_id);
      }
  
@@ -12655,7 +12663,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1223,6 +1518,18 @@
+@@ -1223,6 +1526,18 @@
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                  "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -12674,7 +12682,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
                  "canvas" => self
                      .eager_op_queue
-@@ -1420,15 +1727,38 @@
+@@ -1420,15 +1735,38 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -12717,7 +12725,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  let src_string = src.as_str();
  
                  // Check cache first
-@@ -1579,6 +1909,20 @@
+@@ -1579,6 +1917,20 @@
      }
  }
  
@@ -12738,7 +12746,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2721,50 @@
+@@ -2377,6 +2729,50 @@
          }
      }
  
@@ -12789,7 +12797,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3476,254 @@
+@@ -3088,3 +3484,254 @@
          );
      }
  }
@@ -18211,10 +18219,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        pseudo: &style::selector_parser::PseudoElement,
 +        generated_only: bool,
 +    ) -> Option<Arc<ComputedValues>> {
-         let node = self.nodes.get(node_id)?;
-         if !node.is_element() || !node.flags.is_in_document() {
-             return None;
-         }
++        let node = self.nodes.get(node_id)?;
++        if !node.is_element() || !node.flags.is_in_document() {
++            return None;
++        }
 +        let stored = node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| {
 +            let primary = d.styles.get_primary()?.clone();
 +            let eager = if pseudo.is_eager() { d.styles.pseudos.get(pseudo).cloned() } else { None };
@@ -18317,16 +18325,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            .build(),
 +        )
 +    }
- 
--        style::thread_state::enter(ThreadState::LAYOUT);
++
 +    /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
 +    /// cascaded pseudo-elements included.
 +    fn resolve_undisplayed_styles(&self, node_id: NodeId) -> Option<style::data::ElementStyles> {
-+        let node = self.nodes.get(node_id)?;
-+        if !node.is_element() || !node.flags.is_in_document() {
-+            return None;
-+        }
-+
+         let node = self.nodes.get(node_id)?;
+         if !node.is_element() || !node.flags.is_in_document() {
+             return None;
+         }
+ 
+-        style::thread_state::enter(ThreadState::LAYOUT);
 +        let _layout_thread_scope = LayoutThreadScope::enter();
  
          let guard = &self.guard;
@@ -18342,7 +18350,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  }
  
-@@ -501,44 +704,52 @@
+@@ -493,7 +696,7 @@
+     fn match_non_ts_pseudo_class(
+         &self,
+         pseudo_class: &<Self::Impl as selectors::SelectorImpl>::NonTSPseudoClass,
+-        _context: &mut MatchingContext<Self::Impl>,
++        context: &mut MatchingContext<Self::Impl>,
+     ) -> bool {
+         match *pseudo_class {
+             NonTSPseudoClass::Active => self.element_state().contains(ElementState::ACTIVE),
+@@ -501,44 +704,61 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
@@ -18365,15 +18382,20 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -            NonTSPseudoClass::Indeterminate => false,
 -            NonTSPseudoClass::Lang(_) => false,
 -            NonTSPseudoClass::CustomState(_) => false,
+-            NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
+-            NonTSPseudoClass::PlaceholderShown => false,
+-            NonTSPseudoClass::ReadWrite => false,
+-            NonTSPseudoClass::ReadOnly => false,
 +            NonTSPseudoClass::Indeterminate => {
 +                self.element_state().contains(ElementState::INDETERMINATE)
 +            }
 +            NonTSPseudoClass::Lang(ref lang) => self.match_element_lang(None, lang),
 +            NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
-             NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
--            NonTSPseudoClass::PlaceholderShown => false,
--            NonTSPseudoClass::ReadWrite => false,
--            NonTSPseudoClass::ReadOnly => false,
++            // pyro: every link, visited or not, as browsers match `:link` for an element's style
++            // (only the colours a visited link paints come from `:visited`).
++            NonTSPseudoClass::Link => self
++                .element_state()
++                .intersects(ElementState::VISITED_OR_UNVISITED),
 +            NonTSPseudoClass::PlaceholderShown => {
 +                self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
 +            }
@@ -18382,8 +18404,13 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              NonTSPseudoClass::ServoNonZeroBorder => false,
              NonTSPseudoClass::Target => false,
 -            NonTSPseudoClass::Visited => false,
-+            // pyro: links to the document itself (`ElementData::flush_link_visited`).
-+            NonTSPseudoClass::Visited => self.element_state().contains(ElementState::VISITED),
++            // pyro: links to the document itself (`ElementData::flush_link_visited`), but not
++            // inside `:has()`, where Chromium takes every link as unvisited (WPT
++            // `css/selectors/has-visited.html`, `invalidation/link-pseudo-in-has.html`).
++            NonTSPseudoClass::Visited => {
++                self.element_state().contains(ElementState::VISITED)
++                    && context.relative_selector_anchor().is_none()
++            }
              NonTSPseudoClass::Autofill => false,
 -            NonTSPseudoClass::Default => false,
 +            NonTSPseudoClass::Default => self.element_state().contains(ElementState::DEFAULT),
@@ -18417,7 +18444,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
      }
  
-@@ -641,6 +852,16 @@
+@@ -641,6 +861,16 @@
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
@@ -18434,7 +18461,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -806,6 +1027,8 @@
+@@ -806,6 +1036,8 @@
      fn may_have_animations(&self) -> bool {
          self.element_data()
              .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
@@ -18443,7 +18470,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn set_may_have_animations(&self) {
-@@ -818,6 +1041,10 @@
+@@ -818,6 +1050,10 @@
          if !self.may_have_animations() {
              return false;
          }
@@ -18454,7 +18481,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
          context
              .animations
-@@ -852,6 +1079,10 @@
+@@ -852,6 +1088,10 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -18465,7 +18492,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_animation_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -864,6 +1095,9 @@
+@@ -864,6 +1104,9 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -18475,7 +18502,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_transition_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -889,15 +1123,21 @@
+@@ -889,15 +1132,21 @@
      }
  
      fn lang_attr(&self) -> Option<style::selector_parser::AttrValue> {
@@ -18501,7 +18528,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,27 +1157,168 @@
+@@ -917,27 +1166,168 @@
          root_element.children.contains(&self.id)
      }
  
@@ -18582,7 +18609,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
 +        self.selector_flags().get().contains(flags)
 +    }
-+
+ 
 +    fn relative_selector_search_direction(&self) -> ElementSelectorFlags {
 +        let flags = self.selector_flags().get();
 +        if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING)
@@ -18610,7 +18637,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    // ) {
 +    //     todo!()
 +    // }
- 
++
 +    // fn process_post_animation(&self, tasks: style::context::PostAnimationTasks) {
 +    //     todo!()
 +    // }
@@ -18680,7 +18707,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              ));
          };
  
-@@ -1083,6 +1464,32 @@
+@@ -1083,6 +1473,32 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -18713,7 +18740,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1507,19 @@
+@@ -1100,6 +1516,19 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -18733,7 +18760,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1358,6 +1778,15 @@
+@@ -1358,6 +1787,15 @@
                  }
              }
  
@@ -18749,7 +18776,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +1802,59 @@
+@@ -1373,148 +1811,59 @@
              }
          }
  
@@ -18937,7 +18964,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +1867,28 @@
+@@ -1527,6 +1876,28 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -18966,7 +18993,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +1896,180 @@
+@@ -1534,11 +1905,180 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -19147,7 +19174,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,16 +2077,150 @@
+@@ -1546,16 +2086,150 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -19298,7 +19325,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if !data.damage.is_empty() {
                  // Mark the ancestor chain so that the damage propagation pass
                  // visits this element.
-@@ -1597,6 +2262,12 @@
+@@ -1597,6 +2271,12 @@
      }
  }
  
@@ -19311,7 +19338,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2340,41 @@
+@@ -1669,12 +2349,41 @@
                      .push(pe_node_id);
              }
          }
@@ -19353,7 +19380,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1707,6 +2407,10 @@
+@@ -1707,6 +2416,10 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
@@ -19364,7 +19391,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2441,688 @@
+@@ -1737,3 +2450,734 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -19764,6 +19791,52 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        drop(m);
 +        d.resolve(0.0);
 +        assert_eq!(order(&d, a), 0, ".x dropped with its siblings");
++    }
++
++    /// A link to the document itself (`href=""`) is visited, yet it still matches `:link` (as
++    /// every link does for Chromium's regular style), and inside `:has()` it is unvisited, as
++    /// Chromium takes every link there (WPT `css/selectors/invalidation/link-pseudo-in-has.html`,
++    /// `css/selectors/has-visited.html`): `:has(> :link)` matches its parent and
++    /// `:has(> :visited)` does not, whether `href` was set before or after the insertion.
++    #[test]
++    fn a_link_to_the_document_is_a_link_and_unvisited_inside_has() {
++        let (mut d, body) = make_doc(
++            "a:link { order: 1 } a:visited { order: 3 } a:link { z-index: 5 } \
++             .p:has(> :link) { order: 7 } .p:has(> :visited) { z-index: 9 }",
++            "has-visited-link",
++        );
++        d.set_base_url("http://test/page.html");
++        let z_index = |d: &BaseDocument, id: NodeId| {
++            use style::values::generics::position::ZIndex;
++            match d.nodes[id].primary_styles().unwrap().get_position().z_index {
++                ZIndex::Integer(z) => z,
++                ZIndex::Auto => 0,
++            }
++        };
++        let mut m = d.mutate();
++        let (p, q) = (div(&mut m, "p"), div(&mut m, "p"));
++        // `href` set before the insertion, as the WPT page does.
++        let a = m.create_element(qual_name!("a"), vec![]);
++        m.set_attribute(a, qual_name!("href"), "");
++        m.append_children(p, &[a]);
++        let b = m.create_element(qual_name!("a"), vec![]);
++        m.append_children(q, &[b]);
++        m.append_children(body, &[p, q]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 3, "a:visited wins over the earlier a:link");
++        assert_eq!(z_index(&d, a), 5, "a:link applies to the visited link");
++        assert_eq!(order(&d, p), 7, ":has(> :link) matches");
++        assert_eq!(z_index(&d, p), 0, ":has(> :visited) does not");
++        assert_eq!(order(&d, q), 0, "no link yet");
++
++        // `href` set after the insertion: invalidation reaches the anchor.
++        let mut m = d.mutate();
++        m.set_attribute(b, qual_name!("href"), "");
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, q), 7, ":has(> :link) matches after the change");
++        assert_eq!(z_index(&d, q), 0, ":has(> :visited) still does not");
 +    }
 +}
 +

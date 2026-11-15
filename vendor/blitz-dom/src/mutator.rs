@@ -378,7 +378,9 @@ impl DocumentMutator<'_> {
     }
 
     fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
-        let (base, document) = self.doc.link_urls();
+        // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
+        // `href` change only.
+        let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &name.local);
@@ -442,7 +444,9 @@ impl DocumentMutator<'_> {
 
         if name.local == local_name!("href") {
             element.flush_link_state();
-            element.flush_link_visited(&base, &document);
+            if let Some((base, document)) = &link_urls {
+                element.flush_link_visited(base, document);
+            }
         }
 
         if name.local == local_name!("open") {
@@ -542,7 +546,9 @@ impl DocumentMutator<'_> {
     }
 
     fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
-        let (base, document) = self.doc.link_urls();
+        // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
+        // `href` change only.
+        let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &name.local);
@@ -613,7 +619,9 @@ impl DocumentMutator<'_> {
 
         if name.local == local_name!("href") {
             element.flush_link_state();
-            element.flush_link_visited(&base, &document);
+            if let Some((base, document)) = &link_urls {
+                element.flush_link_visited(base, document);
+            }
         }
 
         if name.local == local_name!("open") {

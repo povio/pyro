@@ -209,11 +209,9 @@ impl ElementCx<'_, '_> {
         let last_clip = *get_cyclic(&bg_styles.background_clip.0, layer_count - 1);
         let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
         let background_clip: BoxModelBox = last_clip.into();
-        // pyro: Chromium's bleed avoidance for a rounded box whose border hides its edge.
-        let shrunk_border_box = canvas
-            .is_none()
-            .then(|| self.bleed_avoiding_border_box(style))
-            .flatten();
+        // pyro: Chromium's bleed avoidance for a rounded box whose border hides its edge, worked
+        // out when a layer cut to the border box paints.
+        let shrunk_border_box = std::cell::OnceCell::new();
         let clip_path = |clip: BoxModelBox,
                          border_area: bool,
                          attachment: StyloBackgroundAttachment| {
@@ -221,17 +219,15 @@ impl ElementCx<'_, '_> {
                 (Some(canvas), _) => canvas.to_path(0.1),
                 (None, Some(local)) => local.box_path(clip),
                 (None, None) if border_area => self.border_area_path(),
-                (None, None) => match (clip, &shrunk_border_box) {
-                    (BoxModelBox::BorderBox, Some(shrunk)) => shrunk.clone(),
+                (None, None) => match clip {
+                    BoxModelBox::BorderBox => shrunk_border_box
+                        .get_or_init(|| self.bleed_avoiding_border_box(style))
+                        .clone()
+                        .unwrap_or_else(|| self.box_path(clip)),
                     _ => self.box_path(clip),
                 },
             }
         };
-        let background_clip_path = clip_path(
-            background_clip,
-            last_clip == StyloBackgroundClip::BorderArea,
-            last_attachment,
-        );
 
         // Draw background color (if any)
         let mut text_run = last_clip == StyloBackgroundClip::Text && canvas.is_none();
@@ -244,6 +240,12 @@ impl ElementCx<'_, '_> {
             .resolve_to_absolute(&current_color)
             .as_srgb_color();
         if bg_color != Color::TRANSPARENT {
+            // pyro: the colour's clip only when there is a colour.
+            let background_clip_path = clip_path(
+                background_clip,
+                last_clip == StyloBackgroundClip::BorderArea,
+                last_attachment,
+            );
             let local_color = local_cx(last_attachment).is_some();
             if local_color {
                 scene.push_clip_layer(

@@ -2405,10 +2405,17 @@ impl ElementCx<'_, '_> {
             || x_offset + paint_size.width > container_size.width
             || y_offset + paint_size.height > container_size.height;
         // pyro: replaced content is cut to the content edge's curve (CSS Backgrounds 3 §5.3),
-        // which lies inside the padding box's clip once a border or padding is set.
+        // which lies inside the padding box's clip once a border or padding is set: a corner
+        // whose radii both exceed the border and padding there is still rounded.
         let inset = |i: kurbo::Insets| i.x0 != 0.0 || i.y0 != 0.0 || i.x1 != 0.0 || i.y1 != 0.0;
-        let rounded_content = self.frame.has_border_radius()
-            && (inset(self.frame.border_width) || inset(self.frame.padding_width));
+        let (r, b, p) = (self.frame.border_radii, self.frame.border_width, self.frame.padding_width);
+        let i = kurbo::Insets::new(b.x0 + p.x0, b.y0 + p.y0, b.x1 + p.x1, b.y1 + p.y1);
+        let rounded = |r: kurbo::Vec2, x: f64, y: f64| r.x > x && r.y > y;
+        let rounded_content = inset(i)
+            && (rounded(r.top_left, i.x0, i.y0)
+                || rounded(r.top_right, i.x1, i.y0)
+                || rounded(r.bottom_right, i.x1, i.y1)
+                || rounded(r.bottom_left, i.x0, i.y1));
         self.context.layer_manager.maybe_with_layer(
             scene,
             overflows || rounded_content,
