@@ -235,6 +235,10 @@ pub struct TextInputData {
     /// pyro: the `placeholder` attribute laid out in the element's `::placeholder` style
     /// (`None` without one); paint shows it while the value is empty.
     pub placeholder: Option<Box<InputPlaceholder>>,
+    /// pyro: what `text-overflow` ends the control's overflowing lines with while it is not
+    /// focused ("…" or the property's string, shaped in the control's style) and its text;
+    /// `None` for `clip`. Built with the editor.
+    pub ellipsis: Option<(Box<parley::layout::Layout<TextBrush>>, String)>,
 }
 
 /// pyro: the placeholder text of an `<input>` or `<textarea>`, laid out in its
@@ -316,6 +320,7 @@ impl TextInputData {
             scroll_offset: 0.0,
             content_box_subpixel_offset: taffy::Point::ZERO,
             placeholder: None,
+            ellipsis: None,
         }
     }
 

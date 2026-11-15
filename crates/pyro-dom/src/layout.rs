@@ -957,7 +957,10 @@ impl Layout {
         // Only scroll containers scroll; others stay at 0 (as in Chrome).
         let clips = self.style.overflow_clip_axes(dom, el);
         let text_control = axis == Axis::Width && self.text_control_scroll_width(dom, el).is_some();
-        if !(if axis == Axis::Width { clips.x } else { clips.y }) && !text_control {
+        // A `<textarea>` scrolls its text whatever its `overflow` computes to here (the UA
+        // sheet's `overflow: auto` in Chrome): lines that do not wrap scroll sideways.
+        let textarea = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "textarea");
+        if !(if axis == Axis::Width { clips.x } else { clips.y }) && !text_control && !textarea {
             return Some(0.0);
         }
         // Chromium's maximum offset is its pixel-snapped scroll size less its

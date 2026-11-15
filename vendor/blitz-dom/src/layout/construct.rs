@@ -1411,6 +1411,20 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
         node.attr(local_name!("value")).unwrap_or("").to_string()
     };
     let placeholder = input_placeholder(doc, input_element_id, is_multiline);
+    // pyro: the `text-overflow` ellipsis of the control's lines, in its own style.
+    let ellipsis = doc.nodes[input_element_id]
+        .primary_styles()
+        .and_then(|style| super::inline::build::line_end_ellipsis(&style, true))
+        .map(|text| {
+            let mut font_ctx = doc.font_ctx.lock().unwrap();
+            let mut builder =
+                doc.layout_ctx.tree_builder(&mut font_ctx, doc.viewport.scale(), true, &parley_style);
+            builder.set_base_direction(base_direction);
+            builder.push_text(&text);
+            let mut layout = builder.build().0;
+            layout.break_all_lines(None);
+            (Box::new(layout), text)
+        });
     let node = &mut doc.nodes[input_element_id];
     let is_focussed = node.is_focussed();
     let element = &mut node.data.downcast_element_mut().unwrap();
@@ -1433,6 +1447,7 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
 
     // pyro: a textarea's placeholder is broken into lines at its width by layout.
     text_input_data.placeholder = placeholder;
+    text_input_data.ellipsis = ellipsis;
     let editor = &mut text_input_data.editor;
     editor.set_scale(doc.viewport.scale_f64() as f32);
     editor.set_width(None);

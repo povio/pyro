@@ -601,6 +601,18 @@ impl LayoutPassState<'_> {
                             if let Some(placeholder) = input.placeholder.as_deref_mut() {
                                 placeholder.break_lines(Some(content_width * scale));
                             }
+                            // pyro: lines that do not wrap (`white-space: nowrap`, `wrap=off`)
+                            // are the control's scrollable overflow: it scrolls to them.
+                            let text_width = input.editor.try_layout().map_or(0.0, |layout| layout.width() / scale);
+                            if text_width > content_width {
+                                let mut output = output;
+                                let overflow = output.scrollable_overflow_rect;
+                                let mut rect = overflow.rect();
+                                rect.right = rect.right.max(pb.left + text_width + pb.right);
+                                output.scrollable_overflow_rect =
+                                    taffy::ScrollableOverflow::new(rect, overflow.is_reversed());
+                                return ChildLayout::Done(output);
+                            }
                         }
                     }
                     return ChildLayout::Done(output);

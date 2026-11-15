@@ -73,6 +73,8 @@ from the root of an upstream checkout at that commit) is the whole diff.
     overflows or not (`line_truncation`, `truncate_line`'s `forced`: after the whole line when the ellipsis
     fits there), whatever `text-overflow` says, and the root's later lines, their annotations and their part
     of a text mask are not painted. Covered by `crates/pyro-render/tests/line_clamp.rs`.
+    `draw_text_input_text` ends the overflowing lines of a text control (`<input>`, `<textarea>`) with its
+    `TextInputData::ellipsis` the same way while the control is not focused and not scrolled, as Chromium does.
   - `src/render/box_shadow.rs` (`overflow_clip_path`), `src/render.rs` (`render_element`, `paint_content`,
     `draw_text_mask`, `ElementCx::draw_hoisted_child`): the overflow clip. A scroll container clips at its padding
     box, as before. `overflow: clip` on both axes (and `contain: paint`) clips at the box `overflow-clip-margin`

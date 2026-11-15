@@ -2989,22 +2989,71 @@ impl ElementCx<'_, '_> {
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             draw_text_context.line_tops = tops;
-            crate::text::stroke_text(
-                scene,
-                input_data.editor.try_layout().unwrap().lines(),
-                self.context.dom,
-                transform,
-                TextPaintOptions {
-                    scale: self.scale,
-                    brush_override: None,
-                    shadows: true,
-                },
-                self.node.id,
-                None,
-                &mut draw_text_context,
-                None,
-                None,
-            );
+            let options = TextPaintOptions { scale: self.scale, brush_override: None, shadows: true };
+            let layout = input_data.editor.try_layout().unwrap();
+            // pyro: `text-overflow` in a text control, as Chromium has it: while the control
+            // is not focused and not scrolled, each line that overflows its content box ends
+            // with the ellipsis (a focused control shows its text clipped, to edit it).
+            let ellipsis = input_data
+                .ellipsis
+                .as_ref()
+                .filter(|_| {
+                    let scroll = self.node.scroll_offset();
+                    !self.node.is_focussed() && input_data.scroll_offset == 0.0 && scroll.x == 0.0 && scroll.y == 0.0
+                });
+            match ellipsis {
+                None => crate::text::stroke_text(
+                    scene,
+                    layout.lines(),
+                    self.context.dom,
+                    transform,
+                    options,
+                    self.node.id,
+                    None,
+                    &mut draw_text_context,
+                    None,
+                    None,
+                ),
+                Some((ellipsis, text)) => {
+                    let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
+                    for line in layout.lines() {
+                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, layout.is_rtl(), false);
+                        draw_text_context.cut = truncation.map(|(cut, _)| cut);
+                        crate::text::stroke_text(
+                            scene,
+                            std::iter::once(line.clone()),
+                            self.context.dom,
+                            transform,
+                            options,
+                            self.node.id,
+                            None,
+                            &mut draw_text_context,
+                            None,
+                            None,
+                        );
+                        draw_text_context.cut = None;
+                        if let Some((_, x)) = truncation {
+                            let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
+                            let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
+                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
+                            draw_text_context.line_tops = None;
+                            crate::text::stroke_text(
+                                scene,
+                                ellipsis.lines(),
+                                self.context.dom,
+                                transform * Affine::translate(offset),
+                                options,
+                                self.node.id,
+                                Some(text),
+                                &mut draw_text_context,
+                                None,
+                                None,
+                            );
+                            draw_text_context.line_tops = tops;
+                        }
+                    }
+                }
+            }
             draw_text_context.line_tops = None;
         }
     }

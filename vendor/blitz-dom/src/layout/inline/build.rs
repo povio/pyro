@@ -584,7 +584,7 @@ fn build_inline_layout_with(
     }
     // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
     // overflowing line with, in the root's own style (its first available font, as in Chromium).
-    let ellipsis = root_node_style.as_deref().and_then(|style| line_end_ellipsis(style));
+    let ellipsis = root_node_style.as_deref().and_then(|style| line_end_ellipsis(style, false));
     let rtl_lines = text_layout.layout.is_rtl();
     text_layout.ellipsis = ellipsis.as_deref().map(|text| {
         let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
@@ -640,43 +640,6 @@ fn build_inline_layout_with(
     text_layout.percent_span_edges = bidi_scan.percent_edges;
     text_layout.span_block_edges = bidi_scan.block_edges;
     return true;
-
-    /// pyro: what `text-overflow` puts at the end of the overflowing lines of a box with this
-    /// style: "…" for `ellipsis`, the string of a `<string>` value (one line: its white space
-    /// collapsed, with every line-breaking control character (U+000A to U+000D, U+0085, U+2028,
-    /// U+2029) as a space, as Chromium draws it), `None` when the box does not clip its inline overflow
-    /// or the end side's value is `clip`. Stylo keeps a single value as `second` (the end
-    /// side); of two, `first` is the line-left side's, where right-to-left lines end.
-    fn line_end_ellipsis(style: &style::properties::ComputedValues) -> Option<String> {
-        use style::computed_values::direction::T as Direction;
-        use style::values::computed::Overflow;
-        use style::values::specified::text::TextOverflowSide;
-        if style.get_box().overflow_x == Overflow::Visible {
-            return None;
-        }
-        let overflow = &style.get_text().text_overflow;
-        let end = if !overflow.sides_are_logical && style.clone_direction() == Direction::Rtl {
-            &overflow.first
-        } else {
-            &overflow.second
-        };
-        match end {
-            TextOverflowSide::Clip => None,
-            TextOverflowSide::Ellipsis => Some("\u{2026}".to_string()),
-            TextOverflowSide::String(string) => {
-                let is_space = |c: char| matches!(c, ' ' | '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}');
-                let mut text = String::new();
-                for c in AsRef::<str>::as_ref(string).chars() {
-                    if !is_space(c) {
-                        text.push(c);
-                    } else if !text.ends_with(' ') {
-                        text.push(' ');
-                    }
-                }
-                Some(text)
-            }
-        }
-    }
 
     /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
     /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
@@ -1260,5 +1223,42 @@ fn bases_overlap(a: &TextAnnotationKind, b: &TextAnnotationKind) -> bool {
             a.start < b.end && b.start < a.end
         }
         _ => false,
+    }
+}
+
+/// pyro: what `text-overflow` puts at the end of the overflowing lines of a box with this
+/// style: "…" for `ellipsis`, the string of a `<string>` value (one line: its white space
+/// collapsed, with every line-breaking control character (U+000A to U+000D, U+0085, U+2028,
+/// U+2029) as a space, as Chromium draws it), `None` when the box does not clip its inline overflow
+/// or the end side's value is `clip`. Stylo keeps a single value as `second` (the end
+/// side); of two, `first` is the line-left side's, where right-to-left lines end.
+pub(crate) fn line_end_ellipsis(style: &style::properties::ComputedValues, clips: bool) -> Option<String> {
+    use style::computed_values::direction::T as Direction;
+    use style::values::computed::Overflow;
+    use style::values::specified::text::TextOverflowSide;
+    if !clips && style.get_box().overflow_x == Overflow::Visible {
+        return None;
+    }
+    let overflow = &style.get_text().text_overflow;
+    let end = if !overflow.sides_are_logical && style.clone_direction() == Direction::Rtl {
+        &overflow.first
+    } else {
+        &overflow.second
+    };
+    match end {
+        TextOverflowSide::Clip => None,
+        TextOverflowSide::Ellipsis => Some("\u{2026}".to_string()),
+        TextOverflowSide::String(string) => {
+            let is_space = |c: char| matches!(c, ' ' | '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}');
+            let mut text = String::new();
+            for c in AsRef::<str>::as_ref(string).chars() {
+                if !is_space(c) {
+                    text.push(c);
+                } else if !text.ends_with(' ') {
+                    text.push(' ');
+                }
+            }
+            Some(text)
+        }
     }
 }

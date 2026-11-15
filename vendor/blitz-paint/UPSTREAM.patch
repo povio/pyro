@@ -4313,16 +4313,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
 +            // pyro: each line's top at the whole CSS pixel Chromium paints it at.
 +            let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
- 
--            // Render inline element backgrounds (e.g. `<span style="background: ...">`)
--            // behind the text and selection highlight.
--            crate::text::draw_inline_backgrounds(
--                scene,
--                text_layout.layout.lines(),
--                self.context.dom,
--                transform,
--                self.node.id,
--            );
++
 +            // Render the boxes of inline elements (e.g. `<span style="background: ...">`)
 +            // behind the text and selection highlight. pyro: line by line, each line's boxes
 +            // and then its text, as CSS 2.1 Appendix E paints line boxes (a box on a line
@@ -4375,6 +4366,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                self.paint_inline_box_fragment(scene, fragment, transform, tops);
 +            }
  
+-            // Render inline element backgrounds (e.g. `<span style="background: ...">`)
+-            // behind the text and selection highlight.
+-            crate::text::draw_inline_backgrounds(
+-                scene,
+-                text_layout.layout.lines(),
+-                self.context.dom,
+-                transform,
+-                self.node.id,
+-            );
+-
              // Render text selection highlight (if any) using cached selection ranges
 -            if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
 +            // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
@@ -4401,7 +4402,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
--            crate::text::stroke_text(
 +            draw_text_context.text_shift = text_shift;
 +            draw_text_context.line_tops = tops;
 +            draw_text_context.first_line = text_layout.first_line;
@@ -4581,8 +4581,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        }
 +        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
 +            crate::text::draw_text_selection(
-                 scene,
--                text_layout.layout.lines(),
++                scene,
 +                &text_layout.layout,
 +                &line_transform,
 +                sel_start,
@@ -4592,8 +4591,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
 +        for (index, line) in text_layout.layout.lines().enumerate() {
 +            let vertical = vertical(&line);
-+            crate::text::stroke_text(
-+                scene,
+             crate::text::stroke_text(
+                 scene,
+-                text_layout.layout.lines(),
 +                std::iter::once(line),
                  self.context.dom,
 -                transform,
@@ -4716,31 +4716,93 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +2988,7 @@
+@@ -1078,18 +2988,73 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+-            crate::text::stroke_text(
+-                scene,
+-                input_data.editor.try_layout().unwrap().lines(),
+-                self.context.dom,
+-                transform,
+-                TextPaintOptions {
+-                    scale: self.scale,
+-                    brush_override: None,
+-                },
+-                self.node.id,
+-                &mut draw_text_context,
+-            );
 +            draw_text_context.line_tops = tops;
-             crate::text::stroke_text(
-                 scene,
-                 input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +2997,15 @@
-                 TextPaintOptions {
-                     scale: self.scale,
-                     brush_override: None,
-+                    shadows: true,
-                 },
-                 self.node.id,
-+                None,
-                 &mut draw_text_context,
-+                None,
-+                None,
-             );
++            let options = TextPaintOptions { scale: self.scale, brush_override: None, shadows: true };
++            let layout = input_data.editor.try_layout().unwrap();
++            // pyro: `text-overflow` in a text control, as Chromium has it: while the control
++            // is not focused and not scrolled, each line that overflows its content box ends
++            // with the ellipsis (a focused control shows its text clipped, to edit it).
++            let ellipsis = input_data
++                .ellipsis
++                .as_ref()
++                .filter(|_| {
++                    let scroll = self.node.scroll_offset();
++                    !self.node.is_focussed() && input_data.scroll_offset == 0.0 && scroll.x == 0.0 && scroll.y == 0.0
++                });
++            match ellipsis {
++                None => crate::text::stroke_text(
++                    scene,
++                    layout.lines(),
++                    self.context.dom,
++                    transform,
++                    options,
++                    self.node.id,
++                    None,
++                    &mut draw_text_context,
++                    None,
++                    None,
++                ),
++                Some((ellipsis, text)) => {
++                    let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
++                    for line in layout.lines() {
++                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, layout.is_rtl(), false);
++                        draw_text_context.cut = truncation.map(|(cut, _)| cut);
++                        crate::text::stroke_text(
++                            scene,
++                            std::iter::once(line.clone()),
++                            self.context.dom,
++                            transform,
++                            options,
++                            self.node.id,
++                            None,
++                            &mut draw_text_context,
++                            None,
++                            None,
++                        );
++                        draw_text_context.cut = None;
++                        if let Some((_, x)) = truncation {
++                            let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
++                            let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
++                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
++                            draw_text_context.line_tops = None;
++                            crate::text::stroke_text(
++                                scene,
++                                ellipsis.lines(),
++                                self.context.dom,
++                                transform * Affine::translate(offset),
++                                options,
++                                self.node.id,
++                                Some(text),
++                                &mut draw_text_context,
++                                None,
++                                None,
++                            );
++                            draw_text_context.line_tops = tops;
++                        }
++                    }
++                }
++            }
 +            draw_text_context.line_tops = None;
          }
      }
  
-@@ -1103,7 +3019,7 @@
+@@ -1103,7 +3068,7 @@
              // Right align and pad the bullet when rendering outside
              let x_padding = match marker {
                  Marker::Char(_) => 8.0,
@@ -4749,7 +4811,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              // Outside markers are placed outside the list item's border box
              // (`pos` is the origin of its content box)
-@@ -1114,14 +3030,33 @@
+@@ -1114,14 +3079,33 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -4786,7 +4848,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1129,7 +3064,7 @@
+@@ -1129,7 +3113,7 @@
              };
  
              let pos = Point {
@@ -4795,7 +4857,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,79 +3080,406 @@
+@@ -1145,79 +3129,406 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -5250,7 +5312,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              }
          }
      }
-@@ -1232,6 +3494,11 @@
+@@ -1232,6 +3543,11 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -5262,7 +5324,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1272,20 +3539,121 @@
+@@ -1272,20 +3588,121 @@
          let viewport = svg_viewport_affine(svg, paint_size.width, paint_size.height);
          let transform = (self.transform * viewport).then_translate(Vec2 { x, y });
  
@@ -5385,7 +5447,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +3661,27 @@
+@@ -1293,15 +3710,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -5414,7 +5476,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1358,6 +3738,7 @@
+@@ -1358,6 +3787,7 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -5422,7 +5484,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  |scene| {
                      scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
                  },
-@@ -1466,3 +3847,58 @@
+@@ -1466,3 +3896,58 @@
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
  }

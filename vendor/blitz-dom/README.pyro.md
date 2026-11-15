@@ -59,7 +59,11 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   value as `second`) gets "…" shaped in its own style; blitz-paint ends each overflowing line with it. Repro
   `bench/fidelity/repros/text-overflow-ellipsis.html`. `text-overflow: "<string>"` shapes the string instead, on
   one line (white space collapsed; U+000A to U+000D, U+0085, U+2028 and U+2029 count as spaces), in the base
-  direction of the root's lines (WPT `css-overflow/text-overflow-string-*`).
+  direction of the root's lines (WPT `css-overflow/text-overflow-string-*`). A text control (`layout/construct.rs`
+  `create_text_editor`, `TextInputData::ellipsis`) gets the ellipsis of its own `text-overflow` too, whatever its
+  `overflow` (it always clips); blitz-paint draws it while the control is neither focused nor scrolled. A
+  `<textarea>`'s lines that do not wrap are its scrollable overflow (`layout/mod.rs`, the textarea leaf), so
+  script can scroll to them (pyro-dom `scroll_extent` lets a textarea scroll).
 - `layout/line_clamp.rs`, `layout/mod.rs` (`compute_child_layout_in_current_wm`), `layout/inline/layout.rs`,
   `node/text.rs` (`TextLayout::clamp`, `line_box_top`, `counted_lines`, `LineClamp`), `node/node.rs`
   (`NodeFlags::CLAMPS_LINES`): the legacy line clamp (`-webkit-line-clamp` on a vertical `-webkit-box`; Stylo's
