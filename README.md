@@ -80,6 +80,13 @@ whose dylibs record where they were linked. Workspace crates are compiled increm
 sccache passes through, so edit rebuilds are unchanged (pyro-dom edit: 4.6-5.3 s with it, 5.8-5.9 s without).
 `sccache --show-stats` shows the hit rate.
 
+### Vendored crates and merging main
+
+`vendor/` holds patched copies of upstream crates; each `vendor/<crate>/UPSTREAM.patch` is the whole diff from its
+upstream, and `scripts/vendor/regen-patch <crate>` (or `--all`) rewrites it after an edit. When a merge of main
+conflicts in those patches, the WPT baselines or the vendor READMEs, follow
+[Merging main into a branch](bench/wpt/README.md#merging-main-into-a-branch).
+
 ### Profile-guided optimization (optional)
 
 `scripts/pgo/build.sh` builds `target/<host>/release-pgo/pyro` in three steps that can also

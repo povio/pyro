@@ -99,6 +99,47 @@ that changes nothing leaves the file byte-identical (no artifact). One page per 
 Naming every pass would make the file ~38 MB instead of ~0.5 MB; `h` is what lets the gate tell that a page's
 subtests changed, since a `fail` entry does not name its passes.
 
+## Merging main into a branch
+
+Most branches touch the same few files, so a merge of main used to conflict in them every time. `.gitattributes` and
+two scripts make those conflicts mechanical:
+
+- `vendor/*/README.pyro.md` and `crates/pyro-render/tests/integration.rs` merge with git's `union` driver: the lines
+  both sides added are kept, ours first. Read the result. A line both sides edited comes out twice, two sections both
+  sides appended at the same place lose the blank line between them, and a line one side removed or renamed comes back
+  when the other side added a line next to it (in `integration.rs` a `mod` line for a file that is gone: the build
+  fails on it).
+- `baseline.json` and `reftest-baseline.json` merge page by page (`merge-baseline.mjs`). A page only one side changed
+  takes that side's entry (a loss accepted there stays accepted). A page both sides changed keeps every pass of either
+  side; when two entries cannot be combined (`fail` entries of different subtest names), that page's two lines are
+  left as a conflict. The gate checks the result as usual.
+- `vendor/*/UPSTREAM.patch` still conflicts. `scripts/vendor/regen-patch --all` rewrites it from the merged sources
+  and checks that `git apply` on the upstream reproduces them. It rebuilds the upstream from the patch committed on
+  main's side of the merge (else at the merge base), so the conflict markers do not matter. A file that is as one side
+  committed it keeps that side's section byte for byte: only the files both sides edited get new sections. It refuses
+  a crate while a file in it has conflict markers, is unmerged in the index (a modify/delete conflict has no markers)
+  or is untracked (a `*.orig` a merge tool left: delete it; a new file: `git add` it).
+
+```sh
+git fetch origin &&
+  s=$(git show origin/main:scripts/vendor/setup-merge-drivers.sh) && sh -c "$s" &&  # the drivers, from any branch
+  git -c attr.tree=origin/main merge --no-commit origin/main  # main's .gitattributes, on an older branch too (git 2.43+)
+# Conflicts left in sources: resolve each and `git add` (or `git rm`) it; the UPSTREAM.patch files can stay conflicted.
+# `git diff --name-only --diff-filter=U` lists what is left. Then:
+scripts/vendor/regen-patch --all && git add vendor/*/UPSTREAM.patch && git commit --no-edit
+```
+
+Stage by name, not with `git add -u`: that marks every unmerged file resolved, conflict markers and all, and takes
+unrelated edits into the merge. regen-patch exits 1 while a vendored crate has a conflict left, and `git commit`
+refuses while any file is unmerged. Setting the drivers up once per clone is enough (the first line does it every
+time, harmlessly); regen-patch warns in a merge when the baseline driver is missing (git then merged the baselines as
+text, which can drop passes without a conflict).
+
+`scripts/vendor/regen-patch --check --all` checks the patches without writing anything; CI runs it on every change to
+`vendor/` against the revision before it (`.github/workflows/vendor-patches.yml`). `--fresh` regenerates every section
+instead of keeping the committed ones. blitz-paint's, parley_engine's and stylo's sections are macOS `diff -u` output:
+elsewhere the regenerated sections can align differently (they still apply).
+
 ## Before making it a required check
 
 The gate's false failures come from pages whose results depend on load. `flaky.json` starts with the six such pages
