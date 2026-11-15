@@ -4,7 +4,8 @@
 pull request and fails when coverage goes down. `baseline.json` records, per page, which subtests pass, whether the
 page completed, and how long it took. The same gate runs over WPT's reftests in the same directories (9,842 pages,
 `reftest-baseline.json`): see [Reftests](#reftests), which also compares pyro's results with Chrome's.
-[What runs](#what-runs) lists the testharness pages by directory.
+[What runs](#what-runs) lists the testharness pages by directory. And it runs over WPT's crashtests (2,031 pages,
+`crashtest-baseline.json`): see [Crashtests](#crashtests).
 
 ## How a run works
 
@@ -458,3 +459,81 @@ Paint (the paint directories and CSS2's backgrounds, borders, colors, visufx, ui
 (339 of them `first-letter-punctuation-*`), tables 199, normal-flow 127, lists 120 (counters and the `*-applies-to`
 pages), generated-content 105, text 101, bidi-text 55, positioning 48 and fewer elsewhere.
 
+## Crashtests
+
+A WPT crashtest is a page that once crashed a browser: it passes when the browser loads it, paints it and is still
+there. `run.mjs --kind crashtest` runs them and `gate.mjs ... --kind crashtest` gates them as it gates reftests: each
+crashtest is reported as one subtest, `crashtest`, so a crashtest that passed in `crashtest-baseline.json` must still
+pass in some run of it, an unrecorded pass fails as stale, and `crashtest-flaky.json` (the format of `flaky.json`)
+lists what is not checked. Only passes are protected, as for reftests. Adding or widening a `crashtest-flaky.json`
+entry, or dropping a baseline pass, needs the `wpt-accept-loss` label; a page that crashes, panics or hangs pyro is
+never listed there or recorded as passing: it stays a failing entry until pyro is fixed. The refreshed baseline is
+the `wpt-crashtest-baseline` artifact:
+
+```sh
+gh run download <run-id> -n wpt-crashtest-baseline -D bench/wpt     # writes bench/wpt/crashtest-baseline.json
+```
+
+There is no baseline until a first run's artifact is committed: with none on the branch or its base, the gate only
+reports (`bootstrap`), runs every page twice and uploads the baseline both passes agree on.
+
+### What runs
+
+`crashtest.mjs` `discoverCrashtests()` names crashtests as WPT's manifest does (`tools/manifest/sourcefile.py`,
+`name_is_crashtest`): a markup file (`.html`, `.htm`, `.xht`, `.xhtml`, `.xml`, `.svg`) whose name ends in `-crash`
+before its extension (`a-crash.html`, `a-crash.tentative.html`; not `a-crash-001.html`), or that lies under a
+directory named `crashtests`, outside `resources`, `support` and `tools`. It walks the whole checkout
+(`CRASHTEST_DIRS` is `.`; `--dirs css/css-multicol,dom` runs part of it), and `wpt-paths.txt` checks out every
+crashtest in WPT by those two names, not only those in the directories the other kinds run: at the pinned revision
+discovery finds the manifest's 2,105 crashtests exactly. Of the 2,031 that run, 226 lie in the testharness and
+reftest directories; the other 1,805, with the 18 support files they load outside the paths already listed (found
+from `serve.mjs`'s request log over a run of all of them, and from the URLs their sources name), add 8 MB in 1,925 files to the
+checkout (180 MB with its git directory), which is why all of them run rather than the 226.
+
+2,031 run. Left out, counted by reason in the run's `excluded`: 45 whose names need wptserve (`.sub`, `.https`,
+`.h2`, `.www`), 27 that load testdriver and 2 that name a Python handler or `pipe=`. A page's results are counted
+under its area (`css/css-multicol`, `html/semantics`, `dom`): the largest are css-multicol 164, editing 151,
+html/semantics 135, mathml 126 and css-break 116.
+
+### How a crashtest is judged
+
+As wptrunner does (`docs/writing-tests/crashtest.md`, `executors/test-wait.js` with the class `test-wait`), in
+`crashtest.mjs` and `run.mjs`:
+
+- The browser and the viewport are the reftests' (800x600, Ahem installed).
+- The page is loaded, and the runner waits for the load event, `document.fonts.ready` (after a forced layout) and
+  two animation frames. With `class="test-wait"` on the root element it then fires `TestRendered` at it and waits
+  for the class to go, two frames after each change of the root's attributes, up to the page's timeout (15 s, 45 s
+  with `<meta name=timeout content=long>`): `timeout`, with `test-wait was not removed`, `the page did not load` or
+  `the page kept navigating`.
+- "The test passes if the load event is reached, and the browser finishes painting, without terminating." pyro lays
+  out and paints on demand, so the runner then takes a screenshot and drops it: a page whose layout or paint fails
+  is an `error` with the browser's message, not a pass.
+- The runner then navigates the page to `about:blank`, so the document is torn down inside its own test and not
+  under the next page of the worker.
+- **Crash.** A page whose browser died under it runs again alone; if the browser dies again the page is recorded as
+  `crash`, with the last lines of the browser's stderr (a Rust abort's message, `has overflowed its stack`). The
+  pages that ran beside it get their own results.
+- **Panic.** pyro catches Rust panics at its JavaScript bindings and on its render thread, so most panics do not end
+  the process: the call throws, or the frame is not painted. The runner reads the browser's stderr; when a panic is
+  printed while a page runs, the page runs again alone, and if one is printed again it is recorded as `panic` with
+  the panic's location and message.
+- **Hang.** A page that does not answer for 15 s past its timeout is recorded as `hang` and the browser is replaced.
+
+Only a `complete` page carries the passing subtest. `CRASHTEST_STDERR=FILE` appends the browser's stderr to FILE;
+with `RUST_BACKTRACE=1` that includes each panic's backtrace:
+
+```sh
+RUST_BACKTRACE=1 CRASHTEST_STDERR=/tmp/stderr.log bun bench/wpt/run.mjs --kind crashtest --wpt "$WPT_DIR" \
+  --bin pyro=target/release-fast/pyro --jobs 1 --match 'documentElement-remove' --out /tmp/crash.json
+```
+
+### CI
+
+One job, `crashtest`, on the self-hosted `lp-m1` (as every macOS job): it restores the browser and the WPT checkout
+the other jobs use, runs `gate.mjs run --kind crashtest` at one page per CPU, checks the result against
+`crashtest-baseline.json` in the same job (the base branch's files and the `wpt-accept-loss` label as the other
+gates read them) and uploads `wpt-crashtest-shard-0` and, when it changed, `wpt-crashtest-baseline`. It is one job
+and not a run job plus a Linux gate job because the check takes a second and the job already has what it needs;
+it is not sharded because a pull request's run is about 2,000 pages of some 90 ms each. Manual runs take `suites`
+(`crashtest` runs this job alone) and `crashtest-args` (for example `--dirs css/css-multicol`).

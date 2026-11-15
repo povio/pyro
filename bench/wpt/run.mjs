@@ -1,7 +1,9 @@
-// WPT runner over CDP (Playwright connectOverCDP), identical for every target: testharness pages, or reftests with
-// --kind reftest (reftest.mjs: each reftest is reported as one subtest, "reftest").
+// WPT runner over CDP (Playwright connectOverCDP), identical for every target: testharness pages, reftests with
+// --kind reftest (reftest.mjs: each reftest is reported as one subtest, "reftest"), or crashtests with --kind crashtest
+// (crashtest.mjs: one subtest, "crashtest", passing when the page loaded and the browser neither crashed, panicked
+// nor hung).
 // Usage: bun run.mjs --wpt DIR --bin label=/path/to/serve-compatible-binary --out results.json
-//          [--kind testharness|reftest] [--base http://127.0.0.1:9415]   (default: start serve.mjs on a free port)
+//          [--kind testharness|reftest|crashtest] [--base http://127.0.0.1:9415]   (default: start serve.mjs on a free port)
 //          [--dirs dom,url,...] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
 //          [--sample-encoding N] [--match REGEX] [--tests FILE] [--list]
 //          [--baseline baseline.json [--gate]] [--shard I/N] [--reuse-context] [--repeat N]
@@ -23,6 +25,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_DIRS, REFTEST_DIRS, discover, discoverReftests, plan, shard, readJson } from './lib.mjs';
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
+import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(HERE, '..', 'package.json'));
 const { chromium } = require('playwright-core');
@@ -33,8 +36,10 @@ const WPT = path.resolve(opt('--wpt'));
 const [LABEL, BIN] = (opt('--bin', 'x=') ?? '').split(/=(.*)/s);
 const OUT = opt('--out');
 const KIND = opt('--kind', 'testharness');
-if (KIND !== 'testharness' && KIND !== 'reftest') throw new Error(`--kind ${KIND}: expected testharness or reftest`);
-const KIND_DIRS = KIND === 'reftest' ? REFTEST_DIRS : DEFAULT_DIRS;
+if (!['testharness', 'reftest', 'crashtest'].includes(KIND)) throw new Error(`--kind ${KIND}: expected testharness, reftest or crashtest`);
+const KIND_DIRS = KIND === 'reftest' ? REFTEST_DIRS : KIND === 'crashtest' ? CRASHTEST_DIRS : DEFAULT_DIRS;
+// Reftests and crashtests render: the reftest environment and viewport, and a page whose browser died runs again alone.
+const RENDERS = KIND !== 'testharness';
 const DIRS = opt('--dirs', KIND_DIRS.join(',')).split(',');
 const JOBS = Number(opt('--jobs', 6));
 const TIMEOUT = Number(opt('--timeout', 15000));
@@ -52,7 +57,7 @@ if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}:
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
-  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS) : discover(WPT, DIRS, { sampleEncoding: SAMPLE });
+  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS) : discover(WPT, DIRS, { sampleEncoding: SAMPLE });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
@@ -92,6 +97,23 @@ if (!BASE) {
 // ---------- browser ----------
 async function freePort() { return new Promise((r) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); }); }
 let child, endpoint, generation = 0, browserCpuS = 0;
+// Crashtests read the browser's stderr: a Rust panic the process survives (caught at a binding, or on a worker
+// thread) prints `thread '...' panicked at <file>:<line>:<col>:` and its message on the next line. `panics` counts
+// them, `lastPanic` is the newest, `stderrTail` the last lines of the current browser (a crash's last words).
+// CRASHTEST_STDERR=FILE appends every line there (with RUST_BACKTRACE=1, the panics' backtraces).
+let panics = 0, lastPanic = '', stderrTail = [];
+const STDERR_LOG = process.env.CRASHTEST_STDERR && fs.createWriteStream(process.env.CRASHTEST_STDERR, { flags: 'a' });
+function watchStderr(stream) {
+  const tail = stderrTail = [];
+  let head = null;
+  readline.createInterface({ input: stream }).on('line', (line) => {
+    STDERR_LOG?.write(line + '\n');
+    tail.push(line.slice(0, 300));
+    if (tail.length > 12) tail.shift();
+    if (head != null) { lastPanic = `${head} ${line.trim()}`.slice(0, 400); head = null; }
+    if (/panicked at /.test(line)) { panics++; head = line.trim(); lastPanic = head.slice(0, 400); }
+  });
+}
 // CPU seconds a child process has used, from ps (the browser is SIGKILLed, so its rusage never reaches us).
 function cpuOf(pid) {
   try {
@@ -111,7 +133,8 @@ async function startBrowser() {
   child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error', '--load-resources', 'stylesheet', '--load-resources', 'iframe', '--cdp-max-connections', '64'],
     // PYRO_PARENT_PID: the browser exits with this runner however it ends. It runs in a process group of its own, so a
     // runner killed with its CI job (a cancelled or superseded run) left it serving on the self-hosted machine.
-    { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(KIND === 'reftest' ? reftestEnv(WPT) : ahemEnv(WPT)) } });
+    { stdio: KIND === 'crashtest' ? ['ignore', 'ignore', 'pipe'] : 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(RENDERS ? reftestEnv(WPT) : ahemEnv(WPT)), ...(KIND === 'crashtest' ? { RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '0' } : {}) } });
+  if (child.stderr) watchStderr(child.stderr);
   for (let i = 0; i < 1000; i++) {
     try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) { endpoint = `http://127.0.0.1:${port}`; return; } } catch {}
     await new Promise((r) => setTimeout(r, 10));
@@ -155,12 +178,12 @@ async function openPage(slot, t) {
   }
   if (!slot.browser) { slot.gen = generation; slot.browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 }); }
   if (!slot.page) {
-    slot.ctx = await slot.browser.newContext(KIND === 'reftest' ? REFTEST_CONTEXT : t.viewport ? { viewport: t.viewport, deviceScaleFactor: 1 } : undefined);
+    slot.ctx = await slot.browser.newContext(RENDERS ? REFTEST_CONTEXT : t.viewport ? { viewport: t.viewport, deviceScaleFactor: 1 } : undefined);
     slot.page = await slot.ctx.newPage();
     slot.page.on('dialog', (d) => d.dismiss().catch(() => {}));
   }
   // A context kept from the page before (--reuse-context) may have that page's viewport.
-  if (KIND !== 'reftest' && REUSE) {
+  if (!RENDERS && REUSE) {
     const want = t.viewport ?? DEFAULT_VIEWPORT, now = slot.page.viewportSize();
     if (now?.width !== want.width || now?.height !== want.height) await slot.page.setViewportSize(want);
   }
@@ -171,6 +194,7 @@ async function openPage(slot, t) {
 async function runOne(slot, t, gen) {
   const page = await openPage(slot, t);
   if (KIND === 'reftest') return runReftest(page, t, BASE, t.limit);
+  if (KIND === 'crashtest') return runCrashtest(page, t, BASE, t.limit);
   const t0 = Date.now();
   await page.goto(`${BASE}/${t.url}`, { waitUntil: 'commit', timeout: t.limit });
   // The wait also fails when the browser is gone, replaced because another slot's page hung it. It would fail until
@@ -231,9 +255,11 @@ function parse(log) {
   return subs;
 }
 
-// Reftests: a page whose browser died under it runs again alone (no other page in the browser), so the page that
+// Reftests and crashtests: a page whose browser died under it runs again alone (no other page in the browser), so the page that
 // crashes the browser is told apart from the pages that ran beside it: one that loses its browser alone is recorded
 // as `crash`, the others get their own result. (Testharness pages run again up to 3 times beside the others.)
+// Crashtests also run a page again alone when a panic was printed while it ran beside others, and record it as
+// `panic` when one is printed again while it runs alone.
 let running = 0, solo = null;
 const idle = [];
 async function enter(t) {
@@ -265,9 +291,9 @@ async function worker() {
     const t = tests[next++];
     let r;
     if (restarting) await restarting;
-    const leave = KIND === 'reftest' ? await enter(t) : () => {};
+    const leave = RENDERS ? await enter(t) : () => {};
     if (restarting) await restarting;
-    const gen = generation;
+    const gen = generation, panicsBefore = panics, tail = stderrTail;
     try { r = await guarded(slot, t, gen); }
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
@@ -278,13 +304,26 @@ async function worker() {
       // This page's browser died and no slot has replaced it yet. (After a replacement `child` may still be the
       // browser that was killed for it, until the new one is spawned.)
       if (gen === generation && died) { restarts++; await restartBrowser(gen); }
-      if (KIND === 'reftest' && lost) {
+      if (RENDERS && lost) {
         if (!t.solo) { t.solo = true; tests.push(t); continue; }
-        if (died) r.status = 'crash';
+        if (died) {
+          r.status = 'crash';
+          // The browser's last words (a panic that aborted, an assertion), read once its stderr has drained.
+          if (KIND === 'crashtest') { await sleep(50); r.error = `browser died: ${tail.slice(-4).join(' | ') || 'nothing on stderr'}`.slice(0, 600); }
+        }
       }
       // The browser was replaced under this page (another slot's page hung it): run the page again.
       else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
     } finally { leave(); }
+    if (KIND === 'crashtest' && r.status !== 'crash' && r.status !== 'hang') {
+      // A panic's lines may still be in the pipe when the page's last answer arrives.
+      await sleep(10);
+      if (panics !== panicsBefore) {
+        if (!t.solo) { t.solo = true; tests.push(t); await resetSlot(slot); continue; }
+        r = { status: 'panic', ms: r.ms, error: lastPanic, subtests: [] };
+        await resetSlot(slot);
+      }
+    }
     if (r.status === 'hang') { slot.browser = slot.ctx = slot.page = null; restarts++; await restartBrowser(gen); }
     if (r.status === 'timeout') await resetSlot(slot);
     const { est, limit, retried, solo: alone, refs, fuzzy, viewport, ...meta } = t;

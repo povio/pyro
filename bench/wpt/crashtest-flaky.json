@@ -1,0 +1,4 @@
+{
+ "//": "What the WPT crashtest gate does not check, each with its reason (README.md, Crashtests): flaky.json's format, for crashtest pages. Keys are page URLs, or patterns where * matches anything. An entry is the whole page ({reason}) or only its completion ({reason, allowIncomplete: true}). Adding or widening an entry needs the wpt-accept-loss label. A page that crashes, panics or hangs pyro is never listed here: it stays failing in the baseline until pyro is fixed.",
+ "tests": {}
+}
