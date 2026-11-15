@@ -1338,3 +1338,24 @@ Main pins Stylo 0.23.0; this copy builds against the vendored 0.24.0.
 
 Covered by `block_in_inline.rs`, `unicode_bidi.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in
 `crates/pyro-render/tests`.
+
+## Floats painted in the phases of their stacking context; floats in inline formatting contexts (WPT reftests, lane P3)
+
+- `src/layout/paint_tree.rs` (`Node::paints_in_ancestor_phases`, `Node::is_inline_level`, `is_lifted_float`,
+  `NodeFlags::HAS_FLOAT_PAINT_CHILDREN`): a block box of the normal flow that is no layer root, no stacking context,
+  no float, no flex or grid item, no multi-column container and no replaced element (anonymous blocks and split
+  inlines included) paints in its painter's phases (CSS 2.1 Appendix E: block backgrounds, then floats, then inline
+  content). Its floats are lifted out of it, as positioned boxes are, to the nearest box that paints its own phases,
+  which lists them at its float level in tree order and is flagged. Floats inside an earlier block painted under a
+  later block's background, and blocks in split inlines painted over floats (WPT `stack-floats-001..004`,
+  `overhanging-float-paint-order`). An anonymous block's style keeps `display: inline`, which these checks see
+  through. blitz-paint paints the phases (`FlowPhase`).
+- `src/layout/inline/layout.rs`: a float placed with nothing before it on its line leaves the line to be retried
+  after it: content that doesn't fit beside the float moves down (WPT `floats-placement-004`, `c414-flt-fit-001`,
+  `c5525-fltwidth-001`). A float left for below its line but met past the point where the line wrapped is dropped
+  there and met again on the next line (`PendingFloat::item`, parley's `BreakerState::item_index`); a float met
+  again after its line wrapped before it keeps its place (`placed_through`); before, it was placed twice (WPT
+  `floats-line-wrap-shifted-001`, `float-no-content-beside-001`). Relatively positioned inline boxes around a float
+  move it (`inline_span_offset`; WPT `block-in-inline-float-between-001`).
+
+Covered by `crates/pyro-render/tests/floats.rs`.

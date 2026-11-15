@@ -203,3 +203,31 @@ changes above, so all are kept. Three places needed more than a merge:
 
 Upstream's float and block-formatting-context fixes since v0.15.1 (#1384, #1385, #1386, #1387, #1389, #1392,
 #1394, #1395, #1397, #1401) and `ScrollableOverflow` (#1372) come with the update; blitz-dom main uses them.
+
+## Floats and the boxes that avoid them (WPT reftests, lane P3)
+
+- `compute/block.rs` (`perform_final_layout_on_in_flow_children`): a box that avoids floats (a table, a new
+  formatting context, a block-level replaced element) goes to the first band where its border box fits. Its
+  narrowest border box in a band is what it needs: a table, a replaced element or a box of an intrinsic width is
+  measured in the band (`measure_child_size` with the band's stretch width, the inputs its layout gets, so the layout
+  that follows is cached), any other auto width shrinks to the band, down to its padding and border, its `min-width`
+  and what its negative margins prop it up to. A box laid out in a band that is taller than the band stays as wide is
+  placed again beside the floats of its whole height (`find_bfc_slot` with that height, at most 8 times): upstream
+  checked only the styled height, so a box beside a short float overlapped the wider float below it (WPT
+  `floats-wrap-bfc-004`, `floats-bfc-003`, `table-among-floats-001`, `floats-wrap-bfc-with-margin-003`).
+- `compute/block.rs` (`generate_item_list`): a block-level replaced element or form control
+  (`is_compressible_replaced`, the tree's `block_child_width_fits_content` included) is not in its parent's block
+  formatting context: it keeps clear of floats as a table does (CSS 2.1 § 9.5; WPT `floats-039`).
+- `compute/float.rs` (`place_floated_box_inner`, `find_content_slot`, `find_bfc_slot`): clearance searched from the
+  segment after the cleared floats' last one (`last_placed_floats` ends are exclusive; `+ 1` skipped one more), so a
+  float clearing one side was pushed below the next float on the other side too (WPT `floats-placement-005`). The
+  `y` threshold (`clear_bottoms`) still does the clearing.
+- `compute/float.rs` (`find_bfc_slot`, `Segment::has_wide_float`): zero-width floats alone beside a box leave its
+  margins to apply as if there were none (WPT `zero-width-floats`); beside a float of some width a zero-width float
+  absorbs its side's margin, as before (WPT `zero-width-floats-positioning.tentative`).
+
+Not done: the browsers' rule that an auto width's negative margins do not widen the band it must fit in (WPT
+`floats-wrap-bfc-with-margin-001`, which every browser passes) contradicts `floats-wrap-bfc-with-margin-006/007.tentative`
+(every browser fails them, pyro passed them), so the band still widens by them. Nor `max-height` separating a
+last child's bottom margin (WPT `max-height-separates-margin`, Chromium and Gecko): `margin-collapse-038` (Safari only,
+which pyro passes) expects the margins to collapse. Covered by `crates/pyro-render/tests/floats.rs`.

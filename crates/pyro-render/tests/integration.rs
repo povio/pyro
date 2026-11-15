@@ -13,6 +13,7 @@ mod containing_block_chain;
 mod dotted_dashed_lines;
 mod filter_color;
 mod filter_drop_shadow;
+mod floats;
 mod font_optical_sizing;
 mod font_unicode_range;
 mod fractional_scroll_overflow;

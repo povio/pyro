@@ -559,3 +559,20 @@ covered by `crates/pyro-render/tests/mirror.rs`.
 
 - `src/text.rs`: main skips text whose fill is fully transparent; a recording paint (the PDF's, `runs` given)
   keeps it as invisible text, so it stays selectable and searchable.
+
+## Floats painted in the phases of their stacking context (WPT reftests, lane P3)
+
+- `src/render.rs` (`FlowPhase`, `ElementCx::draw_children_in_phases`, `draw_flow_children`): a box whose paint
+  children include floats (blitz-dom `NodeFlags::HAS_FLOAT_PAINT_CHILDREN`) paints its children as CSS 2.1 Appendix
+  E does: negative `z-index`, the backgrounds of the blocks of its normal flow (`FlowPhase::Background`, the boxes
+  that paint in its phases walked through, any other block-level box whole), the floats, its and their inline
+  content (`Foreground`, inline-level boxes whole), their outlines (`Outline`, only when one has an outline, under
+  the positioned boxes as in Chromium; WPT `z-index-020`), then the positioned boxes and stacking contexts. A box
+  painted in a phase pushes no layer (it has no effect or clip). Pages without floats paint as before.
+- `src/render.rs` (`enclosing_inline_effects`): a float in inline boxes with an `opacity` or a `filter` paints in a
+  group with their effects (WPT `inline-opacity-float-child`, `filtered-inline-applies-to-float`).
+- `src/render.rs` (`inline_box_fragments`) and `src/render/clip_path.rs`: a line's content ends at its
+  `inline_min_coord` plus its advance: on a line beside a float the boxes of inline elements were cut to nothing
+  (WPT `clear-inline-001`). `src/render/border.rs`: `outline_line` is visible to `render.rs`.
+
+Covered by `crates/pyro-render/tests/floats.rs`.

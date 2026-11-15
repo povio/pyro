@@ -108,6 +108,11 @@ bitflags! {
         /// pyro: an anonymous block whose first child is a split inline standing for its tail:
         /// the inline content after its last block-level box, with its end.
         const STARTS_WITH_SPLIT_TAIL = 1 << 13;
+        /// pyro: some of its `paint_children` are floats, its own or lifted out of the boxes of
+        /// its subtree that paint in its paint phases (`Node::paints_in_ancestor_phases`): it paints
+        /// them in the phases of CSS 2.1 Appendix E, after the block backgrounds and before the
+        /// inline content of those boxes. Set by the paint-tree build.
+        const HAS_FLOAT_PAINT_CHILDREN = 1 << 14;
     }
 }
 

@@ -10,6 +10,7 @@
 //! subtree can never paint or hit-test a box where layout no longer puts it.
 
 use blitz_traits::node_id::NodeId;
+use markup5ever::local_name;
 use std::cell::Cell;
 use std::ops::Range;
 use stylo_taffy::CopyStyleGetters;
@@ -509,6 +510,14 @@ impl BaseDocument {
 
             let is_layer_root =
                 stacking_context.is_none() || self.nodes[node_id].is_paint_layer_root();
+            // pyro: whether this box paints the floats of its subtree itself (CSS 2.1 Appendix E
+            // step 5), or lifts them to the nearest ancestor that does, as positioned boxes are
+            // lifted to the nearest layer root. Asked only when a float turns up.
+            let mut paints_floats: Option<bool> = None;
+            let mut paints_floats_here = |doc: &Self| {
+                *paints_floats
+                    .get_or_insert_with(|| is_layer_root || !doc.nodes[node_id].paints_in_ancestor_phases())
+            };
             let keyed_base = self.scratch.keyed_children.len();
 
             for (index, &child_id) in children.iter().enumerate() {
@@ -561,6 +570,9 @@ impl BaseDocument {
                         self.scratch
                             .keyed_children
                             .push(((2, paint_order.1), child_id));
+                    } else if paint_order.0 == 1 && !paints_floats_here(self) {
+                        // pyro: a float painted in an ancestor's float phase (see `paints_floats`).
+                        entries.push(HoistedPaintChild::new(child_id, 0))
                     } else {
                         self.scratch.keyed_children.push((paint_order, child_id));
                     }
@@ -568,10 +580,13 @@ impl BaseDocument {
                     // Positioned descendants lifted out of the static boxes of
                     // this child's subtree join this node's positioned paint
                     // level, in tree order after the child.
-                    if is_layer_root && entries.len() > first_entry {
+                    // pyro: floats lifted out of them join its float level, in tree order.
+                    if entries.len() > first_entry && (is_layer_root || paints_floats_here(self)) {
                         let subtree_entries: ThinVec<_> = entries.drain(first_entry..).collect();
                         for entry in subtree_entries {
-                            if entry.z_index == 0 {
+                            if entry.z_index == 0 && self.is_lifted_float(entry.node_id) && paints_floats_here(self) {
+                                self.scratch.keyed_children.push(((1, 0), entry.node_id));
+                            } else if entry.z_index == 0 && is_layer_root {
                                 self.scratch
                                     .keyed_children
                                     .push(((2, paint_order.1), entry.node_id));
@@ -606,6 +621,8 @@ impl BaseDocument {
             }
 
             self.scratch.keyed_children[keyed_base..].sort_by_key(|&(paint_order, _)| paint_order);
+            let has_floats = self.scratch.keyed_children[keyed_base..].iter().any(|&((level, _), _)| level == 1);
+            self.nodes[node_id].flags.set(NodeFlags::HAS_FLOAT_PAINT_CHILDREN, has_floats);
 
             let mut paint_children = self.nodes[node_id]
                 .paint_children
@@ -737,6 +754,15 @@ impl BaseDocument {
                 !child.is_stacking_context_root(false) && Some(node_to_paint_order(child, false)) == first
             });
         placed.plain_paint_order = if plain { first } else { None };
+    }
+
+    /// pyro: whether the entry `id` lifted with `z-index` 0 is a float (painted at its painter's
+    /// float level), not a positioned box or a stacking context (its positioned level).
+    fn is_lifted_float(&self, id: NodeId) -> bool {
+        self.nodes[id]
+            .primary_styles()
+            .is_some_and(|style| style.clone_float() != Float::None && style.clone_position() == Position::Static)
+            && !self.is_paint_stacking_context_root(id, false)
     }
 
     /// The layout child of `node_id` whose subtree contains `id`, following
@@ -908,6 +934,65 @@ impl Node {
                     || e.sub_doc_data().is_some()
                     || e.text_input_data().is_some()
             })
+    }
+
+    /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a
+    /// block box of the normal flow whose background goes with the other block backgrounds of
+    /// its stacking context (step 4), under the floats of its subtree (step 5, lifted to the
+    /// ancestor, which paints them), and whose inline content goes over them (step 7). That is a
+    /// non-replaced block container (`display: block`, `list-item`, `flow-root`, or an inline
+    /// laid out as a block around block-level content) that is no float, no flex or grid item,
+    /// no multi-column container, makes no stacking context and is no layer root (positioned,
+    /// clipping). Every other box paints its floats itself, and atomically in its parent's
+    /// phases: a block-level one with the block backgrounds, an inline-level one with the
+    /// inline content.
+    pub fn paints_in_ancestor_phases(&self) -> bool {
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        let Some(style) = self.primary_styles() else {
+            return false;
+        };
+        if style.clone_float() != Float::None || self.is_paint_layer_root() {
+            return false;
+        }
+        let display = style.clone_display();
+        // (An anonymous block's style, `::-servo-anonymous-box`, keeps the initial `display:
+        // inline`; anonymous table parts have their table displays.)
+        let flow_block = (display.outside() == DisplayOutside::Block || self.is_anonymous())
+            && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot);
+        if !(flow_block || self.is_split_inline() || self.is_inline_with_only_block_children()) {
+            return false;
+        }
+        if style.get_column().is_multicol()
+            || !style.get_effects().backdrop_filter.0.is_empty()
+            || self.is_stacking_context_root(false)
+        {
+            return false;
+        }
+        // Replaced elements and form controls paint content of their own, whole.
+        if self.element_data().is_some_and(|element| {
+            crate::layout::replaced::is_replaced(element)
+                || matches!(
+                    element.name.local,
+                    local_name!("input") | local_name!("button") | local_name!("select") | local_name!("textarea")
+                )
+        }) {
+            return false;
+        }
+        !self.layout_parent.get().and_then(|id| self.tree().get(id)).is_some_and(|parent| {
+            parent.primary_styles().is_some_and(|parent_style| {
+                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
+            })
+        })
+    }
+
+    /// pyro: whether this box is laid out at the inline level (an atomic inline: an inline
+    /// block, an image): in its parent's paint phases it paints with the inline content.
+    pub fn is_inline_level(&self) -> bool {
+        use style::values::specified::box_::DisplayOutside;
+        !self.is_anonymous()
+            && self
+                .primary_styles()
+                .is_some_and(|style| style.clone_display().outside() == DisplayOutside::Inline)
     }
 
     /// The offset from the border box of `painter_id` at which this node is

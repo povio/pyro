@@ -94,6 +94,8 @@ fn ceil_layout_unit(v: f32, scale: f32) -> f32 {
 #[cfg(feature = "floats")]
 struct PendingFloat {
     node_id: NodeId,
+    /// pyro: the index of its item in the layout (parley `BreakerState::item_index`)
+    item: usize,
     output: LayoutOutput,
     margin: taffy::Rect<f32>,
     direction: taffy::FloatDirection,
@@ -160,9 +162,11 @@ impl LayoutPassState<'_> {
         min_y: f32,
         container_pb: taffy::Rect<f32>,
         oof_candidates: &mut OofCandidates,
+        span_offset: taffy::Point<f32>,
     ) {
         let PendingFloat {
             node_id,
+            item: _,
             mut output,
             margin,
             direction,
@@ -179,9 +183,12 @@ impl LayoutPassState<'_> {
             false,
         );
 
+        // pyro: relatively positioned inline boxes around the float move it as they move the rest
+        // of their content (CSS 2.1 § 9.4.3), not where it is placed (WPT
+        // `block-in-inline-float-between-001`).
         let location = taffy::Point {
-            x: pos.x + margin.left + container_pb.left,
-            y: pos.y + margin.top + container_pb.top,
+            x: pos.x + margin.left + container_pb.left + span_offset.x,
+            y: pos.y + margin.top + container_pb.top + span_offset.y,
         };
         let size = output.size;
         self.nodes[node_id].update_unrounded_layout(|layout| {
@@ -878,10 +885,25 @@ impl LayoutPassState<'_> {
                     s.clone_text_wrap_mode() == stylo_to_parley::stylo::TextWrapMode::Wrap
                 });
                 inline_layout.hit_reach = None;
+                // pyro: the relative offset of the inline boxes a float is in (`place_inline_float`).
+                let relative_spans = inline_layout.relative_spans;
+                let root_id = node_id;
+                let span_cb = taffy::Size { width: width / scale, height: 0.0 };
+                let float_span_offset = |nodes: &crate::NodeTree, float_id: NodeId| match nodes[float_id].parent {
+                    Some(parent) if relative_spans => {
+                        crate::layout::inline::inline_span_offset(nodes, parent, root_id, span_cb)
+                    }
+                    _ => taffy::Point::ZERO,
+                };
                 let mut breaker = inline_layout.layout.break_lines();
                 let mut line_slot = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None);
                 let mut has_active_floats = line_slot.segment_id.is_some();
                 let mut pending_floats: Vec<PendingFloat> = Vec::new();
+                // pyro: the item of the last float placed in this pass. A line that wraps before
+                // a float it placed meets it again on the next line: it keeps its place. (The
+                // floats before it are all placed: a float met after one left for below its line
+                // is left for below it too.)
+                let mut placed_through: Option<usize> = None;
                 let state = breaker.state_mut();
                 state.set_layout_max_advance(max_advance);
                 set_line_slot(state, &line_slot, scale, slack);
@@ -937,15 +959,23 @@ impl LayoutPassState<'_> {
 
                             let state = breaker.state_mut();
 
+                            // pyro: a float met past the point where the line wrapped is met
+                            // again on the next line, and placed after that one (CSS 2.1 §9.5.1
+                            // rule 6; WPT `floats-line-wrap-shifted-001`).
+                            let next_item = state.item_index();
+                            pending_floats.retain(|float| float.item < next_item);
                             if !pending_floats.is_empty() {
                                 let min_y = state.line_y() as f32 / scale;
                                 for float in pending_floats.drain(..) {
+                                    placed_through = placed_through.max(Some(float.item));
+                                    let span_offset = float_span_offset(&self.nodes, float.node_id);
                                     self.place_inline_float(
                                         &mut block_ctx,
                                         float,
                                         min_y,
                                         container_pb,
                                         &mut oof_candidates,
+                                        span_offset,
                                     );
                                 }
                                 has_active_floats = true;
@@ -970,8 +1000,19 @@ impl LayoutPassState<'_> {
                             continue;
                         }
                         YieldData::InlineBoxBreak(box_break_data) => {
+                            let item = breaker.state().item_index();
                             let state = breaker.state_mut();
                             let node_id = NodeId::from_u64(box_break_data.inline_box_id);
+
+                            // pyro: met again after its line wrapped before it: it keeps its place.
+                            if placed_through.is_some_and(|placed| item <= placed) {
+                                state.append_inline_box_to_line(
+                                    box_break_data.advance,
+                                    f32::NEG_INFINITY,
+                                    f32::NEG_INFINITY,
+                                );
+                                continue;
+                            }
 
                             let (direction, clear, margin) = {
                                 let style = self.child_layout_style(&self.nodes[node_id]);
@@ -997,6 +1038,7 @@ impl LayoutPassState<'_> {
                             let float_width = (output.size.width + margin.left + margin.right) * scale;
                             let float = PendingFloat {
                                 node_id,
+                                item,
                                 output,
                                 margin,
                                 direction,
@@ -1010,16 +1052,21 @@ impl LayoutPassState<'_> {
                                 && (box_break_data.advance <= 0.0
                                     || box_break_data.advance + float_width
                                         <= state.line_max_advance() + 0.001 * scale);
+                            // pyro: nothing precedes the float on its line.
+                            let leads_line = box_break_data.advance <= 0.0;
                             if !fits_on_line {
                                 pending_floats.push(float);
                             } else {
                                 let min_y = state.line_y() as f32 / scale;
+                                placed_through = placed_through.max(Some(item));
+                                let span_offset = float_span_offset(&self.nodes, node_id);
                                 self.place_inline_float(
                                     &mut block_ctx,
                                     float,
                                     min_y,
                                     container_pb,
                                     &mut oof_candidates,
+                                    span_offset,
                                 );
 
                                 let min_y = state.line_y() / scale as f64;
@@ -1038,6 +1085,14 @@ impl LayoutPassState<'_> {
                                 f32::NEG_INFINITY,
                                 f32::NEG_INFINITY,
                             );
+
+                            // pyro: a float placed with nothing before it on the line leaves
+                            // the line to be retried from here, after the float: content that does
+                            // not fit beside it moves down, the float stays (CSS 2.1 §9.5.1; WPT
+                            // `floats-placement-004`, `c414-flt-fit-001`).
+                            if fits_on_line && leads_line && has_active_floats {
+                                line_start_state = Some(breaker.state().clone());
+                            }
 
                             // if float.is_floated() {
                             //     println!("INLINE FLOATED BOX ({}) {:?}", ibox.id, float);

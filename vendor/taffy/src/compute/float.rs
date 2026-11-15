@@ -104,6 +104,9 @@ struct Segment {
     /// The insets of a segment created for a float are seeded with the float's containing
     /// block insets on both sides, so a non-zero inset alone does not imply a float.
     has_float: [bool; 2],
+    /// pyro: whether a float of some width occupies the left (slot 0) / right (slot 1) inset (a
+    /// zero-width float sets `has_float` only).
+    has_wide_float: [bool; 2],
 }
 
 impl Segment {
@@ -124,6 +127,8 @@ impl Segment {
     fn union(&mut self, other: &Segment) {
         self.insets = self.insets.max(other.insets);
         self.has_float = [self.has_float[0] || other.has_float[0], self.has_float[1] || other.has_float[1]];
+        self.has_wide_float =
+            [self.has_wide_float[0] || other.has_wide_float[0], self.has_wide_float[1] || other.has_wide_float[1]];
     }
 
     /// Whether this segment is narrower than `other` on either side: a larger inset, or a float
@@ -329,7 +334,12 @@ impl FloatContext {
     fn subdivide_segment(&mut self, idx: usize, divide_at_y: f32) {
         let old_segment = &mut self.segments[idx];
         let new_segment =
-            Segment { insets: old_segment.insets, has_float: old_segment.has_float, y: divide_at_y..old_segment.y.end };
+            Segment {
+                insets: old_segment.insets,
+                has_float: old_segment.has_float,
+                has_wide_float: old_segment.has_wide_float,
+                y: divide_at_y..old_segment.y.end,
+            };
         if !old_segment.y.contains(&divide_at_y) || old_segment.y.start == divide_at_y {
             debug_log!("old_segment", dbg:&mut *old_segment);
             debug_log!("divide_at_y", dbg:divide_at_y);
@@ -412,18 +422,22 @@ impl FloatContext {
         //    - Respects "clear"
         let float_start = self.last_placed_floats[0].start.max(self.last_placed_floats[1].start);
         let hwm = match clear {
+            // pyro: the ranges end after the floats' last segments (exclusive): the first
+            // segment that may hold the cleared float is the end itself. `+ 1` skipped it, and a
+            // float clearing a side was pushed below the next float on the other side too (WPT
+            // `floats-placement-005`).
             Clear::Left => {
                 let left_end = self.last_placed_floats[0].end;
-                float_start.max(left_end + 1)
+                float_start.max(left_end)
             }
             Clear::Right => {
                 let right_end = self.last_placed_floats[1].end;
-                float_start.max(right_end + 1)
+                float_start.max(right_end)
             }
             Clear::Both => {
                 let left_end = self.last_placed_floats[0].end;
                 let right_end = self.last_placed_floats[1].end;
-                left_end.max(right_end) + 1
+                float_start.max(left_end.max(right_end))
             }
             Clear::None => float_start,
         };
@@ -522,6 +536,7 @@ impl FloatContext {
                     y: last_y_end..start_y,
                     insets: FloatInsets::ZERO,
                     has_float: [false; 2],
+                    has_wide_float: [false; 2],
                 });
             }
 
@@ -531,7 +546,9 @@ impl FloatContext {
             insets[direction] += floated_box.width;
             let mut has_float = [false; 2];
             has_float[slot] = true;
-            self.segments.push(Segment { y: start_y..(start_y + floated_box.height), insets, has_float });
+            let mut has_wide_float = [false; 2];
+            has_wide_float[slot] = floated_box.width > 0.0;
+            self.segments.push(Segment { y: start_y..(start_y + floated_box.height), insets, has_float, has_wide_float });
 
             // Update last_placed_float
             let start_idx = self.segments.len() - 1;
@@ -577,7 +594,12 @@ impl FloatContext {
                 let end_y = start_y + floated_box.height;
                 if end_y > last_y_end {
                     let insets = containing_block_insets;
-                    self.segments.push(Segment { y: last_y_end..end_y, insets, has_float: [false; 2] });
+                    self.segments.push(Segment {
+                        y: last_y_end..end_y,
+                        insets,
+                        has_float: [false; 2],
+                        has_wide_float: [false; 2],
+                    });
                 }
                 self.segments.len() - 1
             }
@@ -609,6 +631,7 @@ impl FloatContext {
         for segment in &mut self.segments[start_idx..=end_idx] {
             segment.insets[direction] = placed_inset_plus_width;
             segment.has_float[slot] = true;
+            segment.has_wide_float[slot] |= floated_box.width > 0.0;
         }
 
         // Update last_placed_float
@@ -675,7 +698,7 @@ impl FloatContext {
 
         // The min starting segment index
         let at_least = after.map(|idx| idx + 1).unwrap_or(0);
-        let hwm = at_least.max(self.cleared_segment(clear).map(|idx| idx + 1).unwrap_or(0));
+        let hwm = at_least.max(self.cleared_segment(clear).unwrap_or(0));
 
         let start_idx = self
             .segments
@@ -775,7 +798,7 @@ impl FloatContext {
 
         // The min starting segment index
         let at_least = after.map(|idx| idx + 1).unwrap_or(0);
-        let hwm = at_least.max(self.cleared_segment(clear).map(|idx| idx + 1).unwrap_or(0));
+        let hwm = at_least.max(self.cleared_segment(clear).unwrap_or(0));
 
         let start_idx = self
             .segments
@@ -796,15 +819,20 @@ impl FloatContext {
                 let slot_height = lower_segments
                     .find(|seg| seg.is_narrower_than(&combined))
                     .map_or(f32::INFINITY, |seg| seg.y.start - y);
-                let Segment { insets, has_float, .. } = combined;
+                let Segment { insets, has_float, has_wide_float, .. } = combined;
 
                 let lead = match direction {
                     Direction::Ltr => FloatDirection::Left,
                     Direction::Rtl => FloatDirection::Right,
                 };
                 let trail = lead.opposite();
-                let has_lead_float = has_float[lead as usize];
-                let has_trail_float = has_float[trail as usize];
+                // pyro: zero-width floats alone beside the box leave its margins to apply as if
+                // they were not there (WPT `zero-width-floats`); beside a float of some width, a
+                // zero-width float on a side still absorbs the margin on that side, as Chromium
+                // has it (WPT `zero-width-floats-positioning.tentative`).
+                let any_wide = has_wide_float[0] || has_wide_float[1];
+                let has_lead_float = has_float[lead as usize] && any_wide;
+                let has_trail_float = has_float[trail as usize] && any_wide;
                 let mut fit_insets = FloatInsets::ZERO;
                 let mut stretch_insets = FloatInsets::ZERO;
                 fit_insets[lead] =

@@ -1003,7 +1003,9 @@ fn generate_item_list(
                 is_table,
                 is_compressible_replaced,
                 min_content_width_cap,
-                is_in_same_bfc,
+                // pyro: a block-level replaced element (or form control) keeps its border box clear
+                // of floats, as a table or a new formatting context does (CSS2 §9.5; WPT `floats-039`).
+                is_in_same_bfc: is_in_same_bfc && !is_compressible_replaced,
                 #[cfg(feature = "float_layout")]
                 float,
                 #[cfg(feature = "float_layout")]
@@ -1534,14 +1536,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                         // for the item's border box, which must not overlap any float
                         // The item's height isn't known until it is laid out, so only its styled
                         // (minimum) height is checked against floats below its top edge
-                        let min_height = item
+                        let mut min_height = item
                             .size
                             .height
                             .maybe_clamp(item.min_size.height, item.max_size.height)
                             .or(item.min_size.height)
                             .unwrap_or(0.0)
                             .max(item.padding_border_sum.height);
+                        // pyro: the narrowest border box the item can have in a slot: a table, a
+                        // replaced element or a box of an intrinsic width is as wide as it is laid
+                        // out in the slot (WPT `floats-wrap-bfc-004`), any other auto width shrinks
+                        // to the slot, down to its padding and border, its `min-width` and what its
+                        // negative margins prop it up to (CSS2 §10.3.3). The layout is the one the
+                        // item gets below if the slot stands (the same inputs: cached).
+                        let plain_auto = item.size.width.is_none()
+                            && item.size_style.width.is_auto()
+                            && !item.is_table
+                            && !item.is_compressible_replaced
+                            && non_stretch_justify_self.is_none();
                         let mut slot_segment = None;
+                        let mut height_retries = 0;
                         let slot = loop {
                             let slot = block_ctx.find_bfc_slot(
                                 min_y,
@@ -1552,15 +1566,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                                 slot_segment,
                             );
                             let Some(segment_id) = slot.segment_id else { break slot };
-                            let width = item
-                                .size
-                                .width
-                                .unwrap_or(slot.stretch_width.max(min_auto_width).max(0.0))
-                                .maybe_clamp(item.min_size.width, item.max_size.width);
-                            if width <= slot.border_width + FIT_TOLERANCE {
-                                break slot;
+                            let stretch_width = slot.stretch_width.max(min_auto_width).max(0.0);
+                            let mut laid_out = None;
+                            let width = if plain_auto {
+                                min_auto_width.maybe_clamp(item.min_size.width, item.max_size.width)
+                            } else if item.is_table || item.size.width.is_none() {
+                                let inputs = item_inputs(tree, stretch_width);
+                                let size = tree.compute_child_layout(item.node_id, inputs).size;
+                                laid_out = Some(size);
+                                size.width
+                            } else {
+                                item.size.width.unwrap_or(0.0).maybe_clamp(item.min_size.width, item.max_size.width)
+                            };
+                            if width.max(item.padding_border_sum.width) > slot.border_width + FIT_TOLERANCE {
+                                slot_segment = Some(segment_id);
+                                continue;
                             }
-                            slot_segment = Some(segment_id);
+                            // pyro: the item must not overlap the floats beside any of its height,
+                            // which it has once laid out in the slot: taller than the slot stays as
+                            // wide, it is placed again beside the floats of its height (WPT
+                            // `table-among-floats-001`, `floats-bfc-003`).
+                            if slot.height.is_finite() && height_retries < 8 {
+                                let height = match laid_out {
+                                    Some(size) => size.height,
+                                    None => {
+                                        let inputs = item_inputs(tree, stretch_width);
+                                        tree.compute_child_layout(item.node_id, inputs).size.height
+                                    }
+                                };
+                                if height > slot.height + FIT_TOLERANCE && height > min_height + FIT_TOLERANCE {
+                                    min_height = height;
+                                    height_retries += 1;
+                                    continue;
+                                }
+                            }
+                            break slot;
                         };
 
                         // If the item had to move down to avoid floats then it "separates from the

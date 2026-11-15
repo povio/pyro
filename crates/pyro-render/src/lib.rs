@@ -3255,6 +3255,46 @@ mod settle_resolution_tests {
         assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&key));
         assert!(renderer.mirrors.get_mut(&1).unwrap().doc.paint_tree_matches_fresh_build());
     }
+
+    /// Floats are lifted out of the blocks that paint in their painter's phases (blitz-dom
+    /// `Node::paints_in_ancestor_phases`): the paint tree rebuilt after changes to those blocks
+    /// (one becomes a layer root, a flex container, the float stops floating) equals a fresh build.
+    #[test]
+    fn floats_lifted_to_their_painter_match_a_fresh_build_after_changes() {
+        let (snap, _) = fixture(
+            "<!doctype html><style>body{margin:0}</style><div id=outer><div id=mid>0\
+             <span id=box style='float:left;width:20px;height:20px'></span></div>\
+             <span><div style='height:30px'></div></span></div>",
+        );
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let (outer, mid, float) =
+            (blitz_by_id(&renderer, 1, "outer"), blitz_by_id(&renderer, 1, "mid"), blitz_by_id(&renderer, 1, "box"));
+        let check = |renderer: &mut Renderer, what: &str| {
+            let doc = &mut renderer.mirrors.get_mut(&1).unwrap().doc;
+            doc.ensure_paint_tree();
+            assert!(doc.paint_tree_matches_fresh_build(), "{what}");
+        };
+        check(&mut renderer, "first build");
+        let lifted = |renderer: &Renderer| {
+            renderer.mirrors[&1].doc.get_node(mid).unwrap().paint_children.borrow().as_ref().is_none_or(|c| !c.contains(&float))
+        };
+        assert!(lifted(&renderer), "the float is lifted out of the block");
+        for (node, style, what) in [
+            (mid, "position:relative", "the block becomes a layer root"),
+            (mid, "", "and back"),
+            (outer, "display:flex", "its parent becomes a flex container"),
+            (outer, "", "and back"),
+            (float, "width:20px;height:20px", "the float stops floating"),
+            (float, "float:left;width:20px;height:20px", "and floats again"),
+        ] {
+            set_style(&mut renderer, 1, node, style);
+            resolve(&mut renderer, 1);
+            check(&mut renderer, what);
+        }
+        assert!(lifted(&renderer), "the float is lifted again");
+    }
 }
 
 #[cfg(test)]
