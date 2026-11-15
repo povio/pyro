@@ -549,6 +549,22 @@ pub(crate) fn style(
         letter_spacing,
         text_wrap_mode,
         white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
+        soft_hyphen: match (itext_styles.hyphens, &itext_styles.hyphenate_character) {
+            (style::computed_values::hyphens::T::None, _) => parley::SoftHyphen::NoBreak,
+            (_, style::values::computed::HyphenateCharacter::Auto) => parley::SoftHyphen::Auto,
+            (_, style::values::computed::HyphenateCharacter::String(string)) => {
+                let mut chars = string.chars();
+                match (chars.next(), chars.next()) {
+                    (None, _) => parley::SoftHyphen::Hidden,
+                    (Some(ch), None) => parley::SoftHyphen::Char(ch),
+                    _ => parley::SoftHyphen::Auto,
+                }
+            }
+        },
+        tab_size: match itext_styles.tab_size {
+            style::values::generics::length::LengthOrNumber::Number(number) => parley::TabSize::Spaces(number.0),
+            style::values::generics::length::LengthOrNumber::Length(length) => parley::TabSize::Length(length.0.px()),
+        },
         overflow_wrap,
         word_break,
         line_break,

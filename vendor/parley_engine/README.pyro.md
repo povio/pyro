@@ -92,3 +92,16 @@ paragraph level is the first paragraph's. Covered by `crates/pyro-render/tests/u
 `src/shape/shaped_text.rs`: `IdeographicBaselines::from_font_instance` reads `ideo`, `idtp`, `icfb` and `icft` of
 a font's `BASE` table (horizontal axis, the default script's values), for `text-box-edge: ideographic` and
 `ideographic-ink` (WPT `css-inline/text-box-trim`, the BaselineDiagnostic fonts).
+## Tabs
+
+`shape/shaper.rs`: a tab is shaped as a space (browsers do the same): a font without a glyph for U+0009 (Ahem) drew
+its missing-glyph box. `shape/shaped_text.rs` (`ShapedText::set_cluster_advance`): parley's line breaker sets a
+tab's advance to the tab stop it reaches (parley's README.pyro.md, "Tab stops"). Covered by
+`crates/pyro-render/tests/tab_stops.rs`.
+
+## Soft hyphens
+
+`shape/shaped_text.rs`: `RunMetrics::hyphen` / `ShapedRun::hyphen` (the glyph and advance of the font's U+2010, else
+U+002D, kept with the run's cached metrics), `ShapedText::glyph_of` (any other character of a run's font) and
+`ShapedText::set_cluster_glyph`; `shape/data.rs`: `CharacterFlags::is_soft_hyphen`. parley's line breaker shows a
+hyphen where a line ends at a soft hyphen (parley's README.pyro.md, "Soft hyphens").

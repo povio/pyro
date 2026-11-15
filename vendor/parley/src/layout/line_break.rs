@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use core_maths::CoreFloat;
 use parlance::BidiLevel;
 
-use crate::layout::data::{AlignedSubtreeOffset, run_box_metrics};
+use crate::layout::data::{AlignedSubtreeOffset, TabStops, run_box_metrics};
 use crate::layout::resume::{BreakInputs, LineStart};
 use crate::layout::spacing::{EffectiveSpacing, Justification, is_word_separator};
 use crate::layout::style_metrics::{
@@ -103,6 +103,17 @@ struct LineState {
     /// ([`InlineBoxKind::SpanStart`]). The content that follows stays on the edge's line: its
     /// wrap opportunity was marked before the edge.
     after_span_start: bool,
+
+    /// pyro: the line's tabs that go to a tab stop: each one's shaped cluster and its advance.
+    /// The shaped text takes them when the line is committed.
+    tabs: SmallVec<[(u32, f32); 2]>,
+    /// pyro: the shaped cluster after the line's last such tab: justification starts there.
+    justify_from: u32,
+    /// pyro: the last atom appended to the line when it is a soft hyphen: its shaped cluster and
+    /// the hyphen of its run's font (glyph, advance). A line that ends there shows the hyphen.
+    shy: Option<(u32, u32, f32)>,
+    /// pyro: the last atom appended is a soft hyphen that no line ends at (`hyphens: none`).
+    no_break_after: bool,
 }
 
 impl LineState {
@@ -112,6 +123,10 @@ impl LineState {
         self.box_metrics.reset();
         self.num_word_separators = 0;
         self.after_span_start = false;
+        self.tabs.clear();
+        self.justify_from = 0;
+        self.shy = None;
+        self.no_break_after = false;
     }
 }
 
@@ -698,6 +713,30 @@ impl BreakerState {
         self.cluster_idx = atom.shaped_clusters_range().end;
         self.line.x = next_x;
         self.line.num_word_separators += u32::from(is_word_separator);
+        self.line.shy = None;
+        self.line.no_break_after = false;
+        if let [character] = atom.characters()
+            && character.flags.is_soft_hyphen()
+            && atom.shaped_clusters_range().len() == 1
+        {
+            use crate::style::SoftHyphen;
+            let font_hyphen = || data.shaped_text.runs().get(self.run_idx).and_then(|run| run.hyphen);
+            let hyphen = match data.styles[style_index as usize].soft_hyphen {
+                SoftHyphen::Auto => font_hyphen(),
+                SoftHyphen::Char(ch) => data.shaped_text.glyph_of(self.run_idx, ch).or_else(font_hyphen),
+                SoftHyphen::Hidden => None,
+                SoftHyphen::NoBreak => {
+                    self.line.no_break_after = true;
+                    None
+                }
+            };
+            self.line.shy = hyphen.map(|(glyph, advance)| (atom.shaped_clusters_range().start, glyph, advance));
+        }
+        // pyro: a tab that goes to a tab stop keeps what is before it where it is.
+        if self.line.tabs.last().is_some_and(|tab| tab.0 == atom.shaped_clusters_range().start) {
+            self.line.num_word_separators = 0;
+            self.line.justify_from = atom.shaped_clusters_range().end;
+        }
         self.line.box_metrics.add_text(
             self.item_idx,
             self.run_idx,
@@ -734,6 +773,8 @@ impl BreakerState {
         placement: InlineBoxPlacement,
         quantize: bool,
     ) {
+        self.line.shy = None;
+        self.line.no_break_after = false;
         self.item_idx += 1;
         self.line.items.end += 1;
         self.line.x = next_x;
@@ -1076,6 +1117,42 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         max_advance: f32,
         line_indent: f32,
     ) -> Option<YieldData> {
+        // pyro: a line that wraps after a soft hyphen shows the hyphen of the font there; the
+        // line's other soft hyphens show nothing (an earlier break may have ended a line at one).
+        let shy = self.state.line.shy.take().filter(|&(cluster, _, _)| {
+            matches!(reason, BreakReason::Regular | BreakReason::Emergency)
+                && cluster + 1 == self.state.line.clusters.end
+        });
+        let clusters = self.state.line.clusters.clone();
+        let data = &mut self.layout.data;
+        let mut shown = false;
+        data.shown_hyphens.retain(|&(cluster, glyph, advance)| {
+            if shy.is_some_and(|(at, _, _)| at == cluster) {
+                shown = true;
+                true
+            } else if clusters.contains(&cluster) {
+                data.shaped_text.set_cluster_glyph(cluster, glyph, advance);
+                false
+            } else {
+                true
+            }
+        });
+        if let Some((cluster, glyph, advance)) = shy {
+            if !shown
+                && let Some((was_glyph, was_advance)) =
+                    data.shaped_text.set_cluster_glyph(cluster, glyph, advance)
+            {
+                data.shown_hyphens.push((cluster, was_glyph, was_advance));
+                shown = true;
+            }
+            if shown {
+                self.state.line.x += advance;
+            }
+        }
+        // pyro: the line's tabs take the advances that reach their stops.
+        for (cluster, advance) in self.state.line.tabs.drain(..) {
+            self.layout.data.shaped_text.set_cluster_advance(cluster, advance);
+        }
         commit_line(
             self.layout,
             &mut self.lines,
@@ -1415,7 +1492,17 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // line breaks. We should accept the overflowing fragment in that scenario.
                             // pyro: nor after a span's start edge, which the opportunity was
                             // marked before.
-                            if self.state.line.x != 0.0 && !self.state.line.after_span_start {
+                            // pyro: nor after a soft hyphen whose hyphen would not fit, when
+                            // the line can end earlier, nor after one that `hyphens: none` has.
+                            let hyphen_fits = self.state.prev_boundary.is_none()
+                                || self.state.line.shy.is_none_or(|(_, _, hyphen)| {
+                                    self.state.line.x + hyphen <= max_advance + FIT_TOLERANCE
+                                });
+                            if self.state.line.x != 0.0
+                                && !self.state.line.after_span_start
+                                && hyphen_fits
+                                && !self.state.line.no_break_after
+                            {
                                 self.state.mark_line_break_opportunity();
                                 // break_opportunity = true;
                             }
@@ -1433,7 +1520,32 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
                         // Breaking an atom requires reshaping, which we don't do here, so it is
                         // consumed as a whole (this includes all clusters of a ligature).
-                        let advance = spacing.atom_advance(&atom);
+                        let mut advance = spacing.atom_advance(&atom);
+                        // pyro: a preserved tab reaches the next tab stop, counted from the
+                        // start edge of the lines' container.
+                        let tab = self.layout.data.tab_stops().filter(|_| {
+                            TabStops::applies(whitespace, style) && atom.shaped_clusters_range().len() == 1
+                        });
+                        if let Some(tabs) = tab {
+                            // A line next to a float starts away from that edge.
+                            let line_start = if !self.state.layout_max_advance.is_finite() {
+                                0.0
+                            } else if self.layout.data.base_level.is_rtl() {
+                                self.state.layout_max_advance
+                                    - self.state.line_x
+                                    - self.state.line_max_advance
+                            } else {
+                                self.state.line_x
+                            };
+                            let reach = tabs.advance(
+                                style,
+                                line_start.max(0.0) + self.state.line.x + line_indent,
+                            );
+                            advance = reach;
+                            let cluster = atom.shaped_clusters_range().start;
+                            self.state.line.tabs.retain(|&mut (index, _)| index != cluster);
+                            self.state.line.tabs.push((cluster, reach));
+                        }
 
                         // Compute the x position of the content being currently processed
                         let next_x = self.state.line.x + advance;
@@ -2065,14 +2177,17 @@ fn commit_line<B: Brush>(
         BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
         BreakReason::Explicit | BreakReason::None => state.x - max_advance,
     };
-    let (hanging_advance, justification_end_cluster, hanging_opportunities) = hanging_whitespace(
+    let (hanging_advance, justification_end_cluster, hanging_opportunities, collapsed_advance) = hanging_whitespace(
         layout,
         &lines.line_items[start_item_idx..end_item_idx],
         overflow,
     );
     // The word separators counted as the line was built include the line's hanging whitespace, and
     // hanging whitespace is not stretched by justification.
-    let num_justification_opportunities = state.num_word_separators - hanging_opportunities;
+    // pyro: saturating, as the separators before a tab stop are not counted while those of
+    // them that hang still are.
+    let num_justification_opportunities =
+        state.num_word_separators.saturating_sub(hanging_opportunities);
 
     // Reorder the items within the line (if required). Reordering is required if the line contains
     // a mix of bidi levels (a mix of LTR and RTL text)
@@ -2100,12 +2215,14 @@ fn commit_line<B: Brush>(
         num_justification_opportunities,
         justification: Justification {
             justification_end_cluster,
+            justification_start_cluster: state.justify_from,
             ..Justification::NONE
         },
         metrics: LineMetrics {
             indent: line_indent,
             advance: state.x,
             hanging_advance,
+            collapsed_advance,
             ..Default::default()
         },
         aligned_subtree_offsets: 0..0,
@@ -2154,8 +2271,11 @@ fn hanging_whitespace<B: Brush>(
     layout: &Layout<B>,
     line_items: &[LineItemData],
     overflow: f32,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, f32) {
     let mut hanging_whitespace_advance = 0.;
+    // pyro: the collapsible white space at the very end (`LineMetrics::collapsed_advance`).
+    let mut collapsed_advance = 0.;
+    let mut in_collapsed_suffix = true;
     // Atoms with shaped clusters before this index may be stretched by justification.
     let mut justification_end_cluster = u32::MAX;
     let mut hanging_opportunities = 0;
@@ -2231,6 +2351,21 @@ fn hanging_whitespace<B: Brush>(
                         }
                     }
                     hanging_whitespace_advance += hanging;
+                    if in_collapsed_suffix {
+                        let last_cluster = atom.shaped_clusters().last().unwrap();
+                        let collapses = matches!(
+                            layout.data.styles[last_cluster.style_index as usize].white_space_collapse,
+                            WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::PreserveBreaks
+                        );
+                        if all_hang
+                            && collapses
+                            && matches!(whitespace, Whitespace::Space | Whitespace::Tab | Whitespace::Newline)
+                        {
+                            collapsed_advance += hanging;
+                        } else {
+                            in_collapsed_suffix = false;
+                        }
+                    }
                     // Justification can't stretch within an atom, so it stops at the start of the
                     // last atom that hangs in its entirety or only partially.
                     justification_end_cluster = atom.shaped_clusters_range().start;
@@ -2253,6 +2388,7 @@ fn hanging_whitespace<B: Brush>(
         hanging_whitespace_advance,
         justification_end_cluster,
         hanging_opportunities,
+        collapsed_advance.min(hanging_whitespace_advance).max(0.),
     )
 }
 

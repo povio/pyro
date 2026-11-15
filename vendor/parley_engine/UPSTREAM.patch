@@ -235,7 +235,7 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -132,6 +191,89 @@
+@@ -132,6 +191,110 @@
      }
  }
  
@@ -283,6 +283,8 @@
 +    /// The font's units per em, which scale glyph advances to the font size.
 +    pub(crate) units_per_em: f32,
 +    pub(crate) font_metrics: FontMetrics,
++    /// pyro: the font's hyphen (U+2010, else U+002D): its glyph and advance at the font size.
++    pub(crate) hyphen: Option<(u32, f32)>,
 +}
 +
 +impl RunMetrics {
@@ -303,9 +305,28 @@
 +            skrifa::prelude::Size::new(font_size),
 +            coords,
 +        );
++        let hyphen = {
++            use skrifa::MetadataProvider as _;
++            let charmap = font_ref.charmap();
++            let glyph_metrics = skrifa::metrics::GlyphMetrics::new(
++                &font_ref,
++                skrifa::prelude::Size::unscaled(),
++                coords,
++            );
++            charmap
++                .map('\u{2010}')
++                .or_else(|| charmap.map('-'))
++                .and_then(|glyph| {
++                    let advance = glyph_metrics.advance_width(glyph)?;
++                    (metrics.units_per_em != 0).then(|| {
++                        (glyph.to_u32(), advance * (font_size / metrics.units_per_em as f32))
++                    })
++                })
++        };
 +        Self {
 +            units_per_em: metrics.units_per_em as f32,
 +            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size),
++            hyphen,
 +        }
 +    }
 +}
@@ -325,7 +346,7 @@
  /// The result of shaping.
  ///
  /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
-@@ -152,6 +294,9 @@
+@@ -152,6 +315,9 @@
      glyphs: Vec<Glyph>,
      fonts: Vec<FontInstance>,
      normalized_coords: Vec<NormalizedCoord>,
@@ -335,7 +356,7 @@
  }
  
  impl ShapedText {
-@@ -179,6 +324,7 @@
+@@ -179,6 +345,7 @@
          self.glyphs.clear();
          self.fonts.clear();
          self.normalized_coords.clear();
@@ -343,7 +364,74 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -273,7 +419,8 @@
+@@ -215,7 +382,66 @@
+         }
+         for shaped_cluster in self.shaped_clusters.iter_mut() {
+             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
++        }
++    }
++
++    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
++    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
++    /// last glyph; an inline glyph's advance is its cluster's.
++    #[inline]
++    pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
++        let Some(cluster) = self.shaped_clusters.get_mut(index as usize) else {
++            return;
++        };
++        let delta = advance - cluster.advance;
++        cluster.advance = advance;
++        if !cluster.has_inline_glyph() && cluster.glyph_len() > 0 {
++            let last = cluster.glyph_offset as usize + usize::from(cluster.glyph_len()) - 1;
++            if let Some(glyph) = self.glyphs.get_mut(last) {
++                glyph.advance += delta;
++            }
++        }
++    }
++
++    /// pyro: the glyph of `ch` in the font of the run at `run_index` and its advance at the run's
++    /// size, if the font has the character (a `hyphenate-character` other than the font's hyphen).
++    pub fn glyph_of(&self, run_index: usize, ch: char) -> Option<(u32, f32)> {
++        use skrifa::MetadataProvider as _;
++        let run = self.runs.get(run_index)?;
++        let font = self.fonts.get(run.font_index)?;
++        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
++        let glyph = font_ref.charmap().map(ch)?;
++        // The same coords, in skrifa's type.
++        let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
++            [run.normalized_coords_range.clone()]
++        .iter()
++        .map(|coord| skrifa::instance::NormalizedCoord::from_bits(coord.to_bits()))
++        .collect();
++        let metrics =
++            skrifa::metrics::GlyphMetrics::new(&font_ref, skrifa::prelude::Size::unscaled(), coords.as_slice());
++        let units_per_em = { use skrifa::raw::TableProvider as _; font_ref.head().ok()?.units_per_em() };
++        (units_per_em != 0).then_some(())?;
++        Some((glyph.to_u32(), metrics.advance_width(glyph)? * (run.font_size / f32::from(units_per_em))))
++    }
++
++    /// pyro: gives the one-glyph shaped cluster at `index` the glyph `id` with `advance`, and
++    /// returns what it had (a soft hyphen at the end of a line shows a hyphen; one inside a line
++    /// gets its own glyph back).
++    #[inline]
++    pub fn set_cluster_glyph(&mut self, index: u32, id: u32, advance: f32) -> Option<(u32, f32)> {
++        let cluster = self.shaped_clusters.get_mut(index as usize)?;
++        if cluster.glyph_len() != 1 {
++            return None;
+         }
++        let before_advance = cluster.advance;
++        cluster.advance = advance;
++        if cluster.has_inline_glyph() {
++            Some((core::mem::replace(&mut cluster.glyph_offset, id), before_advance))
++        } else {
++            let glyph = self.glyphs.get_mut(cluster.glyph_offset as usize)?;
++            glyph.advance = advance;
++            Some((core::mem::replace(&mut glyph.id, id), before_advance))
++        }
+     }
+ 
+     /// The character data of the text, in logical order.
+@@ -273,7 +499,8 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -353,7 +441,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +449,36 @@
+@@ -302,18 +529,36 @@
                  index
              });
  
@@ -400,15 +488,27 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -396,6 +561,7 @@
+@@ -395,7 +640,9 @@
+             bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
++            hyphen: metrics.hyphen,
          });
 +        metrics
      }
  }
  
-@@ -647,6 +813,7 @@
+@@ -423,6 +670,9 @@
+     pub bidi_level: BidiLevel,
+     /// Total advance of the run.
+     pub advance: f32,
++    /// pyro: the hyphen of the run's font (U+2010, else U+002D): its glyph and its advance at
++    /// the run's size. The line breaker shows it where a line ends at a soft hyphen.
++    pub hyphen: Option<(u32, f32)>,
+     /// The font metrics of this run.
+     pub font_metrics: FontMetrics,
+ }
+@@ -647,6 +897,7 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -416,7 +516,7 @@
                  language: None,
                  features: &[],
                  variations: &[],
-@@ -805,6 +972,7 @@
+@@ -805,6 +1056,7 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -424,7 +524,7 @@
                      language: None,
                      features: &[],
                      variations: &[],
-@@ -814,6 +982,7 @@
+@@ -814,6 +1066,7 @@
                  char_end: text.chars().count().try_into().unwrap(),
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -578,7 +678,18 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -357,10 +431,10 @@
+@@ -340,7 +414,9 @@
+             // with `char_indices`, push each char individually via `.chars` with a cluster index
+             // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
+             // index in `data.rs`.
+-            buffer.add(ch, i as u32);
++            // pyro: a tab is shaped as a space, as in browsers: it draws nothing, and its advance
++            // is the line breaker's to set (the tab stop it reaches).
++            buffer.add(if ch == '\t' { ' ' } else { ch }, i as u32);
+         }
+ 
+         buffer.set_pre_context(&text[..range.byte_range.start]);
+@@ -357,10 +433,10 @@
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
                  .features(&scx.features)
@@ -591,7 +702,7 @@
              text,
              range,
              segment,
-@@ -370,10 +444,16 @@
+@@ -370,10 +446,16 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -610,7 +721,7 @@
      };
  
      // This is the run being accumulated, i.e., consecutive graphemes for which `select_font`
-@@ -429,6 +509,18 @@
+@@ -429,6 +511,18 @@
      Ok(())
  }
  
@@ -841,3 +952,36 @@
  }
  
  impl core::fmt::Debug for AnalysisOptions<'_> {
+--- a/src/shape/data.rs
++++ b/src/shape/data.rs
+@@ -266,6 +266,8 @@
+     const WORD_BOUNDARY: u8 = 1 << 3;
+     /// Whether there is a soft wrap opportunity before the character.
+     const SOFT_WRAP_OPPORTUNITY: u8 = 1 << 4;
++    /// pyro: whether the source character is U+00AD SOFT HYPHEN.
++    const SOFT_HYPHEN: u8 = 1 << 5;
+ 
+     #[inline(always)]
+     pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
+@@ -288,10 +290,21 @@
+                     Self::SOFT_WRAP_OPPORTUNITY
+                 } else {
+                     0
++                }
++                | if source_char == '\u{ad}' {
++                    Self::SOFT_HYPHEN
++                } else {
++                    0
+                 },
+         )
+     }
+ 
++    /// pyro: whether the character is U+00AD SOFT HYPHEN.
++    #[inline(always)]
++    pub fn is_soft_hyphen(self) -> bool {
++        self.0 & Self::SOFT_HYPHEN != 0
++    }
++
+     /// Whether there is a soft wrap opportunity before this character ([UAX #14][line-breaking]).
+     ///
+     /// Note mandatory breaks (like `\n`) are encoded as [`Whitespace`].

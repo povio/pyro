@@ -19,3 +19,8 @@ entry) once a Blitz release carries these commits and changes.
   column flex container), and `StyleFlags::HAS_NATURAL_RATIO`, set by blitz-dom on a replaced element with a
   natural aspect ratio: `aspect_ratio()` then answers `None` for `auto <ratio>`, so the natural ratio applies
   (css-sizing-4 §5.1).
+
+- `src/wrapper.rs` (`float`, `clear`): `inline-start` and `inline-end` are sides of the inline axis: with a
+  right-to-left direction (the box's inherited one stands in for its containing block's) `inline-start` is the right
+  side. They were always left and right (WPT `tab-stop-with-float-001.html?class=rtl`;
+  `crates/pyro-render/tests/tab_stops.rs`).

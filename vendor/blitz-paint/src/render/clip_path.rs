@@ -1138,7 +1138,7 @@ impl ElementCx<'_, '_> {
             let metrics = line.metrics();
             // pyro: from the line's start, past the floats before it (`inline_box_fragments`).
             let content_end =
-                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.hanging_advance;
+                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.collapsed_advance;
             let shift = tops.map_or(0.0, |tops| tops.shift(metrics));
             // Per element: its x range on the line and its own style.
             let mut spans: Vec<Option<(f32, f32, u16)>> = vec![None; effects.len()];

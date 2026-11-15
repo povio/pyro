@@ -2167,11 +2167,12 @@ impl ElementCx<'_, '_> {
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
-            // White space hanging at the line's end is in no box. pyro: the line starts at its
+            // Collapsible white space hanging at the line's end is in no box (preserved and
+            // ideographic spaces that hang are: `LineMetrics::collapsed_advance`). pyro: the line starts at its
             // `inline_min_coord`, past the floats before it (its items are placed from there): without
             // it every box on a line beside a float was cut to nothing (WPT `clear-inline-001`).
             let content_end =
-                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.hanging_advance;
+                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.collapsed_advance;
             for item in line.items() {
                 let (style_index, x0, x1, edge) = match &item {
                     PositionedLayoutItem::GlyphRun(run) => {

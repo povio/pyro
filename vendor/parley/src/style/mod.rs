@@ -43,6 +43,37 @@ pub enum WhiteSpaceCollapse {
     BreakSpaces,
 }
 
+/// pyro: the distance between tab stops (CSS `tab-size`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TabSize {
+    /// A number of spaces: the advance of a space in the layout's root style, with its letter
+    /// and word spacing (see [`Layout::set_tab_stops`](crate::Layout::set_tab_stops)).
+    Spaces(f32),
+    /// A length.
+    Length(f32),
+}
+
+impl Default for TabSize {
+    fn default() -> Self {
+        Self::Spaces(8.0)
+    }
+}
+
+/// pyro: what a soft hyphen (U+00AD) does where a line could end at it (CSS `hyphens` and
+/// `hyphenate-character`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum SoftHyphen {
+    /// The line may end there and then shows the hyphen of the font (U+2010, else U+002D).
+    #[default]
+    Auto,
+    /// The line may end there and then shows this character, if the font has it.
+    Char(char),
+    /// The line may end there and shows nothing.
+    Hidden,
+    /// No line ends there.
+    NoBreak,
+}
+
 /// The height that this text takes up. The default is `MetricsRelative(1.0)`, which is the given
 /// font's preferred line height.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -299,6 +330,10 @@ pub enum StyleProperty<'a, B: Brush> {
     TextWrapMode(TextWrapMode),
     /// Whitespace collapsing and hanging behavior.
     WhiteSpaceCollapse(WhiteSpaceCollapse),
+    /// pyro: the distance between tab stops.
+    TabSize(TabSize),
+    /// pyro: what a soft hyphen does at the end of a line.
+    SoftHyphen(SoftHyphen),
 }
 
 /// Unresolved styles.
@@ -356,6 +391,10 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     pub text_wrap_mode: TextWrapMode,
     /// Whitespace collapsing and hanging behavior.
     pub white_space_collapse: WhiteSpaceCollapse,
+    /// pyro: the distance between tab stops, for the preserved tabs of this style.
+    pub tab_size: TabSize,
+    /// pyro: what the soft hyphens of this style do at the end of a line.
+    pub soft_hyphen: SoftHyphen,
     /// pyro: room the span's text needs beyond its content area, over and under it, for what is
     /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
     /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -437,6 +476,8 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             overflow_wrap: OverflowWrap::default(),
             text_wrap_mode: TextWrapMode::default(),
             white_space_collapse: WhiteSpaceCollapse::default(),
+            tab_size: TabSize::default(),
+            soft_hyphen: SoftHyphen::default(),
             annotation_space: AnnotationSpace::default(),
             text_box_trim: TextBoxTrim::default(),
         }

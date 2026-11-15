@@ -221,6 +221,12 @@ pub struct LineMetrics {
     // into two fields.
     pub hanging_advance: f32,
 
+    /// pyro: the part of [`Self::hanging_advance`] that is collapsible white space (spaces, tabs
+    /// and segment breaks of a collapsing `white-space`) at the line's very end. It is in no box,
+    /// as browsers remove it; preserved white space and ideographic spaces that hang are content
+    /// of their boxes (a background shows behind them).
+    pub collapsed_advance: f32,
+
     /// The minimum inline-axis coordinate of the line.
     ///
     /// For horizontal text, this would be the left of the line.

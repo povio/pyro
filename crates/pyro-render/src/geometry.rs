@@ -926,15 +926,17 @@ pub(crate) fn inline_item_rect(
             // Chromium's text fragments are their advance ceiled to a layout
             // unit (1/64 px).
             let mut x1 = x + ((run.advance() as f64 / scale * 64.0 - 0.01).ceil() / 64.0) * scale;
-            // White space hanging at the line's end is in no fragment.
+            // Collapsible white space hanging at the line's end is in no fragment; preserved
+            // and ideographic spaces that hang are content (`LineMetrics::collapsed_advance`).
             let metrics = line.metrics();
-            if rtl && metrics.hanging_advance > 0.0 {
+            if rtl && metrics.collapsed_advance > 0.0 {
                 // pyro: in a right-to-left paragraph it is at the line's left end, at the
                 // paragraph's level (UAX #9 L1), whatever the level of the text before it.
-                let hung = (metrics.inline_min_coord + metrics.offset + metrics.hanging_advance) as f64;
+                let hung = (metrics.inline_min_coord + metrics.offset + metrics.hanging_advance) as f64
+                    - (metrics.hanging_advance - metrics.collapsed_advance) as f64;
                 x = x.max(hung).min(x1);
-            } else if !run.run().is_rtl() && metrics.hanging_advance > 0.0 {
-                x1 = x1.min((metrics.offset + metrics.advance - metrics.hanging_advance) as f64).max(x);
+            } else if !run.run().is_rtl() && metrics.collapsed_advance > 0.0 {
+                x1 = x1.min((metrics.offset + metrics.advance - metrics.collapsed_advance) as f64).max(x);
             }
             (Some(run.style().brush.id), Rect::new(x, top as f64, x1, bottom as f64))
         }

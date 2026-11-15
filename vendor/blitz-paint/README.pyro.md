@@ -753,3 +753,7 @@ Not done: a sticky (or relatively positioned) row or row group is not painted as
 painted after the table's backgrounds can cover its background (WPT `position-sticky-table-tr-top` and the like).
 
 Covered by `crates/pyro-render/tests/sticky_paint.rs`; WPT `css/css-position/sticky`: 33 more reftests pass.
+- `src/render.rs` (`inline_box_fragments`), `src/render/clip_path.rs`: an inline box's fragment is cut by the
+  collapsible white space hanging at its line's end (`LineMetrics::collapsed_advance`), not by all that hangs:
+  preserved spaces and ideographic spaces that hang keep their background (WPT `trailing-ideographic-space-*`;
+  `crates/pyro-render/tests/hanging_spaces.rs`).

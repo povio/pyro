@@ -210,6 +210,18 @@ impl<B: Brush> Layout<B> {
         self.data.indent_options = options;
     }
 
+    /// pyro: makes the layout's preserved tabs go to tab stops, one every `tab-size` of the
+    /// tab's style ([`TabSize`](crate::TabSize)) from the start edge of the lines' container.
+    /// `space` is the advance that a number of spaces counts in, in layout units; a tab closer
+    /// than `min_advance` to its stop goes on to the next. Without this a tab has the advance of
+    /// a space.
+    ///
+    /// Like the indent, this must be set before the content widths are read and the lines broken.
+    pub fn set_tab_stops(&mut self, space: f32, min_advance: f32) {
+        self.data.tab_space = if space.is_finite() { space.max(0.0) } else { 0.0 };
+        self.data.tab_min_advance = min_advance.max(0.0);
+    }
+
     /// Returns line breaker to compute lines for the layout.
     pub fn break_lines(&mut self) -> BreakLines<'_, B> {
         BreakLines::new(self)

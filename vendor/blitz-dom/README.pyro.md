@@ -1752,3 +1752,14 @@ Covered by `crates/pyro-render/tests/sticky_paint.rs`.
   loaded yet) the `<ratio>` still applies.
 
 Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `grid-aspect-ratio-005`, `-006`.
+- `src/layout/inline/build.rs` (`build_inline_layout_with`), `src/stylo_to_parley.rs`: preserved tabs go to tab stops
+  (parley's README.pyro.md, "Tab stops"). Each style carries its `tab-size`; an inline root whose text has a tab sets
+  the stops' unit, the advance of a space in the root's first available font plus the root's letter and word
+  spacing, and the least tab advance, 0.5ch of that font, before its content widths are measured. Covered by
+  `crates/pyro-render/tests/tab_stops.rs`.
+
+- `src/stylo_to_parley.rs`, `src/document.rs` (`init_stylo_prefs`: `layout.css.hyphens.enabled`): `hyphens` and
+  `hyphenate-character` are parsed and reach parley as each style's `SoftHyphen` (parley's README.pyro.md, "Soft
+  hyphens"): `hyphens: none` lets no line end at a soft hyphen, `hyphenate-character` names what a line ending at one
+  shows (the empty string nothing, one character that character, `auto` and longer strings the font's hyphen).
+  `hyphens: auto` breaks only at soft hyphens, as `manual`. Covered by `crates/pyro-render/tests/soft_hyphens.rs`.

@@ -601,6 +601,26 @@ fn build_inline_layout_with(
         Box::new(layout)
     });
     text_layout.ellipsis_text = ellipsis.unwrap_or_default();
+    // pyro: the tab stops of preserved tabs (CSS Text 3 § 4.2). The tab's own style has the
+    // `tab-size`; a number counts in the advance of a space in the root's first available font
+    // (the block container's, not the tab's inline box) plus the root's letter and word spacing.
+    // A tab closer than 0.5ch to its stop goes on to the next. Set before the content widths are
+    // measured, as each layout of this text has the same stops.
+    if text_layout.text.contains('\t') {
+        let mut space_style = parley_style.clone();
+        space_style.letter_spacing = 0.0;
+        space_style.word_spacing = 0.0;
+        let mut advance_of = |text: &str| {
+            let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &space_style);
+            builder.push_text(text);
+            let mut layout = builder.build().0;
+            layout.break_all_lines(None);
+            layout.full_width()
+        };
+        let space = advance_of("\u{a0}") + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
+        let ch = advance_of("0");
+        text_layout.layout.set_tab_stops(space, ch / 2.0);
+    }
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
