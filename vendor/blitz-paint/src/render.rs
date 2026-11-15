@@ -690,6 +690,53 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let outside = |bbox: Rect| {
             bbox.x1 < clip_rect.x0 || bbox.x0 > clip_rect.x1 || bbox.y1 < clip_rect.y0 || bbox.y0 > clip_rect.y1
         };
+        let current_color = styles.clone_color();
+        // pyro: an SVG filter that is no colour chain makes the list layers of its own
+        // (`filters::filter_steps`), and paints its filter region even for an element that paints
+        // nothing (empty or hidden).
+        #[cfg(feature = "svg")]
+        let filter_steps = crate::filters::filter_steps(
+            &effects.filter.0,
+            self.scale,
+            &current_color,
+            self.dom,
+            (size.width, size.height),
+        );
+        #[cfg(not(feature = "svg"))]
+        let filter_steps: Option<Vec<()>> = None;
+        if hidden && filter_steps.is_none() {
+            return;
+        }
+        let filter = match filter_steps {
+            Some(_) => None,
+            None => convert_filters(&effects.filter.0, self.scale, &current_color, self.dom).map(Arc::new),
+        };
+        // pyro: what a filter moves or spreads into the clip rectangle is in it (a drop shadow's
+        // offset, a blur): `layers::filter_reach`. A graph's output lies in its filter region,
+        // wherever the content is (a flood, a tile): the regions are in the element's ink
+        // (`filters::steps_reach`), and an `feTile` reads its input anywhere in the region.
+        #[cfg(feature = "svg")]
+        let (steps_reach, filter_regions, tiles) = match &filter_steps {
+            Some(steps) => crate::filters::steps_reach(steps, screen_transform, self.scale),
+            None => (Rect::ZERO, None, false),
+        };
+        #[cfg(not(feature = "svg"))]
+        let (steps_reach, filter_regions, tiles) = (Rect::ZERO, None::<Rect>, false);
+        let filter_reach = match filter.as_deref() {
+            Some(filter) => crate::layers::filter_reach(filter, screen_transform),
+            None => steps_reach,
+        };
+        let filter_reach = Some(filter_reach).filter(|reach| *reach != Rect::ZERO);
+        let screen_bbox = filter_regions.map_or(screen_bbox, |regions| screen_bbox.union(regions));
+        let screen_bbox = match filter_reach {
+            Some(reach) => Rect::new(
+                screen_bbox.x0 + reach.x0,
+                screen_bbox.y0 + reach.y0,
+                screen_bbox.x1 + reach.x1,
+                screen_bbox.y1 + reach.y1,
+            ),
+            None => screen_bbox,
+        };
         // pyro: an inline root's own text decorations reach outside its box by as much as they
         // are thick (`text-decoration-thickness: 4em`).
         if outside(screen_bbox)
@@ -719,10 +766,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         // Optimise zero-area (/very small area) clips by not rendering at all
+        // pyro: but for an SVG filter graph, which paints its filter region (`filter_steps`).
         let clip_area = content_box_size.width * content_box_size.height;
         let overflow_area =
             node.scrollable_overflow().width() * node.scrollable_overflow().height();
-        if should_clip && clip_area < 0.01 && overflow_area < 0.01 {
+        if should_clip && clip_area < 0.01 && overflow_area < 0.01 && filter_steps.is_none() {
             return;
         }
 
@@ -739,15 +787,27 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // rectangle passed to descendants to the visible (clipped) region so that content
         // scrolled out of view is culled rather than drawn and clipped away. The box used
         // here matches the clip applied to the content below.
+        // pyro: under a filter, content its reach moves into the rectangle is visible.
+        let source_rect = match filter_reach {
+            Some(reach) => crate::layers::filter_source_area(clip_rect, reach),
+            None => clip_rect,
+        };
+        // pyro: an `feTile` in view reads its input anywhere in its filter region.
+        let source_rect = match filter_regions {
+            Some(regions) if tiles && !outside(regions) => {
+                source_rect.union(crate::layers::filter_source_area(regions, steps_reach))
+            }
+            _ => source_rect,
+        };
         let child_clip_rect = if should_clip {
             let clip_box = if is_text_input {
                 cx.frame.text_input_clip_path()
             } else {
                 cx.frame.padding_box_path()
             };
-            clip_rect.intersect(screen_transform.transform_rect_bbox(clip_box.bounding_box()))
+            source_rect.intersect(screen_transform.transform_rect_bbox(clip_box.bounding_box()))
         } else {
-            clip_rect
+            source_rect
         };
 
         // Compute clip-path (if any) and wrap all rendering in a clip layer
@@ -762,27 +822,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
-        let current_color = styles.clone_color();
-        // pyro: an SVG filter that is no colour chain makes the list layers of its own
-        // (`filters::filter_steps`), and paints its filter region even for an element that paints
-        // nothing (empty or hidden).
-        #[cfg(feature = "svg")]
-        let filter_steps = crate::filters::filter_steps(
-            &effects.filter.0,
-            self.scale,
-            &current_color,
-            self.dom,
-            (size.width, size.height),
-        );
-        #[cfg(not(feature = "svg"))]
-        let filter_steps: Option<Vec<()>> = None;
-        if hidden && filter_steps.is_none() {
-            return;
-        }
-        let filter = match filter_steps {
-            Some(_) => None,
-            None => convert_filters(&effects.filter.0, self.scale, &current_color, self.dom).map(Arc::new),
-        };
         let backdrop_filter =
             convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new);
         // pyro: `backdrop-filter`: the backdrop is captured here, before the element's own layers

@@ -132,6 +132,38 @@ impl FilterGraph {
         })
     }
 
+    /// How far the graph's output can lie from the content it reads, in its user space: a rect
+    /// around the origin (as `Filter::expansion_rect`, but the sum of every node's reach: an
+    /// offset, a blur, a displacement's half scale, a morphology radius, a kernel), and whether it
+    /// has an `feTile`, which reads its input anywhere in the region. For culling.
+    pub fn reach(&self) -> (Rect, bool) {
+        let mut tiles = false;
+        let reach = self.filter.nodes().iter().fold(Rect::ZERO, |sum, node| {
+            let around = |r: f64| Rect::new(-r, -r, r, r);
+            let own = match &node.effect {
+                FilterEffect::DisplacementMap(d) => around(f64::from(d.scale.abs()) / 2.0),
+                FilterEffect::Morphology(m) => around(f64::from(m.radius.abs())),
+                FilterEffect::ConvolveMatrix(k) => {
+                    let rows = k.values.len() / k.size.max(1) as usize;
+                    around(k.size.max(rows as u32) as f64)
+                }
+                FilterEffect::DiffuseLighting(_) | FilterEffect::SpecularLighting(_) => around(1.0),
+                FilterEffect::Tile => {
+                    tiles = true;
+                    Rect::ZERO
+                }
+                FilterEffect::Image(image) => match (image.image_id, image.transform) {
+                    (BLUR_XY, Some([x, y, ..])) => around(3.0 * f64::from(x.abs().max(y.abs()))),
+                    (MORPHOLOGY, Some([x, y, ..])) => around(f64::from(x.abs().max(y.abs()))),
+                    _ => Rect::ZERO,
+                },
+                effect => effect.expansion_rect(),
+            };
+            Rect::new(sum.x0 + own.x0, sum.y0 + own.y0, sum.x1 + own.x1, sum.y1 + own.y1)
+        });
+        (reach, tiles)
+    }
+
     /// Pushes the filter's layer under `transform` (the filter's user space to the scene's) and
     /// draws what its `feImage`s show, each in a layer of its own that only the graph reads (see
     /// anyrender_vello_cpu's `FILTER_IMAGE_SOURCE`). The content to filter follows, then a pop.
@@ -165,7 +197,7 @@ impl FilterGraph {
             // feimage-element-ref-geometry).
             let sub = primitive.rect();
             let base = Affine::translate((f64::from(sub.x()), f64::from(sub.y())));
-            let ctx = crate::render::Ctx { cull: transform.transform_rect_bbox(self.region) };
+            let ctx = crate::render::Ctx { cull: transform.transform_rect_bbox(self.region), box_reference: false };
             crate::render::render_group(
                 scene,
                 image.root(),

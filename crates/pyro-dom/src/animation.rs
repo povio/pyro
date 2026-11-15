@@ -83,6 +83,11 @@ pub struct ElementAnimations {
     pub key: u64,
     pub transitions: Vec<Effect>,
     pub animations: Vec<Effect>,
+    /// CSS and script animations that are current but not in effect (in their delay, without a
+    /// backwards fill): they give no values, but the properties they animate act as if
+    /// `will-change` named them (Web Animations 1, "side effects of animation"), so one that
+    /// makes a stacking context makes the element one meanwhile.
+    pub current: Vec<Effect>,
 }
 
 /// The document's animated elements at one moment.

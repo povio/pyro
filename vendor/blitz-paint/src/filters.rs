@@ -95,6 +95,38 @@ pub(crate) fn filter_steps(
     Some(steps)
 }
 
+/// pyro: for culling an element whose `filter` list is `steps` (`render_node`): how far the steps
+/// move or spread content (a rect around the origin, as `layers::filter_reach`: the chains' and
+/// graphs' reaches added up), the union of the graphs' filter regions (a graph's output lies in
+/// its region whatever the content: a flood, turbulence), both in the frame's pixels, and whether
+/// a graph has an `feTile` (which reads its input anywhere in its region). `transform` is the
+/// element's to the frame (a chain is in its device pixels); `scale`, device pixels per CSS px (a
+/// graph is in CSS px from the border box's corner).
+#[cfg(feature = "svg")]
+pub(crate) fn steps_reach(steps: &[FilterStep], transform: kurbo::Affine, scale: f64) -> (kurbo::Rect, Option<kurbo::Rect>, bool) {
+    use kurbo::{Affine, Rect};
+    let linear = |t: Affine| {
+        let [a, b, c, d, _, _] = t.as_coeffs();
+        Affine::new([a, b, c, d, 0.0, 0.0])
+    };
+    let user = transform * Affine::scale(scale);
+    let (mut reach, mut regions, mut tiles) = (Rect::ZERO, None::<Rect>, false);
+    for step in steps {
+        let own = match step {
+            FilterStep::Chain(filter) => crate::layers::filter_reach(filter, transform),
+            FilterStep::Graph(graph) => {
+                let region = user.transform_rect_bbox(graph.region);
+                regions = Some(regions.map_or(region, |r| r.union(region)));
+                let (own, tile) = graph.reach();
+                tiles |= tile;
+                linear(user).transform_rect_bbox(own)
+            }
+        };
+        reach = Rect::new(reach.x0 + own.x0, reach.y0 + own.y0, reach.x1 + own.x1, reach.y1 + own.y1);
+    }
+    (reach, regions, tiles)
+}
+
 /// Whether colour functions keep transparent black transparent (a matrix whose alpha row adds
 /// nothing, a transfer of the alpha that maps 0 to 0): applied as a chain, they change nothing
 /// where the content is not, as they would over their filter region.

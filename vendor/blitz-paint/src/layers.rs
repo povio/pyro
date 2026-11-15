@@ -192,6 +192,27 @@ pub(crate) fn local_raster_marker() -> Arc<Filter> {
     Arc::new(Filter::single(anyrender::filters::FilterEffect::Offset(kurbo::Vec2::new(-0.0, -0.0))))
 }
 
+/// pyro: how far `filter`'s output can lie from its input, in the frame's pixels under
+/// `transform` (the element's): a rect around the origin, as `Filter::expansion_rect`, but the sum
+/// of its primitives' reaches (a chain's offsets and blurs add up). A drop shadow's offset moves
+/// content the element's box or a clip leaves out of view into view, and the other way round:
+/// culling must not drop such an element or its content (WPT `drop-shadow-clipped-001`,
+/// `filters-drop-shadow-003`).
+pub(crate) fn filter_reach(filter: &Filter, transform: Affine) -> kurbo::Rect {
+    let reach = filter.nodes().iter().fold(kurbo::Rect::ZERO, |sum, node| {
+        let reach = node.effect.expansion_rect();
+        kurbo::Rect::new(sum.x0 + reach.x0, sum.y0 + reach.y0, sum.x1 + reach.x1, sum.y1 + reach.y1)
+    });
+    let [a, b, c, d, _, _] = transform.as_coeffs();
+    Affine::new([a, b, c, d, 0.0, 0.0]).transform_rect_bbox(reach)
+}
+
+/// pyro: `rect` grown by what a filter of `reach` ([`filter_reach`]) can move into it: the area
+/// whose content the filter can draw inside `rect`.
+pub(crate) fn filter_source_area(rect: kurbo::Rect, reach: kurbo::Rect) -> kurbo::Rect {
+    kurbo::Rect::new(rect.x0 - reach.x1, rect.y0 - reach.y1, rect.x1 - reach.x0, rect.y1 - reach.y0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

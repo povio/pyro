@@ -1054,6 +1054,8 @@ impl ElementCx<'_, '_> {
                             .0
                             .iter()
                             .any(|image| !matches!(image, GenericImage::None))
+                        || ((style.get_effects().opacity < 1.0 || !style.get_effects().backdrop_filter.0.is_empty())
+                            && paints_alone(dom, root, id))
                 })
         };
         let mut effects: Vec<blitz_dom::NodeId> = Vec::new();
@@ -1208,19 +1210,58 @@ impl ElementCx<'_, '_> {
                         metrics.block_max_coord as f64 + shift,
                     ))
                     .inflate(reach, reach);
+                // pyro: under a translation, out to whole device pixels around the box as
+                // `draw_inline_boxes` snaps it (to whole CSS px): the passes inside and outside
+                // the areas then meet on pixel edges, where an edge through a pixel cut the box's
+                // border and let a sliver of what lies under it through (WPT
+                // `backdrop-filter-inline-positioning`).
+                let [a, b, c, d, tx, ty] = transform.as_coeffs();
+                let area = if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 {
+                    let snap = |v: f64, t: f64| ((t + v) / self.scale).round() * self.scale - t;
+                    let snapped = Rect::new(
+                        snap(border_box.x0, tx),
+                        snap(border_box.y0, ty),
+                        snap(border_box.x1, tx),
+                        snap(border_box.y1, ty),
+                    );
+                    let area = area.union(snapped);
+                    Rect::new(
+                        (tx + area.x0).floor() - tx,
+                        (ty + area.y0).floor() - ty,
+                        (tx + area.x1).ceil() - tx,
+                        (ty + area.y1).ceil() - ty,
+                    )
+                } else {
+                    area
+                };
                 fragments[slot].push(InlineFragment { border_box, area });
             }
         }
 
         INLINE_EFFECTS.set(true);
         // The layout without the elements' areas.
-        let mut outside = visible.to_path(0.1);
-        for fragment in fragments.iter().flatten() {
-            outside.extend(fragment.area.to_path(0.1));
+        // pyro: cut into pieces that do not overlap, inside the visible area: where two areas
+        // overlapped (lines closer than their content is tall) the even-odd rule counted them
+        // twice and painted the layout there at full strength under the faded or clipped copy.
+        // pyro: the clip is cut to what the layout paints (its ink, recorded first), not the whole
+        // visible area: a clip layer the size of the frame cost a 4K frame of a paragraph with a
+        // faded span 8% more instructions.
+        let mut layout = anyrender::Scene::new();
+        self.draw_inline_layout(&mut layout, pos);
+        if let Some(ink) = crate::bounds::scene_bounds(&layout.commands)
+            && transform.determinant().abs() > 1e-12
+        {
+            let outer = transform.inverse().transform_rect_bbox(ink).intersect(visible);
+            if outer.width() > 0.0 && outer.height() > 0.0 {
+                let mut outside = outer.to_path(0.1);
+                for piece in disjoint_rects(fragments.iter().flatten().map(|fragment| fragment.area.intersect(outer))) {
+                    outside.extend(piece.to_path(0.1));
+                }
+                scene.push_clip_layer(Fill::EvenOdd, transform, &outside);
+                scene.append_scene(layout, Affine::IDENTITY);
+                scene.pop_layer();
+            }
         }
-        scene.push_clip_layer(Fill::EvenOdd, transform, &outside);
-        self.draw_inline_layout(scene, pos);
-        scene.pop_layer();
 
         // Each element's area, under its clip path and mask.
         for (&effect, fragments) in effects.iter().zip(&fragments) {
@@ -1263,7 +1304,51 @@ impl ElementCx<'_, '_> {
                 .any(|image| !matches!(image, GenericImage::None));
             let first_edges = edges(has_left, has_right);
             let strip_edges = edges(true, true);
+            let opacity = style.get_effects().opacity;
+            let alone = paints_alone(dom, root, effect);
+            // pyro: its backdrop filter, over its fragments' border boxes (WPT
+            // `backdrop-filter-inline-positioning`): the backdrop is captured before its layers and
+            // drawn first inside them, as `render_element` does for a box.
+            let backdrop = alone
+                .then(|| {
+                    crate::filters::convert_filters(
+                        &style.get_effects().backdrop_filter.0,
+                        self.scale,
+                        &style.clone_color(),
+                        dom,
+                    )
+                })
+                .flatten()
+                .map(std::sync::Arc::new);
             drop(style);
+            let mut boxes = BezPath::new();
+            if let Some(backdrop) = &backdrop {
+                // At whole CSS pixels under a translation, as `draw_inline_boxes` puts the boxes.
+                let [a, b, c, d, tx, ty] = transform.as_coeffs();
+                let snap = |v: f64, t: f64| {
+                    if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 {
+                        ((t + v) / self.scale).round() * self.scale - t
+                    } else {
+                        v
+                    }
+                };
+                for fragment in fragments {
+                    let r = fragment.border_box;
+                    boxes.extend(Rect::new(snap(r.x0, tx), snap(r.y0, ty), snap(r.x1, tx), snap(r.y1, ty)).to_path(0.1));
+                }
+                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), 0.0, transform, &boxes, None, Some(backdrop.clone()));
+                scene.pop_layer();
+            }
+            // pyro: its opacity, over all of its fragments as one group (CSS Color 4 §3.2, WPT
+            // `t32-opacity-offscreen-multiple-boxes-*`), when nothing else paints in its areas.
+            let faded = opacity < 1.0 && alone;
+            if faded {
+                let mut areas = BezPath::new();
+                for fragment in fragments {
+                    areas.extend(fragment.area.to_path(0.1));
+                }
+                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, None, None);
+            }
             let box_layout = |rect: Rect, (border, padding): (taffy::Rect<f32>, taffy::Rect<f32>)| taffy::Layout {
                 size: taffy::Size {
                     width: (rect.width() / self.scale) as f32,
@@ -1285,6 +1370,10 @@ impl ElementCx<'_, '_> {
             let clip = first_cx.element_clip();
             let first_visible = visible - first.border_box.origin().to_vec2();
             with_element_clip(scene, clip.as_ref(), first_transform, self.scale, first_visible, |scene| {
+                if let Some(backdrop) = &backdrop {
+                    scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), 1.0, transform, &boxes, None, Some(backdrop.clone()));
+                    scene.pop_layer();
+                }
                 if !has_mask {
                     let mut areas = BezPath::new();
                     for fragment in fragments {
@@ -1315,8 +1404,77 @@ impl ElementCx<'_, '_> {
                     offset += fragment.border_box.width();
                 }
             });
+            if faded {
+                scene.pop_layer();
+            }
         }
         INLINE_EFFECTS.set(false);
         true
     }
+}
+
+/// pyro: rectangles covering what `rects` cover, no two of which overlap (empty ones left out).
+fn disjoint_rects(rects: impl Iterator<Item = Rect>) -> Vec<Rect> {
+    let mut out: Vec<Rect> = Vec::new();
+    for rect in rects {
+        let mut pieces = vec![rect];
+        for &taken in &out {
+            pieces = pieces
+                .into_iter()
+                .flat_map(|piece| {
+                    let cut = piece.intersect(taken);
+                    if !(cut.width() > 0.0 && cut.height() > 0.0) {
+                        return vec![piece];
+                    }
+                    [
+                        Rect::new(piece.x0, piece.y0, piece.x1, cut.y0),
+                        Rect::new(piece.x0, cut.y1, piece.x1, piece.y1),
+                        Rect::new(piece.x0, cut.y0, cut.x0, cut.y1),
+                        Rect::new(cut.x1, cut.y0, piece.x1, cut.y1),
+                    ]
+                    .into_iter()
+                    .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+                    .collect()
+                })
+                .collect();
+        }
+        out.extend(pieces.into_iter().filter(|r| r.width() > 0.0 && r.height() > 0.0));
+    }
+    out
+}
+
+/// pyro: whether the inline element `id` of the inline root `root` can be faded (or painted over
+/// its filtered backdrop) by painting the layout in its areas in its group: no inline element
+/// between them paints a box (a background, a border, a shadow) that would show there, which the
+/// element paints over, not with.
+fn paints_alone(dom: &blitz_dom::BaseDocument, root: blitz_dom::NodeId, id: blitz_dom::NodeId) -> bool {
+    // An anonymous block's inline elements are its parent's children: the walk stops there too.
+    let container = dom.get_node(root).filter(|node| node.is_anonymous()).and_then(|node| node.parent);
+    let mut ancestor = dom.get_node(id).and_then(|node| node.parent);
+    while let Some(node) = ancestor.filter(|&a| a != root && Some(a) != container).and_then(|a| dom.get_node(a)) {
+        if let Some(style) = node.primary_styles() {
+            let background = style.get_background();
+            let border = style.get_border();
+            let paints = background.background_color.resolve_to_absolute(&style.clone_color()).alpha > 0.0
+                || background
+                    .background_image
+                    .0
+                    .iter()
+                    .any(|image| !matches!(image, style::values::generics::image::GenericImage::None))
+                || [
+                    (border.border_top_style, &border.border_top_width),
+                    (border.border_right_style, &border.border_right_width),
+                    (border.border_bottom_style, &border.border_bottom_width),
+                    (border.border_left_style, &border.border_left_width),
+                ]
+                .iter()
+                .any(|(line, width)| !line.none_or_hidden() && width.0.to_f32_px() > 0.0)
+                || !style.get_effects().box_shadow.0.is_empty();
+            if paints {
+                return false;
+            }
+        }
+        ancestor = node.parent;
+    }
+    true
 }
