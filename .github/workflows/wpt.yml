@@ -119,8 +119,9 @@ jobs:
           } | tee -a "$GITHUB_OUTPUT"
       # The reftest shards run on the self-hosted runner (lp-m1), as every other macOS job: one shard there, since it
       # runs one job at a time and more would only add their setup to its queue. A manual run can pick GitHub's macos-15
-      # runners (two shards side by side, billed as macOS minutes); their results matched lp-m1's but for one
-      # animation page's timing (bench/wpt/README.md, "Reftests"). None for `suites: testharness`.
+      # runners (four shards side by side, about the two shards' time each before the layout directories doubled the
+      # reftests; billed as macOS minutes); their results matched lp-m1's but for one animation page's timing
+      # (bench/wpt/README.md, "Reftests"). None for `suites: testharness`.
       - name: Reftest shards
         id: reftest
         env:
@@ -130,7 +131,7 @@ jobs:
           runner="${RUNNER:-default}"
           if [ "$runner" = default ]; then runner=lp-m1; fi
           if [ "$SUITES" = testharness ] || [ "$SUITES" = crashtest ]; then shards='[]'
-          elif [ "$runner" = macos-15 ]; then shards='[0, 1]'
+          elif [ "$runner" = macos-15 ]; then shards='[0, 1, 2, 3]'
           else shards='[0]'; fi
           { echo "runner=$runner"; echo "shards=$shards"; } | tee -a "$GITHUB_OUTPUT"
 
@@ -216,8 +217,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Shards are balanced by the baseline's durations; the gate job checks that all of them reported.
-        shard: [0, 1, 2, 3]
+        # One shard: lp-m1 runs one job at a time, so four shards ran one after another and each paid its setup
+        # (about 25 s of a 68 s job). The pages run as before, --jobs 4 side by side. More shards are balanced by the
+        # baseline's durations; the gate job checks that all of them reported.
+        shard: [0]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -228,7 +231,7 @@ jobs:
       - name: Install the runner's dependencies
         working-directory: bench
         run: bun install --frozen-lockfile
-      # The pinned WPT revision, only the directories bench/wpt/wpt-paths.txt lists (about 85 MB).
+      # The pinned WPT revision, only the directories bench/wpt/wpt-paths.txt lists (about 290 MB).
       - uses: actions/cache@v4
         id: wpt-cache
         with:
@@ -253,8 +256,9 @@ jobs:
         env:
           SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
           RUNNER_ARGS: ${{ inputs.runner-args }}
-          # macos-15 arm64 runners have 3 CPUs; one page more than CPUs keeps them busy while a page waits on a timer.
-          # Reruns use the same --jobs, padded with copies of the pages they rerun.
+          # The load the baseline was recorded under (GitHub's 3-CPU macos-15 runners: one page more than CPUs), kept
+          # on lp-m1's 8 CPUs so timing-dependent pages see what they saw. Reruns use the same --jobs, padded with
+          # copies of the pages they rerun.
           JOBS: '4'
           OUT: wpt-shard-${{ strategy.job-index }}.json
         run: |
