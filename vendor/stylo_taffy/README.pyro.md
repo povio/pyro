@@ -12,3 +12,5 @@ entry) once a Blitz release carries these commits and changes.
   (blitz-dom's README.pyro.md, "block-in-inline"); its margins, borders, padding and sizes belong to
   its inline head and tail, so as a box it has none: `size`, `min_size` and `max_size` are `auto`,
   `margin`, `padding` and `border` zero.
+- `src/wrapper.rs`: `BlockContainerStyle::margin_trim` answers from the computed `margin-trim`
+  (`block-start`, `block-end`), for Taffy's block layout (vendor/taffy/README.pyro.md).

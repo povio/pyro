@@ -23,6 +23,10 @@ crate (`diff -ruN`).
   (upstream: gecko only). pyro-render's PDF output reads them to place page cuts of paper-cut
   documents. Nothing else reads them; computed values of other properties are unchanged.
 
+- `properties/longhands.toml`: `margin-trim` is parsed and computed for servo too (upstream: gecko
+  only), with `rebuild_box` restyle damage. Taffy's block layout reads it through stylo_taffy
+  (vendor/taffy/README.pyro.md).
+
 - `values/specified/box.rs`: `break-before` and `break-after` also take `avoid-page` and
   `avoid-column`, as the spec has them (upstream has only `avoid`, and drops the declaration).
   `page-break-*` still rejects them.

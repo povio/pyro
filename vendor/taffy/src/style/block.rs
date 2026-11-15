@@ -1,4 +1,5 @@
 //! Style types for Block layout
+use crate::geometry::Line;
 use crate::style::{AlignContent, AlignItems, AlignSelf};
 use crate::{CoreStyle, Style};
 
@@ -22,6 +23,14 @@ pub trait BlockContainerStyle: CoreStyle {
     #[inline(always)]
     fn justify_items(&self) -> AlignItems {
         Style::<Self::CustomIdent>::DEFAULT.justify_items
+    }
+
+    /// pyro: `margin-trim` (css-box-4 §3.3) in the block axis: whether the margins of the
+    /// container's in-flow children that adjoin its block-start (`start`) and block-end (`end`)
+    /// edges are truncated to zero.
+    #[inline(always)]
+    fn margin_trim(&self) -> Line<bool> {
+        Line::FALSE
     }
 }
 

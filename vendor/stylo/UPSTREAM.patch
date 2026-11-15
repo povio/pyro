@@ -204,7 +204,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-15 11:27:53
++++ b/properties/longhands.toml	2026-11-15 19:15:29
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -226,7 +226,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  initial = "computed::BreakWithin::Auto"
  struct = "box"
 -engine = "gecko"
- spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
+-spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
++spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
 +animation_type = "discrete"
 +affects = "layout"
 +
@@ -305,6 +306,17 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
+@@ -3383,9 +3395,9 @@
+ type = "MarginTrim"
+ initial = "computed::MarginTrim::empty()"
+ struct = "margin"
+-engine = "gecko"
+ gecko_pref = "layout.css.margin-trim.enabled"
+ animation_type = "none"
++servo_restyle_damage = "rebuild_box"
+ spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
+ affects = "layout"
+ 
 @@ -3694,6 +3706,7 @@
  [box-decoration-break]
  struct = "border"

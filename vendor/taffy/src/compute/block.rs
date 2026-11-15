@@ -641,6 +641,8 @@ fn compute_inner(
     let text_align = style.text_align();
     let align_content = style.align_content();
     let justify_items = style.justify_items();
+    // pyro: `margin-trim`
+    let margin_trim = style.margin_trim();
     drop(style);
 
     // 1. Generate items
@@ -711,6 +713,7 @@ fn compute_inner(
         direction,
         own_margins_collapse_with_children,
         children_margins_adjoin_own_edges,
+        margin_trim,
         #[cfg(feature = "content_size")]
         is_scroll_container,
         block_ctx,
@@ -1284,6 +1287,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     direction: Direction,
     own_margins_collapse_with_children: Line<bool>,
     children_margins_adjoin_own_edges: Line<bool>,
+    margin_trim: Line<bool>,
     #[cfg(feature = "content_size")] is_scroll_container: bool,
     block_ctx: &mut BlockContext<'_>,
 ) -> (Rect<f32>, f32, CollapsibleMarginSet, CollapsibleMarginSet, Option<f32>, Option<f32>) {
@@ -1341,6 +1345,15 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     // clearance. Such margins collapse with the margins of following siblings but the resulting
     // margin does not collapse with the bottom margin of the parent block.
     let mut active_margin_set_has_clearance = false;
+    // pyro: `margin-trim: block-start` (css-box-4 §3.3): the block-start margins of the in-flow
+    // boxes at the container's block-start edge are truncated to zero, with every margin that
+    // collapses with them: the margins their descendants collapse through them, and both margins
+    // of a box that is collapsed through, after which the next box is at the edge.
+    let mut trims_start_margin = margin_trim.start;
+    // pyro: `margin-trim: block-end`: the bottom of the last in-flow box that is not collapsed
+    // through, and whether there is one.
+    let mut last_solid_item_bottom: Option<f32> = None;
+    let mut has_in_flow_box = false;
 
     #[cfg(feature = "float_layout")]
     let mut has_active_floats = block_ctx.has_active_floats(committed_y_offset);
@@ -1355,9 +1368,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             };
             item.static_position = Point { x, y: y_offset_for_absolute }
         } else {
-            let item_margin = item
+            #[cfg_attr(not(feature = "float_layout"), allow(unused_mut))]
+            let mut item_margin = item
                 .margin
                 .map(|margin| margin.resolve_to_option(container_inner_width, |val, basis| tree.calc(val, basis)));
+            // pyro: `margin-trim: block-start` (floats are not in flow and keep their margins)
+            #[cfg(feature = "float_layout")]
+            let trims_item_start_margin = trims_start_margin && !item.float.is_floated();
+            #[cfg(not(feature = "float_layout"))]
+            let trims_item_start_margin = trims_start_margin;
+            if trims_item_start_margin {
+                item_margin.top = Some(0.0);
+            }
             let item_non_auto_margin = item_margin.map(|m| m.unwrap_or(0.0));
             let item_non_auto_x_margin_sum = item_non_auto_margin.horizontal_axis_sum();
 
@@ -1702,6 +1724,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             item.oof_candidates = item_layout.oof_candidates.take();
             let final_size = item_layout.size;
 
+            has_in_flow_box = true;
+            // pyro: `margin-trim: block-start`
+            if trims_item_start_margin {
+                item_layout.top_margin = CollapsibleMarginSet::ZERO;
+                if item_layout.margins_can_collapse_through {
+                    item_layout.bottom_margin = CollapsibleMarginSet::ZERO;
+                    item_margin.bottom = Some(0.0);
+                } else {
+                    trims_start_margin = false;
+                }
+            }
+
             let top_margin_set = item_layout.top_margin.collapse_with_margin(item_margin.top.unwrap_or(0.0));
             let bottom_margin_set = item_layout.bottom_margin.collapse_with_margin(item_margin.bottom.unwrap_or(0.0));
 
@@ -2001,6 +2035,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 y_offset_for_absolute = committed_y_offset + item_layout.size.height + y_margin_offset;
             } else {
                 committed_y_offset = location.y - inset_offset.y + item_layout.size.height;
+                last_solid_item_bottom = Some(committed_y_offset);
                 // A self-collapsing item with clearance is not collapsed through (its margins do not collapse
                 // with margins of preceding siblings), but its top and bottom margins still collapse with each
                 // other and with the margins of following siblings.
@@ -2022,6 +2057,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 block_ctx.commit_strut();
             }
         }
+    }
+
+    // pyro: `margin-trim: block-end` (css-box-4 §3.3): the block-end margin of the last in-flow
+    // box is truncated to zero, with every margin that collapses with it: those of the boxes
+    // after the last one that is not collapsed through (which then sit at its bottom edge), or
+    // every margin when all the boxes are collapsed through.
+    if margin_trim.end && has_in_flow_box {
+        let edge = last_solid_item_bottom.unwrap_or(resolved_content_box_inset.top);
+        for item in items.iter_mut().rev() {
+            if item.position.is_out_of_flow() {
+                item.static_position.y = edge;
+                continue;
+            }
+            #[cfg(feature = "float_layout")]
+            if item.float.is_floated() {
+                continue;
+            }
+            let inset_offset = resolve_relative_offset(item, parent_size, direction, tree);
+            let collapsed_through = item.can_be_collapsed_through;
+            let Some(layout) = item.final_layout.as_mut() else { continue };
+            layout.margin.bottom = 0.0;
+            if !collapsed_through {
+                break;
+            }
+            layout.location.y = edge + inset_offset.y;
+            layout.margin.top = 0.0;
+        }
+        if last_solid_item_bottom.is_none() {
+            first_child_top_margin_set = CollapsibleMarginSet::ZERO;
+        }
+        active_collapsible_margin_set = CollapsibleMarginSet::ZERO;
+        active_margin_set_has_clearance = false;
     }
 
     // The margins of a self-collapsing element with clearance do not collapse with the bottom

@@ -366,6 +366,16 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
     #[inline]
+    fn margin_trim(&self) -> taffy::Line<bool> {
+        use style::values::computed::MarginTrim;
+        let trim = *self.style.get_margin().get_margin_trim();
+        taffy::Line {
+            start: trim.contains(MarginTrim::BLOCK_START),
+            end: trim.contains(MarginTrim::BLOCK_END),
+        }
+    }
+
+    #[inline]
     fn text_align(&self) -> taffy::TextAlign {
         let align = convert::text_align(self.style.clone_text_align());
         self.layout_wm().logical_text_align(align)

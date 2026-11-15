@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..7043cdf6 100644
+index 3cd3e713..af8ac249 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -499,16 +499,11 @@ pub fn compute_block_layout(
@@ -53,7 +53,16 @@ index 3cd3e713..7043cdf6 100644
  
      // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
      // However, the axis are switched (transposed) because a node that scrolls vertically needs
-@@ -662,7 +670,10 @@ fn compute_inner(
+@@ -633,6 +641,8 @@ fn compute_inner(
+     let text_align = style.text_align();
+     let align_content = style.align_content();
+     let justify_items = style.justify_items();
++    // pyro: `margin-trim`
++    let margin_trim = style.margin_trim();
+     drop(style);
+ 
+     // 1. Generate items
+@@ -662,7 +672,10 @@ fn compute_inner(
      // must not be influenced by the item's specified height).
      let container_percentage_resolution_height = percentage_basis_dimensions
          .height
@@ -65,7 +74,7 @@ index 3cd3e713..7043cdf6 100644
  
      // 3. Perform final item layout and return content height
      //
-@@ -683,6 +694,7 @@ fn compute_inner(
+@@ -683,6 +696,7 @@ fn compute_inner(
          first_child_top_margin_set,
          last_child_bottom_margin_set,
          mut first_baseline,
@@ -73,7 +82,15 @@ index 3cd3e713..7043cdf6 100644
      ) = perform_final_layout_on_in_flow_children(
          tree,
          run_mode,
-@@ -741,6 +753,7 @@ fn compute_inner(
+@@ -699,6 +713,7 @@ fn compute_inner(
+         direction,
+         own_margins_collapse_with_children,
+         children_margins_adjoin_own_edges,
++        margin_trim,
+         #[cfg(feature = "content_size")]
+         is_scroll_container,
+         block_ctx,
+@@ -741,6 +756,7 @@ fn compute_inner(
          let free_space = container_inner_height - inflow_content_height;
          let group_offset = compute_block_align_content_offset(align_content, free_space);
          first_baseline = first_baseline.map(|baseline| baseline + group_offset);
@@ -81,7 +98,7 @@ index 3cd3e713..7043cdf6 100644
          for item in items.iter_mut() {
              if let Some(layout) = item.final_layout.as_mut() {
                  layout.location.y += group_offset;
-@@ -803,7 +816,7 @@ fn compute_inner(
+@@ -803,7 +819,7 @@ fn compute_inner(
          size: final_outer_size,
          #[cfg(feature = "content_size")]
          scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
@@ -90,7 +107,7 @@ index 3cd3e713..7043cdf6 100644
          top_margin: if own_margins_collapse_with_children.start {
              first_child_top_margin_set
          } else {
-@@ -837,6 +850,24 @@ fn compute_inner(
+@@ -837,6 +853,24 @@ fn compute_inner(
          }
      }
  
@@ -115,7 +132,7 @@ index 3cd3e713..7043cdf6 100644
      // 4. Collect out-of-flow candidates in document order (direct out-of-flow children plus
      // candidates bubbled from in-flow children's subtrees). These are laid out by the
      // out-of-flow positioning pass (`compute_oof_layout`), which runs after this algorithm.
-@@ -859,7 +890,7 @@ fn compute_inner(
+@@ -859,7 +893,7 @@ fn compute_inner(
                  item.justify_self.unwrap_or(justify_items).resolve_self_relative(item.direction, direction, true);
              let align_self =
                  item.align_self.unwrap_or(AlignItems::NORMAL).resolve_self_relative(item.direction, direction, false);
@@ -124,7 +141,7 @@ index 3cd3e713..7043cdf6 100644
                  node: item.node_id,
                  order: item.order,
                  position: item.position,
-@@ -931,7 +962,9 @@ fn compute_inner(
+@@ -931,7 +965,9 @@ fn compute_inner(
  }
  
  /// Create a `Vec` of `BlockItem` structs where each item in the `Vec` represents a child of the current node
@@ -135,7 +152,7 @@ index 3cd3e713..7043cdf6 100644
  fn generate_item_list(
      tree: &impl LayoutBlockContainer,
      node: NodeId,
-@@ -964,8 +997,11 @@ fn generate_item_list(
+@@ -964,8 +1000,11 @@ fn generate_item_list(
  
              let is_block = child_style.is_block();
              let is_table = child_style.is_table();
@@ -149,7 +166,7 @@ index 3cd3e713..7043cdf6 100644
                  let calc = |val, basis| tree.calc(val, basis);
                  let width = child_style.size().width.maybe_resolve(Some(0.0), calc);
                  let max_width = child_style.max_size().width.maybe_resolve(Some(0.0), calc);
-@@ -982,7 +1018,9 @@ fn generate_item_list(
+@@ -982,7 +1021,9 @@ fn generate_item_list(
                  && is_not_floated
                  && !is_scroll_container
                  && !contain.establishes_independent_formatting_context()
@@ -160,7 +177,7 @@ index 3cd3e713..7043cdf6 100644
  
              BlockItem {
                  node_id: child_node_id,
-@@ -990,7 +1028,9 @@ fn generate_item_list(
+@@ -990,7 +1031,9 @@ fn generate_item_list(
                  is_table,
                  is_compressible_replaced,
                  min_content_width_cap,
@@ -171,7 +188,7 @@ index 3cd3e713..7043cdf6 100644
                  #[cfg(feature = "float_layout")]
                  float,
                  #[cfg(feature = "float_layout")]
-@@ -1091,7 +1131,8 @@ fn resolve_relative_offset(
+@@ -1091,7 +1134,8 @@ fn resolve_relative_offset(
  }
  
  /// Compute the content-based width in the case that the width of the container is not known
@@ -181,8 +198,11 @@ index 3cd3e713..7043cdf6 100644
  fn determine_content_based_container_width(
      tree: &mut impl LayoutPartialTree,
      items: &[BlockItem],
-@@ -1245,7 +1286,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1243,9 +1287,10 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+     direction: Direction,
+     own_margins_collapse_with_children: Line<bool>,
      children_margins_adjoin_own_edges: Line<bool>,
++    margin_trim: Line<bool>,
      #[cfg(feature = "content_size")] is_scroll_container: bool,
      block_ctx: &mut BlockContext<'_>,
 -) -> (Rect<f32>, f32, CollapsibleMarginSet, CollapsibleMarginSet, Option<f32>) {
@@ -190,7 +210,7 @@ index 3cd3e713..7043cdf6 100644
      // Resolve container_inner_width for sizing child nodes using initial content_box_inset
      let container_inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
      #[cfg(feature = "content_size")]
-@@ -1294,6 +1335,8 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1294,10 +1339,21 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      let mut active_collapsible_margin_set = CollapsibleMarginSet::ZERO;
      let mut is_collapsing_with_first_margin_set = true;
      let mut first_baseline: Option<f32> = None;
@@ -199,7 +219,40 @@ index 3cd3e713..7043cdf6 100644
      // Whether the active margin set contains the margins of a self-collapsing element with
      // clearance. Such margins collapse with the margins of following siblings but the resulting
      // margin does not collapse with the bottom margin of the parent block.
-@@ -1518,14 +1561,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+     let mut active_margin_set_has_clearance = false;
++    // pyro: `margin-trim: block-start` (css-box-4 §3.3): the block-start margins of the in-flow
++    // boxes at the container's block-start edge are truncated to zero, with every margin that
++    // collapses with them: the margins their descendants collapse through them, and both margins
++    // of a box that is collapsed through, after which the next box is at the edge.
++    let mut trims_start_margin = margin_trim.start;
++    // pyro: `margin-trim: block-end`: the bottom of the last in-flow box that is not collapsed
++    // through, and whether there is one.
++    let mut last_solid_item_bottom: Option<f32> = None;
++    let mut has_in_flow_box = false;
+ 
+     #[cfg(feature = "float_layout")]
+     let mut has_active_floats = block_ctx.has_active_floats(committed_y_offset);
+@@ -1312,9 +1368,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+             };
+             item.static_position = Point { x, y: y_offset_for_absolute }
+         } else {
+-            let item_margin = item
++            #[cfg_attr(not(feature = "float_layout"), allow(unused_mut))]
++            let mut item_margin = item
+                 .margin
+                 .map(|margin| margin.resolve_to_option(container_inner_width, |val, basis| tree.calc(val, basis)));
++            // pyro: `margin-trim: block-start` (floats are not in flow and keep their margins)
++            #[cfg(feature = "float_layout")]
++            let trims_item_start_margin = trims_start_margin && !item.float.is_floated();
++            #[cfg(not(feature = "float_layout"))]
++            let trims_item_start_margin = trims_start_margin;
++            if trims_item_start_margin {
++                item_margin.top = Some(0.0);
++            }
+             let item_non_auto_margin = item_margin.map(|m| m.unwrap_or(0.0));
+             let item_non_auto_x_margin_sum = item_non_auto_margin.horizontal_axis_sum();
+ 
+@@ -1518,14 +1583,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                          // for the item's border box, which must not overlap any float
                          // The item's height isn't known until it is laid out, so only its styled
                          // (minimum) height is checked against floats below its top edge
@@ -227,7 +280,7 @@ index 3cd3e713..7043cdf6 100644
                          let slot = loop {
                              let slot = block_ctx.find_bfc_slot(
                                  min_y,
-@@ -1536,15 +1591,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1536,15 +1613,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                                  slot_segment,
                              );
                              let Some(segment_id) = slot.segment_id else { break slot };
@@ -277,7 +330,26 @@ index 3cd3e713..7043cdf6 100644
                          };
  
                          // If the item had to move down to avoid floats then it "separates from the
-@@ -1826,6 +1907,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1621,6 +1724,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+             item.oof_candidates = item_layout.oof_candidates.take();
+             let final_size = item_layout.size;
+ 
++            has_in_flow_box = true;
++            // pyro: `margin-trim: block-start`
++            if trims_item_start_margin {
++                item_layout.top_margin = CollapsibleMarginSet::ZERO;
++                if item_layout.margins_can_collapse_through {
++                    item_layout.bottom_margin = CollapsibleMarginSet::ZERO;
++                    item_margin.bottom = Some(0.0);
++                } else {
++                    trims_start_margin = false;
++                }
++            }
++
+             let top_margin_set = item_layout.top_margin.collapse_with_margin(item_margin.top.unwrap_or(0.0));
+             let bottom_margin_set = item_layout.bottom_margin.collapse_with_margin(item_margin.bottom.unwrap_or(0.0));
+ 
+@@ -1826,6 +1941,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                      child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                  first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
              }
@@ -296,7 +368,54 @@ index 3cd3e713..7043cdf6 100644
  
              // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
              #[cfg(feature = "float_layout")]
-@@ -1947,5 +2040,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1908,6 +2035,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+                 y_offset_for_absolute = committed_y_offset + item_layout.size.height + y_margin_offset;
+             } else {
+                 committed_y_offset = location.y - inset_offset.y + item_layout.size.height;
++                last_solid_item_bottom = Some(committed_y_offset);
+                 // A self-collapsing item with clearance is not collapsed through (its margins do not collapse
+                 // with margins of preceding siblings), but its top and bottom margins still collapse with each
+                 // other and with the margins of following siblings.
+@@ -1931,6 +2059,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+         }
+     }
+ 
++    // pyro: `margin-trim: block-end` (css-box-4 §3.3): the block-end margin of the last in-flow
++    // box is truncated to zero, with every margin that collapses with it: those of the boxes
++    // after the last one that is not collapsed through (which then sit at its bottom edge), or
++    // every margin when all the boxes are collapsed through.
++    if margin_trim.end && has_in_flow_box {
++        let edge = last_solid_item_bottom.unwrap_or(resolved_content_box_inset.top);
++        for item in items.iter_mut().rev() {
++            if item.position.is_out_of_flow() {
++                item.static_position.y = edge;
++                continue;
++            }
++            #[cfg(feature = "float_layout")]
++            if item.float.is_floated() {
++                continue;
++            }
++            let inset_offset = resolve_relative_offset(item, parent_size, direction, tree);
++            let collapsed_through = item.can_be_collapsed_through;
++            let Some(layout) = item.final_layout.as_mut() else { continue };
++            layout.margin.bottom = 0.0;
++            if !collapsed_through {
++                break;
++            }
++            layout.location.y = edge + inset_offset.y;
++            layout.margin.top = 0.0;
++        }
++        if last_solid_item_bottom.is_none() {
++            first_child_top_margin_set = CollapsibleMarginSet::ZERO;
++        }
++        active_collapsible_margin_set = CollapsibleMarginSet::ZERO;
++        active_margin_set_has_clearance = false;
++    }
++
+     // The margins of a self-collapsing element with clearance do not collapse with the bottom
+     // margin of the parent block: they extend the parent's content height instead of escaping it
+     let last_child_bottom_margin_set =
+@@ -1947,5 +2107,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
      committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
      let content_height = f32_max(0.0, committed_y_offset);
@@ -2621,6 +2740,31 @@ index c18fa644..50154417 100644
  };
  #[doc(inline)]
  pub use crate::style::Style;
+diff --git a/src/style/block.rs b/src/style/block.rs
+index fb1c7a3b..d31a6e45 100644
+--- a/src/style/block.rs
++++ b/src/style/block.rs
+@@ -1,4 +1,5 @@
+ //! Style types for Block layout
++use crate::geometry::Line;
+ use crate::style::{AlignContent, AlignItems, AlignSelf};
+ use crate::{CoreStyle, Style};
+ 
+@@ -23,6 +24,14 @@ pub trait BlockContainerStyle: CoreStyle {
+     fn justify_items(&self) -> AlignItems {
+         Style::<Self::CustomIdent>::DEFAULT.justify_items
+     }
++
++    /// pyro: `margin-trim` (css-box-4 §3.3) in the block axis: whether the margins of the
++    /// container's in-flow children that adjoin its block-start (`start`) and block-end (`end`)
++    /// edges are truncated to zero.
++    #[inline(always)]
++    fn margin_trim(&self) -> Line<bool> {
++        Line::FALSE
++    }
+ }
+ 
+ /// The set of styles required for a Block layout item (child of a Block container)
 diff --git a/src/tree/layout.rs b/src/tree/layout.rs
 index e250d742..3122372d 100644
 --- a/src/tree/layout.rs

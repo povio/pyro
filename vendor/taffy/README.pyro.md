@@ -66,6 +66,17 @@ Upstream's generated tests expect exact fractions and are not run against this c
 `grid_parity_tailwind_columns` and `grid_parity_calendar_fr_rows_with_min_height` in
 `crates/pyro-layout/tests/flow.rs` cover it.
 
+`style/block.rs` and `compute/block.rs`: `BlockContainerStyle::margin_trim` (default: neither edge) is
+`margin-trim` in the block axis (css-box-4 §3.3; stylo_taffy answers from the computed value). With `start`,
+the top margins of the in-flow children at the container's top edge are truncated to zero together with every
+margin that collapses with them: the margins their descendants collapse through them, and both margins of a
+child that is collapsed through, after which the next child is at the edge. With `end`, the same for the
+bottom margin of the last in-flow child and the collapsed-through children after the last one with a height
+(they move to its bottom edge); when every child is collapsed through, all their margins go. Floats and
+out-of-flow boxes keep their margins. The container's own margins are not trimmed. The trimmed margins are
+reported as zero in the children's `Layout::margin`. Covered by `crates/pyro-render/tests/margin_trim.rs` and
+WPT `css/css-box/margin-trim` (42 of 42 reftests).
+
 ## Incremental rounding
 
 These hooks went unused for a while. blitz-dom's `writing-mode` feature (#199) replaced `round_layout` with
