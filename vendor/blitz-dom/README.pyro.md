@@ -1349,7 +1349,9 @@ Covered by `block_in_inline.rs`, `unicode_bidi.rs`, `inline_relative_position.rs
   which lists them at its float level in tree order and is flagged. Floats inside an earlier block painted under a
   later block's background, and blocks in split inlines painted over floats (WPT `stack-floats-001..004`,
   `overhanging-float-paint-order`). An anonymous block's style keeps `display: inline`, which these checks see
-  through. blitz-paint paints the phases (`FlowPhase`).
+  through. blitz-paint paints the phases (`FlowPhase`). Lifted floats are marked (`HoistedPaintChild::is_float`); a
+  box that lifted floats (`NodeFlags::LIFTS_FLOATS`) or painted them is checked again before a build keeps its lists,
+  as its parent can change whether it lifts them (a block that becomes a flex item) without damaging it.
 - `src/layout/inline/layout.rs`: a float placed with nothing before it on its line leaves the line to be retried
   after it: content that doesn't fit beside the float moves down (WPT `floats-placement-004`, `c414-flt-fit-001`,
   `c5525-fltwidth-001`). A float left for below its line but met past the point where the line wrapped is dropped
