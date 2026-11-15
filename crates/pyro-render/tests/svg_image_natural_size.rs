@@ -10,7 +10,7 @@ struct DataUrls;
 impl Fetcher for DataUrls {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         std::thread::spawn(move || match url.strip_prefix("data:image/svg+xml,") {
-            Some(svg) => done(Ok(svg.replace("%3C", "<").replace("%3E", ">").replace("%23", "#").into_bytes())),
+            Some(svg) => done(Ok(svg.replace("%3C", "<").replace("%3E", ">").replace("%23", "#").replace("%25", "%").into_bytes())),
             None => done(Err("offline".into())),
         });
     }
@@ -36,9 +36,9 @@ fn pixel(img: &RgbaImage, x: u32, y: u32) -> [u8; 3] {
 
 #[test]
 fn an_svg_without_a_size_is_300_by_150() {
-    // The SVG fills far more than any box; what shows is its box.
+    // The SVG's rect fills its viewport, which is the image's box.
     let img = render(
-        "<img src=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='1000' height='1000' fill='%2300f'/%3E%3C/svg%3E\">",
+        "<img src=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100%25' height='100%25' fill='%2300f'/%3E%3C/svg%3E\">",
     );
     assert_eq!(pixel(&img, 295, 145), [0, 0, 255], "inside 300x150");
     assert_eq!(pixel(&img, 305, 5), [255, 255, 255], "right of 300");

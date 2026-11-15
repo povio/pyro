@@ -1099,8 +1099,12 @@ impl LayoutPassState<'_> {
         // Parley lays out empty text as a single strut-height line (text-editor semantics),
         // but a line box containing no text, inline boxes or other in-flow content is a
         // zero-height line box in CSS (CSS2 §9.4.2).
-        let has_inline_content =
-            !inline_layout.has_no_text() || inline_layout.layout.inline_boxes().len() > 0;
+        // pyro: out-of-flow boxes are no content: a line of empty inline boxes (their struts) and
+        // absolutely positioned boxes is zero-height.
+        let has_inline_content = !inline_layout.has_no_text()
+            || inline_layout.layout.inline_boxes().any(|inline_box| {
+                !matches!(inline_box.kind, parley::InlineBoxKind::OutOfFlow | parley::InlineBoxKind::CustomOutOfFlow)
+            });
 
         let mut height = if has_inline_content {
             inline_layout.layout.height()

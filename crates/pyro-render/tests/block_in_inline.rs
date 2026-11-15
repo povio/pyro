@@ -242,3 +242,16 @@ fn what_a_split_inlines_head_and_tail_hold_have_their_boxes() {
     assert!(h[1] < 40.0 && h[2] > 0.0, "{h:?}");
     assert!(t[1] >= 80.0 && t[2] > 0.0 && t[3] > 0.0, "{t:?}");
 }
+
+#[test]
+fn a_line_of_empty_inline_boxes_and_an_absolutely_positioned_box_has_no_height() {
+    // No text, no in-flow content, no sides (CSS 2.1 § 9.4.2): a zero-height line, the empty
+    // boxes' struts notwithstanding (the absolutely positioned box made them count: WPT
+    // shadow-dom/offsetTop-offsetLeft-across-shadow-boundaries).
+    let laid = lay_out(
+        "<div id=a>0</div><span><span></span><span style='position:absolute'>0</span></span><div id=b>0</div>",
+        &["a", "b"],
+    );
+    let (a, b) = (laid.rect(0), laid.rect(1));
+    assert!(close(b[1], a[1] + a[3]), "{a:?} {b:?}");
+}
