@@ -200,7 +200,7 @@ impl FilterGraph {
             // feimage-element-ref-geometry).
             let sub = primitive.rect();
             let base = Affine::translate((f64::from(sub.x()), f64::from(sub.y())));
-            let ctx = crate::render::Ctx { cull: transform.transform_rect_bbox(self.region), box_reference: false };
+            let ctx = crate::render::Ctx { cull: transform.transform_rect_bbox(self.region) };
             crate::render::render_group(
                 scene,
                 image.root(),
