@@ -6,6 +6,7 @@
 //!   when it sets none); text without one takes `HighlightText` on `Highlight`.
 //! - Decorations whose colour is the text's (`currentcolor`) take the highlight's colour over the
 //!   selected text; one of another colour stays one line in its colour.
+//! - A `::selection` style's own text decoration is drawn over the selected text.
 //! - Text in `user-select: none` is not highlighted.
 //!
 //! The lines are lower than the text's content area, which the highlight then covers (it covers
@@ -129,6 +130,23 @@ fn decorations_of_the_text_colour_take_the_selection_colour() {
         &format!("{style}<p id=a style='text-decoration:underline #00f'>Underlined</p>"),
         ("a", 2, "a", 6),
         "<p style='text-decoration:underline #00f'>Un<span style='color:#0a0'>derl</span>ined</p>",
+    );
+}
+
+/// A `::selection` style's own text decoration is drawn over the selected text (WPT
+/// `selection-pseudo-with-decoration-invalidation-*`).
+#[test]
+fn the_selection_style_draws_its_own_decoration() {
+    matches(
+        "<style>p::selection{background:#ff0;color:currentcolor;text-decoration:underline #00f 2px}</style><p id=a>Selected</p>",
+        ("a", 0, "a", 8),
+        "<p style='background:#ff0;display:inline-block;text-decoration:underline #00f 2px'>Selected</p>",
+    );
+    // Only over the selected stretch, next to the element's own line.
+    matches(
+        "<style>p::selection{color:#0a0;text-decoration:overline}</style><p id=a style='text-decoration:underline #00f'>Selected</p>",
+        ("a", 2, "a", 6),
+        "<p style='text-decoration:underline #00f'>Se<span style='color:#0a0;text-decoration:overline'>lect</span>ed</p>",
     );
 }
 

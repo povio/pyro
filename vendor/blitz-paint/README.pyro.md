@@ -601,7 +601,8 @@ from the root of an upstream checkout at that commit) is the whole diff.
   drawn twice, clipped: outside the stretches as usual, inside them in the highlight's colour, decorations of the
   text's colour (`currentcolor`, `ResolvedDecoration::current_color`) in it too and no text shadows. The highlight
   is the `::selection` style of the nearest element with one, else the system's `HighlightText` on `Highlight`
-  (Stylo's servo values); text under `user-select: none` is not highlighted. A line cut by an ellipsis keeps
+  (Stylo's servo values); a `::selection` style's own `text-decoration` is drawn over the selected text as a
+  line of that element (`LineDecoration::selection`); text under `user-select: none` is not highlighted. A line cut by an ellipsis keeps
   upstream's light blue rectangles; a recording paint (the PDF's) draws no selection. Covered by
   `selection_highlight.rs` in `crates/pyro-render/tests`.
 - `src/text.rs` (`LineDecoration::shift`, `stroke_text`): the decoration line of a relatively positioned inline box

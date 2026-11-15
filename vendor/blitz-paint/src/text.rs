@@ -346,7 +346,7 @@ fn select_best_dash_gap(stroke_length: f64, dash_length: f64, gap_length: f64) -
 /// decorating box. The `text-decoration-inset` and `text-underline-offset` values
 /// depend on the run's advance/font-size and are resolved lazily when drawing.
 #[derive(Clone)]
-struct ResolvedDecoration {
+pub(crate) struct ResolvedDecoration {
     line: TextDecorationLine,
     style: TextDecorationStyle,
     color: Color,
@@ -517,6 +517,9 @@ struct DecorationRunGeometry {
 struct LineDecoration {
     node_id: NodeId,
     deco: ResolvedDecoration,
+    /// pyro: the line is a selection highlight's own (`::selection { text-decoration }`), drawn
+    /// over the selected text of `node_id`'s content next to the box's own decoration.
+    selection: bool,
     /// pyro: the box is an ancestor of the inline root (a block whose decoration propagates
     /// into it): it is positioned from the line, as the root's own is.
     outer: bool,
@@ -1330,7 +1333,7 @@ fn flush_line_decorations<S: PaintScene>(
 }
 
 /// pyro: the decoration a box draws as a decorating box (`text-decoration-line`), if any.
-fn own_decoration(styles: &style::properties::ComputedValues) -> Option<ResolvedDecoration> {
+pub(crate) fn own_decoration(styles: &style::properties::ComputedValues) -> Option<ResolvedDecoration> {
     let itext = styles.get_inherited_text();
     let text = styles.get_text();
     let drawn_lines = TextDecorationLine::UNDERLINE
@@ -1791,18 +1794,26 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let run_x1 = content_end.map_or(run_x1, |end| run_x1.min(end).max(run_x0));
             let run_x0 = content_start.map_or(run_x0, |start| run_x0.max(start).min(run_x1));
 
+            // pyro: the decoration of the selection's highlight goes over the selected text's own.
+            let selection_deco = match highlighting {
+                true => crate::highlight::highlight_of(doc, run_node_id, highlights)
+                    .and_then(|highlight| Some((highlight.owner?, highlight.decoration?))),
+                false => None,
+            };
             // pyro: the decorations of blocks the root is in come first (outermost).
             let boxes = outer
                 .iter()
-                .map(|(node_id, deco)| (*node_id, deco, true))
-                .chain(stack.iter().filter_map(|entry| Some((entry.node_id, entry.decoration.as_ref()?, false))));
-            for (node_id, deco, is_outer) in boxes {
-                let idx = match deco_boxes.iter().position(|d| d.node_id == node_id) {
+                .map(|(node_id, deco)| (*node_id, deco, true, false))
+                .chain(stack.iter().filter_map(|entry| Some((entry.node_id, entry.decoration.as_ref()?, false, false))))
+                .chain(selection_deco.as_ref().map(|(owner, deco)| (*owner, &**deco, false, true)));
+            for (node_id, deco, is_outer, is_selection) in boxes {
+                let idx = match deco_boxes.iter().position(|d| d.node_id == node_id && d.selection == is_selection) {
                     Some(idx) => idx,
                     None => {
                         deco_boxes.push(LineDecoration {
                             node_id,
                             deco: deco.clone(),
+                            selection: is_selection,
                             outer: is_outer,
                             segments: SmallVec::new(),
                             min_x: f64::INFINITY,
@@ -1843,7 +1854,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
 
         // pyro: over selected text, decorations of the text's colour take the highlight's.
         if highlighting {
-            for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.current_color) {
+            for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.current_color && !acc.selection) {
                 if let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) {
                     acc.deco.color = highlight.color;
                 }

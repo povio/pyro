@@ -6,7 +6,8 @@
 //! further (Blink's `ExpandSelectionRectToLineHeight`), its edges on whole CSS px as an inline
 //! box's are. The selected glyphs are drawn in the highlight's colour, and so are the decorations
 //! whose colour is the text's (`currentcolor`); decorations of another colour keep it, and the
-//! line stays one line across the selection's edges. The highlight is the `::selection` style of
+//! line stays one line across the selection's edges. A `::selection` style's own text decoration
+//! is drawn over the selected text, as a decoration of the element whose style it is. The highlight is the `::selection` style of
 //! the nearest element that has one (the text's element, its parent, ...), else the system's:
 //! `HighlightText` on `Highlight`. Text that `user-select: none` keeps from being selected is not
 //! highlighted.
@@ -25,7 +26,9 @@ use smallvec::SmallVec;
 use style::selector_parser::PseudoElement;
 
 use crate::color::{Color, ToColorColor as _};
-use crate::text::{DrawTextContext, LineTops, TextPaintOptions, stroke_text};
+use std::rc::Rc;
+
+use crate::text::{DrawTextContext, LineTops, ResolvedDecoration, TextPaintOptions, own_decoration, stroke_text};
 
 /// The system highlight colours, CSS Color 4 `Highlight` and `HighlightText` as Stylo's servo
 /// device computes them (light colour scheme), so that text selected without a `::selection`
@@ -34,10 +37,15 @@ const HIGHLIGHT: Color = Color::from_rgb8(0, 65, 198);
 const HIGHLIGHT_TEXT: Color = Color::from_rgb8(0, 0, 0);
 
 /// What selected text is drawn with.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone)]
 pub(crate) struct Highlight {
     pub background: Color,
     pub color: Color,
+    /// The element whose `::selection` style this is (`None`: the system's highlight), and the
+    /// text decoration of that style: lines drawn over the selected text, as an element's own
+    /// are over its content.
+    pub owner: Option<NodeId>,
+    pub decoration: Option<Rc<ResolvedDecoration>>,
 }
 
 /// The highlight of selected text whose innermost element is `node_id` (`None`: the text is not
@@ -48,10 +56,11 @@ pub(crate) fn highlight_of(
     cache: &mut Vec<(NodeId, Option<Highlight>)>,
 ) -> Option<Highlight> {
     if let Some((_, highlight)) = cache.iter().find(|(id, _)| *id == node_id) {
-        return *highlight;
+        return highlight.clone();
     }
     use style::values::computed::UserSelect;
     let mut selection = None;
+    let mut owner = None;
     let mut selectable = None;
     let mut current = Some(node_id);
     while let Some(id) = current {
@@ -60,6 +69,7 @@ pub(crate) fn highlight_of(
             selection = node.try_stylo_element_data().and_then(|data| {
                 data.get().and_then(|data| data.styles.pseudos.get(&PseudoElement::Selection).cloned())
             });
+            owner = selection.as_ref().map(|_| id);
         }
         if selectable.is_none() {
             // `auto` is what the parent's is (`none` stays `none` in the content of an element).
@@ -80,11 +90,13 @@ pub(crate) fn highlight_of(
             Highlight {
                 background: style.get_background().background_color.resolve_to_absolute(&color).as_srgb_color(),
                 color: color.as_srgb_color(),
+                owner,
+                decoration: own_decoration(&style).map(Rc::new),
             }
         }
-        None => Highlight { background: HIGHLIGHT, color: HIGHLIGHT_TEXT },
+        None => Highlight { background: HIGHLIGHT, color: HIGHLIGHT_TEXT, owner: None, decoration: None },
     });
-    cache.push((node_id, highlight));
+    cache.push((node_id, highlight.clone()));
     highlight
 }
 
