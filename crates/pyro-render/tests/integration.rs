@@ -58,6 +58,7 @@ mod profiling_timers;
 mod render;
 mod sampled_animations;
 mod selection_highlight;
+mod size_containment;
 mod sticky_paint;
 mod soft_hyphens;
 mod style_element_text;

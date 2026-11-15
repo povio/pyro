@@ -1781,3 +1781,15 @@ Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `g
   the binary); they broke only at spaces. `word-break: manual` (stylo parses it for this engine) turns that off for
   its text (parley's `TextStyle::dictionary_breaks`, parley_engine's `LineBreakConfig::no_dictionary`). WPT css-text
   `line-breaking-024..027`, `word-break-normal-{th,km,lo,my}-*`, `word-break-manual-001`.
+## Size containment and `contain-intrinsic-size` (round 3 lane S)
+
+- `src/layout/mod.rs` (`compute_child_layout_in_current_wm`, `size_contained_size`): a box with size containment
+  (`contain: size` or `strict`; css-contain-2 §3.1) is sized as an empty box whose content is its
+  `contain-intrinsic-size` (css-sizing-4 §4.1: `none` is zero, `auto <length>` the length, as no size is
+  remembered): Taffy's leaf layout, with the box's own style, gives that size, and the box's algorithm then lays
+  its content out with both dimensions known. A replaced element keeps its natural aspect ratio
+  (`replaced::natural_ratio`): one size gives the other (WPT css-flexbox `canvas-contain-size`). `contain: size` did nothing before. Not for non-atomic inline
+  boxes, tables and internal table boxes. `contain: inline-size` alone is not done.
+
+Covered by `crates/pyro-render/tests/size_containment.rs`; WPT `css/css-sizing/contain-intrinsic-size`: 23 more
+reftests pass.

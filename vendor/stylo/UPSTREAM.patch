@@ -218,7 +218,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-15 20:15:35
++++ b/properties/longhands.toml	2026-11-15 21:50:40
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -289,6 +289,50 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  initial_specified_value = "specified::BorderSideWidth::medium()"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
  affects = "layout"
+@@ -636,39 +648,39 @@
+ type = "ContainIntrinsicSize"
+ initial = "computed::ContainIntrinsicSize::None"
+ struct = "position"
+-engine = "gecko"
+ logical_group = "contain-intrinsic-size"
+ logical = true
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ 
+ [contain-intrinsic-height]
+ type = "ContainIntrinsicSize"
+ initial = "computed::ContainIntrinsicSize::None"
+ struct = "position"
+-engine = "gecko"
+ logical_group = "contain-intrinsic-size"
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ 
+ [contain-intrinsic-inline-size]
+ type = "ContainIntrinsicSize"
+ initial = "computed::ContainIntrinsicSize::None"
+ struct = "position"
+-engine = "gecko"
+ logical_group = "contain-intrinsic-size"
+ logical = true
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ 
+ [contain-intrinsic-width]
+ type = "ContainIntrinsicSize"
+ initial = "computed::ContainIntrinsicSize::None"
+ struct = "position"
+-engine = "gecko"
+ logical_group = "contain-intrinsic-size"
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ 
+ [container-name]
+ type = "ContainerName"
 @@ -1281,6 +1293,7 @@
  [list-style-image]
  type = "Image"
@@ -348,13 +392,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -4287,6 +4299,19 @@
- affects = "layout"
- gecko_ffi_name = "mBoxOrient"
- aliases = ["-webkit-box-orient"]
-+type = "BoxOrient"
-+initial = "computed::BoxOrient::Horizontal"
-+
+@@ -4290,6 +4302,19 @@
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -365,9 +406,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +affects = "layout"
 +servo_restyle_damage = "rebuild_box"
- type = "BoxOrient"
- initial = "computed::BoxOrient::Horizontal"
- 
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
+ [-moz-box-pack]
+ struct = "xul"
+ engine = "gecko"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-14 13:56:06
@@ -412,7 +456,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-15 20:15:35
++++ b/properties/shorthands.toml	2026-11-15 21:50:40
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -442,7 +486,15 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND"
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
-@@ -476,7 +473,6 @@
+@@ -285,7 +282,6 @@
+ kind = "two_properties"
+ 
+ [contain-intrinsic-size]
+-engine = "gecko"
+ sub_properties = ["contain-intrinsic-width", "contain-intrinsic-height"]
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ kind = "two_properties"
+@@ -476,7 +472,6 @@
  servo_pref = "layout.css.columns.enabled"
  
  [column-rule]
@@ -450,7 +502,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
  derive_serialize = true
-@@ -556,7 +552,6 @@
+@@ -556,7 +551,6 @@
  derive_serialize = true
  
  [-webkit-line-clamp]

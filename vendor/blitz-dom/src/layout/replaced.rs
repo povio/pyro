@@ -95,8 +95,31 @@ pub(crate) fn has_natural_ratio(element: &ElementData) -> bool {
             }
             ImageData::None => false,
         },
-        SpecialElementData::Canvas(_) => true,
-        _ => false,
+        _ => element.name.local == local_name!("canvas"),
+    }
+}
+
+/// pyro: the natural aspect ratio of a replaced element that has one (see [`has_natural_ratio`];
+/// a canvas's is its `width` and `height` attributes', 300 by 150 without them), in physical
+/// axes.
+pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
+    use crate::node::{ImageData, SpecialElementData};
+    let usable = |ratio: f32| (ratio.is_finite() && ratio > 0.0).then_some(ratio);
+    match &element.special_data {
+        SpecialElementData::Image(image) => match &**image {
+            ImageData::Raster(image) => usable(image.width as f32 / image.height as f32),
+            #[cfg(feature = "svg")]
+            ImageData::Svg(svg) => match (svg.intrinsic_width(), svg.intrinsic_height()) {
+                (Some(width), Some(height)) if width > 0.0 && height > 0.0 => usable(width / height),
+                _ => svg.viewbox_aspect_ratio().and_then(usable),
+            },
+            ImageData::None => None,
+        },
+        _ if element.name.local == local_name!("canvas") => {
+            let attr = |name| element.attr(name).and_then(|value| value.trim().parse::<f32>().ok());
+            usable(attr(local_name!("width")).unwrap_or(300.0) / attr(local_name!("height")).unwrap_or(150.0))
+        }
+        _ => None,
     }
 }
 

@@ -27,6 +27,11 @@ crate (`diff -ruN`).
   only), with `rebuild_box` restyle damage. Taffy's block layout reads it through stylo_taffy
   (vendor/taffy/README.pyro.md).
 
+- `properties/longhands.toml`, `properties/shorthands.toml`: `contain-intrinsic-width`, `-height`,
+  `-inline-size`, `-block-size` and the `contain-intrinsic-size` shorthand are parsed and computed for servo
+  too (upstream: gecko only), with `rebuild_box` restyle damage. blitz-dom's layout reads them for boxes
+  with size containment (vendor/blitz-dom/README.pyro.md).
+
 - `values/specified/box.rs`: `break-before` and `break-after` also take `avoid-page` and
   `avoid-column`, as the spec has them (upstream has only `avoid`, and drops the declaration).
   `page-break-*` still rejects them.

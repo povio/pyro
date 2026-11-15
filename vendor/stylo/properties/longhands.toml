@@ -648,39 +648,39 @@ affects = "layout"
 type = "ContainIntrinsicSize"
 initial = "computed::ContainIntrinsicSize::None"
 struct = "position"
-engine = "gecko"
 logical_group = "contain-intrinsic-size"
 logical = true
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [contain-intrinsic-height]
 type = "ContainIntrinsicSize"
 initial = "computed::ContainIntrinsicSize::None"
 struct = "position"
-engine = "gecko"
 logical_group = "contain-intrinsic-size"
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [contain-intrinsic-inline-size]
 type = "ContainIntrinsicSize"
 initial = "computed::ContainIntrinsicSize::None"
 struct = "position"
-engine = "gecko"
 logical_group = "contain-intrinsic-size"
 logical = true
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [contain-intrinsic-width]
 type = "ContainIntrinsicSize"
 initial = "computed::ContainIntrinsicSize::None"
 struct = "position"
-engine = "gecko"
 logical_group = "contain-intrinsic-size"
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [container-name]
 type = "ContainerName"

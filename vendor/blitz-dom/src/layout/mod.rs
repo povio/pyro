@@ -219,7 +219,18 @@ impl LayoutPassState<'_> {
     ) -> taffy::tree::LayoutOutput {
         // pyro: this runs once per tree level of a recursive layout; what is not part
         // of the recursion stays out of its frame (see `dispatch_child_layout`).
-        let inputs = self.adjusted_child_inputs(node_id, inputs);
+        let mut inputs = self.adjusted_child_inputs(node_id, inputs);
+        // pyro: size containment (`Self::size_contained_size`)
+        if self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|styles| {
+            styles.get_box().contain.contains(style::values::computed::Contain::BLOCK_SIZE)
+        }) {
+            if let Some(size) = self.size_contained_size(node_id, inputs) {
+                if inputs.run_mode != RunMode::PerformLayout {
+                    return taffy::tree::LayoutOutput::from_outer_size(size);
+                }
+                inputs.known_dimensions = size.map(Some);
+            }
+        }
         // pyro: a box that clamps its lines ends at the clamp line, which its laid-out
         // content names (`layout::line_clamp`): a measuring run lays it out too, and what
         // that leaves on its content is not the layout a cached final run stands for.
@@ -248,6 +259,69 @@ impl LayoutPassState<'_> {
             self.lay_out_out_of_flow_boxes(node_id, &mut output);
         }
         output
+    }
+
+    /// pyro: the size of a box with size containment (`contain: size`, css-contain-2 §3.1): the
+    /// size it has as an empty box whose content is `contain-intrinsic-size` (css-sizing-4 §4.1;
+    /// `none` is zero, `auto <length>` the length: no size is remembered). Its content is then
+    /// laid out in a box of that size and never changes it. `None`: the box has no size
+    /// containment (a non-atomic inline box, a table, an internal table box).
+    #[inline(never)]
+    fn size_contained_size(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> Option<taffy::Size<f32>> {
+        use style::values::computed::Contain;
+        use style::values::generics::box_::ContainIntrinsicSize;
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        let node = &self.nodes[dom_node_id(node_id)];
+        let content = {
+            let styles = node.primary_styles()?;
+            if !styles.get_box().contain.contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
+                return None;
+            }
+            let display = styles.clone_display();
+            let contained = match display.outside() {
+                DisplayOutside::Inline => display.inside() != DisplayInside::Flow,
+                DisplayOutside::Block => true,
+                _ => false,
+            } && display.inside() != DisplayInside::Table;
+            if !contained {
+                return None;
+            }
+            let length = |size: &style::values::computed::ContainIntrinsicSize| match size {
+                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
+                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+            };
+            let position = styles.get_position();
+            let (width, height) = (length(&position.contain_intrinsic_width), length(&position.contain_intrinsic_height));
+            #[cfg(feature = "writing-mode")]
+            let vertical = self.layout_wm.is_vertical();
+            #[cfg(not(feature = "writing-mode"))]
+            let vertical = false;
+            if vertical { taffy::Size { width: height, height: width } } else { taffy::Size { width, height } }
+        };
+        let style = self.child_layout_style(node);
+        // A replaced element keeps its natural aspect ratio (its natural sizes are gone): a size
+        // in one axis gives the other (WPT css-flexbox `canvas-contain-size`).
+        let natural_ratio = node.data.downcast_element().and_then(replaced::natural_ratio).map(|ratio| {
+            #[cfg(feature = "writing-mode")]
+            let vertical = self.layout_wm.is_vertical();
+            #[cfg(not(feature = "writing-mode"))]
+            let vertical = false;
+            if vertical { 1.0 / ratio } else { ratio }
+        });
+        let output = taffy::compute_leaf_layout(
+            taffy::tree::LayoutInput { run_mode: RunMode::ComputeSize, ..inputs },
+            &style,
+            resolve_calc_value,
+            |known_dimensions, _available_space| match (known_dimensions.width, known_dimensions.height, natural_ratio) {
+                (Some(width), None, Some(ratio)) => taffy::Size { width, height: width / ratio },
+                (None, Some(height), Some(ratio)) => taffy::Size { width: height * ratio, height },
+                (width, height, _) => taffy::Size {
+                    width: width.unwrap_or(content.width),
+                    height: height.unwrap_or(content.height),
+                },
+            },
+        );
+        Some(output.size)
     }
 
     #[inline(never)]

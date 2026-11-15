@@ -9890,14 +9890,25 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +217,155 @@
+@@ -191,13 +217,229 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
 -        let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
 +        // pyro: this runs once per tree level of a recursive layout; what is not part
 +        // of the recursion stays out of its frame (see `dispatch_child_layout`).
-+        let inputs = self.adjusted_child_inputs(node_id, inputs);
++        let mut inputs = self.adjusted_child_inputs(node_id, inputs);
++        // pyro: size containment (`Self::size_contained_size`)
++        if self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|styles| {
++            styles.get_box().contain.contains(style::values::computed::Contain::BLOCK_SIZE)
++        }) {
++            if let Some(size) = self.size_contained_size(node_id, inputs) {
++                if inputs.run_mode != RunMode::PerformLayout {
++                    return taffy::tree::LayoutOutput::from_outer_size(size);
++                }
++                inputs.known_dimensions = size.map(Some);
++            }
++        }
 +        // pyro: a box that clamps its lines ends at the clamp line, which its laid-out
 +        // content names (`layout::line_clamp`): a measuring run lays it out too, and what
 +        // that leaves on its content is not the layout a cached final run stands for.
@@ -9929,6 +9940,69 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          output
      }
  
++    /// pyro: the size of a box with size containment (`contain: size`, css-contain-2 §3.1): the
++    /// size it has as an empty box whose content is `contain-intrinsic-size` (css-sizing-4 §4.1;
++    /// `none` is zero, `auto <length>` the length: no size is remembered). Its content is then
++    /// laid out in a box of that size and never changes it. `None`: the box has no size
++    /// containment (a non-atomic inline box, a table, an internal table box).
++    #[inline(never)]
++    fn size_contained_size(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> Option<taffy::Size<f32>> {
++        use style::values::computed::Contain;
++        use style::values::generics::box_::ContainIntrinsicSize;
++        use style::values::specified::box_::{DisplayInside, DisplayOutside};
++        let node = &self.nodes[dom_node_id(node_id)];
++        let content = {
++            let styles = node.primary_styles()?;
++            if !styles.get_box().contain.contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
++                return None;
++            }
++            let display = styles.clone_display();
++            let contained = match display.outside() {
++                DisplayOutside::Inline => display.inside() != DisplayInside::Flow,
++                DisplayOutside::Block => true,
++                _ => false,
++            } && display.inside() != DisplayInside::Table;
++            if !contained {
++                return None;
++            }
++            let length = |size: &style::values::computed::ContainIntrinsicSize| match size {
++                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
++                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
++            };
++            let position = styles.get_position();
++            let (width, height) = (length(&position.contain_intrinsic_width), length(&position.contain_intrinsic_height));
++            #[cfg(feature = "writing-mode")]
++            let vertical = self.layout_wm.is_vertical();
++            #[cfg(not(feature = "writing-mode"))]
++            let vertical = false;
++            if vertical { taffy::Size { width: height, height: width } } else { taffy::Size { width, height } }
++        };
++        let style = self.child_layout_style(node);
++        // A replaced element keeps its natural aspect ratio (its natural sizes are gone): a size
++        // in one axis gives the other (WPT css-flexbox `canvas-contain-size`).
++        let natural_ratio = node.data.downcast_element().and_then(replaced::natural_ratio).map(|ratio| {
++            #[cfg(feature = "writing-mode")]
++            let vertical = self.layout_wm.is_vertical();
++            #[cfg(not(feature = "writing-mode"))]
++            let vertical = false;
++            if vertical { 1.0 / ratio } else { ratio }
++        });
++        let output = taffy::compute_leaf_layout(
++            taffy::tree::LayoutInput { run_mode: RunMode::ComputeSize, ..inputs },
++            &style,
++            resolve_calc_value,
++            |known_dimensions, _available_space| match (known_dimensions.width, known_dimensions.height, natural_ratio) {
++                (Some(width), None, Some(ratio)) => taffy::Size { width, height: width / ratio },
++                (None, Some(height), Some(ratio)) => taffy::Size { width: height * ratio, height },
++                (width, height, _) => taffy::Size {
++                    width: width.unwrap_or(content.width),
++                    height: height.unwrap_or(content.height),
++                },
++            },
++        );
++        Some(output.size)
++    }
++
 +    #[inline(never)]
 +    fn lay_out_out_of_flow_boxes(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
 +        compute_oof_layout(self, node_id, output);
@@ -10048,7 +10122,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +385,91 @@
+@@ -217,13 +459,91 @@
          }
      }
  
@@ -10140,7 +10214,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +485,35 @@
+@@ -239,8 +559,35 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -10177,7 +10251,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +528,7 @@
+@@ -255,7 +602,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -10186,7 +10260,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -292,9 +565,11 @@
+@@ -292,9 +639,11 @@
                          &node.layout_style(),
                          resolve_calc_value,
                          |_known_size, _available_space| taffy::Size {
@@ -10201,7 +10275,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              height: resolved_line_height.unwrap_or(16.0) * rows,
                          },
                      );
-@@ -322,19 +597,86 @@
+@@ -322,19 +671,86 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -10291,7 +10365,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                                  inputs,
                                  &node.layout_style(),
                                  resolve_calc_value,
-@@ -354,28 +696,72 @@
+@@ -354,28 +770,72 @@
                                          height: min_size,
                                      }
                                  },
@@ -10375,7 +10449,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      // Width/height attributes are presentational hints mapped to the CSS
                      // width/height properties by
                      // `synthesize_presentational_hints_for_legacy_attributes`, so they
-@@ -407,39 +793,50 @@
+@@ -407,39 +867,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -10447,7 +10521,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +869,27 @@
+@@ -472,6 +943,27 @@
                          _ => unreachable!(),
                      };
  
@@ -10475,7 +10549,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -495,119 +913,299 @@
+@@ -495,119 +987,299 @@
  
                      let mut style = node.layout_style();
                      style.set_percent_basis(orthogonal_percent_basis);
@@ -10628,7 +10702,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            inputs.available_space =
 +                inputs.available_space.maybe_min(max_available_space);
 +        }
-+
+ 
+-            _ => taffy::LayoutOutput::HIDDEN,
 +        let SpecialElementData::TableRoot(context) = &self.nodes[dom_node_id(node_id)]
 +            .data
 +            .downcast_element()
@@ -10709,8 +10784,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            },
 +            output.scrollable_overflow_rect.is_reversed(),
 +        );
- 
--            _ => taffy::LayoutOutput::HIDDEN,
++
 +        output
 +    }
 +}
@@ -10788,7 +10862,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            };
 +            let caption_output = self.compute_child_layout(taffy_node_id(caption), caption_inputs);
 +            laid_out.push((caption, above, margin, caption_output));
-+        }
+         }
 +        let extent = |above: bool| -> f32 {
 +            laid_out
 +                .iter()
@@ -10834,7 +10908,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                self.set_unrounded_layout(taffy_node_id(*caption), &layout);
 +            }
 +            *context.grid_box.borrow_mut() = Some((top, grid_height));
-         }
++        }
 +        output.size.height = top + grid_height + bottom;
 +        output.baselines.first = output.baselines.first.map(|baseline| baseline + top);
 +        output.baselines.last = output.baselines.last.map(|baseline| baseline + top);
@@ -10861,7 +10935,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +1265,11 @@
+@@ -667,7 +1339,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -10874,7 +10948,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -698,17 +1300,20 @@
+@@ -698,17 +1374,20 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -10897,7 +10971,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +1326,7 @@
+@@ -721,6 +1400,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -10905,7 +10979,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +1338,14 @@
+@@ -732,6 +1412,14 @@
      }
  }
  
@@ -10920,7 +10994,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -782,16 +1396,86 @@
+@@ -782,16 +1470,86 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -11011,7 +11085,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -852,7 +1536,19 @@
+@@ -852,7 +1610,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -11032,7 +11106,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +1564,30 @@
+@@ -868,6 +1638,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -11063,7 +11137,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +1692,13 @@
+@@ -972,3 +1766,13 @@
          })
      }
  }
@@ -13121,7 +13195,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  use markup5ever::{LocalName, local_name};
  use taffy::{
      AvailableSpace, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, MaybeMath, MaybeResolve,
-@@ -16,6 +17,95 @@
+@@ -16,6 +17,118 @@
          || *tag_name == local_name!("iframe")
  }
  
@@ -13203,8 +13277,31 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +            }
 +            ImageData::None => false,
 +        },
-+        SpecialElementData::Canvas(_) => true,
-+        _ => false,
++        _ => element.name.local == local_name!("canvas"),
++    }
++}
++
++/// pyro: the natural aspect ratio of a replaced element that has one (see [`has_natural_ratio`];
++/// a canvas's is its `width` and `height` attributes', 300 by 150 without them), in physical
++/// axes.
++pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
++    use crate::node::{ImageData, SpecialElementData};
++    let usable = |ratio: f32| (ratio.is_finite() && ratio > 0.0).then_some(ratio);
++    match &element.special_data {
++        SpecialElementData::Image(image) => match &**image {
++            ImageData::Raster(image) => usable(image.width as f32 / image.height as f32),
++            #[cfg(feature = "svg")]
++            ImageData::Svg(svg) => match (svg.intrinsic_width(), svg.intrinsic_height()) {
++                (Some(width), Some(height)) if width > 0.0 && height > 0.0 => usable(width / height),
++                _ => svg.viewbox_aspect_ratio().and_then(usable),
++            },
++            ImageData::None => None,
++        },
++        _ if element.name.local == local_name!("canvas") => {
++            let attr = |name| element.attr(name).and_then(|value| value.trim().parse::<f32>().ok());
++            usable(attr(local_name!("width")).unwrap_or(300.0) / attr(local_name!("height")).unwrap_or(150.0))
++        }
++        _ => None,
 +    }
 +}
 +
@@ -13217,7 +13314,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  /// The intrinsic dimensions of a replaced element per CSS Images 3
  /// (https://drafts.csswg.org/css-images/#intrinsic-dimensions): an intrinsic
  /// width, an intrinsic height, and an intrinsic aspect ratio, each of which
-@@ -187,11 +277,22 @@
+@@ -187,11 +300,22 @@
                  // A ratio-only replaced element stretches to fit the width it is laid out
                  // in: the available width if definite, else (under a max-content constraint)
                  // its containing block, per CSS2 §10.3.2.
@@ -13242,7 +13339,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
                  if let Some(width) = stretch_fit_width {
                      Size {
                          width,
-@@ -286,6 +387,13 @@
+@@ -286,6 +410,13 @@
              RequestedAxis::Horizontal => {
                  style_size.width = None;
                  min_size.width = None;
@@ -13256,7 +13353,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
              }
              RequestedAxis::Vertical => {
                  style_size.height = None;
-@@ -295,6 +403,18 @@
+@@ -295,6 +426,18 @@
          }
      }
  
