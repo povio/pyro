@@ -184,8 +184,8 @@ from the root of an upstream checkout at that commit) is the whole diff.
     run draws its shadows, the last first, right before its glyphs (Chromium paints a text fragment's shadows right
     before it): the glyphs in the shadow's colour moved by its offset (the text's own colour does not matter:
     transparent text casts one), and a shadow with a blur radius inside a layer with a `blur()` of half the radius
-    (Chromium's `BlurRadiusToStdDev`). A line's decorations cast the shadows of the first run they cover, each line
-    right after its shadows. Not drawn in a `background-clip: text` mask, in a recording paint (the PDF matches each
+    (Chromium's `BlurRadiusToStdDev`). Each run under a decoration casts its own shadows on its part of the line
+    (lane G2, below), each line right after its shadows. Not drawn in a `background-clip: text` mask, in a recording paint (the PDF matches each
     glyph run to the text run recorded for it by its glyphs, which a shadow has too), nor in vertical writing modes
     (a shadow's offset is physical, and the lines are turned). Covered by `crates/pyro-render/tests/text_shadow.rs`.
 
@@ -320,6 +320,44 @@ from the root of an upstream checkout at that commit) is the whole diff.
     marks outside ruby). Annotations turn with their line in vertical writing modes, and a `background-clip: text`
     mask holds them.
   - Covered by `crates/pyro-render/tests/text_decoration_lines.rs` and `text_emphasis_ruby.rs`.
+- Inline fragments and text painting (WPT reftest lane G2); covered by `crates/pyro-render/tests/inline_fragments.rs`:
+  - `src/text.rs` (`line_insets`, `decoration_span`, `own_decoration`): `text-decoration-inset` applies at a
+    decorating box's ends: with `box-decoration-break: slice` (the initial value) the insets cut the box's fragments
+    (the lines it has text on) laid side by side as one strip, the start inset from the start of its first fragment
+    and the end inset from the end of its last, what is longer than a fragment carrying into the next (WPT
+    `text-decoration-inset-percentage-slice-multiline`); with `clone` both at the ends of every fragment (they
+    applied at both ends of every line). Percentages are of the box's whole decoration line (its runs on all its
+    lines, with its inline padding and borders), or of the fragment's for `clone` (they were of the line's runs). `auto`
+    is a twelfth and a half of the font size, at least 1px (Stylo's servo value; it was no inset). The start is on the
+    right in a right-to-left box. `stroke_text` takes the whole layout to find a box's lines (kept in
+    `DrawTextContext::spans` while the same layout is drawn line by line); without it (an input's text, a marker, the
+    ellipsis) each line is the whole box, as before. Vertical writing modes are left to lane L: the padding and
+    borders counted are the physical left and right ones, not the inline axis's.
+  - `src/text.rs` (`stroke_text`, `hanging_start`): white space hanging at the end of a left-to-right line is not
+    decorated, nor counted in a box's decoration line (Chromium removes it): the line ends where the last run ends,
+    less the hanging advance.
+  - `src/text.rs` (`snapped_ends`, `flush_line_decorations`): a decoration line's ends are on whole device pixels
+    where it is drawn only moved into a raster, so that the lines of adjacent boxes meet without a partly covered
+    pixel, and a line ends where a reference's clip cuts the same line (WPT `text-underline-offset-calc`,
+    `text-decoration-inset-003`, `text-decoration-subelements-002`; Chromium's lines end on whole pixels there because
+    its glyph advances are whole on WPT's Linux runs).
+  - `src/text.rs` (`flush_line_decorations`, `LineDecoration::segments`): a line's decorations are painted outermost
+    box first, an inner box's line over an outer box's (the order of Chromium's applied decorations; it was the
+    reverse), and each run under a decoration casts its own shadows on its part of the line, in pieces of runs with
+    the same shadow cut on whole pixels, none where a run has no shadow at that index (they cast the first run's;
+    WPT `text-shadow/decorations-multiple-zorder`).
+  - `src/text.rs` (`draw_inline_text_mask`, `DrawTextContext::only_within`, `InlineTextMask`), `src/render.rs`
+    (`draw_inline_boxes`, `draw_text_mask`): `background-clip: text` on an inline box (not atomic) masks with the
+    glyphs of its own text and its descendants', drawn where its inline root draws them (line tops, layout-unit x),
+    in each fragment's border box; the mask was empty. A block's mask is placed as its text is drawn and cut by
+    `text-overflow: ellipsis` as the text is (`stroke_inline_text`, which `draw_inline_layout` shares), and so is an
+    inline box's (`InlineTextMask::cut`). An inline box's mask does not hold ruby annotations or emphasis marks yet.
+  - `src/render.rs` (`draw_inline_boxes`): a box sliced across lines that has box shadows or background images
+    paints them as those of the whole box, its fragments laid side by side in line order (right to left for a
+    right-to-left box), each fragment its piece: the background and the inner shadows in the fragment's border box,
+    the outer shadows outside it but not past its open sides (Blink's `PaintRectForImageStrip`; WPT
+    `box-shadow/slice-inline-fragmentation-*`). Each fragment cast a closed shadow, and a gradient started over in
+    each. A box of colours alone paints as before, one box per fragment.
 - `src/render.rs` (`render_element`): an element whose 3D transform hides it (blitz-dom's
   `NodeFlags::TRANSFORM_HIDES`: its back face shows with `backface-visibility: hidden`, it lies behind the
   viewer, or its matrix has no inverse) is not painted, nor is its content. Covered by

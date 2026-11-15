@@ -3708,6 +3708,7 @@ servo_restyle_damage = "repaint"
 [box-decoration-break]
 struct = "border"
 spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
+extra_prefixes = ["webkit"]
 animation_type = "discrete"
 affects = "layout"
 type = "BoxDecorationBreak"

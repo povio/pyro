@@ -84,7 +84,6 @@ COUNTED_UNKNOWN_PROPERTIES = [
     "-webkit-mask-repeat-y",
     "user-zoom",
     "min-zoom",
-    "-webkit-box-decoration-break",
     "orientation",
     "max-zoom",
     "-webkit-app-region",

@@ -76,6 +76,12 @@ crate (`diff -ruN`).
   names (`Node::transform_reference_box`: the content box for `content-box` and `fill-box`, the border box
   otherwise; "3D transforms flattened").
 
+- `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `-webkit-box-decoration-break` is an alias
+  of `box-decoration-break` (`extra_prefixes = ["webkit"]`; it was a counted unknown property, so the declaration was
+  dropped), as in Chromium, which supports both. blitz-paint reads the value for `text-decoration-inset` and for the
+  shadows and backgrounds of inline boxes broken across lines (`vendor/blitz-paint/README.pyro.md`, "Inline
+  fragments and text painting").
+
 ## Text decorations and emphasis
 
 - `properties/longhands.toml`: `text-decoration-skip-ink` is parsed and computed for Servo too (upstream: Gecko only);
