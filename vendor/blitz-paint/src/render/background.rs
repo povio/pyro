@@ -209,6 +209,9 @@ impl ElementCx<'_, '_> {
         let last_clip = *get_cyclic(&bg_styles.background_clip.0, layer_count - 1);
         let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
         let background_clip: BoxModelBox = last_clip.into();
+        // pyro: Chromium's bleed avoidance for a rounded box whose border hides its edge, worked
+        // out when a layer cut to the border box paints.
+        let shrunk_border_box = std::cell::OnceCell::new();
         let clip_path = |clip: BoxModelBox,
                          border_area: bool,
                          attachment: StyloBackgroundAttachment| {
@@ -216,14 +219,15 @@ impl ElementCx<'_, '_> {
                 (Some(canvas), _) => canvas.to_path(0.1),
                 (None, Some(local)) => local.box_path(clip),
                 (None, None) if border_area => self.border_area_path(),
-                (None, None) => self.box_path(clip),
+                (None, None) => match clip {
+                    BoxModelBox::BorderBox => shrunk_border_box
+                        .get_or_init(|| self.bleed_avoiding_border_box(style))
+                        .clone()
+                        .unwrap_or_else(|| self.box_path(clip)),
+                    _ => self.box_path(clip),
+                },
             }
         };
-        let background_clip_path = clip_path(
-            background_clip,
-            last_clip == StyloBackgroundClip::BorderArea,
-            last_attachment,
-        );
 
         // pyro: `background-blend-mode`: each layer blends with the layers and the colour under it,
         // in an isolated group (Compositing 1 §8.1: not with what lies behind the element).
@@ -244,6 +248,12 @@ impl ElementCx<'_, '_> {
             .resolve_to_absolute(&current_color)
             .as_srgb_color();
         if bg_color != Color::TRANSPARENT {
+            // pyro: the colour's clip only when there is a colour.
+            let background_clip_path = clip_path(
+                background_clip,
+                last_clip == StyloBackgroundClip::BorderArea,
+                last_attachment,
+            );
             let local_color = local_cx(last_attachment).is_some();
             if local_color {
                 scene.push_clip_layer(
@@ -313,6 +323,97 @@ impl ElementCx<'_, '_> {
         if blends {
             scene.pop_layer();
         }
+    }
+
+    /// pyro: the border box that `background-clip: border-box` layers are cut to under a rounded
+    /// border that hides the background's edge, as Chromium paints it
+    /// (`BoxDecorationData::ComputeBleedAvoidance`, `kBackgroundBleedShrinkBackground`): every
+    /// side's colour opaque and its style neither dotted, dashed nor hidden, some border drawn,
+    /// no border image. The box is inset by half of each side's width (a sixth with a `double`
+    /// side) and its radii shrink with it, so the border covers the background's antialiased
+    /// edge: drawn to the outer edge, the background showed through the border's own
+    /// antialiasing there, a dark seam around a light border. `None` when the background is cut
+    /// to the border box as it is (also under a side narrower than two device pixels).
+    fn bleed_avoiding_border_box(&self, style: &ComputedValues) -> Option<BezPath> {
+        use style::values::specified::BorderStyle;
+        if !self.frame.has_border_radius() {
+            return None;
+        }
+        let border = style.get_border();
+        if !matches!(border.border_image_source, GenericImage::None) {
+            return None;
+        }
+        let current_color = style.clone_color();
+        let widths = self.frame.border_width;
+        let sides = [
+            (
+                &border.border_top_color,
+                border.border_top_style,
+                widths.y0,
+            ),
+            (
+                &border.border_right_color,
+                border.border_right_style,
+                widths.x1,
+            ),
+            (
+                &border.border_bottom_color,
+                border.border_bottom_style,
+                widths.y1,
+            ),
+            (
+                &border.border_left_color,
+                border.border_left_style,
+                widths.x0,
+            ),
+        ];
+        if !sides.iter().any(|(_, _, width)| *width > 0.0) {
+            return None;
+        }
+        let mut double = false;
+        for (color, side_style, width) in sides {
+            let opaque = color.resolve_to_absolute(&current_color).alpha >= 1.0;
+            if !opaque
+                || matches!(
+                    side_style,
+                    BorderStyle::Hidden | BorderStyle::Dotted | BorderStyle::Dashed
+                )
+            {
+                return None;
+            }
+            // A side under two device pixels keeps the background to the outer edge: the
+            // background's edge, half a pixel in, and the border's two antialiased edges share
+            // its pixels, and what is under the box showed through where their coverages met
+            // (WPT `filter-effects/blur-clip-border-radius`, a 1px border).
+            if width > 0.0 && width < 2.0 {
+                return None;
+            }
+            // A double border under 3px is drawn solid (Blink's `BorderEdge::EffectiveStyle`).
+            double |= side_style == BorderStyle::Double && width >= 3.0 * self.scale;
+        }
+        let fraction = if double { 1.0 / 6.0 } else { 0.5 };
+        let insets = kurbo::Insets::new(
+            widths.x0 * fraction,
+            widths.y0 * fraction,
+            widths.x1 * fraction,
+            widths.y1 * fraction,
+        );
+        let radii = self.frame.border_radii;
+        let shrink = |r: Vec2, dx: f64, dy: f64| Vec2::new((r.x - dx).max(0.0), (r.y - dy).max(0.0));
+        let radii = NonUniformRoundedRectRadii {
+            top_left: shrink(radii.top_left, insets.x0, insets.y0),
+            top_right: shrink(radii.top_right, insets.x1, insets.y0),
+            bottom_right: shrink(radii.bottom_right, insets.x1, insets.y1),
+            bottom_left: shrink(radii.bottom_left, insets.x0, insets.y1),
+        };
+        let shrunk = CssBox::new(
+            self.frame.border_box - insets,
+            kurbo::Insets::ZERO,
+            kurbo::Insets::ZERO,
+            0.0,
+            radii,
+        );
+        Some(shrunk.border_box_path())
     }
 
     /// pyro: this element's boxes as a `background-attachment: local` layer sees them on a scroll
@@ -676,6 +777,11 @@ impl ElementCx<'_, '_> {
             return;
         }
 
+        // pyro: an image without a `viewBox` or a size lays its content out in the size it is
+        // drawn at (`SvgImageData::for_url`); it was stretched from usvg's 100x100.
+        let sized = svg.sized(bg_size.width as f32, bg_size.height as f32);
+        let svg = sized.as_ref().unwrap_or(svg);
+
         let viewport = super::svg_viewport_affine(
             svg,
             (bg_size.width * self.scale) as f32,
@@ -708,6 +814,15 @@ impl ElementCx<'_, '_> {
         if x.count as u64 * y.count as u64 > 2_000 {
             return;
         }
+        // pyro: an image ends at its viewport: content past it (a stroke on the root's edges) is
+        // cut off, tile by tile, when there is any (it was drawn over the neighbouring tiles and
+        // the area around them).
+        let size = svg.tree.size();
+        let ink = svg.tree.root().abs_layer_bounding_box();
+        let overflows = ink.left() < -0.01
+            || ink.top() < -0.01
+            || ink.right() > size.width() + 0.01
+            || ink.bottom() > size.height() + 0.01;
         for hc in 0..y.count {
             for wc in 0..x.count {
                 let origin = Vec2::new(
@@ -715,7 +830,14 @@ impl ElementCx<'_, '_> {
                     y.start + hc as f64 * y.stride,
                 );
                 let transform = base_transform * kurbo::Affine::translate(origin) * viewport;
-                anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+                if overflows {
+                    let tile = Rect::from_origin_size(origin.to_point(), bg_size);
+                    scene.push_clip_layer(Fill::NonZero, base_transform, &tile);
+                    anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+                    scene.pop_layer();
+                } else {
+                    anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+                }
             }
         }
     }
@@ -980,35 +1102,84 @@ fn compute_layer_position_and_size(
 
     let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
 
+    let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
+    let bg_size = round_layer_size(
+        bg_size,
+        container_w,
+        container_h,
+        matches!(repeat_x, Round),
+        matches!(repeat_y, Round),
+        size_is_auto(layer.size),
+    );
+
+    // pyro: the image is positioned at its final size, after `round` scaled it (CSS Backgrounds
+    // 3 §3.9: sizing, the round step, then positioning; it was positioned at its unrounded size).
     let bg_pos = compute_layer_position(
         layer,
         (container_w - bg_size.width) as f32,
         (container_h - bg_size.height) as f32,
     );
 
-    let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
-
-    let bg_size = if matches!(repeat_x, Round) && matches!(repeat_y, Round) {
-        let count = (container_w / bg_size.width).round();
-        let width = container_w / count;
-
-        let count = (container_h / bg_size.height).round();
-        let height = container_h / count;
-
-        Size::new(width, height)
-    } else if matches!(repeat_x, Round) {
-        let count = (container_w / bg_size.width).round();
-        let width = container_w / count;
-        Size::new(width, bg_size.height)
-    } else if matches!(repeat_y, Round) {
-        let count = (container_h / bg_size.height).round();
-        let height = container_h / count;
-        Size::new(bg_size.width, height)
-    } else {
-        bg_size
-    };
-
     (bg_pos, bg_size)
+}
+
+/// Which axes of a `background-size` are `auto` (x, y).
+fn size_is_auto(size: &BackgroundSize) -> (bool, bool) {
+    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
+    match size {
+        BackgroundSize::ExplicitSize { width, height } => {
+            (matches!(width, Lpa::Auto), matches!(height, Lpa::Auto))
+        }
+        BackgroundSize::Cover | BackgroundSize::Contain => (false, false),
+    }
+}
+
+/// pyro: the round step of CSS Backgrounds 3 §3.9 on a layer sized `size` in a positioning area
+/// `container_w` x `container_h`: a `round` axis is scaled to fit a whole number of copies (at
+/// least one), and when only one axis rounds and `background-size` is `auto` in the other (`auto`
+/// in `auto_axes`), the other is scaled with it, so the image keeps the aspect ratio it had.
+/// Upstream left the other axis alone, and divided by zero copies for an image more than twice
+/// the area's size.
+fn round_layer_size(
+    size: Size,
+    container_w: f64,
+    container_h: f64,
+    round_x: bool,
+    round_y: bool,
+    auto_axes: (bool, bool),
+) -> Size {
+    let round = |container: f64, len: f64| {
+        if len > 0.0 && container > 0.0 {
+            container / (container / len).round().max(1.0)
+        } else {
+            len
+        }
+    };
+    match (round_x, round_y) {
+        (true, true) => Size::new(
+            round(container_w, size.width),
+            round(container_h, size.height),
+        ),
+        (true, false) => {
+            let width = round(container_w, size.width);
+            let height = if auto_axes.1 && size.width > 0.0 {
+                size.height * width / size.width
+            } else {
+                size.height
+            };
+            Size::new(width, height)
+        }
+        (false, true) => {
+            let height = round(container_h, size.height);
+            let width = if auto_axes.0 && size.height > 0.0 {
+                size.width * height / size.height
+            } else {
+                size.width
+            };
+            Size::new(width, height)
+        }
+        (false, false) => size,
+    }
 }
 
 #[inline]
