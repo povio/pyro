@@ -240,6 +240,15 @@ export function entryOf(status, ms, all, pass, n) {
   return { ...e, pass: [...pass].sort() };
 }
 export const passCount = (e) => (e.pass ? e.pass.length : e.n - e.fail.length);
+// The file: one page per line, sorted, so a baseline change reads as a small diff and two branches' changes merge
+// (merge-baseline.mjs merges them page by page).
+export function formatBaseline(head, tests) {
+  const urls = Object.keys(tests).sort();
+  let s = JSON.stringify(head, null, 1).replace(/\n}$/, ',\n "tests": {\n');
+  s += urls.map((u) => `  ${JSON.stringify(u)}: ${JSON.stringify(tests[u])}`).join(',\n');
+  s += '\n }\n}\n';
+  return s;
+}
 
 // What every run of a page agrees on (a run and its reruns): it completed only if every run did, a subtest passed
 // only if it passed in every run, and `all` is its set of names when every run completed with the same one.

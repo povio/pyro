@@ -31,8 +31,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  MAX_IGNORED_INCOMPLETE, consensus, differs, entryOf, isImprovement, isRegression, judge, lostCount, mergeEntry,
-  newMs, passCount, passing, readFlaky, readJson, roundMs, skippable, weakening, wholePage,
+  MAX_IGNORED_INCOMPLETE, consensus, differs, entryOf, formatBaseline, isImprovement, isRegression, judge, lostCount,
+  mergeEntry, newMs, passCount, passing, readFlaky, readJson, roundMs, skippable, weakening, wholePage,
 } from './lib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -343,13 +343,8 @@ function delta(old, e) {
   return { gained: Math.max(0, d), lost: Math.max(0, -d) };
 }
 
-// One page per line, sorted, so a baseline change reads as a small diff and two branches' changes merge.
 function writeBaseline(file, head, tests) {
-  const urls = Object.keys(tests).sort();
-  let s = JSON.stringify(head, null, 1).replace(/\n}$/, ',\n "tests": {\n');
-  s += urls.map((u) => `  ${JSON.stringify(u)}: ${JSON.stringify(tests[u])}`).join(',\n');
-  s += '\n }\n}\n';
-  fs.writeFileSync(file, s);
+  fs.writeFileSync(file, formatBaseline(head, tests));
 }
 
 // ---------- diff ----------
