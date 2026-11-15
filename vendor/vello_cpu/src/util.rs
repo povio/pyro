@@ -7,16 +7,20 @@ use vello_common::fearless_simd::{f32x4, prelude::*, u8x32};
 use vello_common::math::FloatExt;
 use vello_common::util::{narrow, widen};
 
-/// pyro: a division by 255 rounded to the nearest integer, as Skia's 8-bit pipeline divides
-/// (`div255` in `SkRasterPipeline_opts.h`, its NEON form `vraddhn_u16(v, vrshrq_n_u16(v, 8))`),
-/// for every product of two 8-bit values the u8 pipeline composites with.
+/// pyro: a division by 255 rounded to the nearest integer, for every product of two 8-bit values
+/// the u8 pipeline composites with: as Skia's 8-bit pipeline divides on NEON (`div255` in
+/// `SkRasterPipeline_opts.h`, `vrshrq_n_u16(vrsraq_n_u16(v, v, 8), 8)`, the same value) and as a
+/// GPU's float blend rounds (Chromium on macOS). Skia's lowp `div255` on other CPUs is upstream's
+/// `(v + 255) / 256`.
 ///
-/// vello_common's `Div255Ext` (`(v + 255) >> 8`, `ceil(v / 256)`) is a level high for about half
-/// of all products, so a translucent colour over another (`rgba(.., .5)` over `rgba(.., .5)`, an
-/// opacity group over a background, a backdrop under a translucent box) came out a level off the
-/// colour Chromium paints, and off the references that spell that colour out as one opaque
-/// colour (WPT box-shadow-multiple-001, t32-opacity-zorder-c, backdrop-filter-isolation-*). Both
-/// are exact for multiples of 255 (`div_255(v * 255) == v`), so opaque compositing is unchanged.
+/// vello_common's `Div255Ext` (`(v + 255) >> 8`, `ceil(v / 256)`) is a level off for about 29% of
+/// all products, nearly always high, so a translucent colour over another (`rgba(.., .5)` over
+/// `rgba(.., .5)`, an opacity group over a background, a backdrop under a translucent box) came
+/// out a level off the colour Chromium paints, and off the references that spell that colour out
+/// as one opaque colour (WPT box-shadow-multiple-001, t32-opacity-zorder-c,
+/// backdrop-filter-isolation-*). Both are exact for multiples of 255 (`div_255(v * 255) == v`), so
+/// fully covered opaque pixels composite as before; about a fifth of the antialiased edge pixels
+/// of opaque content over another colour move by a level.
 ///
 /// Valid for `v <= 255 * 255 + 127`; every product of two `u8` is.
 pub(crate) trait Div255Ext: private::Sealed {
@@ -64,8 +68,9 @@ where
 }
 
 pub(crate) mod scalar {
-    /// pyro: a division by 255 rounded to the nearest integer, as Skia's 8-bit pipeline divides
-    /// (see [`Div255Ext`](super::Div255Ext)). Upstream rounded up (`(val + 255) >> 8`).
+    /// pyro: a division by 255 rounded to the nearest integer, as Skia's 8-bit pipeline divides on
+    /// NEON (see [`Div255Ext`](super::Div255Ext)). Upstream divided by 256 rounding up
+    /// (`(val + 255) >> 8`).
     ///
     /// Valid for `val <= 255 * 255 + 127`.
     #[inline(always)]
