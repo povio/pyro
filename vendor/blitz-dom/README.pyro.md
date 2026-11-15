@@ -756,8 +756,8 @@ collected and grids laid out whole or again.
 parent whose child list or text changed with `CHILDREN_CHANGED` (`CONSTRUCT_FC`: collect its layout children again),
 not `ALL_DAMAGE`; `CONSTRUCT_BOX` means the node's own box changed. A reconstructing node forwards `RELAYOUT |
 CONSTRUCT_DESCENDENT` to its parent, plus `CONSTRUCT_FC` only when its own box changed or when its children are laid
-out by an ancestor: `display: inline` boxes (to the inline root, replaced ones included since `is_or_contains_block`
-looks through them), `display: contents`, table rows, row groups, columns and column groups (to the table) and list
+out by an ancestor: `display: inline` boxes (to the inline root, replaced ones included, though `is_or_contains_block`
+does not look through an atomic inline box: an `<object>` is one only while it shows an image), `display: contents`, table rows, row groups, columns and column groups (to the table) and list
 items (to the list). A paragraph appended deep in a page collects its container's children again, not every
 ancestor's. `phase_profile::constructions` counts the collections (and, with it, the tables built from scratch).
 Covered by `crates/pyro-render/tests/incremental_construction.rs` (each change compared with a fresh build, boxes and
@@ -1102,8 +1102,10 @@ generalizes `with_root_size`. Tests: `an_svg_view_fragment_shows_the_view` and
 `svg` namespace prefix: the sheet's default namespace is XHTML's), so an inline `<svg>`'s content stops at its box;
 blitz-paint's `draw_svg` makes the cut, at the content box. `src/stylo.rs` (`build_presentational_hints`): an SVG
 element's `overflow` attribute is the property's presentation attribute (`overflow="visible"` overrides the UA
-rule); `parse_svg_presentation_attr` returns every longhand a shorthand sets. In layout the `overflow` of a replaced
-element is `clip` (stylo_taffy's README). WPT CSS2 `*-replaced-*` pages with `svg:svg`; covered by
+rule); `parse_svg_presentation_attr` returns every longhand a shorthand sets. In layout that `overflow` counts as
+on any box, as in Chromium (measured in Chrome 157): a replaced flex item whose `overflow` is not `visible` has an
+automatic minimum size of 0, so SVG icons shrink in a row too narrow for them, and a block-level replaced element
+stays clear of floats with any `overflow`. WPT CSS2 `*-replaced-*` pages with `svg:svg`; covered by
 `crates/pyro-render/tests/svg_viewport_clip.rs`.
 
 ## `<object>` images
@@ -1115,7 +1117,8 @@ element is `clip` (stylo_taffy's README). WPT CSS2 `*-replaced-*` pages with `sv
 (its `type` is `image/*`, or without a `type` the URL's extension names an image format) loads it as `<img>` loads
 its `src`. Once it has loaded, the object is replaced content: laid out by `compute_replaced_layout` from the image's
 natural size and ratio, an atomic inline box when inline-level, painted by blitz-paint's `draw_image` or `draw_svg`,
-and its children (the fallback) build no boxes. Until then, when the load fails, and for other objects (`text/html`:
+and its children (the fallback) build no boxes: `Node::is_or_contains_block` does not look through an atomic
+inline box (`is_inline_box`), so a block in the fallback does not split the object. Until then, when the load fails, and for other objects (`text/html`:
 nested documents are not done), the children render as before. Removing `data` or changing `type` away from an image
 shows the fallback again. An SVG with no natural width, height or ratio keeps the fallback too
 (`object_shows_image`, `src/document.rs` `apply_loaded_image`): Chromium draws one at the default object size, which
@@ -1283,7 +1286,9 @@ Tests: `an_image_marker_ends_7px_before_the_item_on_its_first_baseline`,
     `vertical-align: baseline` (or any value but `top`, `middle`, `bottom`; `align-content: normal`), spanning one row,
     in a horizontal table, are aligned on their row's baseline (Taffy's `table_baseline` works out the offsets from
     each cell's baseline, `table_cell_baseline`: its own layout's, else the bottom of its content box when it has
-    content, which an empty cell does not, whatever its `height`). A cell's offset is stored on it before its final layout; a change clears its layout cache. Its layout
+    content, which an empty cell does not, whatever its `height`). A cell's offset is stored on it before its final layout; a change clears its layout cache. Taffy sets the offsets
+    only in a table with such cells, so a cell collected as not aligned (`collect_table_cells`) drops its own: a table
+    that lost its last baseline-aligned cell, or turned vertical, lays its cells out as a fresh build does. Its layout
     then moves its in-flow and floated children, its lines (`TextLayout::block_offset`), its out-of-flow candidates'
     static positions, its overflow and its baselines down by the offset, inside the layout cache, so a cached layout
     keeps them there. A table with such cells hands its `TableGridState` back only while none of its cells

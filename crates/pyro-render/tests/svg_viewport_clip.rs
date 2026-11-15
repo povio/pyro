@@ -2,9 +2,9 @@
 //! (`svg:not(:root) { overflow: hidden }`, the overflow clip of a replaced element at its content
 //! box): before, content past the box painted (WPT CSS2 `absolute-replaced-width-002` drew a
 //! 200x100 rect under a 50 px high `<svg:svg>`). `overflow: visible`, in CSS or as the
-//! presentation attribute, keeps the content. The `overflow` stays paint-only: the `<svg>` is no
-//! scroll container in layout (a flex item's automatic minimum size stays its content size). An
-//! SVG image is cut at its box whatever its root's `overflow`.
+//! presentation attribute, keeps the content. In layout that `overflow` counts as on any other
+//! box, as in Chromium: a flex item's automatic minimum size is 0 with it, and a block-level
+//! `<svg>` stays clear of floats. An SVG image is cut at its box whatever its root's `overflow`.
 use std::sync::Arc;
 
 use pyro_render::*;
@@ -92,19 +92,85 @@ fn a_rounded_svg_cuts_at_its_corners() {
     assert_eq!(pixel(&img, 3, 3), WHITE, "the corner");
 }
 
-/// The `overflow` of an `<svg>` is paint-only: as a flex item it keeps its content size as its
-/// automatic minimum size, and a narrow row does not shrink it (Chromium: a replaced element is no
-/// scroll container).
+/// An `<svg>` whose `overflow` is not `visible` (the UA sheet's `hidden`) has an automatic minimum
+/// size of 0 as a flex item, as any replaced element with such an `overflow` has in Chromium: a
+/// narrow row shrinks it. (Chrome 157: two 40px SVGs in a 50px row are 25px each.)
 #[test]
-fn an_svg_flex_item_does_not_shrink_below_its_size() {
+fn an_svg_flex_item_shrinks_in_a_narrow_row() {
     let img = render(
         "<div style='display:flex; width:50px'>
            <svg width='40' height='20'><rect width='40' height='20' fill='blue'/></svg>
            <svg width='40' height='20'><rect width='40' height='20' fill='green'/></svg>
          </div>",
     );
+    assert_eq!(pixel(&img, 22, 10), BLUE, "the first is 25px wide");
+    assert_eq!(pixel(&img, 27, 10), GREEN, "the second starts at 25px");
+    assert_eq!(pixel(&img, 47, 10), GREEN, "and is 25px wide");
+    assert_eq!(pixel(&img, 53, 10), WHITE, "the row ends at 50px");
+}
+
+/// With `overflow: visible` the `<svg>` keeps its content size as its automatic minimum size, and
+/// the other item takes the rest (Chrome 157: 40px and 10px).
+#[test]
+fn an_overflow_visible_svg_flex_item_keeps_its_size() {
+    let img = render(
+        "<div style='display:flex; width:50px'>
+           <svg width='40' height='20' style='overflow:visible'><rect width='40' height='20' fill='blue'/></svg>
+           <svg width='40' height='20'><rect width='40' height='20' fill='green'/></svg>
+         </div>",
+    );
     assert_eq!(pixel(&img, 38, 10), BLUE, "the first keeps 40px");
-    assert_eq!(pixel(&img, 75, 10), GREEN, "the second starts at 40px");
+    assert_eq!(pixel(&img, 45, 10), GREEN, "the second has the 10px left");
+    assert_eq!(pixel(&img, 53, 10), WHITE, "and is cut there");
+}
+
+/// The same for other replaced elements: a `<canvas>` with `overflow: hidden` shrinks, one without
+/// keeps its size (Chrome 157: 10px and 40px).
+#[test]
+fn a_replaced_flex_item_with_hidden_overflow_shrinks() {
+    let img = render(
+        "<div style='display:flex; width:50px; align-items:flex-start'>
+           <canvas width='40' height='20' style='overflow:hidden; background:blue'></canvas>
+           <canvas width='40' height='20' style='background:green'></canvas>
+         </div>",
+    );
+    assert_eq!(pixel(&img, 5, 2), BLUE, "the first is 10px wide");
+    assert_eq!(pixel(&img, 12, 2), GREEN, "the second starts at 10px");
+    assert_eq!(pixel(&img, 47, 2), GREEN, "and keeps 40px");
+}
+
+/// In a grid the SVGs' `width` is their minimum contribution, whatever their `overflow` (Chrome
+/// 157: two 40px SVGs in a 50px grid of two `auto` columns stay 40px, at 0 and 40).
+#[test]
+fn svg_grid_items_with_a_width_keep_their_columns() {
+    let img = render(
+        "<div style='display:grid; width:50px; grid-template-columns:auto auto'>
+           <svg width='40' height='20'><rect width='40' height='20' fill='blue'/></svg>
+           <svg width='40' height='20'><rect width='40' height='20' fill='green'/></svg>
+         </div>",
+    );
+    assert_eq!(pixel(&img, 38, 10), BLUE, "the first keeps 40px");
+    assert_eq!(pixel(&img, 42, 10), GREEN, "the second starts at 40px");
+    assert_eq!(pixel(&img, 78, 10), GREEN, "and keeps 40px");
+}
+
+/// A block-level replaced element stays clear of a float, with or without a clipping `overflow`
+/// (Chrome 157: each sits at x=100 beside a 100px left float).
+#[test]
+fn block_level_replaced_elements_avoid_floats() {
+    for replaced in [
+        "<canvas width='40' height='20' style='display:block; background:blue'></canvas>",
+        "<canvas width='40' height='20' style='display:block; overflow:hidden; background:blue'></canvas>",
+        "<svg width='40' height='20'><rect width='40' height='20' fill='blue'/></svg>",
+        "<svg width='40' height='20' style='overflow:visible'><rect width='40' height='20' fill='blue'/></svg>",
+    ] {
+        let img = render(&format!(
+            "<div style='width:300px'><div style='float:left; width:100px; height:50px'></div>{replaced}</div>"
+        ));
+        assert_eq!(pixel(&img, 10, 10), WHITE, "not under the float: {replaced}");
+        assert_eq!(pixel(&img, 105, 10), BLUE, "beside the float: {replaced}");
+        assert_eq!(pixel(&img, 135, 10), BLUE, "40px wide: {replaced}");
+    }
 }
 
 /// An SVG image is cut at its box, whatever its root element's `overflow`.

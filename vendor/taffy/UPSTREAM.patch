@@ -2480,7 +2480,7 @@ index c18fa644..50154417 100644
  #[doc(inline)]
  pub use crate::style::Style;
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..106716b2 100644
+index 7d4adf22..5d4fadbc 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -290,6 +290,16 @@ pub trait RoundTree: TraverseTree {
@@ -2500,7 +2500,7 @@ index 7d4adf22..106716b2 100644
  }
  
  /// Trait used by the `print_tree` method which prints a debug representation
-@@ -344,6 +354,75 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -344,6 +354,76 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
  
@@ -2545,7 +2545,8 @@ index 7d4adf22..106716b2 100644
 +    }
 +
 +    /// pyro: how far down a cell's content is laid out in its box (`offset`, its row's baseline less its own),
-+    /// set before the cell's final layout in a table with baseline-aligned cells (0 for the other cells).
++    /// set before the cell's final layout in a table with baseline-aligned cells (0 for the other cells). Not
++    /// called in a table without them: the tree resets the offset of a cell that stops being aligned itself.
 +    fn set_table_cell_baseline_offset(&mut self, _node_id: NodeId, _child_node_id: NodeId, _offset: f32) {}
 +
 +    /// pyro: a baseline-aligned cell's baseline from the top of its border box, laid out with `inputs` (its
@@ -2576,7 +2577,7 @@ index 7d4adf22..106716b2 100644
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
-@@ -373,6 +452,21 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +453,21 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  

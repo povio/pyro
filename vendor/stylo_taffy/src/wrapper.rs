@@ -170,26 +170,10 @@ impl<T: Deref<Target = ComputedValues>> From<T> for TaffyStyloStyle<T> {
 impl<T: Deref<Target = ComputedValues>> From<TaffyStyloStyle<T>> for taffy::Style<Atom> {
     fn from(value: TaffyStyloStyle<T>) -> Self {
         let mut style = convert::to_taffy_style(&value.style);
-        style.overflow = replaced_overflow(style.overflow, value.flags);
         value.layout_wm().transpose_style(&mut style);
         style.item_is_replaced = value.flags.contains(StyleFlags::IS_REPLACED);
         style
     }
-}
-
-/// pyro: the `overflow` of a replaced element (the UA sheet's `hidden` on an inline `<svg>`) only
-/// clips its content, at its content box, in paint: it is no scroll container, so as a flex or
-/// grid item its automatic minimum size stays its content size, and it starts no formatting
-/// context, as in Chromium. A clipping value is `clip` here, which taffy treats so.
-#[inline]
-fn replaced_overflow(overflow: taffy::Point<taffy::Overflow>, flags: StyleFlags) -> taffy::Point<taffy::Overflow> {
-    if !flags.contains(StyleFlags::IS_REPLACED) {
-        return overflow;
-    }
-    overflow.map(|o| match o {
-        taffy::Overflow::Visible => taffy::Overflow::Visible,
-        _ => taffy::Overflow::Clip,
-    })
 }
 
 // CoreStyle impl
@@ -235,7 +219,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
             x: convert::overflow(box_styles.overflow_x),
             y: convert::overflow(box_styles.overflow_y),
         };
-        self.layout_wm().logical_point(replaced_overflow(overflow, self.flags))
+        self.layout_wm().logical_point(overflow)
     }
 
     #[inline]

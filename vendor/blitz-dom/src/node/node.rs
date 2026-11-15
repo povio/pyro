@@ -1179,6 +1179,12 @@ impl Node {
             DisplayOutside::None => false,
             DisplayOutside::Block => true,
             _ => {
+                // pyro: an atomic inline box (a replaced element, an `<object>` showing an
+                // image) contains no block for its container: its children are its own
+                // content (`<svg>`) or are not rendered (an object's fallback).
+                if self.element_data().is_some_and(crate::layout::replaced::is_inline_box) {
+                    return false;
+                }
                 if display.inside() == DisplayInside::Flow {
                     self.children
                         .iter()

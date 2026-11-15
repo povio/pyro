@@ -3142,20 +3142,27 @@ fn collect_table_cells(
                 enter_layout_tree(doc, node_id);
             }
             let node = &mut doc.nodes[node_id];
+            let rowspan: u16 = node
+                .attr(local_name!("rowspan"))
+                .and_then(|val| val.parse::<u16>().ok())
+                .map(|v| v.clamp(1, 65534))
+                .unwrap_or(1);
+            let baseline =
+                !wm.is_vertical() && rowspan == 1 && is_baseline_aligned(&node.primary_styles().unwrap());
+            // pyro: the grid sets the offsets only in a table with baseline-aligned cells
+            // (`table_has_baseline_cells`): a cell that is no longer aligned so drops its own here,
+            // or it would keep it once the table has none left (or in a table without any).
+            if !baseline {
+                set_cell_baseline_offset(node, 0.0);
+            }
             let stylo_style = &node.primary_styles().unwrap();
             let percent_width = stylo_taffy::convert::dimension(stylo_style.get_width()).tag() == taffy::CompactLength::PERCENT_TAG;
             let colspan: u16 = node
                 .attr(local_name!("colspan"))
                 .and_then(|val| val.parse().ok())
                 .unwrap_or(1);
-            let rowspan: u16 = node
-                .attr(local_name!("rowspan"))
-                .and_then(|val| val.parse::<u16>().ok())
-                .map(|v| v.clamp(1, 65534))
-                .unwrap_or(1);
             let mut style = table_taffy_style(node, wm);
             let col = cursor.next_free();
-            let baseline = !wm.is_vertical() && rowspan == 1 && is_baseline_aligned(stylo_style);
 
             // In the collapsed borders model the borders are laid out as gutters between
             // the cells (see the table's `gap`) rather than as part of the cells

@@ -93,6 +93,23 @@ fn an_inline_object_is_an_atomic_box() {
     assert_eq!(pixel(&img, 10, 45), WHITE, "no fallback below");
 }
 
+/// A block in the fallback of an inline image object does not split the object: its children are
+/// not rendered, so it stays one atomic inline box (Chromium draws the image only, the next box
+/// beside it).
+#[test]
+fn a_block_in_the_fallback_does_not_split_an_inline_object() {
+    let img = render(&format!(
+        "<div><object data=\"{SQUARE}\" type='image/svg+xml'><i></i><p><i></i></p><i></i></object><i></i></div>"
+    ));
+    assert_eq!(pixel(&img, 40, 30), BLUE, "the image starts the line");
+    assert_eq!(pixel(&img, 10, 10), BLUE, "no fallback before it");
+    assert_eq!(pixel(&img, 90, 35), RED, "the box after it is on its line, at 80");
+    assert_eq!(pixel(&img, 110, 35), WHITE, "and nothing else");
+    for y in [50, 70, 90, 110] {
+        assert_eq!(pixel(&img, 10, y), WHITE, "no fallback below, at y {y}");
+    }
+}
+
 /// An SVG with no natural size or ratio keeps the object's fallback, as objects did before
 /// (blitz-dom `object_shows_image`: WPT `replaced-intrinsic-002`).
 #[test]

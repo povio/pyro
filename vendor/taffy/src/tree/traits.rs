@@ -395,7 +395,8 @@ pub trait LayoutGridContainer: LayoutPartialTree {
     }
 
     /// pyro: how far down a cell's content is laid out in its box (`offset`, its row's baseline less its own),
-    /// set before the cell's final layout in a table with baseline-aligned cells (0 for the other cells).
+    /// set before the cell's final layout in a table with baseline-aligned cells (0 for the other cells). Not
+    /// called in a table without them: the tree resets the offset of a cell that stops being aligned itself.
     fn set_table_cell_baseline_offset(&mut self, _node_id: NodeId, _child_node_id: NodeId, _offset: f32) {}
 
     /// pyro: a baseline-aligned cell's baseline from the top of its border box, laid out with `inputs` (its

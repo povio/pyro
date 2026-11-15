@@ -205,7 +205,8 @@ row's is the lowest, and each cell's
 `baseline_shim` the row's less its own (a cell with neither takes no part). The shim counts in the row's height as a
 margin does, but the cell is positioned as any other, filling its row: the tree moves its content down by the shim
 inside it (`set_table_cell_baseline_offset`, called before each cell's final layout, 0 for the cells without a
-shim), as Chromium's intrinsic padding does. blitz-dom hands a table with such cells its `TableGridState` back
+shim; never in a table without such cells, where the tree drops stale offsets itself), as Chromium's intrinsic
+padding does. blitz-dom hands a table with such cells its `TableGridState` back
 only while nothing in it changed (a change may move other cells' baselines).
 Covered by `baseline_cells_share_their_rows_baseline` in `crates/pyro-render/tests/table_parts.rs`.
 

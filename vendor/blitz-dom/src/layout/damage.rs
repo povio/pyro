@@ -611,10 +611,11 @@ fn forwards_construction(node: &Node) -> bool {
     }
     match display.inside() {
         DisplayInside::Contents => true,
-        // Replaced inline elements (`<canvas>`, `<svg>`, ...) included: they
-        // are atomic in the inline layout, but `is_or_contains_block` looks
-        // through any `display: inline` element at its children, so a block
-        // among them changes how the parent partitions its children.
+        // Replaced inline elements (`<canvas>`, `<svg>`, ...) included, though
+        // they are atomic in the inline layout and `is_or_contains_block` does
+        // not look through them (pyro): an `<object>` is one only while it
+        // shows an image, and its fallback children partition its parent's
+        // otherwise.
         DisplayInside::Flow => display.outside() == DisplayOutside::Inline,
         inside => is_table_part_inside(inside),
     }
