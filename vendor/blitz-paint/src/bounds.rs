@@ -26,6 +26,14 @@ fn layer_bounds(commands: &[RenderCommand], at: &mut usize) -> Option<Rect> {
         *at += 1;
         let painted = match command {
             RenderCommand::PopLayer => return bounds,
+            // pyro (lane H2): a projective layer's commands are in its plane's own pixels: it paints
+            // its clip (`render/three_d.rs`).
+            RenderCommand::PushLayer(layer)
+                if layer.filter.as_deref().is_some_and(crate::render::is_projective_marker) =>
+            {
+                layer_bounds(commands, at);
+                Some(layer.transform.transform_rect_bbox(layer.clip.bounding_box()))
+            }
             RenderCommand::PushLayer(layer) => {
                 let clip = layer.transform.transform_rect_bbox(layer.clip.bounding_box());
                 let inner = layer_bounds(commands, at);

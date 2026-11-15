@@ -66,3 +66,35 @@ fn an_out_of_flow_cell_is_hit_in_its_collapsed_border_gutters() {
         }
     }
 }
+
+/// pyro (lane H2): a box turned out of the plane under a perspective reports the bounds of the
+/// trapezoid paint draws through its 4x4 matrix, and is hit there: its near edge reaches above
+/// the affine that stands in for it (whose bounds were reported). Every hit-test path agrees.
+#[test]
+fn layout_queries_follow_a_plane_drawn_through_a_perspective() {
+    let p = page(
+        "<!doctype html><html><head><style>
+          body { margin: 0 }
+          div { position: absolute }
+          #persp { left: 100px; top: 50px; width: 150px; height: 150px; perspective: 500px }
+          #rot { left: 0; top: 0; width: 150px; height: 150px; background: #cfc; transform: rotateY(50deg) }
+        </style></head><body>
+        <div id=persp><div id=rot></div></div>
+        </body></html>",
+    );
+    let rot = p.id("rot");
+    // About the centre (175, 125): a point u px right of it moves to depth -u sin 50deg, where
+    // W = 1 + u sin 50deg / 500.
+    let (sin, cos) = (50f64.to_radians().sin(), 50f64.to_radians().cos());
+    let w = |u: f64| 1.0 + u * sin / 500.0;
+    let (left, right) = (175.0 - 75.0 * cos / w(-75.0), 175.0 + 75.0 * cos / w(75.0));
+    let (top, bottom) = (125.0 - 75.0 / w(-75.0), 125.0 + 75.0 / w(-75.0));
+    let r = p.layout.bounding_client_rect(&p.dom, rot);
+    for (got, want) in [(r.x, left), (r.y, top), (r.width, right - left), (r.height, bottom - top)] {
+        assert!((got - want).abs() < 1.0 / 32.0, "{r:?}: {got} for {want}");
+    }
+    let at = |x, y| p.describe(p.layout.element_from_point(&p.dom, x, y));
+    // Above the stand-in (which starts at y = 49) but inside the near edge.
+    assert_eq!(at(122.0, 42.0), p.describe(Some(rot)));
+    assert!(p.compare("a plane drawn through a perspective") >= 2);
+}

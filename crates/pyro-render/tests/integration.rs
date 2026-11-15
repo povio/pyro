@@ -50,5 +50,6 @@ mod text_emphasis_ruby;
 mod text_line_tops;
 mod text_shadow;
 mod text_overflow_ellipsis;
+mod three_d_contexts;
 mod transform_3d;
 mod vertical_writing_mode;

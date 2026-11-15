@@ -12,6 +12,9 @@ mod graph;
 /// pyro: see the `graph` module (an SVG filter primitive's subregion).
 pub use graph::CROP_IMAGE as FILTER_CROP_IMAGE;
 mod filters;
+/// pyro (lane H2): planes drawn through a perspective.
+mod projective;
+pub use projective::{Homography, projective_marker};
 
 pub use image_cache::ImageCacheConfig;
 pub use image_renderer::VelloCpuImageRenderer;

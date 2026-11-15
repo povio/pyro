@@ -5,6 +5,8 @@ mod box_shadow;
 mod clip_path;
 mod form_controls;
 mod mask;
+mod three_d;
+pub(crate) use three_d::is_projective_marker;
 
 use blitz_dom::CopyStyleGetters;
 use std::cell::RefCell;
@@ -159,6 +161,8 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub composite_3d: bool,
     /// pyro: how many local-raster layers (`composite_3d`) the element painted is in.
     pub(crate) local_raster_depth: std::cell::Cell<u32>,
+    /// pyro (lane H2): 3D rendering contexts being recorded (`render/three_d.rs`).
+    pub(crate) three_d: three_d::State,
 
     // Pre-computed `Scene`s for each CustomWidget
     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
@@ -214,6 +218,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             fractional_text_x: false,
             composite_3d: false,
             local_raster_depth: std::cell::Cell::new(0),
+            three_d: Default::default(),
             custom_widget_scenes,
         }
     }
@@ -645,6 +650,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
         let has_opacity = opacity < 1.0;
 
+        // pyro (lane H2): a plane of a 3D rendering context, or a plane drawn through a
+        // perspective, is recorded and drawn sorted by depth (`render/three_d.rs`).
+        if self.paint_plane(scene, node, parent_style_transform) {
+            return;
+        }
+
         let should_clip = self.should_clip_node(node, &styles);
         let is_text_input = node
             .element_data()
@@ -799,6 +810,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // through them, and its antialiased edge came out a fifth lighter along the edge of the
         // screenshot. Past the frame the margin shows nothing.
         let viewport = if self.local_raster_depth.get() > 0 { viewport.inflate(8.0, 8.0) } else { viewport };
+        // pyro (lane H2): in a plane's recording the element's stand-in transform is not where the
+        // plane is drawn: a group clipped to the viewport keeps all of the plane.
+        let viewport = if self.three_d.depth.get() > 0 { Rect::new(-1e7, -1e7, 1e7, 1e7) } else { viewport };
         let blend_layer_pushed = self.layer_manager.maybe_push_layer(
             scene,
             isolate || blend != BlendMode::default(),

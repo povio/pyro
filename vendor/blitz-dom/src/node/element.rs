@@ -140,6 +140,9 @@ pub struct ElementData {
     /// Layout output state (`None` until layout first writes to this node).
     pub layout_data: Option<Box<LayoutData>>,
     pub transform: Option<Box<Affine>>,
+    /// pyro (lane H2): the plane paint draws the element in through its 4x4 matrix, when it is
+    /// one (`Node::set_transform`).
+    pub plane_3d: Option<Box<super::Plane3D>>,
 }
 
 /// Taffy layout output state (cache, layouts, scroll offset and overflow).
@@ -381,6 +384,7 @@ impl Clone for ElementData {
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
             transform: None,
+            plane_3d: None,
         }
     }
 }
@@ -499,6 +503,7 @@ impl ElementData {
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
             transform: None,
+            plane_3d: None,
         };
         data.flush_is_focussable();
         data.flush_link_state();

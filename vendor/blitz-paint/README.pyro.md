@@ -340,6 +340,25 @@ from the root of an upstream checkout at that commit) is the whole diff.
   frame's edges to sample, and a clip on that edge cut through them (a fifth lighter along the screenshot's edge).
   Screenshots only (`paint_scene`): print, `paint_scene_with` and the text-recording paint stay
   vector. Covered by `crates/pyro-render/tests/transform_3d.rs`.
+- `src/render/three_d.rs` (new; `BlitzDomPainter::paint_plane`, `bsp`), `src/render.rs` (`render_element`,
+  `BlitzDomPainter::three_d`), `src/bounds.rs` (`layer_bounds`), lane H2: 3D rendering contexts and planes drawn
+  through a perspective, as Chromium's compositor draws them. blitz-dom marks the planes (`Node::plane_3d`: the
+  elements of a context with a transform node in Chromium, a context's root, a flat element its 3D transform maps
+  projectively). The root of a context (or such a flat element) records its painting and each plane's on its own
+  (a plane painted inside another leaves a marker there; culling is off and the viewport-sized group clips reach
+  everywhere in a recording, as the stand-in transforms are not where planes are drawn), cuts the recordings into
+  chunks at the markers in paint order, and draws the chunks back to front: each chunk is a polygon (its content's
+  bounds in its plane through its 4x4 matrix, cut at the viewer's plane), sorted by a BSP tree as viz's `BspTree`
+  sorts a 3D sorting context (the first polygon splits the others by its plane; coplanar ones keep paint order;
+  one crossing a plane is split and each piece drawn clipped to it). A chunk whose plane keeps W constant is drawn
+  through the affine of its matrix (its commands as recorded when that is the stand-in); one whose W varies is a
+  projective layer for anyrender_vello_cpu (`projective_marker`: six offsets carrying the homography; its content
+  in the plane's own pixels, its clip the projection's bounds), which `scene_bounds` takes as its clip. A plane met
+  inside a clip or layer of another stays there, flattened. `backface-visibility: hidden` on a `preserve-3d`
+  element showing its back hides its own chunks. Print (`composite_3d` false) gets the sorting with the stand-ins.
+  WPT `transform3d-sorting-*`, `preserve3d-and-flattening-*`, `css-transform-3d-transform-style`,
+  `perspective-split-by-zero-w`, `transform-3d-rotateY-stair-*`. Covered by
+  `crates/pyro-render/tests/three_d_contexts.rs` and the unit tests in `src/render/three_d.rs`.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
