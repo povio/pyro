@@ -455,8 +455,78 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
         let location = node.final_layout().location;
         parent
+            * self.table_part_transform(node)
             * Affine::translate(Vec2::new(location.x as f64, location.y as f64) * self.scale)
             * node.transform().as_deref().copied().unwrap_or_default()
+    }
+
+    /// pyro: the transforms of a table cell's row group and row, which are no boxes of their own
+    /// (their cells are the table's children): each about its own box, in the table's space.
+    fn table_part_transform(&self, node: &Node) -> Affine {
+        let index = node.layout_data().table_cell_index;
+        if index == u32::MAX {
+            return Affine::IDENTITY;
+        }
+        let Some(table) = node.layout_parent.get().and_then(|id| self.dom.get_node(id)) else {
+            return Affine::IDENTITY;
+        };
+        let Some(blitz_dom::node::SpecialElementData::TableRoot(ctx)) = table.element_data().map(|e| &e.special_data) else {
+            return Affine::IDENTITY;
+        };
+        let Some(cell) = ctx.cells.get(index as usize).filter(|cell| cell.node_id == node.id) else {
+            return Affine::IDENTITY;
+        };
+        let Some(row) = ctx.rows.get(cell.row as usize) else {
+            return Affine::IDENTITY;
+        };
+        let transformed = |id: NodeId| {
+            self.dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                use style::values::generics::transform::{GenericRotate, GenericScale, GenericTranslate};
+                let b = style.get_box();
+                !b.transform.0.is_empty()
+                    || !matches!(b.rotate, GenericRotate::None)
+                    || !matches!(b.translate, GenericTranslate::None)
+                    || !matches!(b.scale, GenericScale::None)
+            })
+        };
+        let parts = [row.group, Some(row.node_id)];
+        if !parts.iter().flatten().any(|&id| transformed(id)) {
+            return Affine::IDENTITY;
+        }
+        let grid = ctx.computed_grid_info.borrow();
+        let Some(grid) = grid.as_ref() else { return Affine::IDENTITY };
+        let columns: Vec<taffy::Line<f32>> = PhysicalTracks::from_tracks(&grid.columns).iter().collect();
+        let rows: Vec<taffy::Line<f32>> = PhysicalTracks::from_tracks(&grid.rows).iter().collect();
+        let (Some(first), Some(last)) = (columns.first(), columns.last()) else { return Affine::IDENTITY };
+        let top = ctx.grid_box.borrow().map_or(0.0, |(top, _)| top);
+        let mut out = Affine::IDENTITY;
+        for (at, id) in parts.into_iter().enumerate() {
+            let Some(id) = id else { continue };
+            if !transformed(id) {
+                continue;
+            }
+            // The rows of the part: the row's own, or its group's.
+            let spanned: Vec<&taffy::Line<f32>> = ctx
+                .rows
+                .iter()
+                .zip(&rows)
+                .filter(|(other, _)| if at == 0 { other.group == Some(id) } else { other.node_id == id })
+                .map(|(_, track)| track)
+                .collect();
+            let (Some(y0), Some(y1)) = (spanned.first().map(|t| t.start), spanned.last().map(|t| t.end)) else {
+                continue;
+            };
+            let Some(style) = self.dom.get_node(id).and_then(|node| node.primary_styles()) else { continue };
+            let Some(t) = blitz_dom::resolve_2d_transform_for_size(style.get_box(), last.end - first.start, y1 - y0)
+            else {
+                continue;
+            };
+            let [a, b, c, d, e, f] = t.as_coeffs();
+            let t = Affine::new([a, b, c, d, e * self.scale, f * self.scale]);
+            let origin = Vec2::new(first.start as f64, (y0 + top) as f64) * self.scale;
+            out *= Affine::translate(origin) * t * Affine::translate(-origin);
+        }
+        out
     }
 
     fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
@@ -860,7 +930,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             self.local_raster_depth.set(self.local_raster_depth.get() + 1);
         }
 
-        let paints_own_box = !node.is_inline_with_only_block_children();
+        // pyro: a split inline's fragments are painted by its pieces' lines (`inline_box_fragments`).
+        let paints_own_box = !node.is_inline_with_only_block_children() && !node.is_split_inline();
 
         // pyro: `opacity` and `filter` apply to everything the element paints, as one group
         // (Chromium's effect node): its outset box-shadow, its box, its content and descendants
@@ -980,7 +1051,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if cx.context.backgrounds {
             cx.draw_table_row_backgrounds(scene);
         }
-        cx.draw_table_borders(scene);
+        // pyro: a collapsed table whose cells hold half of the borders around them draws the
+        // borders over the cells' backgrounds, after its children (Chromium paints collapsed
+        // borders after the cells' backgrounds); one with uniform gutters draws them here.
+        let borders_after_cells = matches!(&cx.element.special_data,
+            blitz_dom::node::SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some());
+        if !borders_after_cells {
+            cx.draw_table_borders(scene);
+        }
         if paints_own_box {
             cx.draw_border(scene);
         }
@@ -1032,6 +1110,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             },
         );
         cx.transform = unscrolled_transform;
+        if borders_after_cells {
+            cx.draw_table_borders(scene);
+        }
 
         // Overlay scrollbars, drawn unscrolled above the
         // clipped content.
@@ -1162,9 +1243,29 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // todo: maybe cache this so we don't need to constantly be figuring it out
         // It is quite a bit of math to calculate during render/traverse
         // Also! we can cache the bezpaths themselves, saving us a bunch of work
-        let frame = create_css_rect(&style, &layout, scale);
-
         let element = node.element_data().unwrap();
+
+        // pyro: a table with captions is its wrapper box; it paints its own box (background,
+        // borders, shadows, outline) around its grid alone (`TableContext::grid_box`).
+        let frame = match &element.special_data {
+            blitz_dom::node::SpecialElementData::TableRoot(table) => match *table.grid_box.borrow() {
+                Some((top, height)) => {
+                    let mut grid = layout;
+                    grid.size.height = height;
+                    let frame = create_css_rect(&style, &grid, scale);
+                    let dy = Vec2::new(0.0, top as f64 * scale);
+                    CssBox::new(
+                        frame.border_box + dy,
+                        frame.border_width,
+                        frame.padding_width,
+                        frame.outline_width,
+                        frame.border_radii,
+                    )
+                }
+                None => create_css_rect(&style, &layout, scale),
+            },
+            _ => create_css_rect(&style, &layout, scale),
+        };
 
         ElementCx {
             context: self,
@@ -1539,14 +1640,16 @@ impl ElementCx<'_, '_> {
     /// slice`): no border, no padding, square corners. A fragment's edges are snapped to CSS
     /// pixels and it paints as a box does: outer shadow, background, inner shadow, border,
     /// outline. On a line, a box paints before the boxes inside it. `transform` is the lines', and
-    /// `tops` where each line's text goes: its boxes go with it.
-    fn draw_inline_boxes(
+    /// `tops` where each line's text goes: its boxes go with it. pyro: the fragments in paint
+    /// order (by line), for `paint_inline_box_fragment`.
+    fn inline_box_fragments(
         &self,
-        scene: &mut impl PaintScene,
-        layout: &parley::Layout<blitz_dom::node::TextBrush>,
+        text_layout: &blitz_dom::node::TextLayout,
         transform: Affine,
         tops: Option<crate::text::LineTops>,
-    ) {
+    ) -> Vec<InlineBoxFragment> {
+        let layout = &text_layout.layout;
+        let mut painted_fragments = Vec::new();
         use parley::{InlineBoxKind, PositionedLayoutItem};
         use style::computed_values::direction::T as Direction;
         use style::values::computed::{Length, LengthPercentage, Margin};
@@ -1562,11 +1665,15 @@ impl ElementCx<'_, '_> {
             x1: f32,
             top: f32,
             bottom: f32,
+            /// pyro: the (visual) index of the last item it holds.
+            last_item: usize,
+            /// pyro: the top of its line box (where the text of the line above ends).
+            line_top: f32,
         }
 
         let styles = layout.styles();
         if styles.len() < 2 {
-            return;
+            return painted_fragments;
         }
         let dom = self.context.dom;
         let root = self.node.id;
@@ -1622,6 +1729,7 @@ impl ElementCx<'_, '_> {
 
         let mut fragments: Vec<Fragment> = Vec::new();
         let rtl_layout = layout.is_rtl();
+        let mut item_index = 0usize;
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
@@ -1645,6 +1753,7 @@ impl ElementCx<'_, '_> {
                         _ => continue,
                     },
                 };
+                item_index += 1;
                 chain_of(&mut chain, style_index);
                 let depth = chain.len();
                 for (level, &(node, style_index)) in chain.iter().enumerate() {
@@ -1667,12 +1776,15 @@ impl ElementCx<'_, '_> {
                             x1 -= margin(&style.get_margin().margin_right);
                         }
                     }
-                    match fragments[first..].iter_mut().find(|fragment| fragment.node == node) {
-                        Some(fragment) => {
+                    // pyro: a fragment holds the items of its element that are next to each other in
+                    // visual order: bidi reordering can split what an element holds on a line.
+                    match fragments[first..].iter_mut().rev().find(|fragment| fragment.node == node) {
+                        Some(fragment) if fragment.last_item + 1 == item_index || fragment.last_item == item_index => {
                             fragment.x0 = fragment.x0.min(x0);
                             fragment.x1 = fragment.x1.max(x1);
+                            fragment.last_item = item_index;
                         }
-                        None => {
+                        _ => {
                             let (top, bottom) = line.span_content_area(style_index);
                             let shift = tops.map_or(0.0, |tops| tops.shift(metrics)) as f32;
                             fragments.push(Fragment {
@@ -1683,6 +1795,8 @@ impl ElementCx<'_, '_> {
                                 x1,
                                 top: top + shift,
                                 bottom: bottom + shift,
+                                last_item: item_index,
+                                line_top: metrics.block_min_coord + shift,
                             });
                         }
                     }
@@ -1690,24 +1804,46 @@ impl ElementCx<'_, '_> {
             }
         }
         if fragments.is_empty() {
-            return;
+            return painted_fragments;
         }
 
-        // An element's first and last fragment, and how wide its fragments are together (device
-        // px): with `box-decoration-break: slice` its fragments are pieces of one box.
-        let mut ends: HashMap<NodeId, (usize, usize, f32)> = HashMap::new();
+        // An element's first and last fragment on its first line, and on its last (CSS 2.1 § 8.6:
+        // in a left-to-right element the first line's left-most fragment has the left side and the
+        // last line's right-most the right side; in a right-to-left one the first line's
+        // right-most has the right side and the last line's left-most the left side), and how wide
+        // its fragments are together (device px): with `box-decoration-break: slice` its fragments
+        // are pieces of one box.
+        let mut ends: HashMap<NodeId, ([usize; 4], f32)> = HashMap::new();
         for (index, fragment) in fragments.iter().enumerate() {
             let width = fragment.x1 - fragment.x0;
             ends.entry(fragment.node)
-                .and_modify(|ends| (ends.1, ends.2) = (index, ends.2 + width))
-                .or_insert((index, index, width));
+                .and_modify(|(ends, total)| {
+                    if fragment.line == fragments[ends[0]].line {
+                        ends[1] = index;
+                    }
+                    if fragment.line > fragments[ends[2]].line {
+                        ends[2] = index;
+                    }
+                    ends[3] = index;
+                    *total += width;
+                })
+                .or_insert(([index; 4], width));
         }
+        // pyro: a split inline's start and end are in the pieces that hold them.
+        let piece = |node: NodeId| {
+            text_layout
+                .split_pieces
+                .iter()
+                .find(|piece| piece.0 == node)
+                .map_or((true, true), |piece| (piece.1, piece.2))
+        };
+        // pyro: relatively positioned elements move their fragments.
+        let relative = dom.inline_root_has_relative_spans(root);
         let mut order: Vec<usize> = (0..fragments.len()).collect();
         order.sort_by_key(|&index| (fragments[index].line, fragments[index].depth));
 
         // The boxes are where the text is.
-        let (text_transform, text_shift) = (transform, self.fractional_text_x_of_node());
-        let transform = transform * Affine::translate((text_shift, 0.0));
+        let transform = transform * Affine::translate((self.fractional_text_x_of_node(), 0.0));
         let [a, b, c, d, tx, ty] = transform.as_coeffs();
         let translation_only = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0;
         let scale = self.scale as f32;
@@ -1719,10 +1855,15 @@ impl ElementCx<'_, '_> {
             let Some(style) = node.primary_styles() else {
                 continue;
             };
-            let (first, last, total) = ends[&fragment.node];
-            let (starts, ends) = (first == index, last == index);
+            let (sides, total) = ends[&fragment.node];
+            let (first, last) = (sides[0], sides[3]);
+            let (has_start, has_end) = piece(fragment.node);
             let rtl = style.clone_direction() == Direction::Rtl;
-            let (left, right) = if rtl { (ends, starts) } else { (starts, ends) };
+            let (left, right) = if rtl {
+                (has_end && sides[2] == index, has_start && sides[1] == index)
+            } else {
+                (has_start && sides[0] == index, has_end && sides[3] == index)
+            };
             // pyro: a box sliced across lines (`box-decoration-break: slice`, the initial value)
             // casts the shadows and shows the background images of the whole box, its fragments
             // laid side by side, each fragment its piece of them (Blink's
@@ -1730,7 +1871,7 @@ impl ElementCx<'_, '_> {
             // and right (device px). Only where that shows: a box of one colour paints the same
             // either way.
             let effects = style.get_effects();
-            let stitch = (!(starts && ends)
+            let stitch = (!(first == index && last == index)
                 && style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Slice
                 && (!effects.box_shadow.0.is_empty()
                     || style
@@ -1784,6 +1925,12 @@ impl ElementCx<'_, '_> {
                 fragment.x1 as f64,
                 (fragment.bottom + (border.bottom + padding.bottom) * scale) as f64,
             );
+            let rect = if relative {
+                let (dx, dy) = dom.inline_span_relative_offset(fragment.node, root);
+                rect + kurbo::Vec2::new((dx * scale) as f64, (dy * scale) as f64)
+            } else {
+                rect
+            };
             // Where a rectangle of the lines goes, and its size (device px).
             let place = |rect: Rect| {
                 if translation_only {
@@ -1797,95 +1944,129 @@ impl ElementCx<'_, '_> {
                     (transform * Affine::translate((rect.x0, rect.y0)), rect.size())
                 }
             };
-            let box_cx = |transform: Affine, size: Size, border, padding| {
-                let layout = Layout {
-                    size: taffy::Size {
-                        width: (size.width / self.scale) as f32,
-                        height: (size.height / self.scale) as f32,
-                    },
-                    border,
-                    padding,
-                    ..Layout::new()
-                };
-                self.context.element_cx(node, layout, transform, None)
-            };
             let (transform, size) = place(rect);
-            let mut cx = box_cx(transform, size, border, padding);
-            if !left {
-                cx.frame.border_radii.top_left = Vec2::ZERO;
-                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-            }
-            if !right {
-                cx.frame.border_radii.top_right = Vec2::ZERO;
-                cx.frame.border_radii.bottom_right = Vec2::ZERO;
-            }
-            // The whole box, for a sliced box's shadows and background images, and the fragment's
-            // piece of it: its border box, and for the outer shadows the space past its closed
-            // sides and above and below it.
+            // The whole box, for a sliced box's shadows and background images (see
+            // `paint_inline_box_fragment`).
             let whole = stitch.map(|(grow_left, grow_right)| {
                 let whole = Rect::new(rect.x0 - grow_left as f64, rect.y0, rect.x1 + grow_right as f64, rect.y1);
                 let (transform, size) = place(whole);
-                box_cx(transform, size, whole_border, whole_padding)
+                (transform, size, whole_border, whole_padding)
             });
-            let piece = Rect::from_origin_size(Point::ZERO, size);
-            let far = 1e6;
-            let outside = Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far);
-            match &whole {
-                Some(whole) => {
-                    scene.push_clip_layer(Fill::NonZero, transform, &outside);
-                    whole.draw_outset_box_shadow(scene);
-                    scene.pop_layer();
-                }
-                None => cx.draw_outset_box_shadow(scene),
+            painted_fragments.push(InlineBoxFragment {
+                node: fragment.node,
+                line: fragment.line,
+                transform,
+                size,
+                border,
+                padding,
+                whole,
+                left,
+                right,
+                reaches_above: (rect.y0 as f32) < fragment.line_top,
+            });
+        }
+        painted_fragments
+    }
+
+    /// pyro: paints a fragment of `inline_box_fragments`: outer shadow, background, inner shadow,
+    /// border and outline. `transform` and `tops` are the root's text's (for a `background-clip:
+    /// text` mask).
+    fn paint_inline_box_fragment(
+        &self,
+        scene: &mut impl PaintScene,
+        fragment: &InlineBoxFragment,
+        transform: Affine,
+        tops: Option<crate::text::LineTops>,
+    ) {
+        let Some(node) = self.context.dom.get_node(fragment.node) else {
+            return;
+        };
+        let (text_transform, text_shift) = (transform, self.fractional_text_x_of_node());
+        let box_cx = |transform: Affine, size: Size, border, padding| {
+            let layout = Layout {
+                size: taffy::Size {
+                    width: (size.width / self.scale) as f32,
+                    height: (size.height / self.scale) as f32,
+                },
+                border,
+                padding,
+                ..Layout::new()
+            };
+            self.context.element_cx(node, layout, transform, None)
+        };
+        let (transform, size, left, right) = (fragment.transform, fragment.size, fragment.left, fragment.right);
+        let mut cx = box_cx(transform, size, fragment.border, fragment.padding);
+        if !left {
+            cx.frame.border_radii.top_left = Vec2::ZERO;
+            cx.frame.border_radii.bottom_left = Vec2::ZERO;
+        }
+        if !right {
+            cx.frame.border_radii.top_right = Vec2::ZERO;
+            cx.frame.border_radii.bottom_right = Vec2::ZERO;
+        }
+        // The whole box, for a sliced box's shadows and background images, and the fragment's
+        // piece of it: its border box, and for the outer shadows the space past its closed
+        // sides and above and below it.
+        let whole = fragment.whole.map(|(transform, size, border, padding)| box_cx(transform, size, border, padding));
+        let piece = Rect::from_origin_size(Point::ZERO, size);
+        let far = 1e6;
+        let outside = Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far);
+        match &whole {
+            Some(whole) => {
+                scene.push_clip_layer(Fill::NonZero, transform, &outside);
+                whole.draw_outset_box_shadow(scene);
+                scene.pop_layer();
             }
-            if self.context.backgrounds {
-                // pyro: a `background-clip: text` layer shows through the box's own glyphs.
-                let text_clip = cx.style.get_background().background_clip.0.iter().any(|clip| {
-                    *clip == style::properties::generated::longhands::background_clip::single_value::computed_value::T::Text
+            None => cx.draw_outset_box_shadow(scene),
+        }
+        if self.context.backgrounds {
+            // pyro: a `background-clip: text` layer shows through the box's own glyphs.
+            let text_clip = cx.style.get_background().background_clip.0.iter().any(|clip| {
+                *clip == style::properties::generated::longhands::background_clip::single_value::computed_value::T::Text
+            });
+            if text_clip {
+                // The glyphs `text-overflow: ellipsis` cuts from the line are not in the mask
+                // either (`stroke_inline_text`).
+                let scale = self.scale as f32;
+                let cut = self.element.inline_layout_data.as_ref().and_then(|text_layout| {
+                    let ellipsis = text_layout.ellipsis.as_deref()?;
+                    let line = text_layout.layout.get(fragment.line)?;
+                    let width = self.node.unrounded_layout().content_box_width() * scale;
+                    truncate_line(&line, ellipsis, width, scale, text_layout.layout.is_rtl()).map(|(cut, _)| cut)
                 });
-                if text_clip {
-                    // The glyphs `text-overflow: ellipsis` cuts from the line are not in the mask
-                    // either (`stroke_inline_text`).
-                    let cut = self.element.inline_layout_data.as_ref().and_then(|text_layout| {
-                        let ellipsis = text_layout.ellipsis.as_deref()?;
-                        let line = layout.get(fragment.line)?;
-                        let width = self.node.unrounded_layout().content_box_width() * scale;
-                        truncate_line(&line, ellipsis, width, scale, layout.is_rtl()).map(|(cut, _)| cut)
-                    });
-                    self.context.draw_text_context.borrow_mut().inline_mask = Some(crate::text::InlineTextMask {
-                        element: fragment.node,
-                        root,
-                        transform: text_transform,
-                        tops,
-                        text_shift,
-                        line: fragment.line,
-                        cut,
-                    });
-                }
-                match &whole {
-                    Some(whole) => {
-                        scene.push_clip_layer(Fill::NonZero, transform, &piece);
-                        whole.draw_background(scene);
-                        scene.pop_layer();
-                    }
-                    None => cx.draw_background(scene),
-                }
-                if text_clip {
-                    self.context.draw_text_context.borrow_mut().inline_mask = None;
-                }
+                self.context.draw_text_context.borrow_mut().inline_mask = Some(crate::text::InlineTextMask {
+                    element: fragment.node,
+                    root: self.node.id,
+                    transform: text_transform,
+                    tops,
+                    text_shift,
+                    line: fragment.line,
+                    cut,
+                });
             }
             match &whole {
                 Some(whole) => {
                     scene.push_clip_layer(Fill::NonZero, transform, &piece);
-                    whole.draw_inset_box_shadow(scene);
+                    whole.draw_background(scene);
                     scene.pop_layer();
                 }
-                None => cx.draw_inset_box_shadow(scene),
+                None => cx.draw_background(scene),
             }
-            cx.draw_border(scene);
-            // Over the box, as a block's outline is (see `render_element`).
-            cx.draw_outline(scene);
+            if text_clip {
+                self.context.draw_text_context.borrow_mut().inline_mask = None;
+            }
         }
+        match &whole {
+            Some(whole) => {
+                scene.push_clip_layer(Fill::NonZero, transform, &piece);
+                whole.draw_inset_box_shadow(scene);
+                scene.pop_layer();
+            }
+            None => cx.draw_inset_box_shadow(scene),
+        }
+        cx.draw_border(scene);
+        // Over the box, as a block's outline is (see `render_element`).
+        cx.draw_outline(scene);
     }
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
@@ -1918,11 +2099,56 @@ impl ElementCx<'_, '_> {
             let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
 
             // Render the boxes of inline elements (e.g. `<span style="background: ...">`)
-            // behind the text and selection highlight.
-            self.draw_inline_boxes(scene, &text_layout.layout, transform, tops);
+            // behind the text and selection highlight. pyro: line by line, each line's boxes
+            // and then its text, as CSS 2.1 Appendix E paints line boxes (a box on a line
+            // paints over the text of the line above where it reaches into it), when a box after
+            // the first line reaches above its line and no selection, ellipsis or annotation
+            // interleaves.
+            let fragments = self.inline_box_fragments(text_layout, transform, tops);
+            let selection = self.context.selection_ranges.get(&self.node.id).copied();
+            let by_line = selection.is_none()
+                && text_layout.ellipsis.is_none()
+                && text_layout.annotations.is_empty()
+                && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
+            if by_line {
+                let options = TextPaintOptions {
+                    scale: self.scale,
+                    brush_override: None,
+                    shadows: true,
+                };
+                let mut next = 0;
+                for (index, line) in text_layout.layout.lines().enumerate() {
+                    // (A fragment's `background-clip: text` mask borrows the text context.)
+                    while let Some(fragment) = fragments.get(next).filter(|fragment| fragment.line == index) {
+                        self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                        next += 1;
+                    }
+                    let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                    draw_text_context.text_shift = text_shift;
+                    draw_text_context.line_tops = tops;
+                    crate::text::stroke_text(
+                        scene,
+                        std::iter::once(line),
+                        self.context.dom,
+                        transform,
+                        options,
+                        self.node.id,
+                        Some(&text_layout.text),
+                        &mut draw_text_context,
+                        None,
+                        Some(&text_layout.layout),
+                    );
+                    draw_text_context.text_shift = 0.0;
+                    draw_text_context.line_tops = None;
+                }
+                return;
+            }
+            for fragment in &fragments {
+                self.paint_inline_box_fragment(scene, fragment, transform, tops);
+            }
 
             // Render text selection highlight (if any) using cached selection ranges
-            if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
+            if let Some((sel_start, sel_end)) = selection {
                 crate::text::draw_text_selection(
                     scene,
                     &text_layout.layout,
@@ -2270,7 +2496,7 @@ impl ElementCx<'_, '_> {
             // Right align and pad the bullet when rendering outside
             let x_padding = match marker {
                 Marker::Char(_) => 8.0,
-                Marker::String(_) => 0.0,
+                Marker::String(_) | Marker::Image { .. } => 0.0,
             };
             // Outside markers are placed outside the list item's border box
             // (`pos` is the origin of its content box)
@@ -2285,11 +2511,19 @@ impl ElementCx<'_, '_> {
                 self.draw_marker_symbol(scene, pos, *symbol, layout);
                 return;
             }
+            if let Marker::Image { width, height } = marker {
+                self.draw_marker_image(scene, pos, *width, *height, layout);
+                return;
+            }
             let first_line = self
                 .element
                 .inline_layout_data
                 .as_ref()
                 .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
+            // pyro: the marker goes with the line, which floats beside the item move.
+            let line_x = first_line.as_ref().map_or(0.0, |(text_layout, line)| {
+                line.metrics().inline_min_coord / text_layout.layout.scale()
+            });
             let y_offset = if let Some((text_layout, first_text_line)) = &first_line
             {
                 // pyro: with the line, where it is painted (`LineTops`).
@@ -2307,7 +2541,7 @@ impl ElementCx<'_, '_> {
             };
 
             let pos = Point {
-                x: pos.x + (content_box_subpixel_offset.x + x_offset) as f64,
+                x: pos.x + (content_box_subpixel_offset.x + x_offset + line_x) as f64,
                 y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
             };
 
@@ -2358,6 +2592,33 @@ impl ElementCx<'_, '_> {
         let Some(marker_line) = marker_layout.lines().next() else { return };
         let layout_scale = marker_layout.scale();
         let item_layout = self.node.final_layout();
+        let (baseline, line_x) = self.marker_baseline(marker_layout);
+        let ascent = (font_ascent(&marker_line).unwrap_or(0.0) / layout_scale).round() as i32;
+        let offset = ascent * 2 / 3;
+        let size = ((offset + 1) / 2) as f64;
+        let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
+        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
+            - (offset + 7) as f64;
+        let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
+        let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
+        let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
+        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, self.node.id));
+        match symbol {
+            '•' => scene.fill(Fill::NonZero, self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect)),
+            '◦' => {
+                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
+            }
+            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
+        }
+    }
+
+    /// pyro: the baseline an outside marker sits on, in CSS px from the top of the list item's
+    /// content box: that of the item's first line, the first line of the first box in it that has
+    /// one, or, when there is none, that of the marker's own line (a line of the item's font).
+    /// With it, how far floats move that line's start (the marker goes with the line).
+    fn marker_baseline(&self, marker_layout: &parley::Layout<blitz_dom::node::TextBrush>) -> (f32, f32) {
+        let layout_scale = marker_layout.scale();
+        let item_layout = self.node.final_layout();
         // The first line, and its box's border box top from the item's.
         let (mut node, mut top) = (self.node, 0.0);
         let mut first_line = None;
@@ -2378,8 +2639,7 @@ impl ElementCx<'_, '_> {
             top += child.final_layout().location.y;
             node = child;
         }
-        // The baseline from the item's content box top, in CSS px.
-        let baseline = match &first_line {
+        match &first_line {
             Some((node, text, line)) => {
                 let shift = self
                     .text_placement_of(node, text.block_offset as f64)
@@ -2389,25 +2649,50 @@ impl ElementCx<'_, '_> {
                 let content_top = top + layout.border.top + layout.padding.top
                     - item_layout.border.top
                     - item_layout.padding.top;
-                content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset
+                let line_scale = text.layout.scale();
+                (
+                    content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset,
+                    line.metrics().inline_min_coord / line_scale,
+                )
             }
-            None => marker_line.metrics().baseline / layout_scale,
-        };
-        let ascent = (font_ascent(&marker_line).unwrap_or(0.0) / layout_scale).round() as i32;
-        let offset = ascent * 2 / 3;
-        let size = ((offset + 1) / 2) as f64;
+            None => (marker_layout.lines().next().map_or(0.0, |line| line.metrics().baseline / layout_scale), 0.0),
+        }
+    }
+
+    /// pyro: an outside `list-style-image` marker, as Chromium places one
+    /// (`ListMarker::InlineMarginsForOutside`): the image at its natural size, ending 7px before
+    /// the item's border box, its bottom on the baseline of the item's first line (an inline
+    /// replaced box on the marker's line), at whole device pixels.
+    fn draw_marker_image(
+        &self,
+        scene: &mut impl PaintScene,
+        pos: Point,
+        width: f32,
+        height: f32,
+        marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
+    ) {
+        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
+        let (baseline, line_x) = self.marker_baseline(marker_layout);
+        let item_layout = self.node.final_layout();
         let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
-        let x = pos.x + (subpixel.x - item_layout.padding.left - item_layout.border.left) as f64 - (offset + 7) as f64;
-        let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
-        let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
-        let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
-        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, self.node.id));
-        match symbol {
-            '•' => scene.fill(Fill::NonZero, self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect)),
-            '◦' => {
-                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
+        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
+            - f64::from(width + 7.0);
+        let y = pos.y + f64::from(subpixel.y + baseline - height);
+        let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
+        match &image.image {
+            blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
+                let quality = to_image_quality(self.style.clone_image_rendering());
+                let size = Affine::scale_non_uniform(
+                    f64::from(width) * self.scale / f64::from(raster.width),
+                    f64::from(height) * self.scale / f64::from(raster.height),
+                );
+                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
             }
-            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
+            #[cfg(feature = "svg")]
+            blitz_dom::node::ImageData::Svg(svg) => {
+                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
+            }
+            _ => {}
         }
     }
 
@@ -2769,4 +3054,25 @@ struct EffectLayer {
     backdrop_filter: Option<Arc<anyrender::Filter>>,
     /// pyro: the element's border box with its radii, in its space: what its backdrop shows in.
     backdrop_clip: Option<kurbo::BezPath>,
+}
+
+/// pyro: a fragment of an inline (non-atomic) element's box on one line, ready to paint
+/// (`ElementCx::inline_box_fragments`).
+struct InlineBoxFragment {
+    node: NodeId,
+    line: usize,
+    /// Where its box goes and its size (device px), and its border and padding (none on an
+    /// open side).
+    transform: Affine,
+    size: Size,
+    border: taffy::Rect<f32>,
+    padding: taffy::Rect<f32>,
+    /// A box sliced across lines with shadows or background images: the whole box, placed as the
+    /// fragment is, with its border and padding.
+    whole: Option<(Affine, Size, taffy::Rect<f32>, taffy::Rect<f32>)>,
+    /// Whether the fragment has its left and its right side.
+    left: bool,
+    right: bool,
+    /// Whether its box reaches above its line box, over the line before.
+    reaches_above: bool,
 }

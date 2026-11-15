@@ -1306,6 +1306,25 @@ impl BaseDocument {
             crate::util::ensure_stack(|| self.deallocate_anonymous_block(nested_id));
         }
 
+        // pyro: the boxes it wrapped or laid out have it as their layout parent no more (a box
+        // `display: none` since keeps no pointer to a freed one; a fresh build has none).
+        let wrapped: Vec<NodeId> = self.nodes[anon_id]
+            .children
+            .iter()
+            .copied()
+            .chain(self.nodes[anon_id].layout_children.borrow().iter().flatten().copied())
+            .collect();
+        for id in wrapped {
+            if let Some(node) = self.nodes.get(id) {
+                if node.layout_parent.get() == Some(anon_id) {
+                    node.layout_parent.set(None);
+                }
+                if node.layout_child_of.get() == Some(anon_id) {
+                    node.layout_child_of.set(None);
+                }
+            }
+        }
+
         self.remove_node_from_tree(anon_id);
     }
 
@@ -1318,6 +1337,7 @@ impl BaseDocument {
     /// cells, `enter_layout_tree`; a former table's other children, `damage_former_table_parts`).
     pub(crate) fn leave_layout_tree(&mut self, node_id: NodeId) {
         let Some(node) = self.nodes.get(node_id) else { return };
+        let anonymous = node.is_anonymous();
         let children = node.layout_children.borrow_mut().take();
         for child_id in children.into_iter().flatten() {
             let Some(child) = self.nodes.get(child_id) else { continue };
@@ -1325,6 +1345,11 @@ impl BaseDocument {
                 continue;
             }
             child.layout_child_of.set(None);
+            // pyro: an anonymous box leaving the layout tree is freed with its owner's anonymous
+            // boxes: its children keep no pointer to it.
+            if anonymous && child.layout_parent.get() == Some(node_id) {
+                child.layout_parent.set(None);
+            }
             crate::util::ensure_stack(|| self.leave_layout_tree(child_id));
         }
         let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
@@ -1710,6 +1735,16 @@ impl BaseDocument {
             Err(err) => {
                 if let Some(url) = res.resolved_url.as_ref() {
                     let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
+                    // pyro: a list item whose image fails keeps its `list-style-type` marker.
+                    for (node_id, image_type) in &waiting_nodes {
+                        if let (ImageType::ListStyle(idx), Some(node)) = (image_type, self.nodes.get_mut(*node_id)) {
+                            if let Some(Some(image)) =
+                                node.element_data_mut().and_then(|el| el.list_style_images.get_mut(*idx))
+                            {
+                                image.status = Status::Error;
+                            }
+                        }
+                    }
                     #[cfg(feature = "tracing")]
                     tracing::warn!(
                         url = url.as_str(),
@@ -1860,12 +1895,16 @@ impl BaseDocument {
                     node.clear_layout_cache();
                     node.insert_damage(ALL_DAMAGE);
                 }
-                ImageType::Background(idx) | ImageType::Mask(idx) | ImageType::BorderImage(idx) => {
+                ImageType::Background(idx)
+                | ImageType::Mask(idx)
+                | ImageType::BorderImage(idx)
+                | ImageType::ListStyle(idx) => {
                     let layer_image = node.element_data_mut().and_then(|el| {
                         let images = match image_type {
                             ImageType::Background(_) => &mut el.background_images,
                             ImageType::Mask(_) => &mut el.mask_images,
                             ImageType::BorderImage(_) => &mut el.border_images,
+                            ImageType::ListStyle(_) => &mut el.list_style_images,
                             ImageType::Image => unreachable!(),
                         };
                         images.get_mut(idx)
@@ -1873,6 +1912,11 @@ impl BaseDocument {
                     if let Some(Some(layer_image)) = layer_image {
                         layer_image.status = Status::Ok;
                         layer_image.image = image.clone();
+                    }
+                    // pyro: a list item's image is its marker: the list builds it again.
+                    if matches!(image_type, ImageType::ListStyle(_)) {
+                        node.clear_layout_cache();
+                        node.insert_damage(ALL_DAMAGE);
                     }
                 }
             }

@@ -173,6 +173,11 @@ impl EffectiveSpacing {
     #[inline(always)]
     pub(crate) fn gaps(self, atom: &Atom<'_>) -> Gaps {
         let whitespace = atom.characters()[0].whitespace;
+        // pyro: an atom with no advance that is no white space (a bidi formatting character, a
+        // zero-width joiner) is not spaced, as in browsers (only letter spacing spaces it).
+        if self.spacing.letter != 0. && whitespace == Whitespace::None && atom.advance() == 0. {
+            return Gaps::ZERO;
+        }
         let mut gaps = self.spacing.gaps(whitespace);
 
         if is_word_separator(whitespace)

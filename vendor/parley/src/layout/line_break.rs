@@ -2033,6 +2033,12 @@ fn commit_line<B: Brush>(
             }
         }
     }
+    // pyro: UAX #9 rule L1: the white space and the zero-width formatting characters (bidi
+    // controls) that end the line take the paragraph's level, so that reordering puts them at
+    // the line's end edge, where they hang.
+    if needs_reorder {
+        reset_trailing_whitespace_level(layout, &mut lines.line_items, start_item_idx);
+    }
     // let end_run_idx = lines.line_items.last().map(|item| item.index).unwrap_or(0);
     let end_item_idx = lines.line_items.len();
 
@@ -2062,6 +2068,18 @@ fn commit_line<B: Brush>(
     // a mix of bidi levels (a mix of LTR and RTL text)
     if needs_reorder && end_item_idx - start_item_idx > 1 {
         reorder_line_items(&mut lines.line_items[start_item_idx..end_item_idx]);
+        place_span_edges(layout, &mut lines.line_items[start_item_idx..end_item_idx]);
+    } else if end_item_idx - start_item_idx > 1
+        && lines.line_items[start_item_idx..end_item_idx].iter().any(|item| {
+            item.kind == LayoutItemKind::InlineBox && {
+                let inline_box = &layout.data.inline_boxes[item.index].inline_box;
+                inline_box.kind.is_span_edge() && inline_box.rtl
+            }
+        })
+    {
+        // pyro: a right-to-left span in a line that needs no reordering still has its start
+        // edge on the right of its content and its end edge on the left.
+        place_span_edges(layout, &mut lines.line_items[start_item_idx..end_item_idx]);
     }
 
     lines.lines.push(LineData {
@@ -2226,6 +2244,151 @@ fn hanging_whitespace<B: Brush>(
         justification_end_cluster,
         hanging_opportunities,
     )
+}
+
+/// pyro: UAX #9 rule L1 for a line whose items are `line_items[start..]` (logical order): its
+/// trailing white space (spaces, tabs, a segment break) and zero-width formatting characters
+/// get the paragraph's level. A text item ending in some is split in two at their start.
+fn reset_trailing_whitespace_level<B: Brush>(layout: &Layout<B>, line_items: &mut Vec<LineItemData>, start: usize) {
+    let base_level = layout.data.base_level;
+    let shaped_text = &layout.data.shaped_text;
+    let shaped_clusters = shaped_text.shaped_clusters();
+    let mut index = line_items.len();
+    while index > start {
+        index -= 1;
+        let item = line_items[index].clone();
+        match item.kind {
+            LayoutItemKind::InlineBox => {
+                if layout.data.inline_boxes[item.index].inline_box.kind.takes_inline_space() {
+                    return;
+                }
+            }
+            LayoutItemKind::TextRun => {
+                let slice = shaped_text.run_slice(item.index as u32);
+                let range = item.shaped_cluster_range.clone();
+                let mut whitespace_start = range.end;
+                while whitespace_start > range.start {
+                    let cluster = &shaped_clusters[whitespace_start as usize - 1];
+                    let characters = slice.characters_in(cluster.chars_range());
+                    let resets = characters.iter().all(|character| match character.whitespace {
+                        Whitespace::Space
+                        | Whitespace::IdeographicSpace
+                        | Whitespace::OtherSpaceSeparator
+                        | Whitespace::Tab
+                        | Whitespace::Newline => true,
+                        Whitespace::None => cluster.advance == 0.0,
+                        _ => false,
+                    });
+                    if !resets {
+                        break;
+                    }
+                    whitespace_start -= 1;
+                }
+                if whitespace_start == range.end {
+                    return;
+                }
+                if whitespace_start > range.start {
+                    if item.bidi_level != base_level {
+                        let char_range = |clusters: Range<u32>| {
+                            shaped_clusters[clusters.start as usize].chars_range().start
+                                ..shaped_clusters[clusters.end as usize - 1].chars_range().end
+                        };
+                        let mut tail = item.clone();
+                        tail.bidi_level = base_level;
+                        tail.shaped_cluster_range = whitespace_start..range.end;
+                        tail.text_range = slice.text_byte_range(char_range(whitespace_start..range.end));
+                        let head = &mut line_items[index];
+                        head.shaped_cluster_range = range.start..whitespace_start;
+                        head.text_range = slice.text_byte_range(char_range(range.start..whitespace_start));
+                        line_items.insert(index + 1, tail);
+                    }
+                    return;
+                }
+                line_items[index].bidi_level = base_level;
+            }
+        }
+    }
+}
+
+/// pyro: after reordering a line (`items` in visual order), puts each span edge beside its span's
+/// content on the line, on the side CSS 2.1 § 8.6 gives it: a left-to-right span's start edge (its
+/// left side) left of its left-most item there and its end edge right of its right-most; a
+/// right-to-left span's the other way round. Reordering moved each edge with the level it resolved
+/// to, which need not be its side's (an end edge after a right-to-left override in the span).
+/// Inner spans' edges are placed first.
+fn place_span_edges<B: Brush>(layout: &Layout<B>, items: &mut [LineItemData]) {
+    let boxes = &layout.data.inline_boxes;
+    let is_edge = |item: &LineItemData| {
+        item.kind == LayoutItemKind::InlineBox && boxes[item.index].inline_box.kind.is_span_edge()
+    };
+    if !items.iter().any(is_edge) {
+        return;
+    }
+    let styles = &layout.data.styles;
+    let shaped_text = &layout.data.shaped_text;
+    let style_of = |item: &LineItemData| -> u16 {
+        match item.kind {
+            LayoutItemKind::InlineBox => boxes[item.index].parent_style_index,
+            LayoutItemKind::TextRun => {
+                let slice = shaped_text.run_slice(item.index as u32);
+                let cluster = &shaped_text.shaped_clusters()[item.shaped_cluster_range.start as usize];
+                slice
+                    .characters_in(cluster.chars_range())
+                    .first()
+                    .map_or(0, |character| character.style_index)
+            }
+        }
+    };
+    let depth = |mut style: u16| {
+        let mut depth = 0;
+        while style != 0 && depth < 4096 {
+            style = styles[usize::from(style)].parent;
+            depth += 1;
+        }
+        depth
+    };
+    let in_span = |mut style: u16, span: u16| loop {
+        if style == span {
+            return true;
+        }
+        if style == 0 {
+            return false;
+        }
+        style = styles[usize::from(style)].parent;
+    };
+    // The edges by box index, deepest span first.
+    let mut edges: Vec<usize> = items.iter().filter(|item| is_edge(item)).map(|item| item.index).collect();
+    edges.sort_by_key(|&index| core::cmp::Reverse(depth(boxes[index].parent_style_index)));
+    for box_index in edges {
+        let Some(from) = items.iter().position(|item| is_edge(item) && item.index == box_index) else {
+            continue;
+        };
+        let layout_box = &boxes[box_index];
+        let span = layout_box.parent_style_index;
+        let left = (layout_box.inline_box.kind == InlineBoxKind::SpanStart) != layout_box.inline_box.rtl;
+        // The span's content on the line: its items but its own edges.
+        let mut first = None;
+        let mut last = None;
+        for (index, item) in items.iter().enumerate() {
+            let own_edge = is_edge(item) && boxes[item.index].parent_style_index == span;
+            if index != from && !own_edge && in_span(style_of(item), span) {
+                first.get_or_insert(index);
+                last = Some(index);
+            }
+        }
+        let (Some(first), Some(last)) = (first, last) else {
+            continue;
+        };
+        let to = if left { first } else { last + 1 };
+        let edge = items[from].clone();
+        if from < to {
+            items[from..to].rotate_left(1);
+            items[to - 1] = edge;
+        } else if from > to {
+            items[to..=from].rotate_right(1);
+            items[to] = edge;
+        }
+    }
 }
 
 /// Reorder items within line according to the bidi levels of the items

@@ -55,7 +55,7 @@ mod html;
 mod iframe;
 /// Integration of taffy and the DOM.
 mod layout;
-pub use layout::table::{CollapsedEdge, CollapsedEdges};
+pub use layout::table::{CollapsedEdge, CollapsedEdges, TableCell, TableContext};
 pub use layout::multicol::{ColumnFragment, ColumnFragments};
 mod mutator;
 mod query_selector;
@@ -90,7 +90,7 @@ pub use resolved_style::{
     css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
 };
 pub use stylo_taffy::CopyStyleGetters;
-pub use stylo_to_kurbo::resolve_2d_transform;
+pub use stylo_to_kurbo::{resolve_2d_transform, resolve_2d_transform_for_size};
 
 pub mod net;
 pub mod util;

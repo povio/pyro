@@ -425,7 +425,7 @@ impl Descent<'_> {
                 origin = shift(top.y) * origin;
             }
             for item in line.items() {
-                let (start, r) = geometry::inline_item_rect(&line, &item, scale);
+                let (start, r) = geometry::inline_item_rect(&line, &item, scale, text.layout.is_rtl());
                 // An element's fragment grows to its border box in the block axis.
                 let to_doc = |r: Rect, (top, bottom): (f64, f64)| {
                     origin.transform_rect_bbox(Rect::new(

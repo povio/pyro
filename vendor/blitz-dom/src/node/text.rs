@@ -68,6 +68,18 @@ pub struct TextLayout {
     /// pyro: the first letter of the root's first line, styled by an element's
     /// `::first-letter` (`layout::first_letter`), set before each build.
     pub first_letter: Option<FirstLetterSplit>,
+    /// pyro: when the root is an anonymous block holding a piece of inline boxes split around
+    /// block-level content (`NodeFlags::IS_SPLIT_INLINE`), those boxes, innermost first, each
+    /// with whether this piece holds its start and its end: only there do its fragments have
+    /// their start and end sides. Set by each build.
+    pub split_pieces: Vec<(NodeId, bool, bool)>,
+    /// pyro: the build put the bidi formatting characters of inline boxes' `unicode-bidi`, or
+    /// the struts of empty inline boxes (U+2061), in `text`: they are no content (see
+    /// [`Self::has_no_text`]).
+    pub bidi_controls: bool,
+    /// pyro: some inline box (not atomic) laid out here is relatively positioned: what it holds
+    /// is painted moved (`BaseDocument::inline_span_relative_offset`). Set by each build.
+    pub relative_spans: bool,
 }
 
 /// pyro: where an inline layout's first letter is: the bytes of a text node's content that an
@@ -130,6 +142,13 @@ pub fn can_take_emphasis_mark(c: char) -> bool {
 impl TextLayout {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// pyro: whether the text is empty, the bidi formatting characters of `unicode-bidi` aside.
+    pub fn has_no_text(&self) -> bool {
+        self.text.is_empty()
+            || (self.bidi_controls
+                && self.text.chars().all(|c| matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2061}')))
     }
 
     /// The layout's content widths with a text indent of `indent` set on it.

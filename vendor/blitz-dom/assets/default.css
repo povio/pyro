@@ -345,15 +345,16 @@ output {
     unicode-bidi: isolate;
 }
 
-/* We need the "bdo:-moz-has-dir-attr" bit because "bdo" has lower
-   specificity than the ":-moz-has-dir-attr" selector above. */
+/* pyro: `bdo[dir]` outweighs the `[dir]` rules above, as Gecko's
+   "bdo:-moz-has-dir-attr" does; Stylo does not parse that pseudo-class, which
+   dropped the whole rule (and the next one). */
 bdo,
-bdo:-moz-has-dir-attr {
+bdo[dir] {
     unicode-bidi: isolate-override;
 }
 
-textarea:-moz-dir-attr-like-auto,
-pre:-moz-dir-attr-like-auto {
+textarea[dir="auto" i],
+pre[dir="auto" i] {
     unicode-bidi: plaintext;
 }
 
@@ -663,6 +664,19 @@ table[rules][rules="groups"]>tbody {
 caption {
     display: table-caption;
     text-align: center;
+}
+
+/* pyro: the anonymous table, row and cell boxes of CSS 2.1 §17.2.1 (layout/table_fixup.rs) */
+*|*::-servo-anonymous-table {
+    display: table;
+}
+
+*|*::-servo-anonymous-table-row {
+    display: table-row;
+}
+
+*|*::-servo-anonymous-table-cell {
+    display: table-cell;
 }
 
 table[align="center"]>caption {
