@@ -103,6 +103,13 @@ for offscreen rasters and its filter conventions. Upstream draws a translucent r
 Offscreen rasters use `VelloCpuImageRenderer` on the calling thread. PDF output (pyro-render `pdf.rs`) leaves
 `DestIn` layers out: masks and clip paths of several shapes are not applied there.
 
+## A mask in user units that a box references (second pass, lane P6)
+
+- `src/lib.rs` (`render_svg_tree_within`): renders a tree with the visible area of the scene as the bound of its
+  offscreen rasters, in place of the tree's viewport. blitz-paint draws a `<mask maskUnits="userSpaceOnUse">` that a
+  CSS box references with it: the mask's content may lie above or left of the box's corner (the tree's origin), over
+  the box's shadow, where the viewport bound cut the mask's raster to nothing (WPT `mask-image-3f`).
+
 Regenerate the patch from a pristine copy of the published crate:
 `git diff --no-index --no-prefix a b` with the published crate in `a` (without `.cargo_vcs_info.json`,
 `Cargo.toml.orig` and `.cargo-ok`) and this directory, without this file and the patch, in `b`, run from their

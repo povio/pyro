@@ -1,9 +1,12 @@
 # WPT coverage gate
 
-`.github/workflows/wpt.yml` runs our WPT subset (the directories in `lib.mjs` `DEFAULT_DIRS`, ~2,800 pages) on every
+`.github/workflows/wpt.yml` runs our WPT subset (the directories in `lib.mjs` `DEFAULT_DIRS`, 3,541 pages) on every
 pull request and fails when coverage goes down. `baseline.json` records, per page, which subtests pass, whether the
-page completed, and how long it took. The same gate runs over WPT's reftests in the paint directories (9,341 pages,
-`reftest-baseline.json`): see [Reftests](#reftests), which also compares pyro's results with Chrome's.
+page completed, and how long it took. The same gate runs over WPT's reftests in the same directories and in 31 CSS layout
+directories (18,156 pages, 62% of WPT's 29,212 reftests; `reftest-baseline.json`): see [Reftests](#reftests), which
+also compares pyro's results with Chrome's.
+[What runs](#what-runs) lists the testharness pages by directory. And it runs over WPT's crashtests (2,031 pages,
+`crashtest-baseline.json`): see [Crashtests](#crashtests).
 
 ## How a run works
 
@@ -15,9 +18,11 @@ page completed, and how long it took. The same gate runs over WPT's reftests in 
    with it, for that reason alone.
 3. `build`: `cargo build --profile release-fast` (dependencies cached by `Swatinem/rust-cache`, saved from `main`
    only), the patched JavaScriptCore linked in, saved to the cache.
-4. `wpt`: four macOS shards. Each restores the pinned WPT checkout (`fetch-wpt.sh`: revision `wpt-revision.txt`,
-   only the paths in `wpt-paths.txt`, ~85 MB, cached), takes its share of the pages (longest first, balanced by the
-   baseline's durations) and runs it at `--jobs 4` (3 CPUs). Every page whose result differs from the baseline then
+4. `wpt`: one job on `lp-m1` (the matrix takes more shards: each takes its share of the pages, balanced by the
+   baseline's durations). It restores the pinned WPT checkout (`fetch-wpt.sh`: revision `wpt-revision.txt`, only the
+   paths in `wpt-paths.txt`, about 290 MB, cached) and runs the pages longest first at `--jobs 4`, the load the
+   baseline was recorded under. It was four shards until 2026-11-15: the runner takes one job at a time, so they ran
+   one after another and each paid about 25 s of setup. Every page whose result differs from the baseline then
    runs at least twice more at the same `--jobs`, padded with copies when few pages differ, so a timing-sensitive
    page reruns under about the load it first ran under.
 5. `gate` (Linux): merges the shards, checks them, writes the summary, and uploads a refreshed `baseline.json` as the
@@ -48,6 +53,61 @@ reruns use the normal timeouts. The summary lists the pages whose runs disagreed
 candidates.
 
 With no baseline anywhere (the first runs), a run only reports; its artifact is the first baseline.
+
+## What runs
+
+Both kinds run the same 18 directories: the ten testharness directories and the eight paint directories
+(`lib.mjs` `PAINT_DIRS`). `discover()` takes every page that loads `/resources/testharness.js` with a script
+element: `.any.js` and `.window.js` files (their window variant) and markup files (`.html`, `.htm`, `.xhtml`,
+`.xht`, `.xml`, `.svg`). At the pinned revision that is 3,541 pages:
+
+| directory | pages | testdriver | wptserve name | Python handler | no window global |
+|---|---:|---:|---:|---:|---:|
+| dom | 643 | 86 | 6 | 6 | 1 |
+| html/dom | 246 | 2 | 9 | 5 | 1 |
+| encoding | 1,258 | 0 | 1 | 4 | 0 |
+| url | 48 | 0 | 0 | 1 | 0 |
+| fetch/api/basic | 9 | 0 | 8 | 21 | 0 |
+| xhr | 146 | 1 | 10 | 198 | 0 |
+| css/selectors | 394 | 78 | 3 | 0 | 0 |
+| uievents | 17 | 52 | 0 | 0 | 0 |
+| shadow-dom | 185 | 129 | 0 | 0 | 0 |
+| webstorage | 51 | 0 | 3 | 0 | 0 |
+| css/css-backgrounds | 128 | 0 | 4 | 0 | 0 |
+| css/css-text-decor | 48 | 0 | 0 | 0 | 0 |
+| css/filter-effects | 37 | 0 | 0 | 0 | 0 |
+| css/compositing | 15 | 0 | 0 | 0 | 0 |
+| css/css-masking | 63 | 0 | 2 | 0 | 0 |
+| css/css-color | 69 | 0 | 0 | 0 | 0 |
+| css/css-transforms | 105 | 3 | 0 | 0 | 0 |
+| css/CSS2 | 79 | 0 | 0 | 0 | 0 |
+| **all** | **3,541** | 351 | 46 | 235 | 2 |
+
+Left out, counted by reason in the run's `excluded`: pages that load testdriver, names that need wptserve
+(`.sub.`, `.https.`, `.h2.`, `.www.`), pages that name a Python handler (`.py`) outside an HTML comment, and
+`.any.js` files with no window global. Worker variants never run. A `.py` in a comment does not count (html/canvas's
+generated pages name their generator there). Generated pages that name no handler themselves but need wptserve are
+kept out by path: `referrer-policy/`, `content-security-policy/` and anything loading
+`/common/security-features/`, `html/syntax/speculative-parsing/` and `html/semantics/**/moving-between-documents/`
+(`SERVER_PAGES` in `lib.mjs`; none of these directories runs today).
+
+The 728 pages added to the first 2,813 (2026-11-15):
+
+- 541 testharness pages of the eight paint directories (parsing, computed values, interpolation, hit tests, CSS2
+  geometry). They run as wptrunner runs every page, in an 800x600 viewport; the ten older directories keep the
+  1280x720 their baseline was recorded with.
+- 187 `.xml`, `.svg` and `.xht` pages that discovery used to drop without a count: css/selectors/old-tests 166
+  (9 more load testdriver), dom 18, css/filter-effects 3.
+
+In a local run of the 728 (not a baseline: CI records that), 727 completed, none crashed or hung the browser, 25,751
+of 39,889 subtests passed and three runs agreed on every page. `dom/nodes/Element-firstElementChild-entity.svg`
+times out (its internal DTD subset declares an entity).
+
+The browser has Ahem for every page (`PYRO_FONTS`, as the reftests), as wptrunner installs it. `serve.mjs` answers
+`/resources/WebIDLParser.js` with `resources/webidl2/lib/webidl2.js`, as wptserve routes it: before that every
+idlharness page failed its one subtest (the eight older idlharness pages pass 2,309 subtests with it). A subtest name
+that holds this server's origin (interpolation pages name the `url()` values they resolved) is recorded with
+wptserve's origin, `http://web-platform.test:8000`, since the port differs from run to run.
 
 ## flaky.json
 
@@ -235,9 +295,12 @@ gh run download <run-id> -n wpt-reftest-baseline -D bench/wpt     # writes bench
 `lib.mjs` `discoverReftests()` classifies files as WPT's manifest does (`tools/manifest/sourcefile.py`): a markup file
 (`.html`, `.htm`, `.xht`, `.xhtml`, `.xml`, `.svg`) with a `match` or `mismatch` link is a reftest, unless it is a
 manual, visual, crash or print test, a testharness page, or under a `resources`, `support` or `tools` directory. The
-directories are `REFTEST_DIRS`: the paint directories and all of CSS2 (it costs about 50 s of the run). At the pinned
-revision they hold 9,341 reftests. wpt.fyi lists 9,352 in them: the same 9,341, and the 11 left out below for wptserve
-or testdriver.
+directories are `REFTEST_DIRS`: the paint directories with all of CSS2 (it costs about 50 s of the run), the five
+testharness directories that hold reftests (501: selector invalidation, `dir=auto` and bidi, shadow trees), and the 31
+layout directories (`LAYOUT_DIRS`, 8,314: flexbox, grid, sizing, position, tables, text, fonts, inline, overflow and
+the smaller style directories). At the pinned revision they hold 18,156 reftests, 62% of the 29,212 in WPT's
+manifest (32% before the two additions of 2026-11-15). In the first 13 directories wpt.fyi lists 9,855: the same
+9,842, and the 13 left out below for wptserve or testdriver.
 
 | directory | reftests | reference files | no reference | crash tests | manual | print | wptserve | testdriver |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -249,13 +312,109 @@ or testdriver.
 | css/css-color | 308 | 148 | 0 | 3 | 0 | 0 | 0 | 0 |
 | css/css-transforms | 797 | 311 | 4 | 28 | 1 | 0 | 0 | 0 |
 | css/CSS2 | 6,241 | 2,099 | 2,314 | 32 | 4 | 43 | 1 | 0 |
-| **all** | **9,341** | 3,750 | 2,450 | 121 | 70 | 43 | 10 | 1 |
+| css/selectors | 341 | 157 | 1 | 20 | 2 | 0 | 0 | 1 |
+| html/dom | 127 | 111 | 2 | 3 | 1 | 0 | 0 | 0 |
+| shadow-dom | 25 | 21 | 0 | 43 | 0 | 0 | 0 | 1 |
+| dom | 4 | 3 | 65 | 44 | 0 | 0 | 0 | 0 |
+| encoding | 4 | 4 | 34 | 2 | 0 | 0 | 0 | 0 |
+| **the 13 above** | **9,842** | 4,046 | 2,552 | 233 | 73 | 43 | 10 | 3 |
+| css/css-flexbox | 1,020 | 546 | 9 | 29 | 8 | 3 | 0 | 0 |
+| css/css-sizing | 566 | 119 | 0 | 8 | 0 | 0 | 3 | 0 |
+| css/css-position | 248 | 100 | 0 | 28 | 0 | 3 | 2 | 0 |
+| css/css-tables | 169 | 85 | 0 | 42 | 0 | 4 | 0 | 0 |
+| css/css-display | 222 | 55 | 92 | 3 | 0 | 0 | 0 | 0 |
+| css/css-align | 64 | 47 | 1 | 0 | 0 | 0 | 0 | 0 |
+| css/css-box | 42 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
+| css/css-overflow | 697 | 455 | 21 | 51 | 0 | 0 | 0 | 3 |
+| css/css-images | 474 | 248 | 4 | 6 | 0 | 0 | 8 | 0 |
+| css/css-values | 171 | 83 | 2 | 22 | 1 | 2 | 41 | 0 |
+| css/css-variables | 183 | 20 | 0 | 4 | 0 | 0 | 0 | 0 |
+| css/css-cascade | 44 | 18 | 0 | 7 | 1 | 7 | 0 | 0 |
+| css/css-conditional | 172 | 32 | 0 | 63 | 0 | 0 | 1 | 0 |
+| css/css-nesting | 17 | 8 | 0 | 6 | 0 | 0 | 0 | 0 |
+| css/css-lists | 198 | 161 | 2 | 17 | 0 | 0 | 0 | 0 |
+| css/css-pseudo | 279 | 233 | 1 | 26 | 7 | 0 | 0 | 0 |
+| css/css-content | 66 | 56 | 0 | 6 | 0 | 0 | 0 | 0 |
+| css/css-logical | 6 | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
+| css/cssom | 12 | 9 | 0 | 19 | 0 | 0 | 0 | 0 |
+| css/cssom-view | 11 | 7 | 2 | 4 | 0 | 0 | 0 | 0 |
+| css/mediaqueries | 58 | 9 | 3 | 1 | 0 | 0 | 0 | 0 |
+| css/css-syntax | 1 | 1 | 4 | 3 | 0 | 0 | 0 | 0 |
+| css/css-shadow | 113 | 17 | 0 | 3 | 0 | 0 | 0 | 1 |
+| css/css-transitions | 6 | 5 | 0 | 13 | 55 | 0 | 0 | 0 |
+| css/css-animations | 36 | 25 | 0 | 46 | 66 | 0 | 0 | 0 |
+| css/css-properties-values-api | 7 | 3 | 0 | 7 | 0 | 0 | 0 | 0 |
+| css/css-grid | 826 | 1,161 | 4 | 43 | 0 | 1 | 0 | 2 |
+| css/css-text | 1,621 | 1,059 | 26 | 41 | 2 | 0 | 4 | 0 |
+| css/css-fonts | 378 | 333 | 4 | 10 | 0 | 2 | 6 | 0 |
+| css/css-inline | 373 | 170 | 0 | 7 | 0 | 3 | 0 | 0 |
+| css/css-borders | 234 | 116 | 1 | 3 | 0 | 0 | 0 | 0 |
+| **layout directories** | **8,314** | 5,194 | 176 | 518 | 140 | 25 | 65 | 6 |
+| **all** | **18,156** | 9,240 | 2,728 | 751 | 213 | 68 | 75 | 9 |
+
+In a local run of the 501 added on 2026-11-15 (not a baseline), every page completed and 376 passed (css/selectors
+294, html/dom 59, shadow-dom 16, dom 3, encoding 4); Chrome passes 481.
+
+`css/css-grid/grid-lanes/` is left out by path (`lib.mjs` `REFTEST_SKIP`, counted in `excluded`): 911 reftests of
+masonry layout, which pyro does not implement and of which Chrome passes 120. A failing page still runs on every pull
+request (only one that times out with nothing passing is skipped), so they would cost about 5% of the reftest run and
+protect nothing. Two css-fonts tests name a reference that WPT does not have (`reference not in the checkout`). The
+layout directories' testharness pages are not run: 4,771 of them can run, more than the 3,541 pages of the whole
+testharness run today.
+
+A local run of the layout directories (2026-11-15, one pass at 3 jobs on a loaded machine, not a baseline; the
+baseline comes from CI) found no crash, no hang and no browser restart. 5,203 of the 8,314 pass; Chrome passes 7,164:
+
+| directory | reftests | pyro (local) | Chrome | did not complete |
+|---|---:|---:|---:|---|
+| css/css-flexbox | 1,020 | 919 | 1,006 | timeout 2 |
+| css/css-sizing | 566 | 358 | 541 |  |
+| css/css-position | 248 | 110 | 247 |  |
+| css/css-tables | 169 | 116 | 160 |  |
+| css/css-display | 222 | 107 | 149 | timeout 1, error 1 |
+| css/css-align | 64 | 45 | 61 |  |
+| css/css-box | 42 | 2 | 42 |  |
+| css/css-overflow | 697 | 207 | 410 | timeout 4 |
+| css/css-images | 474 | 252 | 376 | timeout 3 |
+| css/css-values | 171 | 140 | 165 |  |
+| css/css-variables | 183 | 182 | 179 |  |
+| css/css-cascade | 44 | 36 | 44 |  |
+| css/css-conditional | 172 | 144 | 169 | timeout 3 |
+| css/css-nesting | 17 | 12 | 17 |  |
+| css/css-lists | 198 | 111 | 125 |  |
+| css/css-pseudo | 279 | 107 | 251 |  |
+| css/css-content | 66 | 34 | 62 |  |
+| css/css-logical | 6 | 1 | 6 |  |
+| css/cssom | 12 | 8 | 9 |  |
+| css/cssom-view | 11 | 9 | 11 |  |
+| css/mediaqueries | 58 | 42 | 56 |  |
+| css/css-syntax | 1 | 1 | 1 |  |
+| css/css-shadow | 113 | 23 | 94 | error 2 |
+| css/css-transitions | 6 | 5 | 6 | timeout 1 |
+| css/css-animations | 36 | 26 | 33 |  |
+| css/css-properties-values-api | 7 | 6 | 7 |  |
+| css/css-grid | 826 | 673 | 814 |  |
+| css/css-text | 1,621 | 1,115 | 1,328 | timeout 1 |
+| css/css-fonts | 378 | 192 | 323 | timeout 10 |
+| css/css-inline | 373 | 75 | 287 |  |
+| css/css-borders | 234 | 145 | 185 |  |
+| **layout directories** | 8,314 | 5,203 | 7,164 | timeout 25, error 3 |
+
+The 25 timeouts are pages whose `reftest-wait` is never removed, for features pyro lacks: `font-palette` and
+`@font-palette-values` (10), scroll markers (4), embedded SVG documents that change (3), container queries on
+pseudo-elements and cues (3), and `flex-item-z-ordering-003/-004`, `display-change-object-iframe`,
+`pseudo-element-transform` and `text-fit/selection-highlight-painting`. They pass nothing, so pull requests skip them.
+The 3 errors are one pyro bug, not a crash: `Page.captureScreenshot` answers `the page's tree has a repeated key` on
+`css/css-display/display-contents-shadow-dom-1.html`, `css/css-shadow/reslot-text-inheritance.html` and
+`css/css-shadow/shadow-fallback-dynamic-004.html` (all three change a shadow tree's slotting after load). The support files these pages ask for
+and do not get are missing in WPT too (`/fonts/DoulosSIL-R.woff`, `/fonts/GentiumPlus-R.woff2`,
+`css/css-pseudo/highlight-cascade/support/selections.js` and ten others).
 
 Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
 markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
 such as `interact`), print reftests, pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions,
-`pipe=`, Python handlers), and testdriver. Testharness pages in these directories (parsing, computed values) are not
-reftests and are not run here. A reference that has references of its own (155 tests) is compared one level deep, as
+`pipe=`, Python handlers), and testdriver. Testharness pages in these directories are not reftests: the testharness run takes
+them ([What runs](#what-runs)). A reference that has references of its own (155 tests) is compared one level deep, as
 wptrunner does at this revision (`ReftestTest.from_manifest`); it is a test of its own as well, so the chain is covered
 link by link. `about:blank` references are supported.
 
@@ -295,9 +454,24 @@ As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
 The `reftest` job runs `gate.mjs run --kind reftest` in one shard on the self-hosted `lp-m1`, one page per CPU, and
 `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build` jobs (the
 browser, built on `lp-m1`) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support
-files; 171 MB). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
-`reftest-runner` (`macos-15`: two shards on GitHub's hosted runners, billed as macOS minutes) and `reftest-args` (for
+files; about 290 MB with its git directory). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
+`reftest-runner` (`macos-15`: four shards on GitHub's hosted runners, billed as macOS minutes) and `reftest-args` (for
 example `--dirs css/CSS2 --no-rerun` to time a directory).
+
+The layout directories (8,314 reftests) about double the reftest job, and more shards cannot shorten it: `lp-m1`
+takes one job at a time, so shards there run one after another and each adds its setup. Its run step took 129 to
+132 s for 9,842 pages in three runs (job 154 to 160 s); with 18,156 pages it is about 240 s (est., at the same 13 ms
+of wall time per page; job about 4.5 min). The testharness run became one job at the same `--jobs 4` to pay for most
+of it: four jobs of 67 to 73 s (272 to 286 s) become one of about 200 s (est.: 25 s of setup, four times 43 s of
+pages). A pull request's jobs on `lp-m1` go from about 8.2 min to about 8.8 min (est.), without the crashtest job.
+The first run with the new pages costs about 2.5 min more, once: each new page that passes runs again, and the 25
+pages that time out take 15 s each before the gate skips them.
+
+The first 2026-11-15 additions needed no more shards (est., from CI's means of about 85 ms per reftest and 270-320 ms per
+testharness page): 501 reftests are about 43 s of page time, 5 to 10 s of the one shard at 8 jobs; 728 testharness
+pages are about 200-235 s of page time, 12 to 15 s on each of the four shards at 4 jobs (locally they took 35 s of page
+time, plus one 15 s timeout that pull requests skip). The first run after pages are added runs each new page that
+passes once more, so it costs about twice that.
 
 Measured on the pull request that added the job (all 9,341 reftests; a run without a baseline runs every page twice):
 
@@ -387,3 +561,100 @@ Paint (the paint directories and CSS2's backgrounds, borders, colors, visufx, ui
 (339 of them `first-letter-punctuation-*`), tables 199, normal-flow 127, lists 120 (counters and the `*-applies-to`
 pages), generated-content 105, text 101, bidi-text 55, positioning 48 and fewer elsewhere.
 
+## Crashtests
+
+A WPT crashtest is a page that once crashed a browser: it passes when the browser loads it, paints it and is still
+there. `run.mjs --kind crashtest` runs them and `gate.mjs ... --kind crashtest` gates them as it gates reftests: each
+crashtest is reported as one subtest, `crashtest`, so a crashtest that passed in `crashtest-baseline.json` must still
+pass in some run of it, an unrecorded pass fails as stale, and `crashtest-flaky.json` (the format of `flaky.json`)
+lists what is not checked. Only passes are protected, as for reftests. Adding or widening a `crashtest-flaky.json`
+entry, or dropping a baseline pass, needs the `wpt-accept-loss` label; a page that crashes, panics or hangs pyro is
+never listed there or recorded as passing: it stays a failing entry until pyro is fixed. The refreshed baseline is
+the `wpt-crashtest-baseline` artifact:
+
+```sh
+gh run download <run-id> -n wpt-crashtest-baseline -D bench/wpt     # writes bench/wpt/crashtest-baseline.json
+```
+
+There is no baseline until a first run's artifact is committed: with none on the branch or its base, the gate only
+reports (`bootstrap`), runs every page twice and uploads the baseline both passes agree on.
+
+### What runs
+
+`crashtest.mjs` `discoverCrashtests()` names crashtests as WPT's manifest does (`tools/manifest/sourcefile.py`,
+`name_is_crashtest`): a markup file (`.html`, `.htm`, `.xht`, `.xhtml`, `.xml`, `.svg`) whose name ends in `-crash`
+before its extension (`a-crash.html`, `a-crash.tentative.html`; not `a-crash-001.html`), or that lies under a
+directory named `crashtests`, outside `resources`, `support` and `tools`. It walks the whole checkout
+(`CRASHTEST_DIRS` is `.`; `--dirs css/css-multicol,dom` runs part of it), and `wpt-paths.txt` checks out every
+crashtest in WPT by those two names, not only those in the directories the other kinds run: at the pinned revision
+discovery finds the manifest's 2,105 crashtests exactly. Of the 2,031 that run, 226 lie in the testharness and
+reftest directories; the other 1,805, with the 18 support files they load outside the paths already listed (found
+from `serve.mjs`'s request log over a run of all of them, and from the URLs their sources name), add 8 MB in 1,925 files to the
+checkout (180 MB with its git directory), which is why all of them run rather than the 226.
+
+2,031 run. Left out, counted by reason in the run's `excluded`: 45 whose names need wptserve (`.sub`, `.https`,
+`.h2`, `.www`), 27 that load testdriver and 2 that name a Python handler or `pipe=`. A page's results are counted
+under its area (`css/css-multicol`, `html/semantics`, `dom`): the largest are css-multicol 164, editing 151,
+html/semantics 135, mathml 126 and css-break 116.
+
+### How a crashtest is judged
+
+As wptrunner does (`docs/writing-tests/crashtest.md`, `executors/test-wait.js` with the class `test-wait`), in
+`crashtest.mjs` and `run.mjs`:
+
+- The browser and the viewport are the reftests' (800x600, Ahem installed).
+- The page is loaded, and the runner waits for the load event, `document.fonts.ready` (after a forced layout) and
+  two animation frames. With `class="test-wait"` on the root element it then fires `TestRendered` at it and waits
+  for the class to go, two frames after each change of the root's attributes, up to the page's timeout (15 s, 45 s
+  with `<meta name=timeout content=long>`): `timeout`, with `test-wait was not removed`, `the page did not load` or
+  `the page kept navigating`.
+- "The test passes if the load event is reached, and the browser finishes painting, without terminating." pyro lays
+  out and paints on demand, so the runner then takes a screenshot and drops it: a page whose layout or paint fails
+  is an `error` with the browser's message, not a pass.
+- The runner then navigates the page to `about:blank`, so the document is torn down inside its own test and not
+  under the next page of the worker.
+- **Crash.** A page whose browser died under it runs again alone; if the browser dies again the page is recorded as
+  `crash`, with the last lines of the browser's stderr (a Rust abort's message, `has overflowed its stack`). The
+  pages that ran beside it get their own results.
+- **Panic.** pyro catches Rust panics at its JavaScript bindings and on its render thread, so most panics do not end
+  the process: the call throws, or the frame is not painted. The runner reads the browser's stderr; when a panic is
+  printed while a page runs, the page runs again alone, and if one is printed again it is recorded as `panic` with
+  the panic's location and message.
+- **Hang.** A page that does not answer for 15 s past its timeout is recorded as `hang` and the browser is replaced.
+
+Only a `complete` page carries the passing subtest. `CRASHTEST_STDERR=FILE` appends the browser's stderr to FILE;
+with `RUST_BACKTRACE=1` that includes each panic's backtrace:
+
+```sh
+RUST_BACKTRACE=1 CRASHTEST_STDERR=/tmp/stderr.log bun bench/wpt/run.mjs --kind crashtest --wpt "$WPT_DIR" \
+  --bin pyro=target/release-fast/pyro --jobs 1 --match 'documentElement-remove' --out /tmp/crash.json
+```
+
+### What it found
+
+The first local runs (an M1 Max under load, `--jobs 3`, both passes of a bootstrap run agreeing on all but one
+transition page): 1,967 of 2,031 passed. 12 pages failed for a defect in pyro, 11 of them fixed with the kind
+(1,978 pass):
+
+| pages | what happened | fix |
+|---:|---|---|
+| 5 | panic, `root_element()` on a document whose element the page removed (`documentElement.remove()`), in the capture and in the document's size | pyro-render reads `try_root_element()`: such a document is an empty canvas the size of the viewport |
+| 2 | panic in `resolve_deferred_tasks`: a root element that is inline content (a `<br>` appended to the document) made the document node an inline root | blitz-dom: only a box is an inline root |
+| 2 | no screenshot, `the page's tree has a repeated key`: every `<slot>` of one name (and every slot of a `slotAssignment: "manual"` root) rendered the host's children | pyro-dom's render tree gives them to the slot DOM's "find a slot" names |
+| 1 | crash, stack overflow in usvg: a `<pattern>` cycle through `href` (`svg/crashtests/chrome-bug-565674533.html`) | `svg_refs.rs` breaks pattern cycles as it does clip path, mask and filter cycles |
+| 1 | panic, `Duration::from_secs_f64` on an animation of `duration: 95903184853313357582278077554606` | timer delays from a page saturate (`delay_from_ms`) |
+| 1 | **open**: `custom-elements/many-slots-crash.html` hangs (no answer for 30 s). A custom element whose shadow tree holds another of itself recurses; Chrome ends it with a stack overflow `RangeError`. pyro's page thread was sampled in `Dom::collect_garbage` (`component_root`) under `PageDom::sweep_released_nodes`, from the mutation-observer microtask inside `custom::run_reactions`: each level sweeps the nodes released so far | |
+
+The other 52 time out without a crash: 51 wait in `test-wait` for something pyro does not do (20 of them view
+transitions; scroll timelines, typed OM, editing commands), and one navigates without end. They are failing entries
+of the baseline, skipped by a pull request's run.
+
+### CI
+
+One job, `crashtest`, on the self-hosted `lp-m1` (as every macOS job): it restores the browser and the WPT checkout
+the other jobs use, runs `gate.mjs run --kind crashtest` at one page per CPU, checks the result against
+`crashtest-baseline.json` in the same job (the base branch's files and the `wpt-accept-loss` label as the other
+gates read them) and uploads `wpt-crashtest-shard-0` and, when it changed, `wpt-crashtest-baseline`. It is one job
+and not a run job plus a Linux gate job because the check takes a second and the job already has what it needs;
+it is not sharded because a pull request's run is about 2,000 pages of some 90 ms each. Manual runs take `suites`
+(`crashtest` runs this job alone) and `crashtest-args` (for example `--dirs css/css-multicol`).

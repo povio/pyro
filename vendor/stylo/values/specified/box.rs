@@ -495,6 +495,10 @@ enum DisplayKeyword {
     Inside(DisplayInside),
     Outside(DisplayOutside),
     ListItem,
+    /// pyro: the `math` inside keyword (CSS Display 4, MathML Core): an inside of its own on a
+    /// MathML element; on any other element it computes to `flow`, as it is kept here (pyro lays
+    /// no MathML out). Its default outside is `inline`.
+    Math,
 }
 
 impl DisplayKeyword {
@@ -540,6 +544,7 @@ impl DisplayKeyword {
             /// <display-inside> = flow | flow-root | table | flex | grid | ruby
             /// https://drafts.csswg.org/css-display/#typedef-display-inside
             "flow" => Inside(DisplayInside::Flow),
+            "math" => Math,
             "flex" => Inside(DisplayInside::Flex),
             "flow-root" => Inside(DisplayInside::FlowRoot),
             "table" => Inside(DisplayInside::Table),
@@ -626,10 +631,15 @@ impl ToTyped for Display {
 impl Parse for Display {
     fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
         let mut got_list_item = false;
+        let mut got_math = false;
         let mut inside = None;
         let mut outside = None;
         match DisplayKeyword::parse(input)? {
             DisplayKeyword::Full(d) => return Ok(d),
+            DisplayKeyword::Math => {
+                got_math = true;
+                inside = Some(DisplayInside::Flow);
+            },
             DisplayKeyword::Outside(o) => {
                 outside = Some(o);
             },
@@ -652,13 +662,19 @@ impl Parse for Display {
                 DisplayKeyword::Inside(i) if inside.is_none() => {
                     inside = Some(i);
                 },
+                DisplayKeyword::Math if inside.is_none() => {
+                    got_math = true;
+                    inside = Some(DisplayInside::Flow);
+                },
                 _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
             }
         }
 
         let inside = inside.unwrap_or(DisplayInside::Flow);
-        let outside = outside.unwrap_or_else(|| inside.default_display_outside());
-        if got_list_item && !inside.is_valid_for_list_item() {
+        let outside = outside.unwrap_or_else(|| {
+            if got_math { DisplayOutside::Inline } else { inside.default_display_outside() }
+        });
+        if got_list_item && (got_math || !inside.is_valid_for_list_item()) {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
 

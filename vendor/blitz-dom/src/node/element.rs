@@ -81,6 +81,12 @@ pub struct ElementData {
 
     /// pyro: the `border-image-source` image (at most one entry).
     pub border_images: ThinVec<Option<ImageResourceData>>,
+    /// pyro: the SVG documents this element references elements of by `url(document.svg#id)`:
+    /// its computed `clip-path` and `filter` functions, then (an SVG element's) `filter` and
+    /// `mask` attributes, one entry each in that order ([`super::svg::reference_candidates`]).
+    /// A reference into this document has an entry without an image. `mask-image` documents
+    /// are in `mask_images`.
+    pub reference_images: ThinVec<Option<ImageResourceData>>,
     /// pyro: the `list-style-image` image of a list item (a list of one), its marker once loaded.
     pub list_style_images: ThinVec<Option<ImageResourceData>>,
 
@@ -134,6 +140,9 @@ pub struct ElementData {
     /// letter in the inline layout that holds it (`layout::first_letter`). Not in the tree: no
     /// children, no damage, its parent is the letter's text's parent.
     pub first_letter: Option<NodeId>,
+    /// pyro: the node holding this element's `::first-line` style, whose parent is the inline
+    /// root holding the first line it styles (`layout::first_line`). Not in the tree.
+    pub first_line: Option<NodeId>,
 
     /// Detailed layout information from the most recent layout (currently
     /// grid track sizing information for grid containers only). Used by
@@ -349,6 +358,7 @@ impl std::fmt::Debug for ElementData {
             .field("mask_images", &self.mask_images)
             .field("border_images", &self.border_images)
             .field("list_style_images", &self.list_style_images)
+            .field("reference_images", &self.reference_images)
             .field("inline_layout_data", &self.inline_layout_data)
             .field("list_item_data", &self.list_item_data)
             .field("template_contents", &self.template_contents)
@@ -377,6 +387,7 @@ impl Clone for ElementData {
             mask_images: self.mask_images.clone(),
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
+            reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
             template_contents: self.template_contents,
@@ -397,6 +408,7 @@ impl Clone for ElementData {
             before: None,
             after: None,
             first_letter: None,
+            first_line: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -502,6 +514,7 @@ impl ElementData {
             mask_images: ThinVec::new(),
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
+            reference_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
             selector_flags: Cell::new(ElementSelectorFlags::empty()),
@@ -518,6 +531,7 @@ impl ElementData {
             before: None,
             after: None,
             first_letter: None,
+            first_line: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,

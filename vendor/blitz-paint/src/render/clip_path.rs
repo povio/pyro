@@ -742,6 +742,23 @@ pub(super) mod svg_reference {
         dom.get_element_by_id(&percent_decode(fragment))
     }
 
+    /// pyro: the SVG document a `url()` names an element of, when it is another document that
+    /// the element has loaded (`images`: its `reference_images`, or its `mask_images`), with the
+    /// element's id: `clip-path: url(shapes.svg#clip)`, a `data:` URL too.
+    pub(crate) fn external_reference(
+        images: &[Option<blitz_dom::node::ImageResourceData>],
+        url: &ComputedUrl,
+    ) -> Option<(std::sync::Arc<[u8]>, String)> {
+        use blitz_dom::node::{ImageData, Status};
+        let url = url.url()?;
+        let fragment = url.fragment()?;
+        let loaded = images.iter().flatten().find(|image| *image.url == **url && image.status == Status::Ok)?;
+        let ImageData::Svg(svg) = &loaded.image else {
+            return None;
+        };
+        Some((svg.source.clone()?, percent_decode(fragment)))
+    }
+
     fn percent_decode(text: &str) -> String {
         let bytes = text.as_bytes();
         let mut out = Vec::with_capacity(bytes.len());
@@ -949,20 +966,35 @@ impl ElementCx<'_, '_> {
     fn svg_clip(&self, url: &style::values::computed::url::ComputedUrl) -> Option<ElementClip> {
         use svg_reference::*;
         let dom = self.context.dom;
-        let target = local_reference(dom, url)?;
-        let node = dom.get_node(target)?;
-        if !is_svg_element(node, "clipPath") {
-            return None;
-        }
-        if reference_cycle(dom, target) {
-            return Some(ElementClip::Nothing);
-        }
-        let id = node.attr(blitz_dom::local_name!("id"))?;
+        // pyro: a `<clipPath>` of this document, or of another one the element has loaded
+        // (`url(shapes.svg#clip)`).
+        let mut external: Option<std::sync::Arc<[u8]>> = None;
+        let (target, id, object_bounding_box) = match local_reference(dom, url) {
+            Some(target) => {
+                let node = dom.get_node(target)?;
+                if !is_svg_element(node, "clipPath") {
+                    return None;
+                }
+                if reference_cycle(dom, target) {
+                    return Some(ElementClip::Nothing);
+                }
+                let units = node.attr(blitz_dom::local_name!("clipPathUnits")) == Some("objectBoundingBox");
+                (Some(target), node.attr(blitz_dom::local_name!("id"))?.to_string(), units)
+            }
+            None => {
+                let (source, id) = external_reference(&self.element.reference_images, url)?;
+                let (name, units) = blitz_dom::node::svg_source_element(&source, &id, "clipPathUnits")?;
+                if name != "clipPath" {
+                    return None;
+                }
+                external = Some(source);
+                (None, id, units.as_deref() == Some("objectBoundingBox"))
+            }
+        };
+        let id = id.as_str();
         // User units are CSS px unzoomed.
         let zoom = self.style.effective_zoom.value() as f64;
         let to_user = 1.0 / (self.scale * zoom);
-        let object_bounding_box =
-            node.attr(blitz_dom::local_name!("clipPathUnits")) == Some("objectBoundingBox");
         // The shape the clip path is taken from: the border box, whose box `objectBoundingBox`
         // units are fractions of; with user units, anything visible may be in the region.
         let shape = scale_rect(
@@ -975,12 +1007,11 @@ impl ElementCx<'_, '_> {
         );
         let painter = self.context;
         let content = opaque_rect(shape, &format!("clip-path=\"url(#{})\"", escape_attribute(id)));
-        let svg = dom.svg_reference_document(
-            target,
-            &content,
-            (painter.width as f64 * to_user) as f32,
-            (painter.height as f64 * to_user) as f32,
-        )?;
+        let (width, height) = ((painter.width as f64 * to_user) as f32, (painter.height as f64 * to_user) as f32);
+        let svg = match target {
+            Some(target) => dom.svg_reference_document(target, &content, width, height)?,
+            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref().unwrap_or_default(), &content, width, height)?,
+        };
         let user = Affine::scale(zoom);
         // usvg leaves out a shape whose clip path is empty or invalid: it clips everything.
         let Some(clip) = clipped_group(svg.tree.root()).and_then(|group| group.clip_path()) else {

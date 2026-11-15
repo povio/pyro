@@ -8,3 +8,4 @@ crates/pyro-render/tests/integration.rs merge=union
 # (without it git merges these files as text).
 bench/wpt/baseline.json merge=wpt-baseline
 bench/wpt/reftest-baseline.json merge=wpt-baseline
+bench/wpt/crashtest-baseline.json merge=wpt-baseline

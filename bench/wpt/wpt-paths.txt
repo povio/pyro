@@ -1,5 +1,5 @@
 # What bench/wpt/fetch-wpt.sh checks out of WPT (git sparse-checkout patterns, relative to the WPT root).
-# Test directories (run.mjs's default --dirs):
+# Test directories (lib.mjs DEFAULT_DIRS, the first ten):
 dom/
 html/dom/
 encoding/
@@ -10,7 +10,8 @@ css/selectors/
 uievents/
 shadow-dom/
 webstorage/
-# Reftest directories (lib.mjs REFTEST_DIRS, run.mjs --kind reftest):
+# Paint directories (lib.mjs PAINT_DIRS). Both kinds run every directory above and below: run.mjs runs their testharness
+# pages, run.mjs --kind reftest their reftests.
 css/css-backgrounds/
 css/css-text-decor/
 css/filter-effects/
@@ -19,6 +20,42 @@ css/css-masking/
 css/css-color/
 css/css-transforms/
 css/CSS2/
+# Crashtests (crashtest.mjs, run.mjs --kind crashtest): every one in WPT, by the names WPT's manifest gives them (a
+# crashtests/ directory anywhere, or a file name ending in -crash before its extension); about 2,100 small files.
+**/crashtests/
+**/*-crash.*
+# Layout directories (lib.mjs LAYOUT_DIRS): reftests only.
+css/css-flexbox/
+css/css-sizing/
+css/css-position/
+css/css-tables/
+css/css-display/
+css/css-align/
+css/css-box/
+css/css-overflow/
+css/css-images/
+css/css-values/
+css/css-variables/
+css/css-cascade/
+css/css-conditional/
+css/css-nesting/
+css/css-lists/
+css/css-pseudo/
+css/css-content/
+css/css-logical/
+css/cssom/
+css/cssom-view/
+css/mediaqueries/
+css/css-syntax/
+css/css-shadow/
+css/css-transitions/
+css/css-animations/
+css/css-properties-values-api/
+css/css-grid/
+css/css-text/
+css/css-fonts/
+css/css-inline/
+css/css-borders/
 # Support files those tests load (from serve.mjs's request log, WPT_SERVE_LOG, over a full run; for the reftests,
 # from the URLs their pages, references and stylesheets name):
 resources/
@@ -32,9 +69,30 @@ html/interaction/focus/the-autofocus-attribute/resources/
 loading/resources/
 css/support/
 css/reference/
-css/css-images/support/
-css/css-images/image-orientation/
 web-animations/testcommon.js
 web-animations/resources/
 media/1x1-green.png
 media/test.webm
+# Support files the crashtests outside the directories above load (from serve.mjs's request log over a run of all of
+# them, and from the URLs their sources name):
+css/css-contain/content-visibility/resources/slot-content-visibility.html
+css/css-flexbox/support/flexbox.css
+css/css-font-loading/support/fontfaceset-loading-worker.js
+css/css-fonts/resources/markA.ttf
+css/css-fonts/support/font-family-keywords.js
+css/css-values/resources/ExTest-NoSpace.woff
+domparsing/resources/dummy-xml.xml
+html/browsers/browsing-the-web/navigating-across-documents/resources/unknown-protocol-reload-crash-frame.html
+html/canvas/resources/wait-for-canvas-paint.js
+html/semantics/embedded-content/the-iframe-element/resources/hello-world.html
+html/semantics/interactive-elements/the-dialog-element/resources/showmodal-frame.html
+html/semantics/text-level-semantics/the-a-element/resources/a-onclick-handler-iframe.html
+intersection-observer/resources/transformed-iframe-subframe.html
+jpegxl/resources/custom-primaries-icc-overflow.jxl
+jpegxl/resources/incomplete-codestream-trailing-box.jxl
+media/sound_5.oga
+xml/xslt/xslt-type-confusion.xml
+xml/xslt/xslt-type-confusion.xsl
+media/2x2-green.mp4
+media/white.mp4
+media/white.webm

@@ -225,6 +225,10 @@ impl crate::document::BaseDocument {
             }
             self.first_letter_changed
                 .extend(std::mem::take(traverser.first_letter_changed.get_mut().unwrap()));
+            if traverser.first_line_styles.into_inner() {
+                self.first_line_styles = true;
+            }
+            self.first_line_changed.extend(std::mem::take(traverser.first_line_changed.get_mut().unwrap()));
         }
         // pyro: restyled nodes that stopped being sticky, and
         // removed ones, leave the set (only nodes that were sticky are in it).
@@ -722,6 +726,12 @@ impl selectors::Element for BlitzNode<'_> {
                 self.element_state().contains(ElementState::INDETERMINATE)
             }
             NonTSPseudoClass::Lang(ref lang) => self.match_element_lang(None, lang),
+            // pyro: the element's directionality (`crate::direction`).
+            NonTSPseudoClass::Dir(ref dir) => match &**dir {
+                "ltr" => !crate::direction::is_rtl(self),
+                "rtl" => crate::direction::is_rtl(self),
+                _ => false,
+            },
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             // pyro: every link, visited or not, as browsers match `:link` for an element's style
             // (only the colours a visited link paints come from `:visited`).
@@ -1128,10 +1138,16 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn get_attr(&self, attr: &style::LocalName, ns: &style::Namespace) -> Option<String> {
-        // TODO: case-insensitive matching for HTML-ns attrs
+        // pyro: `attr(Title)` names the `title` attribute of an HTML element in an HTML document
+        // (css-values-5 § attr(): the name is lowercased there); XML documents keep its case.
+        let lowered = (!self.tree().xml_document
+            && self.element_data().is_some_and(|element| element.name.ns == ns!(html))
+            && attr.0.bytes().any(|b| b.is_ascii_uppercase()))
+        .then(|| markup5ever::LocalName::from(attr.0.to_ascii_lowercase()));
+        let name = lowered.as_ref().unwrap_or(&attr.0);
         self.attrs()?
             .iter()
-            .find(|a| a.name.local == attr.0 && a.name.ns == ns.0)
+            .find(|a| a.name.local == *name && a.name.ns == ns.0)
             .map(|a| a.value.clone())
     }
 
@@ -1904,6 +1920,10 @@ pub struct RecalcStyle<'a> {
     /// pyro: the elements whose `::first-letter` style this traversal changed
     /// (`layout::first_letter::style_changed`).
     first_letter_changed: Mutex<Vec<NodeId>>,
+    /// pyro: an element styled in this traversal kept a `::first-line` style, and the elements
+    /// whose `::first-line` style it changed (`layout::first_line::style_changed`).
+    first_line_styles: std::sync::atomic::AtomicBool,
+    first_line_changed: Mutex<Vec<NodeId>>,
     /// pyro: an element styled in this traversal has a `::before` / `::after` whose content
     /// reads counters or quotes (`layout::counters`).
     generated_counters: std::sync::atomic::AtomicBool,
@@ -1924,6 +1944,8 @@ impl<'a> RecalcStyle<'a> {
             track_style_changes: false,
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
             first_letter_changed: Mutex::new(Vec::new()),
+            first_line_styles: std::sync::atomic::AtomicBool::new(false),
+            first_line_changed: Mutex::new(Vec::new()),
             generated_counters: std::sync::atomic::AtomicBool::new(false),
             track_counters: false,
             counters_changed: std::sync::atomic::AtomicBool::new(false),
@@ -2111,6 +2133,10 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 true => None,
                 false => data.styles.pseudos.get(&style::selector_parser::PseudoElement::FirstLetter).cloned(),
             };
+            let old_first_line = match data.styles.pseudos.is_empty() {
+                true => None,
+                false => data.styles.pseudos.get(&style::selector_parser::PseudoElement::FirstLine).cloned(),
+            };
             // pyro: what counters and quotes read of the element before the restyle.
             let old_generated = (self.track_counters && !self.counters_changed.load(std::sync::atomic::Ordering::Relaxed))
                 .then(|| crate::layout::counters::CounterInputs::of(&data.styles));
@@ -2259,6 +2285,28 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 };
                 if changed {
                     self.first_letter_changed.lock().unwrap().push(el.id);
+                }
+                // pyro: as for `::first-line` (`layout::first_line::style_changed`).
+                let new_first_line = match data.styles.pseudos.is_empty() {
+                    true => None,
+                    false => data.styles.pseudos.get(&PseudoElement::FirstLine),
+                };
+                if new_first_line.is_some() {
+                    self.first_line_styles.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                let line_changed = match (&old_first_line, new_first_line) {
+                    (None, None) => false,
+                    (Some(old), Some(new)) => {
+                        !Arc::ptr_eq(old, new)
+                            && matches!(
+                                RestyleDamage::compute_style_difference::<&Node>(old, new).change,
+                                style::matching::StyleChange::Changed { .. }
+                            )
+                    }
+                    _ => true,
+                };
+                if line_changed {
+                    self.first_line_changed.lock().unwrap().push(el.id);
                 }
             }
 
@@ -2454,6 +2502,14 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
                 &el.border_images,
             )
             || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
+            // pyro: the SVG documents its `clip-path`, `filter` and `mask` reference.
+            || {
+                #[cfg(feature = "svg")]
+                let out_of_sync = crate::node::references_out_of_sync(el, style);
+                #[cfg(not(feature = "svg"))]
+                let out_of_sync = false;
+                out_of_sync
+            }
     })
 }
 

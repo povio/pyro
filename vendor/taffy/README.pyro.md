@@ -262,3 +262,21 @@ Not done: the browsers' rule that an auto width's negative margins do not widen 
 (every browser fails them, pyro passed them), so the band still widens by them. Nor `max-height` separating a
 last child's bottom margin (WPT `max-height-separates-margin`, Chromium and Gecko): `margin-collapse-038` (Safari only,
 which pyro passes) expects the margins to collapse. Covered by `crates/pyro-render/tests/floats.rs`.
+
+## Inline layout leftovers (WPT reftests, lane P5)
+
+- `src/tree/layout.rs` (`OofCandidate::containing_block`), `src/compute/oof.rs` (`perform_oof_layout`): a candidate
+  can carry its containing block, when that is no layout node's (the padding box an inline box's fragments bound):
+  the first positioning pass that meets it lays it out against that area, not against the node's (nor a grid area).
+- `src/tree/traits.rs`, `src/compute/block.rs`: three hooks of `LayoutBlockContainer`.
+  `block_container_passes_percentage_height`: a container that is no containing block (an inline box laid out
+  around its blocks) hands its own containing block's height on as the percentage basis.
+  `block_container_direction`: such a container lays its children out in its containing block's direction.
+  `block_child_flow_overlap` / `set_block_flow_overlap`: the final layout records whether in-flow children overlap
+  in the block axis (one starts above the end of an earlier one, or follows one whose content is taller than its
+  box, or a child recorded an overlap) and whether the container's own content is taller than its box.
+- `src/compute/block.rs`: the last baseline a child that is a scroll container gives its container is its bottom
+  margin edge, whatever lines it holds (as browsers place an inline-block on it; WPT
+  `baseline-block-with-overflow-001`).
+
+Covered by `crates/pyro-render/tests/inline_leftovers.rs`.

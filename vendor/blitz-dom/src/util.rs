@@ -117,6 +117,9 @@ pub enum ImageType {
     BorderImage(usize),
     /// pyro: `list-style-image`.
     ListStyle(usize),
+    /// pyro: an SVG document an element's `clip-path` or `filter` references an element of
+    /// (`ElementData::reference_images`).
+    Reference(usize),
 }
 
 /// A point

@@ -68,6 +68,9 @@ pub struct TextLayout {
     /// pyro: the first letter of the root's first line, styled by an element's
     /// `::first-letter` (`layout::first_letter`), set before each build.
     pub first_letter: Option<FirstLetterSplit>,
+    /// pyro: the node holding the `::first-line` style of the root's first line
+    /// (`layout::first_line`), set before each build: paint draws the line with it.
+    pub first_line: Option<NodeId>,
     /// pyro: when the root is an anonymous block holding a piece of inline boxes split around
     /// block-level content (`NodeFlags::IS_SPLIT_INLINE`), those boxes, innermost first, each
     /// with whether this piece holds its start and its end: only there do its fragments have
@@ -80,6 +83,9 @@ pub struct TextLayout {
     /// pyro: some inline box (not atomic) laid out here is relatively positioned: what it holds
     /// is painted moved (`BaseDocument::inline_span_relative_offset`). Set by each build.
     pub relative_spans: bool,
+    /// pyro: some inline box's margin or padding at an edge is a percentage: each layout gives
+    /// those edges their width (`span_edge_widths_in`).
+    pub percent_span_edges: bool,
 }
 
 /// pyro: where an inline layout's first letter is: the bytes of a text node's content that an

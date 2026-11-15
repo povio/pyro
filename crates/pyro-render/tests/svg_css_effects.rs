@@ -232,17 +232,44 @@ fn one_mask_reference_keeps_the_stroke_past_the_fill_box() {
 }
 
 #[test]
-fn a_mask_of_another_document_does_not_hide_the_element() {
-    // `sprite.svg#m` names a `<mask>` this does not resolve: the element stays unmasked rather
-    // than masked by what the sprite draws (nothing). An SVG image with a fragment that names
-    // no `<mask>` is the layer's image.
+fn a_mask_of_another_document_masks_the_element() {
+    // `sprite.svg#m` names a `<mask>` of another document: the element is masked by it (its
+    // white 10x10 square), not by what the sprite draws (nothing). An SVG image with a fragment
+    // that names no `<mask>` is the layer's image.
     let img = render(
         r##"<svg width="200" height="100"><rect width="60" height="60" fill="#0000ff" style="mask-image: url(sprite.svg#m)"/>
             <rect x="100" width="60" height="60" fill="#0000ff" style="mask-image: url(m.svg#nothing)"/></svg>"##,
     );
-    assert_eq!(px(&img, 5, 5), BLUE);
+    assert_eq!(px(&img, 5, 5), BLUE, "under the mask's square");
+    assert_eq!(px(&img, 30, 30), WHITE, "outside it");
     assert_eq!(px(&img, 105, 5), BLUE);
     assert_eq!(px(&img, 115, 15), WHITE, "m.svg's transparent quarter");
+}
+
+/// `mask-mode: alpha` or `luminance` on the masked element is used in place of the `<mask>`'s
+/// `mask-type`; `match-source` takes the `mask-type` (WPT `mask-mode-to-mask-type-svg`). The
+/// mask's content is opaque black: nothing by its luminance, everything by its alpha.
+#[test]
+fn mask_mode_is_used_in_place_of_the_masks_mask_type() {
+    let img = render(
+        r##"<style>rect.m { fill: #0000ff; width: 20px; height: 20px }
+              #lum { mask-type: luminance } #alpha { mask-type: alpha }</style>
+            <svg width="200" height="100">
+              <mask id="lum"><rect width="200" height="100" fill="black"/></mask>
+              <mask id="alpha"><rect width="200" height="100" fill="black"/></mask>
+              <rect class="m" x="0" style="mask-image: url(#lum); mask-mode: match-source"/>
+              <rect class="m" x="30" style="mask-image: url(#alpha); mask-mode: match-source"/>
+              <rect class="m" x="60" style="mask-image: url(#lum); mask-mode: alpha"/>
+              <rect class="m" x="90" style="mask-image: url(#alpha); mask-mode: luminance"/>
+              <rect class="m" x="120" style="mask-image: url(#lum); mask-mode: luminance"/>
+              <rect class="m" x="150" style="mask-image: url(#alpha); mask-mode: alpha"/></svg>"##,
+    );
+    assert_eq!(px(&img, 10, 10), WHITE, "match-source of a luminance mask");
+    assert_eq!(px(&img, 40, 10), BLUE, "match-source of an alpha mask");
+    assert_eq!(px(&img, 70, 10), BLUE, "alpha over a luminance mask");
+    assert_eq!(px(&img, 100, 10), WHITE, "luminance over an alpha mask");
+    assert_eq!(px(&img, 130, 10), WHITE, "luminance of a luminance mask");
+    assert_eq!(px(&img, 160, 10), BLUE, "alpha of an alpha mask");
 }
 
 #[test]
@@ -346,4 +373,58 @@ fn a_filter_element_named_as_usvg_names_filter_functions_keeps_its_region() {
     assert_eq!(px(&img, 50, 50), BLUE);
     assert_eq!(px(&img, 21, 50), BLUE, "the region past the content");
     assert_eq!(px(&img, 18, 50), WHITE);
+}
+
+/// A shape in a `<mask>` that only a box of the page references has no box in usvg's tree of the
+/// `<svg>`: its CSS `clip-path` basic shape resolves against the box of its geometry attributes
+/// (WPT `mask-image-3h`). Before, the shape was clipped to nothing.
+#[test]
+fn a_basic_shape_clip_path_inside_a_mask_resolves_against_the_shapes_box() {
+    let img = render(
+        r##"<svg height="0"><mask id="m" x="0" y="0" width="1" height="1">
+              <rect x="25" y="25" width="50" height="50" fill="white" clip-path="circle(50% at 50% 50%)"/></mask></svg>
+            <div style="width:100px;height:100px;background:#0000ff;mask-image:url(#m)"></div>"##,
+    );
+    assert_eq!(px(&img, 50, 50), BLUE, "in the circle");
+    assert_eq!(px(&img, 27, 27), WHITE, "the rect's corner, outside the circle");
+    assert_eq!(px(&img, 10, 10), WHITE, "outside the rect");
+}
+
+/// A `<mask>` in user units reaches past the border box, and `mask-clip` does not cut a layer
+/// that references a `<mask>`: it shows the element's box shadow where its content is (WPT
+/// `mask-image-3f`).
+#[test]
+fn a_user_space_mask_shows_the_box_shadow_outside_the_border_box() {
+    let img = render(
+        r##"<svg height="0"><mask id="m" x="-50" y="-50" width="200" height="200" maskUnits="userSpaceOnUse">
+              <rect x="-50" y="-50" width="40" height="40" fill="white"/></mask></svg>
+            <div style="margin:60px;width:50px;height:50px;background:red;box-shadow:0 0 0 50px #0000ff;mask-image:url(#m)"></div>"##,
+    );
+    assert_eq!(px(&img, 30, 30), BLUE, "the shadow under the mask's square");
+    assert_eq!(px(&img, 55, 30), WHITE, "the shadow beside it");
+    assert_eq!(px(&img, 80, 80), WHITE, "the box, masked out");
+}
+
+/// An inline `<svg>` references resources of another inline `<svg>` of the page (a hidden one
+/// of definitions): ids are the document's. usvg reads each `<svg>` alone, so the referenced
+/// gradient (and the one its `href` names), filter and clip path are copied into the source.
+/// Before, the fill was dropped and the filter and clip path ignored (WPT
+/// `svg-filter-filter-units-user-space`).
+#[test]
+fn an_svg_references_the_resources_of_another_inline_svg() {
+    let img = render(
+        r##"<svg width="0" height="0" style="position:absolute"><defs>
+              <linearGradient id="base"><stop offset="0" stop-color="#0000ff"/><stop offset="1" stop-color="#0000ff"/></linearGradient>
+              <linearGradient id="g" href="#base"/>
+              <filter id="f" x="0" y="0" width="1" height="1"><feFlood flood-color="green"/></filter>
+              <clipPath id="c"><rect width="20" height="50"/></clipPath></defs></svg>
+            <svg width="200" height="50">
+              <rect width="50" height="50" fill="url(#g)"/>
+              <rect x="60" width="50" height="50" fill="red" filter="url(#f)"/>
+              <g transform="translate(120)"><rect width="50" height="50" fill="#0000ff" clip-path="url(#c)"/></g></svg>"##,
+    );
+    assert_eq!(px(&img, 25, 25), BLUE, "the gradient of the other svg, through its href");
+    assert_eq!(px(&img, 85, 25), GREEN, "the filter of the other svg");
+    assert_eq!(px(&img, 130, 25), BLUE, "inside the clip path of the other svg");
+    assert_eq!(px(&img, 150, 25), WHITE, "outside it");
 }

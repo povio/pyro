@@ -54,10 +54,25 @@ impl ElementCx<'_, '_> {
             BoxModelBox::ContentBox => 0,
         };
         let largest = (0..svg_styles.mask_image.0.len())
-            .map(|idx| BoxModelBox::from(*get_cyclic(&svg_styles.mask_clip.0, idx)))
+            .map(|idx| self.mask_layer_clip(idx))
             .max_by_key(|&clip| rank(clip))
             .unwrap_or(BoxModelBox::BorderBox);
         self.box_path(largest)
+    }
+
+    /// pyro: the box a mask layer is cut to: its `mask-clip`, but a layer that references an
+    /// SVG `<mask>` is not cut (`mask-clip` positions and cuts mask *images*; a `<mask>` applies
+    /// in its own region, which may reach past the border box: over the element's box shadow,
+    /// WPT `mask-image-3f`).
+    fn mask_layer_clip(&self, idx: usize) -> BoxModelBox {
+        let svg_styles = self.style.get_svg();
+        #[cfg(feature = "svg")]
+        if let Some(GenericImage::Url(url)) = svg_styles.mask_image.0.get(idx) {
+            if self.names_svg_mask(url, idx) {
+                return BoxModelBox::NoClip;
+            }
+        }
+        BoxModelBox::from(*get_cyclic(&svg_styles.mask_clip.0, idx))
     }
 
     /// If the element has a CSS mask, push an isolation layer for the masked content
@@ -145,12 +160,12 @@ impl ElementCx<'_, '_> {
                 None,
                 None,
             );
-            scene.push_clip_layer(Fill::NonZero, self.transform, &self.box_path(layer.clip));
+            scene.push_clip_layer(Fill::NonZero, self.transform, &self.box_path(self.mask_layer_clip(idx)));
             let mode = *get_cyclic(&svg_styles.mask_mode.0, idx);
             // pyro: a reference to an SVG `<mask>` of the page.
             #[cfg(feature = "svg")]
             let drawn = match layer.stylo_image {
-                GenericImage::Url(url) => self.draw_svg_mask(scene, url, mode),
+                GenericImage::Url(url) => self.draw_svg_mask(scene, url, mode, idx),
                 _ => false,
             };
             #[cfg(not(feature = "svg"))]
@@ -181,33 +196,79 @@ impl ElementCx<'_, '_> {
     /// border box's origin with the element's zoom. `mask-mode: match-source` is the mask's
     /// `mask-type`; `alpha` and `luminance` are used instead of it. Returns whether the URL named
     /// a `<mask>` (and the layer was drawn); a mask in a reference cycle masks everything.
+    /// Whether a mask layer's URL names an SVG `<mask>`, of this document or of the document
+    /// loaded as the layer's image.
+    fn names_svg_mask(&self, url: &style::values::computed::url::ComputedUrl, layer: usize) -> bool {
+        use super::clip_path::svg_reference::*;
+        let dom = self.context.dom;
+        match local_reference(dom, url) {
+            Some(target) => dom.get_node(target).is_some_and(|node| is_svg_element(node, "mask")),
+            None => self
+                .element
+                .mask_images
+                .get(layer..layer + 1)
+                .and_then(|image| external_reference(image, url))
+                .is_some_and(|(source, id)| {
+                    blitz_dom::node::svg_source_element(&source, &id, "id").is_some_and(|(name, _)| name == "mask")
+                }),
+        }
+    }
+
     fn draw_svg_mask(
         &self,
         scene: &mut impl PaintScene,
         url: &style::values::computed::url::ComputedUrl,
         mode: StyloMaskMode,
+        layer: usize,
     ) -> bool {
         use super::clip_path::svg_reference::*;
         let dom = self.context.dom;
-        let Some(target) = local_reference(dom, url) else {
-            return false;
+        // pyro: a `<mask>` of this document, or of the document loaded as the layer's image
+        // (`mask-image: url(masks.svg#mask)`: the image is the mask, not the document's drawing).
+        let mut external: Option<std::sync::Arc<[u8]>> = None;
+        let (target, id, user_space) = match local_reference(dom, url) {
+            Some(target) => {
+                let Some(node) = dom.get_node(target).filter(|node| is_svg_element(node, "mask")) else {
+                    return false;
+                };
+                if reference_cycle(dom, target) {
+                    return true;
+                }
+                let Some(id) = node.attr(blitz_dom::local_name!("id")) else {
+                    return true;
+                };
+                let user_space = node.attr(blitz_dom::local_name!("maskUnits")) == Some("userSpaceOnUse")
+                    && node.attr(blitz_dom::local_name!("maskContentUnits")) != Some("objectBoundingBox");
+                (Some(target), id.to_string(), user_space)
+            }
+            None => {
+                let images = &self.element.mask_images;
+                let Some((source, id)) = images.get(layer..layer + 1).and_then(|image| external_reference(image, url))
+                else {
+                    return false;
+                };
+                if !blitz_dom::node::svg_source_element(&source, &id, "id").is_some_and(|(name, _)| name == "mask") {
+                    return false;
+                }
+                let attr = |name: &str| blitz_dom::node::svg_source_element(&source, &id, name).and_then(|(_, value)| value);
+                let user_space = attr("maskUnits").as_deref() == Some("userSpaceOnUse")
+                    && attr("maskContentUnits").as_deref() != Some("objectBoundingBox");
+                external = Some(source);
+                (None, id, user_space)
+            }
         };
-        let Some(node) = dom.get_node(target).filter(|node| is_svg_element(node, "mask")) else {
-            return false;
-        };
-        if reference_cycle(dom, target) {
-            return true;
-        }
-        let Some(id) = node.attr(blitz_dom::local_name!("id")) else {
-            return true;
-        };
+        let id = id.as_str();
         let zoom = self.style.effective_zoom.value() as f64;
         let to_user = 1.0 / (self.scale * zoom);
+        // The shape the mask is taken from: the border box, whose box `objectBoundingBox` units
+        // are fractions of; a mask in user units throughout may reach anything visible (the
+        // element's box shadow, WPT `mask-image-3f`).
+        let stand_in = if user_space { self.visible_area() } else { self.frame.border_box };
         let shape = Rect::new(
-            self.frame.border_box.x0 * to_user,
-            self.frame.border_box.y0 * to_user,
-            self.frame.border_box.x1 * to_user,
-            self.frame.border_box.y1 * to_user,
+            stand_in.x0 * to_user,
+            stand_in.y0 * to_user,
+            stand_in.x1 * to_user,
+            stand_in.y1 * to_user,
         );
         // `alpha` or `luminance` over the mask's `mask-type` (an id selector is all usvg needs).
         let simple_id = id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
@@ -220,19 +281,23 @@ impl ElementCx<'_, '_> {
         };
         let content = mask_type + &opaque_rect(shape, &format!("mask=\"url(#{})\"", escape_attribute(id)));
         let painter = self.context;
-        let Some(svg) = dom.svg_reference_document(
-            target,
-            &content,
-            (painter.width as f64 * to_user) as f32,
-            (painter.height as f64 * to_user) as f32,
-        ) else {
+        let (width, height) = ((painter.width as f64 * to_user) as f32, (painter.height as f64 * to_user) as f32);
+        let svg = match target {
+            Some(target) => dom.svg_reference_document(target, &content, width, height),
+            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref().unwrap_or_default(), &content, width, height),
+        };
+        let Some(svg) = svg else {
             return true;
         };
-        anyrender_svg::render_svg_tree(
-            scene,
-            &svg.tree,
-            self.transform * Affine::scale(self.scale * zoom),
-        );
+        let transform = self.transform * Affine::scale(self.scale * zoom);
+        if user_space {
+            // Its content may lie above or left of the border box's corner, outside the tree's
+            // viewport: what is visible bounds its raster.
+            let visible = self.transform.transform_rect_bbox(self.visible_area());
+            anyrender_svg::render_svg_tree_within(scene, &svg.tree, transform, visible);
+        } else {
+            anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+        }
         true
     }
 }

@@ -893,6 +893,8 @@ impl DocumentMutator<'_> {
         // A table's `cellpadding` is a presentational hint on its cells, not on the table.
         let restyles_cells = *attr == local_name!("cellpadding")
             && node.data.is_element_with_tag_name(&local_name!("table"));
+        // pyro: `dir` decides the directionality of the element's descendants too (`:dir()`).
+        let restyles_cells = restyles_cells || *attr == local_name!("dir");
         if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
             data.hint |= if is_style {
                 RestyleHint::RESTYLE_STYLE_ATTRIBUTE

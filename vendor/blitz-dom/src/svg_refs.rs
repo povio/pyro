@@ -5,6 +5,14 @@
 //! which ended the browser. The source is rewritten first as usvg would treat it: every
 //! reference that closes a cycle becomes `none`.
 //!
+//! pyro: patterns too. usvg sets a `fill` or `stroke` inside a pattern that refers back to the
+//! pattern, directly or through one other element, to `none` (`fix_recursive_patterns`), but not
+//! one that comes back through a pattern's `href` (a pattern without children draws the children
+//! of the pattern its `href` names): WPT svg/crashtests/chrome-bug-565674533.html, where `p2`'s
+//! line is stroked with `p1` and `p1` takes its content from `p2`, overflowed the stack. Here a
+//! paint that closes a cycle among patterns loses its reference (its fallback colour stays, or it
+//! becomes `none`), and an `href` that closes one stops naming an element.
+//!
 //! pyro: a `filter` that references no element is `none` as well: Chromium draws the element
 //! unfiltered (Filter Effects: the filter chain is ignored), where usvg leaves the element out (WPT
 //! css/filter-effects/filter-invalid).
@@ -21,46 +29,52 @@ const SVG_NS: &str = "http://www.w3.org/2000/svg";
 /// `none`; borrowed when there is none (or it is not XML usvg would read).
 pub(crate) fn break_reference_cycles(source: &[u8]) -> Cow<'_, [u8]> {
     let Ok(text) = std::str::from_utf8(source) else { return Cow::Borrowed(source) };
-    if !text.contains("url(") || !["clip-path", "mask", "filter"].iter().any(|p| text.contains(p)) {
+    if !text.contains("url(") || !["clip-path", "mask", "filter", "pattern"].iter().any(|p| text.contains(p)) {
         return Cow::Borrowed(source);
     }
     let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
     let Ok(doc) = roxmltree::Document::parse_with_options(text, options) else {
         return Cow::Borrowed(source);
     };
-    let mut cuts = Vec::new();
+    // (source range, what replaces it)
+    let mut cuts: Vec<(Range<usize>, &'static str)> = Vec::new();
     for (tag, property) in [("clipPath", "clip-path"), ("mask", "mask"), ("filter", "filter")] {
-        cuts.extend(cycle_closing_references(&doc, tag, property));
+        cuts.extend(cycle_closing_references(&doc, tag, |element| content_references(element, property)));
     }
-    cuts.extend(missing_filter_references(&doc));
+    cuts.extend(cycle_closing_references(&doc, "pattern", pattern_references));
+    cuts.extend(missing_filter_references(&doc).into_iter().map(|range| (range, "none")));
     if cuts.is_empty() {
         return Cow::Borrowed(source);
     }
-    cuts.sort_by_key(|range| range.start);
+    cuts.sort_by_key(|(range, _)| range.start);
     cuts.dedup();
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
-    for cut in cuts {
+    for (cut, with) in cuts {
         if cut.start < at {
             continue;
         }
         out.push_str(&text[at..cut.start]);
-        out.push_str("none");
+        out.push_str(with);
         at = cut.end;
     }
     out.push_str(&text[at..]);
     Cow::Owned(out.into_bytes())
 }
 
-/// The source ranges of the `property` references (attribute values, or values in a `style`
-/// attribute) that close a cycle among the `tag` elements: a depth-first search from each,
-/// whose back edges they are. Without them the references form no cycle.
-fn cycle_closing_references(
-    doc: &roxmltree::Document<'_>,
+/// A reference to an element by id: the id, the source range to replace when the reference
+/// closes a cycle, and what replaces it.
+type Reference<'a> = (&'a str, Range<usize>, &'static str);
+
+/// The references (`references_of` an element: those its content makes) that close a cycle among
+/// the `tag` elements, as source ranges and their replacements: a depth-first search from each
+/// element, whose back edges they are. Without them the references form no cycle.
+fn cycle_closing_references<'a, 'input>(
+    doc: &'a roxmltree::Document<'input>,
     tag: &str,
-    property: &str,
-) -> Vec<Range<usize>> {
-    let elements: Vec<roxmltree::Node<'_, '_>> = doc
+    references_of: impl Fn(roxmltree::Node<'a, 'input>) -> Vec<Reference<'a>>,
+) -> Vec<(Range<usize>, &'static str)> {
+    let elements: Vec<roxmltree::Node<'a, 'input>> = doc
         .descendants()
         .filter(|n| {
             // As usvg reads them: in the SVG namespace or none (blitz serializes an inline
@@ -75,15 +89,14 @@ fn cycle_closing_references(
     }
     let index: HashMap<&str, usize> =
         elements.iter().enumerate().filter_map(|(i, n)| Some((n.attribute("id")?, i))).collect();
-    // The references each element's content (itself included) makes: (target, source range).
-    let edges: Vec<Vec<(usize, Range<usize>)>> = elements
+    // The references each element's content (itself included) makes: (target, source range,
+    // replacement).
+    let edges: Vec<Vec<(usize, Range<usize>, &'static str)>> = elements
         .iter()
         .map(|element| {
-            element
-                .descendants()
-                .filter(|n| n.is_element())
-                .flat_map(|n| references(n, property))
-                .filter_map(|(id, range)| Some((*index.get(id)?, range)))
+            references_of(*element)
+                .into_iter()
+                .filter_map(|(id, range, with)| Some((*index.get(id)?, range, with)))
                 .collect()
         })
         .collect();
@@ -98,7 +111,7 @@ fn cycle_closing_references(
         let mut stack = vec![(start, 0)];
         state[start] = 1;
         while let Some((node, next)) = stack.pop() {
-            let Some((target, range)) = edges[node].get(next) else {
+            let Some((target, range, with)) = edges[node].get(next) else {
                 state[node] = 2;
                 continue;
             };
@@ -108,12 +121,86 @@ fn cycle_closing_references(
                     state[*target] = 1;
                     stack.push((*target, 0));
                 }
-                1 => cuts.push(range.clone()),
+                1 => cuts.push((range.clone(), *with)),
                 _ => {}
             }
         }
     }
     cuts
+}
+
+/// The `property` references the content of `element` (itself included) makes, each replaced by
+/// `none` when it closes a cycle.
+fn content_references<'a>(element: roxmltree::Node<'a, '_>, property: &str) -> Vec<Reference<'a>> {
+    element
+        .descendants()
+        .filter(|n| n.is_element())
+        .flat_map(|n| references(n, property))
+        .map(|(id, range)| (id, range, "none"))
+        .collect()
+}
+
+/// pyro: the references a `<pattern>` makes to patterns its drawing needs: the `fill` and `stroke`
+/// paints of its content (itself included: they inherit), and its own `href` (`xlink:href`), whose
+/// pattern's children it draws when it has none. A paint that closes a cycle loses its `url()`
+/// and keeps its fallback (`none` without one); an `href` becomes `none`, which names no element.
+fn pattern_references<'a>(pattern: roxmltree::Node<'a, '_>) -> Vec<Reference<'a>> {
+    let mut found = Vec::new();
+    for node in pattern.descendants().filter(|n| n.is_element()) {
+        for property in ["fill", "stroke"] {
+            for (id, range, fallback) in paint_references(node, property) {
+                found.push((id, range, if fallback { "" } else { "none" }));
+            }
+        }
+    }
+    for attr in pattern.attributes() {
+        if attr.name() == "href" && matches!(attr.namespace(), None | Some("http://www.w3.org/1999/xlink")) {
+            if let Some(id) = attr.value().trim().strip_prefix('#').filter(|id| !id.is_empty()) {
+                found.push((id, attr.range_value(), "none"));
+            }
+        }
+    }
+    found
+}
+
+/// The `url(#id)` paint `node` has for `property` (`fill` or `stroke`), as an attribute or a
+/// declaration of its `style` attribute: the id, and the source range of the value when the
+/// paint is the reference alone (`false`), or of its `url()` when a fallback follows (`true`).
+fn paint_references<'a>(node: roxmltree::Node<'a, '_>, property: &str) -> Vec<(&'a str, Range<usize>, bool)> {
+    // `value` at `start` in the source.
+    fn paint(value: &str, start: usize) -> Option<(&str, Range<usize>, bool)> {
+        let lead = value.len() - value.trim_start().len();
+        let rest = &value[lead..];
+        let close = rest.find(')')?;
+        let id = url_id(&rest[..=close])?;
+        match rest[close + 1..].trim().is_empty() {
+            true => Some((id, start..start + value.len(), false)),
+            false => Some((id, start + lead..start + lead + close + 1, true)),
+        }
+    }
+    let mut found = Vec::new();
+    for attr in node.attributes() {
+        if attr.namespace().is_some() {
+            continue;
+        }
+        let range = attr.range_value();
+        let raw = &node.document().input_text()[range.clone()];
+        if attr.name() == property {
+            found.extend(paint(raw, range.start));
+        } else if attr.name() == "style" {
+            let mut offset = range.start;
+            for declaration in raw.split_inclusive(';') {
+                let body = declaration.trim_end_matches(';');
+                if let Some((name, value)) = body.split_once(':') {
+                    if name.trim() == property {
+                        found.extend(paint(value, offset + name.len() + 1));
+                    }
+                }
+                offset += declaration.len();
+            }
+        }
+    }
+    found
 }
 
 /// pyro: the source ranges of the `filter` values that are one reference, to an id no element has
@@ -260,6 +347,40 @@ mod tests {
         let out = String::from_utf8(super::default_zero_divisors(svg).unwrap()).unwrap();
         assert!(out.contains(r#"divisor="9""#), "{out}");
         assert!(super::default_zero_divisors(br#"<svg><feConvolveMatrix divisor="2"/></svg>"#).is_none());
+    }
+
+    /// pyro: WPT svg/crashtests/chrome-bug-565674533.html: `p2`'s line is stroked with `p1`, and
+    /// `p1`, which has no children, draws `p2`'s through its `href`. usvg followed that without
+    /// end (a stack overflow that ended the browser).
+    #[test]
+    fn a_pattern_cycle_through_href_loses_the_reference_that_closes_it() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg">
+<pattern id="p2" width="1" height="1"><line id="l" y2="1" x2="1" stroke="url(#p1) green"/></pattern>
+<pattern id="p1" width="2" height="1" href="#p2"/>
+<polygon points="0,0 100,0 100,100 0,100" fill="url(#p1) lime"/></svg>"##;
+        let out = broken(svg);
+        assert!(out.contains(r#"<pattern id="p1" width="2" height="1" href="none"/>"#), "{out}");
+        assert!(out.contains(r#"stroke="url(#p1) green""#), "the paint that does not close the cycle stays: {out}");
+        assert!(out.ends_with(r#"fill="url(#p1) lime"/></svg>"#), "{out}");
+        usvg::Tree::from_str(&out, &usvg::Options::default()).unwrap();
+
+        // Through `xlink:href`, with the paint in a `style` attribute and no fallback, from the
+        // other end: the paint closes the cycle.
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<pattern id="a" width="1" height="1" xlink:href="#b"/>
+<pattern id="b" width="1" height="1"><rect width="1" height="1" style="fill: url(#c)"/></pattern>
+<pattern id="c" width="1" height="1"><rect width="1" height="1" fill="url(#a) red"/></pattern>
+<rect width="10" height="10" fill="url(#a)"/></svg>"##;
+        let out = broken(svg);
+        assert!(out.contains(r#"<rect width="1" height="1" fill=" red"/>"#), "the fallback colour stays: {out}");
+        assert!(out.contains(r##"xlink:href="#b""##) && out.contains("fill: url(#c)"), "{out}");
+        usvg::Tree::from_str(&out, &usvg::Options::default()).unwrap();
+
+        // Patterns that only use each other are kept.
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg"><pattern id="a" width="1" height="1"><rect width="1" height="1" fill="red"/></pattern>
+<pattern id="b" width="1" height="1" href="#a"/><pattern id="c" width="1" height="1"><rect fill="url(#b)" stroke="url(#a)"/></pattern>
+<rect width="10" height="10" fill="url(#c)"/></svg>"##;
+        assert!(matches!(break_reference_cycles(svg.as_bytes()), std::borrow::Cow::Borrowed(_)));
     }
 
     #[test]

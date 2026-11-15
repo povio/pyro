@@ -1097,7 +1097,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             };
             drop(child_style);
 
-            oof_candidates.push(OofCandidate {
+            oof_candidates.push(OofCandidate { containing_block: None,
                 node: child,
                 order,
                 position,

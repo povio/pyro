@@ -828,7 +828,8 @@ pub(crate) fn perform_oof_layout(
     // to the work list (Blink-style re-sweep).
     let mut worklist: Vec<OofCandidate> = Vec::new();
     for candidate in candidates {
-        if claims.for_position(candidate.position) {
+        // pyro: a candidate with a containing block of its own is laid out here.
+        if candidate.containing_block.is_some() || claims.for_position(candidate.position) {
             worklist.push(*candidate);
         } else {
             unclaimed.push(*candidate);
@@ -851,17 +852,21 @@ pub(crate) fn perform_oof_layout(
             overflow,
             #[cfg(feature = "content_size")]
             contain,
-        } = layout_oof_box(
-            tree,
-            candidate,
-            area_size,
-            area_offset,
-            direction,
-            container_overflow,
-            #[cfg(feature = "grid")]
-            Some(node_id),
-            |_, _| {},
-        );
+        } = {
+            // pyro: against its own containing block (an inline box's), not a grid area.
+            let (box_area_size, box_area_offset) = candidate.containing_block.unwrap_or((area_size, area_offset));
+            layout_oof_box(
+                tree,
+                candidate,
+                box_area_size,
+                box_area_offset,
+                direction,
+                container_overflow,
+                #[cfg(feature = "grid")]
+                candidate.containing_block.is_none().then_some(node_id),
+                |_, _| {},
+            )
+        };
         let location = layout.location;
         let final_size = layout.size;
 
@@ -871,7 +876,7 @@ pub(crate) fn perform_oof_layout(
         if !surfaced.is_empty() {
             surfaced.translate(location);
             for surfaced_candidate in surfaced.iter() {
-                if claims.for_position(surfaced_candidate.position) {
+                if surfaced_candidate.containing_block.is_some() || claims.for_position(surfaced_candidate.position) {
                     worklist.push(*surfaced_candidate);
                 } else {
                     unclaimed.push(*surfaced_candidate);

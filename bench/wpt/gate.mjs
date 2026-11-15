@@ -1,7 +1,8 @@
 // WPT coverage gate: a subtest that passes in baseline.json must still pass, and a page that completed must still
 // complete. See bench/wpt/README.md. With --kind reftest (every command), the same gate over the paint reftests:
 // run.mjs --kind reftest reports each reftest as one subtest ("reftest"), the baseline is reftest-baseline.json, the
-// flaky list reftest-flaky.json and the CI artifact wpt-reftest-baseline.
+// flaky list reftest-flaky.json and the CI artifact wpt-reftest-baseline. With --kind crashtest, the same over the
+// crashtests (one subtest, "crashtest"): crashtest-baseline.json, crashtest-flaky.json, wpt-crashtest-baseline.
 //
 //   bun bench/wpt/gate.mjs run --wpt DIR --bin PATH [--out FILE] [--jobs N] [--shard I/N] [--full]
 //                              [--dirs a,b] [--match RE] [--retest PREVIOUS.json] [--no-rerun] [--no-check]
@@ -42,15 +43,18 @@ const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] :
 const flag = (k) => argv.includes(k);
 const positional = () => argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1]?.startsWith('--') && !FLAGS.includes(argv[i - 1])));
 const KIND = opt('--kind', 'testharness');
-if (KIND !== 'testharness' && KIND !== 'reftest') { console.error(`gate.mjs: --kind ${KIND}: expected testharness or reftest`); process.exit(2); }
-const SUITE = KIND === 'reftest'
-  ? { title: 'WPT reftest gate', baseline: 'reftest-baseline.json', flaky: 'reftest-flaky.json', artifact: 'wpt-reftest-baseline' }
-  : { title: 'WPT coverage gate', baseline: 'baseline.json', flaky: 'flaky.json', artifact: 'wpt-baseline' };
+const SUITES = {
+  testharness: { title: 'WPT coverage gate', baseline: 'baseline.json', flaky: 'flaky.json', artifact: 'wpt-baseline', regression: 'WPT regression' },
+  reftest: { title: 'WPT reftest gate', baseline: 'reftest-baseline.json', flaky: 'reftest-flaky.json', artifact: 'wpt-reftest-baseline', regression: 'WPT reftest regression' },
+  crashtest: { title: 'WPT crashtest gate', baseline: 'crashtest-baseline.json', flaky: 'crashtest-flaky.json', artifact: 'wpt-crashtest-baseline', regression: 'WPT crashtest regression' },
+};
+if (!Object.hasOwn(SUITES, KIND)) { console.error(`gate.mjs: --kind ${KIND}: expected ${Object.keys(SUITES).join(', ')}`); process.exit(2); }
+const SUITE = SUITES[KIND];
 const BASELINE_FILE = path.resolve(opt('--baseline', path.join(HERE, SUITE.baseline)));
 const FLAKY_FILE = path.resolve(opt('--flaky', path.join(HERE, SUITE.flaky)));
 const B = path.basename(BASELINE_FILE), F = path.basename(FLAKY_FILE);
-// A reftest's coverage is its pass: whether a failing one completes is not checked (lib.mjs judge()).
-const JUDGE = KIND === 'reftest' ? { completion: false } : undefined;
+// A reftest's or a crashtest's coverage is its pass: whether a failing one completes is not checked (lib.mjs judge()).
+const JUDGE = KIND === 'testharness' ? undefined : { completion: false };
 const WPT_REPO = 'https://github.com/web-platform-tests/wpt';
 const LABEL = 'wpt-accept-loss';
 // Reruns: each page whose first result differs runs at least RERUNS more times, more when few pages differ, so the
@@ -254,7 +258,7 @@ function check(files) {
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `verdict=${verdict}\n`);
   if (GH) {
     for (const p of problems) console.log(`::error title=${SUITE.title}::${ghEsc(p)}`);
-    for (const c of regressions.slice(0, 20)) console.log(`::error title=${KIND === 'reftest' ? 'WPT reftest regression' : 'WPT regression'}::${ghEsc(`${c.url}: ${c.setChanged ? 'subtest names changed; ' : ''}${lostCount(c)} subtest(s) no longer pass${c.broke ? `; page ${c.was} → ${c.status}` : ''}`)}`);
+    for (const c of regressions.slice(0, 20)) console.log(`::error title=${SUITE.regression}::${ghEsc(`${c.url}: ${c.setChanged ? 'subtest names changed; ' : ''}${lostCount(c)} subtest(s) no longer pass${c.broke ? `; page ${c.was} → ${c.status}` : ''}`)}`);
     if (verdict === 'stale') console.log(`::error title=${SUITE.title}: baseline is stale::${ghEsc(`${improvements.length} page(s) pass ${gained} more subtests (or now complete); commit the refreshed bench/wpt/${B}: ${download.replace(/`/g, '')}`)}`);
     if (verdict === 'rebaseline') console.log(`::error title=${SUITE.title}: baseline missing::${ghEsc(`${why}; commit this run's baseline: ${download.replace(/`/g, '')}`)}`);
     if (verdict === 'bootstrap') console.log(`::warning title=${SUITE.title}: bootstrap::${ghEsc(`No gate: ${why}.`)}`);
@@ -325,7 +329,7 @@ function update(files) {
     for (const u of Object.keys(tests)) if (!L.planned.has(u) && !L.skipped.has(u)) { lost += passCount(tests[u]); delete tests[u]; changed++; }
   }
   // A run that changes nothing writes the file as it was, so CI can tell that nothing changed.
-  const head = { wpt: { repo: WPT_REPO, revision: baseline.wpt.revision }, dirs: baseline.dirs ?? L.runs[0].dirs };
+  const head = { wpt: { repo: WPT_REPO, revision: baseline.wpt.revision }, dirs: L.restricted ? baseline.dirs ?? L.runs[0].dirs : L.runs[0].dirs };
   const outFile = path.resolve(opt('--out', BASELINE_FILE));
   writeBaseline(outFile, head, tests);
   const total = Object.values(tests).reduce((a, e) => a + passCount(e), 0);

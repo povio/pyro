@@ -519,6 +519,59 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  }
  
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
+diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
+--- a/servo/selector_parser.rs	2026-11-11 19:55:57
++++ b/servo/selector_parser.rs	2026-11-15 15:12:22
+@@ -376,6 +376,9 @@
+     /// The :state` pseudo-class.
+     CustomState(CustomState),
+     Default,
++    /// pyro: `:dir()`, its argument ASCII-lowercased (`ltr` and `rtl` match, any other
++    /// identifier matches nothing).
++    Dir(Box<str>),
+     Defined,
+     Disabled,
+     Enabled,
+@@ -439,6 +442,11 @@
+         if let Lang(ref lang) = *self {
+             dest.write_str(":lang(")?;
+             serialize_identifier(lang, dest)?;
++            return dest.write_char(')');
++        }
++        if let Dir(ref dir) = *self {
++            dest.write_str(":dir(")?;
++            serialize_identifier(dir, dest)?;
+             return dest.write_char(')');
+         }
+ 
+@@ -485,7 +493,7 @@
+             Self::UserValid => ":user-valid",
+             Self::Valid => ":valid",
+             Self::Visited => ":visited",
+-            Self::Lang(_) => unreachable!(),
++            Self::Lang(_) | Self::Dir(_) => unreachable!(),
+         })
+     }
+ }
+@@ -531,7 +539,7 @@
+             Self::UserValid => ElementState::USER_VALID,
+             Self::Valid => ElementState::VALID,
+             Self::Visited => ElementState::VISITED,
+-            Self::CustomState(_) | Self::Lang(_) | Self::ServoNonZeroBorder => {
++            Self::CustomState(_) | Self::Lang(_) | Self::Dir(_) | Self::ServoNonZeroBorder => {
+                 ElementState::empty()
+             },
+         }
+@@ -697,6 +705,9 @@
+                 let result = AtomIdent::from(parser.expect_ident()?.as_ref());
+                 NonTSPseudoClass::CustomState(CustomState(result))
+             },
++            "dir" if !after_part => {
++                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
++            },
+             _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
+         };
+ 
 diff -ruN a/style_resolver.rs b/style_resolver.rs
 --- a/style_resolver.rs	2026-11-11 19:55:57
 +++ b/style_resolver.rs	2026-11-11 20:10:18
@@ -1109,8 +1162,66 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-11 19:55:57
-@@ -2013,6 +2013,8 @@
++++ b/values/specified/box.rs	2026-11-15 16:55:00
+@@ -495,6 +495,10 @@
+     Inside(DisplayInside),
+     Outside(DisplayOutside),
+     ListItem,
++    /// pyro: the `math` inside keyword (CSS Display 4, MathML Core): an inside of its own on a
++    /// MathML element; on any other element it computes to `flow`, as it is kept here (pyro lays
++    /// no MathML out). Its default outside is `inline`.
++    Math,
+ }
+ 
+ impl DisplayKeyword {
+@@ -540,6 +544,7 @@
+             /// <display-inside> = flow | flow-root | table | flex | grid | ruby
+             /// https://drafts.csswg.org/css-display/#typedef-display-inside
+             "flow" => Inside(DisplayInside::Flow),
++            "math" => Math,
+             "flex" => Inside(DisplayInside::Flex),
+             "flow-root" => Inside(DisplayInside::FlowRoot),
+             "table" => Inside(DisplayInside::Table),
+@@ -626,10 +631,15 @@
+ impl Parse for Display {
+     fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
+         let mut got_list_item = false;
++        let mut got_math = false;
+         let mut inside = None;
+         let mut outside = None;
+         match DisplayKeyword::parse(input)? {
+             DisplayKeyword::Full(d) => return Ok(d),
++            DisplayKeyword::Math => {
++                got_math = true;
++                inside = Some(DisplayInside::Flow);
++            },
+             DisplayKeyword::Outside(o) => {
+                 outside = Some(o);
+             },
+@@ -651,14 +661,20 @@
+                 },
+                 DisplayKeyword::Inside(i) if inside.is_none() => {
+                     inside = Some(i);
++                },
++                DisplayKeyword::Math if inside.is_none() => {
++                    got_math = true;
++                    inside = Some(DisplayInside::Flow);
+                 },
+                 _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
+             }
+         }
+ 
+         let inside = inside.unwrap_or(DisplayInside::Flow);
+-        let outside = outside.unwrap_or_else(|| inside.default_display_outside());
+-        if got_list_item && !inside.is_valid_for_list_item() {
++        let outside = outside.unwrap_or_else(|| {
++            if got_math { DisplayOutside::Inline } else { inside.default_display_outside() }
++        });
++        if got_list_item && (got_math || !inside.is_valid_for_list_item()) {
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
+ 
+@@ -2013,6 +2029,8 @@
      Auto,
      Page,
      Avoid,
@@ -1119,7 +1230,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      Left,
      Right,
  }
-@@ -2030,7 +2032,9 @@
+@@ -2030,7 +2048,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -1130,7 +1241,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2051,7 @@
+@@ -2047,7 +2067,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),

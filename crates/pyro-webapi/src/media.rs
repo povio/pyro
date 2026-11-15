@@ -30,7 +30,6 @@
 //! realm's first use.
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
-use std::time::Duration;
 
 use bytes::Bytes;
 use pyro_dom::media_element::{MediaChange, MediaEvent};
@@ -608,7 +607,7 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
             }
         }
     });
-    let delay = Duration::from_secs_f64(delay.max(0.0) / 1000.0);
+    let delay = crate::util::delay_from_ms(delay);
     // Without an embedder there is no event loop to time playback with.
     if let Some(hooks) = hooks {
         let id = hooks.set_media_timer(delay, task);

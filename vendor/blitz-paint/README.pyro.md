@@ -585,6 +585,30 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/text.rs`: the text of relatively positioned inline boxes is painted moved
   (`BaseDocument::inline_span_relative_offset`), only in inline roots that have one. Covered by
   `block_in_inline.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in `crates/pyro-render/tests`.
+- `src/text.rs` (`stroke_text`, `DrawTextContext::first_line`), `src/render.rs` (`inline_box_fragments`,
+  `paint_inline_box_fragment`, `draw_inline_layout`): `::first-line`. The first line of an inline root whose
+  layout has a `::first-line` style node (blitz-dom's `TextLayout::first_line`) is painted as if its content were in
+  an inline box of that style: the box is on each run's stack between the root and the elements on the line, so
+  text that inherits takes its colour and text shadows and its decorations are drawn under the line's text (placed
+  by the root's own font); the elements on the line paint their text and boxes in their styles reparented onto it
+  (blitz-dom's `BaseDocument::first_line_style`: inherited properties from the first line, `currentcolor` its
+  colour); its background, borderless, is a fragment around the line's content, painted before the elements'.
+  Nothing changes for roots without one. Covered by `first_line.rs` in `crates/pyro-render/tests`.
+- `src/highlight.rs` (new), `src/text.rs`, `src/render.rs` (`draw_inline_layout`): the selection is painted as
+  Chromium paints highlights (CSS Pseudo-Elements 4 § 3). Behind each selected stretch of a line goes the
+  highlight's background, from the line box's top to its bottom or the text's content area where that reaches
+  further (Blink's `ExpandSelectionRectToLineHeight`), on whole CSS px as inline boxes are; the line is then
+  drawn twice, clipped: outside the stretches as usual, inside them in the highlight's colour, decorations of the
+  text's colour (`currentcolor`, `ResolvedDecoration::current_color`) in it too and no text shadows. The highlight
+  is the `::selection` style of the nearest element with one, else the system's `HighlightText` on `Highlight`
+  (Stylo's servo values); a `::selection` style's own `text-decoration` is drawn over the selected text as a
+  line of that element (`LineDecoration::selection`); text under `user-select: none` is not highlighted. A line cut by an ellipsis keeps
+  upstream's light blue rectangles; a recording paint (the PDF's) draws no selection. Covered by
+  `selection_highlight.rs` in `crates/pyro-render/tests`.
+- `src/text.rs` (`LineDecoration::shift`, `stroke_text`): the decoration line of a relatively positioned inline box
+  (or one inside such boxes of the root) moves with its text (it stayed where the box's text was laid out, under the
+  moved glyphs). White space hanging at the end of a right-to-left line, at its left, is not decorated, as at the
+  right of a left-to-right one. Covered by `direction_text.rs` in `crates/pyro-render/tests`.
 
 - `src/filters.rs` (`image_filter`), `src/render/background.rs` (`draw_image_layer_in`),
   `src/render/border_image.rs` (`draw_border_image`): a `filter()` image (the CSS `<image>` function of Filter
@@ -651,3 +675,49 @@ other `svg:svg` pages; covered by `crates/pyro-render/tests/svg_viewport_clip.rs
   (WPT `clear-inline-001`). `src/render/border.rs`: `outline_line` is visible to `render.rs`.
 
 Covered by `crates/pyro-render/tests/floats.rs`.
+
+## SVG viewports and references to other SVG documents (second pass, lane P6)
+
+- `src/render.rs` (`draw_svg`): the root `<svg>` of an SVG document always clips at its viewport, whatever its
+  `overflow` (Chromium's `LayoutSVGRoot::ShouldApplyViewportClip`; the UA sheet's `overflow: hidden` is for
+  `svg:not(:root)`, so the root computed `visible` and painted past its box). An SVG image (`<img>`, `<object>`) is
+  cut at its concrete object rect as well as at the content box: under `object-fit: contain`, `none` or `scale-down`
+  content outside the image's viewport no longer shows in the rest of the box. That second clip layer is pushed
+  only when the object rect leaves some of the box and the content's ink reaches past the rect; icons and images
+  that fill their box pay nothing.
+- `src/render/clip_path.rs` (`svg_reference::external_reference`, `svg_clip`), `src/render/mask.rs`
+  (`draw_svg_mask`), `src/filters.rs` (`reference_graph`, `filter_steps` takes the element's
+  `reference_images`): `clip-path: url(shapes.svg#clip)`, `mask-image: url(masks.svg#mask)` and
+  `filter: url(filters.svg#f)` name elements of other SVG documents (`data:` URLs too). The document blitz-dom
+  loaded for the element (`ElementData::reference_images`, or the mask layer's image) stands in `<defs>` of the
+  reference document in place of the page's `<svg>` (`SvgImageData::reference_document_from_source`). A mask
+  layer whose URL names a `<mask>` of its document is that mask, not the document's drawing. Another document's
+  filter is always a graph (no notes about its primitives). WPT `clip-path-url-reference-external`,
+  `mask-image-1c`, `mask-image-url-remote-mask`, `filter-external-002-test`.
+
+- `src/render/mask.rs` (`mask_layer_clip`, `names_svg_mask`, `draw_svg_mask`): a mask layer that references an
+  SVG `<mask>` is not cut to its `mask-clip` box (that cuts mask images; a `<mask>` applies in its own region), and
+  a mask in user units throughout (`maskUnits="userSpaceOnUse"`, no `objectBoundingBox` content) is taken from
+  everything visible rather than from the border box, drawn with `anyrender_svg::render_svg_tree_within`: it shows
+  the element's box shadow where its content is (WPT `mask-image-3f`, `-3g`).
+
+Covered by `crates/pyro-render/tests/svg_viewport_clip.rs`, `svg_external_references.rs` and `svg_css_effects.rs`.
+Covered by `crates/pyro-render/tests/svg_viewport_clip.rs` and `svg_external_references.rs`.
+## `visibility` on descendants; in-flow blocks that overlap (WPT reftests, lane P5)
+
+- `src/render.rs` (`render_element`, `paint_element`, `ElementPaint::hidden`), `src/text.rs`
+  (`DecorationStackEntry::hidden`, `node_is_hidden`): an element whose `visibility` is not `visible` paints nothing
+  of its own (box, text, marker, image, outline) but its descendants that are `visible` again still paint (CSS 2.1
+  § 11.2); the element and everything in it was skipped. A glyph run is hidden by the `visibility` of the inline box
+  it is in, with its decorations and shadows, and so is that box's fragment (WPT `visibility-005`,
+  `position-relative-032`).
+- `src/render.rs` (`paint_element`): a box whose in-flow block children overlap (`NodeFlags::FLOW_BOXES_OVERLAP`,
+  set by layout) paints them in the phases of CSS 2.1 Appendix E, as one with floats does: the block backgrounds
+  first, then the inline content, so an inline-block or a line of an earlier block is not covered by the background
+  of a later one (WPT `inline-block-zorder-001`/`-002`, `inline-table-zorder-001`/`-002`, `position-absolute-007`,
+  `margin-collapse-004`).
+
+- `src/render.rs` (`inline_box_fragments`): a glyph run of bidi formatting characters alone is no content of an
+  inline box's fragment (WPT `bidi-011`).
+
+Covered by `crates/pyro-render/tests/inline_leftovers.rs`.

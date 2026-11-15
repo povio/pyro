@@ -80,6 +80,22 @@ pub fn render_svg_tree_with_notes<S: PaintScene>(
     filter::with_notes(notes, || render_svg_tree(scene, svg, transform));
 }
 
+/// pyro: [`render_svg_tree`] for a tree whose content may lie outside its viewport: `visible`
+/// is the area of the scene the output can show (in the scene's space, after `transform`), which
+/// bounds the offscreen rasters in place of the tree's viewport. For a `<mask>` in user units a
+/// CSS box references, whose content may lie above or left of the box's corner (the origin).
+pub fn render_svg_tree_within<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform: Affine, visible: kurbo::Rect) {
+    let ctx = render::Ctx { cull: visible };
+    render::render_group(
+        scene,
+        svg.root(),
+        Affine::IDENTITY,
+        transform,
+        &mut util::default_error_handler,
+        &ctx,
+    );
+}
+
 /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
 ///
 /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features

@@ -8,6 +8,8 @@ mod mask;
 mod multicol;
 mod three_d;
 pub(crate) use three_d::is_projective_marker;
+#[cfg(feature = "svg")]
+pub(crate) use clip_path::svg_reference::external_reference;
 
 use blitz_dom::CopyStyleGetters;
 use std::cell::RefCell;
@@ -780,12 +782,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
-        // Hide elements with a visibility style other than visible
-        // pyro: but for the region of an SVG filter (below), which paints whatever the element does.
+        // pyro: `visibility` other than `visible` hides what the element paints itself (its box,
+        // its own text and content); its descendants that are `visible` again still paint (CSS 2.1
+        // § 11.2), and so does the region of an SVG filter.
         let hidden = styles.get_inherited_box().visibility != StyloVisibility::Visible;
-        if hidden && !styles.get_effects().filter.0.iter().any(|f| matches!(f, crate::filters::StyloFilter::Url(_))) {
-            return;
-        }
 
         // pyro: a 3D transform hides the element and its content: its back face shows with
         // `backface-visibility: hidden`, or it lies behind the viewer (`Node::set_transform`).
@@ -870,12 +870,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             &current_color,
             self.dom,
             (size.width, size.height),
+            node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
         );
         #[cfg(not(feature = "svg"))]
         let filter_steps: Option<Vec<()>> = None;
-        if hidden && filter_steps.is_none() {
-            return;
-        }
         let filter = match filter_steps {
             Some(_) => None,
             None => {
@@ -1125,7 +1123,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some() || filter_steps.is_some();
         let element = ElementPaint {
             node,
-            paints_own_box,
+            paints_own_box: paints_own_box && !hidden,
+            hidden,
             should_clip,
             is_text_input,
             content_position,
@@ -1149,9 +1148,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
                 if has_effect_layer {
                     let mut group = Scene::new();
-                    if !hidden {
-                        self.paint_element(&mut cx, &mut group, &element);
-                    }
+                    self.paint_element(&mut cx, &mut group, &element);
                     self.paint_effect_group(
                         scene,
                         group,
@@ -1201,6 +1198,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let ElementPaint {
             node,
             paints_own_box,
+            hidden,
             should_clip,
             is_text_input,
             content_position,
@@ -1235,7 +1233,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
             cx.draw_inset_box_shadow(scene);
         }
-        if cx.context.backgrounds {
+        if cx.context.backgrounds && !hidden {
             cx.draw_table_row_backgrounds(scene);
         }
         // pyro: a collapsed table whose cells hold half of the borders around them draws the
@@ -1243,13 +1241,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // borders after the cells' backgrounds); one with uniform gutters draws them here.
         let borders_after_cells = matches!(&cx.element.special_data,
             blitz_dom::node::SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some());
-        if !borders_after_cells {
+        if !borders_after_cells && !hidden {
             cx.draw_table_borders(scene);
         }
         if paints_own_box {
             cx.draw_border(scene);
         }
-        cx.stroke_devtools(scene);
+        if !hidden {
+            cx.stroke_devtools(scene);
+        }
 
         let clip = if is_text_input {
             &cx.frame.text_input_clip_path()
@@ -1275,14 +1275,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 };
 
                 cx.transform = self.scrolled_transform(node, cx.transform);
-                cx.draw_image(scene);
-                #[cfg(feature = "svg")]
-                cx.draw_svg(scene);
-                #[cfg(feature = "custom-widget")]
-                cx.draw_custom_widget(scene);
-                cx.draw_sub_document(scene);
-                cx.draw_input(scene);
-                cx.draw_text_input_text(scene, content_position);
+                if !hidden {
+                    cx.draw_image(scene);
+                    #[cfg(feature = "svg")]
+                    cx.draw_svg(scene);
+                    #[cfg(feature = "custom-widget")]
+                    cx.draw_custom_widget(scene);
+                    cx.draw_sub_document(scene);
+                    cx.draw_input(scene);
+                    cx.draw_text_input_text(scene, content_position);
+                }
                 // pyro: a multi-column container paints its column rules over the border, under
                 // the content, clipped and scrolled with it, and its content once per column
                 // (`render/multicol.rs`).
@@ -1291,10 +1293,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 }
                 if !cx.draw_columns(scene, content_position, child_clip_rect) {
                     // pyro: floats among the paint children: in the phases of CSS 2.1 Appendix E.
-                    if node
-                        .flags
-                        .contains(blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN)
-                    {
+                    // pyro: and so are in-flow boxes that overlap (`FLOW_BOXES_OVERLAP`).
+                    if node.flags.intersects(
+                        blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN
+                            | blitz_dom::node::NodeFlags::FLOW_BOXES_OVERLAP,
+                    ) {
                         cx.draw_children_in_phases(
                             scene,
                             cx.transform,
@@ -1304,12 +1307,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         return;
                     }
                     cx.draw_inline_layout(scene, content_position);
-                    cx.draw_marker(scene, content_position);
+                    if !hidden {
+                        cx.draw_marker(scene, content_position);
+                    }
                     cx.draw_children(scene, cx.transform, child_clip_rect);
                 }
             },
         );
         cx.transform = unscrolled_transform;
+        if hidden {
+            return;
+        }
         if borders_after_cells {
             cx.draw_table_borders(scene);
         }
@@ -1993,10 +2001,13 @@ impl ElementCx<'_, '_> {
             last_item: usize,
             /// pyro: the top of its line box (where the text of the line above ends).
             line_top: f32,
+            /// pyro: its element's style on the first line (`BaseDocument::first_line_style`).
+            style: Option<style::servo_arc::Arc<ComputedValues>>,
         }
 
         let styles = layout.styles();
-        if styles.len() < 2 {
+        // pyro: a root of text alone has no inline box, but for its `::first-line` box.
+        if styles.len() < 2 && text_layout.first_line.is_none() {
             return painted_fragments;
         }
         let dom = self.context.dom;
@@ -2013,6 +2024,9 @@ impl ElementCx<'_, '_> {
                 let Some(style) = node.primary_styles() else {
                     return false;
                 };
+                if style.get_inherited_box().visibility != StyloVisibility::Visible {
+                    return false;
+                }
                 let background = style.get_background();
                 let border = style.get_border();
                 background.background_color.resolve_to_absolute(&style.clone_color()).as_srgb_color()
@@ -2053,6 +2067,10 @@ impl ElementCx<'_, '_> {
 
         let mut fragments: Vec<Fragment> = Vec::new();
         let rtl_layout = layout.is_rtl();
+        // pyro: the first line's content is in the `::first-line` box (blitz-dom
+        // `TextLayout::first_line`), outside the elements on it, which have their styles there.
+        let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
+        let mut first_line_styles = Vec::new();
         let mut item_index = 0usize;
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
@@ -2067,6 +2085,19 @@ impl ElementCx<'_, '_> {
                     PositionedLayoutItem::GlyphRun(run) => {
                         let x0 = run.offset();
                         let mut x1 = x0 + run.advance();
+                        // pyro: a run of bidi formatting characters alone (U+202E written in the
+                        // text, placed at the level before it) is no content of a box: it made a
+                        // fragment of its own away from the content it reorders.
+                        if run.advance() == 0.0
+                            && text_layout.text.get(run.run().text_range()).is_some_and(|text| {
+                                !text.is_empty()
+                                    && text.chars().all(|c| {
+                                        matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}')
+                                    })
+                            })
+                        {
+                            continue;
+                        }
                         if !rtl_layout {
                             x1 = x1.min(content_end).max(x0);
                         }
@@ -2082,6 +2113,10 @@ impl ElementCx<'_, '_> {
                 };
                 item_index += 1;
                 chain_of(&mut chain, style_index);
+                let on_first_line = first_line.filter(|_| line.text_range().start == 0);
+                if let Some(first_line) = on_first_line {
+                    chain.push((first_line, 0));
+                }
                 let depth = chain.len();
                 for (level, &(node, style_index)) in chain.iter().enumerate() {
                     if !paints(node) {
@@ -2114,6 +2149,9 @@ impl ElementCx<'_, '_> {
                         _ => {
                             let (top, bottom) = line.span_content_area(style_index);
                             let shift = tops.map_or(0.0, |tops| tops.shift(metrics)) as f32;
+                            let style = on_first_line
+                                .filter(|&first_line| first_line != node)
+                                .and_then(|first_line| dom.first_line_style(root, first_line, node, &mut first_line_styles));
                             fragments.push(Fragment {
                                 node,
                                 depth: depth - level,
@@ -2124,6 +2162,7 @@ impl ElementCx<'_, '_> {
                                 bottom: bottom + shift,
                                 last_item: item_index,
                                 line_top: metrics.block_min_coord + shift,
+                                style,
                             });
                         }
                     }
@@ -2290,6 +2329,7 @@ impl ElementCx<'_, '_> {
                 left,
                 right,
                 reaches_above: (rect.y0 as f32) < fragment.line_top,
+                style: fragment.style.clone(),
             });
         }
         painted_fragments
@@ -2323,6 +2363,9 @@ impl ElementCx<'_, '_> {
         };
         let (transform, size, left, right) = (fragment.transform, fragment.size, fragment.left, fragment.right);
         let mut cx = box_cx(transform, size, fragment.border, fragment.padding);
+        if let Some(style) = &fragment.style {
+            cx.style = style.clone();
+        }
         if !left {
             cx.frame.border_radii.top_left = Vec2::ZERO;
             cx.frame.border_radii.bottom_left = Vec2::ZERO;
@@ -2334,7 +2377,13 @@ impl ElementCx<'_, '_> {
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
         // sides and above and below it.
-        let whole = fragment.whole.map(|(transform, size, border, padding)| box_cx(transform, size, border, padding));
+        let whole = fragment.whole.map(|(transform, size, border, padding)| {
+            let mut whole = box_cx(transform, size, border, padding);
+            if let Some(style) = &fragment.style {
+                whole.style = style.clone();
+            }
+            whole
+        });
         let piece = Rect::from_origin_size(Point::ZERO, size);
         let far = 1e6;
         let outside = Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far);
@@ -2453,6 +2502,7 @@ impl ElementCx<'_, '_> {
                     let mut draw_text_context = self.context.draw_text_context.borrow_mut();
                     draw_text_context.text_shift = text_shift;
                     draw_text_context.line_tops = tops;
+                    draw_text_context.first_line = text_layout.first_line;
                     crate::text::stroke_text(
                         scene,
                         std::iter::once(line),
@@ -2467,6 +2517,7 @@ impl ElementCx<'_, '_> {
                     );
                     draw_text_context.text_shift = 0.0;
                     draw_text_context.line_tops = None;
+                    draw_text_context.first_line = None;
                 }
                 return;
             }
@@ -2475,7 +2526,11 @@ impl ElementCx<'_, '_> {
             }
 
             // Render text selection highlight (if any) using cached selection ranges
-            if let Some((sel_start, sel_end)) = selection {
+            // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
+            // by an ellipsis; a recording paint (the PDF's) draws no selection.
+            let highlight = selection
+                .filter(|_| text_layout.ellipsis.is_none() && self.context.draw_text_context.borrow().runs.is_none());
+            if let (Some((sel_start, sel_end)), None) = (selection, highlight) {
                 crate::text::draw_text_selection(
                     scene,
                     &text_layout.layout,
@@ -2492,22 +2547,37 @@ impl ElementCx<'_, '_> {
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             draw_text_context.text_shift = text_shift;
             draw_text_context.line_tops = tops;
+            draw_text_context.first_line = text_layout.first_line;
             let options = TextPaintOptions {
                 scale: self.scale,
                 brush_override: None,
                 shadows: true,
             };
-            stroke_inline_text(
-                scene,
-                self.context.dom,
-                self.node,
-                text_layout,
-                transform,
-                options,
-                &mut draw_text_context,
-                tops,
-                self.scale,
-            );
+            match highlight {
+                Some(selection) => crate::highlight::stroke_highlighted_text(
+                    scene,
+                    self.context.dom,
+                    self.node.id,
+                    &text_layout.layout,
+                    &text_layout.text,
+                    transform,
+                    tops,
+                    options,
+                    selection,
+                    &mut draw_text_context,
+                ),
+                None => stroke_inline_text(
+                    scene,
+                    self.context.dom,
+                    self.node,
+                    text_layout,
+                    transform,
+                    options,
+                    &mut draw_text_context,
+                    tops,
+                    self.scale,
+                ),
+            }
             // pyro: ruby annotations and emphasis marks, over the text of each line.
             if !text_layout.annotations.is_empty() {
                 let recording = draw_text_context.runs.is_some();
@@ -2532,6 +2602,7 @@ impl ElementCx<'_, '_> {
             }
             draw_text_context.text_shift = 0.0;
             draw_text_context.line_tops = None;
+            draw_text_context.first_line = None;
         }
     }
 
@@ -3310,12 +3381,35 @@ impl ElementCx<'_, '_> {
         // pyro: the viewport clip, as Chromium has it (`LayoutSVGRoot::ShouldApplyViewportClip`,
         // `ReplacedPainter`): an inline `<svg>` clips its content unless its `overflow` is
         // `visible` (the UA sheet's `svg:not(:root) { overflow: hidden }`; `overflow="visible"`
-        // is its presentation attribute), an SVG image always. The cut is the content box
-        // (`overflow-clip-margin: content-box`), along the content edge's curve. It is a layer
-        // only where it cuts something: the content (its strokes and filter regions too) reaches
-        // past the box, or the content edge is rounded. An inline `<svg>` that does not clip is
-        // not cut at all (no object-fit or rounded cut either: Chromium skips its clip).
-        let clip = if self.element.name.local == local_name!("svg") && {
+        // is its presentation attribute); the root `<svg>` of an SVG document and an SVG image
+        // always, whatever the `overflow`. The cut is the content box (`overflow-clip-margin:
+        // content-box`), along the content edge's curve. It is a layer only where it cuts
+        // something: the content (its strokes and filter regions too) reaches past the box, or
+        // the content edge is rounded. An inline `<svg>` that does not clip is not cut at all
+        // (no object-fit or rounded cut either: Chromium skips its clip).
+        let inline = self.element.name.local == local_name!("svg");
+        let document_root = inline && self.node.is_root_element();
+        // The content's ink (strokes and filter regions too) in the frame's coordinates.
+        let ink = || {
+            let bounds = svg.tree.root().abs_layer_bounding_box();
+            (Affine::translate((x, y)) * viewport).transform_rect_bbox(Rect::new(
+                bounds.left().into(),
+                bounds.top().into(),
+                bounds.right().into(),
+                bounds.bottom().into(),
+            ))
+        };
+        // A hundredth of a device pixel of float noise from the viewport transform.
+        let reaches_past = |ink: Rect, rect: Rect| {
+            let e = 0.01;
+            ink.x0 < rect.x0 - e || ink.y0 < rect.y0 - e || ink.x1 > rect.x1 + e || ink.y1 > rect.y1 + e
+        };
+        // pyro: an SVG image's viewport is its concrete object rect, not the box: under
+        // `object-fit: contain`, `none` or `scale-down` content outside the viewport does not
+        // show in the rest of the box (Chromium draws the image into that rect, clipped). A
+        // second cut, only where the content reaches past a rect that leaves some of the box.
+        let mut object_clip = None;
+        let clip = if inline && !document_root && {
             let b = self.style.get_box();
             matches!(b.overflow_x, Overflow::Visible) && matches!(b.overflow_y, Overflow::Visible)
         } {
@@ -3325,20 +3419,18 @@ impl ElementCx<'_, '_> {
             if content.is_zero_area() {
                 return;
             }
-            let bounds = svg.tree.root().abs_layer_bounding_box();
-            let ink = (Affine::translate((x, y)) * viewport).transform_rect_bbox(Rect::new(
-                bounds.left().into(),
-                bounds.top().into(),
-                bounds.right().into(),
-                bounds.bottom().into(),
-            ));
-            // A hundredth of a device pixel of float noise from the viewport transform.
-            let e = 0.01;
-            let past = ink.x0 < content.x0 - e
-                || ink.y0 < content.y0 - e
-                || ink.x1 > content.x1 + e
-                || ink.y1 > content.y1 + e;
-            if past || self.content_edge_is_rounded() {
+            let ink = ink();
+            if !inline {
+                let object = Rect::new(x, y, x + paint_size.width as f64, y + paint_size.height as f64);
+                let covers = object.x0 <= content.x0
+                    && object.y0 <= content.y0
+                    && object.x1 >= content.x1
+                    && object.y1 >= content.y1;
+                if !covers && reaches_past(ink, object) {
+                    object_clip = Some(object);
+                }
+            }
+            if reaches_past(ink, content) || self.content_edge_is_rounded() {
                 ReplacedClip::Always
             } else {
                 ReplacedClip::Fit
@@ -3354,8 +3446,10 @@ impl ElementCx<'_, '_> {
             |scene| {
                 // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what
                 // blends in it blends with nothing under the image.
-                let isolate = self.element.name.local != local_name!("svg")
-                    && anyrender_svg::has_blend_modes(&svg.tree);
+                let isolate = !inline && anyrender_svg::has_blend_modes(&svg.tree);
+                if let Some(object) = object_clip {
+                    scene.push_clip_layer(Fill::NonZero, self.transform, &object);
+                }
                 if isolate {
                     scene.push_layer(
                         Fill::NonZero,
@@ -3375,6 +3469,9 @@ impl ElementCx<'_, '_> {
                     None => anyrender_svg::render_svg_tree(scene, &svg.tree, transform),
                 }
                 if isolate {
+                    scene.pop_layer();
+                }
+                if object_clip.is_some() {
                     scene.pop_layer();
                 }
             },
@@ -3595,6 +3692,8 @@ fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBo
 struct ElementPaint<'n> {
     node: &'n Node,
     paints_own_box: bool,
+    /// pyro: `visibility` hides what the element paints itself; its descendants still paint.
+    hidden: bool,
     should_clip: bool,
     is_text_input: bool,
     content_position: Point,
@@ -3639,4 +3738,6 @@ struct InlineBoxFragment {
     right: bool,
     /// Whether its box reaches above its line box, over the line before.
     reaches_above: bool,
+    /// pyro: its element's style on the first line, in place of its own (`::first-line`).
+    style: Option<style::servo_arc::Arc<ComputedValues>>,
 }

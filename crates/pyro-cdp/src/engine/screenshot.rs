@@ -357,6 +357,8 @@ impl EngineHost {
             animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
             xml_document: s.xml_document,
             content_language: s.content_language,
+            // The document selection, highlighted as Chromium paints it.
+            selection: s.selection.map(|(start, end)| pyro_render::TextSelection { start, end }),
         })
     }
 

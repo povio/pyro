@@ -1064,6 +1064,15 @@ elements of one kind, through the references their content makes, as attributes 
 `none`, as usvg treats a short cycle. Sources without a cycle are passed on as they are. Covered by
 `crates/pyro-render/tests/svg_reference_cycles.rs`.
 
+Patterns have a cycle usvg does not break either (found by the WPT crashtests, `bench/wpt/README.md`): usvg sets a
+`fill` or `stroke` inside a pattern that refers back to the pattern, directly or through one other element, to
+`none` (`fix_recursive_patterns`), but not one that comes back through a pattern's `href`, whose children a pattern
+without children draws (WPT svg/crashtests/chrome-bug-565674533.html: `p2`'s line is stroked with `p1`, and `p1`
+takes its content from `p2`; a stack overflow that ended the browser). `pattern_references` gives the same search
+the paints of a pattern's content and its `href` (`xlink:href`): a paint that closes a cycle loses its `url()` and
+keeps its fallback colour (`none` without one), an `href` that closes one is set to `none`, which names no element.
+Unit-tested in `src/svg_refs.rs` (`a_pattern_cycle_through_href_loses_the_reference_that_closes_it`).
+
 Two more rewrites there make usvg read a filter as Chromium does (both unit-tested in `src/svg_refs.rs`, and in
 `crates/pyro-render/tests/svg_filter_primitives.rs`):
 
@@ -1206,8 +1215,46 @@ and a `content-box` local background reached the scrollport's edge at the end (W
   captions render).
 - `assets/default.css`: `area` is `display: none` without Gecko's `!important`, as in Chromium.
 - `src/stylo.rs`: `<body text>` maps to `color` (a legacy colour value).
+- `src/layout/first_line.rs` (new), `src/layout/first_letter.rs`, `src/node/text.rs`, `src/node/element.rs`,
+  `src/resolve.rs`, `src/stylo.rs`, `src/document.rs`, `src/layout/counters.rs`: `::first-line` is applied (the
+  pref is on: it was not even parsed). As for `::first-letter`, the nearest block container whose first line is an
+  inline root's (`first_letter::origin`, now by pseudo-element) styles it, its style cascaded again with the
+  block holding the line as parent when that is a descendant. Before a root builds its inline layout,
+  `first_line::style_node_for` finds the style and keeps it on a node the originating element owns (`ElementData::
+  first_line`, not in the tree, its parent the root): `TextLayout::first_line`. The layout does not use it (the
+  lines are broken in the root's own styles: fonts and spacing of the first line are not applied); blitz-paint
+  draws the first line with it. `BaseDocument::first_line_style` gives an element's style on the first line: its
+  own reparented onto the first-line box (Stylo's `FirstLineReparenting`, as Gecko does), kept across paints while
+  its own and its new parent's styles are the same (`first_line::ReparentCache`). A `::first-line` style that came
+  or went builds the block's inline layout again; one that changed on a line that has its node only restyles the
+  node (`first_line::style_changed`: the layout does not read it, so a page-wide restyle relays no first line out).
+  `first_letter::origin` passes anonymous blocks (whose anonymous style computes `display: inline`) and inlines split
+  around blocks on to their container, so a first line or first letter in a block-in-inline's first piece is styled.
+  The `::first-letter` and `::first-line` nodes load their background images (`pending_style_image_nodes`).
+- `src/dom_selection.rs` (new), `src/document.rs`, `src/lib.rs`: the embedder's selection (`DomSelection`, text
+  nodes and UTF-16 offsets; pyro-render sets pyro-webapi's for a screenshot) replaces blitz's own in
+  `get_text_selection_ranges`: the text nodes from the start to the end in tree order, mapped through each inline
+  root's `text_nodes` to bytes of its text (collapsed white space maps to where it collapsed).
 
-Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit tests here.
+Tests: `generated_content`, `first_line` and `selection_highlight` in pyro-render; `first_letter`,
+`counters` and `dom_selection` unit tests here.
+
+## `:dir()`, bidi overrides across `<br>`, `text-indent` of anonymous blocks (WPT reftests)
+
+- `src/direction.rs` (new), `src/stylo.rs`, `src/mutator.rs`: `:dir(ltr)` and `:dir(rtl)` match by the element's
+  directionality (HTML: the nearest valid `dir`; `dir="auto"` and a `<bdi>` by the first strong character of their
+  text or a text control's value; a `tel` input left to right; the root left to right), the rules pyro-dom applies
+  for script. Stylo parses `:dir()` for servo now (`vendor/stylo/README.pyro.md`). A `dir` change restyles the
+  element's descendants too.
+- `src/layout/inline/build.rs` (`BidiScan::open_controls`, `reopen_bidi_controls`): after a forced line break
+  (`<br>`), the bidi formatting characters of the embeddings, overrides and isolates still open are pushed again:
+  the break is a paragraph separator to the bidi algorithm, which closes them, and Blink re-opens them
+  (`InlineItemsBuilder::AppendForcedBreak`), so `unicode-bidi: bidi-override` holds on the lines after a `<br>`.
+- `src/layout/inline/layout.rs`, `src/layout/first_line.rs` (`starts_a_block`): `text-indent` indents the first
+  line of an anonymous block only when it is its container's first in-flow child (CSS 2.1 16.1), not the
+  anonymous block after an inline's block-level content.
+
+Tests: `direction_text` in pyro-render; `direction` unit tests here.
 
 ## List markers (WPT reftests)
 
@@ -1565,3 +1612,87 @@ Covered by `block_in_inline.rs`, `unicode_bidi.rs`, `inline_relative_position.rs
   move it (`inline_span_offset`; WPT `block-in-inline-float-between-001`).
 
 Covered by `crates/pyro-render/tests/floats.rs`.
+
+## References to elements of other SVG documents, `mask-mode` on SVG elements (second pass, lane P6)
+
+- `src/node/element.rs` (`ElementData::reference_images`), `src/node/svg.rs` (`reference_candidates`,
+  `references_out_of_sync`, `svg_source_element`, `embeddable_svg`, `SvgImageData::reference_document_from_source`),
+  `src/layout/damage.rs` (`flush_svg_references_from_style`), `src/stylo.rs` (`needs_style_image_flush`),
+  `src/util.rs` (`ImageType::Reference`), `src/document.rs` (`apply_loaded_image`), `src/net.rs`
+  (`ImageHandler::parse`): the SVG documents an element's `clip-path` and `filter` (and an SVG element's
+  `clip-path`, `filter` and `mask` attributes) reference elements of by `url(document.svg#id)` are fetched as images
+  are, one entry per reference, and kept with their source. A reference into the page gets an entry without an
+  image (no fetch). A document that is no image usvg accepts (a root of no size, `<svg width="0" height="0">`) is
+  parsed with its root filling a viewport and kept for its source. An SVG element's `clip-path` attribute is taken
+  as written: the style engine resolves a presentation attribute's URL without the document's base.
+- `src/node/svg_css.rs` (`Writer::import_document`, `external_reference_rewrites`, `css_mask_rewrite`): the
+  documents an element of an inline `<svg>` has loaded are written into the source's `<defs>` once, and its
+  `clip-path`, `filter` and `mask` references name their elements by fragment, which usvg resolves (it loads no
+  other document). `mask-image: url(sprite.svg#m)` naming another document's `<mask>` masks by it; before, the
+  element was left unmasked. WPT `clip-path-url-reference-external-svg-element`,
+  `clip-path-url-reference-data-uri-svg-element`, `svg-external-filter-resource`, `svg-data-uri-filter-resource`.
+- `src/node/svg_css.rs` (`Writer::mask_of_type`, `mask_rewrite`): `mask-mode: alpha` or `luminance` on an SVG
+  element that references one `<mask>` is used in place of the mask's `mask-type` (CSS Masking 1 §6.2): the mask is
+  written again into `<defs>` with that type and the element references the copy (WPT
+  `mask-mode-to-mask-type-svg`).
+
+- `src/node/svg_css.rs` (`attribute_boxes`, `Writer::boxes`): an element usvg's tree of the `<svg>` does not hold
+  (the content of a `<mask>` or `<clipPath>` only a box of the page references) has the fill and stroke boxes of
+  its geometry attributes when it is a `<rect>`, `<circle>` or `<ellipse>`: its `clip-path` basic shape or
+  `transform-box` resolved against an empty box (WPT `mask-image-3h`).
+- `src/document.rs` (`with_cross_svg_references`), `src/layout/construct.rs`: an inline `<svg>` that references a
+  `<filter>`, `<clipPath>`, `<mask>`, gradient, `<pattern>` or `<marker>` of another inline `<svg>` of the page
+  (`url(#id)`, a gradient's `href="#id"`) gets a copy of it (and of what that references) in a `<defs>` first in
+  its source: ids are the document's, usvg reads each `<svg>` alone. A later change to the definitions does not
+  rebuild the `<svg>`s that use them.
+
+Covered by `crates/pyro-render/tests/svg_external_references.rs` and `svg_css_effects.rs`.
+## A document whose root element is inline content
+
+`src/layout/construct.rs` (`collect_layout_children_with_wrap`): only a box holds an inline layout. The document
+node is the container of the root element, and when that element is inline content (a `<br>` appended to a document
+whose element was removed) the document node was made an inline root: the inline layout queued for it had no element
+to go to and `resolve_deferred_tasks` panicked (WPT css/css-text/white-space/
+pre-line-br-with-whitespace-child-crash.html, css/css-contain/contain-style-remove-element-crash.html). Such a root
+element is now the document's layout child, as every other root element. Covered by
+`crates/pyro-render/tests/no_root_element.rs`.
+## Inline layout leftovers (WPT reftests, lane P5)
+
+- `src/layout/inline/layout.rs` (`inline_containing_block_of`, `span_padding_box`): an out-of-flow box whose
+  containing block is a positioned inline box is laid out against the padding box that box's fragments bound (CSS
+  2.1 § 10.1 4.1: top and left of its first fragment, bottom and right of its last; the other way round for a
+  right-to-left box), moved by the box's relative offset, where the inline root's own padding box was used. The
+  root sets it on the candidate (`OofCandidate::containing_block`, taffy) and lays the box out in its own pass. A
+  box's static position moves with the relatively positioned inline boxes around it. On a line without content a
+  span is at the line's top (a span holding only the out-of-flow box). WPT `abspos-inline-007`/`-008`,
+  `toogle-abspos-on-relpos-inline-child`, `slice-inline-fragmentation-001..003`.
+- `src/layout/inline/build.rs` (`span_edge_widths`, `span_edge_widths_in`): a side of an inline box is an edge when
+  it has a margin, a border or a padding, also when they add up to nothing (a border and a negative margin as wide:
+  it paints, its line is no empty line, a block-level out-of-flow box after it starts below; WPT `margin-right-114`,
+  `static-inside-inline-002`), and when one is a percentage: each layout gives such an edge its width against the
+  root's content width (zero while the root is measured; `TextLayout::percent_span_edges`; WPT `c547-indent-001`).
+  A right-to-left span with one edge has the other too, empty: parley places a span's edges around the span's
+  content on the line, which must be items of its own there (text is shaped across a span's boundary otherwise;
+  WPT `bidi-box-model-011`, `-014`, `-015`, `-029`, `-030`, `-032`).
+- `src/layout/inline/layout.rs`: `text-indent` does not indent an anonymous block that is not its parent's first
+  box (CSS Text 3 § 8.1; WPT `text-indent-014`).
+- `src/layout/mod.rs` (`block_container_passes_percentage_height`, `block_container_direction`): an inline box
+  laid out as a block around its blocks is no containing block: percentage heights in it resolve against its
+  containing block's height (WPT `block-in-inline-percents-001`, `percent-height-1`), and that block's direction
+  decides which margin an over-constrained child drops (WPT `block-in-inline-margins-001b`, `-002b`).
+- `src/node/node.rs` (`has_block_level_pseudo_element`): a block-level `::before` or `::after` makes its inline box
+  one that contains a block (read from the pseudo-element's style: its box is made after the container asks), so
+  the box is split around it (WPT `block-in-inline-insert-013`, `-014`, `-016a`, `-016b`). `src/document.rs`
+  (`deallocate_anonymous_block`): the boxes of a split inline's head or tail keep no pointer to the freed anonymous
+  block that laid them out (they are the split inline's children, not the block's).
+- `src/layout/construct.rs`: an absolutely positioned box that would be inline-level joins the anonymous block of
+  the inline content it follows, as a float does: its static position is on that line (WPT
+  `remove-block-between-inline-and-abspos`).
+- `src/layout/mod.rs`, `src/node/node.rs` (`NodeFlags::FLOW_BOXES_OVERLAP`, `FLOW_CONTENT_OVERFLOWS`): layout
+  records where in-flow block boxes overlap in the block axis (a negative margin, or a box after one whose content
+  is taller than it), for the box that paints them (taffy's `set_block_flow_overlap`; blitz-paint paints such
+  children in phases).
+- `src/stylo.rs` (`get_attr`): `attr(Title)` names the `title` attribute of an HTML element in an HTML document
+  (WPT `content-attr-case-001`).
+
+Covered by `crates/pyro-render/tests/inline_leftovers.rs`.

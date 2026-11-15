@@ -456,6 +456,11 @@ pub struct OofCandidate {
     pub position: Position,
     /// The static position of the box in each axis
     pub static_position: Point<AxisStaticPosition>,
+    /// pyro: the box's containing block when it is no layout node's: the padding box an inline
+    /// box's fragments bound (CSS 2.1 § 10.1 4.1), its size and its offset in the border box the
+    /// static position is relative to. The first positioning pass that meets the candidate lays
+    /// it out against this area (the inline box's inline formatting context root).
+    pub containing_block: Option<(Size<f32>, Point<f32>)>,
 }
 
 /// A list of [`OofCandidate`]s.
@@ -541,6 +546,10 @@ impl OofCandidates {
             candidate.static_position.x.area.end += offset.x;
             candidate.static_position.y.area.start += offset.y;
             candidate.static_position.y.area.end += offset.y;
+            if let Some((_, origin)) = candidate.containing_block.as_mut() {
+                origin.x += offset.x;
+                origin.y += offset.y;
+            }
         }
     }
 }

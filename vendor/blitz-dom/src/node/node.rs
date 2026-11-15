@@ -129,6 +129,16 @@ bitflags! {
         /// box's phases), at the last paint-tree build: whether it still does is checked before
         /// its lists are kept.
         const LIFTS_FLOATS = 1 << 15;
+        /// pyro: in-flow block boxes it paints in its phases overlap: a block-level child starts
+        /// above the bottom of one before it (a negative margin), or follows one whose content
+        /// overflows it, here or in a box of its subtree that paints in its phases
+        /// (`Node::paints_in_ancestor_phases`). Painted box by box, the later box's background
+        /// would cover the earlier one's inline content: it paints its children in the phases of
+        /// CSS 2.1 Appendix E, as with floats. Set by its layout.
+        const FLOW_BOXES_OVERLAP = 1 << 16;
+        /// pyro: its in-flow content is taller than its box (a `height` or `max-height` shorter
+        /// than its lines or blocks). Set by its layout.
+        const FLOW_CONTENT_OVERFLOWS = 1 << 17;
     }
 }
 
@@ -1148,6 +1158,24 @@ impl Node {
                 .is_some_and(|d| matches!(d.inside(), DisplayInside::None | DisplayInside::Contents))
     }
 
+    /// pyro: whether the element's `::before` or `::after` generates an in-flow block-level box
+    /// (`display: block` and the like, with content, neither floated nor absolutely positioned).
+    fn has_block_level_pseudo_element(&self) -> bool {
+        use style::values::generics::counters::Content;
+        let Some(data) = self.try_stylo_element_data().and_then(|data| data.get()) else {
+            return false;
+        };
+        if data.styles.pseudos.is_empty() {
+            return false;
+        }
+        data.styles.pseudos.as_array()[..2].iter().flatten().any(|style| {
+            !matches!(style.get_counters().content, Content::Normal | Content::None)
+                && style.clone_display().outside() == DisplayOutside::Block
+                && !style.clone_float().is_floating()
+                && !style.clone_position().is_absolutely_positioned()
+        })
+    }
+
     pub fn is_or_contains_block(&self) -> bool {
         if self.is_line_break() {
             return false;
@@ -1186,10 +1214,14 @@ impl Node {
                     return false;
                 }
                 if display.inside() == DisplayInside::Flow {
-                    self.children
-                        .iter()
-                        .copied()
-                        .any(|child_id| crate::util::ensure_stack(|| self.tree()[child_id].is_or_contains_block()))
+                    // pyro: so is a block-level `::before` or `::after` (read from its style: its
+                    // box is made when this inline box is built, after its container asks).
+                    self.has_block_level_pseudo_element()
+                        || self
+                            .children
+                            .iter()
+                            .copied()
+                            .any(|child_id| crate::util::ensure_stack(|| self.tree()[child_id].is_or_contains_block()))
                 } else {
                     false
                 }

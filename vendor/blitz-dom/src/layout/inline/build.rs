@@ -25,31 +25,64 @@ use crate::{
 };
 
 /// pyro: the inline-axis space the start and the end side of an inline (non-atomic) box take:
-/// margin, border and padding, in CSS pixels. Percentages resolve against zero and `auto` margins
-/// are zero. A vertical writing mode keeps the box edgeless.
-pub(crate) fn span_edge_widths(style: &style::properties::ComputedValues) -> (f32, f32) {
+/// margin, border and padding, in CSS pixels; `None` for a side with none of them. A side whose
+/// margin, border and padding add up to nothing (a border and a negative margin as wide) still
+/// is an edge: it paints, and its line is no empty line (CSS 2.1 § 9.4.2). Percentages resolve
+/// against zero and `auto` margins are zero. A vertical writing mode keeps the box edgeless.
+pub(crate) fn span_edge_widths(style: &style::properties::ComputedValues) -> (Option<f32>, Option<f32>) {
+    let (start, end, _) = span_edge_widths_in(style, 0.0);
+    (start, end)
+}
+
+/// pyro: [`span_edge_widths`] with percentages resolved against `basis` (the width of the
+/// span's containing block, CSS px; zero while it is not known and for intrinsic sizes), and
+/// whether a side has a percentage: such a side is an edge whatever it resolves to, and each
+/// layout gives it its width.
+pub(crate) fn span_edge_widths_in(
+    style: &style::properties::ComputedValues,
+    basis: f32,
+) -> (Option<f32>, Option<f32>, bool) {
     use style::values::computed::{Length, LengthPercentage, Margin};
     use style::values::generics::length::GenericMargin;
     if style.writing_mode.is_vertical() {
-        return (0.0, 0.0);
+        return (None, None, false);
     }
-    let length = |v: &LengthPercentage| v.resolve(Length::new(0.0)).px();
+    let length = |v: &LengthPercentage| v.resolve(Length::new(basis)).px();
     let margin = |v: &Margin| match v {
         GenericMargin::LengthPercentage(v) => length(v),
         _ => 0.0,
+    };
+    let margin_percent = |v: &Margin| match v {
+        GenericMargin::LengthPercentage(v) => v.has_percentage(),
+        _ => false,
     };
     let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
     // The used width: none where the side has no border style.
     let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
         if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() }
     };
-    let left = margin(&m.margin_left) + border(&b.border_left_width, b.border_left_style) + length(&p.padding_left.0);
-    let right =
-        margin(&m.margin_right) + border(&b.border_right_width, b.border_right_style) + length(&p.padding_right.0);
+    let side = |margin: f32, border: f32, padding: f32, percent: bool| {
+        (margin != 0.0 || border != 0.0 || padding != 0.0 || percent).then_some(margin + border + padding)
+    };
+    let left_percent = margin_percent(&m.margin_left) || p.padding_left.0.has_percentage();
+    let right_percent = margin_percent(&m.margin_right) || p.padding_right.0.has_percentage();
+    let left = side(
+        margin(&m.margin_left),
+        border(&b.border_left_width, b.border_left_style),
+        length(&p.padding_left.0),
+        left_percent,
+    );
+    let right = side(
+        margin(&m.margin_right),
+        border(&b.border_right_width, b.border_right_style),
+        length(&p.padding_right.0),
+        right_percent,
+    );
+    let percent = left_percent || right_percent;
     if style.clone_direction() == style::computed_values::direction::T::Rtl {
-        (right, left)
+        (right, left, percent)
     } else {
-        (left, right)
+        (left, right, percent)
     }
 }
 
@@ -105,6 +138,8 @@ struct BidiScan {
     rtl: bool,
     /// Some inline box (not atomic, not split) is relatively positioned.
     relative: bool,
+    /// Some inline box's margin or padding at an edge is a percentage (`span_edge_widths_in`).
+    percent_edges: bool,
     /// How many in-flow atomic inline boxes were pushed.
     atomic_boxes: usize,
     /// Some inline box held nothing and pushed an empty-box strut.
@@ -112,6 +147,20 @@ struct BidiScan {
     /// The split inlines the layout holds pieces of, with whether it holds their start and end
     /// (`TextLayout::split_pieces`).
     split_pieces: Vec<(NodeId, bool, bool)>,
+    /// The bidi formatting characters pushed (with `bidi`) whose embedding, override or isolate
+    /// is open, outermost first: a forced line break (a paragraph separator to the bidi
+    /// algorithm, which closes them) opens them again (`reopen_bidi_controls`).
+    open_controls: Vec<&'static [char]>,
+}
+
+/// pyro: after a forced line break (`<br>`), the bidi formatting characters still open before it,
+/// again: the break ends the bidi algorithm's paragraph, which closes every embedding, override
+/// and isolate, and Blink re-opens them after it (`InlineItemsBuilder::AppendForcedBreak`), so a
+/// `unicode-bidi: bidi-override` holds on the lines after a `<br>` too.
+fn reopen_bidi_controls(builder: &mut TreeBuilder<TextBrush>, bidi_scan: &BidiScan) {
+    for controls in &bidi_scan.open_controls {
+        controls.iter().for_each(|&c| builder.push_bidi_control(c));
+    }
 }
 
 /// pyro: the split inlines (`NodeFlags::IS_SPLIT_INLINE`) whose box holds the anonymous block
@@ -165,10 +214,12 @@ fn open_span(
         bidi_scan.rtl |= rtl;
         if bidi {
             start_controls.iter().for_each(|&c| builder.push_bidi_control(c));
+            bidi_scan.open_controls.push(start_controls);
         }
     }
-    let (start_edge, end_edge) = span_edge_widths(style);
-    let (start_edge, end_edge) = (if start { start_edge } else { 0.0 }, if end { end_edge } else { 0.0 });
+    let (start_edge, end_edge, percent) = span_edge_widths_in(style, 0.0);
+    bidi_scan.percent_edges |= percent;
+    let (start_edge, end_edge) = (start_edge.filter(|_| start), end_edge.filter(|_| end));
     let scale = builder.scale();
     let edge = |kind, width: f32| InlineBox {
         id: node_id.as_u64(),
@@ -180,25 +231,29 @@ fn open_span(
         vertical_align: Default::default(),
         rtl,
     };
-    if start_edge != 0.0 {
-        builder.push_inline_box(edge(InlineBoxKind::SpanStart, start_edge));
+    // pyro: a right-to-left span with one edge has the other too, empty (see
+    // `build_inline_layout_recursive`).
+    let both = rtl && (start_edge.is_some() || end_edge.is_some());
+    if start_edge.is_some() || (both && start) {
+        builder.push_inline_box(edge(InlineBoxKind::SpanStart, start_edge.unwrap_or(0.0)));
     }
-    if (start_edge != 0.0 || end_edge != 0.0) && std::mem::take(strut) {
+    if (start_edge.is_some() || end_edge.is_some()) && std::mem::take(strut) {
         builder.push_text("\u{2060}");
     }
     SpanEnd {
-        edge: (end_edge != 0.0).then(|| edge(InlineBoxKind::SpanEnd, end_edge)),
+        edge: (end_edge.is_some() || (both && end)).then(|| edge(InlineBoxKind::SpanEnd, end_edge.unwrap_or(0.0))),
         controls: controls.map(|(_, end_controls)| end_controls),
     }
 }
 
 /// pyro: pushes the end of a span `open_span` started.
-fn close_span(builder: &mut TreeBuilder<TextBrush>, end: SpanEnd, bidi: bool) {
+fn close_span(builder: &mut TreeBuilder<TextBrush>, end: SpanEnd, bidi: bool, bidi_scan: &mut BidiScan) {
     if let Some(edge) = end.edge {
         builder.push_inline_box(edge);
     }
     if let (true, Some(controls)) = (bidi, end.controls) {
         controls.iter().for_each(|&c| builder.push_bidi_control(c));
+        bidi_scan.open_controls.pop();
     }
     builder.pop_style_span();
 }
@@ -301,7 +356,9 @@ fn build_inline_layout_with(
         if matches!(style.clone_unicode_bidi(), UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride) {
             bidi_scan.controls = true;
             if bidi {
-                builder.push_bidi_control(if rtl { '\u{202E}' } else { '\u{202D}' });
+                let control: &'static [char] = if rtl { &['\u{202E}'] } else { &['\u{202D}'] };
+                builder.push_bidi_control(control[0]);
+                bidi_scan.open_controls.push(control);
             }
         }
     }
@@ -437,7 +494,7 @@ fn build_inline_layout_with(
     }
 
     for end in piece_ends.into_iter().rev().flatten() {
-        close_span(&mut builder, end, bidi);
+        close_span(&mut builder, end, bidi, &mut bidi_scan);
     }
     text_layout.split_pieces = std::mem::take(&mut bidi_scan.split_pieces);
 
@@ -498,12 +555,15 @@ fn build_inline_layout_with(
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
     // own before it reads them.
     let text_only = text_layout.layout.inline_boxes().all(|inline_box| inline_box.kind != InlineBoxKind::InFlow);
+    // (Nor an edge whose width each layout sets: a percentage margin or padding.)
+    let text_only = text_only && !bidi_scan.percent_edges;
     text_layout.text_content_widths = text_only.then(|| {
         text_layout.layout.set_text_indent(0.0, IndentOptions::default());
         text_layout.layout.calculate_content_widths()
     });
     text_layout.bidi_controls = bidi || bidi_scan.empty_box_struts;
     text_layout.relative_spans = bidi_scan.relative;
+    text_layout.percent_span_edges = bidi_scan.percent_edges;
     return true;
 
     /// pyro: whether `text-overflow` puts an ellipsis at the end of the lines of a box with this
@@ -640,7 +700,7 @@ fn build_inline_layout_with(
                 bidi_scan,
             ));
         }
-        close_span(builder, end, bidi);
+        close_span(builder, end, bidi, bidi_scan);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -683,6 +743,9 @@ fn build_inline_layout_with(
                     ]);
                     builder.push_text("\n");
                     builder.pop_style_span();
+                    if bidi {
+                        reopen_bidi_controls(builder, bidi_scan);
+                    }
                     text_transformer.word_break(builder);
                     return;
                 }
@@ -807,14 +870,16 @@ fn build_inline_layout_with(
                             });
                             if let (true, Some((start, _))) = (bidi, controls) {
                                 start.iter().for_each(|&c| builder.push_bidi_control(c));
+                                bidi_scan.open_controls.push(start);
                             }
                             let held = (builder.text().len(), bidi_scan.atomic_boxes);
 
                             // pyro: the span's inline-axis margin, border and padding take space
                             // at its start and its end (CSS 2.1 9.4.2): an edge box at each, inside
                             // the span's style, when there is any.
-                            let (start_edge, end_edge) =
-                                node.primary_styles().map(|s| span_edge_widths(&s)).unwrap_or_default();
+                            let (start_edge, end_edge, percent) =
+                                node.primary_styles().map(|s| span_edge_widths_in(&s, 0.0)).unwrap_or_default();
+                            bidi_scan.percent_edges |= percent;
                             let scale = builder.scale();
                             let rtl = node.primary_styles().is_some_and(|style| {
                                 style.clone_direction() == style::computed_values::direction::T::Rtl
@@ -829,11 +894,17 @@ fn build_inline_layout_with(
                                 vertical_align: Default::default(),
                                 rtl,
                             };
-                            if start_edge != 0.0 {
-                                builder.push_inline_box(edge(InlineBoxKind::SpanStart, start_edge));
+                            // pyro: a right-to-left span's edges trade sides on the line (its end
+                            // edge goes left of its content): the line needs the span's content
+                            // as items of its own, which an edge at each end of it gives (text
+                            // is shaped across a span's boundary otherwise). With one edge it
+                            // has the other too, empty.
+                            let both = rtl && (start_edge.is_some() || end_edge.is_some());
+                            if start_edge.is_some() || both {
+                                builder.push_inline_box(edge(InlineBoxKind::SpanStart, start_edge.unwrap_or(0.0)));
                             }
                             // A span with such an edge is not empty: its line has the strut.
-                            if (start_edge != 0.0 || end_edge != 0.0) && std::mem::take(strut) {
+                            if (start_edge.is_some() || end_edge.is_some()) && std::mem::take(strut) {
                                 builder.push_text("\u{2060}");
                             }
 
@@ -893,11 +964,12 @@ fn build_inline_layout_with(
                                 builder.push_empty_box_strut();
                                 bidi_scan.empty_box_struts = true;
                             }
-                            if end_edge != 0.0 {
-                                builder.push_inline_box(edge(InlineBoxKind::SpanEnd, end_edge));
+                            if end_edge.is_some() || both {
+                                builder.push_inline_box(edge(InlineBoxKind::SpanEnd, end_edge.unwrap_or(0.0)));
                             }
                             if let (true, Some((_, end))) = (bidi, controls) {
                                 end.iter().for_each(|&c| builder.push_bidi_control(c));
+                                bidi_scan.open_controls.pop();
                             }
                             builder.pop_style_span();
                         }

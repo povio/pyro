@@ -265,6 +265,9 @@ impl BaseDocument {
         for node_id in std::mem::take(&mut self.first_letter_changed) {
             super::first_letter::style_changed(self, node_id);
         }
+        for node_id in std::mem::take(&mut self.first_line_changed) {
+            super::first_line::style_changed(self, node_id);
+        }
         if !self.generated_counters || !self.counters_dirty {
             return;
         }

@@ -30,7 +30,9 @@ pub use scrollbar::{ScrollbarColor, ScrollbarRef, ScrollbarWidth};
 pub use stylo_data::ComputedStyleRef;
 pub(crate) use stylo_data::LayoutStyles;
 #[cfg(feature = "svg")]
-pub use svg::{SvgImageData, SvgIntrinsicDimensions};
+pub use svg::{SvgImageData, SvgIntrinsicDimensions, svg_source_element};
+#[cfg(feature = "svg")]
+pub(crate) use svg::{ReferenceCandidate, embeddable_svg, reference_candidates, references_out_of_sync};
 pub use text::{
     can_take_emphasis_mark, FirstLetterSplit, GeneratedTextInputEvent, InputPlaceholder, TextAnnotation,
     TextAnnotationKind, TextBrush, TextInputData, TextLayout,

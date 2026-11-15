@@ -1,6 +1,6 @@
 #!/bin/sh
 # Fetches the WPT revision pinned in bench/wpt/wpt-revision.txt into DIR: one commit, no history, and only the paths
-# bench/wpt/wpt-paths.txt lists (the test directories plus the support files they load). About 85 MB, ~15 s.
+# bench/wpt/wpt-paths.txt lists (the test directories plus the support files they load). About 290 MB with its git directory, under a minute.
 # Usage: bench/wpt/fetch-wpt.sh [--force] DIR        (WPT_REVISION=<sha> overrides the pin, WPT_REMOTE=<url> the repo)
 # DIR is new or empty, or a checkout this script made (it moves that one to the pinned revision in place; git refuses
 # if local changes would be lost). A git checkout it did not make is used as it is when it is at the pinned

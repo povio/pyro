@@ -167,6 +167,14 @@ All covered by `crates/pyro-render/tests/unicode_bidi.rs` (and `block_in_inline.
 blitz-dom can tell a float it left for below a line from one past the point where that line wrapped (met again on
 the next line; WPT `floats-line-wrap-shifted-001`). Covered by `crates/pyro-render/tests/floats.rs`.
 
+`resolve/tree.rs` (`flush_pending_whitespace`): collapsible white space after an inline box that follows a
+preserved segment break is kept (the box is content of the new line): the spaces between inline-blocks after a
+`<br>` were dropped (WPT `vertical-align-122`; `crates/pyro-render/tests/inline_leftovers.rs`).
+
+`layout/line_break.rs` (`place_span_edges`): a text item without an advance (a bidi formatting character written
+in the text, which keeps the level before it) is no content an edge goes beside: a span starting with U+202E had
+its start edge left at that character, away from the content the override reordered (WPT `bidi-011`).
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

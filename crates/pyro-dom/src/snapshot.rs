@@ -367,7 +367,11 @@ impl Dom {
                     if html && local == "slot" && scope != NONE {
                         let (host, host_scope) = hosts[scope];
                         let name = e.attr("name").unwrap_or("");
-                        let assigned = self.slotted(host, name);
+                        // Only the slot the root assigns that name to: a second slot of the
+                        // name rendered the same children again (two nodes of one key, which
+                        // the renderer refuses: no screenshot).
+                        let assigned =
+                            if self.takes_assignment(n, name) { self.slotted(host, name) } else { Vec::new() };
                         if assigned.is_empty() {
                             push_children(&mut stack, self.child_idx_iter(n).collect(), scope);
                         } else {
@@ -852,6 +856,26 @@ impl Dom {
             }
             _ => false,
         }
+    }
+
+    /// Whether `slot` is the slot its shadow root assigns the nodes named `name` to (DOM "find a
+    /// slot"): the first slot of that name in tree order, in a root that assigns by name. A
+    /// `slotAssignment: "manual"` root assigns none (`HTMLSlotElement.assign()` holds no state
+    /// yet, as `Dom::find_slot`): its slots render their fallback content.
+    fn takes_assignment(&self, slot: u32, name: &str) -> bool {
+        let root = self.root_idx(slot);
+        match &self.n(root).kind {
+            NodeKind::Fragment(f) if f.shadow.is_some() && f.flags & crate::node::shadow_flags::MANUAL_SLOTS == 0 => {}
+            _ => return false,
+        }
+        let mut cur = self.n(root).first_child;
+        while cur != NIL {
+            if self.is_slot(cur) && self.n(cur).element().and_then(|e| e.attr("name")).unwrap_or("") == name {
+                return cur == slot;
+            }
+            cur = self.following_in(cur, root);
+        }
+        false
     }
 
     /// Light children of `host` assigned to the slot named `name` (the

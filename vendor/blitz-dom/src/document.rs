@@ -111,6 +111,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.content.alt-text.enabled", true);
         style_config::set_pref!("layout.css.corner-shape.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
+        // pyro: `::first-line` parses and is cascaded (`layout::first_line`).
+        style_config::set_pref!("layout.css.first-line.enabled", true);
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
@@ -532,6 +534,16 @@ pub struct BaseDocument {
     /// pyro: elements whose `::first-letter` style a style traversal changed, for the next
     /// resolve (`layout::first_letter::style_changed`).
     pub(crate) first_letter_changed: Vec<NodeId>,
+    /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
+    /// roots look for the style of their first line (`layout::first_line`).
+    pub(crate) first_line_styles: bool,
+    /// pyro: elements whose `::first-line` style a style traversal changed, for the next resolve
+    /// (`layout::first_line::style_changed`).
+    pub(crate) first_line_changed: Vec<NodeId>,
+    /// pyro: the embedder's selection, painted in place of `text_selection` (`dom_selection`).
+    pub(crate) dom_selection: Option<crate::DomSelection>,
+    /// pyro: the styles of elements on first lines, cascaded again (`layout::first_line`).
+    pub(crate) first_line_reparented: crate::layout::first_line::ReparentCache,
 
     /// pyro: a style traversal kept a `::before` / `::after` whose content reads counters or
     /// quotes (sticky): each resolve with damage evaluates them (`layout::counters`).
@@ -743,6 +755,10 @@ impl BaseDocument {
             generated_before_after: false,
             first_letter_styles: false,
             first_letter_changed: Vec::new(),
+            first_line_styles: false,
+            first_line_changed: Vec::new(),
+            dom_selection: None,
+            first_line_reparented: Default::default(),
             generated_counters: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
@@ -1279,6 +1295,10 @@ impl BaseDocument {
             if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter) {
                 self.remove_node_from_tree(first_letter);
             }
+            // pyro: and its `::first-line` style.
+            if let Some(first_line) = node.element_data().and_then(|element| element.first_line) {
+                self.remove_node_from_tree(first_line);
+            }
 
             for &child in &node.children {
                 crate::util::ensure_stack(|| self.drop_node_ignoring_parent_with(child, on_drop));
@@ -1323,6 +1343,38 @@ impl BaseDocument {
                 }
                 if node.layout_child_of.get() == Some(anon_id) {
                     node.layout_child_of.set(None);
+                }
+            }
+        }
+        // pyro: so have the boxes of a split inline's head or tail it laid out, which are not its
+        // children but the split inline's (`find_inline_layout_embedded_boxes`).
+        let anon = &self.nodes[anon_id];
+        if anon
+            .flags
+            .intersects(crate::node::NodeFlags::ENDS_WITH_SPLIT_HEAD | crate::node::NodeFlags::STARTS_WITH_SPLIT_TAIL)
+        {
+            let len = anon.children.len();
+            let mut pending: Vec<NodeId> = anon
+                .children
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|&(index, _)| anon.split_ref_at(index, len).is_some())
+                .map(|(_, id)| id)
+                .collect();
+            while let Some(id) = pending.pop() {
+                let Some(node) = self.nodes.get(id) else { continue };
+                for child_id in node.before().into_iter().chain(node.children.iter().copied()).chain(node.after()) {
+                    let Some(child) = self.nodes.get(child_id) else { continue };
+                    if child.layout_parent.get() == Some(anon_id) {
+                        child.layout_parent.set(None);
+                    }
+                    if child.layout_child_of.get() == Some(anon_id) {
+                        child.layout_child_of.set(None);
+                    }
+                    if child.is_element() {
+                        pending.push(child_id);
+                    }
                 }
             }
         }
@@ -1869,7 +1921,7 @@ impl BaseDocument {
     /// pyro: damages the outermost `<svg>` around SVG element `node_id`, so that its box (and the
     /// SVG source it is drawn from) is built again.
     #[cfg(feature = "svg")]
-    fn damage_inline_svg_root(&mut self, node_id: NodeId) {
+    pub(crate) fn damage_inline_svg_root(&mut self, node_id: NodeId) {
         let mut root = None;
         let mut next = Some(node_id);
         while let Some(id) = next {
@@ -1929,6 +1981,18 @@ impl BaseDocument {
                     node.clear_layout_cache();
                     node.insert_damage(ALL_DAMAGE);
                 }
+                // pyro: a document an element's `clip-path`, `filter` or `mask` references an
+                // element of: the box is painted, and an inline `<svg>` written, with it.
+                ImageType::Reference(idx) => {
+                    if let Some(Some(reference)) =
+                        node.element_data_mut().and_then(|el| el.reference_images.get_mut(idx))
+                    {
+                        reference.status = Status::Ok;
+                        reference.image = image.clone();
+                    }
+                    #[cfg(feature = "svg")]
+                    self.damage_inline_svg_root(node_id);
+                }
                 ImageType::Background(idx)
                 | ImageType::Mask(idx)
                 | ImageType::BorderImage(idx)
@@ -1939,7 +2003,7 @@ impl BaseDocument {
                             ImageType::Mask(_) => &mut el.mask_images,
                             ImageType::BorderImage(_) => &mut el.border_images,
                             ImageType::ListStyle(_) => &mut el.list_style_images,
-                            ImageType::Image => unreachable!(),
+                            ImageType::Image | ImageType::Reference(_) => unreachable!(),
                         };
                         images.get_mut(idx)
                     });
@@ -2725,6 +2789,68 @@ impl BaseDocument {
         svg
     }
 
+    /// pyro: `svg` (an inline `<svg>`'s source) with the resources of the page's other inline
+    /// `<svg>`s that it references and does not define itself (`filter="url(#f)"`,
+    /// `fill="url(#gradient)"`, a gradient's `href="#base"`, where the `<filter>` or gradient
+    /// stands in a hidden `<svg>` of definitions), copied into a `<defs>` first in it: ids are
+    /// the document's, and usvg reads each `<svg>` alone. What a copied element references is
+    /// copied too. (A later change to the definitions does not rebuild the `<svg>`s that use
+    /// them.)
+    #[cfg(feature = "svg")]
+    pub(crate) fn with_cross_svg_references(&self, mut svg: String) -> String {
+        if !svg.contains("(#") && !svg.contains("href=\"#") {
+            return svg;
+        }
+        fn referenced(text: &str, out: &mut Vec<String>) {
+            for (open, close) in [("url(#", ')'), ("href=\"#", '"')] {
+                let mut rest = text;
+                while let Some(start) = rest.find(open) {
+                    let after = &rest[start + open.len()..];
+                    let Some(end) = after.find(close) else {
+                        break;
+                    };
+                    let id = after[..end].trim();
+                    if !id.is_empty() && !out.iter().any(|known| known == id) {
+                        out.push(id.to_string());
+                    }
+                    rest = &after[end..];
+                }
+            }
+        }
+        let defined = |text: &str, id: &str| text.contains(&format!(" id=\"{id}\""));
+        let mut ids = Vec::new();
+        referenced(&svg, &mut ids);
+        let mut defs = String::new();
+        let mut next = 0;
+        while next < ids.len() && next < 64 {
+            let id = ids[next].clone();
+            next += 1;
+            if defined(&svg, &id) || defined(&defs, &id) {
+                continue;
+            }
+            let Some(node) = self.get_element_by_id(&id).and_then(|node_id| self.get_node(node_id)) else {
+                continue;
+            };
+            let resource = node.element_data().is_some_and(|data| {
+                data.name.ns == markup5ever::ns!(svg)
+                    && matches!(
+                        data.name.local.as_ref(),
+                        "filter" | "clipPath" | "mask" | "linearGradient" | "radialGradient" | "pattern" | "marker"
+                    )
+            });
+            if !resource {
+                continue;
+            }
+            let source = node.svg_source();
+            referenced(&source, &mut ids);
+            defs.push_str(&source);
+        }
+        if let (false, Some(end)) = (defs.is_empty(), svg.find('>')) {
+            svg.insert_str(end + 1, &format!("<defs>{defs}</defs>"));
+        }
+        svg
+    }
+
     /// Returns the current CSS media type used to evaluate `@media` rules.
     pub fn media_type(&self) -> &MediaType {
         &self.media_type
@@ -3432,6 +3558,10 @@ impl BaseDocument {
     /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
     /// Returns empty vec if no selection.
     pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
+        // pyro: the embedder's selection, when it set one.
+        if let Some(selection) = self.dom_selection {
+            return self.dom_selection_ranges(selection);
+        }
         let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
 
         let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {

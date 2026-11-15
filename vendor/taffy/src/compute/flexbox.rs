@@ -3073,7 +3073,7 @@ fn collect_oof_candidates(
         let main = AxisStaticPosition { area: main_area, align: AxisStaticAlign::from_keyword(main_edge) };
 
         let static_position = if constants.is_row { Point { x: main, y: cross } } else { Point { x: cross, y: main } };
-        candidates.push(OofCandidate { node: child, order: order as u32, position, static_position });
+        candidates.push(OofCandidate { containing_block: None, node: child, order: order as u32, position, static_position });
     }
 }
 
