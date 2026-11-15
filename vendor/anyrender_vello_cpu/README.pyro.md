@@ -101,8 +101,8 @@ first node and the setter is private), and a primitive's subregion is an `Image`
 `FILTER_CROP_IMAGE` (`u32::MAX`, exported) whose transform holds the rectangle (`[x0, y0, x1, y1, ..]`, the filter's
 space) and whose input is the node it crops. What anyrender's types cannot say: `FilterEffect::Tile` tiles the
 rectangle of the crop node it reads; `ConvolveMatrix`'s `size` is the number of columns and its `values` the kernel
-followed by the rows, the target's x and y and the edge mode (without those four, a square kernel centred, edges
-duplicated); a lighting node's colour is the `Flood` node that is its second input; and `Image` nodes of exported ids
+followed by the rows, the target's x and y and the edge mode, read first (`order="4 3"` makes 16 values, as many as
+a square 4 x 4 kernel; without those four, a square kernel centred, edges duplicated); a lighting node's colour is the `Flood` node that is its second input; and `Image` nodes of exported ids
 below the crop's are `FILTER_IMAGE_SOURCE` (an `feImage`'s content: `[k, 0, ..]`), `FILTER_BLUR_XY` (two deviations),
 `FILTER_MORPHOLOGY` (two radii, dilate or erode) and `FILTER_TURBULENCE` (frequencies, octaves, seed, fractal noise
 or turbulence). The content of `feImage` number `k` is drawn inside the filter layer, before the content filtered,

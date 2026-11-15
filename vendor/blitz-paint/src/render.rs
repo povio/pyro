@@ -2546,7 +2546,20 @@ impl ElementCx<'_, '_> {
         // content), when the filter regions reach past the tree's viewport. An `<svg>` that does
         // not declare its size is 300 x 150 CSS px in Chromium, where its box here is its
         // content's: the cut is at least that far from the box's corner.
-        let filter_overflow = !svg.tree.filters().is_empty() && {
+        // Not when the `<svg>` declares `overflow: visible` (its attribute or its `style`): its
+        // filters then show past its box (an icon's glow), as on a page without the UA's
+        // `svg:not(:root) { overflow: hidden }`, which pyro's sheet does not have.
+        let overflow_visible = {
+            let visible = |v: &str| v.trim().trim_end_matches("!important").trim().eq_ignore_ascii_case("visible");
+            self.element.attr(local_name!("overflow")).is_some_and(visible)
+                || self.element.attr(local_name!("style")).is_some_and(|style| {
+                    style
+                        .split(';')
+                        .filter_map(|d| d.split_once(':'))
+                        .any(|(name, value)| name.trim().eq_ignore_ascii_case("overflow") && visible(value))
+                })
+        };
+        let filter_overflow = !overflow_visible && !svg.tree.filters().is_empty() && {
             let (bounds, size) = (svg.tree.root().abs_layer_bounding_box(), svg.tree.size());
             bounds.left() < 0.0 || bounds.top() < 0.0 || bounds.right() > size.width() || bounds.bottom() > size.height()
         };

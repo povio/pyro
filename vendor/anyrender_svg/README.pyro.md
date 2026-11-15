@@ -54,13 +54,16 @@ for offscreen rasters and its filter conventions. Upstream draws a translucent r
   `feImage` content (an element, or an image usvg loaded) is drawn in the filter layer, before the content, in a
   layer of opacity 0 that only the graph reads, at the subregion's corner (as Blink places it; an image usvg laid
   out in the subregion). Children that reach past the first filter's region are clipped to it (SVG's source
-  graphic stops there). A filter with a primitive anyrender_vello_cpu does not do (`feDropShadow` of two
-  deviations), or with the transparent black flood usvg stands in for a primitive it could not read (an `feImage`
-  it could not load), is left out: the group is drawn unfiltered, as before.
+  graphic stops there; a CSS filter function's layer is no region, see below: `FilterGraph::bounded`). A filter
+  with a primitive anyrender_vello_cpu does not do (`feDropShadow` of two deviations), or with the transparent black
+  flood usvg stands in for a primitive it could not read (an `feImage` it could not load), is left out: the group is
+  drawn unfiltered, as before; a flood the caller says is a real `feFlood` (`PrimitiveNotes::flood`: Figma's
+  `<feFlood flood-opacity="0" result="BackgroundImageFix"/>`) is a transparent flood. `FilterGraph::reach` is how far
+  the graph's output can lie from its content (for its painter's culling).
 - **Tainted filter primitives** (`src/filter.rs`, `PrimitiveNotes`, `render_svg_tree_with_notes`): a flood, drop
   shadow or lighting colour computed from `currentcolor` (which a `:visited` link's colour can be) is tainted, and so
   is everything made from it; an `feDisplacementMap` whose map is tainted passes its input on unmoved, as Chromium's
-  does (WPT css/filter-effects/tainting-*). usvg resolves `currentcolor`, so the caller passes what the document
+  does (WPT css/filter-effects/tainting-*), and its result is tainted (Blink checks every input). usvg resolves `currentcolor`, so the caller passes what the document
   knows (blitz-paint reads the `<filter>` elements); a filter in a list after a tainted one reads a tainted source.
   The caller also says which lighting primitive has no light source: its result is transparent black (Chromium),
   where usvg's stand-in would leave the filter out. `FilterGraph` is public for blitz-paint, which applies SVG

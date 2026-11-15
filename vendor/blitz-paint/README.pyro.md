@@ -186,14 +186,25 @@ from the root of an upstream checkout at that commit) is the whole diff.
     the opacity around them. A graph fills its region whatever the element paints: an empty element's filter
     region is painted, and so is a `visibility: hidden` element's (its content not), as in Chromium (WPT
     css/filter-effects/empty-element-with-filter-*, visibility-hidden-element-with-filter-001,
-    effect-reference-obb-dimensions). A `drop-shadow()` coloured from `currentcolor` before it taints the graph's
-    source (see anyrender_svg's README).
+    effect-reference-obb-dimensions). A `drop-shadow()` coloured from `currentcolor` (`uses_current_color`, the
+    computed colour's structure) before it taints the graph's source (see anyrender_svg's README). Culling takes
+    the steps' reach and the graphs' regions (`steps_reach`): a region reaching into view from a box outside it is
+    painted, an `feTile` in view keeps the content of its whole region, and an empty `overflow: hidden` element still
+    paints its region.
+  - `src/bounds.rs` (`layer_bounds`, `stays_with_input`): a layer whose filter can paint where its content is not (a
+    graph with a flood, turbulence, a tile, an image, a displacement, morphology or a composite; a colour function
+    adding alpha) is bounded by its whole clip, its filter region, so that an ancestor's opacity or filter layer
+    keeps an empty element's filter region and a flood past the content.
   - `src/filters.rs` (`svg_filter_notes`, `primitive_notes`), `src/render.rs` (`draw_svg`): an inline `<svg>`'s
     tree is rendered with what the document knows of its filters' primitives that usvg does not keep: which
-    `flood-color` or `lighting-color` is computed from `currentcolor` (tainted) and which lighting primitive has no
-    light source. What its filters make past its box is cut off at the content box (an `<svg>`'s
-    `overflow: hidden`), at least 300 x 150 CSS px from its corner when it declares no size (its box here is its
-    content's, where Chromium's is that). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
+    `flood-color` or `lighting-color` is computed from `currentcolor` (tainted), which lighting primitive has no
+    light source and which is a real `feFlood`. A tree filter is the `<filter>` of its id in the `<svg>` (else in
+    the document) whose primitives it has; usvg names the second and later uses of an `objectBoundingBox` filter
+    `filterN`, and those take the notes of the uses with the same primitives and colours. A `<filter href>`
+    template's primitives are read through the reference. What its filters make past its box is cut off at the
+    content box (an `<svg>`'s `overflow: hidden`), at least 300 x 150 CSS px from its corner when it declares no
+    size (its box here is its content's, where Chromium's is that), unless the `<svg>` declares `overflow: visible`
+    (its attribute or its `style`; pyro's UA sheet has no `svg:not(:root) { overflow: hidden }`). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
   - `src/layers.rs` (`blend_isolation`), `src/render.rs` (`render_element`): a stacking context that holds an element
     with a `mix-blend-mode` (its nearest ancestor that is one, the root element's at the latest) is painted as an
     isolated group, as Chromium isolates one: the element blends with what the context painted, not with what lies

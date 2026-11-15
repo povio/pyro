@@ -604,13 +604,13 @@ fn convolution(kernel: &anyrender::filters::convolution::ConvolutionKernel) -> O
         return None;
     }
     let values = &kernel.values;
-    let (rows, target_x, target_y, edge) = if values.len() == columns * columns {
-        (columns, columns / 2, columns / 2, Edge::Duplicate)
-    } else {
-        let extra = values.len().checked_sub(4)?;
-        if extra % columns != 0 {
-            return None;
-        }
+    // The extra values first (`order="4 3"`: 12 + 4 values could also pass for a 4 x 4 kernel), a
+    // square kernel of its own otherwise.
+    let extra = values
+        .len()
+        .checked_sub(4)
+        .filter(|&extra| extra % columns == 0 && values[extra] >= 0.0 && values[extra] as usize * columns == extra);
+    let (rows, target_x, target_y, edge) = if let Some(extra) = extra {
         let [rows, tx, ty, edge] = values[extra..] else { return None };
         let edge = match edge as i32 {
             0 => Edge::Duplicate,
@@ -618,6 +618,10 @@ fn convolution(kernel: &anyrender::filters::convolution::ConvolutionKernel) -> O
             _ => Edge::None,
         };
         (rows as usize, tx as usize, ty as usize, edge)
+    } else if values.len() == columns * columns {
+        (columns, columns / 2, columns / 2, Edge::Duplicate)
+    } else {
+        return None;
     };
     if rows == 0 || rows > 64 || rows * columns > values.len() || target_x >= columns || target_y >= rows {
         return None;
@@ -1077,5 +1081,25 @@ mod tests {
         // User (2, 2) is device (4, 2): the pixel at (2, 1) reads (6, 3).
         let out = graph.render(source, &[], REGION);
         assert_eq!(at(&out, 2, 1), [0, 0, 255, 255]);
+    }
+
+    /// A kernel of 4 columns and 3 rows with its extra values (rows, target, edge) is 16 values,
+    /// as many as a square 4 x 4 kernel: the extra values are read first.
+    #[test]
+    fn a_kernel_of_four_columns_and_three_rows() {
+        let kernel = |values: Vec<f32>| anyrender::filters::convolution::ConvolutionKernel {
+            size: 4,
+            values,
+            divisor: 1.0,
+            bias: 0.0,
+            preserve_alpha: false,
+        };
+        let mut values = vec![1.0; 12];
+        values.extend([3.0, 1.0, 2.0, 1.0]);
+        let Some(Op::Convolve(k)) = convolution(&kernel(values)) else { panic!() };
+        assert_eq!((k.columns, k.rows, k.target_x, k.target_y, k.kernel.len()), (4, 3, 1, 2, 12));
+        assert!(matches!(k.edge, Edge::Wrap));
+        let Some(Op::Convolve(k)) = convolution(&kernel(vec![1.0; 16])) else { panic!() };
+        assert_eq!((k.columns, k.rows, k.target_x, k.target_y), (4, 4, 2, 2), "a square kernel alone");
     }
 }

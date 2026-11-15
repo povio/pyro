@@ -225,3 +225,164 @@ fn svg_filters_on_html_elements() {
     assert_eq!(pixel(&img, 5, 105), WHITE, "moved by a fifth of the box");
     assert_eq!(pixel(&img, 55, 155), GREEN, "to 10 px right and down");
 }
+
+/// An SVG filter's region paints under an ancestor's opacity layer too: the layer's bounds take
+/// the whole region of a filter that paints where its content is not (a flood), for an empty and
+/// a hidden element, and for a flood past a box's content; before, the empty and hidden elements'
+/// groups had no bounds and the ancestor drew nothing, and the flood was cut to the box.
+#[test]
+fn svg_filter_regions_under_an_opacity_ancestor() {
+    let img = render(
+        "<svg width='0' height='0' style='position:absolute'>
+           <filter id='flood' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='0' y='0' width='50' height='50'>
+             <feFlood flood-color='green'/></filter>
+           <filter id='wide' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='0' y='0' width='100' height='100'>
+             <feFlood flood-color='green'/></filter>
+         </svg>
+         <div style='opacity:0.5'>
+           <div style='position:absolute; left:0; top:0; width:0; height:0; filter:url(#flood)'></div>
+           <div style='position:absolute; left:100px; top:0; width:50px; height:50px; background:red; visibility:hidden; filter:url(#flood)'></div>
+           <div style='position:absolute; left:0; top:100px; width:50px; height:50px; background:red; filter:url(#wide)'></div>
+         </div>
+         <div style='opacity:0.5; position:absolute; left:200px; top:0'>
+           <svg width='50' height='50' style='display:block'>
+             <filter id='inline' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='0' y='0' width='50' height='50'>
+               <feFlood flood-color='green'/></filter>
+             <rect width='10' height='10' fill='red' filter='url(#inline)'/>
+           </svg>
+         </div>",
+    );
+    let half_green = [127, 191, 127];
+    let near = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2);
+    for (x, y, what) in [
+        (25, 25, "an empty element's region"),
+        (125, 25, "a hidden element's"),
+        (75, 175, "a flood past the box"),
+        (240, 40, "an inline SVG's flood past its rectangle"),
+    ] {
+        assert!(near(pixel(&img, x, y), half_green), "{what}: {:?}", pixel(&img, x, y));
+    }
+}
+
+/// usvg names the second and later uses of an `objectBoundingBox` filter (the default units)
+/// `filterN`: the notes of the `<filter>` reach those uses too (a `currentcolor` map stays tainted
+/// on both rectangles), and a `<filter href>` template's primitives give the notes of the filter
+/// using it.
+#[test]
+fn a_filter_used_twice_or_through_a_template_keeps_its_taint() {
+    let img = render(
+        "<svg width='300' height='200' style='display:block'>
+           <linearGradient id='g'><stop stop-color='red'/><stop stop-color='red' offset='.5'/>
+             <stop stop-color='green' offset='.5'/><stop stop-color='green' offset='1'/></linearGradient>
+           <filter id='f' color-interpolation-filters='sRGB'>
+             <feFlood flood-color='currentcolor' style='color: rgb(0%, 100%, 50%)'/>
+             <feDisplacementMap in='SourceGraphic' xChannelSelector='G' yChannelSelector='B' scale='100'/>
+           </filter>
+           <filter id='t' href='#f' filterUnits='userSpaceOnUse' x='0' y='100' width='300' height='100'/>
+           <rect width='100' height='100' fill='url(#g)' filter='url(#f)'/>
+           <rect x='150' width='100' height='100' fill='url(#g)' filter='url(#f)'/>
+           <rect y='100' width='100' height='100' fill='url(#g)' filter='url(#t)'/>
+         </svg>",
+    );
+    for (x, y, what) in [(25, 50, "the first use"), (175, 50, "the second"), (25, 150, "the template")] {
+        assert_eq!(pixel(&img, x, y), RED, "{what}: unmoved");
+        assert_eq!(pixel(&img, x + 50, y), GREEN, "{what}: unmoved");
+    }
+}
+
+/// Culling takes an SVG filter graph's region: a flood whose region reaches into view from a box
+/// left of the viewport paints, and so does an empty `overflow: hidden` element's region.
+#[test]
+fn svg_filter_regions_are_not_culled() {
+    let img = render(
+        "<svg width='0' height='0' style='position:absolute'>
+           <filter id='far' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='0' y='0' width='300' height='50'>
+             <feFlood flood-color='green'/></filter>
+           <filter id='flood' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='0' y='0' width='50' height='50'>
+             <feFlood flood-color='green'/></filter>
+         </svg>
+         <div style='position:absolute; left:-200px; top:0; width:50px; height:50px; filter:url(#far)'></div>
+         <div style='position:absolute; left:0; top:100px; width:0; height:0; overflow:hidden; filter:url(#flood)'></div>",
+    );
+    assert_eq!(pixel(&img, 50, 25), GREEN, "the region reaching into view");
+    assert_eq!(pixel(&img, 25, 125), GREEN, "an empty overflow: hidden element's region");
+}
+
+/// `filter` lists mixing CSS functions and an SVG graph on HTML elements: the functions apply in
+/// their place in the list (an offset, then a drop shadow of the moved content), and a
+/// `drop-shadow()` coloured from `currentcolor` taints what follows (a displacement through the
+/// shadowed source then moves nothing).
+#[test]
+fn filter_lists_mixing_functions_and_graphs() {
+    let img = render(
+        "<svg width='0' height='0' style='position:absolute'>
+           <filter id='offset' filterUnits='userSpaceOnUse' x='-100' y='-100' width='400' height='400'>
+             <feOffset dx='50' dy='0'/></filter>
+           <filter id='displace' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='0' y='0' width='100' height='50'>
+             <feFlood flood-color='green' result='green'/>
+             <feDisplacementMap in='green' in2='SourceGraphic' xChannelSelector='G' yChannelSelector='B' scale='100'/>
+           </filter>
+         </svg>
+         <div style='position:absolute; left:0; top:0; width:25px; height:25px; background:green;
+                     filter:url(#offset) drop-shadow(0 50px 0 blue)'></div>
+         <div style='position:absolute; left:0; top:100px; width:100px; height:50px; background:rgb(0, 255, 128);
+                     color:rgb(0, 255, 128); filter:drop-shadow(0 0 0 currentcolor) url(#displace)'></div>",
+    );
+    assert_eq!(pixel(&img, 12, 12), WHITE, "moved away");
+    assert_eq!(pixel(&img, 62, 12), GREEN, "moved 50 px right");
+    assert_eq!(pixel(&img, 62, 62), BLUE, "the shadow of the moved box");
+    assert_eq!(pixel(&img, 12, 62), WHITE, "not of the box where it was");
+    assert_eq!(pixel(&img, 10, 125), GREEN, "a tainted map moves nothing: all green");
+    assert_eq!(pixel(&img, 90, 125), GREEN, "to the right edge");
+}
+
+/// An inline `<svg>` that declares `overflow: visible` shows what its filters make past its box
+/// (an icon's glow); one that does not is cut at its box.
+#[test]
+fn an_svg_with_overflow_visible_shows_its_filter_output() {
+    let img = render(
+        "<div style='position:absolute; left:50px; top:50px'>
+           <svg width='20' height='20' style='display:block; overflow:visible'>
+             <filter id='f' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='-40' y='-40' width='100' height='100'>
+               <feFlood flood-color='green'/></filter>
+             <rect width='20' height='20' fill='red' filter='url(#f)'/>
+           </svg>
+         </div>
+         <div style='position:absolute; left:200px; top:50px'>
+           <svg width='20' height='20' style='display:block' overflow='visible'>
+             <filter id='g' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='-40' y='-40' width='100' height='100'>
+               <feFlood flood-color='green'/></filter>
+             <rect width='20' height='20' fill='red' filter='url(#g)'/>
+           </svg>
+         </div>
+         <div style='position:absolute; left:50px; top:150px'>
+           <svg width='20' height='20' style='display:block'>
+             <filter id='h' color-interpolation-filters='sRGB' filterUnits='userSpaceOnUse' x='-40' y='-40' width='100' height='100'>
+               <feFlood flood-color='green'/></filter>
+             <rect width='20' height='20' fill='red' filter='url(#h)'/>
+           </svg>
+         </div>",
+    );
+    assert_eq!(pixel(&img, 30, 30), GREEN, "the style's overflow: visible");
+    assert_eq!(pixel(&img, 180, 30), GREEN, "the attribute's");
+    assert_eq!(pixel(&img, 30, 130), WHITE, "cut at the box");
+    assert_eq!(pixel(&img, 60, 160), GREEN, "in it");
+}
+
+/// A real `feFlood` of opacity 0 (Figma's `BackgroundImageFix`) is a transparent flood, not usvg's
+/// stand-in for a primitive it could not read: the filter applies (the box moved 50 px right).
+#[test]
+fn a_transparent_flood_is_a_flood() {
+    let img = render(
+        "<svg width='300' height='200' style='display:block'>
+           <filter id='f' filterUnits='userSpaceOnUse' x='0' y='0' width='300' height='200'>
+             <feFlood flood-opacity='0' result='BackgroundImageFix'/>
+             <feOffset in='SourceGraphic' dx='50' result='moved'/>
+             <feMerge><feMergeNode in='BackgroundImageFix'/><feMergeNode in='moved'/></feMerge>
+           </filter>
+           <rect width='50' height='50' fill='green' filter='url(#f)'/>
+         </svg>",
+    );
+    assert_eq!(pixel(&img, 25, 25), WHITE, "moved away");
+    assert_eq!(pixel(&img, 75, 25), GREEN);
+}

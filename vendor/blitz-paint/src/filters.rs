@@ -80,7 +80,7 @@ pub(crate) fn filter_steps(
             filter => {
                 if let StyloFilter::DropShadow(shadow) = filter {
                     // Its colour as computed keeps `currentcolor` (in a function too) unresolved.
-                    tainted |= format!("{:?}", shadow.color).contains("CurrentColor");
+                    tainted |= uses_current_color(&shadow.color);
                 }
                 chain.extend(convert_single_filter(filter, scale as f32, current_color));
             }
@@ -93,6 +93,20 @@ pub(crate) fn filter_steps(
         steps.push(FilterStep::Chain(std::sync::Arc::new(Filter::linear_list(chain.into_iter()))));
     }
     Some(steps)
+}
+
+/// Whether a computed colour is `currentcolor` or made from it (in `color-mix()`, as a relative
+/// colour's origin, in `contrast-color()`).
+#[cfg(feature = "svg")]
+fn uses_current_color(color: &style::values::computed::Color) -> bool {
+    use style::values::generics::color::GenericColor;
+    match color {
+        GenericColor::Absolute(_) => false,
+        GenericColor::CurrentColor => true,
+        GenericColor::ColorMix(mix) => mix.items.iter().any(|item| uses_current_color(&item.color)),
+        GenericColor::ContrastColor(color) => uses_current_color(color),
+        GenericColor::ColorFunction(function) => function.origin_color().is_some_and(uses_current_color),
+    }
 }
 
 /// pyro: for culling an element whose `filter` list is `steps` (`render_node`): how far the steps
@@ -191,25 +205,155 @@ fn reference_graph(
 
 /// pyro: what the document knows of the filters of an inline `<svg>`'s tree that usvg does not
 /// keep (see [`anyrender_svg::PrimitiveNotes`]), by filter id; `None` for another element or a tree
-/// without filters.
+/// without filters. A tree filter's id names the `<filter>` in the `<svg>` (the first of that id,
+/// as usvg resolves it in the source it reads), else in the document, when its primitives are that
+/// element's. usvg names the second and later uses of a filter it cannot share (an
+/// `objectBoundingBox` one, the default) `filterN`: such a use takes the notes of the uses it
+/// repeats (the same primitives and colours), all of them if several (a tainted one taints).
 #[cfg(feature = "svg")]
 pub(crate) fn svg_filter_notes(
     dom: &BaseDocument,
     node: &Node,
     tree: &anyrender_svg::usvg::Tree,
 ) -> Option<anyrender_svg::FilterNotes> {
+    use anyrender_svg::usvg::filter::Filter as TreeFilter;
     if tree.filters().is_empty() || local_name(node) != Some("svg") {
         return None;
     }
+    // The `<filter>`s in the `<svg>`, by id.
+    let mut scoped: std::collections::HashMap<&str, blitz_dom::NodeId> = std::collections::HashMap::new();
+    let mut stack: Vec<blitz_dom::NodeId> = node.children.iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
+        let child = &dom.tree()[id];
+        if local_name(child) == Some("filter")
+            && let Some(name) = attr(child, "id")
+        {
+            scoped.entry(name).or_insert(id);
+        }
+        stack.extend(child.children.iter().rev().copied());
+    }
     let mut notes = anyrender_svg::FilterNotes::new();
+    let mut repeats: Vec<&TreeFilter> = Vec::new();
     for filter in tree.filters() {
-        let Some(id) = dom.get_element_by_id(filter.id()) else { continue };
-        let element = &dom.tree()[id];
-        if local_name(element) == Some("filter") {
-            notes.insert(filter.id().to_owned(), primitive_notes(dom, element));
+        let element = scoped
+            .get(filter.id())
+            .copied()
+            .or_else(|| dom.get_element_by_id(filter.id()))
+            .map(|id| &dom.tree()[id])
+            .filter(|element| local_name(element) == Some("filter") && same_primitives(dom, element, filter));
+        match element {
+            Some(element) => {
+                notes.insert(filter.id().to_owned(), primitive_notes(dom, element));
+            }
+            None => repeats.push(filter),
+        }
+    }
+    for filter in repeats {
+        let signature = tree_signature(filter);
+        let mut merged: Option<Vec<anyrender_svg::PrimitiveNotes>> = None;
+        for known in tree.filters() {
+            let Some(known_notes) = notes.get(known.id()) else { continue };
+            if tree_signature(known) != signature {
+                continue;
+            }
+            match &mut merged {
+                None => merged = Some(known_notes.clone()),
+                Some(merged) => {
+                    for (m, n) in merged.iter_mut().zip(known_notes) {
+                        m.tainted |= n.tainted;
+                        m.no_light |= n.no_light;
+                        m.flood &= n.flood;
+                    }
+                }
+            }
+        }
+        if let Some(merged) = merged {
+            notes.insert(filter.id().to_owned(), merged);
         }
     }
     Some(notes)
+}
+
+/// What tells a tree filter's uses apart: its primitives' kinds and colours (a use's subregions
+/// and lengths depend on the element it filters).
+#[cfg(feature = "svg")]
+fn tree_signature(filter: &anyrender_svg::usvg::filter::Filter) -> Vec<(std::mem::Discriminant<anyrender_svg::usvg::filter::Kind>, String)> {
+    use anyrender_svg::usvg::filter::Kind;
+    filter
+        .primitives()
+        .iter()
+        .map(|primitive| {
+            let kind = primitive.kind();
+            let colours = match kind {
+                Kind::Flood(f) => format!("{:?} {}", f.color(), f.opacity().get()),
+                Kind::DropShadow(s) => format!("{:?} {}", s.color(), s.opacity().get()),
+                Kind::DiffuseLighting(l) => format!("{:?}", l.lighting_color()),
+                Kind::SpecularLighting(l) => format!("{:?}", l.lighting_color()),
+                _ => String::new(),
+            };
+            (std::mem::discriminant(kind), colours)
+        })
+        .collect()
+}
+
+/// Whether the `<filter>` `element`'s primitives are those of the tree filter `filter`, one for
+/// one and kind for kind (usvg's stand-in for one it could not read, a transparent flood, stands
+/// for any).
+#[cfg(feature = "svg")]
+fn same_primitives(dom: &BaseDocument, element: &Node, filter: &anyrender_svg::usvg::filter::Filter) -> bool {
+    use anyrender_svg::usvg::filter::Kind;
+    let elements = filter_primitives(dom, element);
+    elements.len() == filter.primitives().len()
+        && elements.iter().zip(filter.primitives()).all(|(element, primitive)| {
+            let name = local_name(element).unwrap_or_default();
+            match primitive.kind() {
+                Kind::Flood(_) => true,
+                Kind::Blend(_) => name == "feBlend",
+                Kind::ColorMatrix(_) => name == "feColorMatrix",
+                Kind::ComponentTransfer(_) => name == "feComponentTransfer",
+                Kind::Composite(_) => name == "feComposite",
+                Kind::ConvolveMatrix(_) => name == "feConvolveMatrix",
+                Kind::DiffuseLighting(_) => name == "feDiffuseLighting",
+                Kind::DisplacementMap(_) => name == "feDisplacementMap",
+                Kind::DropShadow(_) => name == "feDropShadow",
+                Kind::GaussianBlur(_) => name == "feGaussianBlur",
+                Kind::Image(_) => name == "feImage",
+                Kind::Merge(_) => name == "feMerge",
+                Kind::Morphology(_) => name == "feMorphology",
+                Kind::Offset(_) => name == "feOffset",
+                Kind::SpecularLighting(_) => name == "feSpecularLighting",
+                Kind::Tile(_) => name == "feTile",
+                Kind::Turbulence(_) => name == "feTurbulence",
+            }
+        })
+}
+
+/// The primitives of a `<filter>`: its own, or, when it has none, those of the `<filter>` its
+/// `href` names (a template), as usvg takes them.
+#[cfg(feature = "svg")]
+fn filter_primitives<'a>(dom: &'a BaseDocument, filter: &'a Node) -> Vec<&'a Node> {
+    let mut at = filter;
+    for _ in 0..16 {
+        let primitives: Vec<&Node> = at
+            .children
+            .iter()
+            .map(|&id| &dom.tree()[id])
+            .filter(|n| local_name(n).is_some_and(|name| PRIMITIVES.contains(&name)))
+            .collect();
+        if !primitives.is_empty() {
+            return primitives;
+        }
+        let Some(next) = attr(at, "href")
+            .and_then(|href| href.trim().strip_prefix('#'))
+            .and_then(|id| dom.get_element_by_id(id))
+            .map(|id| &dom.tree()[id])
+            .filter(|n| local_name(n) == Some("filter"))
+        else {
+            break;
+        };
+        at = next;
+    }
+    Vec::new()
 }
 
 /// The filter primitives usvg reads, by element name.
@@ -242,13 +386,10 @@ fn primitive_notes(dom: &BaseDocument, filter: &Node) -> Vec<anyrender_svg::Prim
     let children = |node: &Node| -> Vec<&Node> {
         node.children.iter().map(|&id| &dom.tree()[id]).filter(|n| n.is_element()).collect::<Vec<_>>()
     };
-    children(filter)
+    filter_primitives(dom, filter)
         .into_iter()
         .filter_map(|primitive| {
             let name = local_name(primitive)?;
-            if !PRIMITIVES.contains(&name) {
-                return None;
-            }
             let property = match name {
                 "feFlood" | "feDropShadow" => Some("flood-color"),
                 "feDiffuseLighting" | "feSpecularLighting" => Some("lighting-color"),
@@ -268,7 +409,7 @@ fn primitive_notes(dom: &BaseDocument, filter: &Node) -> Vec<anyrender_svg::Prim
                 && !children(primitive)
                     .iter()
                     .any(|n| matches!(local_name(n), Some("feDistantLight" | "fePointLight" | "feSpotLight")));
-            Some(anyrender_svg::PrimitiveNotes { tainted, no_light })
+            Some(anyrender_svg::PrimitiveNotes { tainted, no_light, flood: name == "feFlood" })
         })
         .collect()
 }

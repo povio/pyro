@@ -55,6 +55,9 @@ pub struct PrimitiveNotes {
     /// It is a lighting primitive without a light source: its result is transparent black (usvg
     /// stands a transparent flood in for it, which otherwise means a primitive it could not read).
     pub no_light: bool,
+    /// It is an `feFlood` element: a transparent black flood is that, not usvg's stand-in for a
+    /// primitive it could not read (Figma's `<feFlood flood-opacity="0" result="BackgroundImageFix"/>`).
+    pub flood: bool,
 }
 
 /// pyro: what the document knows of the primitives of the filters of a tree (by the `<filter>`'s
@@ -389,7 +392,10 @@ fn convert(
             // a light source): the filter is left out, as one of a primitive anyrender_vello_cpu
             // does not do; but lighting without a light is transparent black, as in Chromium.
             Kind::Flood(flood)
-                if flood.opacity().get() == 0.0 && flood.color() == usvg::Color::black() && !note.no_light =>
+                if flood.opacity().get() == 0.0
+                    && flood.color() == usvg::Color::black()
+                    && !note.no_light
+                    && !note.flood =>
             {
                 return None;
             }
@@ -510,7 +516,8 @@ fn convert(
             // unmoved.
             Kind::DisplacementMap(displacement) => {
                 let (input, map) = (lookup(displacement.input1()), lookup(displacement.input2()));
-                tainted |= input.tainted;
+                // Tainted when an input is (Blink's taint check runs over all inputs), the map too.
+                tainted |= input.tainted || map.tainted;
                 if map.tainted {
                     input.value
                 } else {
@@ -913,7 +920,7 @@ mod tests {
         let tainted_flood = |index: usize| PrimitiveNotes { tainted: index == 0, ..Default::default() };
         let (unmoved, _, tainted) = convert(&filter, &tainted_flood, false).unwrap();
         assert!(!kinds(&unmoved).contains(&"displace"), "{:?}", kinds(&unmoved));
-        assert!(!tainted, "the source passed on is not tainted");
+        assert!(tainted, "the result of a tainted map is tainted, as Blink's");
         // A tainted source (a filter list's `drop-shadow(currentcolor)` before it) taints the result.
         let (_, _, tainted) = convert(&filter, &|_| PrimitiveNotes::default(), true).unwrap();
         assert!(tainted);
