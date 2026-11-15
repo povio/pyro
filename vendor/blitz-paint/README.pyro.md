@@ -326,15 +326,21 @@ from the root of an upstream checkout at that commit) is the whole diff.
     fragment's line-over edge by the em box, as Blink's `TextDecorationOffset` does with `FontBaseline::kCentral`
     (measured on Chrome 157, Inter at 10 to 54 px, whose rounded ascent and descent are Blink's float height too): an
     underline `floor(H/2 + em/2 + offset) + 1` px from the edge (1px under the em box), an overline on the font's
-    whole-pixel ascent (`floor(H/2 - (H - floor(H/2))) - t`). `text-underline-position: right`, and Japanese or Korean
-    text without `left`, trade their sides (`ResolveUnderlinePosition`'s `kOver`): the underline goes 1px over the em
-    box (`text-underline-offset` moving it outward) and the overline where the underline would be. The run's own
-    fragment places them (Blink uses no decorating box in vertical writing modes), its baseline where `VerticalLine`
+    whole-pixel ascent (`floor(H/2 - (H - floor(H/2))) - t`). H is the style's first available font's (Blink's
+    `PrimaryFont()`), centred on the central baseline, also where a fallback font draws the run.
+    `text-underline-position: right`, and Japanese or Korean text without `left`, trade their sides
+    (`ResolveUnderlinePosition`'s `kOver`): the underline goes 1px over the em box (`text-underline-offset` moving it
+    outward) and the overline where the underline would be; a `double` line's second line still goes away from the
+    text. Mongolian trades them too, as css-text-decor-3's `auto` and Gecko do (Blink leaves it out; WPT's
+    `text-underline-position-auto-001`). As in horizontal lines, each decorating box draws one straight line per line,
+    placed by the fragment of its own text (its runs share the style's first available font, so which one does not
+    matter), else of the first run it decorates; the inline root and the blocks it is in are not placed by the line's
+    strut there. That run's baseline is where `VerticalLine`
     draws it. Sideways text keeps the alphabetic baseline and the horizontal rules. A vertical line's decorations
     have their edges on whole device pixels (Blink draws them unantialiased; `snap_turned_band`).
   - `src/text.rs` (`ink_gaps`, `VerticalLine::turned_run_shift`): `text-decoration-skip-ink` cuts the decorations of
     vertical lines too, around the glyphs turned with the line (upright glyphs leave no gap), their gap edges on whole
-    device pixels.
+    device pixels (only in vertical lines: horizontal text under a quarter-turn transform keeps unsnapped gaps).
   - `src/render.rs` (`draw_vertical_inline_layout`, `draw_turned_lines`): `sideways-lr` lines are turned a quarter
     counterclockwise, running bottom to top from the content box's bottom with their line-over side on the left
     (they were drawn as `sideways-rl`'s, top to bottom).

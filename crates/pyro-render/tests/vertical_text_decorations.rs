@@ -3,19 +3,24 @@
 //!
 //! - On the central baseline of `vertical-rl`/`vertical-lr` text (`text-orientation: mixed`), an underline goes 1px
 //!   under the em box and an overline on the font's whole-pixel ascent, from the text fragment's line-over (right)
-//!   edge; `text-underline-position: right`, and Japanese or Korean text, trade their sides.
-//! - `sideways-lr` lines run bottom to top from the content box's bottom, their line-over side on the left.
+//!   edge; `text-underline-position: right`, and Japanese, Korean or Mongolian text, trade their sides (a `double`
+//!   line's second line still goes away from the text). A fallback font places nothing: the style's first available
+//!   font does.
+//! - `sideways-lr` lines run bottom to top from the content box's bottom, their line-over side on the left, where an
+//!   emphasis mark's `right` side is under the line.
 //! - `text-decoration-skip-ink` leaves gaps where turned glyphs cross a vertical line's underline.
 use std::sync::Arc;
 
 use pyro_render::*;
 
-/// Serves the Inter subset (`tests/fonts`) as `inter.ttf`.
+/// Serves the Inter subset and Ahem (`tests/fonts`) as `inter.ttf` and `ahem.ttf`.
 struct InterFetch;
 impl Fetcher for InterFetch {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         done(if url.ends_with("/inter.ttf") {
             Ok(include_bytes!("fonts/Inter-subset.ttf").to_vec())
+        } else if url.ends_with("/ahem.ttf") {
+            Ok(include_bytes!("fonts/Ahem.ttf").to_vec())
         } else {
             Err("offline".into())
         });
@@ -25,10 +30,15 @@ impl Fetcher for InterFetch {
 /// `body` (absolutely positioned divs at `top: 20px`, in Inter) on white, 800x400 CSS px; `style` is added to the
 /// divs' rules. Text is aliased, as Chrome drew it (`NoFontAntialiasing`, as WPT's runner starts it).
 fn render(style: &str, body: &str, scale: f64) -> RgbaImage {
+    render_with("", style, body, scale)
+}
+
+/// [`render`] with the rules `css` added.
+fn render_with(css: &str, style: &str, body: &str, scale: f64) -> RgbaImage {
     let fetcher: Arc<dyn Fetcher> = Arc::new(InterFetch);
     let snapshot = Snapshot {
         html: format!(
-            "<!doctype html><style>@font-face {{ font-family: Inter; src: url(inter.ttf) }}
+            "<!doctype html><style>@font-face {{ font-family: Inter; src: url(inter.ttf) }} {css}
              html, body {{ margin: 0; background: #fff }}
              div {{ position: absolute; top: 20px; font-family: Inter; {style} }}</style>{body}"
         ),
@@ -81,7 +91,7 @@ fn inked_rows(img: &RgbaImage, x: usize, y0: usize, y1: usize) -> Vec<(usize, us
 /// each (CSS px), at every device scale.
 #[test]
 fn vertical_decorations_sit_on_the_em_box() {
-    let cases: [(&str, (f64, f64)); 9] = [
+    let cases: [(&str, (f64, f64)); 10] = [
         // An underline 1px under the em box: 23px from the line-over edge (Inter's 19 + 5 px, halved, and half an em).
         ("writing-mode:vertical-rl", (97.0, 99.0)),
         // `right`: 1px over the em box.
@@ -98,6 +108,9 @@ fn vertical_decorations_sit_on_the_em_box() {
         // Sideways text keeps the alphabetic baseline; `sideways-lr` has its line-over side on the left.
         ("writing-mode:sideways-rl", (450.0, 452.0)),
         ("writing-mode:sideways-lr", (518.0, 520.0)),
+        // Mongolian: over the text, as Japanese (css-text-decor-3's `auto`, Gecko and WPT's
+        // `text-underline-position-auto-001`; Chrome leaves Mongolian out and draws it at 547-549).
+        ("writing-mode:vertical-rl' lang='mn", (571.0, 573.0)),
     ];
     let body: String = cases
         .iter()
@@ -192,4 +205,108 @@ fn skip_ink_cuts_the_underline_of_vertical_text() {
         assert!(rows[0].0 >= 80 && rows[0].1 <= 104, "column {x}: beside the hyphen: {rows:?}");
     }
     assert_eq!(inked_rows(&img, 208, 0, 400), vec![(20, 165)], "skip-ink: none");
+}
+
+/// A `double` line's second line goes away from the text, also where the underline and overline trade sides
+/// (Japanese, `text-underline-position: right`): the two lines of each, as Chrome draws them, 2px thick, 1px apart.
+#[test]
+fn double_vertical_decorations_go_away_from_the_text() {
+    let cases: [(&str, [(f64, f64); 2]); 6] = [
+        // Under the em box: the second line further left, away from the text.
+        ("writing-mode:vertical-rl", [(94.0, 96.0), (97.0, 99.0)]),
+        // Over it: the second line further right.
+        ("writing-mode:vertical-rl' lang='ja", [(201.0, 203.0), (204.0, 206.0)]),
+        ("writing-mode:vertical-rl;text-decoration-line:overline", [(282.0, 284.0), (285.0, 287.0)]),
+        // An overline under the em box (`right`): the second line further left.
+        (
+            "writing-mode:vertical-rl;text-decoration-line:overline;text-underline-position:right",
+            [(334.0, 336.0), (337.0, 339.0)],
+        ),
+        ("writing-mode:vertical-lr;text-underline-position:right", [(521.0, 523.0), (524.0, 526.0)]),
+        ("writing-mode:vertical-lr;text-decoration-line:overline' lang='ja", [(574.0, 576.0), (577.0, 579.0)]),
+    ];
+    let lefts = [100, 180, 260, 340, 500, 580];
+    let body: String = cases
+        .iter()
+        .zip(lefts)
+        .map(|((css, _), left)| format!("<div style='left:{left}px;{css}'>MONITOR</div>"))
+        .collect();
+    let img = render(
+        "font-size:20px;line-height:20px;color:transparent;text-decoration:underline double #000;\
+         text-decoration-skip-ink:none;text-decoration-thickness:2px",
+        &body,
+        1.0,
+    );
+    for ((css, chrome), left) in cases.iter().zip(lefts) {
+        let got = inked_runs(&img, 60, left - 30, left + 50, 1.0);
+        assert_eq!(got, chrome.to_vec(), "{css}: Chrome draws it at {chrome:?}");
+    }
+}
+
+/// A run a fallback font draws is decorated from the style's first available font, as Blink places decorations
+/// (`PrimaryFont()`): "x" falls back to Ahem (0.8 + 0.2 em, 4px shorter than Inter at 20px), and each line's
+/// overline and underline are where Chrome draws them, whichever font ends the line, as for text all in Inter.
+#[test]
+fn vertical_decorations_of_a_fallback_font_follow_the_first_font() {
+    let css = "@font-face { font-family: P; src: url(inter.ttf); unicode-range: U+20-5A }
+               @font-face { font-family: A; src: url(ahem.ttf) }";
+    // Two 40px lines each, the first on the right.
+    let cases: [(&str, &str, [(f64, f64); 2]); 4] = [
+        ("overline", "MONxxx<br>xxxMON", [(132.0, 134.0), (172.0, 174.0)]),
+        ("underline", "MONxxx<br>xxxMON", [(227.0, 229.0), (267.0, 269.0)]),
+        ("overline", "MONMON<br>MONMON", [(372.0, 374.0), (412.0, 414.0)]),
+        ("underline", "MONMON<br>MONMON", [(467.0, 469.0), (507.0, 509.0)]),
+    ];
+    let body: String = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (line, text, _))| {
+            format!("<div style='left:{}px;text-decoration-line:{line}'>{text}</div>", 100 + 120 * i)
+        })
+        .collect();
+    let img = render_with(
+        css,
+        "writing-mode:vertical-rl;font-family:P,A;font-size:20px;line-height:40px;color:transparent;\
+         text-decoration:underline #000;text-decoration-skip-ink:none;text-decoration-thickness:2px",
+        &body,
+        1.0,
+    );
+    for (i, (line, text, chrome)) in cases.iter().enumerate() {
+        let left = 100 + 120 * i;
+        for y in [40, 110] {
+            let got = inked_runs(&img, y, left - 20, left + 100, 1.0);
+            assert_eq!(got, chrome.to_vec(), "{line} of {text:?} at row {y}: Chrome draws it at {chrome:?}");
+        }
+    }
+}
+
+/// `text-emphasis-position: over right` (the initial value) puts the marks on the right of a vertical line, which in
+/// `sideways-lr` is under it (its line-over side is on the left), and `left` on the left. Transparent text with black
+/// marks on 60px lines: the marks are on the side of the line's middle (x + 30) where Chrome draws them (columns 42 to
+/// 48 of the line; 11 to 17 for `left`). pyro draws them 2 or 3 px further out, in `sideways-rl` too.
+#[test]
+fn emphasis_marks_of_sideways_lr_text() {
+    let cases: [(&str, bool); 4] = [
+        ("writing-mode:sideways-lr", true),
+        ("writing-mode:sideways-lr;text-emphasis-position:over left", false),
+        ("writing-mode:sideways-rl", true),
+        ("writing-mode:vertical-rl;text-orientation:sideways", true),
+    ];
+    let body: String = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (css, _))| format!("<div style='left:{}px;{css}'>MONITOR</div>", 100 + 100 * i))
+        .collect();
+    let img = render("font-size:20px;line-height:60px;color:transparent;text-emphasis:'M' #000", &body, 1.0);
+    for (i, (css, right)) in cases.iter().enumerate() {
+        let left = 100 + 100 * i;
+        let columns: Vec<usize> = (left..left + 60).filter(|&x| !inked_rows(&img, x, 0, 400).is_empty()).collect();
+        let middle = left + 30;
+        let on_side = |x: &usize| if *right { *x > middle + 5 } else { *x + 5 < middle };
+        assert!(
+            !columns.is_empty() && columns.iter().all(on_side),
+            "{css}: marks in columns {columns:?}, Chrome draws them on the {} of {middle}",
+            if *right { "right" } else { "left" }
+        );
+    }
 }

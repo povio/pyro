@@ -71,17 +71,30 @@ impl VerticalLine {
 
     /// pyro: the metrics a decoration of `run` is placed with on a central baseline (Blink's
     /// `TextDecorationOffset` with `FontBaseline::kCentral`), `None` for sideways text (on the
-    /// alphabetic baseline, placed as horizontal text is). `scale`: device px per CSS px.
-    fn central_metrics(self, run: &parley::GlyphRun<'_, TextBrush>, scale: f64) -> Option<CentralMetrics> {
+    /// alphabetic baseline, placed as horizontal text is). `primary_height`: the ascent plus
+    /// descent of the run's style's first available font (layout px, each a whole CSS px), which
+    /// Blink places the decoration with (`PrimaryFont()`) whichever font draws the run. `scale`:
+    /// device px per CSS px.
+    fn central_metrics(
+        self,
+        run: &parley::GlyphRun<'_, TextBrush>,
+        primary_height: f32,
+        scale: f64,
+    ) -> Option<CentralMetrics> {
         self.central?;
         let metrics = run.run().font_metrics();
         // The fragment's box, as `fragment_shift` centres it: its whole-CSS-pixel ascent above the
         // baseline (Chrome's geometry at a device scale is its geometry at 1, scaled).
         let baseline = run.baseline() + self.fragment_shift_y(run);
         let (ascent, descent) = (f64::from(metrics.ascent) / scale, f64::from(metrics.descent) / scale);
+        let height = ascent.round() + descent.round();
+        // The primary font's box is centred on the same central baseline: where a fallback font
+        // draws the run, its edge moves by half the difference of the two heights.
+        let primary_height = (f64::from(primary_height) / scale).round();
+        let to_primary = ((height - primary_height) * scale / 2.0) as f32;
         Some(CentralMetrics {
-            line_over: baseline - (ascent.round() * scale) as f32,
-            height: ascent.round() + descent.round(),
+            line_over: baseline - (ascent.round() * scale) as f32 + to_primary,
+            height: primary_height,
             em: f64::from(run.run().font_size()) / scale,
         })
     }
@@ -919,7 +932,7 @@ fn flush_line_decorations<S: PaintScene>(
                 let snap = |x: f64| {
                     if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) {
                         (tx + x).round() - tx
-                    } else if a == 0.0 && d == 0.0 && b.abs() == 1.0 && c.abs() == 1.0 {
+                    } else if vertical.is_some() && a == 0.0 && d == 0.0 && b.abs() == 1.0 && c.abs() == 1.0 {
                         // pyro: a vertical line, turned a quarter: its x runs along the device y.
                         ((ty + b * x).round() - ty) / b
                     } else {
@@ -980,6 +993,9 @@ fn flush_line_decorations<S: PaintScene>(
                 f64::from(central.line_over - geom.baseline) / scale + central.decoration_top(underline, over, offset, t)
             })
         };
+        // pyro: where the underline and overline trade sides, a `double` line's second line
+        // still goes away from the text: toward the line-over side for the underline.
+        let outward = if geom.central.is_some() && deco.underline_over_in_vertical { -1.0 } else { 1.0 };
 
         if wanted.contains(TextDecorationLine::UNDERLINE) && deco.line.contains(TextDecorationLine::UNDERLINE) {
             let t = decoration_thickness(&deco.thickness, geom.underline_size, geom.css_font_size, scale);
@@ -1002,7 +1018,7 @@ fn flush_line_decorations<S: PaintScene>(
                 (t / 2.0).ceil().max(1.0)
             };
             // A `double` underline extends downward, away from the text.
-            draw_line(scene, top, whole_css_px(t), 1.0, Some(t));
+            draw_line(scene, top, whole_css_px(t), outward, Some(t));
         }
         if wanted.contains(TextDecorationLine::OVERLINE) && deco.line.contains(TextDecorationLine::OVERLINE) {
             // Fonts don't provide a dedicated overline metric, so reuse the underline
@@ -1011,7 +1027,7 @@ fn flush_line_decorations<S: PaintScene>(
             let thickness = whole_css_px(t);
             // A `double` overline extends upward, away from the text.
             let top = central_top(false, 0.0, t).unwrap_or(-ascent - thickness);
-            draw_line(scene, top, thickness, -1.0, Some(t));
+            draw_line(scene, top, thickness, -outward, Some(t));
         }
         if wanted.contains(TextDecorationLine::LINE_THROUGH) && deco.line.contains(TextDecorationLine::LINE_THROUGH) {
             let t = decoration_thickness(&deco.thickness, geom.strikethrough_size, geom.css_font_size, scale);
@@ -1310,7 +1326,8 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 underline_size: metrics.underline_size,
                 strikethrough_size: metrics.strikethrough_size,
                 css_font_size,
-                central: vertical.and_then(|vertical| vertical.central_metrics(glyph_run, scale)),
+                central: vertical
+                    .and_then(|vertical| vertical.central_metrics(glyph_run, content_bottom - content_top, scale)),
             };
             let run_node_id = style.brush.id;
             // pyro: decorations span what the cut keeps of the run.

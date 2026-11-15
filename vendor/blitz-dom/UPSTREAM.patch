@@ -16677,7 +16677,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
          *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
          for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
-@@ -231,28 +439,264 @@
+@@ -231,28 +439,266 @@
              if self.nodes[pseudo].is_out_of_flow() {
                  continue;
              }
@@ -16766,10 +16766,12 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                    let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
 +                    (start - height - end_x, start)
 +                };
-+                // pyro: `sideways-lr` lines run up from the content box's bottom.
++                // pyro: `sideways-lr` lines run up from the content box's bottom, their end padding
++                // (a scroll container's) the top one.
 +                if stylo_taffy::WritingModeExt::line_left_is_bottom(self.nodes[node_id].layout_data().writing_mode) {
 +                    let bottom = (l.size.height - l.border.bottom - l.padding.bottom) as f64 * scale;
-+                    return Some((Rect::new(b0, bottom - width - end_y, b1, bottom), width > 0.0 || height > 0.0));
++                    let end_top = if scrolls { l.padding.top as f64 * scale } else { 0.0 };
++                    return Some((Rect::new(b0, bottom - width - end_top, b1, bottom), width > 0.0 || height > 0.0));
 +                }
 +                Rect::new(b0, top, b1, top + width + end_y)
 +            }
@@ -16950,7 +16952,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -264,6 +708,43 @@
+@@ -264,6 +710,43 @@
              let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
              let _flags = doc.nodes[node_id].flags;
  
@@ -16994,7 +16996,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
-@@ -277,20 +758,35 @@
+@@ -277,20 +760,35 @@
                  }
  
                  let mut collected = LayoutChildren::default();
@@ -17037,7 +17039,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -300,16 +796,33 @@
+@@ -300,16 +798,33 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -17075,7 +17077,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          doc.nodes[child_id].layout_parent.set(Some(node_id));
                      }
  
-@@ -324,6 +837,26 @@
+@@ -324,6 +839,26 @@
          }
      }
  
@@ -17102,7 +17104,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +891,16 @@
+@@ -358,6 +893,16 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -17119,7 +17121,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +910,9 @@
+@@ -367,9 +912,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -17132,7 +17134,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +929,12 @@
+@@ -386,7 +931,12 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -17146,7 +17148,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +943,13 @@
+@@ -395,18 +945,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -17166,7 +17168,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +962,7 @@
+@@ -419,10 +964,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -17178,7 +17180,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -437,10 +977,27 @@
+@@ -437,10 +979,27 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -17207,7 +17209,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          let root_element_id = crate::taffy_node_id(self.root_element().id);
  
-@@ -448,15 +1005,15 @@
+@@ -448,15 +1007,15 @@
  
          let mut state = LayoutPassState::new(self);
          #[cfg(feature = "writing-mode")]
@@ -17227,7 +17229,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "writing-mode")]
          state.physicalise_and_round_layout(root_element_id);
          #[cfg(not(feature = "writing-mode"))]
-@@ -466,3 +1023,616 @@
+@@ -466,3 +1025,616 @@
          // taffy::print_tree(self, root_node_id)
      }
  }
