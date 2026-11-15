@@ -196,7 +196,31 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  
  [caption-side]
-@@ -2117,7 +2132,6 @@
+@@ -591,7 +606,6 @@
+ type = "Color"
+ initial = "computed_value::T::currentcolor()"
+ struct = "column"
+-engine = "gecko"
+ ignored_when_colors_disabled = true
+ spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-color"
+ affects = "paint"
+@@ -600,7 +614,6 @@
+ type = "BorderStyle"
+ initial = "computed::BorderStyle::None"
+ struct = "column"
+-engine = "gecko"
+ animation_type = "discrete"
+ spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-style"
+ affects = "paint"
+@@ -609,7 +622,6 @@
+ type = "BorderSideWidth"
+ initial = "computed::BorderSideWidth::medium()"
+ struct = "column"
+-engine = "gecko"
+ initial_specified_value = "specified::BorderSideWidth::medium()"
+ spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
+ affects = "layout"
+@@ -2117,7 +2129,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -204,7 +228,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2635,7 +2649,6 @@
+@@ -2635,7 +2646,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -212,7 +236,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2678,7 @@
+@@ -2665,6 +2675,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -220,6 +244,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
+@@ -3770,7 +3781,6 @@
+ 
+ [column-fill]
+ struct = "column"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
+ animation_type = "discrete"
+ affects = "layout"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-14 13:56:06
@@ -231,17 +263,27 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod container {
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
-@@ -3682,18 +3681,8 @@
-                     writer.item(repeat)?;
-                 }
+@@ -810,7 +809,6 @@
+     }
+ }
  
+-#[cfg(feature = "gecko")]
+ pub mod column_rule {
+     pub use crate::properties::generated::shorthands::column_rule::*;
+ 
+@@ -3680,20 +3678,10 @@
+ 
+                 if has_repeat {
+                     writer.item(repeat)?;
+-                }
+-
 -                #[cfg(feature = "gecko")]
 -                {
 -                    if has_origin || (has_clip && *clip != Clip::NoClip) {
 -                        writer.item(origin)?;
 -                    }
--                }
--
+                 }
+ 
 -                #[cfg(feature = "servo")]
 -                {
 -                    if has_origin || has_clip {
@@ -284,6 +326,14 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND"
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
+@@ -476,7 +473,6 @@
+ servo_pref = "layout.css.columns.enabled"
+ 
+ [column-rule]
+-engine = "gecko"
+ sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
+ spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
+ derive_serialize = true
 diff -ruN a/rule_cache.rs b/rule_cache.rs
 --- a/rule_cache.rs	2026-11-11 19:55:57
 +++ b/rule_cache.rs	2026-11-11 19:55:57

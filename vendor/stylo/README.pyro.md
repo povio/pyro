@@ -76,6 +76,14 @@ crate (`diff -ruN`).
   names (`Node::transform_reference_box`: the content box for `content-box` and `fill-box`, the border box
   otherwise; "3D transforms flattened").
 
+## Multi-column layout
+
+- `properties/longhands.toml`, `properties/shorthands.toml`, `properties/shorthands.rs`: `column-rule-color`,
+  `column-rule-style`, `column-rule-width`, the `column-rule` shorthand and `column-fill` are parsed and computed for
+  servo too (upstream: gecko only, so the declarations were dropped). blitz-dom balances columns or fills them by
+  `column-fill` (`layout::multicol`), and blitz-paint paints the column rules. `column-rule-width` is not zeroed for a
+  `none` or `hidden` style (Gecko does that outside Stylo); blitz-paint draws no rule then.
+
 ## Text decorations and emphasis
 
 - `properties/longhands.toml`: `text-decoration-skip-ink` is parsed and computed for Servo too (upstream: Gecko only);
