@@ -636,6 +636,8 @@ impl LayoutPassState<'_> {
         let text_indent = self.nodes[node_id]
             .primary_styles()
             .map(|s| s.slow_clone_text_indent())
+            // pyro: not on the lines of an anonymous block after its block's first line.
+            .filter(|indent| indent.hanging || crate::layout::first_line::starts_a_block(self.doc, node_id))
             .unwrap_or_else(GenericTextIndent::zero);
         let indent_options = IndentOptions {
             each_line: text_indent.each_line,

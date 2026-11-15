@@ -965,6 +965,10 @@ impl BaseDocument {
                 true => crate::layout::first_letter::split(self, task.node_id),
                 false => None,
             };
+            layout.first_line = match self.first_line_styles {
+                true => crate::layout::first_line::style_node_for(self, task.node_id),
+                false => None,
+            };
         }
 
         #[cfg(feature = "parallel-construct")]
@@ -999,6 +1003,7 @@ impl BaseDocument {
                     *layout = TextLayout {
                         layout: std::mem::take(&mut layout.layout),
                         first_letter: layout.first_letter.take(),
+                        first_line: layout.first_line.take(),
                         ..TextLayout::new()
                     };
                     build_inline_layout_into(

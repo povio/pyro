@@ -376,6 +376,9 @@ pub enum NonTSPseudoClass {
     /// The :state` pseudo-class.
     CustomState(CustomState),
     Default,
+    /// pyro: `:dir()`, its argument ASCII-lowercased (`ltr` and `rtl` match, any other
+    /// identifier matches nothing).
+    Dir(Box<str>),
     Defined,
     Disabled,
     Enabled,
@@ -441,6 +444,11 @@ impl ToCss for NonTSPseudoClass {
             serialize_identifier(lang, dest)?;
             return dest.write_char(')');
         }
+        if let Dir(ref dir) = *self {
+            dest.write_str(":dir(")?;
+            serialize_identifier(dir, dest)?;
+            return dest.write_char(')');
+        }
 
         dest.write_str(match *self {
             Self::Active => ":active",
@@ -485,7 +493,7 @@ impl ToCss for NonTSPseudoClass {
             Self::UserValid => ":user-valid",
             Self::Valid => ":valid",
             Self::Visited => ":visited",
-            Self::Lang(_) => unreachable!(),
+            Self::Lang(_) | Self::Dir(_) => unreachable!(),
         })
     }
 }
@@ -531,7 +539,7 @@ impl NonTSPseudoClass {
             Self::UserValid => ElementState::USER_VALID,
             Self::Valid => ElementState::VALID,
             Self::Visited => ElementState::VISITED,
-            Self::CustomState(_) | Self::Lang(_) | Self::ServoNonZeroBorder => {
+            Self::CustomState(_) | Self::Lang(_) | Self::Dir(_) | Self::ServoNonZeroBorder => {
                 ElementState::empty()
             },
         }
@@ -696,6 +704,9 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "state" => {
                 let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                 NonTSPseudoClass::CustomState(CustomState(result))
+            },
+            "dir" if !after_part => {
+                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
             },
             _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
         };

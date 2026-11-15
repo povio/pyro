@@ -360,6 +360,9 @@ struct ResolvedDecoration {
     /// pyro: the underline and overline trade sides in text on a central baseline
     /// ([`underline_over_in_vertical`]).
     underline_over_in_vertical: bool,
+    /// pyro: `text-decoration-color` is the text's colour (`currentcolor`): the colour of a
+    /// selection's highlight where the text is selected (`highlight`).
+    current_color: bool,
     /// pyro: `text-decoration-inset` at the start and the end of the box's decoration line, `auto`
     /// resolved (`None`: no inset). Percentages are resolved per line ([`DecorationInsets`]).
     inset: Option<(LengthPercentage, LengthPercentage)>,
@@ -452,7 +455,12 @@ fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationSt
             shadows: Vec::new(),
         };
     };
+    decoration_entry_of(node_id, &styles)
+}
 
+/// pyro: [`resolve_decoration_entry`] from a given style of the node (its style on a first line,
+/// `BaseDocument::first_line_style`).
+fn decoration_entry_of(node_id: NodeId, styles: &style::properties::ComputedValues) -> DecorationStackEntry {
     let itext = styles.get_inherited_text();
     let fill_color = itext
         ._webkit_text_fill_color
@@ -474,7 +482,7 @@ fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationSt
     DecorationStackEntry {
         node_id,
         fill_color,
-        decoration: own_decoration(&styles),
+        decoration: own_decoration(styles),
         shadows,
     }
 }
@@ -526,6 +534,9 @@ struct LineDecoration {
     /// Geometry from the first run the box covers (fallback when it has no own text on
     /// this line, e.g. it only wraps differently-sized descendants).
     first: Option<DecorationRunGeometry>,
+    /// pyro: how far a relatively positioned box (or one in such boxes of the root) moves its
+    /// line with its text (device px).
+    shift: Option<Vec2>,
 }
 
 /// pyro: what a glyph run of the line being drawn is drawn with, found by the pass over the
@@ -591,6 +602,16 @@ pub(crate) struct DrawTextContext {
     spans_layout: usize,
     /// pyro: the glyph runs the next `stroke_text` draws (none: all).
     pub(crate) run_filter: Option<RunFilter>,
+    /// pyro: the node holding the `::first-line` style of the first line of the inline root the
+    /// next `stroke_text` draws (blitz-dom `TextLayout::first_line`): its first line is drawn as if
+    /// its content were in an inline box of that style, the elements on it with their styles on
+    /// the first line (`BaseDocument::first_line_style`, found once per `stroke_text`).
+    pub(crate) first_line: Option<NodeId>,
+    first_line_styles: Vec<(NodeId, style::servo_arc::Arc<style::properties::ComputedValues>)>,
+    /// pyro: the next `stroke_text` draws selected text (`highlight`): in the colours of its
+    /// highlight, found once per inline root (`highlights`).
+    pub(crate) highlighting: bool,
+    pub(crate) highlights: Vec<(NodeId, Option<crate::highlight::Highlight>)>,
 }
 
 /// pyro: an inline box whose background is clipped to its text (`background-clip: text`): the
@@ -1067,6 +1088,11 @@ fn flush_line_decorations<S: PaintScene>(
         if !deco.line.intersects(wanted) {
             continue;
         }
+        // pyro: a relatively positioned box's line goes with its text.
+        let transform = match acc.shift {
+            Some(shift) => transform * Affine::translate(shift),
+            None => transform,
+        };
         // Prefer the decorating box's own font; fall back to the first run it covers.
         let geom = match (&acc.own, &acc.first) {
             (Some(own), _) => own.clone(),
@@ -1355,6 +1381,7 @@ fn own_decoration(styles: &style::properties::ComputedValues) -> Option<Resolved
         line,
         style: text.text_decoration_style,
         color,
+        current_color: text.text_decoration_color.as_absolute().is_none(),
         thickness: text.text_decoration_thickness.clone(),
         underline_offset: itext.text_underline_offset.non_auto(),
         underline_under: itext
@@ -1523,10 +1550,22 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         spans,
         spans_layout,
         run_filter,
+        first_line,
+        first_line_styles,
+        highlighting,
+        highlights,
     } = context;
     let shift = *text_shift;
     let cut = *cut;
     let only_within = *only_within;
+    // pyro: the first line of the root's layout (an ellipsis has none), and its styles.
+    let first_line = (*first_line).filter(|_| layout.is_some());
+    // Where its box goes on a run's path: inside the root, or inside the element an anonymous
+    // root's content is in (`BaseDocument::first_line_parent`).
+    let first_line_parent = first_line.map(|_| doc.first_line_parent(inline_root_id));
+    first_line_styles.clear();
+    let mut stack_first_line = false;
+    let highlighting = *highlighting;
     // The document does not change while it is painted, so a layout's address names it.
     if let Some(layout) = layout
         && std::ptr::from_ref(layout).addr() != *spans_layout
@@ -1556,6 +1595,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
     // for each run, only resolve styles for the nodes newly descended into (popping
     // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
     for line in lines {
+        // pyro: the first line has the `::first-line` box in its stack (see below).
+        let on_first_line = first_line.filter(|_| line.text_range().start == 0);
+        if on_first_line.is_some() != stack_first_line {
+            stack.clear();
+            stack_first_line = on_first_line.is_some();
+        }
         // pyro: the line at Chromium's whole CSS pixel, with its decorations.
         let transform = match line_tops {
             Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
@@ -1584,6 +1629,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             .filter(|layout| !layout.is_rtl() && hanging > 0.0)
             .and_then(|_| glyph_runs.iter().map(|run| run.offset() + run.advance()).reduce(f32::max))
             .map(|end| f64::from(end - hanging));
+        // pyro: in a right-to-left line it hangs at the left: the content starts that much after
+        // its first run does.
+        let content_start = layout
+            .filter(|layout| layout.is_rtl() && hanging > 0.0)
+            .and_then(|_| glyph_runs.iter().map(|run| run.offset()).reduce(f32::min))
+            .map(|start| f64::from(start + hanging));
         // pyro: an inline box's text mask: its own runs only.
         if let Some(element) = only_within {
             glyph_runs.retain(|run| {
@@ -1621,6 +1672,14 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 walk_id = doc.get_node(node_id).and_then(|node| node.parent);
             }
             path_scratch.reverse();
+            // pyro: on the first line, the `::first-line` box is inside the root, around the rest.
+            if let Some(first_line) = on_first_line
+                && let Some(index) = path_scratch
+                    .iter()
+                    .position(|&id| id == inline_root_id || Some(id) == first_line_parent)
+            {
+                path_scratch.insert(index + 1, first_line);
+            }
 
             let shared = stack
                 .iter()
@@ -1629,11 +1688,24 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 .count();
             stack.truncate(shared);
             for &node_id in &path_scratch[shared..] {
-                stack.push(resolve_decoration_entry(doc, node_id));
+                // pyro: on the first line, each with its style there.
+                let first_line_style = on_first_line.filter(|_| node_id != inline_root_id).and_then(|first_line| {
+                    doc.first_line_style(inline_root_id, first_line, node_id, first_line_styles)
+                });
+                stack.push(match first_line_style {
+                    Some(style) => decoration_entry_of(node_id, &style),
+                    None => resolve_decoration_entry(doc, node_id),
+                });
             }
 
-            let fill_color = brush_override
-                .unwrap_or_else(|| stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK));
+            let fill_color = brush_override.unwrap_or_else(|| {
+                let own = stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK);
+                // pyro: selected text in its highlight's colour.
+                match highlighting {
+                    true => crate::highlight::highlight_of(doc, style.brush.id, highlights).map_or(own, |h| h.color),
+                    false => own,
+                }
+            });
             let shadows: &[TextShadow] = match stack.last() {
                 Some(entry) if paint_shadows => &entry.shadows,
                 _ => &[],
@@ -1717,6 +1789,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let Some((run_x0, run_x1)) = kept_extent else { continue };
             let (run_x0, run_x1) = (run_x0 as f64, run_x1 as f64);
             let run_x1 = content_end.map_or(run_x1, |end| run_x1.min(end).max(run_x0));
+            let run_x0 = content_start.map_or(run_x0, |start| run_x0.max(start).min(run_x1));
 
             // pyro: the decorations of blocks the root is in come first (outermost).
             let boxes = outer
@@ -1738,6 +1811,10 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                             inset_right: 0.0,
                             own: None,
                             first: None,
+                            shift: (relative && !is_outer && node_id != inline_root_id)
+                                .then(|| doc.inline_span_relative_offset(node_id, inline_root_id))
+                                .filter(|&(dx, dy)| dx != 0.0 || dy != 0.0)
+                                .map(|(dx, dy)| Vec2::new(f64::from(dx) * scale, f64::from(dy) * scale)),
                         });
                         deco_boxes.len() - 1
                     }
@@ -1752,7 +1829,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 // A run whose innermost node is the box itself is the box's own text, so
                 // its font is the one Firefox positions and sizes the decoration with. A block
                 // the root is in has the root's own text.
-                let own_node = if is_outer { inline_root_id } else { node_id };
+                let own_node = if is_outer || Some(node_id) == on_first_line { inline_root_id } else { node_id };
                 if own_node == run_node_id {
                     acc.own = Some(geometry.clone());
                 }
@@ -1764,6 +1841,14 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             continue;
         }
 
+        // pyro: over selected text, decorations of the text's colour take the highlight's.
+        if highlighting {
+            for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.current_color) {
+                if let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) {
+                    acc.deco.color = highlight.color;
+                }
+            }
+        }
         // pyro: `text-decoration-inset`, at the ends of each box's decoration line.
         for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.inset.is_some()) {
             let span = layout.and_then(|layout| {

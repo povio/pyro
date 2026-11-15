@@ -229,6 +229,18 @@ pub struct Snapshot {
     /// fallback for `:lang()`. A [`Live`] document whose value changes is
     /// built anew.
     pub content_language: Option<String>,
+    /// The page's selection, painted highlighted in screenshots of a [`Live`]
+    /// document ([`Renderer::paint`]; PDFs show none).
+    pub selection: Option<TextSelection>,
+}
+
+/// A page's selection ([`Snapshot::selection`]): from `start` to `end` in
+/// tree order, each the render key of a text node and an offset in UTF-16
+/// code units of its data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextSelection {
+    pub start: (u64, u32),
+    pub end: (u64, u32),
 }
 
 pub use blitz_dom::animation;
@@ -926,12 +938,15 @@ impl Renderer {
 
     /// Stage 1: the document styled and laid out, sub-resources settled.
     /// Returns it with the node [`Live::clip`] (or [`CLIP_ATTRIBUTE`]) names.
+    /// With `selection`, a live document paints [`Snapshot::selection`] until
+    /// it is prepared without (a paint takes it off again).
     fn prepare<'a>(
         &'a mut self,
         snap: &Snapshot,
         fetcher: &Arc<dyn Fetcher>,
         fresh: &'a mut Option<(blitz_dom::BaseDocument, net::Bridge)>,
         timings: &mut Timings,
+        selection: bool,
     ) -> Result<(&'a mut blitz_dom::BaseDocument, Option<blitz_dom::NodeId>), RenderError> {
         let started = Instant::now();
         let (doc, bridge, clip) = match &snap.live {
@@ -964,6 +979,14 @@ impl Renderer {
                             m.set_element_scroll(offsets);
                         }
                         m.set_canvases(&snap.canvases);
+                        // The selection's text nodes, both in the document.
+                        let selection = snap.selection.filter(|_| selection).and_then(|s| {
+                            Some(blitz_dom::DomSelection {
+                                start: (m.node(s.start.0)?, s.start.1 as usize),
+                                end: (m.node(s.end.0)?, s.end.1 as usize),
+                            })
+                        });
+                        m.doc.set_dom_selection(selection);
                         let clip = live.clip.and_then(|k| m.node(k));
                         (&mut m.doc, &m.bridge, clip)
                     }
@@ -1020,7 +1043,7 @@ impl Renderer {
         let physical = |css: f64| (css * dpr).round() as u32;
 
         let mut fresh = None;
-        let (doc, clip) = self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
+        let (doc, clip) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
 
         let t = Instant::now();
         // A persistent document keeps the scroll of its last capture; only
@@ -1101,6 +1124,7 @@ impl Renderer {
         let extent_w = ((origin.0 * dpr) as u32).saturating_add((w as f64 * dpr / scale).ceil() as u32);
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
         blitz_paint::paint_scene(&mut page, doc, dpr, extent_w, extent_h, 0, 0);
+        doc.set_dom_selection(None);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
         scene.append_scene(page, transform);
         let hash = scene_hash(&scene, w, h, &mut self.blob_hashes);
@@ -1116,7 +1140,7 @@ impl Renderer {
             snap.live.as_ref().ok_or_else(|| RenderError::BadArea("layout queries need a live snapshot".into()))?;
         let mut timings = Timings::default();
         let mut fresh = None;
-        self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
+        self.prepare(snap, fetcher, &mut fresh, &mut timings, false)?;
         self.geometry.entry(live.page).or_default();
         Ok(timings)
     }
@@ -1578,7 +1602,7 @@ impl Renderer {
         let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
         let mut fresh = None;
         let mut cache = std::mem::take(&mut self.pdf_cache);
-        let out = match self.prepare(snap, fetcher, &mut fresh, &mut timings) {
+        let out = match self.prepare(snap, fetcher, &mut fresh, &mut timings, false) {
             Ok((doc, _)) => print_document(doc, (snap.width, snap.height), dpr, opts, timings, &mut cache),
             Err(e) => Err(e),
         };

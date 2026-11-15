@@ -101,11 +101,16 @@ pub(crate) fn scan_text(text: &str) -> TextScan {
 
 /// The `::first-letter` style an element's cascade kept, if any.
 fn eager_style(node: &Node) -> Option<Arc<ComputedValues>> {
+    eager_pseudo(node, &PseudoElement::FirstLetter)
+}
+
+/// The style of an eagerly cascaded pseudo-element (`pseudo`) an element's cascade kept, if any.
+fn eager_pseudo(node: &Node, pseudo: &PseudoElement) -> Option<Arc<ComputedValues>> {
     if !matches!(node.data, NodeData::Element(_)) {
         return None;
     }
     let data = node.try_stylo_element_data()?.get()?;
-    data.styles.pseudos.get(&PseudoElement::FirstLetter).cloned()
+    data.styles.pseudos.get(pseudo).cloned()
 }
 
 /// Whether a box with this display is a block container (which `::first-letter` applies to).
@@ -122,43 +127,60 @@ fn is_out_of_flow(style: &ComputedValues) -> bool {
         || CopyStyleGetters::clone_position(style).is_absolutely_positioned()
 }
 
-/// The element whose `::first-letter` styles the first line of the inline root `root`, with
-/// that style: the root itself, or the nearest block container whose first line is the root's.
-fn origin(doc: &BaseDocument, root: NodeId) -> Option<(NodeId, Arc<ComputedValues>)> {
+/// The element whose `::first-letter` (pyro: or `::first-line`, `pseudo`) styles the first line
+/// of the inline root `root`, with that style: the root itself, or the nearest block container
+/// whose first line is the root's.
+pub(super) fn origin(
+    doc: &BaseDocument,
+    root: NodeId,
+    pseudo: &PseudoElement,
+) -> Option<(NodeId, Arc<ComputedValues>)> {
     let mut current = root;
     loop {
         let node = &doc.nodes[current];
         let display = node.display_style()?;
-        if let Some(style) = eager_style(node) {
+        // pyro: an inline split around block-level boxes (`NodeFlags::IS_SPLIT_INLINE`) holds the
+        // anonymous blocks of its pieces in the block it is in: its first line is that block's.
+        let split = node.is_split_inline();
+        if let Some(style) = eager_pseudo(node, pseudo).filter(|_| !split) {
             // A floated first letter is not supported.
-            let applies = is_block_container(display) && CopyStyleGetters::clone_float(&*style) == Float::None;
+            let applies = is_block_container(display)
+                && (!pseudo.is_first_letter() || CopyStyleGetters::clone_float(&*style) == Float::None);
             return applies.then_some((current, style));
         }
-        // Only an in-flow block box passes its first line on to its container.
+        // Only an in-flow block box passes its first line on to its container. pyro: an
+        // anonymous block is one, whatever display its anonymous style computes.
         let in_flow = node.primary_styles().is_some_and(|style| !is_out_of_flow(&style));
-        if display.outside() != DisplayOutside::Block
-            || !matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
-            || !in_flow
-        {
+        let block = node.is_anonymous()
+            || (display.outside() == DisplayOutside::Block
+                && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot));
+        if !split && (!block || !in_flow) {
             return None;
         }
         let parent = node.layout_parent.get()?;
         let parent_node = &doc.nodes[parent];
-        if !parent_node.display_style().is_some_and(is_block_container) {
+        if !parent_node.is_split_inline() && !parent_node.display_style().is_some_and(is_block_container) {
             return None;
         }
         // The box must be the parent's first in-flow child.
-        let children = parent_node.layout_children.borrow();
-        let first = children.as_deref()?.iter().copied().find(|&child| {
-            let child = &doc.nodes[child];
-            child.display_style().is_none_or(|display| display != Display::None)
-                && !child.primary_styles().is_some_and(|style| is_out_of_flow(&style))
-        });
-        if first != Some(current) {
+        if !is_first_in_flow_child(doc, parent, current) {
             return None;
         }
         current = parent;
     }
+}
+
+/// Whether `child` is the first in-flow box among the layout children of `parent`.
+pub(super) fn is_first_in_flow_child(doc: &BaseDocument, parent: NodeId, child: NodeId) -> bool {
+    let children = doc.nodes[parent].layout_children.borrow();
+    let first = children.as_deref().and_then(|children| {
+        children.iter().copied().find(|&id| {
+            let node = &doc.nodes[id];
+            node.display_style().is_none_or(|display| display != Display::None)
+                && !node.primary_styles().is_some_and(|style| is_out_of_flow(&style))
+        })
+    });
+    first == Some(child)
 }
 
 enum Found {
@@ -225,7 +247,7 @@ fn find_letter(doc: &BaseDocument, root: NodeId) -> Option<(NodeId, std::ops::Ra
 /// The first letter the inline root `root` styles when it builds its inline layout, creating or
 /// updating the node with its style. `None` when its first line has no `::first-letter`.
 pub(crate) fn split(doc: &mut BaseDocument, root: NodeId) -> Option<FirstLetterSplit> {
-    let (origin_id, eager) = origin(doc, root)?;
+    let (origin_id, eager) = origin(doc, root, &PseudoElement::FirstLetter)?;
     let (text, range) = find_letter(doc, root)?;
     let text_parent = doc.nodes[text].parent?;
     let style = if text_parent == origin_id {
@@ -271,6 +293,8 @@ fn style_node(doc: &mut BaseDocument, origin_id: NodeId, parent: NodeId, style: 
         data.set_restyled();
         *node.stylo_element_data_mut().ensure_init_mut() = data;
         node.update_layout_styles();
+        // pyro: its background images load as an element's do.
+        doc.pending_style_image_nodes.push(node_id);
     }
     node_id
 }
@@ -298,7 +322,7 @@ pub(crate) fn style_changed(doc: &mut BaseDocument, origin_id: NodeId) {
 
 /// The deepest block on the chain of first in-flow block children from `block`: where its first
 /// line is.
-fn first_line_block(doc: &BaseDocument, block: NodeId) -> NodeId {
+pub(super) fn first_line_block(doc: &BaseDocument, block: NodeId) -> NodeId {
     let mut current = block;
     'down: loop {
         for &child_id in doc.nodes[current].children.iter() {

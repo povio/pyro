@@ -66,10 +66,15 @@ mod resolved_style;
 /// Scrolling of nodes and the viewport, and scroll animations.
 mod scrolling;
 mod selection;
+/// pyro: the embedder's document selection, painted as highlighted text.
+mod dom_selection;
+pub use dom_selection::DomSelection;
 /// pyro: the colour space of tagged images.
 mod icc;
 /// pyro: the language of an element, for `:lang()`.
 mod lang;
+/// pyro: the directionality of an element, for `:dir()`.
+mod direction;
 /// pyro: SVG reference cycles usvg does not break.
 #[cfg(feature = "svg")]
 mod svg_refs;

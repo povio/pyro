@@ -8,7 +8,7 @@
 //! Not captured: video pixels, iframe contents (empty boxes),
 //! `:active` state (the hovered
 //! and focused elements are carried as render keys for the renderer to
-//! apply), selection and caret, CSS animations/transitions (rendered at
+//! apply, and so is the selection), the caret, CSS animations/transitions (rendered at
 //! their final values), shadow-tree style scoping (shadow `<style>` applies
 //! document-wide).
 
@@ -51,6 +51,10 @@ pub struct RenderSnapshot {
     /// The document's HTTP `Content-Language`
     /// (`pyro_dom::Dom::content_language`), in every form.
     pub content_language: Option<String>,
+    /// The document selection as a renderer paints it, in every form: from
+    /// the start to the end, each a text node's render key and an offset in
+    /// UTF-16 code units of its data (`text_selection`).
+    pub selection: Option<((u64, u32), (u64, u32))>,
 }
 
 /// How a snapshot carries the document.
@@ -93,9 +97,11 @@ impl PageDom {
     fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
         let mut canvases = self.canvas_bitmaps();
         canvases.extend(self.video_bitmaps());
+        let selection = crate::editing::selection_range(self);
         let dom = self.dom.borrow();
+        let selection = selection.and_then(|range| text_selection(&dom, self.document(), range));
         let layout = self.layout();
-        RenderSnapshot { canvases, ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form) }
+        RenderSnapshot { canvases, selection, ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form) }
     }
 }
 
@@ -151,6 +157,54 @@ fn snapshot_of(
             canvases: Vec::new(),
             xml_document: dom.is_xml_document(document),
             content_language: dom.content_language(document).map(str::to_owned),
+            selection: None,
         }
     }
+}
+
+/// The document selection as a renderer paints it ([`RenderSnapshot::selection`]): each end in
+/// the text at it (a start between nodes moves forward to the start of the next rendered text, an
+/// end back to the end of the one before), as the render key of a text node and an offset in
+/// UTF-16 code units of its data. `None` when the selection is collapsed or holds no rendered
+/// text. Text the render tree leaves out or replaces (in `<script>`, `<noscript>`, `<template>`,
+/// frames, `<style>`, `<textarea>`) is passed over.
+fn text_selection(
+    dom: &pyro_dom::Dom,
+    document: NodeId,
+    (start, end): (crate::editing::Point, crate::editing::Point),
+) -> Option<((u64, u32), (u64, u32))> {
+    use crate::editing::{deep_backward, deep_forward, is_text, len, local};
+    use crate::range::compare_boundary_points_dom as compare;
+    if start == end {
+        return None;
+    }
+    let rendered = |text: NodeId| {
+        let mut current = dom.parent(text).ok().flatten();
+        while let Some(node) = current {
+            if matches!(
+                local(dom, node).as_str(),
+                "script" | "noscript" | "template" | "iframe" | "frame" | "style" | "textarea"
+            ) {
+                return false;
+            }
+            current = dom.parent(node).ok().flatten();
+        }
+        true
+    };
+    let texts = || dom.descendants(document).ok().into_iter().flatten().filter(|&n| is_text(dom, n) && rendered(n));
+    let first = deep_forward(dom, start);
+    let first = match is_text(dom, first.0) && rendered(first.0) {
+        true => first,
+        false => (texts().find(|&t| compare(dom, (t, 0), start) >= 0)?, 0),
+    };
+    let last = deep_backward(dom, end);
+    let last = match is_text(dom, last.0) && rendered(last.0) {
+        true => last,
+        false => {
+            let text = texts().filter(|&t| compare(dom, (t, len(dom, t)), end) <= 0).last()?;
+            (text, len(dom, text))
+        }
+    };
+    (compare(dom, first, last) < 0)
+        .then(|| ((pyro_dom::snapshot::render_key(first.0), first.1), (pyro_dom::snapshot::render_key(last.0), last.1)))
 }

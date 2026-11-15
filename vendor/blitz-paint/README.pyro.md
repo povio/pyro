@@ -585,6 +585,29 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/text.rs`: the text of relatively positioned inline boxes is painted moved
   (`BaseDocument::inline_span_relative_offset`), only in inline roots that have one. Covered by
   `block_in_inline.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in `crates/pyro-render/tests`.
+- `src/text.rs` (`stroke_text`, `DrawTextContext::first_line`), `src/render.rs` (`inline_box_fragments`,
+  `paint_inline_box_fragment`, `draw_inline_layout`): `::first-line`. The first line of an inline root whose
+  layout has a `::first-line` style node (blitz-dom's `TextLayout::first_line`) is painted as if its content were in
+  an inline box of that style: the box is on each run's stack between the root and the elements on the line, so
+  text that inherits takes its colour and text shadows and its decorations are drawn under the line's text (placed
+  by the root's own font); the elements on the line paint their text and boxes in their styles reparented onto it
+  (blitz-dom's `BaseDocument::first_line_style`: inherited properties from the first line, `currentcolor` its
+  colour); its background, borderless, is a fragment around the line's content, painted before the elements'.
+  Nothing changes for roots without one. Covered by `first_line.rs` in `crates/pyro-render/tests`.
+- `src/highlight.rs` (new), `src/text.rs`, `src/render.rs` (`draw_inline_layout`): the selection is painted as
+  Chromium paints highlights (CSS Pseudo-Elements 4 § 3). Behind each selected stretch of a line goes the
+  highlight's background, from the line box's top to its bottom or the text's content area where that reaches
+  further (Blink's `ExpandSelectionRectToLineHeight`), on whole CSS px as inline boxes are; the line is then
+  drawn twice, clipped: outside the stretches as usual, inside them in the highlight's colour, decorations of the
+  text's colour (`currentcolor`, `ResolvedDecoration::current_color`) in it too and no text shadows. The highlight
+  is the `::selection` style of the nearest element with one, else the system's `HighlightText` on `Highlight`
+  (Stylo's servo values); text under `user-select: none` is not highlighted. A line cut by an ellipsis keeps
+  upstream's light blue rectangles; a recording paint (the PDF's) draws no selection. Covered by
+  `selection_highlight.rs` in `crates/pyro-render/tests`.
+- `src/text.rs` (`LineDecoration::shift`, `stroke_text`): the decoration line of a relatively positioned inline box
+  (or one inside such boxes of the root) moves with its text (it stayed where the box's text was laid out, under the
+  moved glyphs). White space hanging at the end of a right-to-left line, at its left, is not decorated, as at the
+  right of a left-to-right one. Covered by `direction_text.rs` in `crates/pyro-render/tests`.
 
 - `src/filters.rs` (`image_filter`), `src/render/background.rs` (`draw_image_layer_in`),
   `src/render/border_image.rs` (`draw_border_image`): a `filter()` image (the CSS `<image>` function of Filter

@@ -509,6 +509,11 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::UserValid => self.matches(PseudoClass::UserValid),
             N::UserInvalid => self.matches(PseudoClass::UserInvalid),
             N::Lang(lang) => self.match_element_lang(None, lang),
+            N::Dir(dir) => match &**dir {
+                "ltr" => self.cx().dom.directionality_idx(self.i()) == crate::direction::Direction::Ltr,
+                "rtl" => self.cx().dom.directionality_idx(self.i()) == crate::direction::Direction::Rtl,
+                _ => false,
+            },
             N::CustomState(state) => self.cx().dom.has_custom_state_idx(self.i(), &state.0 .0),
             _ => false,
         }

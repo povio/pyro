@@ -112,6 +112,20 @@ struct BidiScan {
     /// The split inlines the layout holds pieces of, with whether it holds their start and end
     /// (`TextLayout::split_pieces`).
     split_pieces: Vec<(NodeId, bool, bool)>,
+    /// The bidi formatting characters pushed (with `bidi`) whose embedding, override or isolate
+    /// is open, outermost first: a forced line break (a paragraph separator to the bidi
+    /// algorithm, which closes them) opens them again (`reopen_bidi_controls`).
+    open_controls: Vec<&'static [char]>,
+}
+
+/// pyro: after a forced line break (`<br>`), the bidi formatting characters still open before it,
+/// again: the break ends the bidi algorithm's paragraph, which closes every embedding, override
+/// and isolate, and Blink re-opens them after it (`InlineItemsBuilder::AppendForcedBreak`), so a
+/// `unicode-bidi: bidi-override` holds on the lines after a `<br>` too.
+fn reopen_bidi_controls(builder: &mut TreeBuilder<TextBrush>, bidi_scan: &BidiScan) {
+    for controls in &bidi_scan.open_controls {
+        controls.iter().for_each(|&c| builder.push_bidi_control(c));
+    }
 }
 
 /// pyro: the split inlines (`NodeFlags::IS_SPLIT_INLINE`) whose box holds the anonymous block
@@ -165,6 +179,7 @@ fn open_span(
         bidi_scan.rtl |= rtl;
         if bidi {
             start_controls.iter().for_each(|&c| builder.push_bidi_control(c));
+            bidi_scan.open_controls.push(start_controls);
         }
     }
     let (start_edge, end_edge) = span_edge_widths(style);
@@ -193,12 +208,13 @@ fn open_span(
 }
 
 /// pyro: pushes the end of a span `open_span` started.
-fn close_span(builder: &mut TreeBuilder<TextBrush>, end: SpanEnd, bidi: bool) {
+fn close_span(builder: &mut TreeBuilder<TextBrush>, end: SpanEnd, bidi: bool, bidi_scan: &mut BidiScan) {
     if let Some(edge) = end.edge {
         builder.push_inline_box(edge);
     }
     if let (true, Some(controls)) = (bidi, end.controls) {
         controls.iter().for_each(|&c| builder.push_bidi_control(c));
+        bidi_scan.open_controls.pop();
     }
     builder.pop_style_span();
 }
@@ -301,7 +317,9 @@ fn build_inline_layout_with(
         if matches!(style.clone_unicode_bidi(), UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride) {
             bidi_scan.controls = true;
             if bidi {
-                builder.push_bidi_control(if rtl { '\u{202E}' } else { '\u{202D}' });
+                let control: &'static [char] = if rtl { &['\u{202E}'] } else { &['\u{202D}'] };
+                builder.push_bidi_control(control[0]);
+                bidi_scan.open_controls.push(control);
             }
         }
     }
@@ -437,7 +455,7 @@ fn build_inline_layout_with(
     }
 
     for end in piece_ends.into_iter().rev().flatten() {
-        close_span(&mut builder, end, bidi);
+        close_span(&mut builder, end, bidi, &mut bidi_scan);
     }
     text_layout.split_pieces = std::mem::take(&mut bidi_scan.split_pieces);
 
@@ -640,7 +658,7 @@ fn build_inline_layout_with(
                 bidi_scan,
             ));
         }
-        close_span(builder, end, bidi);
+        close_span(builder, end, bidi, bidi_scan);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -683,6 +701,9 @@ fn build_inline_layout_with(
                     ]);
                     builder.push_text("\n");
                     builder.pop_style_span();
+                    if bidi {
+                        reopen_bidi_controls(builder, bidi_scan);
+                    }
                     text_transformer.word_break(builder);
                     return;
                 }
@@ -807,6 +828,7 @@ fn build_inline_layout_with(
                             });
                             if let (true, Some((start, _))) = (bidi, controls) {
                                 start.iter().for_each(|&c| builder.push_bidi_control(c));
+                                bidi_scan.open_controls.push(start);
                             }
                             let held = (builder.text().len(), bidi_scan.atomic_boxes);
 
@@ -898,6 +920,7 @@ fn build_inline_layout_with(
                             }
                             if let (true, Some((_, end))) = (bidi, controls) {
                                 end.iter().for_each(|&c| builder.push_bidi_control(c));
+                                bidi_scan.open_controls.pop();
                             }
                             builder.pop_style_span();
                         }

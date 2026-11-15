@@ -27,6 +27,7 @@ pub(crate) mod construct;
 pub(crate) mod counters;
 pub(crate) mod damage;
 pub(crate) mod first_letter;
+pub(crate) mod first_line;
 pub(crate) mod inline;
 pub(crate) mod list;
 pub mod multicol;

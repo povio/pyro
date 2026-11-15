@@ -131,6 +131,11 @@ crate (`diff -ruN`).
   `ThreeDLightShadow` are `ButtonBorder`, as CSS Color 4 §6.2 maps them (upstream: `ButtonFace`; WPT
   `css-color/deprecated-sameas-018`/`-019`). Test: `deprecated_three_d_colours_are_button_border` in
   `crates/pyro-render/tests/background_images_and_edges.rs`.
+- `servo/selector_parser.rs`: `:dir()` is parsed for servo too (`NonTSPseudoClass::Dir`, its identifier
+  ASCII-lowercased; upstream servo had no `:dir()`, so a rule using it was dropped). It has no element state flag
+  (as `:lang()`), so style sharing revalidates it. blitz-dom matches `ltr` and `rtl` by the element's
+  directionality (`vendor/blitz-dom/src/direction.rs`), pyro-dom by its own; any other identifier matches nothing.
+  Test: `dir_matches_the_directionality_of_elements` in `crates/pyro-render/tests/direction_text.rs`.
 
 ## Moving from 0.22 to 0.23
 

@@ -583,3 +583,31 @@ fn caret_from_point() {
     assert!(eval(r, "new CaretPosition()").starts_with("THROW TypeError"));
     assert!(eval(r, "document.caretPositionFromPoint(1)").starts_with("THROW TypeError"));
 }
+
+/// The selection a render snapshot carries for the renderer (`RenderSnapshot::selection`, painted
+/// in screenshots): its ends moved into text, as render keys of text nodes with UTF-16 offsets;
+/// text the render tree leaves out (a `<script>`'s) is passed over, a collapsed selection is none.
+#[test]
+fn render_snapshots_carry_the_selection_in_text() {
+    let e = env("<p id=p>Some <b>bold</b> te\u{e9}xt</p><script>var x = 1</script>");
+    let r = &e.main;
+    let key = |script: &str| {
+        let dom = e.page.dom.borrow();
+        let p = dom.get_element_by_id(e.page.document(), "p").unwrap().unwrap();
+        let children: Vec<_> = dom.children(p).unwrap().collect();
+        let node = match script {
+            "first" => children[0],
+            "bold" => dom.first_child(children[1]).unwrap().unwrap(),
+            _ => children[2],
+        };
+        pyro_dom::snapshot::render_key(node)
+    };
+    assert_eq!(e.page.render_view().selection, None);
+    eval(r, "const range = document.createRange(); range.selectNode(document.querySelector('b')); getSelection().addRange(range)");
+    assert_eq!(e.page.render_view().selection, Some(((key("bold"), 0), (key("bold"), 4))));
+    // To the end of the body: its last child, a script, renders nothing.
+    eval(r, "document.execCommand('selectAll')");
+    assert_eq!(e.page.render_view().selection, Some(((key("first"), 0), (key("last"), 6))));
+    eval(r, "getSelection().collapse(p.firstChild, 2)");
+    assert_eq!(e.page.render_view().selection, None);
+}

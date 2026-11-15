@@ -1206,8 +1206,46 @@ and a `content-box` local background reached the scrollport's edge at the end (W
   captions render).
 - `assets/default.css`: `area` is `display: none` without Gecko's `!important`, as in Chromium.
 - `src/stylo.rs`: `<body text>` maps to `color` (a legacy colour value).
+- `src/layout/first_line.rs` (new), `src/layout/first_letter.rs`, `src/node/text.rs`, `src/node/element.rs`,
+  `src/resolve.rs`, `src/stylo.rs`, `src/document.rs`, `src/layout/counters.rs`: `::first-line` is applied (the
+  pref is on: it was not even parsed). As for `::first-letter`, the nearest block container whose first line is an
+  inline root's (`first_letter::origin`, now by pseudo-element) styles it, its style cascaded again with the
+  block holding the line as parent when that is a descendant. Before a root builds its inline layout,
+  `first_line::style_node_for` finds the style and keeps it on a node the originating element owns (`ElementData::
+  first_line`, not in the tree, its parent the root): `TextLayout::first_line`. The layout does not use it (the
+  lines are broken in the root's own styles: fonts and spacing of the first line are not applied); blitz-paint
+  draws the first line with it. `BaseDocument::first_line_style` gives an element's style on the first line: its
+  own reparented onto the first-line box (Stylo's `FirstLineReparenting`, as Gecko does), kept across paints while
+  its own and its new parent's styles are the same (`first_line::ReparentCache`). A `::first-line` style that came
+  or went builds the block's inline layout again; one that changed on a line that has its node only restyles the
+  node (`first_line::style_changed`: the layout does not read it, so a page-wide restyle relays no first line out).
+  `first_letter::origin` passes anonymous blocks (whose anonymous style computes `display: inline`) and inlines split
+  around blocks on to their container, so a first line or first letter in a block-in-inline's first piece is styled.
+  The `::first-letter` and `::first-line` nodes load their background images (`pending_style_image_nodes`).
+- `src/dom_selection.rs` (new), `src/document.rs`, `src/lib.rs`: the embedder's selection (`DomSelection`, text
+  nodes and UTF-16 offsets; pyro-render sets pyro-webapi's for a screenshot) replaces blitz's own in
+  `get_text_selection_ranges`: the text nodes from the start to the end in tree order, mapped through each inline
+  root's `text_nodes` to bytes of its text (collapsed white space maps to where it collapsed).
 
-Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit tests here.
+Tests: `generated_content`, `first_line` and `selection_highlight` in pyro-render; `first_letter`,
+`counters` and `dom_selection` unit tests here.
+
+## `:dir()`, bidi overrides across `<br>`, `text-indent` of anonymous blocks (WPT reftests)
+
+- `src/direction.rs` (new), `src/stylo.rs`, `src/mutator.rs`: `:dir(ltr)` and `:dir(rtl)` match by the element's
+  directionality (HTML: the nearest valid `dir`; `dir="auto"` and a `<bdi>` by the first strong character of their
+  text or a text control's value; a `tel` input left to right; the root left to right), the rules pyro-dom applies
+  for script. Stylo parses `:dir()` for servo now (`vendor/stylo/README.pyro.md`). A `dir` change restyles the
+  element's descendants too.
+- `src/layout/inline/build.rs` (`BidiScan::open_controls`, `reopen_bidi_controls`): after a forced line break
+  (`<br>`), the bidi formatting characters of the embeddings, overrides and isolates still open are pushed again:
+  the break is a paragraph separator to the bidi algorithm, which closes them, and Blink re-opens them
+  (`InlineItemsBuilder::AppendForcedBreak`), so `unicode-bidi: bidi-override` holds on the lines after a `<br>`.
+- `src/layout/inline/layout.rs`, `src/layout/first_line.rs` (`starts_a_block`): `text-indent` indents the first
+  line of an anonymous block only when it is its container's first in-flow child (CSS 2.1 16.1), not the
+  anonymous block after an inline's block-level content.
+
+Tests: `direction_text` in pyro-render; `direction` unit tests here.
 
 ## List markers (WPT reftests)
 

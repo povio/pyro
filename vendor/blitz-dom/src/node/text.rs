@@ -68,6 +68,9 @@ pub struct TextLayout {
     /// pyro: the first letter of the root's first line, styled by an element's
     /// `::first-letter` (`layout::first_letter`), set before each build.
     pub first_letter: Option<FirstLetterSplit>,
+    /// pyro: the node holding the `::first-line` style of the root's first line
+    /// (`layout::first_line`), set before each build: paint draws the line with it.
+    pub first_line: Option<NodeId>,
     /// pyro: when the root is an anonymous block holding a piece of inline boxes split around
     /// block-level content (`NodeFlags::IS_SPLIT_INLINE`), those boxes, innermost first, each
     /// with whether this piece holds its start and its end: only there do its fragments have

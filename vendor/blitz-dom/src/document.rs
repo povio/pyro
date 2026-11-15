@@ -111,6 +111,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.content.alt-text.enabled", true);
         style_config::set_pref!("layout.css.corner-shape.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
+        // pyro: `::first-line` parses and is cascaded (`layout::first_line`).
+        style_config::set_pref!("layout.css.first-line.enabled", true);
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
@@ -532,6 +534,16 @@ pub struct BaseDocument {
     /// pyro: elements whose `::first-letter` style a style traversal changed, for the next
     /// resolve (`layout::first_letter::style_changed`).
     pub(crate) first_letter_changed: Vec<NodeId>,
+    /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
+    /// roots look for the style of their first line (`layout::first_line`).
+    pub(crate) first_line_styles: bool,
+    /// pyro: elements whose `::first-line` style a style traversal changed, for the next resolve
+    /// (`layout::first_line::style_changed`).
+    pub(crate) first_line_changed: Vec<NodeId>,
+    /// pyro: the embedder's selection, painted in place of `text_selection` (`dom_selection`).
+    pub(crate) dom_selection: Option<crate::DomSelection>,
+    /// pyro: the styles of elements on first lines, cascaded again (`layout::first_line`).
+    pub(crate) first_line_reparented: crate::layout::first_line::ReparentCache,
 
     /// pyro: a style traversal kept a `::before` / `::after` whose content reads counters or
     /// quotes (sticky): each resolve with damage evaluates them (`layout::counters`).
@@ -743,6 +755,10 @@ impl BaseDocument {
             generated_before_after: false,
             first_letter_styles: false,
             first_letter_changed: Vec::new(),
+            first_line_styles: false,
+            first_line_changed: Vec::new(),
+            dom_selection: None,
+            first_line_reparented: Default::default(),
             generated_counters: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
@@ -1278,6 +1294,10 @@ impl BaseDocument {
             // pyro: the node holding its `::first-letter` style.
             if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter) {
                 self.remove_node_from_tree(first_letter);
+            }
+            // pyro: and its `::first-line` style.
+            if let Some(first_line) = node.element_data().and_then(|element| element.first_line) {
+                self.remove_node_from_tree(first_line);
             }
 
             for &child in &node.children {
@@ -3432,6 +3452,10 @@ impl BaseDocument {
     /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
     /// Returns empty vec if no selection.
     pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
+        // pyro: the embedder's selection, when it set one.
+        if let Some(selection) = self.dom_selection {
+            return self.dom_selection_ranges(selection);
+        }
         let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
 
         let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {

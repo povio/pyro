@@ -1993,10 +1993,13 @@ impl ElementCx<'_, '_> {
             last_item: usize,
             /// pyro: the top of its line box (where the text of the line above ends).
             line_top: f32,
+            /// pyro: its element's style on the first line (`BaseDocument::first_line_style`).
+            style: Option<style::servo_arc::Arc<ComputedValues>>,
         }
 
         let styles = layout.styles();
-        if styles.len() < 2 {
+        // pyro: a root of text alone has no inline box, but for its `::first-line` box.
+        if styles.len() < 2 && text_layout.first_line.is_none() {
             return painted_fragments;
         }
         let dom = self.context.dom;
@@ -2053,6 +2056,10 @@ impl ElementCx<'_, '_> {
 
         let mut fragments: Vec<Fragment> = Vec::new();
         let rtl_layout = layout.is_rtl();
+        // pyro: the first line's content is in the `::first-line` box (blitz-dom
+        // `TextLayout::first_line`), outside the elements on it, which have their styles there.
+        let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
+        let mut first_line_styles = Vec::new();
         let mut item_index = 0usize;
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
@@ -2082,6 +2089,10 @@ impl ElementCx<'_, '_> {
                 };
                 item_index += 1;
                 chain_of(&mut chain, style_index);
+                let on_first_line = first_line.filter(|_| line.text_range().start == 0);
+                if let Some(first_line) = on_first_line {
+                    chain.push((first_line, 0));
+                }
                 let depth = chain.len();
                 for (level, &(node, style_index)) in chain.iter().enumerate() {
                     if !paints(node) {
@@ -2114,6 +2125,9 @@ impl ElementCx<'_, '_> {
                         _ => {
                             let (top, bottom) = line.span_content_area(style_index);
                             let shift = tops.map_or(0.0, |tops| tops.shift(metrics)) as f32;
+                            let style = on_first_line
+                                .filter(|&first_line| first_line != node)
+                                .and_then(|first_line| dom.first_line_style(root, first_line, node, &mut first_line_styles));
                             fragments.push(Fragment {
                                 node,
                                 depth: depth - level,
@@ -2124,6 +2138,7 @@ impl ElementCx<'_, '_> {
                                 bottom: bottom + shift,
                                 last_item: item_index,
                                 line_top: metrics.block_min_coord + shift,
+                                style,
                             });
                         }
                     }
@@ -2290,6 +2305,7 @@ impl ElementCx<'_, '_> {
                 left,
                 right,
                 reaches_above: (rect.y0 as f32) < fragment.line_top,
+                style: fragment.style.clone(),
             });
         }
         painted_fragments
@@ -2323,6 +2339,9 @@ impl ElementCx<'_, '_> {
         };
         let (transform, size, left, right) = (fragment.transform, fragment.size, fragment.left, fragment.right);
         let mut cx = box_cx(transform, size, fragment.border, fragment.padding);
+        if let Some(style) = &fragment.style {
+            cx.style = style.clone();
+        }
         if !left {
             cx.frame.border_radii.top_left = Vec2::ZERO;
             cx.frame.border_radii.bottom_left = Vec2::ZERO;
@@ -2334,7 +2353,13 @@ impl ElementCx<'_, '_> {
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
         // sides and above and below it.
-        let whole = fragment.whole.map(|(transform, size, border, padding)| box_cx(transform, size, border, padding));
+        let whole = fragment.whole.map(|(transform, size, border, padding)| {
+            let mut whole = box_cx(transform, size, border, padding);
+            if let Some(style) = &fragment.style {
+                whole.style = style.clone();
+            }
+            whole
+        });
         let piece = Rect::from_origin_size(Point::ZERO, size);
         let far = 1e6;
         let outside = Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far);
@@ -2453,6 +2478,7 @@ impl ElementCx<'_, '_> {
                     let mut draw_text_context = self.context.draw_text_context.borrow_mut();
                     draw_text_context.text_shift = text_shift;
                     draw_text_context.line_tops = tops;
+                    draw_text_context.first_line = text_layout.first_line;
                     crate::text::stroke_text(
                         scene,
                         std::iter::once(line),
@@ -2467,6 +2493,7 @@ impl ElementCx<'_, '_> {
                     );
                     draw_text_context.text_shift = 0.0;
                     draw_text_context.line_tops = None;
+                    draw_text_context.first_line = None;
                 }
                 return;
             }
@@ -2475,7 +2502,11 @@ impl ElementCx<'_, '_> {
             }
 
             // Render text selection highlight (if any) using cached selection ranges
-            if let Some((sel_start, sel_end)) = selection {
+            // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
+            // by an ellipsis; a recording paint (the PDF's) draws no selection.
+            let highlight = selection
+                .filter(|_| text_layout.ellipsis.is_none() && self.context.draw_text_context.borrow().runs.is_none());
+            if let (Some((sel_start, sel_end)), None) = (selection, highlight) {
                 crate::text::draw_text_selection(
                     scene,
                     &text_layout.layout,
@@ -2492,22 +2523,37 @@ impl ElementCx<'_, '_> {
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             draw_text_context.text_shift = text_shift;
             draw_text_context.line_tops = tops;
+            draw_text_context.first_line = text_layout.first_line;
             let options = TextPaintOptions {
                 scale: self.scale,
                 brush_override: None,
                 shadows: true,
             };
-            stroke_inline_text(
-                scene,
-                self.context.dom,
-                self.node,
-                text_layout,
-                transform,
-                options,
-                &mut draw_text_context,
-                tops,
-                self.scale,
-            );
+            match highlight {
+                Some(selection) => crate::highlight::stroke_highlighted_text(
+                    scene,
+                    self.context.dom,
+                    self.node.id,
+                    &text_layout.layout,
+                    &text_layout.text,
+                    transform,
+                    tops,
+                    options,
+                    selection,
+                    &mut draw_text_context,
+                ),
+                None => stroke_inline_text(
+                    scene,
+                    self.context.dom,
+                    self.node,
+                    text_layout,
+                    transform,
+                    options,
+                    &mut draw_text_context,
+                    tops,
+                    self.scale,
+                ),
+            }
             // pyro: ruby annotations and emphasis marks, over the text of each line.
             if !text_layout.annotations.is_empty() {
                 let recording = draw_text_context.runs.is_some();
@@ -2532,6 +2578,7 @@ impl ElementCx<'_, '_> {
             }
             draw_text_context.text_shift = 0.0;
             draw_text_context.line_tops = None;
+            draw_text_context.first_line = None;
         }
     }
 
@@ -3639,4 +3686,6 @@ struct InlineBoxFragment {
     right: bool,
     /// Whether its box reaches above its line box, over the line before.
     reaches_above: bool,
+    /// pyro: its element's style on the first line, in place of its own (`::first-line`).
+    style: Option<style::servo_arc::Arc<ComputedValues>>,
 }

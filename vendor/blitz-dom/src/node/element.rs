@@ -134,6 +134,9 @@ pub struct ElementData {
     /// letter in the inline layout that holds it (`layout::first_letter`). Not in the tree: no
     /// children, no damage, its parent is the letter's text's parent.
     pub first_letter: Option<NodeId>,
+    /// pyro: the node holding this element's `::first-line` style, whose parent is the inline
+    /// root holding the first line it styles (`layout::first_line`). Not in the tree.
+    pub first_line: Option<NodeId>,
 
     /// Detailed layout information from the most recent layout (currently
     /// grid track sizing information for grid containers only). Used by
@@ -397,6 +400,7 @@ impl Clone for ElementData {
             before: None,
             after: None,
             first_letter: None,
+            first_line: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -518,6 +522,7 @@ impl ElementData {
             before: None,
             after: None,
             first_letter: None,
+            first_line: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,

@@ -519,6 +519,59 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  }
  
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
+diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
+--- a/servo/selector_parser.rs	2026-11-11 19:55:57
++++ b/servo/selector_parser.rs	2026-11-15 15:12:22
+@@ -376,6 +376,9 @@
+     /// The :state` pseudo-class.
+     CustomState(CustomState),
+     Default,
++    /// pyro: `:dir()`, its argument ASCII-lowercased (`ltr` and `rtl` match, any other
++    /// identifier matches nothing).
++    Dir(Box<str>),
+     Defined,
+     Disabled,
+     Enabled,
+@@ -439,6 +442,11 @@
+         if let Lang(ref lang) = *self {
+             dest.write_str(":lang(")?;
+             serialize_identifier(lang, dest)?;
++            return dest.write_char(')');
++        }
++        if let Dir(ref dir) = *self {
++            dest.write_str(":dir(")?;
++            serialize_identifier(dir, dest)?;
+             return dest.write_char(')');
+         }
+ 
+@@ -485,7 +493,7 @@
+             Self::UserValid => ":user-valid",
+             Self::Valid => ":valid",
+             Self::Visited => ":visited",
+-            Self::Lang(_) => unreachable!(),
++            Self::Lang(_) | Self::Dir(_) => unreachable!(),
+         })
+     }
+ }
+@@ -531,7 +539,7 @@
+             Self::UserValid => ElementState::USER_VALID,
+             Self::Valid => ElementState::VALID,
+             Self::Visited => ElementState::VISITED,
+-            Self::CustomState(_) | Self::Lang(_) | Self::ServoNonZeroBorder => {
++            Self::CustomState(_) | Self::Lang(_) | Self::Dir(_) | Self::ServoNonZeroBorder => {
+                 ElementState::empty()
+             },
+         }
+@@ -697,6 +705,9 @@
+                 let result = AtomIdent::from(parser.expect_ident()?.as_ref());
+                 NonTSPseudoClass::CustomState(CustomState(result))
+             },
++            "dir" if !after_part => {
++                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
++            },
+             _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
+         };
+ 
 diff -ruN a/style_resolver.rs b/style_resolver.rs
 --- a/style_resolver.rs	2026-11-11 19:55:57
 +++ b/style_resolver.rs	2026-11-11 20:10:18
