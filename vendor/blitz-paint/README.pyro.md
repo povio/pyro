@@ -142,6 +142,17 @@ from the root of an upstream checkout at that commit) is the whole diff.
     text and 4px for 24px, and of another size. Other marker types and inside markers stay text. Covered by
     `a_list_markers_symbol_is_a_shape_sized_from_the_font_at_whole_css_pixels` in
     `crates/pyro-render/tests/text_line_tops.rs`.
+  - `src/render.rs` (`draw_marker_image`, `marker_baseline`): an outside `list-style-image` marker (blitz-dom's
+    `Marker::Image`), as Chromium places it (`ListMarker::InlineMarginsForOutside`): the image at its natural size
+    ends 7px before the item's border box, its bottom on the baseline of the item's first line (its own or the first
+    box's in it, else the marker's line), at whole device pixels; a raster image is scaled to that size, an SVG drawn
+    at its own. Covered by `an_image_marker_ends_7px_before_the_item_on_its_first_baseline` in
+    `crates/pyro-render/tests/generated_content.rs`.
+  - `src/render.rs` (`draw_marker`, `draw_marker_symbol`, `marker_baseline`): an outside marker moves with the first
+    line when floats move that line's start (parley's `inline_min_coord`), as Chromium places it at the line's start:
+    beside a float an item's marker stayed by the item's own box, behind the float or off the page (WPT
+    `list-style-*-applies-to-017`).
+    Covered by `an_outside_marker_goes_with_the_line_a_float_moves` there.
 
 - Paint gaps from the ToS feature videos (Chromium 147):
   - `src/render.rs` (`render_element`, `paint_element`, `paint_effect_group`), `src/bounds.rs`: `opacity`, `filter`
@@ -287,6 +298,18 @@ from the root of an upstream checkout at that commit) is the whole diff.
     into each box's areas under its clip path, whose reference box is its first fragment (as Blink's and Gecko's
     are), and its mask, laid over its fragments side by side (`box-decoration-break: slice`). Inline boxes inside
     one are painted with it. An inline box's margin box has its style's margins on every side.
+
+- Table structure (WPT reftests; see blitz-dom's README):
+  - `src/render.rs` (`element_cx`): a table with captions paints its own box (background, borders, shadows,
+    outline) around its grid alone (`TableContext::grid_box`); `table_part_transform`: a cell is painted under its
+    row group's and row's transforms, each about the part's box (rows are transformable; their cells are the
+    table's children). A collapsed table whose cells hold half of the borders around them draws the borders after
+    its children (over the cells' backgrounds, as Chromium paints them).
+  - `src/render/border.rs`: a collapsed table with cells never draws its own border (its outer borders are the
+    collapsed ones that won there); the grid's borders are drawn below the captions above it.
+  - `src/render/background.rs` (`draw_table_row_backgrounds`): background images of column groups, columns, row
+    groups and rows are painted in each cell, positioned against the part's own box (`TablePartRects`), in that
+    order with their colours; a collapsed row (`visibility: collapse`) paints nothing.
 
 - Text decorations, emphasis marks and ruby (WPT reftest lane G):
   - `src/text.rs` (`flush_line_decorations`, `decoration_thickness`, `whole_css_px`, `StrutGeometry`): decoration
@@ -443,6 +466,17 @@ from the root of an upstream checkout at that commit) is the whole diff.
     colour was painted there before it (then it stops at the corner's diagonal), so the later side's antialiased
     diagonal lies over the earlier side's colour. As two trapezoids, both diagonals were antialiased over the
     background, which showed through between them (WPT `CSS2/border-seams-001`).
+- `src/render.rs` (`inline_box_fragments`, `paint_inline_box_fragment`, `InlineBoxFragment`; together what the
+  entries above call `draw_inline_boxes`: the fragments are collected, then painted): an inline root
+  with an inline box that reaches above its line, over the line before (tall padding or borders), paints line by
+  line, each line's box fragments and then its text (CSS 2.1 Appendix E), so a line's backgrounds cover the text of
+  the line above as in browsers; other roots paint all fragments, then all text, as before. A split inline
+  (blitz-dom's `NodeFlags::IS_SPLIT_INLINE`) paints no box of its own: its pieces' lines paint its fragments, with
+  its start and end sides only in the pieces that hold them (`TextLayout::split_pieces`). Relatively positioned
+  inline boxes move their fragments.
+- `src/text.rs`: the text of relatively positioned inline boxes is painted moved
+  (`BaseDocument::inline_span_relative_offset`), only in inline roots that have one. Covered by
+  `block_in_inline.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in `crates/pyro-render/tests`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

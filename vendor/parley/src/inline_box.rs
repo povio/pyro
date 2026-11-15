@@ -24,6 +24,10 @@ pub struct InlineBox {
     pub baseline: Option<f32>,
     /// Vertical alignment of the box within its line, relative to the enclosing style span.
     pub vertical_align: VerticalAlign,
+    /// pyro: for a span edge ([`InlineBoxKind::SpanStart`], [`InlineBoxKind::SpanEnd`]), whether
+    /// its span is right-to-left: its start edge is its right side and its end edge its left.
+    /// A line that bidi reordering changed puts each edge on its side of the span's content there.
+    pub rtl: bool,
 }
 
 /// An [`InlineBox`] together with the style index of the span that contains it.

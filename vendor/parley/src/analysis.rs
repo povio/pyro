@@ -1,6 +1,8 @@
 // Copyright 2026 the Parley Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+use alloc::vec::Vec;
+
 use crate::{Brush, LayoutContext, WhiteSpaceCollapse};
 
 use parley_engine::break_overrides::LineBreakOverrideFn;
@@ -50,11 +52,22 @@ pub(crate) fn analyze_text<B: Brush>(
         }
     }
 
+    // pyro: atomic and out-of-flow inline boxes take part in bidi resolution as U+FFFC, as in
+    // browsers (`shape::inline_box_levels`).
+    let mut objects: Vec<usize> = lcx
+        .inline_boxes
+        .iter()
+        .filter(|b| !b.inline_box.kind.is_span_edge())
+        .map(|b| b.inline_box.index.min(text.len()))
+        .collect();
+    objects.sort_unstable();
+
     let options = AnalysisOptions {
         base_direction,
         line_break: &lcx.line_break,
         break_spaces: &lcx.break_spaces,
         line_break_override,
+        objects: &objects,
     };
     lcx.analyzer.analyze(text, &options, &mut lcx.analysis);
 }

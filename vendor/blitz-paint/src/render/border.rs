@@ -469,8 +469,12 @@ impl ElementCx<'_, '_> {
     /// Draw all borders for a node
     pub(crate) fn draw_border(&self, scene: &mut impl PaintScene) {
         // A table without uniform collapsed borders draws them all (`draw_collapsed_edges`).
+        // pyro: a collapsed table with cells draws its outer borders as the collapsed ones that
+        // won there, never its own (`draw_table_borders`).
         if self.node.layout_data().collapsed_border.is_some()
-            || matches!(&self.element.special_data, SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some())
+            || matches!(&self.element.special_data, SpecialElementData::TableRoot(table)
+                if table.collapsed_edges.is_some()
+                    || (table.border_collapse == BorderCollapse::Collapse && !table.cells.is_empty()))
         {
             return;
         }
@@ -1036,10 +1040,12 @@ impl ElementCx<'_, '_> {
         // The borders are laid out as the gutters between the tracks, and as the border
         // of the table around them. Track positions are relative to the table's border box.
         let border_width = table.style.gap.map(|gap| gap.into_raw().value() as f64);
+        // pyro: the grid sits below the captions above it.
+        let grid_top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
         let left = cols.origin() as f64 - border_width.width;
         let right = (cols.origin() + cols.span()) as f64 + border_width.width;
-        let top = rows.origin() as f64 - border_width.height;
-        let bottom = (rows.origin() + rows.span()) as f64 + border_width.height;
+        let top = grid_top + rows.origin() as f64 - border_width.height;
+        let bottom = grid_top + (rows.origin() + rows.span()) as f64 + border_width.height;
 
         let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64| {
             let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
@@ -1055,12 +1061,12 @@ impl ElementCx<'_, '_> {
             fill(left, bottom - border_width.height, right, bottom);
         }
         for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
-            fill(left, prev.end as f64, right, next.start as f64);
+            fill(left, grid_top + prev.end as f64, right, grid_top + next.start as f64);
         }
 
         // Vertical borders, one segment per row
         for row in rows.iter() {
-            let (y0, y1) = (row.start as f64, row.end as f64);
+            let (y0, y1) = (grid_top + row.start as f64, grid_top + row.end as f64);
             if outer_border_style.border_left_style != BorderStyle::Hidden {
                 fill(left, y0, left + border_width.width, y1);
             }
@@ -1084,7 +1090,10 @@ impl ElementCx<'_, '_> {
         let cols = PhysicalTracks::from_tracks(&grid_info.columns);
         let rows = PhysicalTracks::from_tracks(&grid_info.rows);
         let xs: Vec<f64> = line_positions(&cols);
-        let ys: Vec<f64> = line_positions(&rows);
+        // pyro: the grid sits below the captions above it.
+        let SpecialElementData::TableRoot(table) = &self.element.special_data else { return };
+        let grid_top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
+        let ys: Vec<f64> = line_positions(&rows).into_iter().map(|y| y + grid_top).collect();
         if xs.len() != edges.columns + 1 || ys.len() != edges.rows + 1 {
             return;
         }

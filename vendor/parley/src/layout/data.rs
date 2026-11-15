@@ -683,7 +683,15 @@ impl ContentWidthsMeasurer {
                     continue;
                 }
                 if SPACED {
-                    gap = spacing.gaps(whitespace).after;
+                    // pyro: as `EffectiveSpacing::gaps`, no gap after a zero-width atom that is no
+                    // white space.
+                    let zero_width = whitespace == Whitespace::None
+                        && clusters[i..]
+                            .iter()
+                            .enumerate()
+                            .take_while(|&(j, next)| j == 0 || !next.is_grapheme_start())
+                            .all(|(_, next)| next.advance == 0.);
+                    gap = if zero_width { 0. } else { spacing.gaps(whitespace).after };
                 }
             } else if skip_atom {
                 // The next line starts after the whole newline atom.

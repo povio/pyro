@@ -4469,8 +4469,10 @@ fn paint_only_restyles_run_no_layout_and_match_fresh_builds() {
         if painted.hash != fresh_painted.hash {
             failures.push(format!("{what}: paint differs from a fresh build"));
         }
-        // (Blitz paints no opacity, transform or visibility of a non-atomic inline box.)
-        if painted.hash == hash && !inline_unpainted {
+        // (Blitz paints no opacity, transform or visibility of a non-atomic inline box. A table in
+        // the collapsing border model has no padding: CSS 2.1 §17.6.2.)
+        let collapsed_padding = what.starts_with("#c ") && what.contains("padding");
+        if painted.hash == hash && !inline_unpainted && !collapsed_padding {
             failures.push(format!("{what}: paint did not change"));
         }
         hash = painted.hash;

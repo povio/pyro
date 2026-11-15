@@ -30,6 +30,7 @@ use crate::node::{NodeFlags, SpecialElementData};
 
 use super::damage::{CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC};
 use super::resolve_calc_value;
+use super::table_fixup::{Kind, Level};
 
 pub struct TableTreeWrapper<'a, 'doc> {
     pub(crate) doc: &'a mut LayoutPassState<'doc>,
@@ -495,6 +496,12 @@ pub struct TableContext {
     /// Absolutely positioned descendants of the table's row groups and rows (and of the
     /// table itself). They take no part in the table grid.
     pub oof_children: Vec<(NodeId, taffy::Position)>,
+    /// pyro: the table's captions, in order: laid out above (`caption-side: top`) or below the
+    /// grid, at the table's width (the table's box is then its wrapper box, captions included).
+    pub captions: Vec<NodeId>,
+    /// pyro: with captions, where the grid (the table box proper, which paints the table's
+    /// background and borders) is in the table's box: its top and its height.
+    pub grid_box: AtomicRefCell<Option<(f32, f32)>>,
     pub rows: Vec<TableRow>,
     pub columns: Vec<TableColumn>,
     /// The percentage of each `<col>` of an auto table (0 to 1), in the columns' order.
@@ -950,18 +957,27 @@ fn resolve_collapsed_edges(
     cells: &[TableCell],
     areas: &[(usize, usize, usize, usize)],
     rows: &[TableRow],
+    table_columns: &[TableColumn],
     columns: usize,
 ) -> CollapsedEdges {
     let mut edges = CollapsedEdges::new(rows.len(), columns);
     let all = EdgeRange { lines: 0..rows.len() + 1, rows: 0..rows.len() };
     for (cell, &(r0, c0, r1, c1)) in cells.iter().zip(areas) {
         if r0 < r1 && c0 < c1 {
-            offer_box(&mut edges, doc, cell.node_id, (r0, c0, r1, c1), 3, &all);
+            offer_box(&mut edges, doc, cell.node_id, (r0, c0, r1, c1), CELL_PRIORITY, &all);
         }
     }
-    offer_rows_groups_and_table(&mut edges, doc, table, rows, 0..rows.len(), &all);
+    offer_rows_groups_and_table(&mut edges, doc, table, rows, table_columns, 0..rows.len(), &all);
     edges
 }
+
+/// The order in which the borders of a table's boxes win among equals (css-tables-3 §11.3):
+/// cell, row, row group, column, column group, table.
+const CELL_PRIORITY: u8 = 5;
+const ROW_PRIORITY: u8 = 4;
+const ROW_GROUP_PRIORITY: u8 = 3;
+const COLUMN_PRIORITY: u8 = 2;
+const COLUMN_GROUP_PRIORITY: u8 = 1;
 
 /// The segments a partial resolution resets and resolves again: the horizontal ones on `lines`
 /// and the vertical ones of `rows`.
@@ -981,6 +997,16 @@ fn offer_box(
 ) {
     let Some(styles) = doc.nodes[id].primary_styles() else { return };
     let border = styles.get_border();
+    // pyro: a box without borders offers none (most rows, groups and columns).
+    {
+        use style::values::computed::BorderStyle as B;
+        if [border.border_top_style, border.border_right_style, border.border_bottom_style, border.border_left_style]
+            .iter()
+            .all(|side| *side == B::None)
+        {
+            return;
+        }
+    }
     let color = styles.clone_color();
     let ncols = edges.columns;
     for (line, side) in [(r0, 0), (r1, 2)] {
@@ -1003,12 +1029,13 @@ fn offer_rows_groups_and_table(
     doc: &BaseDocument,
     table: NodeId,
     rows: &[TableRow],
+    table_columns: &[TableColumn],
     span: Range<usize>,
     range: &EdgeRange,
 ) {
     let (nrows, ncols) = (rows.len(), edges.columns);
     for r in span.clone() {
-        offer_box(edges, doc, rows[r].node_id, (r, 0, r + 1, ncols), 2, range);
+        offer_box(edges, doc, rows[r].node_id, (r, 0, r + 1, ncols), ROW_PRIORITY, range);
     }
     if span.is_empty() {
         return;
@@ -1022,9 +1049,35 @@ fn offer_rows_groups_and_table(
         let group = rows[r].group;
         let end = rows[r..].iter().take_while(|row| row.group == group).count() + r;
         if let Some(group) = group {
-            offer_box(edges, doc, group, (r, 0, end, ncols), 1, range);
+            offer_box(edges, doc, group, (r, 0, end, ncols), ROW_GROUP_PRIORITY, range);
         }
         r = end;
+    }
+    // pyro: the columns and column groups, each over every row (`<col>` and `<colgroup>`
+    // borders were not offered).
+    if nrows > 0 {
+        let mut c = 0;
+        while c < table_columns.len().min(ncols) {
+            let column = &table_columns[c];
+            let end = c + table_columns[c..ncols.min(table_columns.len())]
+                .iter()
+                .take_while(|other| other.node_id == column.node_id)
+                .count();
+            offer_box(edges, doc, column.node_id, (0, c, nrows, end), COLUMN_PRIORITY, range);
+            c = end;
+        }
+        let mut c = 0;
+        while c < table_columns.len().min(ncols) {
+            let group = table_columns[c].group;
+            let end = c + table_columns[c..ncols.min(table_columns.len())]
+                .iter()
+                .take_while(|other| other.group == group)
+                .count();
+            if let Some(group) = group {
+                offer_box(edges, doc, group, (0, c, nrows, end), COLUMN_GROUP_PRIORITY, range);
+            }
+            c = end;
+        }
     }
     if nrows > 0 && ncols > 0 {
         offer_box(edges, doc, table, (0, 0, nrows, ncols), 0, range);
@@ -1245,6 +1298,9 @@ pub struct TableRow {
     /// before it in `TableContext::cells`), and the column after its last cell.
     pub cell_count: u32,
     pub columns: u16,
+    /// pyro: `visibility: collapse` (the row's, or inherited from its group): the row takes no
+    /// height and its cells paint nothing (CSS 2.1 §17.5.5).
+    pub collapsed: bool,
 }
 
 /// The used width of one border side: border widths are not adjusted for
@@ -1353,6 +1409,10 @@ fn row_tracks(rows: &[TableRow], gutter: f32) -> Vec<taffy::GridTemplateComponen
     let has_unconstrained_rows = rows.iter().any(|row| !row.is_constrained);
     rows.iter()
         .map(|row| {
+            if row.collapsed {
+                let track: TrackSizingFunction = style_helpers::length(0.0);
+                return track.into();
+            }
             let min = match row.height {
                 Some(height) => style_helpers::length((height - gutter).max(0.0)),
                 // Table rows retain their cells' intrinsic minimum even when
@@ -1372,10 +1432,15 @@ fn row_tracks(rows: &[TableRow], gutter: f32) -> Vec<taffy::GridTemplateComponen
         .collect()
 }
 
-pub(crate) fn build_table_context(
-    doc: &mut BaseDocument,
-    table_root_node_id: NodeId,
-) -> (TableContext, Vec<NodeId>) {
+/// pyro: what building a table gives: its context, its layout children (cells, out-of-flow boxes
+/// and captions) and the anonymous rows and cells it made (`table_fixup`), which it owns.
+pub(crate) struct BuiltTable {
+    pub(crate) context: TableContext,
+    pub(crate) layout_children: Vec<NodeId>,
+    pub(crate) anonymous: Vec<NodeId>,
+}
+
+pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: NodeId) -> BuiltTable {
     let mut cells: Vec<TableCell> = Vec::new();
     let mut oof_children: Vec<(NodeId, taffy::Position)> = Vec::new();
     let mut rows: Vec<TableRow> = Vec::new();
@@ -1385,9 +1450,20 @@ pub(crate) fn build_table_context(
     let wm = table_wm(doc, table_root_node_id);
     // pyro: the cells of the table built last time, released below if they are no longer.
     let former = former_table_context(doc, table_root_node_id);
-    let root_node = &mut doc.nodes[table_root_node_id];
 
-    let children = std::mem::take(&mut root_node.children);
+    // pyro: the table's children with its pseudo-elements, `display: contents` boxes looked through,
+    // and what is not a proper table child in anonymous rows (CSS 2.1 §17.2.1).
+    let mut anonymous: Vec<NodeId> = Vec::new();
+    let children =
+        super::table_fixup::fixup_children(doc, table_root_node_id, Level::Table, wm.is_vertical(), &mut anonymous)
+            .unwrap_or_else(|| doc.nodes[table_root_node_id].children.to_vec());
+    // (Captions are laid out in horizontal tables only: `lay_out_table_captions`.)
+    let captions: Vec<NodeId> = children
+        .iter()
+        .copied()
+        .filter(|&id| !wm.is_vertical() && super::table_fixup::kind(doc, id) == Kind::Caption)
+        .collect();
+    let root_node = &mut doc.nodes[table_root_node_id];
 
     let Some(stylo_styles) = root_node.primary_styles() else {
         panic!("Ignoring table because it has no styles");
@@ -1431,6 +1507,8 @@ pub(crate) fn build_table_context(
             }
         }
     }
+    // pyro: the columns a `<col>` gives a width (a first-row cell's width gives the others theirs).
+    let col_widths: Vec<bool> = column_sizes.iter().map(|column| !column.max.is_auto()).collect();
     let mut first_cell_border: Option<ServoArc<Border>> = None;
     // Percentage widths set on first-row cells: (column index, percentage, padding + border)
     let mut percent_columns: Vec<(u16, f32, f32)> = Vec::new();
@@ -1448,7 +1526,7 @@ pub(crate) fn build_table_context(
     };
     for order in 0..3 {
         for child_id in children.iter().copied() {
-            if row_group_order(doc, child_id) != order {
+            if row_group_order(doc, child_id) != order || captions.contains(&child_id) {
                 continue;
             }
             collect_table_cells(
@@ -1465,6 +1543,7 @@ pub(crate) fn build_table_context(
                 &mut column_sizes,
                 &mut first_cell_border,
                 &mut percent_columns,
+                &mut anonymous,
             );
         }
     }
@@ -1497,6 +1576,41 @@ pub(crate) fn build_table_context(
     }
     let num_columns = cursor.num_columns.max(column_sizes.len() as u16);
     column_sizes.resize(num_columns as usize, remaining_column);
+    // pyro: the collapsed borders, resolved before the columns get their widths: in the fixed
+    // table layout algorithm a first-row cell's `width` gives its column a border box with half
+    // of the collapsed borders beside it (CSS 2.1 §17.6.2, as Chromium).
+    let first_gap = first_cell_border.as_ref().map_or((0.0, 0.0), |border| {
+        (
+            side_width(border.border_left_width.0, border.border_left_style)
+                .max(side_width(border.border_right_width.0, border.border_right_style)),
+            side_width(border.border_top_width.0, border.border_top_style)
+                .max(side_width(border.border_bottom_width.0, border.border_bottom_style)),
+        )
+    });
+    let mut early_areas = None;
+    let early_edges = (border_collapse == BorderCollapse::Collapse && !wm.is_vertical()).then(|| {
+        let areas = early_areas.insert(cell_areas(&cells, rows.len(), num_columns as usize));
+        resolve_collapsed_edges(doc, table_root_node_id, &cells, areas, &rows, &columns, num_columns as usize)
+    });
+    if is_fixed {
+        if let Some(edges) = early_edges.as_ref().filter(|edges| edges_in_use(edges, first_gap)) {
+            for cell in cells.iter().filter(|cell| cell.row == 0 && cell.colspan == 1) {
+                let column = cell.column as usize;
+                if col_widths.get(column).copied().unwrap_or(false) || column >= column_sizes.len() {
+                    continue;
+                }
+                let track = column_sizes[column].max.into_raw();
+                if track.tag() != taffy::CompactLength::LENGTH_TAG
+                    || cell.style.box_sizing != taffy::BoxSizing::ContentBox
+                    || edges.rows == 0
+                {
+                    continue;
+                }
+                let half = (edges.vertical_at(0, column).width + edges.vertical_at(0, column + 1).width) / 2.0;
+                column_sizes[column] = style_helpers::length(track.value() + half);
+            }
+        }
+    }
     let mut single_cell_columns = vec![0u32; num_columns as usize];
     for cell in cells.iter().filter(|cell| cell.colspan == 1) {
         single_cell_columns[cell.column as usize] += 1;
@@ -1596,6 +1710,32 @@ pub(crate) fn build_table_context(
                 top: style_helpers::length(padding.top + spacing_y),
                 bottom: style_helpers::length(padding.bottom + spacing_y),
             };
+            // pyro: a content-box table's lengths include the spacing around its cells (its content
+            // box is its grid's), laid out here as padding: they are that much less.
+            if style.box_sizing == taffy::BoxSizing::ContentBox {
+                fn less(raw: taffy::CompactLength, by: f32) -> Option<f32> {
+                    (by != 0.0 && raw.tag() == taffy::CompactLength::LENGTH_TAG).then(|| (raw.value() - by).max(0.0))
+                }
+                let (x, y) = (2.0 * spacing_x, 2.0 * spacing_y);
+                if let Some(v) = less(style.size.width.into_raw(), x) {
+                    style.size.width = style_helpers::length(v);
+                }
+                if let Some(v) = less(style.min_size.width.into_raw(), x) {
+                    style.min_size.width = style_helpers::length(v);
+                }
+                if let Some(v) = less(style.max_size.width.into_raw(), x) {
+                    style.max_size.width = style_helpers::length(v);
+                }
+                if let Some(v) = less(style.size.height.into_raw(), y) {
+                    style.size.height = style_helpers::length(v);
+                }
+                if let Some(v) = less(style.min_size.height.into_raw(), y) {
+                    style.min_size.height = style_helpers::length(v);
+                }
+                if let Some(v) = less(style.max_size.height.into_raw(), y) {
+                    style.max_size.height = style_helpers::length(v);
+                }
+            }
             taffy::Size {
                 width: style_helpers::length(spacing_x),
                 height: style_helpers::length(spacing_y),
@@ -1625,16 +1765,16 @@ pub(crate) fn build_table_context(
             top: style.gap.height,
             bottom: style.gap.height,
         };
+        // pyro: a table in the collapsing border model has no padding (CSS 2.1 §17.6.2).
+        style.padding = taffy::Rect::ZERO.map(style_helpers::length);
     }
 
     // pyro: a table whose collapsed borders are not one uniform grid has each cell keep half
     // of the borders around it, and the table half of its outer ones, as Chromium's boxes do.
     let collapse_gap = (style.gap.width.into_raw().value(), style.gap.height.into_raw().value());
     let ncols = style.grid_template_columns.len();
-    let edges = (border_collapse == BorderCollapse::Collapse && !wm.is_vertical()).then(|| {
-        let areas = cell_areas(&cells, rows.len(), ncols);
-        resolve_collapsed_edges(doc, table_root_node_id, &cells, &areas, &rows, ncols)
-    });
+    debug_assert!(early_edges.as_ref().is_none_or(|edges| edges.columns == ncols));
+    let edges = early_edges;
     let (collapsed_edges, spare_edges) = match edges {
         Some(edges) if edges_in_use(&edges, collapse_gap) => (Some(edges), None),
         edges => (None, edges),
@@ -1648,7 +1788,8 @@ pub(crate) fn build_table_context(
         let zero = style_helpers::length(0.0);
         style.gap = taffy::Size { width: zero, height: zero };
         style.border = collapsed_table_border(edges);
-        let areas = cell_areas(&cells, edges.rows, edges.columns);
+        // (The cells' areas the edges were resolved over.)
+        let areas = early_areas.unwrap_or_else(|| cell_areas(&cells, edges.rows, edges.columns));
         for (cell, area) in cells.iter_mut().zip(areas) {
             apply_collapsed_borders(doc, cell, area, edges);
         }
@@ -1656,18 +1797,95 @@ pub(crate) fn build_table_context(
         for cell in cells.iter() {
             doc.nodes[cell.node_id].set_collapsed_border(None);
         }
+        // pyro: laid out as gutters, a uniform collapsed table's outer borders are its own border
+        // whole, where its box (as Chromium's) holds half of each: a content-box table's lengths,
+        // which count the half, are a half border less on each side.
+        if border_collapse == BorderCollapse::Collapse && style.box_sizing == taffy::BoxSizing::ContentBox {
+            fn less(raw: taffy::CompactLength, by: f32) -> Option<f32> {
+                (by != 0.0 && raw.tag() == taffy::CompactLength::LENGTH_TAG).then(|| (raw.value() - by).max(0.0))
+            }
+            let (x, y) = collapse_gap;
+            if let Some(v) = less(style.size.width.into_raw(), x) {
+                style.size.width = style_helpers::length(v);
+            }
+            if let Some(v) = less(style.min_size.width.into_raw(), x) {
+                style.min_size.width = style_helpers::length(v);
+            }
+            if let Some(v) = less(style.max_size.width.into_raw(), x) {
+                style.max_size.width = style_helpers::length(v);
+            }
+            if let Some(v) = less(style.size.height.into_raw(), y) {
+                style.size.height = style_helpers::length(v);
+            }
+            if let Some(v) = less(style.min_size.height.into_raw(), y) {
+                style.min_size.height = style_helpers::length(v);
+            }
+            if let Some(v) = less(style.max_size.height.into_raw(), y) {
+                style.max_size.height = style_helpers::length(v);
+            }
+        }
     }
 
+    // pyro: a fixed table is never narrower than its columns' widths and the spacing between
+    // them (CSS 2.1 §17.5.2.1: the greater of its `width` and that sum).
+    if is_fixed && style.min_size.width.into_raw().tag() != taffy::CompactLength::PERCENT_TAG {
+        let n = style.grid_template_columns.len();
+        let columns: f32 = style
+            .grid_template_columns
+            .iter()
+            .map(|column| match column {
+                taffy::GridTemplateComponent::Single(track)
+                    if track.min.into_raw().tag() == taffy::CompactLength::LENGTH_TAG =>
+                {
+                    track.min.into_raw().value()
+                }
+                _ => 0.0,
+            })
+            .sum();
+        let gap = style.gap.width.resolve_or_zero(None, resolve_calc_value) * n.saturating_sub(1) as f32;
+        let floor = match style.box_sizing {
+            taffy::BoxSizing::ContentBox => columns + gap,
+            taffy::BoxSizing::BorderBox => {
+                let padding = style.padding.resolve_or_zero(None, resolve_calc_value);
+                let border = style.border.resolve_or_zero(None, resolve_calc_value);
+                columns + gap + padding.left + padding.right + border.left + border.right
+            }
+        };
+        let current = match style.min_size.width.into_raw() {
+            raw if raw.tag() == taffy::CompactLength::LENGTH_TAG => raw.value(),
+            _ => 0.0,
+        };
+        if floor > current {
+            style.min_size.width = style_helpers::length(floor);
+        }
+    }
     let placement = place_cells(&cells);
     let layout_children = cells
         .iter()
         .map(|cell| cell.node_id)
         .chain(oof_children.iter().map(|(node_id, _)| *node_id))
+        .chain(captions.iter().copied())
         .collect();
-    let root_node = &mut doc.nodes[table_root_node_id];
-    root_node.children = children;
     crate::resolve::phase_profile::table_built();
-    let incremental = !has_rowspan && oof_children.is_empty() && cells_follow_rows(&rows, &cells, 0);
+    // pyro: a table with anonymous boxes, generated cells or rows (pseudo-elements), captions, or
+    // that is anonymous itself is built again on any change: `update_rows` collects rows from
+    // their DOM children alone.
+    // (Rows and cells reached through `display: contents` boxes are in its box tree, not its DOM
+    // children's: such a table too.)
+    let through_contents = rows.iter().any(|row| {
+        let parent = doc.nodes[row.node_id].parent;
+        parent != Some(table_root_node_id) && parent != row.group
+    }) || cells.iter().any(|cell| {
+        rows.get(cell.row as usize).is_some_and(|row| doc.nodes[cell.node_id].parent != Some(row.node_id))
+    });
+    let generated = doc.nodes[table_root_node_id].is_anonymous()
+        || !anonymous.is_empty()
+        || !captions.is_empty()
+        || through_contents
+        || cells.iter().any(|cell| doc.nodes[cell.node_id].is_anonymous())
+        || rows.iter().any(|row| doc.nodes[row.node_id].is_anonymous());
+    let incremental =
+        !generated && !has_rowspan && oof_children.is_empty() && cells_follow_rows(&rows, &cells, 0);
     let cells_percent = cells.iter().filter(|cell| cell.percent_width).count();
     for (at, cell) in cells.iter().enumerate() {
         doc.nodes[cell.node_id].layout_data_mut().table_cell_index = at as u32;
@@ -1687,36 +1905,36 @@ pub(crate) fn build_table_context(
         }
     }
 
-    (
-        TableContext {
-            style,
-            cells,
-            oof_children,
-            rows,
-            columns,
-            column_percents,
-            computed_grid_info: AtomicRefCell::new(None),
-            border_collapse,
-            border_style: first_cell_border,
-            collapsed_edges,
-            group_borders,
-            spare_edges,
-            collapse_gap,
-            is_fixed,
-            incremental,
-            cursor_columns: cursor.num_columns,
-            single_cell_columns,
-            percent_cells: cells_percent,
-            changed_cells: AtomicRefCell::new(Vec::new()),
-            grid_state: AtomicRefCell::new(None),
-            grid_splice: AtomicRefCell::new(None),
-            widths: AtomicRefCell::new(CellWidths::default()),
-            placed: AtomicRefCell::new(PlacedCells::default()),
-            placement,
-            calc_values,
-        },
-        layout_children,
-    )
+    let context = TableContext {
+        style,
+        cells,
+        oof_children,
+        captions,
+        grid_box: AtomicRefCell::new(None),
+        rows,
+        columns,
+        column_percents,
+        computed_grid_info: AtomicRefCell::new(None),
+        border_collapse,
+        border_style: first_cell_border,
+        collapsed_edges,
+        group_borders,
+        spare_edges,
+        collapse_gap,
+        is_fixed,
+        incremental,
+        cursor_columns: cursor.num_columns,
+        single_cell_columns,
+        percent_cells: cells_percent,
+        changed_cells: AtomicRefCell::new(Vec::new()),
+        grid_state: AtomicRefCell::new(None),
+        grid_splice: AtomicRefCell::new(None),
+        widths: AtomicRefCell::new(CellWidths::default()),
+        placed: AtomicRefCell::new(PlacedCells::default()),
+        placement,
+        calc_values,
+    };
+    BuiltTable { context, layout_children, anonymous }
 }
 
 /// Whether a collapsed table's borders are cells' and the table's own (not one uniform grid of
@@ -1885,14 +2103,22 @@ fn group_changes(
         }
         return at == g1;
     }
+    // pyro: a group's `::before` and `::after` are in anonymous rows (`table_fixup`).
+    if super::table_fixup::has_pseudo_boxes(&doc.nodes[group]) {
+        return false;
+    }
     let mut rows = Vec::new();
     for &child in children.iter() {
         let node = &doc.nodes[child];
         if !node.is_element() {
+            // pyro: text other than white space is an anonymous row's (`table_fixup`).
+            if node.is_text_node() && !node.is_whitespace_node() {
+                return false;
+            }
             continue;
         }
         let Some(display) = node.display_style() else { continue };
-        if display.outside() == DisplayOutside::None {
+        if display.outside() == DisplayOutside::None && display.inside() != DisplayInside::Contents {
             continue;
         }
         if node.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned()) {
@@ -1900,14 +2126,7 @@ fn group_changes(
         }
         match display.inside() {
             DisplayInside::TableRow => rows.push(child),
-            DisplayInside::Flow
-            | DisplayInside::FlowRoot
-            | DisplayInside::Flex
-            | DisplayInside::Grid
-            | DisplayInside::TableColumnGroup
-            | DisplayInside::TableColumn
-            | DisplayInside::Table
-            | DisplayInside::None => {}
+            // pyro: anything else is in an anonymous row (`table_fixup`).
             _ => return false,
         }
     }
@@ -2125,19 +2344,17 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
         let (mut cells, mut oof, mut rows) = (Vec::new(), Vec::new(), Vec::new());
         let (mut columns, mut percent_columns) = (Vec::new(), Vec::new());
         let mut first_cell_border = ctx.border_style.clone();
+        let mut anonymous = Vec::new();
         for &node_id in &change.rows {
             let node = &doc.nodes[node_id];
+            // (pyro: a row made `display: contents` hands its cells to an anonymous row:
+            // `display: contents` has no display outside, and is structural all the same.)
+            // pyro: anything but a row (or no box) is wrapped in anonymous boxes now
+            // (`table_fixup`): the table is built again.
             let structural = node.is_element()
                 && node.display_style().is_some_and(|display| {
-                    display.outside() != DisplayOutside::None
-                        && matches!(
-                            display.inside(),
-                            DisplayInside::TableRowGroup
-                                | DisplayInside::TableHeaderGroup
-                                | DisplayInside::TableFooterGroup
-                                | DisplayInside::Contents
-                                | DisplayInside::TableCell
-                        )
+                    display.inside() != DisplayInside::TableRow
+                        && !(display.outside() == DisplayOutside::None && display.inside() != DisplayInside::Contents)
                 });
             if structural {
                 return None;
@@ -2156,7 +2373,16 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
                 &mut columns,
                 &mut first_cell_border,
                 &mut percent_columns,
+                &mut anonymous,
             );
+        }
+        // pyro: a row that now has anonymous cells (or what else the fixup wraps) is built with
+        // the table again.
+        if !anonymous.is_empty() || cells.iter().any(|cell| doc.nodes[cell.node_id].is_anonymous()) {
+            for id in anonymous {
+                doc.deallocate_anonymous_block(id);
+            }
+            return None;
         }
         if !oof.is_empty()
             || !columns.is_empty()
@@ -2368,10 +2594,10 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
             for cell in &ctx.cells[ca..cb] {
                 let area = cell_area(cell, ncols);
                 if area.0 < area.2 && area.1 < area.3 {
-                    offer_box(edges, doc, cell.node_id, area, 3, &range);
+                    offer_box(edges, doc, cell.node_id, area, CELL_PRIORITY, &range);
                 }
             }
-            offer_rows_groups_and_table(edges, doc, table, &ctx.rows, around, &range);
+            offer_rows_groups_and_table(edges, doc, table, &ctx.rows, &ctx.columns, around, &range);
             touched.push((ca, cb));
         }
         if edges_in_use(edges, ctx.collapse_gap) != ctx.collapsed_edges.is_some() {
@@ -2651,6 +2877,10 @@ fn leave_layout_children(doc: &mut BaseDocument, node_id: NodeId) {
 /// A row group or row is a part of its table, not a box: it has no layout children of its own
 /// (those of a box it was before: a table built in place of a block).
 fn drop_part_box(doc: &mut BaseDocument, node_id: NodeId) {
+    // pyro: nor a container: what it was a layout child of (an anonymous cell it was a block in,
+    // freed since) is no containing block of it.
+    doc.nodes[node_id].layout_parent.set(None);
+    doc.nodes[node_id].oof_containing_block.set(None);
     leave_layout_children(doc, node_id);
     *doc.nodes[node_id].layout_children.borrow_mut() = None;
     *doc.nodes[node_id].paint_children.borrow_mut() = None;
@@ -2674,10 +2904,12 @@ fn collect_table_cells(
     columns: &mut Vec<TrackSizingFunction>,
     first_cell_border: &mut Option<ServoArc<Border>>,
     percent_columns: &mut Vec<(u16, f32, f32)>,
+    anonymous: &mut Vec<NodeId>,
 ) {
     let node = &mut doc.nodes[node_id];
 
-    if !node.is_element() {
+    // (Anonymous rows and cells, and pseudo-elements, are `AnonymousBlock` nodes.)
+    if !node.is_element() && !node.is_anonymous() {
         return;
     }
 
@@ -2709,8 +2941,13 @@ fn collect_table_cells(
         | DisplayInside::Contents => {
             drop_part_box(doc, node_id);
             let first_row = rows.len();
-            let children = std::mem::take(&mut doc.nodes[node_id].children);
-            for child_id in children.iter().copied() {
+            // pyro: what is not a row in anonymous rows (`table_fixup`); else its own children,
+            // put back below.
+            let fixed = super::table_fixup::fixup_children(doc, node_id, Level::RowGroup, wm.is_vertical(), anonymous);
+            doc.nodes[node_id].remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+            let own =
+                if fixed.is_none() { std::mem::take(&mut doc.nodes[node_id].children) } else { Default::default() };
+            for child_id in fixed.as_deref().unwrap_or(&own[..]).iter().copied() {
                 doc.nodes[child_id]
                     .remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                 collect_table_cells(
@@ -2727,9 +2964,12 @@ fn collect_table_cells(
                     columns,
                     first_cell_border,
                     percent_columns,
+                    anonymous,
                 );
             }
-            doc.nodes[node_id].children = children;
+            if fixed.is_none() {
+                doc.nodes[node_id].children = own;
+            }
             if display.inside() != DisplayInside::Contents {
                 for row in &mut rows[first_row..] {
                     row.group.get_or_insert(node_id);
@@ -2744,6 +2984,9 @@ fn collect_table_cells(
             let height = physical_size(node).and_then(|size| {
                 (size.height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| size.height.value())
             });
+            let collapsed = node.primary_styles().is_some_and(|style| {
+                style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
+            });
             rows.push(TableRow {
                 node_id,
                 group: None,
@@ -2751,13 +2994,19 @@ fn collect_table_cells(
                 is_constrained: height.is_some(),
                 cell_count: 0,
                 columns: 0,
+                collapsed,
             });
             drop_part_box(doc, node_id);
             let row_index = rows.len() - 1;
             let first_cell = cells.len();
 
-            let children = std::mem::take(&mut doc.nodes[node_id].children);
-            for child_id in children.iter().copied() {
+            // pyro: what is not a cell in anonymous cells (`table_fixup`); else its own children,
+            // put back below.
+            let fixed = super::table_fixup::fixup_children(doc, node_id, Level::Row, wm.is_vertical(), anonymous);
+            doc.nodes[node_id].remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+            let own =
+                if fixed.is_none() { std::mem::take(&mut doc.nodes[node_id].children) } else { Default::default() };
+            for child_id in fixed.as_deref().unwrap_or(&own[..]).iter().copied() {
                 collect_table_cells(
                     doc,
                     child_id,
@@ -2772,9 +3021,12 @@ fn collect_table_cells(
                     columns,
                     first_cell_border,
                     percent_columns,
+                    anonymous,
                 );
             }
-            doc.nodes[node_id].children = children;
+            if fixed.is_none() {
+                doc.nodes[node_id].children = own;
+            }
             rows[row_index].cell_count = (cells.len() - first_cell) as u32;
             rows[row_index].columns = cursor.col;
         }
@@ -3051,6 +3303,7 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
             output.size.height = output.size.height.max(cell.min_height.unwrap_or(0.0));
             return output;
         }
+
         // Measuring the intrinsic width of a cell with a minimum width (see
         // `TableCell::min_width`): the cell's own `width` would fix the width of its box,
         // so it is ignored to measure the contents.
@@ -3113,6 +3366,11 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
     }
 
     fn take_table_grid_state(&mut self, _node_id: taffy::NodeId) -> Option<taffy::TableGridReuse> {
+        // pyro: a table with captions moves its cells below the captions above it after each
+        // layout of its grid (`lay_out_table_captions`), which a layout that stood would not redo.
+        if !self.ctx.captions.is_empty() {
+            return None;
+        }
         let mut changed = std::mem::take(&mut *self.ctx.changed_cells.borrow_mut());
         let splice = self.ctx.grid_splice.borrow_mut().take();
         let state = self.ctx.grid_state.borrow_mut().take()?;
@@ -3122,6 +3380,9 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
     }
 
     fn store_table_grid_state(&mut self, _node_id: taffy::NodeId, state: Box<taffy::TableGridState>) {
+        if !self.ctx.captions.is_empty() {
+            return;
+        }
         // (A layout that stood as it was, with only the available width changed, laid out nothing.)
         if !state.stood() {
             crate::resolve::phase_profile::table_grid_laid_out(state.laid_out_again());
