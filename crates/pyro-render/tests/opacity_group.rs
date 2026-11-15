@@ -199,3 +199,20 @@ fn an_out_of_flow_box_moved_into_a_stacking_context_paints_in_tree_order() {
         assert_near(pixel(&img, 1.0, 50, 150), [0.0, 255.0, 0.0], &format!("{what}: the later one over the box"));
     }
 }
+
+/// Neighbouring faded inline elements meet inside a pixel column (each one's areas are snapped out
+/// to whole device pixels): the column was painted in both elements' passes, darker than either.
+#[test]
+fn neighbouring_faded_inline_elements_paint_their_shared_pixel_once() {
+    const SPAN: &str = "opacity:.5;background:#00f;padding-left:10.5px";
+    let img = render(
+        &format!(
+            "<div style='font:20px/30px monospace'><span style='{SPAN}'></span><span style='{SPAN}'></span>x</div>"
+        ),
+        1.0,
+    );
+    let faded = over_white([0, 0, 255], 0.5);
+    for x in [5, 10, 15] {
+        assert_near(pixel(&img, 1.0, x, 15), faded, &format!("at x {x}"));
+    }
+}

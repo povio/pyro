@@ -538,6 +538,19 @@ struct RunPaint {
     /// The glyphs `text-overflow` keeps, and their extent.
     kept: std::ops::Range<usize>,
     kept_extent: Option<(f32, f32)>,
+    /// pyro: whether this pass draws it ([`RunFilter`]).
+    drawn: bool,
+}
+
+/// pyro: the glyph runs of an inline root the next `stroke_text` draws, in a pass of
+/// `draw_inline_effects` inside an inline element's areas: those whose glyphs (and text shadows)
+/// can reach one of `areas` (in the layout's space, the text's shifts applied). The others are
+/// clipped away there: each element's pass drew every glyph of the layout.
+#[derive(Clone, Debug)]
+pub(crate) struct RunFilter {
+    /// The inline root whose text the pass draws (other roots draw all their runs).
+    pub root: NodeId,
+    pub areas: Vec<Rect>,
 }
 
 /// pyro: the decorations propagated into a box's content from its ancestors, outermost first.
@@ -576,6 +589,8 @@ pub(crate) struct DrawTextContext {
     /// layout line by line (an ellipsis, vertical text, a text mask).
     spans: Vec<(NodeId, Option<DecorationSpan>)>,
     spans_layout: usize,
+    /// pyro: the glyph runs the next `stroke_text` draws (none: all).
+    pub(crate) run_filter: Option<RunFilter>,
 }
 
 /// pyro: an inline box whose background is clipped to its text (`background-clip: text`): the
@@ -1507,6 +1522,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         inline_mask: _,
         spans,
         spans_layout,
+        run_filter,
     } = context;
     let shift = *text_shift;
     let cut = *cut;
@@ -1521,6 +1537,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
     let line_tops = line_tops.filter(|_| vertical.is_none());
     // pyro: the text of relatively positioned inline boxes is painted moved.
     let relative = vertical.is_none() && doc.inline_root_has_relative_spans(inline_root_id);
+    let run_filter = run_filter.as_ref().filter(|filter| filter.root == inline_root_id);
     // pyro: the decorations of the root's ancestors that propagate into it.
     let outer = propagated_decorations(doc, inline_root_id, propagated, path_scratch);
     let root_font_size = doc
@@ -1626,6 +1643,48 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 Some(cut) => cut.kept(&glyph_run),
                 None => (0..usize::MAX, Some((glyph_run.offset(), glyph_run.offset() + glyph_run.advance()))),
             };
+            // pyro: whether this pass draws the run, and which of its glyphs (see `RunFilter`): its
+            // ink as its text shadows estimate it (an em around its advance and its content area,
+            // and how far its shadows move and blur it), against the pass's areas. A screenshot
+            // draws the glyphs within that reach of an area only (a run is often a line's text up
+            // to the element); a recording paint keeps whole runs (the PDF maps them to text).
+            let (kept, drawn) = match run_filter {
+                None => (kept, true),
+                Some(filter) => {
+                    let em = f64::from(font_size);
+                    let baseline =
+                        f64::from(glyph_run.baseline()) + line_tops.map_or(0.0, |tops| tops.shift(line.metrics()));
+                    let reach = shadows
+                        .iter()
+                        .map(|shadow| (shadow.x.abs().max(shadow.y.abs()) + 1.5 * shadow.blur) * scale + 1.0)
+                        .fold(0.0, f64::max);
+                    let x0 = f64::from(glyph_run.offset()) + shift;
+                    let ink = Rect::new(
+                        x0 - em,
+                        baseline - f64::from(metrics.ascent) - em,
+                        x0 + f64::from(glyph_run.advance()) + em,
+                        baseline + f64::from(metrics.descent) + em,
+                    )
+                    .inflate(reach, reach);
+                    let near: SmallVec<[Rect; 4]> = filter.areas.iter().copied().filter(|area| ink.overlaps(*area)).collect();
+                    if near.is_empty() || runs.is_some() {
+                        (kept, !near.is_empty())
+                    } else {
+                        let margin = em + reach;
+                        let (mut first, mut last) = (usize::MAX, 0);
+                        for (index, glyph) in glyph_run.positioned_glyphs().enumerate() {
+                            let x = f64::from(glyph.x) + shift;
+                            if near.iter().any(|area| x + margin > area.x0 && x - margin < area.x1) {
+                                first = first.min(index);
+                                last = index + 1;
+                            }
+                        }
+                        let kept = kept.start.max(first)..kept.end.min(last);
+                        let drawn = !kept.is_empty();
+                        (kept, drawn)
+                    }
+                }
+            };
             let first_shadow = run_shadows.len();
             run_shadows.extend_from_slice(shadows);
             run_paints.push(RunPaint {
@@ -1633,6 +1692,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 shadows: first_shadow..run_shadows.len(),
                 kept,
                 kept_extent,
+                drawn,
             });
 
             // Accumulate this run's contribution to each decorating box on its ancestor
@@ -1697,6 +1757,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     acc.own = Some(geometry.clone());
                 }
             }
+        }
+        // pyro: a pass of `draw_inline_effects` that draws none of the line's runs leaves out the
+        // line, unless it has decorations (which may cross the pass's areas between runs).
+        if run_filter.is_some() && deco_boxes.is_empty() && !run_paints.iter().any(|paint| paint.drawn) {
+            continue;
         }
 
         // pyro: `text-decoration-inset`, at the ends of each box's decoration line.
@@ -1868,7 +1933,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let layers = run_paints.iter().map(|paint| paint.shadows.len()).max().unwrap_or(0);
             for layer in (0..layers).rev() {
                 flush(scene, DecorationPhase::Shadow(layer));
-                for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()) {
+                for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()).filter(|(_, paint)| paint.drawn) {
                     if let Some(shadow) = run_shadows[paint.shadows.clone()].get(layer) {
                         draw_run(scene, glyph_run, paint, Some(shadow), runs);
                     }
@@ -1878,7 +1943,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         if !deco_boxes.is_empty() {
             flush(scene, DecorationPhase::UnderOver);
         }
-        for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()) {
+        for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()).filter(|(_, paint)| paint.drawn) {
             if !layered {
                 for shadow in run_shadows[paint.shadows.clone()].iter().rev() {
                     draw_run(scene, glyph_run, paint, Some(shadow), runs);

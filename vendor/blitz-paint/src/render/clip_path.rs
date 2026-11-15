@@ -1042,6 +1042,12 @@ impl ElementCx<'_, '_> {
         }
         let dom = self.context.dom;
         let root = self.node.id;
+        // pyro: a recording paint (the PDF's text) leaves out inline opacity and backdrop
+        // filters: each pass would draw (and record) the layout's glyph runs again, and the PDF
+        // writes every glyph run drawn, so the text would be written once per pass (and the
+        // element's text after the rest, out of reading order). Their text is written unfaded,
+        // once, in order.
+        let recording = self.context.draw_text_context.borrow().runs.is_some();
         let has_effect = |id: blitz_dom::NodeId| {
             dom.get_node(id)
                 .filter(|node| node.element_data().is_some())
@@ -1054,7 +1060,8 @@ impl ElementCx<'_, '_> {
                             .0
                             .iter()
                             .any(|image| !matches!(image, GenericImage::None))
-                        || ((style.get_effects().opacity < 1.0 || !style.get_effects().backdrop_filter.0.is_empty())
+                        || (!recording
+                            && (style.get_effects().opacity < 1.0 || !style.get_effects().backdrop_filter.0.is_empty())
                             && paints_alone(dom, root, id))
                 })
         };
@@ -1238,6 +1245,34 @@ impl ElementCx<'_, '_> {
             }
         }
 
+        // pyro: each element's areas without those of the elements before it: where neighbours'
+        // areas met in a pixel column (each snapped out to whole device pixels), both elements'
+        // passes painted it.
+        let mut taken: Vec<Rect> = Vec::new();
+        let pieces: Vec<Vec<Vec<Rect>>> = fragments
+            .iter()
+            .map(|fragments| {
+                let own = fragments.iter().map(|fragment| subtract(fragment.area, &taken)).collect();
+                taken.extend(fragments.iter().map(|fragment| fragment.area));
+                own
+            })
+            .collect();
+        let path_of = |rects: &mut dyn Iterator<Item = &Rect>| {
+            let mut path = BezPath::new();
+            for rect in rects {
+                path.extend(rect.to_path(0.1));
+            }
+            path
+        };
+
+        // pyro: each element's pass draws the glyph runs that can reach its areas only
+        // (`RunFilter`): drawing every run of the layout clipped to the areas made a paragraph's
+        // cost grow with its faded spans times its length.
+        let text = &self.context.draw_text_context;
+        let set_filter = |areas: Option<Vec<Rect>>| {
+            text.borrow_mut().run_filter = areas.map(|areas| crate::text::RunFilter { root, areas });
+        };
+
         INLINE_EFFECTS.set(true);
         // The layout without the elements' areas.
         // pyro: cut into pieces that do not overlap, inside the visible area: where two areas
@@ -1247,7 +1282,9 @@ impl ElementCx<'_, '_> {
         // visible area: a clip layer the size of the frame cost a 4K frame of a paragraph with a
         // faded span 8% more instructions.
         let mut layout = anyrender::Scene::new();
+        let recorded = text.borrow().runs.as_ref().map(Vec::len);
         self.draw_inline_layout(&mut layout, pos);
+        let mut appended = false;
         if let Some(ink) = crate::bounds::scene_bounds(&layout.commands)
             && transform.determinant().abs() > 1e-12
         {
@@ -1260,11 +1297,17 @@ impl ElementCx<'_, '_> {
                 scene.push_clip_layer(Fill::EvenOdd, transform, &outside);
                 scene.append_scene(layout, Affine::IDENTITY);
                 scene.pop_layer();
+                appended = true;
             }
+        }
+        // pyro: a pass left out records no runs: the PDF matches each glyph run drawn to the next
+        // run recorded.
+        if !appended && let (Some(len), Some(runs)) = (recorded, text.borrow_mut().runs.as_mut()) {
+            runs.truncate(len);
         }
 
         // Each element's area, under its clip path and mask.
-        for (&effect, fragments) in effects.iter().zip(&fragments) {
+        for ((&effect, fragments), pieces) in effects.iter().zip(&fragments).zip(&pieces) {
             let (Some(node), Some(first)) = (dom.get_node(effect), fragments.first()) else {
                 continue;
             };
@@ -1342,11 +1385,8 @@ impl ElementCx<'_, '_> {
             // pyro: its opacity, over all of its fragments as one group (CSS Color 4 §3.2, WPT
             // `t32-opacity-offscreen-multiple-boxes-*`), when nothing else paints in its areas.
             let faded = opacity < 1.0 && alone;
+            let areas = path_of(&mut pieces.iter().flatten());
             if faded {
-                let mut areas = BezPath::new();
-                for fragment in fragments {
-                    areas.extend(fragment.area.to_path(0.1));
-                }
                 scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, None, None);
             }
             let box_layout = |rect: Rect, (border, padding): (taffy::Rect<f32>, taffy::Rect<f32>)| taffy::Layout {
@@ -1375,13 +1415,14 @@ impl ElementCx<'_, '_> {
                     scene.pop_layer();
                 }
                 if !has_mask {
-                    let mut areas = BezPath::new();
-                    for fragment in fragments {
-                        areas.extend(fragment.area.to_path(0.1));
+                    if pieces.iter().all(Vec::is_empty) {
+                        return;
                     }
+                    set_filter(Some(pieces.iter().flatten().copied().collect()));
                     scene.push_clip_layer(Fill::NonZero, transform, &areas);
                     self.draw_inline_layout(scene, pos);
                     scene.pop_layer();
+                    set_filter(None);
                     return;
                 }
                 // The mask, fragment by fragment, over all fragments side by side.
@@ -1391,17 +1432,22 @@ impl ElementCx<'_, '_> {
                     .map(|fragment| fragment.border_box.height())
                     .fold(0.0, f64::max);
                 let mut offset = 0.0;
-                for fragment in fragments {
+                for (fragment, pieces) in fragments.iter().zip(pieces) {
                     let strip = Rect::new(0.0, 0.0, width, height);
                     let strip_transform =
                         transform * Affine::translate((fragment.border_box.x0 - offset, fragment.border_box.y0));
+                    offset += fragment.border_box.width();
+                    if pieces.is_empty() {
+                        continue;
+                    }
                     let mask_cx = self.context.element_cx(node, box_layout(strip, strip_edges), strip_transform, None);
-                    scene.push_clip_layer(Fill::NonZero, transform, &fragment.area);
+                    set_filter(Some(pieces.clone()));
+                    scene.push_clip_layer(Fill::NonZero, transform, &path_of(&mut pieces.iter()));
                     let pushed = mask_cx.maybe_push_css_mask_layer(scene);
                     self.draw_inline_layout(scene, pos);
                     mask_cx.maybe_pop_css_mask_layer(scene, pushed);
                     scene.pop_layer();
-                    offset += fragment.border_box.width();
+                    set_filter(None);
                 }
             });
             if faded {
@@ -1417,30 +1463,37 @@ impl ElementCx<'_, '_> {
 fn disjoint_rects(rects: impl Iterator<Item = Rect>) -> Vec<Rect> {
     let mut out: Vec<Rect> = Vec::new();
     for rect in rects {
-        let mut pieces = vec![rect];
-        for &taken in &out {
-            pieces = pieces
-                .into_iter()
-                .flat_map(|piece| {
-                    let cut = piece.intersect(taken);
-                    if !(cut.width() > 0.0 && cut.height() > 0.0) {
-                        return vec![piece];
-                    }
-                    [
-                        Rect::new(piece.x0, piece.y0, piece.x1, cut.y0),
-                        Rect::new(piece.x0, cut.y1, piece.x1, piece.y1),
-                        Rect::new(piece.x0, cut.y0, cut.x0, cut.y1),
-                        Rect::new(cut.x1, cut.y0, piece.x1, cut.y1),
-                    ]
-                    .into_iter()
-                    .filter(|r| r.width() > 0.0 && r.height() > 0.0)
-                    .collect()
-                })
-                .collect();
-        }
-        out.extend(pieces.into_iter().filter(|r| r.width() > 0.0 && r.height() > 0.0));
+        let pieces = subtract(rect, &out);
+        out.extend(pieces);
     }
     out
+}
+
+/// pyro: rectangles covering what `rect` covers outside `taken`, no two of which overlap (empty
+/// ones left out).
+fn subtract(rect: Rect, taken: &[Rect]) -> Vec<Rect> {
+    let mut pieces: Vec<Rect> = if rect.width() > 0.0 && rect.height() > 0.0 { vec![rect] } else { Vec::new() };
+    for &taken in taken {
+        pieces = pieces
+            .into_iter()
+            .flat_map(|piece| {
+                let cut = piece.intersect(taken);
+                if !(cut.width() > 0.0 && cut.height() > 0.0) {
+                    return vec![piece];
+                }
+                [
+                    Rect::new(piece.x0, piece.y0, piece.x1, cut.y0),
+                    Rect::new(piece.x0, cut.y1, piece.x1, piece.y1),
+                    Rect::new(piece.x0, cut.y0, cut.x0, cut.y1),
+                    Rect::new(cut.x1, cut.y0, piece.x1, cut.y1),
+                ]
+                .into_iter()
+                .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+                .collect()
+            })
+            .collect();
+    }
+    pieces
 }
 
 /// pyro: whether the inline element `id` of the inline root `root` can be faded (or painted over

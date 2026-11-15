@@ -466,8 +466,9 @@ from the root of an upstream checkout at that commit) is the whole diff.
   filter brings into it (its descendants are culled against the clip grown back by the reach). WPT
   `filters-drop-shadow-003`, `drop-shadow-clipped-001`; covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
 - `src/render/background.rs` (`draw_background_layers`): `background-blend-mode`. Each image layer is drawn in a
-  layer of its blend mode, and an element with one that is not `normal` paints its background in an isolated group
-  (not blending with what lies behind it). Covered by `crates/pyro-render/tests/mix_blend_mode.rs`.
+  layer of its blend mode, and an element with one that is not `normal` (among the modes of its image layers)
+  paints its background in an isolated group (not blending with what lies behind it), pushed through the layer
+  manager. Covered by `crates/pyro-render/tests/mix_blend_mode.rs`.
 - `src/render/clip_path.rs` (`draw_inline_effects`, `paints_alone`, `disjoint_rects`): inline elements (not
   atomic) with `opacity` or `backdrop-filter` join those with a clip path or a mask: the layout is painted in their
   areas in a group of their opacity (all fragments as one group), over their backdrop filtered in their fragments'
@@ -477,7 +478,20 @@ from the root of an upstream checkout at that commit) is the whole diff.
   overlap (overlapping areas, lines closer than their text is tall, were painted twice), inside the layout's ink
   (recorded first, `bounds::scene_bounds`) rather than the whole visible area (a frame-sized clip layer). WPT
   `t32-opacity-offscreen-multiple-boxes-1-c`/`2-c`, `backdrop-filter-inline-positioning`; covered by
-  `crates/pyro-render/tests/opacity_group.rs` and `backdrop_filter.rs`.
+  `crates/pyro-render/tests/opacity_group.rs` and `backdrop_filter.rs`. Each element's areas leave out those of
+  the elements before it (neighbours' areas met in a pixel column, painted in both passes). A recording paint (the
+  PDF's text, `paint_scene_recording_text`) leaves inline opacity and backdrop filters out: each pass draws and
+  records glyph runs, and the PDF writes every run drawn, so the text was written once per pass (its text stays
+  unfaded, once, in reading order; `pdf_fidelity.rs`). A pass outside the areas that is left out (out of view)
+  drops the runs it recorded. Inline clip paths and masks still go through the passes in PDFs, as before. Not
+  faded: atomic inline descendants (inline-blocks, images, inline SVG, painted by `draw_children`), floats, the
+  ink of a faded element's glyphs or text shadows beyond its areas (the outside pass paints it unfaded).
+- `src/text.rs` (`RunFilter`, `stroke_text`), `src/render.rs` (`stroke_inline_text`): in an element's pass
+  `draw_inline_effects` draws only the glyph runs whose ink (an em around the run, its text shadows) can reach the
+  element's areas, in screenshots only their glyphs within that reach, and only the lines with such a run or a
+  decoration: each pass drew every glyph of the layout, so a paragraph cost its length times its faded spans (a
+  4K frame of a paragraph with 30 faded spans: 4.19 G instructions, now 0.61 G; 0.49 G unfaded). A recording paint
+  keeps whole runs (the PDF maps runs to their text). The `text-overflow` ellipsis is not filtered.
 - Backgrounds and box edges, wave 3 of the WPT paint reftests (lane F2); covered by
   `crates/pyro-render/tests/background_images_and_edges.rs`:
   - `src/render/background.rs` (`round_layer_size`): the round step of `background-repeat` scales an axis to a

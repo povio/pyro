@@ -1591,6 +1591,9 @@ fn stroke_inline_text(
         context.cut = None;
         // The ellipsis on the line's baseline, next to the last atom kept.
         if let Some((_, x)) = truncation {
+            // pyro: in every pass of `draw_inline_effects` (its runs are not where
+            // the layout's are, which `RunFilter` looks at).
+            let filter = context.run_filter.take();
             let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
             let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
             let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
@@ -1608,6 +1611,7 @@ fn stroke_inline_text(
                 None,
             );
             context.line_tops = tops;
+            context.run_filter = filter;
         }
     }
 }

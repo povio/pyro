@@ -231,11 +231,21 @@ impl ElementCx<'_, '_> {
 
         // pyro: `background-blend-mode`: each layer blends with the layers and the colour under it,
         // in an isolated group (Compositing 1 §8.1: not with what lies behind the element).
-        let blends = bg_styles.background_blend_mode.0.iter().any(|&blend| blend != style::values::computed::effects::Blend::Normal);
-        if blends {
-            let group = canvas.unwrap_or(self.frame.border_box);
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0 - f32::EPSILON, self.transform, &group, None, None);
-        }
+        // Modes past the image layers are not used.
+        let blends = (0..layer_count).any(|idx| {
+            *get_cyclic(&bg_styles.background_blend_mode.0, idx) != style::values::computed::effects::Blend::Normal
+        });
+        let group = canvas.unwrap_or(self.frame.border_box);
+        let blend_group = self.context.layer_manager.maybe_push_layer(
+            scene,
+            blends,
+            BlendMode::default(),
+            ALMOST_OPAQUE,
+            self.transform,
+            &group,
+            None,
+            None,
+        );
 
         // Draw background color (if any)
         let mut text_run = last_clip == StyloBackgroundClip::Text && canvas.is_none();
@@ -320,9 +330,7 @@ impl ElementCx<'_, '_> {
         if text_run {
             self.end_text_clip_group(scene);
         }
-        if blends {
-            scene.pop_layer();
-        }
+        self.context.layer_manager.maybe_pop_layer(scene, blend_group);
     }
 
     /// pyro: the border box that `background-clip: border-box` layers are cut to under a rounded
