@@ -420,6 +420,14 @@ way its block axis runs; paint turns the lines, and these read them physically:
 - `src/layout/writing_mode.rs`: `physical_unrounded_layout` for callers outside this crate (`unrounded_layout` is in
   the writing mode of the box that placed the node); `physical_unrounded_geometry` is public for paint.
 
+`sideways-lr` lines run bottom to top from the content box's bottom, their line-over side on the left (paint turns
+them counterclockwise): `inline_fragment_boxes` and the lines' overflow (`line_bounds`, a scroll container's end
+padding the top one) mirror the inline axis there, and an emphasis mark's `right` is under the line. Inline layout
+itself still runs top to bottom in `sideways-lr`: atomic inlines (their own boxes), the static positions of
+out-of-flow boxes and floats are placed top to bottom, so a line beside a float, which takes its slot from the top,
+is painted from the bottom where the float is (a known gap for inline layout: mirror the slots and boxes when
+`line_left_is_bottom`).
+
 `Node::text_offset_at_point` (hit testing) still takes logical coordinates.
 
 ## `@page` rules of linked sheets

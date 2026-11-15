@@ -2008,7 +2008,7 @@ impl ElementCx<'_, '_> {
     /// Each line is drawn rotated a quarter turn clockwise (`vertical-*`'s sideways glyphs have their
     /// tops to the right), which takes y to -x. In `vertical-rl` that also runs the lines the right
     /// way. In `vertical-lr` they run the other way, so a line's slot is found first and the line is
-    /// rotated within it.
+    /// rotated within it. (pyro: `sideways-lr` turns them counterclockwise.)
     fn draw_vertical_inline_layout(
         &self,
         scene: &mut impl PaintScene,
@@ -2026,8 +2026,17 @@ impl ElementCx<'_, '_> {
         let origin = if block_lr { pos.x + block_offset } else { pos.x + content_width - block_offset };
         // Boxes are painted at whole pixels. Chromium rounds text only in the block axis, so a
         // line starts where it was laid out in the inline axis.
-        let inline_start = self.context.dom.physical_unrounded_geometry(self.node.id).0.y as f64;
+        let (position, unrounded) = self.context.dom.physical_unrounded_geometry(self.node.id);
+        let inline_start = position.y as f64;
         let top = pos.y + inline_start - inline_start.round();
+        // pyro: `sideways-lr` turns its lines the other way, a quarter counterclockwise: they
+        // run bottom to top, from the content box's bottom, with their line-over side on the left.
+        if self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
+            let inset = unrounded.border + unrounded.padding;
+            let bottom = top + (unrounded.size.height - inset.top - inset.bottom) as f64;
+            let transform = self.transform * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, bottom * self.scale]);
+            return self.draw_turned_lines(scene, text_layout, |_| transform);
+        }
         let line_transform = |index: usize| {
             let flip = if block_lr {
                 text_layout.layout.get(index).map_or(0.0, |line| {
@@ -2040,7 +2049,17 @@ impl ElementCx<'_, '_> {
             self.transform
                 * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
         };
+        self.draw_turned_lines(scene, text_layout, line_transform);
+    }
 
+    /// pyro: paints the lines of a vertical writing mode's inline layout, each with its
+    /// transform from layout space (see [`Self::draw_vertical_inline_layout`]).
+    fn draw_turned_lines(
+        &self,
+        scene: &mut impl PaintScene,
+        text_layout: &blitz_dom::node::TextLayout,
+        line_transform: impl Fn(usize) -> Affine,
+    ) {
         let wm = self.style.writing_mode;
         let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
         let all_upright = wm.contains(WritingMode::UPRIGHT);
@@ -2065,7 +2084,7 @@ impl ElementCx<'_, '_> {
             crate::text::draw_text_selection(
                 scene,
                 &text_layout.layout,
-                line_transform,
+                &line_transform,
                 sel_start,
                 sel_end,
             );

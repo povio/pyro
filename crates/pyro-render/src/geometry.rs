@@ -781,6 +781,11 @@ pub(crate) fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::
     let block_offset = text.block_offset as f64;
     match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
         None => Affine::translate((left, top + block_offset)),
+        // `sideways-lr`: a quarter counterclockwise, up from the content box's bottom.
+        Some(true) if sideways_lr(doc, id) => {
+            let bottom = (l.size.height - l.border.bottom - l.padding.bottom) as f64;
+            Affine::new([0.0, -1.0, 1.0, 0.0, left + block_offset, bottom])
+        }
         Some(true) => Affine::new([0.0, 1.0, -1.0, 0.0, left + block_offset, top]),
         Some(false) => {
             let right = (l.size.width - l.border.right - l.padding.right) as f64;
@@ -792,9 +797,19 @@ pub(crate) fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::
 /// What moves a line (CSS px) to its slot in [`line_box_origin`]'s coordinates.
 pub(crate) fn line_slot(doc: &BaseDocument, id: NodeId, metrics: &parley::layout::LineMetrics, scale: f64) -> Affine {
     match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
-        Some(true) => Affine::translate((0.0, -((metrics.block_min_coord + metrics.block_max_coord) as f64) / scale)),
+        Some(true) if !sideways_lr(doc, id) => {
+            Affine::translate((0.0, -((metrics.block_min_coord + metrics.block_max_coord) as f64) / scale))
+        }
         _ => Affine::IDENTITY,
     }
+}
+
+/// Whether `id`'s lines are `sideways-lr`'s: turned counterclockwise, their line-over side on the left
+/// (blitz-paint's `draw_vertical_inline_layout`).
+fn sideways_lr(doc: &BaseDocument, id: NodeId) -> bool {
+    doc.get_node(id)
+        .and_then(|n| n.primary_styles())
+        .is_some_and(|s| s.writing_mode.contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR))
 }
 
 /// `r`'s corners through `t`, clockwise from the top-left one.

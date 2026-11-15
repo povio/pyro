@@ -54,4 +54,5 @@ mod text_shadow;
 mod text_transform_language;
 mod text_overflow_ellipsis;
 mod transform_3d;
+mod vertical_text_decorations;
 mod vertical_writing_mode;
