@@ -216,9 +216,8 @@ Upstream's float and block-formatting-context fixes since v0.15.1 (#1384, #1385,
 - `compute/block.rs` (`perform_final_layout_on_in_flow_children`): a box that avoids floats (a table, a new
   formatting context, a block-level replaced element) goes to the first band where its border box fits. Its
   narrowest border box in a band is what it needs: a table, a replaced element or a box of an intrinsic width is
-  measured in the band (`measure_child_size` with the band's stretch width, the inputs its layout gets, so the layout
-  that follows is cached), any other auto width shrinks to the band, down to its padding and border, its `min-width`
-  and what its negative margins prop it up to. A box laid out in a band that is taller than the band stays as wide is
+  laid out in the band (the inputs its layout gets if the band stands, so that layout is cached), any other auto width
+  shrinks to the band, down to its padding and border, its `min-width` and what its negative margins prop it up to. A box laid out in a band that is taller than the band stays as wide is
   placed again beside the floats of its whole height (`find_bfc_slot` with that height, at most 8 times): upstream
   checked only the styled height, so a box beside a short float overlapped the wider float below it (WPT
   `floats-wrap-bfc-004`, `floats-bfc-003`, `table-among-floats-001`, `floats-wrap-bfc-with-margin-003`).
