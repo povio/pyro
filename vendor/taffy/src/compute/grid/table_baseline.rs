@@ -5,7 +5,8 @@
 //! are baseline-aligned (`table_cell_is_baseline_aligned`; only cells spanning one row). Before its
 //! rows are sized, each such cell of a row with two or more of them is laid out at the width of its
 //! columns: its baseline is its first line box's (its content's first baseline), else, when it has
-//! content, the bottom of its content box; a cell with neither takes no part. The row's baseline is
+//! content, the bottom of its content box; a cell with neither takes no part (the tree works it out:
+//! `table_cell_baseline`). The row's baseline is
 //! the lowest of its cells', and each cell's `baseline_shim` is the row's baseline less its own: its
 //! contribution to the row's height includes the shim as it includes a margin. The cell is then
 //! positioned as any other cell, filling its row, and its content moves down by the shim inside it
@@ -14,9 +15,8 @@
 use super::types::{GridItem, GridTrack};
 use crate::geometry::{AbstractAxis, Line, Size};
 use crate::style::AvailableSpace;
-use crate::tree::{LayoutPartialTreeExt, NodeId, SizingMode};
-use crate::util::ResolveOrZero;
-use crate::LayoutGridContainer;
+use crate::tree::{LayoutInput, LayoutPartialTreeExt, NodeId, RunMode, SizingMode};
+use crate::{LayoutGridContainer, RequestedAxis};
 
 /// Marks the table's baseline-aligned cells (`GridItem::table_baseline`). Whether any is.
 pub(super) fn mark_table_baseline_cells(tree: &impl LayoutGridContainer, node: NodeId, items: &mut [GridItem]) -> bool {
@@ -75,7 +75,7 @@ pub(super) fn resolve_table_cell_baselines<Tree: LayoutGridContainer>(
 }
 
 /// A cell's baseline from the top of its border box, laid out at the width of its columns, or `None` for a
-/// cell without content.
+/// cell without content (`LayoutGridContainer::table_cell_baseline`).
 fn cell_baseline<Tree: LayoutGridContainer>(
     tree: &mut Tree,
     node: NodeId,
@@ -95,25 +95,18 @@ fn cell_baseline<Tree: LayoutGridContainer>(
     );
     let known = item.known_dimensions_in(tree, area);
     let width = known.width.or(area.width);
-    let output = tree.perform_child_layout(
-        item.node,
-        Size { width, height: known.height },
-        area,
-        Size {
+    let inputs = LayoutInput {
+        known_dimensions: Size { width, height: known.height },
+        known_dimensions_are_definite: Size { width: true, height: true },
+        parent_size: area,
+        available_space: Size {
             width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
             height: AvailableSpace::MaxContent,
         },
-        SizingMode::InherentSize,
-        Line::FALSE,
-    );
-    // (A layout run since the cell's last final layout has its content that much lower.)
-    let offset = tree.table_cell_baseline_offset(node, item.node);
-    if let Some(baseline) = output.baselines.first {
-        return Some(baseline - offset);
-    }
-    let padding = item.padding.resolve_or_zero(area.width, |val, basis| tree.calc(val, basis));
-    let border = item.border.resolve_or_zero(area.width, |val, basis| tree.calc(val, basis));
-    let height = output.size.height;
-    let content = height - padding.top - padding.bottom - border.top - border.bottom;
-    (content > 0.0).then(|| height - padding.bottom - border.bottom)
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        run_mode: RunMode::PerformLayout,
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    tree.table_cell_baseline(node, item.node, inputs)
 }

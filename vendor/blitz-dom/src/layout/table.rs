@@ -2901,23 +2901,6 @@ fn is_baseline_aligned(style: &style::properties::ComputedValues) -> bool {
         && stylo_taffy::convert::table_cell_vertical_align(style).is_none()
 }
 
-/// pyro: whether a table cell has content that may give it a baseline: a child other than white
-/// space and comments, or a `::before` or `::after` box. An empty cell takes no part in its row's
-/// baseline alignment (as in Chromium).
-fn cell_has_content(node: &crate::Node, nodes: &crate::NodeTree) -> bool {
-    super::table_fixup::has_pseudo_boxes(node)
-        || node.children.iter().any(|&id| {
-            let child = &nodes[id];
-            match child.data.kind() {
-                crate::node::NodeKind::Comment => false,
-                crate::node::NodeKind::Text => !child.is_whitespace_node(),
-                _ => !child.display_style().is_some_and(|display| {
-                    display.outside() == DisplayOutside::None && display.inside() == DisplayInside::None
-                }),
-            }
-        })
-}
-
 /// pyro: sets how far down a table cell's content is laid out in its box (`shift_cell_content`). A
 /// change clears the cell's layout cache: the next layout of the cell lays its content out again.
 fn set_cell_baseline_offset(node: &mut crate::Node, offset: f32) {
@@ -3158,7 +3141,6 @@ fn collect_table_cells(
             if node.layout_child_of.get().is_none() {
                 enter_layout_tree(doc, node_id);
             }
-            let has_content = cell_has_content(&doc.nodes[node_id], &doc.nodes);
             let node = &mut doc.nodes[node_id];
             let stylo_style = &node.primary_styles().unwrap();
             let percent_width = stylo_taffy::convert::dimension(stylo_style.get_width()).tag() == taffy::CompactLength::PERCENT_TAG;
@@ -3173,7 +3155,7 @@ fn collect_table_cells(
                 .unwrap_or(1);
             let mut style = table_taffy_style(node, wm);
             let col = cursor.next_free();
-            let baseline = !wm.is_vertical() && rowspan == 1 && has_content && is_baseline_aligned(stylo_style);
+            let baseline = !wm.is_vertical() && rowspan == 1 && is_baseline_aligned(stylo_style);
 
             // In the collapsed borders model the borders are laid out as gutters between
             // the cells (see the table's `gap`) rather than as part of the cells
@@ -3501,9 +3483,12 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
     fn take_table_grid_state(&mut self, _node_id: taffy::NodeId) -> Option<taffy::TableGridReuse> {
         // pyro: a table with captions moves its cells below the captions above it after each
         // layout of its grid (`lay_out_table_captions`), which a layout that stood would not redo.
-        // (Nor is a table with baseline-aligned cells laid out again in part: a layout from before
-        // it had them is dropped.)
-        if self.ctx.baseline_cells {
+        // (A table with cells aligned on their rows' baselines is laid out again whole once one of
+        // its cells or rows changed, which may move the others' baselines: its last layout serves
+        // only while nothing changed, when it stands.)
+        if self.ctx.baseline_cells
+            && (!self.ctx.changed_cells.borrow().is_empty() || self.ctx.grid_splice.borrow().is_some())
+        {
             *self.ctx.grid_state.borrow_mut() = None;
             *self.ctx.grid_splice.borrow_mut() = None;
             self.ctx.changed_cells.borrow_mut().clear();
@@ -3521,8 +3506,7 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
     }
 
     fn store_table_grid_state(&mut self, _node_id: taffy::NodeId, state: Box<taffy::TableGridState>) {
-        // pyro: nor with cells aligned on their rows' baselines, whose rows depend on one another's.
-        if !self.ctx.captions.is_empty() || self.ctx.baseline_cells {
+        if !self.ctx.captions.is_empty() {
             return;
         }
         // (A layout that stood as it was, with only the available width changed, laid out nothing.)
@@ -3549,13 +3533,35 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
         set_cell_baseline_offset(&mut self.doc.nodes[cell], offset);
     }
 
-    fn table_cell_baseline_offset(&self, _node_id: taffy::NodeId, child_node_id: taffy::NodeId) -> f32 {
-        let node = &self.doc.nodes[self.ctx.cells[usize::from(child_node_id)].node_id];
-        if node.flags.contains(NodeFlags::HAS_TABLE_BASELINE_OFFSET) {
+    fn table_cell_baseline(
+        &mut self,
+        _node_id: taffy::NodeId,
+        child_node_id: taffy::NodeId,
+        inputs: taffy::LayoutInput,
+    ) -> Option<f32> {
+        // (Its own layout, without the minimum height its `height` gives it in its row: an empty
+        // cell has no content however tall it is.)
+        let cell = self.ctx.cells[usize::from(child_node_id)].node_id;
+        let output = self.doc.compute_child_layout(crate::taffy_node_id(cell), inputs);
+        let node = &self.doc.nodes[cell];
+        // A layout run since the cell's last final layout has its content that much lower.
+        let offset = if node.flags.contains(NodeFlags::HAS_TABLE_BASELINE_OFFSET) {
             node.layout_data().table_baseline_offset
         } else {
             0.0
+        };
+        if let Some(baseline) = output.baselines.first {
+            return Some(baseline - offset);
         }
+        // No line box: the bottom of its content box, when it has content.
+        use taffy::CoreStyle as _;
+        let style = node.layout_style();
+        let parent = inputs.parent_size.width;
+        let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
+        let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+        let height = output.size.height;
+        let content = height - padding.top - padding.bottom - border.top - border.bottom;
+        (content > 0.0).then(|| height - padding.bottom - border.bottom)
     }
 
     fn track_counts(&self, _node_id: taffy::NodeId) -> Option<taffy::Size<u16>> {

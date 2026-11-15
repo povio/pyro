@@ -398,10 +398,12 @@ pub trait LayoutGridContainer: LayoutPartialTree {
     /// set before the cell's final layout in a table with baseline-aligned cells (0 for the other cells).
     fn set_table_cell_baseline_offset(&mut self, _node_id: NodeId, _child_node_id: NodeId, _offset: f32) {}
 
-    /// pyro: the offset [`Self::set_table_cell_baseline_offset`] last set for the cell: a layout of the cell
-    /// that runs before its next final layout has its content (and its baselines) that much lower.
-    fn table_cell_baseline_offset(&self, _node_id: NodeId, _child_node_id: NodeId) -> f32 {
-        0.0
+    /// pyro: a baseline-aligned cell's baseline from the top of its border box, laid out with `inputs` (its
+    /// columns' width), without any offset set for it: its first line box's (or row's), else the bottom of its
+    /// content box when it has content; `None` for a cell without content (it takes no part). The default:
+    /// `None`.
+    fn table_cell_baseline(&mut self, _node_id: NodeId, _child_node_id: NodeId, _inputs: LayoutInput) -> Option<f32> {
+        None
     }
     /// Whether the tree places `node_id`'s in-flow children itself (pyro: a table places its cells
     /// in rows and columns as it builds them). `Some(extent)`: the number of tracks the placed items reach from

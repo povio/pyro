@@ -1228,10 +1228,10 @@ index f0109c6e..c4bf409a 100644
 +}
 diff --git a/src/compute/grid/table_baseline.rs b/src/compute/grid/table_baseline.rs
 new file mode 100644
-index 00000000..f2f8d55e
+index 00000000..09d602c5
 --- /dev/null
 +++ b/src/compute/grid/table_baseline.rs
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,112 @@
 +//! pyro: table cells aligned on their row's baseline (`vertical-align: baseline`, CSS 2.1 §17.5.3;
 +//! css-tables-3 "row layout").
 +//!
@@ -1239,7 +1239,8 @@ index 00000000..f2f8d55e
 +//! are baseline-aligned (`table_cell_is_baseline_aligned`; only cells spanning one row). Before its
 +//! rows are sized, each such cell of a row with two or more of them is laid out at the width of its
 +//! columns: its baseline is its first line box's (its content's first baseline), else, when it has
-+//! content, the bottom of its content box; a cell with neither takes no part. The row's baseline is
++//! content, the bottom of its content box; a cell with neither takes no part (the tree works it out:
++//! `table_cell_baseline`). The row's baseline is
 +//! the lowest of its cells', and each cell's `baseline_shim` is the row's baseline less its own: its
 +//! contribution to the row's height includes the shim as it includes a margin. The cell is then
 +//! positioned as any other cell, filling its row, and its content moves down by the shim inside it
@@ -1248,9 +1249,8 @@ index 00000000..f2f8d55e
 +use super::types::{GridItem, GridTrack};
 +use crate::geometry::{AbstractAxis, Line, Size};
 +use crate::style::AvailableSpace;
-+use crate::tree::{LayoutPartialTreeExt, NodeId, SizingMode};
-+use crate::util::ResolveOrZero;
-+use crate::LayoutGridContainer;
++use crate::tree::{LayoutInput, LayoutPartialTreeExt, NodeId, RunMode, SizingMode};
++use crate::{LayoutGridContainer, RequestedAxis};
 +
 +/// Marks the table's baseline-aligned cells (`GridItem::table_baseline`). Whether any is.
 +pub(super) fn mark_table_baseline_cells(tree: &impl LayoutGridContainer, node: NodeId, items: &mut [GridItem]) -> bool {
@@ -1309,7 +1309,7 @@ index 00000000..f2f8d55e
 +}
 +
 +/// A cell's baseline from the top of its border box, laid out at the width of its columns, or `None` for a
-+/// cell without content.
++/// cell without content (`LayoutGridContainer::table_cell_baseline`).
 +fn cell_baseline<Tree: LayoutGridContainer>(
 +    tree: &mut Tree,
 +    node: NodeId,
@@ -1329,27 +1329,20 @@ index 00000000..f2f8d55e
 +    );
 +    let known = item.known_dimensions_in(tree, area);
 +    let width = known.width.or(area.width);
-+    let output = tree.perform_child_layout(
-+        item.node,
-+        Size { width, height: known.height },
-+        area,
-+        Size {
++    let inputs = LayoutInput {
++        known_dimensions: Size { width, height: known.height },
++        known_dimensions_are_definite: Size { width: true, height: true },
++        parent_size: area,
++        available_space: Size {
 +            width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
 +            height: AvailableSpace::MaxContent,
 +        },
-+        SizingMode::InherentSize,
-+        Line::FALSE,
-+    );
-+    // (A layout run since the cell's last final layout has its content that much lower.)
-+    let offset = tree.table_cell_baseline_offset(node, item.node);
-+    if let Some(baseline) = output.baselines.first {
-+        return Some(baseline - offset);
-+    }
-+    let padding = item.padding.resolve_or_zero(area.width, |val, basis| tree.calc(val, basis));
-+    let border = item.border.resolve_or_zero(area.width, |val, basis| tree.calc(val, basis));
-+    let height = output.size.height;
-+    let content = height - padding.top - padding.bottom - border.top - border.bottom;
-+    (content > 0.0).then(|| height - padding.bottom - border.bottom)
++        sizing_mode: SizingMode::InherentSize,
++        axis: RequestedAxis::Both,
++        run_mode: RunMode::PerformLayout,
++        vertical_margins_are_collapsible: Line::FALSE,
++    };
++    tree.table_cell_baseline(node, item.node, inputs)
 +}
 diff --git a/src/compute/grid/table_reuse.rs b/src/compute/grid/table_reuse.rs
 new file mode 100644
@@ -2241,7 +2234,7 @@ index c18fa644..50154417 100644
  #[doc(inline)]
  pub use crate::style::Style;
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..14fe3f3d 100644
+index 7d4adf22..64ae52c5 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -290,6 +290,16 @@ pub trait RoundTree: TraverseTree {
@@ -2261,7 +2254,7 @@ index 7d4adf22..14fe3f3d 100644
  }
  
  /// Trait used by the `print_tree` method which prints a debug representation
-@@ -344,6 +354,73 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -344,6 +354,75 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
  
@@ -2309,10 +2302,12 @@ index 7d4adf22..14fe3f3d 100644
 +    /// set before the cell's final layout in a table with baseline-aligned cells (0 for the other cells).
 +    fn set_table_cell_baseline_offset(&mut self, _node_id: NodeId, _child_node_id: NodeId, _offset: f32) {}
 +
-+    /// pyro: the offset [`Self::set_table_cell_baseline_offset`] last set for the cell: a layout of the cell
-+    /// that runs before its next final layout has its content (and its baselines) that much lower.
-+    fn table_cell_baseline_offset(&self, _node_id: NodeId, _child_node_id: NodeId) -> f32 {
-+        0.0
++    /// pyro: a baseline-aligned cell's baseline from the top of its border box, laid out with `inputs` (its
++    /// columns' width), without any offset set for it: its first line box's (or row's), else the bottom of its
++    /// content box when it has content; `None` for a cell without content (it takes no part). The default:
++    /// `None`.
++    fn table_cell_baseline(&mut self, _node_id: NodeId, _child_node_id: NodeId, _inputs: LayoutInput) -> Option<f32> {
++        None
 +    }
 +    /// Whether the tree places `node_id`'s in-flow children itself (pyro: a table places its cells
 +    /// in rows and columns as it builds them). `Some(extent)`: the number of tracks the placed items reach from
@@ -2335,7 +2330,7 @@ index 7d4adf22..14fe3f3d 100644
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
-@@ -373,6 +450,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +452,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  

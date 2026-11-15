@@ -1174,15 +1174,17 @@ Tests: `an_image_marker_ends_7px_before_the_item_on_its_first_baseline`,
     2.1 §17.2.1). The construction of the inline formatting context notes an inline box with table parts among its
     children and, once it has visited them (its children are taken while it does), flags the white-space text
     nodes between two parts (comments and `display: none` passed over); the inline build skips them.
-  - `src/layout/table.rs` (`TableCell::baseline`, `is_baseline_aligned`, `cell_has_content`,
+  - `src/layout/table.rs` (`TableCell::baseline`, `is_baseline_aligned`, `table_cell_baseline`,
     `set_cell_baseline_offset`, `shift_cell_content`), `src/layout/mod.rs` (`compute_child_layout_in_current_wm`),
     `src/node/element.rs` (`LayoutData::table_baseline_offset`), `NodeFlags::HAS_TABLE_BASELINE_OFFSET`: cells with
     `vertical-align: baseline` (or any value but `top`, `middle`, `bottom`; `align-content: normal`), spanning one row,
-    with content, in a horizontal table, are aligned on their row's baseline (Taffy's `table_baseline` works out the
-    offsets). A cell's offset is stored on it before its final layout; a change clears its layout cache. Its layout
+    in a horizontal table, are aligned on their row's baseline (Taffy's `table_baseline` works out the offsets from
+    each cell's baseline, `table_cell_baseline`: its own layout's, else the bottom of its content box when it has
+    content, which an empty cell does not, whatever its `height`). A cell's offset is stored on it before its final layout; a change clears its layout cache. Its layout
     then moves its in-flow and floated children, its lines (`TextLayout::block_offset`), its out-of-flow candidates'
     static positions, its overflow and its baselines down by the offset, inside the layout cache, so a cached layout
-    keeps them there. A table with such cells keeps no `TableGridState`.
+    keeps them there. A table with such cells hands its `TableGridState` back only while none of its cells
+    or rows changed (then its last layout stands); after a change it is laid out whole.
   - `src/layout/table.rs`: a fixed table's cells may be narrower than their horizontal padding
     (`table_cells_narrower_than_padding`); a first-row cell's percentage width in a fixed collapsed table gets the
     halves of the collapsed borders beside it, as a length width does; a `<col>`'s width holds the halves of the

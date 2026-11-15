@@ -1534,6 +1534,39 @@ fn table_cell_and_row_changes_match_fresh_builds() {
     table_steps_match_fresh_builds(&page, steps);
 }
 
+/// Cells aligned on their rows' baselines (lane P2): changes that move a row's baseline, or a cell's
+/// offset in its box, lay out as a fresh build does (the offsets live in the cells' layout caches).
+#[test]
+fn baseline_cell_changes_match_fresh_builds() {
+    let rows: String = (0..6)
+        .map(|i| {
+            format!(
+                "<div class=r id=b{i}><div class=c style='padding-top:{}px'><div>cell {i} a</div></div>\
+                 <div class=c><span>text {i} b</span></div><div class=c></div><div class=c><div>{i}.5</div></div></div>",
+                i % 3 * 4
+            )
+        })
+        .collect();
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style>
+  body {{ margin: 0; font: 13px sans-serif }} .t {{ display: table; border-spacing: 2px }}
+  .r {{ display: table-row }} .c {{ display: table-cell; padding: 2px 3px }} .big {{ font-size: 24px }}
+</style></head><body><div class=t id=t>{rows}</div></body></html>"#
+    ));
+    let steps: Vec<(String, Mutate)> = vec![
+        attr("#b1 .c", "class", "c big"),
+        text("#b2 .c:nth-child(2) span", "a much longer text in the second cell that wraps"),
+        attr("#b3 .c", "style", "padding-top: 30px"),
+        attr("#b4 .c:nth-child(2)", "style", "vertical-align: top"),
+        attr("#b4 .c:nth-child(2)", "style", ""),
+        text("#b5 .c:nth-child(3)", "now with text"),
+        attr("#b1 .c", "class", "c"),
+        attr("#t", "style", "width: 600px"),
+        text("#b0 .c div", "edited"),
+    ];
+    table_steps_match_fresh_builds(&page, steps);
+}
+
 /// Nested tables, vertical tables, spans and `display` changes of table parts.
 #[test]
 fn table_structure_changes_match_fresh_builds() {
