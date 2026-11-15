@@ -71,6 +71,8 @@ const CRATES = {
   parley_engine: { files: null, prefix: '', style: 'unified', order: 'committed' },
   // The sections last written on 2026-11-11 are minimal diffs (`diff -d`); later ones are plain `diff -u`.
   stylo: { files: null, prefix: '', style: 'diff-ruN', order: 'tree', alt: [['-u', '-d']] },
+  // As blitz-dom's (the same Blitz checkout). Cargo.toml has the workspace's dependency versions written in.
+  stylo_taffy: { files: ['src'], prefix: 'packages/stylo_taffy/', style: 'blitz-dom', order: 'path' },
   // Cargo.toml is not upstream's (the workspace sections are cut), so it is not covered.
   taffy: { files: ['src', 'examples', 'README.md'], prefix: '', style: 'git-repo', order: 'path' },
 };

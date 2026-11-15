@@ -521,25 +521,47 @@ impl Geometry {
     /// `None` when `id` has no inline root.
     fn inline_items(&self, doc: &BaseDocument, id: NodeId, f: &mut dyn FnMut(Affine, usize, Rect)) -> Option<()> {
         // The nearest ancestor laying the element out inline: a DOM ancestor,
-        // or an anonymous block one wraps its inline children in.
+        // or an anonymous block one wraps its inline children in. pyro: an
+        // inline box split around blocks (blitz-dom's `NodeFlags::IS_SPLIT_INLINE`)
+        // is in two: the anonymous blocks holding its head and its tail.
         let mut child = id;
         let mut cur = doc.get_node(id)?.parent;
-        let root_id = loop {
+        let roots: Vec<NodeId> = loop {
             let r = cur?;
             let n = doc.get_node(r)?;
             if n.flags.is_inline_root() {
-                break r;
+                break vec![r];
             }
-            let anon =
-                n.anonymous_blocks.iter().copied().find(|&a| {
-                    doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child))
-                });
-            if let Some(a) = anon {
-                break a;
+            let anon: Vec<NodeId> = n
+                .anonymous_blocks
+                .iter()
+                .copied()
+                .filter(|&a| doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child)))
+                .collect();
+            if !anon.is_empty() {
+                break anon;
             }
             child = r;
             cur = n.parent;
         };
+        // Line indices go on from one root to the next.
+        let mut lines = 0;
+        for root_id in roots {
+            lines += self.root_inline_items(doc, id, root_id, lines, f).unwrap_or(0);
+        }
+        Some(())
+    }
+
+    /// The fragments of inline element `id` in the inline layout of `root_id` (see
+    /// [`Self::inline_items`]), its lines numbered from `first_line`; how many lines it has.
+    fn root_inline_items(
+        &self,
+        doc: &BaseDocument,
+        id: NodeId,
+        root_id: NodeId,
+        first_line: usize,
+        f: &mut dyn FnMut(Affine, usize, Rect),
+    ) -> Option<usize> {
         let root = doc.get_node(root_id)?;
         let text = root.element_data()?.inline_layout_data.as_ref()?;
         let (t, _) = self.transform(doc, root_id)?;
@@ -562,16 +584,16 @@ impl Geometry {
         for (index, line) in text.layout.lines().enumerate() {
             let origin = origin * line_slot(doc, root_id, &line.metrics(), scale);
             for item in line.items() {
-                let (start, mut r) = inline_item_rect(&line, &item, scale);
+                let (start, mut r) = inline_item_rect(&line, &item, scale, text.layout.is_rtl());
                 if within(start) {
                     if start == Some(id) {
                         r = span_edge_box(doc, &item, r, scale);
                     }
-                    f(origin, index, Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
+                    f(origin, first_line + index, Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
                 }
             }
         }
-        Some(())
+        Some(text.layout.len())
     }
 
     /// `id`'s CSS boxes as quads (CDP `DOM.getBoxModel`/`getContentQuads`),
@@ -696,10 +718,14 @@ pub struct BoxQuads {
 /// One item of `line` in its inline root's text space (device px): the
 /// node it belongs to (a glyph run's text node or innermost element, an
 /// inline box's element, a span edge's span) and its fragment rect.
+///
+/// `rtl`: the layout's paragraphs are right-to-left (`Layout::is_rtl`), so white space hanging at a
+/// line's end is at its left.
 pub(crate) fn inline_item_rect(
     line: &parley::Line<'_, blitz_dom::node::TextBrush>,
     item: &parley::PositionedLayoutItem<'_, blitz_dom::node::TextBrush>,
     scale: f64,
+    rtl: bool,
 ) -> (Option<NodeId>, Rect) {
     match item {
         parley::PositionedLayoutItem::GlyphRun(run) => {
@@ -708,13 +734,18 @@ pub(crate) fn inline_item_rect(
             // font metrics and Parley's quantized lines round them (18px SF:
             // 17 + 4, not 21.1875), whatever font the run fell back to.
             let (top, bottom) = line.span_content_area(run.style_index());
-            let x = run.offset() as f64;
+            let mut x = run.offset() as f64;
             // Chromium's text fragments are their advance ceiled to a layout
             // unit (1/64 px).
             let mut x1 = x + ((run.advance() as f64 / scale * 64.0 - 0.01).ceil() / 64.0) * scale;
             // White space hanging at the line's end is in no fragment.
             let metrics = line.metrics();
-            if !run.run().is_rtl() && metrics.hanging_advance > 0.0 {
+            if rtl && metrics.hanging_advance > 0.0 {
+                // pyro: in a right-to-left paragraph it is at the line's left end, at the
+                // paragraph's level (UAX #9 L1), whatever the level of the text before it.
+                let hung = (metrics.inline_min_coord + metrics.offset + metrics.hanging_advance) as f64;
+                x = x.max(hung).min(x1);
+            } else if !run.run().is_rtl() && metrics.hanging_advance > 0.0 {
                 x1 = x1.min((metrics.offset + metrics.advance - metrics.hanging_advance) as f64).max(x);
             }
             (Some(run.style().brush.id), Rect::new(x, top as f64, x1, bottom as f64))

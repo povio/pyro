@@ -1028,6 +1028,71 @@ and a `content-box` local background reached the scrollport's edge at the end (W
 
 Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit tests here.
 
+## List markers (WPT reftests)
+
+- `src/layout/list.rs` (`image_marker`), `src/node/element.rs` (`ElementData::list_style_images`, `Marker::Image`),
+  `src/util.rs`, `src/layout/damage.rs`, `src/stylo.rs`, `src/document.rs`: `list-style-image` is loaded, as an image
+  layer of its own flushed with the background, mask and border images, and an outside item whose image loaded has
+  an image marker at the image's natural size (an SVG's own size), which blitz-paint draws (`draw_marker_image`). Until
+  the image loads, or when it fails, the item keeps its `list-style-type` marker; the load builds the item again. An
+  inside item keeps its type marker (no inline image marker is made).
+- `src/layout/construct.rs` (`place_inside_marker`): the inside marker of an item of blocks is on the first line of its
+  first box, as in Chromium: the anonymous block of its first inline content takes it, and before a first block it is
+  the line of an anonymous block of its own. An empty item gets none (as the bullet above about
+  `list-style-position-applies-to-015`).
+- `src/layout/construct.rs`, `src/layout/inline/build.rs` (`outside_marker`): an item with an outside marker and no
+  in-flow content (empty, white space, out-of-flow boxes) is an inline root whose one line is its strut (a word joiner
+  at its start): the line the marker sits on. Chromium gives the marker's box to the item (its height and baseline),
+  so an empty item in an inline-block or a table cell lines up as one with text (WPT
+  `list-style-*-applies-to-012`, `-014`); it was 0px tall, with the marker a line lower.
+
+Tests: `an_image_marker_ends_7px_before_the_item_on_its_first_baseline`,
+`an_inside_marker_is_a_line_before_block_content`, `an_empty_item_has_the_line_of_its_outside_marker` and
+`an_outside_marker_goes_with_the_line_a_float_moves` in `crates/pyro-render/tests/generated_content.rs`.
+## Table structure (WPT reftests)
+
+- `src/layout/table_fixup.rs` (new), `src/layout/construct.rs` (`collect_layout_children`), `src/layout/table.rs`
+  (`build_table_context`, `collect_table_cells`), `assets/default.css`: the anonymous table objects of CSS 2.1
+  §17.2.1 (css-tables-3 §3.3). Consecutive table parts among a block container's layout children (cells, rows,
+  row groups, columns, column groups, captions; not replaced elements, whose table display is inline content)
+  are wrapped in an anonymous table; a table's, row group's or row's children that are not its proper children
+  (text, inline and block boxes, nested tables, `::before`/`::after`) in anonymous rows or cells. White space
+  between table parts, or before or after one at the start or end, is dropped whatever `white-space` says (as in
+  Chromium); `display: contents` boxes are looked through; out-of-flow boxes stay the table's. The anonymous boxes
+  are slab nodes (`NodeData::AnonymousBlock`) styled as the UA sheet's `::-servo-anonymous-table`, `-row` and
+  `-cell` boxes from the box they are in, owned (`Node::anonymous_blocks`) by the box whose children they wrap;
+  their `children` are the DOM nodes they wrap. A table part's `::before`/`::after` are made as its children are
+  fixed up. A table, row group or row whose children are all proper ones (or white space, hidden or out of flow)
+  and that has no pseudo-element boxes is built from its children as they are, as before (no allocation, one
+  style read per child). Tables in a vertical writing mode keep the former construction (their stray children are
+  left out).
+- `src/layout/table.rs` (`offer_box`): a box without borders offers none to the collapsed borders (most rows,
+  groups and columns); the cells' grid areas are worked out once for the collapsed borders and their cells.
+- `src/layout/mod.rs` (`lay_out_table_captions`, `table_captions_min_width`), `src/layout/table.rs`
+  (`TableContext::captions`, `grid_box`): captions are laid out above (`caption-side: top`) and below the grid at
+  its width less their margins; the table is at least as wide as their min-content widths; its box is the
+  wrapper box and its grid moves down by the captions above it (`grid_box` tells paint where the table box proper
+  is). A table with captions does not keep its grid's last layout (`take_table_grid_state`).
+- `src/layout/table.rs`: collapsed borders are resolved before the columns get their widths, and a fixed table's
+  first-row cell width gives its column a border box with half of the collapsed borders beside it (CSS 2.1
+  §17.6.2); columns and column groups take part in conflict resolution (cell, row, row group, column, column
+  group, table); a collapsing table has no padding; a uniform collapsed table laid out as gutters and a separated
+  table (border-spacing as padding) take those out of a content-box table's lengths, which count half of the outer
+  borders and the spacing; a fixed table is never narrower than its columns' widths and the spacing between them;
+  a row or row group with `visibility: collapse` takes no height (`TableRow::collapsed`; `src/stylo.rs` makes the
+  change build the table again).
+- Incremental: a table with anonymous boxes, generated cells or rows, captions, rows or cells reached through
+  `display: contents`, or that is anonymous is built again on any change; `update_rows` builds the table again
+  when a changed row is anything but a row, or a group gains text, a non-row child or a pseudo-element.
+  `src/layout/damage.rs`: an anonymous table, row or cell's owner clears its layout cache and notes its cells as
+  changed (`clear_anonymous_table_box_caches`); its style is refreshed as the anonymous box it is, from its parent
+  (`refresh_anonymous_block_styles`); a `writing-mode` change builds the box again. `src/document.rs`: a freed
+  anonymous box leaves no `layout_parent`/`layout_child_of` pointing at it, and `drop_part_box` clears a part's.
+- `src/stylo_to_kurbo.rs`, `src/lib.rs`: `resolve_2d_transform_for_size` (blitz-paint transforms a row's cells by
+  the row's transform); `TableCell` and `TableContext` are exported.
+
+Tests: `table_structure` in pyro-render (each fails without its change); `mirror` covers the incremental paths.
+
 ## Ruby annotations and emphasis marks
 
 - `src/node/text.rs` (`TextAnnotation`, `TextAnnotationKind`, `can_take_emphasis_mark`), `src/layout/inline/build.rs`
@@ -1150,3 +1215,51 @@ Main pins Stylo 0.23.0; this copy builds against the vendored 0.24.0.
   `has_anchors_follow_changes_stylo_has_no_snapshot_for` in pyro-render.
 - `src/stylo_device.rs`: `Device::new` takes the submit button's default label.
 - `src/document.rs`: the pref is `layout.css.text-underline-position.enabled` now.
+
+## Inline boxes split around blocks, `unicode-bidi`, relative inline boxes
+
+- `src/layout/construct.rs` (`split_inline_sequence`, `split_inline_part`, `lays_out_as_block`, the split branch of
+  `collect_complex_layout_children_in`), `src/node/node.rs` (`NodeFlags::IS_SPLIT_INLINE`, `ENDS_WITH_SPLIT_HEAD`,
+  `STARTS_WITH_SPLIT_TAIL`, `Node::split_ref_at`), `src/layout/inline/build.rs` (`build_split_part`,
+  `split_pieces`): an inline box that holds block-level boxes is split around them (CSS 2.1 § 9.2.1.1) where its
+  parent lays out as a block container (a flow, flow-root or table cell box; a table part outside a table is laid
+  out as a flex row and keeps one box). It was one block box with its margins, borders and padding around all it
+  held. Its head, the inline content before its first block-level child, ends the anonymous block before it
+  (`ENDS_WITH_SPLIT_HEAD`: the block's last layout child is the split inline, whose head its build lays out), and
+  its tail, the content after its last block-level child, starts the anonymous block after it
+  (`STARTS_WITH_SPLIT_TAIL`); both are laid out in the split inline's span, the start side in the head and the end
+  side in the tail. The split inline stays a block-level box holding its middle (its first block-level child to its
+  last, with the floats and absolutely positioned boxes right next to them, which float and paint beside the blocks
+  as before), but as a box it has no margins, borders, padding or sizes (`stylo_taffy::StyleFlags::IS_SPLIT_INLINE`);
+  its relative offset moves it. The anonymous blocks of its middle inherit from the block container around it (its
+  strut, alignment and direction) and wrap their content in the spans of the split inlines around them, without
+  their sides (`TextLayout::split_pieces`). A split inline at the edge of another's middle has its head (tail) in
+  the outer one's. A split inline's own construction is damaged (`CONSTRUCT_BOX`) when its container's is.
+- `src/layout/inline/layout.rs`: margins collapse through an inline root with no line (a div holding only an empty
+  span), as through an empty block.
+- `src/layout/inline/build.rs` (`bidi_controls`, `BidiScan`), `src/node/text.rs` (`TextLayout::bidi_controls`,
+  `has_no_text`): `unicode-bidi` and `direction` of inline boxes and block containers apply (only `plaintext` on the
+  root did): an inline box's `embed`, `bidi-override`, `isolate`, `isolate-override` or `plaintext` is the bidi
+  formatting characters Blink inserts for it (CSS Writing Modes 3 § 2.4.2), pushed around its content
+  (`TreeBuilder::push_bidi_control`); a block container's `bidi-override` starts its content with LRO or RLO. They
+  are pushed only where they can change a level: some box has them and the paragraph has right-to-left content (a
+  right-to-left root or box, or right-to-left text); the first build finds out and a second build pushes them. An
+  inline box that holds nothing pushes a strut (U+2061, `TreeBuilder::push_empty_box_strut`), so that its line
+  height counts, as an empty span's does in browsers. Text that is only such characters is no content. A
+  right-to-left span's edges are marked (`InlineBox::rtl`) for parley to put them on their sides.
+- `src/layout/inline/layout.rs` (`line_is_reordered`): the static position of an absolutely positioned box on a
+  right-to-left or reordered line follows the inline content before it in logical order.
+- `src/layout/inline/relative.rs` (new), `src/layout/inline/layout.rs`, `src/layout/inline/build.rs`:
+  `position: relative` on an inline box that is not atomic (CSS 2.1 § 9.4.3) moves what it holds: the atomic inline
+  boxes in it are laid out moved, and paint moves its text and its fragments
+  (`BaseDocument::inline_span_relative_offset`, read only for an inline root with such a box,
+  `TextLayout::relative_spans`). Decorations stay with the line.
+- `src/layout/mod.rs`: an SVG image's (or inline `<svg>`'s) natural width and height are its root's absolute
+  `width` and `height`, and its ratio theirs or else its `viewBox`'s; what it does not declare it does not have,
+  and the default object size (300x150) stands in, as in browsers (usvg's resolved size stood in). The root `<svg>`
+  of an SVG document keeps usvg's size: it fills the viewport in browsers, which is not done.
+- `assets/default.css`: `bdo[dir]` stands for Gecko's `bdo:-moz-has-dir-attr`, and `[dir="auto" i]` for
+  `:-moz-dir-attr-like-auto`: Stylo parses neither, which dropped both rules.
+
+Covered by `block_in_inline.rs`, `unicode_bidi.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in
+`crates/pyro-render/tests`.

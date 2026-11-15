@@ -95,6 +95,19 @@ bitflags! {
         /// own plane and then drawn through its transform, which blitz-paint asks the backend to
         /// do (`layers::local_raster_marker`). Set with the transform (`Node::set_transform`).
         const FLATTENS_3D = 0b100_00000000;
+        /// pyro: an inline box (`display: inline`, not atomic) whose in-flow content includes
+        /// block-level boxes, split around them (CSS 2.1 § 9.2.1.1): it is laid out as a block
+        /// box without margins, borders, padding or a size of its own, and paints no box: its
+        /// anonymous blocks hold its inline pieces, whose lines paint its fragments
+        /// (`layout::inline::split_pieces`). Its relative offset moves the whole of it.
+        const IS_SPLIT_INLINE = 1 << 11;
+        /// pyro: an anonymous block whose last child is a split inline (`IS_SPLIT_INLINE`)
+        /// standing for its head: the inline content before its first block-level box, with its
+        /// start. Set by the construction of the split inline's container.
+        const ENDS_WITH_SPLIT_HEAD = 1 << 12;
+        /// pyro: an anonymous block whose first child is a split inline standing for its tail:
+        /// the inline content after its last block-level box, with its end.
+        const STARTS_WITH_SPLIT_TAIL = 1 << 13;
     }
 }
 
@@ -193,6 +206,7 @@ impl NodeFlags {
         self.remove(Self::IS_INLINE_ROOT);
         self.remove(Self::IS_TABLE_ROOT);
         self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
+        self.remove(Self::IS_SPLIT_INLINE);
     }
 }
 
@@ -891,6 +905,26 @@ impl Node {
     pub fn is_inline_with_only_block_children(&self) -> bool {
         self.flags
             .contains(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN)
+    }
+
+    /// pyro: whether box-tree construction split this inline box around block-level content
+    /// (`NodeFlags::IS_SPLIT_INLINE`): the anonymous blocks around and inside it paint its
+    /// fragments, so it paints no box of its own.
+    pub fn is_split_inline(&self) -> bool {
+        self.flags.contains(NodeFlags::IS_SPLIT_INLINE)
+    }
+
+    /// pyro: whether the child at `index` of this anonymous block (of `len` children) stands for a
+    /// split inline's head or tail (`NodeFlags::ENDS_WITH_SPLIT_HEAD`, `STARTS_WITH_SPLIT_TAIL`):
+    /// `Some(true)` for a tail, `Some(false)` for a head.
+    pub(crate) fn split_ref_at(&self, index: usize, len: usize) -> Option<bool> {
+        if index == 0 && self.flags.contains(NodeFlags::STARTS_WITH_SPLIT_TAIL) {
+            Some(true)
+        } else if index + 1 == len && self.flags.contains(NodeFlags::ENDS_WITH_SPLIT_HEAD) {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     pub fn is_whitespace_node(&self) -> bool {
@@ -1646,6 +1680,9 @@ impl Node {
             if let Some(inline_layout) = el.inline_layout_data.as_deref() {
                 flags |= inline_layout.span_cb_flags;
             }
+        }
+        if self.flags.contains(NodeFlags::IS_SPLIT_INLINE) {
+            flags |= stylo_taffy::StyleFlags::IS_SPLIT_INLINE;
         }
 
         #[cfg(feature = "writing-mode")]

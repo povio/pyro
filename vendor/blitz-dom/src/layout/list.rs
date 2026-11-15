@@ -99,7 +99,16 @@ fn node_list_item_child(
     let styles = node.primary_styles().unwrap();
     let list_style_type = styles.get_list_style_type();
     let list_style_position = styles.clone_list_style_position();
-    let mut marker = marker_for_style(list_style_type, index)?;
+    // pyro: an outside item's loaded `list-style-image` is its marker; while it loads, when it
+    // fails and inside the item (not supported), the `list-style-type` marker is.
+    let image = match list_style_position {
+        ListStylePosition::Outside => node.element_data().and_then(image_marker),
+        ListStylePosition::Inside => None,
+    };
+    let mut marker = match image {
+        Some(image) => image,
+        None => marker_for_style(list_style_type, index)?,
+    };
 
     let position = match list_style_position {
         ListStylePosition::Inside => {
@@ -118,7 +127,7 @@ fn node_list_item_child(
             // pyro: blitz-paint paints a disc, circle or square as a shape sized from the item's
             // font (Blink's `ListMarker::RelativeSymbolMarkerRect`), so their layout is a line of
             // that font.
-            let symbol = matches!(marker, Marker::Char('•' | '◦' | '▪'));
+            let symbol = matches!(marker, Marker::Char('•' | '◦' | '▪') | Marker::Image { .. });
             if let Some(font_family) = font_for_bullet_style(list_style_type).filter(|_| !symbol) {
                 parley_style.font_family = font_family;
             }
@@ -133,12 +142,13 @@ fn node_list_item_child(
             );
 
             match &marker {
-                Marker::Char(_) if symbol => builder.push_text("x"),
+                Marker::Char(_) | Marker::Image { .. } if symbol => builder.push_text("x"),
                 Marker::Char(char) => {
                     let mut buf = [0u8; 4];
                     builder.push_text(char.encode_utf8(&mut buf));
                 }
                 Marker::String(str) => builder.push_text(str),
+                Marker::Image { .. } => {}
             };
 
             let mut layout = builder.build().0;
@@ -154,6 +164,22 @@ fn node_list_item_child(
         position,
         content_box_subpixel_offset: taffy::Point::ZERO,
     })
+}
+
+/// pyro: the marker an item's `list-style-image` makes once it has loaded: its natural size.
+fn image_marker(element: &crate::node::ElementData) -> Option<Marker> {
+    use crate::node::{ImageData, Status};
+    let image = element.list_style_images.first()?.as_ref()?;
+    if !matches!(image.status, Status::Ok) {
+        return None;
+    }
+    let (width, height) = match &image.image {
+        ImageData::Raster(raster) => (raster.width as f32, raster.height as f32),
+        #[cfg(feature = "svg")]
+        ImageData::Svg(svg) => (svg.tree.size().width(), svg.tree.size().height()),
+        _ => return None,
+    };
+    Some(Marker::Image { width, height })
 }
 
 /// pyro: whether a `::marker` rule matches the list item `node_id`.
