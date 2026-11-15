@@ -360,6 +360,36 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
     /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
     pub annotation_space: AnnotationSpace,
+    /// pyro: the edges the span box's content area is trimmed to (CSS Inline 3 `text-box-trim` on
+    /// an inline box): its backgrounds, borders and padding start there.
+    pub text_box_trim: TextBoxTrim,
+}
+
+/// pyro: a font metric a span's content area can end at (CSS Inline 3 `<text-edge>`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextEdge {
+    /// The ascent or descent of the first available font.
+    Text,
+    /// The cap height (an over edge).
+    Cap,
+    /// The x-height (an over edge).
+    Ex,
+    /// The alphabetic baseline (an under edge).
+    Alphabetic,
+    /// The ideographic em box.
+    Ideographic,
+    /// The ideographic character face (ink) box.
+    IdeographicInk,
+}
+
+/// pyro: the edges a span's content area is trimmed to ([`TextStyle::text_box_trim`]); `None`
+/// leaves a side at the font's ascent or descent.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct TextBoxTrim {
+    /// Over (block-start) edge.
+    pub over: Option<TextEdge>,
+    /// Under (block-end) edge.
+    pub under: Option<TextEdge>,
 }
 
 /// pyro: room beyond a span's content area, over and under it ([`TextStyle::annotation_space`]).
@@ -408,6 +438,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             text_wrap_mode: TextWrapMode::default(),
             white_space_collapse: WhiteSpaceCollapse::default(),
             annotation_space: AnnotationSpace::default(),
+            text_box_trim: TextBoxTrim::default(),
         }
     }
 }

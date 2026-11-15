@@ -144,7 +144,68 @@
 +}
 --- a/src/shape/shaped_text.rs
 +++ b/src/shape/shaped_text.rs
-@@ -93,6 +93,7 @@
+@@ -51,6 +51,60 @@
+     pub x_height: Option<f32>,
+ }
+ 
++/// pyro: the ideographic baselines of a font's `BASE` table (horizontal axis), scaled to a font
++/// size, as coordinates above the alphabetic baseline: `ideo`, `idtp`, `icfb` and `icft`.
++#[derive(Clone, Copy, Debug, Default, PartialEq)]
++pub struct IdeographicBaselines {
++    /// `ideo`: the bottom of the ideographic em box.
++    pub ideographic_under: Option<f32>,
++    /// `idtp`: the top of the ideographic em box.
++    pub ideographic_over: Option<f32>,
++    /// `icfb`: the bottom of the ideographic character face.
++    pub face_under: Option<f32>,
++    /// `icft`: the top of the ideographic character face.
++    pub face_over: Option<f32>,
++}
++
++impl IdeographicBaselines {
++    /// Reads them from `font`; `None` for a font without a horizontal `BASE` axis.
++    pub fn from_font_instance(font: &FontInstance, font_size: f32) -> Option<Self> {
++        use skrifa::raw::TableProvider;
++        use skrifa::raw::tables::base::BaseCoord;
++        let font_ref =
++            skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
++        let units_per_em = f32::from(font_ref.head().ok()?.units_per_em());
++        let axis = font_ref.base().ok()?.horiz_axis()?.ok()?;
++        let tags = axis.base_tag_list()?.ok()?;
++        let scripts = axis.base_script_list().ok()?;
++        let records = scripts.base_script_records();
++        // The default script's values, else the first script's.
++        let record = records
++            .iter()
++            .find(|record| record.base_script_tag() == skrifa::Tag::new(b"DFLT"))
++            .or_else(|| records.first())?;
++        let values = record.base_script(scripts.offset_data()).ok()?.base_values()?.ok()?;
++        let coords = values.base_coords();
++        let mut out = Self::default();
++        for (index, tag) in tags.baseline_tags().iter().enumerate() {
++            let Ok(coord) = coords.get(index) else { continue };
++            let coord = match coord {
++                BaseCoord::Format1(c) => c.coordinate(),
++                BaseCoord::Format2(c) => c.coordinate(),
++                BaseCoord::Format3(c) => c.coordinate(),
++            };
++            let value = Some(f32::from(coord) * font_size / units_per_em);
++            match &tag.get().to_be_bytes() {
++                b"ideo" => out.ideographic_under = value,
++                b"idtp" => out.ideographic_over = value,
++                b"icfb" => out.face_under = value,
++                b"icft" => out.face_over = value,
++                _ => {}
++            }
++        }
++        Some(out)
++    }
++}
++
+ impl FontMetrics {
+     /// Metrics to use when no font is available at all.
+     ///
+@@ -93,6 +147,7 @@
                  ),
          );
          Some(Self::from_skrifa_metrics(
@@ -152,7 +213,7 @@
              &skrifa::metrics::Metrics::new(
                  &font_ref,
                  skrifa::prelude::Size::new(font_size),
-@@ -102,7 +103,11 @@
+@@ -102,7 +157,11 @@
          ))
      }
  
@@ -165,7 +226,7 @@
          // Default values from HarfBuzz: https://github.com/harfbuzz/harfbuzz/blob/12ee77ee00514c442bcd28f9aa9d56b708c37382/src/hb-ot-metrics.cc#L355-L372
          let fallback_decoration_size = font_size / 18.0;
  
-@@ -119,7 +124,7 @@
+@@ -119,7 +178,7 @@
          };
  
          Self {
@@ -174,7 +235,7 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -132,6 +137,89 @@
+@@ -132,6 +191,89 @@
      }
  }
  
@@ -264,7 +325,7 @@
  /// The result of shaping.
  ///
  /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
-@@ -152,6 +240,9 @@
+@@ -152,6 +294,9 @@
      glyphs: Vec<Glyph>,
      fonts: Vec<FontInstance>,
      normalized_coords: Vec<NormalizedCoord>,
@@ -274,7 +335,7 @@
  }
  
  impl ShapedText {
-@@ -179,6 +270,7 @@
+@@ -179,6 +324,7 @@
          self.glyphs.clear();
          self.fonts.clear();
          self.normalized_coords.clear();
@@ -282,7 +343,7 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -273,7 +365,8 @@
+@@ -273,7 +419,8 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -292,11 +353,14 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +395,36 @@
+@@ -302,18 +449,36 @@
                  index
              });
  
--        let metrics = {
++        // pyro: the entry of this font, size and location in this text; the first run
++        // of a combination enters the metrics the caller shaped it with before, or computes them.
++        // The table is the same whatever the caller had cached.
+         let metrics = {
 -            let font = &self.fonts[font_index];
 -            let font_ref =
 -                skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
@@ -305,10 +369,6 @@
 -                skrifa::prelude::Size::new(options.font_size),
 -                normalized_coords,
 -            )
-+        // pyro: the entry of this font, size and location in this text; the first run
-+        // of a combination enters the metrics the caller shaped it with before, or computes them.
-+        // The table is the same whatever the caller had cached.
-+        let metrics = {
 +            let font_size = options.font_size.to_bits();
 +            let coords = &self.normalized_coords[normalized_coords_range.clone()];
 +            let entry = self.run_metrics.iter().find(|e| {
@@ -340,7 +400,7 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -396,6 +507,7 @@
+@@ -396,6 +561,7 @@
              advance: run_advance,
              font_metrics,
          });
@@ -348,7 +408,7 @@
      }
  }
  
-@@ -647,6 +759,7 @@
+@@ -647,6 +813,7 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -356,7 +416,7 @@
                  language: None,
                  features: &[],
                  variations: &[],
-@@ -805,6 +918,7 @@
+@@ -805,6 +972,7 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -364,7 +424,7 @@
                      language: None,
                      features: &[],
                      variations: &[],
-@@ -814,6 +928,7 @@
+@@ -814,6 +982,7 @@
                  char_end: text.chars().count().try_into().unwrap(),
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -643,6 +703,13 @@
  //!             language: None,
  //!             features: &[],
  //!             variations: &[],
+@@ -122,5 +123,5 @@
+ pub use analyzer::{AnalysisOptions, Analyzer, LineBreakConfig};
+ pub use glyph::Glyph;
+ pub use shape::atom::{Atom, Atoms, Grapheme, Graphemes, ShapedClusterGlyphs, ShapedSlice};
+-pub use shape::shaped_text::{FontMetrics, ShapedRun, ShapedText};
++pub use shape::shaped_text::{FontMetrics, IdeographicBaselines, ShapedRun, ShapedText};
+ pub use shape::shaper::{FontInstance, FontInstanceRef, FontSelector, ShapeOptions, Shaper};
 --- a/src/shape/atom.rs
 +++ b/src/shape/atom.rs
 @@ -917,6 +917,7 @@

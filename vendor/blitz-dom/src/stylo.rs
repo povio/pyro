@@ -216,6 +216,9 @@ impl crate::document::BaseDocument {
             if traverser.first_letter_styles.into_inner() {
                 self.first_letter_styles = true;
             }
+            if traverser.text_box_trim_styles.into_inner() {
+                self.text_box_trim_styles = true;
+            }
             if traverser.generated_counters.into_inner() && !self.generated_counters {
                 self.generated_counters = true;
                 self.counters_dirty = true;
@@ -1927,6 +1930,8 @@ pub struct RecalcStyle<'a> {
     /// pyro: an element styled in this traversal has a `::before` / `::after` whose content
     /// reads counters or quotes (`layout::counters`).
     generated_counters: std::sync::atomic::AtomicBool,
+    /// pyro: an element was styled with `text-box-trim` (`layout::text_box`).
+    text_box_trim_styles: std::sync::atomic::AtomicBool,
     /// pyro: the document evaluates counters and quotes: restyles note whether they changed
     /// any (`counters_changed`).
     track_counters: bool,
@@ -1947,6 +1952,7 @@ impl<'a> RecalcStyle<'a> {
             first_line_styles: std::sync::atomic::AtomicBool::new(false),
             first_line_changed: Mutex::new(Vec::new()),
             generated_counters: std::sync::atomic::AtomicBool::new(false),
+            text_box_trim_styles: std::sync::atomic::AtomicBool::new(false),
             track_counters: false,
             counters_changed: std::sync::atomic::AtomicBool::new(false),
         }
@@ -2240,6 +2246,9 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             sync_pseudo_element_styles(el, &data, &self.nodes_needing_style_image_flush);
             if let Some(style) = data.styles.get_primary() {
                 el.record_out_of_flow(style);
+                if !style.slow_clone_text_box_trim().is_empty() {
+                    self.text_box_trim_styles.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             }
 
             if data.styles.get_primary().is_some_and(|style| {

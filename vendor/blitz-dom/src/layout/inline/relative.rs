@@ -71,6 +71,32 @@ pub(crate) fn inline_span_offset(
     offset
 }
 
+/// [`inline_span_offset`] in the axes the inline root `root_id` is laid out in (x along its
+/// lines, y across them, towards its block end), with `cb` in those axes: the physical offset
+/// turned for a vertical writing mode.
+pub(crate) fn inline_span_flow_offset(
+    nodes: &NodeTree,
+    node_id: NodeId,
+    root_id: NodeId,
+    cb: taffy::Size<f32>,
+) -> taffy::Point<f32> {
+    let root = &nodes[root_id];
+    let wm = root
+        .primary_styles()
+        .or_else(|| root.parent.and_then(|parent| nodes[parent].primary_styles()))
+        .map(|style| style.writing_mode);
+    match wm {
+        Some(wm) if wm.is_vertical() => {
+            let physical = inline_span_offset(nodes, node_id, root_id, taffy::Size { width: cb.height, height: cb.width });
+            taffy::Point {
+                x: if wm.contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR) { -physical.y } else { physical.y },
+                y: if wm.is_vertical_lr() { physical.x } else { -physical.x },
+            }
+        }
+        _ => inline_span_offset(nodes, node_id, root_id, cb),
+    }
+}
+
 impl BaseDocument {
     /// pyro: how far `position: relative` moves what the inline box (not atomic) `node_id` holds,
     /// laid out by the inline root `root_id` (CSS px): the relative offsets of it and of the

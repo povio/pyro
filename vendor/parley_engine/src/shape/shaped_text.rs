@@ -51,6 +51,60 @@ pub struct FontMetrics {
     pub x_height: Option<f32>,
 }
 
+/// pyro: the ideographic baselines of a font's `BASE` table (horizontal axis), scaled to a font
+/// size, as coordinates above the alphabetic baseline: `ideo`, `idtp`, `icfb` and `icft`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct IdeographicBaselines {
+    /// `ideo`: the bottom of the ideographic em box.
+    pub ideographic_under: Option<f32>,
+    /// `idtp`: the top of the ideographic em box.
+    pub ideographic_over: Option<f32>,
+    /// `icfb`: the bottom of the ideographic character face.
+    pub face_under: Option<f32>,
+    /// `icft`: the top of the ideographic character face.
+    pub face_over: Option<f32>,
+}
+
+impl IdeographicBaselines {
+    /// Reads them from `font`; `None` for a font without a horizontal `BASE` axis.
+    pub fn from_font_instance(font: &FontInstance, font_size: f32) -> Option<Self> {
+        use skrifa::raw::TableProvider;
+        use skrifa::raw::tables::base::BaseCoord;
+        let font_ref =
+            skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
+        let units_per_em = f32::from(font_ref.head().ok()?.units_per_em());
+        let axis = font_ref.base().ok()?.horiz_axis()?.ok()?;
+        let tags = axis.base_tag_list()?.ok()?;
+        let scripts = axis.base_script_list().ok()?;
+        let records = scripts.base_script_records();
+        // The default script's values, else the first script's.
+        let record = records
+            .iter()
+            .find(|record| record.base_script_tag() == skrifa::Tag::new(b"DFLT"))
+            .or_else(|| records.first())?;
+        let values = record.base_script(scripts.offset_data()).ok()?.base_values()?.ok()?;
+        let coords = values.base_coords();
+        let mut out = Self::default();
+        for (index, tag) in tags.baseline_tags().iter().enumerate() {
+            let Ok(coord) = coords.get(index) else { continue };
+            let coord = match coord {
+                BaseCoord::Format1(c) => c.coordinate(),
+                BaseCoord::Format2(c) => c.coordinate(),
+                BaseCoord::Format3(c) => c.coordinate(),
+            };
+            let value = Some(f32::from(coord) * font_size / units_per_em);
+            match &tag.get().to_be_bytes() {
+                b"ideo" => out.ideographic_under = value,
+                b"idtp" => out.ideographic_over = value,
+                b"icfb" => out.face_under = value,
+                b"icft" => out.face_over = value,
+                _ => {}
+            }
+        }
+        Some(out)
+    }
+}
+
 impl FontMetrics {
     /// Metrics to use when no font is available at all.
     ///

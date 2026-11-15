@@ -573,6 +573,8 @@ pub struct LineBreakData {
     pub line_y_start: f64,
     /// The position of the bottom of the line
     pub line_y_end: f64,
+    /// pyro: where the line's text ends (a byte offset; after the newline of a forced break).
+    pub text_end: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -1121,6 +1123,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             metrics: self.lines.lines.last().unwrap().metrics,
             line_y_start,
             line_y_end: self.state.line_y,
+            text_end: self.lines.lines.last().unwrap().text_range.end,
         }
     }
 

@@ -571,6 +571,8 @@ pub(crate) fn style(
         strikethrough_brush: Default::default(),
         // pyro: set by the inline build for spans with annotations (`TextAnnotation`).
         annotation_space: Default::default(),
+        // pyro: set by the inline build for inline boxes (`layout::text_box`).
+        text_box_trim: Default::default(),
     }
 }
 

@@ -1224,7 +1224,7 @@ impl ElementCx<'_, '_> {
                 let below = border.border_bottom_width.0.to_f32_px()
                     * f32::from(!border.border_bottom_style.none_or_hidden())
                     + length(&padding.padding_bottom.0);
-                let (top, bottom) = line.span_content_area(own_style);
+                let (top, bottom) = line.span_box_area(own_style);
                 let border_box = Rect::new(
                     (x0 as f64) + text_shift,
                     ((top - above * scale) as f64) + shift,

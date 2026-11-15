@@ -175,6 +175,21 @@ preserved segment break is kept (the box is content of the new line): the spaces
 in the text, which keeps the level before it) is no content an edge goes beside: a span starting with U+202E had
 its start edge left at that character, away from the content the override reordered (WPT `bidi-011`).
 
+## `text-box-trim` (WPT round 3, lane I)
+
+- `src/style/mod.rs`, `src/resolve/mod.rs`: `TextStyle::text_box_trim` (`TextBoxTrim`, `TextEdge`): the font
+  metric each side of a span box's content area is trimmed to.
+- `src/layout/style_metrics.rs`: `StyleMetrics` keeps the cap height, the ideographic em box and character face
+  (the font's `BASE` table through `parley_engine::IdeographicBaselines`, else derived from the em box) and the
+  trimmed content edges (`content_over`, `content_under`); `StyleMetrics::text_edge`.
+- `src/layout/line.rs`: `Line::span_box_area` (the content area as the span's box has it, trimmed) next to
+  `span_content_area` (the font's, which text decorations go by), and `Line::span_text_edge` (a metric edge of a
+  span box on the line: what a block's `text-box-trim` trims its first and last lines to).
+- `src/layout/line_break.rs`: `LineBreakData::text_end`, by which the inline layout finds the `<br>` that ended a
+  line (its `clear`).
+
+Covered by `crates/pyro-render/tests/text_box_trim.rs`.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

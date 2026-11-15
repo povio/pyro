@@ -86,3 +86,9 @@ names the indices of its objects (atomic inline boxes), which are resolved as U+
 around a box resolved as if it were not there. Each paragraph, up to and including a paragraph separator (class B:
 a preserved line feed, U+2029), is resolved on its own (UAX #9 P1); the whole text was one paragraph. The layout's
 paragraph level is the first paragraph's. Covered by `crates/pyro-render/tests/unicode_bidi.rs`.
+
+## Ideographic baselines (WPT round 3, lane I)
+
+`src/shape/shaped_text.rs`: `IdeographicBaselines::from_font_instance` reads `ideo`, `idtp`, `icfb` and `icft` of
+a font's `BASE` table (horizontal axis, the default script's values), for `text-box-edge: ideographic` and
+`ideographic-ink` (WPT `css-inline/text-box-trim`, the BaselineDiagnostic fonts).

@@ -29,6 +29,8 @@ pub(crate) struct VerticalLine {
     central: Option<f32>,
     /// `text-orientation: upright`: every glyph stands upright.
     all_upright: bool,
+    /// pyro: the line is turned a quarter counterclockwise (`sideways-lr`).
+    counterclockwise: bool,
 }
 
 impl VerticalLine {
@@ -52,7 +54,18 @@ impl VerticalLine {
                     })
             })
             .flatten();
-        Self { central, all_upright }
+        Self { central, all_upright, counterclockwise: false }
+    }
+
+    /// pyro: for a line turned a quarter counterclockwise (`sideways-lr`).
+    pub(crate) fn counterclockwise(mut self, counterclockwise: bool) -> Self {
+        self.counterclockwise = counterclockwise;
+        self
+    }
+
+    /// pyro: a physical offset (a relatively positioned inline box's) in the turned line's space.
+    fn turned_offset(self, (dx, dy): (f32, f32)) -> (f32, f32) {
+        if self.counterclockwise { (-dy, dx) } else { (dy, -dx) }
     }
 
     /// pyro: how far [`Self::fragment_shift`] moves a run along the block axis (layout px).
@@ -305,8 +318,13 @@ pub(crate) fn draw_inline_backgrounds<'a>(
             let x = glyph_run.offset() as f64;
             let w = glyph_run.advance() as f64;
             let baseline = glyph_run.baseline() as f64;
-            let y0 = baseline - metrics.ascent as f64;
-            let y1 = baseline + metrics.descent as f64;
+            // pyro: less what `text-box-trim` trims off the box's content area.
+            let (content, trimmed) = (
+                line.span_content_area(glyph_run.style_index()),
+                line.span_box_area(glyph_run.style_index()),
+            );
+            let y0 = baseline - metrics.ascent as f64 + f64::from(trimmed.0 - content.0);
+            let y1 = baseline + metrics.descent as f64 + f64::from(trimmed.1 - content.1);
             let rect = Rect::new(x, y0, x + w, y1);
 
             for color in backgrounds.into_iter().rev() {
@@ -1613,7 +1631,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
     }
     let line_tops = line_tops.filter(|_| vertical.is_none());
     // pyro: the text of relatively positioned inline boxes is painted moved.
-    let relative = vertical.is_none() && doc.inline_root_has_relative_spans(inline_root_id);
+    // (In a vertical line, which is drawn turned, the offset turns with it.)
+    let relative = doc.inline_root_has_relative_spans(inline_root_id);
+    let relative_offset = |node_id| {
+        let offset = doc.inline_span_relative_offset(node_id, inline_root_id);
+        vertical.map_or(offset, |vertical| vertical.turned_offset(offset))
+    };
     let run_filter = run_filter.as_ref().filter(|filter| filter.root == inline_root_id);
     // pyro: the decorations of the root's ancestors that propagate into it.
     let outer = propagated_decorations(doc, inline_root_id, propagated, path_scratch);
@@ -1863,7 +1886,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                             own: None,
                             first: None,
                             shift: (relative && !is_outer && node_id != inline_root_id)
-                                .then(|| doc.inline_span_relative_offset(node_id, inline_root_id))
+                                .then(|| relative_offset(node_id))
                                 .filter(|&(dx, dy)| dx != 0.0 || dy != 0.0)
                                 .map(|(dx, dy)| Vec2::new(f64::from(dx) * scale, f64::from(dy) * scale)),
                         });
@@ -1967,7 +1990,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 None => (transform, glyph_xform),
             };
             let transform = if relative {
-                let (dx, dy) = doc.inline_span_relative_offset(glyph_run.style().brush.id, inline_root_id);
+                let (dx, dy) = relative_offset(glyph_run.style().brush.id);
                 transform * Affine::translate((dx as f64 * scale, dy as f64 * scale))
             } else {
                 transform

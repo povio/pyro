@@ -921,6 +921,8 @@ impl LayoutPassState<'_> {
         let mut line_bottoms = [0.0f64; 2];
         #[cfg(feature = "floats")]
         let mut line_count_so_far = 0usize;
+        // pyro: the lowest point a `<br>` with `clear` moved the content to (layout px).
+        let mut br_clear_floor = 0.0f32;
 
         // Perform inline layout
         #[cfg(feature = "floats")]
@@ -949,11 +951,12 @@ impl LayoutPassState<'_> {
                 inline_layout.hit_reach = None;
                 // pyro: the relative offset of the inline boxes a float is in (`place_inline_float`).
                 let relative_spans = inline_layout.relative_spans;
+                let br_clears = std::mem::take(&mut inline_layout.br_clears);
                 let root_id = node_id;
                 let span_cb = taffy::Size { width: width / scale, height: 0.0 };
                 let float_span_offset = |nodes: &crate::NodeTree, float_id: NodeId| match nodes[float_id].parent {
                     Some(parent) if relative_spans => {
-                        crate::layout::inline::inline_span_offset(nodes, parent, root_id, span_cb)
+                        crate::layout::inline::inline_span_flow_offset(nodes, parent, root_id, span_cb)
                     }
                     _ => taffy::Point::ZERO,
                 };
@@ -1020,6 +1023,32 @@ impl LayoutPassState<'_> {
                             line_count_so_far += 1;
 
                             let state = breaker.state_mut();
+
+                            // pyro: a `<br>` with `clear` ended the line: what follows starts
+                            // below the floats it clears.
+                            if line_break_data.reason == BreakReason::Explicit
+                                && let Some(&(_, br)) = br_clears
+                                    .iter()
+                                    .find(|&&(offset, _)| offset + 1 == line_break_data.text_end)
+                            {
+                                let clear = self.child_layout_style(&self.nodes[br]).clear();
+                                let y = state.line_y() as f32 / scale;
+                                let cleared = block_ctx.find_content_slot(y, 0.0, clear, None).y;
+                                // The end of the floats beside the line: a trimmed last line
+                                // (`text-box-trim`) does not end the content above it.
+                                let line_top = line_break_data.line_y_start as f32 / scale;
+                                let beside = block_ctx.find_content_slot(line_top, 0.0, clear, None).y;
+                                if beside > line_top {
+                                    br_clear_floor = br_clear_floor.max(beside * scale);
+                                }
+                                if cleared > y {
+                                    let cleared = f64::from(cleared * scale);
+                                    state.set_line_y(cleared);
+                                    line_bottoms[(line_count_so_far - 1) % 2] = cleared;
+                                    br_clear_floor = br_clear_floor.max(cleared as f32);
+                                    has_active_floats = true;
+                                }
+                            }
 
                             // pyro: a float met past the point where the line wrapped is met
                             // again on the next line, and placed after that one (CSS 2.1 §9.5.1
@@ -1167,6 +1196,7 @@ impl LayoutPassState<'_> {
                     }
                 }
                 breaker.finish();
+                inline_layout.br_clears = br_clears;
                 inline_layout.last_break = (!floats_involved).then_some(break_key);
                 let resumed_at = match kept {
                     0 => 0,
@@ -1267,6 +1297,34 @@ impl LayoutPassState<'_> {
             }
         }
 
+        // pyro: `text-box-trim` of the block whose first or last formatted line is here: the
+        // lines move up by what the first line loses over its edge, and the content is shorter
+        // by that and by what the last line loses under its edge (`layout::text_box`).
+        let mut text_box_shift = 0.0;
+        let mut text_box_overflows = false;
+        if has_inline_content {
+            let (start, end) = crate::layout::text_box::block_trim(self.doc, node_id);
+            let layout = &inline_layout.layout;
+            if let Some(trim) = start
+                && let Some(line) = layout.get(0)
+            {
+                let top = line.metrics().block_min_coord;
+                let edge = line.span_text_edge(0, trim.edge, trim.over);
+                // An inverted line (`vertical-lr`) has its under side at the block start.
+                text_box_shift = if trim.over { edge - top } else { line.metrics().block_max_coord - edge };
+            }
+            let mut end_trim = 0.0;
+            if let Some(trim) = end
+                && let Some(line) = trailing_empty_line.unwrap_or(line_count).checked_sub(1).and_then(|i| layout.get(i))
+            {
+                let edge = line.span_text_edge(0, trim.edge, trim.over);
+                end_trim = if trim.over { edge - line.metrics().block_min_coord } else { line.metrics().block_max_coord - edge };
+            }
+            // (Not above where a `<br>`'s clearance put the end of the content.)
+            height = (height - text_box_shift - end_trim).max((br_clear_floor - text_box_shift).min(height));
+            text_box_overflows = text_box_shift > 0.0 || end_trim > 0.0;
+        }
+
         #[cfg(feature = "floats")]
         {
             if is_bfc_root {
@@ -1317,15 +1375,9 @@ impl LayoutPassState<'_> {
                 final_size.height - content_box_inset.vertical_axis_sum() - measured_size.height;
             taffy::compute_block_align_content_offset(align_content, free_space)
         };
+        let block_offset = block_offset - text_box_shift / scale;
         inline_layout.block_offset = block_offset;
         let line_box_top = container_pb.top + block_offset;
-
-        // pyro: whether the lines are laid out in a vertical writing mode (turned): the physical
-        // geometry of inline boxes' fragments is not known here then.
-        let vertical_lines = self.nodes[node_id]
-            .primary_styles()
-            .or_else(|| self.nodes[node_id].parent.and_then(|parent| self.nodes[parent].primary_styles()))
-            .is_some_and(|style| style.writing_mode.is_vertical());
 
         // Store sizes and positions of inline boxes. Walking a line's items builds every
         // glyph run on it, so lines are only walked when there are boxes to find.
@@ -1425,8 +1477,8 @@ impl LayoutPassState<'_> {
                         // (Not in a vertical writing mode, where the lines are laid out turned
                         // and the offset is not applied to them.)
                         let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
-                            Some(parent) if inline_layout.relative_spans && !vertical_lines => {
-                                crate::layout::inline::inline_span_offset(&self.nodes, parent, node_id, container_content_size)
+                            Some(parent) if inline_layout.relative_spans => {
+                                crate::layout::inline::inline_span_flow_offset(&self.nodes, parent, node_id, container_content_size)
                             }
                             _ => taffy::Point::ZERO,
                         };
@@ -1506,7 +1558,7 @@ impl LayoutPassState<'_> {
                         // pyro: relatively positioned inline boxes around it move it too.
                         let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
                             Some(parent) if inline_layout.relative_spans => {
-                                crate::layout::inline::inline_span_offset(&self.nodes, parent, node_id, container_content_size)
+                                crate::layout::inline::inline_span_flow_offset(&self.nodes, parent, node_id, container_content_size)
                             }
                             _ => taffy::Point::ZERO,
                         };
@@ -1575,8 +1627,8 @@ impl LayoutPassState<'_> {
                 let Some((x, y, width, height)) = span_padding_box(&self.nodes, &inline_layout, span, scale) else {
                     continue;
                 };
-                let offset = if inline_layout.relative_spans && !vertical_lines {
-                    crate::layout::inline::inline_span_offset(&self.nodes, span, node_id, content_size)
+                let offset = if inline_layout.relative_spans {
+                    crate::layout::inline::inline_span_flow_offset(&self.nodes, span, node_id, content_size)
                 } else {
                     taffy::Point::ZERO
                 };
@@ -1602,7 +1654,11 @@ impl LayoutPassState<'_> {
         if inputs.run_mode == RunMode::PerformLayout {
             inline_layout.span_cb_flags = span_cb_flags;
             // pyro: lines taller than the box reach into what follows it (`FLOW_CONTENT_OVERFLOWS`).
-            let overflows = measured_size.height > final_size.height - content_box_inset.vertical_axis_sum() + 0.01;
+            // So do lines trimmed by `text-box-trim` and inline boxes with a border or padding
+            // over or under them.
+            let overflows = measured_size.height > final_size.height - content_box_inset.vertical_axis_sum() + 0.01
+                || text_box_overflows
+                || inline_layout.span_block_edges;
             let flags = &mut self.nodes[node_id].flags;
             flags.remove(NodeFlags::FLOW_BOXES_OVERLAP);
             flags.set(NodeFlags::FLOW_CONTENT_OVERFLOWS, overflows);
@@ -1806,7 +1862,7 @@ fn span_padding_box(
         }
         if let Some((x0, x1, own)) = fragment {
             let (top, bottom) = if line_has_content {
-                let (top, bottom) = line.span_content_area(own);
+                let (top, bottom) = line.span_box_area(own);
                 (top - padding_top, bottom + padding_bottom)
             } else {
                 let top = line.metrics().block_min_coord;

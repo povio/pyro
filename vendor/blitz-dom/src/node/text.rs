@@ -88,6 +88,12 @@ pub struct TextLayout {
     /// pyro: some inline box's margin or padding at an edge is a percentage: each layout gives
     /// those edges their width (`span_edge_widths_in`).
     pub percent_span_edges: bool,
+    /// pyro: some inline box has a border or padding over or under it: its box reaches out of
+    /// its line, over what comes before or after the root (`NodeFlags::FLOW_CONTENT_OVERFLOWS`).
+    pub span_block_edges: bool,
+    /// pyro: the `<br>`s with `clear`, each with the offset in `text` of its newline: the line
+    /// after it starts below the floats it clears (CSS 2.1 § 9.5.2). Set by each build.
+    pub br_clears: Vec<(usize, NodeId)>,
 }
 
 /// pyro: where an inline layout's first letter is: the bytes of a text node's content that an

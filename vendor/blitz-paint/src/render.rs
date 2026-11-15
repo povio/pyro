@@ -1307,11 +1307,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         );
                         return;
                     }
+                    // pyro: the stacking contexts with a negative z-index go under the box's own
+                    // inline content (CSS 2.1 Appendix E, step 3 before step 7).
+                    cx.draw_neg_z_children(scene, cx.transform, child_clip_rect);
                     cx.draw_inline_layout(scene, content_position);
                     if !hidden {
                         cx.draw_marker(scene, content_position);
                     }
-                    cx.draw_children(scene, cx.transform, child_clip_rect);
+                    cx.draw_children_above(scene, cx.transform, child_clip_rect);
                 }
             },
         );
@@ -2164,7 +2167,7 @@ impl ElementCx<'_, '_> {
                             fragment.last_item = item_index;
                         }
                         _ => {
-                            let (top, bottom) = line.span_content_area(style_index);
+                            let (top, bottom) = line.span_box_area(style_index);
                             let shift = tops.map_or(0.0, |tops| tops.shift(metrics)) as f32;
                             let style = on_first_line
                                 .filter(|&first_line| first_line != node)
@@ -2719,7 +2722,10 @@ impl ElementCx<'_, '_> {
         let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
         let all_upright = wm.contains(WritingMode::UPRIGHT);
         let vertical = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
-            Some(crate::text::VerticalLine::new(line, sideways, all_upright))
+            Some(
+                crate::text::VerticalLine::new(line, sideways, all_upright)
+                    .counterclockwise(wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR)),
+            )
         };
 
         if self.context.backgrounds {
@@ -3144,7 +3150,16 @@ impl ElementCx<'_, '_> {
     ) {
         // Negative z_index hoisted nodes
         self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
+        self.draw_children_above(scene, parent_style_transform, clip_rect);
+    }
 
+    /// pyro: [`Self::draw_children`] without the stacking contexts of negative z-index.
+    fn draw_children_above(
+        &self,
+        scene: &mut impl PaintScene,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
         // Regular children
         if let Some(children) = &*self.node.paint_children.borrow() {
             for child_id in children {

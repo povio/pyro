@@ -723,3 +723,14 @@ Covered by `crates/pyro-render/tests/svg_viewport_clip.rs` and `svg_external_ref
   inline box's fragment (WPT `bidi-011`).
 
 Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
+
+## Lane I of WPT round 3 (`text-box-trim`)
+
+- `src/render.rs` (`render_node`): the stacking contexts of negative z-index are painted before the box's own
+  inline content (Appendix E step 3 before step 7); they were painted over its text.
+- `src/render.rs`, `src/render/clip_path.rs`, `src/text.rs` (`draw_inline_backgrounds`): the boxes of inline
+  fragments use `Line::span_box_area` (the content area less `text-box-trim`); decorations keep the font's.
+- `src/text.rs` (`VerticalLine::turned_offset`), `src/render.rs`: relatively positioned inline boxes move their
+  text and decorations in vertical lines too, the offset turned with the line.
+
+Covered by `crates/pyro-render/tests/text_box_trim.rs`.

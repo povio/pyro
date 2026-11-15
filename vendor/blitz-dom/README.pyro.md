@@ -1698,3 +1698,27 @@ element is now the document's layout child, as every other root element. Covered
   (WPT `content-attr-case-001`).
 
 Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
+
+## `text-box-trim`, `<br>` clearance (WPT round 3, lane I)
+
+- `src/layout/text_box.rs` (new), `src/layout/inline/layout.rs`: `text-box-trim` / `text-box-edge` on block
+  containers. The inline root holding a block's first or last formatted line (found up the chain of first / last
+  in-flow children, stopped by a child with a border or padding on that side, as in Chromium) moves its lines up
+  by what the first line loses (`TextLayout::block_offset`) and is shorter by both trims; the metric is the
+  `text-box-edge` of the line's own root inline box. `vertical-lr` lines are inverted: their under side is at
+  the block start. On inline boxes the trim goes to parley (`TextStyle::text_box_trim`). Gated by the sticky
+  `BaseDocument::text_box_trim_styles` (set by the style traversal), so other documents pay nothing.
+  `layout.css.text-box.enabled` is set in `init_stylo_prefs` (and in pyro-dom's list).
+- `src/layout/inline/build.rs`, `layout.rs`: a `<br>` with `clear` (`TextLayout::br_clears`) starts the next
+  line below the floats it clears, and a block ending with it ends there; a trimmed last line does not end the
+  block above the float beside it (WPT `text-box-trim-float-clear-br-*`).
+- `src/layout/inline/build.rs`, `layout.rs`: an inline box with a border or padding over or under it
+  (`TextLayout::span_block_edges`), and trimmed lines, set `FLOW_CONTENT_OVERFLOWS`: the box reaches over the
+  next block, whose background is painted before it (Appendix E phases).
+- `src/layout/inline/relative.rs` (`inline_span_flow_offset`): the relative offset of inline boxes in the axes of
+  the layout, so static positions and span containing blocks move with them in vertical writing modes too (paint
+  moves the text there since this change). Not in a multi-column container of a vertical writing mode, which is
+  laid out as one column: `css-position/multicol/static-position/v*-in-multicol` would show what the offset moves
+  out of a column.
+
+Covered by `crates/pyro-render/tests/text_box_trim.rs`.

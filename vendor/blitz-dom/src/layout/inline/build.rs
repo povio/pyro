@@ -140,6 +140,11 @@ struct BidiScan {
     relative: bool,
     /// Some inline box's margin or padding at an edge is a percentage (`span_edge_widths_in`).
     percent_edges: bool,
+    /// Some inline box has a border or padding on a block-axis side: its box reaches out of its
+    /// line (`TextLayout::span_block_edges`).
+    block_edges: bool,
+    /// The `<br>`s with `clear`, each with the offset of its newline (`TextLayout::br_clears`).
+    br_clears: Vec<(usize, NodeId)>,
     /// How many in-flow atomic inline boxes were pushed.
     atomic_boxes: usize,
     /// Some inline box held nothing and pushed an empty-box strut.
@@ -195,6 +200,41 @@ struct SpanEnd {
 /// characters of its `unicode-bidi` (with `bidi`), its start edge with `start`, and the strut
 /// when it has an edge. With `end`, its end edge goes in the returned [`SpanEnd`].
 #[allow(clippy::too_many_arguments)]
+/// pyro: whether the inline root `root_id` is in a multi-column container of a vertical writing
+/// mode.
+fn in_vertical_multicol(nodes: &crate::NodeTree, root_id: NodeId) -> bool {
+    let mut current = Some(root_id);
+    while let Some(id) = current {
+        let node = &nodes[id];
+        if let Some(style) = node.primary_styles() {
+            if !style.writing_mode.is_vertical() {
+                return false;
+            }
+            if style.get_column().is_multicol() {
+                return true;
+            }
+        }
+        current = node.parent;
+    }
+    false
+}
+
+/// pyro: whether an inline box with `style` has a border or padding over or under it.
+fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
+    use style::values::computed::Length;
+    let (b, p) = (style.get_border(), style.get_padding());
+    let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
+        !style.none_or_hidden() && width.0.to_f32_px() != 0.0
+    };
+    let padding = |v: &style::values::computed::NonNegativeLengthPercentage| {
+        v.0.resolve(Length::new(0.0)).px() != 0.0 || v.0.has_percentage()
+    };
+    border(&b.border_top_width, b.border_top_style)
+        || border(&b.border_bottom_width, b.border_bottom_style)
+        || padding(&p.padding_top)
+        || padding(&p.padding_bottom)
+}
+
 fn open_span(
     builder: &mut TreeBuilder<TextBrush>,
     node_id: NodeId,
@@ -205,7 +245,9 @@ fn open_span(
     bidi_scan: &mut BidiScan,
     strut: &mut bool,
 ) -> SpanEnd {
-    builder.push_style_span(stylo_to_parley::style(node_id, style));
+    let mut parley_style = stylo_to_parley::style(node_id, style);
+    parley_style.text_box_trim = crate::layout::text_box::span_trim(style);
+    builder.push_style_span(parley_style);
     bidi_scan.relative |= style.clone_position() == PositionProperty::Relative;
     let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
     let controls = bidi_controls(style);
@@ -219,6 +261,7 @@ fn open_span(
     }
     let (start_edge, end_edge, percent) = span_edge_widths_in(style, 0.0);
     bidi_scan.percent_edges |= percent;
+    bidi_scan.block_edges |= has_block_edges(style);
     let (start_edge, end_edge) = (start_edge.filter(|_| start), end_edge.filter(|_| end));
     let scale = builder.scale();
     let edge = |kind, width: f32| InlineBox {
@@ -497,6 +540,7 @@ fn build_inline_layout_with(
         close_span(&mut builder, end, bidi, &mut bidi_scan);
     }
     text_layout.split_pieces = std::mem::take(&mut bidi_scan.split_pieces);
+    text_layout.br_clears = std::mem::take(&mut bidi_scan.br_clears);
 
     // pyro: the bidi formatting characters change the levels only when some are needed and the
     // paragraph has right-to-left content (see `build_inline_layout_with`).
@@ -569,8 +613,12 @@ fn build_inline_layout_with(
         text_layout.layout.calculate_content_widths()
     });
     text_layout.bidi_controls = bidi || bidi_scan.empty_box_struts;
-    text_layout.relative_spans = bidi_scan.relative;
+    // (Not in a multi-column container of a vertical writing mode, which is laid out as one
+    // column (`layout::multicol`): what the offset moves out of its column would show there,
+    // where the next column covers it.)
+    text_layout.relative_spans = bidi_scan.relative && !in_vertical_multicol(nodes, inline_context_root_node_id);
     text_layout.percent_span_edges = bidi_scan.percent_edges;
+    text_layout.span_block_edges = bidi_scan.block_edges;
     return true;
 
     /// pyro: what `text-overflow` puts at the end of the overflowing lines of a box with this
@@ -765,6 +813,11 @@ fn build_inline_layout_with(
                     builder.push_style_modification_span(&[
                         parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
                     ]);
+                    if node.primary_styles().is_some_and(|style| {
+                        style.clone_clear() != style::computed_values::clear::T::None
+                    }) {
+                        bidi_scan.br_clears.push((builder.text().len(), node_id));
+                    }
                     builder.push_text("\n");
                     builder.pop_style_span();
                     if bidi {
@@ -867,6 +920,9 @@ fn build_inline_layout_with(
                                     ..Default::default()
                                 });
                             style.annotation_space = space_of(&annotations.space, node_id);
+                            if let Some(computed) = node.primary_styles() {
+                                style.text_box_trim = crate::layout::text_box::span_trim(&computed);
+                            }
 
                             builder.push_style_span(style);
                             // pyro: emphasis marks over the span's own text; a `<ruby>`'s first
@@ -884,6 +940,7 @@ fn build_inline_layout_with(
                             bidi_scan.relative |= node
                                 .primary_styles()
                                 .is_some_and(|style| style.clone_position() == PositionProperty::Relative);
+                            bidi_scan.block_edges |= node.primary_styles().is_some_and(|style| has_block_edges(&style));
                             // pyro: the bidi formatting characters its `unicode-bidi` stands for,
                             // around its edges, as Blink places them.
                             let controls = node.primary_styles().and_then(|style| {
