@@ -53,6 +53,156 @@ pub(crate) fn span_edge_widths(style: &style::properties::ComputedValues) -> (f3
     }
 }
 
+/// pyro: the bidi formatting characters that the start and the end of an inline box stand for,
+/// by its `unicode-bidi` and `direction` (CSS Writing Modes 3 § 2.4.2), as Blink inserts them.
+fn bidi_controls(style: &style::properties::ComputedValues) -> Option<(&'static [char], &'static [char])> {
+    use style::computed_values::direction::T as Direction;
+    use style::computed_values::unicode_bidi::T as UnicodeBidi;
+    let rtl = style.clone_direction() == Direction::Rtl;
+    Some(match style.clone_unicode_bidi() {
+        UnicodeBidi::Normal => return None,
+        UnicodeBidi::Embed if rtl => (&['\u{202B}'], &['\u{202C}']),
+        UnicodeBidi::Embed => (&['\u{202A}'], &['\u{202C}']),
+        UnicodeBidi::Isolate if rtl => (&['\u{2067}'], &['\u{2069}']),
+        UnicodeBidi::Isolate => (&['\u{2066}'], &['\u{2069}']),
+        UnicodeBidi::BidiOverride if rtl => (&['\u{202E}'], &['\u{202C}']),
+        UnicodeBidi::BidiOverride => (&['\u{202D}'], &['\u{202C}']),
+        UnicodeBidi::IsolateOverride if rtl => (&['\u{2067}', '\u{202E}'], &['\u{202C}', '\u{2069}']),
+        UnicodeBidi::IsolateOverride => (&['\u{2066}', '\u{202D}'], &['\u{202C}', '\u{2069}']),
+        UnicodeBidi::Plaintext => (&['\u{2068}'], &['\u{2069}']),
+    })
+}
+
+/// pyro: whether `c` is one of the bidi formatting characters `bidi_controls` gives, or the
+/// strut of an empty inline box (U+2061, `TreeBuilder::push_empty_box_strut`): no content.
+pub(crate) fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2061}')
+}
+
+/// pyro: whether `c` makes a paragraph's bidi resolution give right-to-left levels: a strong
+/// right-to-left or Arabic character, an Arabic number, or a right-to-left mark or formatting
+/// character (by block, the Arabic letter mark among them; a superset of bidi classes R, AL and
+/// AN).
+fn is_rtl_char(c: char) -> bool {
+    matches!(c as u32,
+        0x0590..=0x08FF
+        | 0xFB1D..=0xFDFF
+        | 0xFE70..=0xFEFF
+        | 0x10800..=0x10FFF
+        | 0x1E800..=0x1EFFF
+        | 0x200F
+        | 0x202B
+        | 0x202E
+        | 0x2067)
+}
+
+/// pyro: what a build saw of the `unicode-bidi` of the root and its inline boxes.
+#[derive(Default)]
+struct BidiScan {
+    /// Some box stands for bidi formatting characters (`bidi_controls`).
+    controls: bool,
+    /// Such a box, or the root, is right-to-left.
+    rtl: bool,
+    /// Some inline box (not atomic, not split) is relatively positioned.
+    relative: bool,
+    /// How many in-flow atomic inline boxes were pushed.
+    atomic_boxes: usize,
+    /// Some inline box held nothing and pushed an empty-box strut.
+    empty_box_struts: bool,
+    /// The split inlines the layout holds pieces of, with whether it holds their start and end
+    /// (`TextLayout::split_pieces`).
+    split_pieces: Vec<(NodeId, bool, bool)>,
+}
+
+/// pyro: the split inlines (`NodeFlags::IS_SPLIT_INLINE`) whose box holds the anonymous block
+/// `root_id` (inline content between two of their block-level boxes), innermost first: its
+/// content is inside their spans, with neither their start nor their end.
+fn split_pieces(nodes: &crate::NodeTree, root_id: NodeId) -> Vec<(NodeId, bool, bool)> {
+    let mut pieces = Vec::new();
+    let root = &nodes[root_id];
+    // A pseudo-element is an anonymous box of its own, not a piece.
+    let is_pseudo = root.parent.is_some_and(|parent| {
+        nodes[parent].before() == Some(root_id) || nodes[parent].after() == Some(root_id)
+    });
+    if !root.is_anonymous() || is_pseudo {
+        return pieces;
+    }
+    let mut child = root;
+    while let Some(parent) = child.parent.map(|id| &nodes[id]).filter(|node| node.is_split_inline()) {
+        pieces.push((parent.id, false, false));
+        child = parent;
+    }
+    pieces
+}
+
+/// pyro: what the start of an inline box's span pushed that its end pushes too: its end edge and
+/// the bidi formatting characters closing its `unicode-bidi`.
+struct SpanEnd {
+    edge: Option<InlineBox>,
+    controls: Option<&'static [char]>,
+}
+
+/// pyro: pushes the span of the inline box `node_id` (style `style`): the bidi formatting
+/// characters of its `unicode-bidi` (with `bidi`), its start edge with `start`, and the strut
+/// when it has an edge. With `end`, its end edge goes in the returned [`SpanEnd`].
+#[allow(clippy::too_many_arguments)]
+fn open_span(
+    builder: &mut TreeBuilder<TextBrush>,
+    node_id: NodeId,
+    style: &style::properties::ComputedValues,
+    start: bool,
+    end: bool,
+    bidi: bool,
+    bidi_scan: &mut BidiScan,
+    strut: &mut bool,
+) -> SpanEnd {
+    builder.push_style_span(stylo_to_parley::style(node_id, style));
+    bidi_scan.relative |= style.clone_position() == PositionProperty::Relative;
+    let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+    let controls = bidi_controls(style);
+    if let Some((start_controls, _)) = controls {
+        bidi_scan.controls = true;
+        bidi_scan.rtl |= rtl;
+        if bidi {
+            start_controls.iter().for_each(|&c| builder.push_bidi_control(c));
+        }
+    }
+    let (start_edge, end_edge) = span_edge_widths(style);
+    let (start_edge, end_edge) = (if start { start_edge } else { 0.0 }, if end { end_edge } else { 0.0 });
+    let scale = builder.scale();
+    let edge = |kind, width: f32| InlineBox {
+        id: node_id.as_u64(),
+        kind,
+        index: 0,
+        width: width * scale,
+        height: 0.0,
+        baseline: None,
+        vertical_align: Default::default(),
+        rtl,
+    };
+    if start_edge != 0.0 {
+        builder.push_inline_box(edge(InlineBoxKind::SpanStart, start_edge));
+    }
+    if (start_edge != 0.0 || end_edge != 0.0) && std::mem::take(strut) {
+        builder.push_text("\u{2060}");
+    }
+    SpanEnd {
+        edge: (end_edge != 0.0).then(|| edge(InlineBoxKind::SpanEnd, end_edge)),
+        controls: controls.map(|(_, end_controls)| end_controls),
+    }
+}
+
+/// pyro: pushes the end of a span `open_span` started.
+fn close_span(builder: &mut TreeBuilder<TextBrush>, end: SpanEnd, bidi: bool) {
+    if let Some(edge) = end.edge {
+        builder.push_inline_box(edge);
+    }
+    if let (true, Some(controls)) = (bidi, end.controls) {
+        controls.iter().for_each(|&c| builder.push_bidi_control(c));
+    }
+    builder.pop_style_span();
+}
+
 pub(crate) fn build_inline_layout_into(
     nodes: &crate::NodeTree,
     layout_ctx: &mut LayoutContext<TextBrush>,
@@ -61,16 +211,28 @@ pub(crate) fn build_inline_layout_into(
     scale: f32,
     inline_context_root_node_id: NodeId,
 ) {
-    build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false, &[]);
+    // pyro: built with the bidi formatting characters of `unicode-bidi` when they matter.
+    let built = build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false, &[], false);
+    let bidi = !built;
+    if bidi {
+        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false, &[], true);
+    }
     // A line holding atomic inlines but no text still has its strut (CSS 2.1
     // 10.8.1): the root's font and line height. Parley makes no line height
     // without text, so a line of empty inline-blocks was 0px tall. A
     // word joiner (zero-width, no break opportunity) provides the strut.
-    if text_layout.layout.inline_boxes().len() > 0 && text_layout.text.chars().all(|c| c.is_whitespace() && c != '\n') {
-        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[]);
+    if text_layout.layout.inline_boxes().len() > 0
+        && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c))
+    {
+        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[], bidi);
     }
 }
 
+/// Builds the inline layout of `inline_context_root_node_id`. pyro: without `bidi`, returns
+/// false without building when the content needs the bidi formatting characters of its inline
+/// boxes' `unicode-bidi` (some box has one, and the paragraph has right-to-left content: a
+/// left-to-right paragraph without any resolves every level to 0 with or without them).
+#[allow(clippy::too_many_arguments)]
 fn build_inline_layout_with(
     nodes: &crate::NodeTree,
     layout_ctx: &mut LayoutContext<TextBrush>,
@@ -82,7 +244,8 @@ fn build_inline_layout_with(
     // pyro: the room annotations take beyond the content area of the spans that hold them (see
     // `TextAnnotation`), measured by a first build.
     annotation_space: &[(NodeId, parley::AnnotationSpace)],
-) {
+    bidi: bool,
+) -> bool {
     // Get the inline context's root node's text styles
     let root_node = &nodes[inline_context_root_node_id];
     let root_node_style = root_node.primary_styles().or_else(|| {
@@ -119,6 +282,21 @@ fn build_inline_layout_with(
         .as_deref()
         .map(|s| CaseTransform::from_style(s))
         .unwrap_or(CaseTransform::NONE);
+
+    // pyro: a root's `bidi-override` overrides the levels of its whole inline content.
+    let mut bidi_scan = BidiScan::default();
+    if let Some(style) = root_node_style.as_deref() {
+        use style::computed_values::direction::T as Direction;
+        use style::computed_values::unicode_bidi::T as UnicodeBidi;
+        let rtl = style.clone_direction() == Direction::Rtl;
+        bidi_scan.rtl = rtl;
+        if matches!(style.clone_unicode_bidi(), UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride) {
+            bidi_scan.controls = true;
+            if bidi {
+                builder.push_bidi_control(if rtl { '\u{202E}' } else { '\u{202D}' });
+            }
+        }
+    }
 
     // Render position-inside list items
     if let Some(ListItemLayout {
@@ -166,6 +344,17 @@ fn build_inline_layout_with(
     let first_letter_split = text_layout.first_letter.clone();
     let first_letter = first_letter_split.as_ref();
 
+    // pyro: a piece of the split inlines whose box holds it is wrapped in their spans.
+    let pieces = split_pieces(nodes, inline_context_root_node_id);
+    let mut piece_ends = Vec::with_capacity(pieces.len());
+    for &(id, _, _) in pieces.iter().rev() {
+        let end = nodes[id]
+            .primary_styles()
+            .map(|style| open_span(&mut builder, id, &style, false, false, bidi, &mut bidi_scan, strut));
+        piece_ends.push(end);
+    }
+    bidi_scan.split_pieces.extend(pieces.iter().copied());
+
     if let Some(before_id) = root_node.before() {
         build_inline_layout_recursive(
             &mut builder,
@@ -177,9 +366,29 @@ fn build_inline_layout_with(
             strut,
             first_letter,
             annotations,
+            bidi,
+            &mut bidi_scan,
         );
     }
-    for child_id in root_node.children.iter().copied() {
+    let child_count = root_node.children.len();
+    for (index, child_id) in root_node.children.iter().copied().enumerate() {
+        // pyro: the head or the tail of a split inline.
+        if let Some(tail) = root_node.split_ref_at(index, child_count) {
+            build_split_part(
+                &mut builder,
+                &mut text_transformer,
+                nodes,
+                child_id,
+                tail,
+                text_nodes,
+                strut,
+                first_letter,
+                annotations,
+                bidi,
+                &mut bidi_scan,
+            );
+            continue;
+        }
         build_inline_layout_recursive(
             &mut builder,
             &mut text_transformer,
@@ -190,6 +399,8 @@ fn build_inline_layout_with(
             strut,
             first_letter,
             annotations,
+            bidi,
+            &mut bidi_scan,
         );
     }
     if let Some(after_id) = root_node.after() {
@@ -203,7 +414,23 @@ fn build_inline_layout_with(
             strut,
             first_letter,
             annotations,
+            bidi,
+            &mut bidi_scan,
         );
+    }
+
+    for end in piece_ends.into_iter().rev().flatten() {
+        close_span(&mut builder, end, bidi);
+    }
+    text_layout.split_pieces = std::mem::take(&mut bidi_scan.split_pieces);
+
+    // pyro: the bidi formatting characters change the levels only when some are needed and the
+    // paragraph has right-to-left content (see `build_inline_layout_with`).
+    if !bidi
+        && bidi_scan.controls
+        && (bidi_scan.rtl || (!builder.text().is_ascii() && builder.text().chars().any(is_rtl_char)))
+    {
+        return false;
     }
 
     // The first build keeps the lines of the layout's last break over the text that did not
@@ -225,8 +452,17 @@ fn build_inline_layout_with(
     let space = annotation_room(&built, scale);
     text_layout.annotations = built.into_iter().map(|(annotation, _)| annotation).collect();
     if annotation_space.is_empty() && !space.is_empty() {
-        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, strut_build, &space);
-        return;
+        return build_inline_layout_with(
+            nodes,
+            layout_ctx,
+            font_ctx,
+            text_layout,
+            scale,
+            inline_context_root_node_id,
+            strut_build,
+            &space,
+            bidi,
+        );
     }
     // pyro: the "…" that `text-overflow: ellipsis` ends an overflowing line with, in the root's
     // own style (its first available font, as in Chromium).
@@ -249,7 +485,9 @@ fn build_inline_layout_with(
         text_layout.layout.set_text_indent(0.0, IndentOptions::default());
         text_layout.layout.calculate_content_widths()
     });
-    return;
+    text_layout.bidi_controls = bidi || bidi_scan.empty_box_struts;
+    text_layout.relative_spans = bidi_scan.relative;
+    return true;
 
     /// pyro: whether `text-overflow` puts an ellipsis at the end of the lines of a box with this
     /// style: the box clips its inline overflow, and the end side's value is `ellipsis`. Stylo
@@ -305,6 +543,8 @@ fn build_inline_layout_with(
                         &mut false,
                         None,
                         &mut nested,
+                        false,
+                        &mut BidiScan::default(),
                     );
                 }
                 let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
@@ -337,6 +577,53 @@ fn build_inline_layout_with(
         Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
     }
 
+    /// pyro: the head (`tail: false`) or the tail of the split inline `node_id`, in its span:
+    /// a head has its start, a tail its end (`construct::split_inline_part`).
+    #[allow(clippy::too_many_arguments)]
+    fn build_split_part(
+        builder: &mut TreeBuilder<TextBrush>,
+        text_transformer: &mut TextTransformer,
+        nodes: &crate::NodeTree,
+        node_id: NodeId,
+        tail: bool,
+        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
+        strut: &mut bool,
+        first_letter: Option<&FirstLetterSplit>,
+        annotations: &mut FoundAnnotations,
+        bidi: bool,
+        bidi_scan: &mut BidiScan,
+    ) {
+        let node = &nodes[node_id];
+        let Some(style) = node.primary_styles() else {
+            return;
+        };
+        let text_transform = CaseTransform::from_style(&style);
+        let end = open_span(builder, node_id, &style, !tail, tail, bidi, bidi_scan, strut);
+        drop(style);
+        bidi_scan.split_pieces.push((node_id, !tail, tail));
+        let (part, nested) = crate::layout::construct::split_inline_part(nodes, node_id, tail);
+        if let (true, Some(nested)) = (tail, nested) {
+            crate::util::ensure_stack(|| build_split_part(
+                builder, text_transformer, nodes, nested, true, text_nodes, strut, first_letter, annotations, bidi,
+                bidi_scan,
+            ));
+        }
+        for child_id in part {
+            crate::util::ensure_stack(|| build_inline_layout_recursive(
+                builder, text_transformer, nodes, child_id, &text_transform, text_nodes, strut, first_letter, annotations,
+                bidi, bidi_scan,
+            ));
+        }
+        if let (false, Some(nested)) = (tail, nested) {
+            crate::util::ensure_stack(|| build_split_part(
+                builder, text_transformer, nodes, nested, false, text_nodes, strut, first_letter, annotations, bidi,
+                bidi_scan,
+            ));
+        }
+        close_span(builder, end, bidi);
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn build_inline_layout_recursive(
         builder: &mut TreeBuilder<TextBrush>,
         text_transformer: &mut TextTransformer,
@@ -347,6 +634,8 @@ fn build_inline_layout_with(
         strut: &mut bool,
         first_letter: Option<&FirstLetterSplit>,
         annotations: &mut FoundAnnotations,
+        bidi: bool,
+        bidi_scan: &mut BidiScan,
     ) {
         let node = &nodes[node_id];
 
@@ -425,6 +714,8 @@ fn build_inline_layout_with(
                                 strut,
                                 first_letter,
                                 annotations,
+                                bidi,
+                                bidi_scan,
                             ));
                         }
                         builder.pop_style_span();
@@ -434,6 +725,7 @@ fn build_inline_layout_with(
 
                         if is_inline_box_element(tag_name) {
                             if box_kind == InlineBoxKind::InFlow {
+                                bidi_scan.atomic_boxes += 1;
                                 text_transformer.word_break(builder);
                                 if std::mem::take(strut) {
                                     builder.push_text("\u{2060}");
@@ -452,6 +744,7 @@ fn build_inline_layout_with(
                                     .primary_styles()
                                     .map(|s| stylo_to_parley::vertical_align(&s))
                                     .unwrap_or_default(),
+                                rtl: false,
                             });
                         } else if annotations.is_ruby_annotation(tag_name) {
                             // pyro: a ruby annotation of the text since its base started, drawn
@@ -481,12 +774,31 @@ fn build_inline_layout_with(
                                 annotations.ruby = Some(node_id);
                             }
 
+                            bidi_scan.relative |= node
+                                .primary_styles()
+                                .is_some_and(|style| style.clone_position() == PositionProperty::Relative);
+                            // pyro: the bidi formatting characters its `unicode-bidi` stands for,
+                            // around its edges, as Blink places them.
+                            let controls = node.primary_styles().and_then(|style| {
+                                let controls = bidi_controls(&style)?;
+                                bidi_scan.controls = true;
+                                bidi_scan.rtl |= style.clone_direction() == style::computed_values::direction::T::Rtl;
+                                Some(controls)
+                            });
+                            if let (true, Some((start, _))) = (bidi, controls) {
+                                start.iter().for_each(|&c| builder.push_bidi_control(c));
+                            }
+                            let held = (builder.text().len(), bidi_scan.atomic_boxes);
+
                             // pyro: the span's inline-axis margin, border and padding take space
                             // at its start and its end (CSS 2.1 9.4.2): an edge box at each, inside
                             // the span's style, when there is any.
                             let (start_edge, end_edge) =
                                 node.primary_styles().map(|s| span_edge_widths(&s)).unwrap_or_default();
                             let scale = builder.scale();
+                            let rtl = node.primary_styles().is_some_and(|style| {
+                                style.clone_direction() == style::computed_values::direction::T::Rtl
+                            });
                             let edge = |kind, width: f32| InlineBox {
                                 id: node_id.as_u64(),
                                 kind,
@@ -495,6 +807,7 @@ fn build_inline_layout_with(
                                 height: 0.0,
                                 baseline: None,
                                 vertical_align: Default::default(),
+                                rtl,
                             };
                             if start_edge != 0.0 {
                                 builder.push_inline_box(edge(InlineBoxKind::SpanStart, start_edge));
@@ -515,6 +828,8 @@ fn build_inline_layout_with(
                                     strut,
                                     first_letter,
                                     annotations,
+                                    bidi,
+                                    bidi_scan,
                                 ));
                             }
 
@@ -529,6 +844,8 @@ fn build_inline_layout_with(
                                     strut,
                                     first_letter,
                                     annotations,
+                                    bidi,
+                                    bidi_scan,
                                 ));
                             }
                             if let Some(after_id) = node.after() {
@@ -542,14 +859,25 @@ fn build_inline_layout_with(
                                     strut,
                                     first_letter,
                                     annotations,
+                                    bidi,
+                                    bidi_scan,
                                 ));
                             }
 
                             if is_ruby {
                                 (annotations.ruby_base_start, annotations.ruby) = outer_ruby;
                             }
+                            // pyro: a span that holds nothing still has its strut in the line (CSS
+                            // 2.1 § 10.8: its font and line height count in the line's height).
+                            if held == (builder.text().len(), bidi_scan.atomic_boxes) {
+                                builder.push_empty_box_strut();
+                                bidi_scan.empty_box_struts = true;
+                            }
                             if end_edge != 0.0 {
                                 builder.push_inline_box(edge(InlineBoxKind::SpanEnd, end_edge));
+                            }
+                            if let (true, Some((_, end))) = (bidi, controls) {
+                                end.iter().for_each(|&c| builder.push_bidi_control(c));
                             }
                             builder.pop_style_span();
                         }
@@ -557,6 +885,7 @@ fn build_inline_layout_with(
                     // Inline box
                     (_, _) => {
                         if box_kind == InlineBoxKind::InFlow {
+                            bidi_scan.atomic_boxes += 1;
                             text_transformer.word_break(builder);
                             if std::mem::take(strut) {
                                 builder.push_text("\u{2060}");
@@ -575,6 +904,7 @@ fn build_inline_layout_with(
                                 .primary_styles()
                                 .map(|s| stylo_to_parley::vertical_align(&s))
                                 .unwrap_or_default(),
+                            rtl: false,
                         });
                     }
                 };

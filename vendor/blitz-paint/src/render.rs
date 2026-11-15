@@ -848,7 +848,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             self.local_raster_depth.set(self.local_raster_depth.get() + 1);
         }
 
-        let paints_own_box = !node.is_inline_with_only_block_children();
+        // pyro: a split inline's fragments are painted by its pieces' lines (`draw_inline_boxes`).
+        let paints_own_box = !node.is_inline_with_only_block_children() && !node.is_split_inline();
 
         // pyro: `opacity` and `filter` apply to everything the element paints, as one group
         // (Chromium's effect node): its outset box-shadow, its box, its content and descendants
@@ -1447,14 +1448,16 @@ impl ElementCx<'_, '_> {
     /// slice`): no border, no padding, square corners. A fragment's edges are snapped to CSS
     /// pixels and it paints as a box does: outer shadow, background, inner shadow, border,
     /// outline. On a line, a box paints before the boxes inside it. `transform` is the lines', and
-    /// `tops` where each line's text goes: its boxes go with it.
-    fn draw_inline_boxes(
+    /// `tops` where each line's text goes: its boxes go with it. pyro: the fragments in paint
+    /// order (by line), for `paint_inline_box_fragment`.
+    fn inline_box_fragments(
         &self,
-        scene: &mut impl PaintScene,
-        layout: &parley::Layout<blitz_dom::node::TextBrush>,
+        text_layout: &blitz_dom::node::TextLayout,
         transform: Affine,
         tops: Option<crate::text::LineTops>,
-    ) {
+    ) -> Vec<InlineBoxFragment> {
+        let layout = &text_layout.layout;
+        let mut painted_fragments = Vec::new();
         use parley::{InlineBoxKind, PositionedLayoutItem};
         use style::computed_values::direction::T as Direction;
         use style::values::computed::{Length, LengthPercentage, Margin};
@@ -1470,11 +1473,15 @@ impl ElementCx<'_, '_> {
             x1: f32,
             top: f32,
             bottom: f32,
+            /// pyro: the (visual) index of the last item it holds.
+            last_item: usize,
+            /// pyro: the top of its line box (where the text of the line above ends).
+            line_top: f32,
         }
 
         let styles = layout.styles();
         if styles.len() < 2 {
-            return;
+            return painted_fragments;
         }
         let dom = self.context.dom;
         let root = self.node.id;
@@ -1530,6 +1537,7 @@ impl ElementCx<'_, '_> {
 
         let mut fragments: Vec<Fragment> = Vec::new();
         let rtl_layout = layout.is_rtl();
+        let mut item_index = 0usize;
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
@@ -1553,6 +1561,7 @@ impl ElementCx<'_, '_> {
                         _ => continue,
                     },
                 };
+                item_index += 1;
                 chain_of(&mut chain, style_index);
                 let depth = chain.len();
                 for (level, &(node, style_index)) in chain.iter().enumerate() {
@@ -1575,12 +1584,15 @@ impl ElementCx<'_, '_> {
                             x1 -= margin(&style.get_margin().margin_right);
                         }
                     }
-                    match fragments[first..].iter_mut().find(|fragment| fragment.node == node) {
-                        Some(fragment) => {
+                    // pyro: a fragment holds the items of its element that are next to each other in
+                    // visual order: bidi reordering can split what an element holds on a line.
+                    match fragments[first..].iter_mut().rev().find(|fragment| fragment.node == node) {
+                        Some(fragment) if fragment.last_item + 1 == item_index || fragment.last_item == item_index => {
                             fragment.x0 = fragment.x0.min(x0);
                             fragment.x1 = fragment.x1.max(x1);
+                            fragment.last_item = item_index;
                         }
-                        None => {
+                        _ => {
                             let (top, bottom) = line.span_content_area(style_index);
                             let shift = tops.map_or(0.0, |tops| tops.shift(metrics)) as f32;
                             fragments.push(Fragment {
@@ -1591,6 +1603,8 @@ impl ElementCx<'_, '_> {
                                 x1,
                                 top: top + shift,
                                 bottom: bottom + shift,
+                                last_item: item_index,
+                                line_top: metrics.block_min_coord + shift,
                             });
                         }
                     }
@@ -1598,14 +1612,37 @@ impl ElementCx<'_, '_> {
             }
         }
         if fragments.is_empty() {
-            return;
+            return painted_fragments;
         }
 
-        // An element's first and last fragment.
-        let mut ends: HashMap<NodeId, (usize, usize)> = HashMap::new();
+        // An element's first and last fragment on its first line, and on its last (CSS 2.1 § 8.6:
+        // in a left-to-right element the first line's left-most fragment has the left side and the
+        // last line's right-most the right side; in a right-to-left one the first line's
+        // right-most has the right side and the last line's left-most the left side).
+        let mut ends: HashMap<NodeId, [usize; 4]> = HashMap::new();
         for (index, fragment) in fragments.iter().enumerate() {
-            ends.entry(fragment.node).and_modify(|ends| ends.1 = index).or_insert((index, index));
+            ends.entry(fragment.node)
+                .and_modify(|ends| {
+                    if fragment.line == fragments[ends[0]].line {
+                        ends[1] = index;
+                    }
+                    if fragment.line > fragments[ends[2]].line {
+                        ends[2] = index;
+                    }
+                    ends[3] = index;
+                })
+                .or_insert([index; 4]);
         }
+        // pyro: a split inline's start and end are in the pieces that hold them.
+        let piece = |node: NodeId| {
+            text_layout
+                .split_pieces
+                .iter()
+                .find(|piece| piece.0 == node)
+                .map_or((true, true), |piece| (piece.1, piece.2))
+        };
+        // pyro: relatively positioned elements move their fragments.
+        let relative = dom.inline_root_has_relative_spans(root);
         let mut order: Vec<usize> = (0..fragments.len()).collect();
         order.sort_by_key(|&index| (fragments[index].line, fragments[index].depth));
 
@@ -1622,9 +1659,13 @@ impl ElementCx<'_, '_> {
             let Some(style) = node.primary_styles() else {
                 continue;
             };
-            let (starts, ends) = (ends[&fragment.node].0 == index, ends[&fragment.node].1 == index);
-            let (left, right) =
-                if style.clone_direction() == Direction::Rtl { (ends, starts) } else { (starts, ends) };
+            let sides = ends[&fragment.node];
+            let (has_start, has_end) = piece(fragment.node);
+            let (left, right) = if style.clone_direction() == Direction::Rtl {
+                (has_end && sides[2] == index, has_start && sides[1] == index)
+            } else {
+                (has_start && sides[0] == index, has_end && sides[3] == index)
+            };
             let (border, padding) = (style.get_border(), style.get_padding());
             let side = |open: bool, width: f32| if open { 0.0 } else { width };
             // The used width: none where the side has no border style.
@@ -1650,6 +1691,12 @@ impl ElementCx<'_, '_> {
                 fragment.x1 as f64,
                 (fragment.bottom + (border.bottom + padding.bottom) * scale) as f64,
             );
+            let rect = if relative {
+                let (dx, dy) = dom.inline_span_relative_offset(fragment.node, root);
+                rect + kurbo::Vec2::new((dx * scale) as f64, (dy * scale) as f64)
+            } else {
+                rect
+            };
             let (transform, size) = if translation_only {
                 // To whole CSS pixels, as Chromium snaps a box's decorations
                 // (and as block boxes are laid out), whatever the device scale.
@@ -1669,24 +1716,41 @@ impl ElementCx<'_, '_> {
                 padding,
                 ..Layout::new()
             };
-            let mut cx = self.context.element_cx(node, layout, transform, None);
-            if !left {
-                cx.frame.border_radii.top_left = Vec2::ZERO;
-                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-            }
-            if !right {
-                cx.frame.border_radii.top_right = Vec2::ZERO;
-                cx.frame.border_radii.bottom_right = Vec2::ZERO;
-            }
-            cx.draw_outset_box_shadow(scene);
-            if self.context.backgrounds {
-                cx.draw_background(scene);
-            }
-            cx.draw_inset_box_shadow(scene);
-            cx.draw_border(scene);
-            // Over the box, as a block's outline is (see `render_element`).
-            cx.draw_outline(scene);
+            painted_fragments.push(InlineBoxFragment {
+                node: fragment.node,
+                line: fragment.line,
+                layout,
+                transform,
+                left,
+                right,
+                reaches_above: (rect.y0 as f32) < fragment.line_top,
+            });
         }
+        painted_fragments
+    }
+
+    /// pyro: paints a fragment of `inline_box_fragments`.
+    fn paint_inline_box_fragment(&self, scene: &mut impl PaintScene, fragment: &InlineBoxFragment) {
+        let Some(node) = self.context.dom.get_node(fragment.node) else {
+            return;
+        };
+        let mut cx = self.context.element_cx(node, fragment.layout, fragment.transform, None);
+        if !fragment.left {
+            cx.frame.border_radii.top_left = Vec2::ZERO;
+            cx.frame.border_radii.bottom_left = Vec2::ZERO;
+        }
+        if !fragment.right {
+            cx.frame.border_radii.top_right = Vec2::ZERO;
+            cx.frame.border_radii.bottom_right = Vec2::ZERO;
+        }
+        cx.draw_outset_box_shadow(scene);
+        if self.context.backgrounds {
+            cx.draw_background(scene);
+        }
+        cx.draw_inset_box_shadow(scene);
+        cx.draw_border(scene);
+        // Over the box, as a block's outline is (see `render_element`).
+        cx.draw_outline(scene);
     }
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
@@ -1719,11 +1783,54 @@ impl ElementCx<'_, '_> {
             let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
 
             // Render the boxes of inline elements (e.g. `<span style="background: ...">`)
-            // behind the text and selection highlight.
-            self.draw_inline_boxes(scene, &text_layout.layout, transform, tops);
+            // behind the text and selection highlight. pyro: line by line, each line's boxes
+            // and then its text, as CSS 2.1 Appendix E paints line boxes (a box on a line
+            // paints over the text of the line above where it reaches into it), when a box after
+            // the first line reaches above its line and no selection, ellipsis or annotation
+            // interleaves.
+            let fragments = self.inline_box_fragments(text_layout, transform, tops);
+            let selection = self.context.selection_ranges.get(&self.node.id).copied();
+            let by_line = selection.is_none()
+                && text_layout.ellipsis.is_none()
+                && text_layout.annotations.is_empty()
+                && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
+            if by_line {
+                let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                draw_text_context.text_shift = text_shift;
+                draw_text_context.line_tops = tops;
+                let options = TextPaintOptions {
+                    scale: self.scale,
+                    brush_override: None,
+                    shadows: true,
+                };
+                let mut next = 0;
+                for (index, line) in text_layout.layout.lines().enumerate() {
+                    while let Some(fragment) = fragments.get(next).filter(|fragment| fragment.line == index) {
+                        self.paint_inline_box_fragment(scene, fragment);
+                        next += 1;
+                    }
+                    crate::text::stroke_text(
+                        scene,
+                        std::iter::once(line),
+                        self.context.dom,
+                        transform,
+                        options,
+                        self.node.id,
+                        Some(&text_layout.text),
+                        &mut draw_text_context,
+                        None,
+                    );
+                }
+                draw_text_context.text_shift = 0.0;
+                draw_text_context.line_tops = None;
+                return;
+            }
+            for fragment in &fragments {
+                self.paint_inline_box_fragment(scene, fragment);
+            }
 
             // Render text selection highlight (if any) using cached selection ranges
-            if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
+            if let Some((sel_start, sel_end)) = selection {
                 crate::text::draw_text_selection(
                     scene,
                     &text_layout.layout,
@@ -2596,4 +2703,18 @@ struct EffectLayer {
     backdrop_filter: Option<Arc<anyrender::Filter>>,
     /// pyro: the element's border box with its radii, in its space: what its backdrop shows in.
     backdrop_clip: Option<kurbo::BezPath>,
+}
+
+/// pyro: a fragment of an inline (non-atomic) element's box on one line, ready to paint
+/// (`ElementCx::inline_box_fragments`).
+struct InlineBoxFragment {
+    node: NodeId,
+    line: usize,
+    layout: Layout,
+    transform: Affine,
+    /// Whether the fragment has its left and its right side.
+    left: bool,
+    right: bool,
+    /// Whether its box reaches above its line box, over the line before.
+    reaches_above: bool,
 }

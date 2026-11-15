@@ -16,6 +16,9 @@ struct StyleTreeNode<B: Brush> {
     /// The style's id when it is used for whitespace that wrapping is allowed after, which differs
     /// from `style_id` only for spans that disable wrapping.
     wrappable_style_id: Option<u16>,
+    /// pyro: the style's id without letter and word spacing, for the bidi formatting characters
+    /// and empty-box struts pushed in it (browsers space neither), when the style has spacing.
+    unspaced_style_id: Option<u16>,
 }
 
 /// A collapsible whitespace sequence that has not been committed yet.
@@ -31,6 +34,23 @@ struct PendingWhitespace {
 /// Whether `c` is a segment break, i.e. a character which is a forced line break when preserved.
 fn is_segment_break(c: char) -> bool {
     matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
+/// pyro: whether `c` is one of the explicit bidi formatting characters (embeddings, overrides,
+/// isolates and their terminators) that an inline element's `unicode-bidi` stands for.
+pub(crate) fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// pyro: the invisible character an empty inline box puts in its line (U+2061 FUNCTION
+/// APPLICATION: default ignorable, zero-width, line breaking class AL), so that the box's
+/// line height and font take part in the line's height (CSS 2.1 § 10.8) as in browsers.
+pub(crate) const EMPTY_BOX_STRUT: char = '\u{2061}';
+
+/// pyro: whether `text` ends with a segment break, bidi formatting characters and empty-box
+/// struts after it aside.
+fn ends_with_segment_break(text: &str) -> bool {
+    text.trim_end_matches(|c| is_bidi_control(c) || c == EMPTY_BOX_STRUT).ends_with(is_segment_break)
 }
 
 /// Builder for constructing a tree of styles
@@ -59,6 +79,11 @@ pub(crate) struct TreeStyleBuilder<B: Brush> {
     deferred_edges: Vec<usize>,
     /// pyro: the moves of [`Self::deferred_edges`]: inline box index and its new text index.
     edge_moves: Vec<(usize, usize)>,
+    /// pyro: bidi formatting characters pushed while white space was pending, with their style
+    /// index: they go after that white space, or where it was when it is removed.
+    deferred_controls: Vec<(u16, char)>,
+    /// pyro: whether any text other than bidi formatting characters was committed.
+    has_content: bool,
 }
 
 impl<B: Brush> Default for TreeStyleBuilder<B> {
@@ -74,6 +99,8 @@ impl<B: Brush> Default for TreeStyleBuilder<B> {
             collapse_after_edge: false,
             deferred_edges: Vec::new(),
             edge_moves: Vec::new(),
+            deferred_controls: Vec::new(),
+            has_content: false,
         }
     }
 }
@@ -97,6 +124,8 @@ impl<B: Brush> TreeStyleBuilder<B> {
         self.collapse_after_edge = false;
         self.deferred_edges.clear();
         self.edge_moves.clear();
+        self.deferred_controls.clear();
+        self.has_content = false;
 
         // The root style is always materialised at index 0 so that it can act as the parent of
         // every other style (and as the strut for otherwise empty lines).
@@ -108,6 +137,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
             style: root_style,
             style_id: Some(0),
             wrappable_style_id: None,
+            unspaced_style_id: None,
         });
         self.current_span = 0;
     }
@@ -158,8 +188,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
                     // Pending whitespace is always from a `WhiteSpaceCollapse::Collapse` or
                     // `WhiteSpaceCollapse::PreserveBreaks` span, and following CSS Text 4 § 4.3.1 Rule 1
                     // must be removed if it immediately precedes a preserved segment break.
-                    self.pending_whitespace = None;
-                    self.deferred_edges.clear();
+                    self.drop_pending_whitespace();
                 }
                 self.flush_pending_whitespace();
                 self.commit_text(span, text);
@@ -193,8 +222,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
                         // reach this point, so only `LS` and `PS` are treated as forced breaks. In
                         // `PreserveBreaks` mode `CR` and `LF` are not collapsible and are also
                         // preserved as forced breaks.
-                        self.pending_whitespace = None;
-                        self.deferred_edges.clear();
+                        self.drop_pending_whitespace();
                         let break_len = rest.chars().next().unwrap().len_utf8();
                         self.commit_text(span, &rest[..break_len]);
                         rest = &rest[break_len..];
@@ -203,6 +231,16 @@ impl<B: Brush> TreeStyleBuilder<B> {
                     let text_len = rest
                         .find(|c| mode.is_collapsible(c) || is_segment_break(c))
                         .unwrap_or(rest.len());
+                    // pyro: bidi formatting characters in the text are no content to white space
+                    // processing either: spaces on both sides of one collapse into the first.
+                    let controls_len = rest[..text_len].find(|c| !is_bidi_control(c)).unwrap_or(text_len);
+                    if controls_len > 0 && self.pending_whitespace.is_some() {
+                        for c in rest[..controls_len].chars() {
+                            self.push_bidi_control(c);
+                        }
+                        rest = &rest[controls_len..];
+                        continue;
+                    }
                     self.flush_pending_whitespace();
                     self.commit_text(span, &rest[..text_len]);
                     rest = &rest[text_len..];
@@ -221,9 +259,11 @@ impl<B: Brush> TreeStyleBuilder<B> {
         // Whitespace at the start of the inline formatting context is removed, as is whitespace
         // immediately following a preserved segment break. Whitespace following a preserved space
         // or tab is retained, as only collapsible whitespace collapses.
-        let is_at_start = self.text.is_empty() && !self.last_item_is_inline_box;
-        if is_at_start || self.text.ends_with(is_segment_break) {
+        // pyro: bidi formatting characters are no content.
+        let is_at_start = !self.has_content && !self.last_item_is_inline_box;
+        if is_at_start || ends_with_segment_break(&self.text) {
             self.deferred_edges.clear();
+            self.commit_deferred_controls();
             return;
         }
 
@@ -237,6 +277,65 @@ impl<B: Brush> TreeStyleBuilder<B> {
         let end = self.text.len();
         self.edge_moves
             .extend(self.deferred_edges.drain(..).map(|index| (index, end)));
+        self.commit_deferred_controls();
+    }
+
+    /// pyro: removes pending collapsible white space (it precedes a preserved segment break, or
+    /// ends the text): the span end edges after it stay where they are, and the bidi formatting
+    /// characters pushed after it are committed.
+    fn drop_pending_whitespace(&mut self) {
+        self.pending_whitespace = None;
+        self.deferred_edges.clear();
+        self.commit_deferred_controls();
+    }
+
+    /// pyro: pushes a bidi formatting character (an embedding, override or isolate the start or
+    /// the end of an inline element's `unicode-bidi` stands for, CSS Writing Modes 3 § 2.4.2) in
+    /// the current span. It is no content: white space collapses across it, and white space
+    /// pending before it, when kept, goes before it (inside the element the span ends, or before
+    /// the element the span starts, as Blink puts it).
+    pub(crate) fn push_bidi_control(&mut self, c: char) {
+        let style_index = self.resolve_unspaced_style_id(self.current_span);
+        if self.pending_whitespace.is_some() {
+            self.deferred_controls.push((style_index, c));
+        } else {
+            self.commit_control(style_index, c);
+        }
+    }
+
+    /// pyro: commits the strut of an empty inline box (`EMPTY_BOX_STRUT`) in the current span,
+    /// where the text is now. It is no content: white space collapses across it.
+    pub(crate) fn push_empty_box_strut(&mut self) {
+        let style_index = self.resolve_unspaced_style_id(self.current_span);
+        self.commit_control(style_index, EMPTY_BOX_STRUT);
+    }
+
+    fn commit_deferred_controls(&mut self) {
+        if self.deferred_controls.is_empty() {
+            return;
+        }
+        let mut controls = core::mem::take(&mut self.deferred_controls);
+        for &(style_index, c) in &controls {
+            self.commit_control(style_index, c);
+        }
+        controls.clear();
+        self.deferred_controls = controls;
+    }
+
+    /// Appends a bidi formatting character with the given style, leaving the white space state
+    /// as it is.
+    fn commit_control(&mut self, style_index: u16, c: char) {
+        let start = self.text.len();
+        self.text.push(c);
+        match self.style_runs.last_mut() {
+            Some(run) if run.style_index == style_index && run.range.end == start => {
+                run.range.end = self.text.len();
+            }
+            _ => self.style_runs.push(StyleRun {
+                style_index,
+                range: start..self.text.len(),
+            }),
+        }
     }
 
     /// The style table index of the span that text is currently being pushed into.
@@ -265,6 +364,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
         }
         self.last_item_is_inline_box = false;
         self.collapse_after_edge = false;
+        self.has_content = true;
     }
 
     /// The index of `span`'s style in the style table, adding it (and any ancestors that have not
@@ -290,6 +390,25 @@ impl<B: Brush> TreeStyleBuilder<B> {
         assert!(style_id <= u16::MAX as usize, "too many styles");
         self.style_table.push(style);
         style_id as u16
+    }
+
+    /// pyro: the index of `span`'s style without letter and word spacing (see
+    /// `StyleTreeNode::unspaced_style_id`), adding it to the table if necessary.
+    fn resolve_unspaced_style_id(&mut self, span: usize) -> u16 {
+        let span_id = self.resolve_style_id(span);
+        let style = &self.style_table[usize::from(span_id)];
+        if style.letter_spacing == 0.0 && style.word_spacing == 0.0 {
+            return span_id;
+        }
+        if let Some(style_id) = self.tree[span].unspaced_style_id {
+            return style_id;
+        }
+        let mut style = style.clone();
+        style.letter_spacing = 0.0;
+        style.word_spacing = 0.0;
+        let style_id = self.push_style(style);
+        self.tree[span].unspaced_style_id = Some(style_id);
+        style_id
     }
 
     /// The index of `span`'s style with wrapping enabled, adding it to the table if necessary.
@@ -326,6 +445,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
             style,
             style_id: None,
             wrappable_style_id: None,
+            unspaced_style_id: None,
         });
         self.current_span = self.tree.len() - 1;
     }
@@ -358,6 +478,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
         while self.tree[self.current_span].parent.is_some() {
             self.pop_style_span();
         }
+        // pyro: white space still pending ends the text and is removed; bidi formatting
+        // characters pushed after it stay.
+        self.drop_pending_whitespace();
 
         style_table.clear();
         style_runs.clear();

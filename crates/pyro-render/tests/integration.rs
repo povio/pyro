@@ -3,6 +3,7 @@
 //! mostly link time. Add new test files as modules here.
 
 mod backdrop_filter;
+mod block_in_inline;
 mod borders_backgrounds;
 mod br_flex_item;
 mod clip_path_mask;
@@ -20,12 +21,14 @@ mod image_input_replaced;
 mod incremental_construction;
 mod incremental_flex_overflow;
 mod inline_box_decorations;
+mod inline_relative_position;
 mod inline_svg_viewport;
 mod input_percentage_min_content;
 mod input_placeholder;
 mod lang_pseudo_class;
 mod line_break_resume;
 mod line_height_normal;
+mod line_paint_order;
 mod mirror;
 mod mix_blend_mode;
 mod opacity_group;
@@ -38,6 +41,7 @@ mod sampled_animations;
 mod style_sheet_charset;
 mod svg_content;
 mod svg_filters;
+mod svg_image_natural_size;
 mod svg_reference_cycles;
 mod table_cell_height;
 mod table_cell_width;
@@ -51,4 +55,5 @@ mod text_line_tops;
 mod text_shadow;
 mod text_overflow_ellipsis;
 mod transform_3d;
+mod unicode_bidi;
 mod vertical_writing_mode;

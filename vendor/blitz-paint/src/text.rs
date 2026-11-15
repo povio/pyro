@@ -1064,6 +1064,8 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
     let shift = *text_shift;
     let cut = *cut;
     let line_tops = line_tops.filter(|_| vertical.is_none());
+    // pyro: the text of relatively positioned inline boxes is painted moved.
+    let relative = vertical.is_none() && doc.inline_root_has_relative_spans(inline_root_id);
     // pyro: the decorations of the root's ancestors that propagate into it.
     let outer = propagated_decorations(doc, inline_root_id, propagated, path_scratch);
     let root_font_size = doc
@@ -1260,6 +1262,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     (transform * shift, glyph_xform)
                 }
                 None => (transform, glyph_xform),
+            };
+            let transform = if relative {
+                let (dx, dy) = doc.inline_span_relative_offset(glyph_run.style().brush.id, inline_root_id);
+                transform * Affine::translate((dx as f64 * scale, dy as f64 * scale))
+            } else {
+                transform
             };
             let fill_color = paint.fill_color;
 

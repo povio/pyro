@@ -1101,3 +1101,51 @@ Main pins Stylo 0.23.0; this copy builds against the vendored 0.24.0.
   `has_anchors_follow_changes_stylo_has_no_snapshot_for` in pyro-render.
 - `src/stylo_device.rs`: `Device::new` takes the submit button's default label.
 - `src/document.rs`: the pref is `layout.css.text-underline-position.enabled` now.
+
+## Inline boxes split around blocks, `unicode-bidi`, relative inline boxes
+
+- `src/layout/construct.rs` (`split_inline_sequence`, `split_inline_part`, `lays_out_as_block`, the split branch of
+  `collect_complex_layout_children_in`), `src/node/node.rs` (`NodeFlags::IS_SPLIT_INLINE`, `ENDS_WITH_SPLIT_HEAD`,
+  `STARTS_WITH_SPLIT_TAIL`, `Node::split_ref_at`), `src/layout/inline/build.rs` (`build_split_part`,
+  `split_pieces`): an inline box that holds block-level boxes is split around them (CSS 2.1 § 9.2.1.1) where its
+  parent lays out as a block container (a flow, flow-root or table cell box; a table part outside a table is laid
+  out as a flex row and keeps one box). It was one block box with its margins, borders and padding around all it
+  held. Its head, the inline content before its first block-level child, ends the anonymous block before it
+  (`ENDS_WITH_SPLIT_HEAD`: the block's last layout child is the split inline, whose head its build lays out), and
+  its tail, the content after its last block-level child, starts the anonymous block after it
+  (`STARTS_WITH_SPLIT_TAIL`); both are laid out in the split inline's span, the start side in the head and the end
+  side in the tail. The split inline stays a block-level box holding its middle (its first block-level child to its
+  last, with the floats and absolutely positioned boxes right next to them, which float and paint beside the blocks
+  as before), but as a box it has no margins, borders, padding or sizes (`stylo_taffy::StyleFlags::IS_SPLIT_INLINE`);
+  its relative offset moves it. The anonymous blocks of its middle inherit from the block container around it (its
+  strut, alignment and direction) and wrap their content in the spans of the split inlines around them, without
+  their sides (`TextLayout::split_pieces`). A split inline at the edge of another's middle has its head (tail) in
+  the outer one's. A split inline's own construction is damaged (`CONSTRUCT_BOX`) when its container's is.
+- `src/layout/inline/layout.rs`: margins collapse through an inline root with no line (a div holding only an empty
+  span), as through an empty block.
+- `src/layout/inline/build.rs` (`bidi_controls`, `BidiScan`), `src/node/text.rs` (`TextLayout::bidi_controls`,
+  `has_no_text`): `unicode-bidi` and `direction` of inline boxes and block containers apply (only `plaintext` on the
+  root did): an inline box's `embed`, `bidi-override`, `isolate`, `isolate-override` or `plaintext` is the bidi
+  formatting characters Blink inserts for it (CSS Writing Modes 3 § 2.4.2), pushed around its content
+  (`TreeBuilder::push_bidi_control`); a block container's `bidi-override` starts its content with LRO or RLO. They
+  are pushed only where they can change a level: some box has them and the paragraph has right-to-left content (a
+  right-to-left root or box, or right-to-left text); the first build finds out and a second build pushes them. An
+  inline box that holds nothing pushes a strut (U+2061, `TreeBuilder::push_empty_box_strut`), so that its line
+  height counts, as an empty span's does in browsers. Text that is only such characters is no content. A
+  right-to-left span's edges are marked (`InlineBox::rtl`) for parley to put them on their sides.
+- `src/layout/inline/layout.rs` (`line_is_reordered`): the static position of an absolutely positioned box on a
+  right-to-left or reordered line follows the inline content before it in logical order.
+- `src/layout/inline/relative.rs` (new), `src/layout/inline/layout.rs`, `src/layout/inline/build.rs`:
+  `position: relative` on an inline box that is not atomic (CSS 2.1 § 9.4.3) moves what it holds: the atomic inline
+  boxes in it are laid out moved, and paint moves its text and its fragments
+  (`BaseDocument::inline_span_relative_offset`, read only for an inline root with such a box,
+  `TextLayout::relative_spans`). Decorations stay with the line.
+- `src/layout/mod.rs`: an SVG image's (or inline `<svg>`'s) natural width and height are its root's absolute
+  `width` and `height`, and its ratio theirs or else its `viewBox`'s; what it does not declare it does not have,
+  and the default object size (300x150) stands in, as in browsers (usvg's resolved size stood in). The root `<svg>`
+  of an SVG document keeps usvg's size: it fills the viewport in browsers, which is not done.
+- `assets/default.css`: `bdo[dir]` stands for Gecko's `bdo:-moz-has-dir-attr`, and `[dir="auto" i]` for
+  `:-moz-dir-attr-like-auto`: Stylo parses neither, which dropped both rules.
+
+Covered by `block_in_inline.rs`, `unicode_bidi.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in
+`crates/pyro-render/tests`.

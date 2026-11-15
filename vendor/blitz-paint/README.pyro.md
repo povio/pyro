@@ -343,6 +343,16 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
+- `src/render.rs` (`inline_box_fragments`, `paint_inline_box_fragment`, `InlineBoxFragment`): an inline root
+  with an inline box that reaches above its line, over the line before (tall padding or borders), paints line by
+  line, each line's box fragments and then its text (CSS 2.1 Appendix E), so a line's backgrounds cover the text of
+  the line above as in browsers; other roots paint all fragments, then all text, as before. A split inline
+  (blitz-dom's `NodeFlags::IS_SPLIT_INLINE`) paints no box of its own: its pieces' lines paint its fragments, with
+  its start and end sides only in the pieces that hold them (`TextLayout::split_pieces`). Relatively positioned
+  inline boxes move their fragments.
+- `src/text.rs`: the text of relatively positioned inline boxes is painted moved
+  (`BaseDocument::inline_span_relative_offset`), only in inline roots that have one. Covered by
+  `block_in_inline.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in `crates/pyro-render/tests`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
