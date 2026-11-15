@@ -3,6 +3,7 @@
 //! mostly link time. Add new test files as modules here.
 
 mod backdrop_filter;
+mod background_images_and_edges;
 mod borders_backgrounds;
 mod br_flex_item;
 mod clip_path_mask;
@@ -20,6 +21,7 @@ mod image_input_replaced;
 mod incremental_construction;
 mod incremental_flex_overflow;
 mod inline_box_decorations;
+mod inline_fragments;
 mod inline_svg_viewport;
 mod input_percentage_min_content;
 mod input_placeholder;
@@ -49,6 +51,7 @@ mod text_decoration_lines;
 mod text_emphasis_ruby;
 mod text_line_tops;
 mod text_shadow;
+mod text_transform_language;
 mod text_overflow_ellipsis;
 mod three_d_contexts;
 mod transform_3d;

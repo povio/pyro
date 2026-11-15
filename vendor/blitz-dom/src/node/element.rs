@@ -584,6 +584,23 @@ impl ElementData {
         }
     }
 
+    /// pyro: a link whose `href` resolves (against `base`) to `document` itself is visited, as
+    /// the page a browser shows is in its history (WPT `css-color/currentcolor-004`, `href=""`):
+    /// `:visited` matches it instead of `:link`. Other links stay unvisited: there is no
+    /// history. Call after [`Self::flush_link_state`].
+    pub fn flush_link_visited(&mut self, base: &url::Url, document: &url::Url) {
+        if !self.element_state.contains(ElementState::UNVISITED) {
+            return;
+        }
+        let Some(href) = self.attr(local_name!("href")) else {
+            return;
+        };
+        if base.join(href.trim()).is_ok_and(|url| url == *document) {
+            self.element_state.remove(ElementState::UNVISITED);
+            self.element_state.insert(ElementState::VISITED);
+        }
+    }
+
     pub fn flush_open_state(&mut self) {
         let is_open = matches!(
             self.name.local,

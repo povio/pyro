@@ -625,7 +625,7 @@ impl ImageHandler {
 
 impl NetHandler for ResourceHandler<ImageHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-        let result = self.data.parse(bytes);
+        let result = self.data.parse(&resolved_url, bytes);
         self.respond(resolved_url, result)
     }
 }
@@ -646,7 +646,7 @@ fn decoded_key(bytes: &[u8]) -> u64 {
 }
 
 impl ImageHandler {
-    fn parse(&self, bytes: Bytes) -> Result<Resource, String> {
+    fn parse(&self, url: &str, bytes: Bytes) -> Result<Resource, String> {
         let key = decoded_key(&bytes);
         if let Some((_, w, h, data)) = DECODED
             .lock()
@@ -705,12 +705,16 @@ impl ImageHandler {
         let svg_err = {
             use crate::util::parse_svg_image;
             match parse_svg_image(&bytes) {
-                Ok(svg) => return Ok(Resource::Svg(self.kind, svg)),
+                // pyro: its `<view>` fragment, and its source when it has no size.
+                Ok(svg) => return Ok(Resource::Svg(self.kind, svg.for_url(&bytes, url))),
                 Err(e) => e.to_string(),
             }
         };
         #[cfg(not(feature = "svg"))]
-        let svg_err = "svg feature disabled";
+        let svg_err = {
+            let _ = url;
+            "svg feature disabled"
+        };
 
         Err(format!(
             "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",

@@ -400,15 +400,17 @@ impl Device {
                 | SystemColor::Activeborder
                 | SystemColor::Inactiveborder
                 | SystemColor::Threeddarkshadow
+                // pyro: ThreeDHighlight and ThreeDLightShadow are ButtonBorder too (CSS Color 4
+                // §6.2; upstream mapped them to ButtonFace).
+                | SystemColor::Threedhighlight
+                | SystemColor::Threedlightshadow
                 | SystemColor::Threedshadow
                 | SystemColor::Windowframe => srgb(255, 255, 255),
                 SystemColor::Buttonface
                 // Deprecated system colors (CSS Color 4) mapped to Buttonface.
                 | SystemColor::Buttonhighlight
                 | SystemColor::Buttonshadow
-                | SystemColor::Threedface
-                | SystemColor::Threedhighlight
-                | SystemColor::Threedlightshadow => srgb(107, 107, 107),
+                | SystemColor::Threedface => srgb(107, 107, 107),
                 SystemColor::Buttontext => srgb(245, 245, 245),
                 SystemColor::Canvas
                 // Deprecated system colors (CSS Color 4) mapped to Canvas.
@@ -450,15 +452,17 @@ impl Device {
                 | SystemColor::Activeborder
                 | SystemColor::Inactiveborder
                 | SystemColor::Threeddarkshadow
+                // pyro: ThreeDHighlight and ThreeDLightShadow are ButtonBorder too (CSS Color 4
+                // §6.2; upstream mapped them to ButtonFace).
+                | SystemColor::Threedhighlight
+                | SystemColor::Threedlightshadow
                 | SystemColor::Threedshadow
                 | SystemColor::Windowframe => srgb(169, 169, 169),
                 SystemColor::Buttonface
                 // Deprecated system colors (CSS Color 4) mapped to Buttonface.
                 | SystemColor::Buttonhighlight
                 | SystemColor::Buttonshadow
-                | SystemColor::Threedface
-                | SystemColor::Threedhighlight
-                | SystemColor::Threedlightshadow => srgb(220, 220, 220),
+                | SystemColor::Threedface => srgb(220, 220, 220),
                 SystemColor::Buttontext => srgb(0, 0, 0),
                 SystemColor::Canvas
                 // Deprecated system colors (CSS Color 4) mapped to Canvas.
