@@ -56,6 +56,7 @@ mod iframe;
 /// Integration of taffy and the DOM.
 mod layout;
 pub use layout::table::{CollapsedEdge, CollapsedEdges};
+pub use layout::multicol::{ColumnFragment, ColumnFragments};
 mod mutator;
 mod query_selector;
 mod resolve;

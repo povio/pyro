@@ -343,6 +343,16 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
+- `src/render/multicol.rs` (new), `src/render.rs` (`paint_element`): a multi-column container (blitz-dom
+  `layout::multicol`) paints its content once per column: moved to the column and clipped to the column's range of
+  the strip in the block axis only (what overflows a column sideways shows, as in Chromium; the first column shows what
+  lies above the strip, the last what lies below it), its content culled to the column. A box a break goes through is
+  drawn in each column it reaches, each showing its part: `box-decoration-break: slice` (its border, background,
+  shadow and clip path cut at the break, WPT `slice-block-fragmentation-*`, `clip-path-columns-shape-*`). A
+  container whose content fits one column paints as before, without a clip layer. `column-rule` is painted over the
+  border and under the content, in the middle of the gap between neighbouring columns of a row (both have content),
+  as tall as the columns, snapped to whole pixels: `solid` (and the 3D styles, as solid), `double`, `dashed` and
+  `dotted`. Covered by `crates/pyro-render/tests/multicol.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is

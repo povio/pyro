@@ -1004,6 +1004,48 @@ Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit te
   ignored, `<rt>`'s box (background, border) is not painted, and `display: ruby*` stays unparsed (Stylo has it
   for Gecko only), so ruby is found by element name. Covered by `crates/pyro-render/tests/text_emphasis_ruby.rs`.
 
+## Multi-column layout
+
+- `src/layout/multicol.rs` (new), `src/layout/mod.rs` (`ChildLayout::Multicol`, `column_spanners`): a block container (`block`,
+  `flow-root`, `inline-block`, `list-item`) whose `column-count` or `column-width` is not `auto`, in a horizontal
+  writing mode, is a multi-column container (CSS Multi-column Layout 1). Its content is laid out once, in a strip one
+  column wide (its block or inline formatting context at the column width, as tall as its content: legacy WebKit's
+  flow thread), and the strip is broken into columns. Every box keeps its one layout, in strip coordinates; each
+  column is a fragment (`ColumnFragment`: the strip range it shows and where), stored in `LayoutData::columns` by
+  the container's final layout and read through `Node::column_fragments` (which ignores them once the style makes the
+  box no multi-column container). Column count and width follow §3.4 (`column-gap: normal` is 1em); intrinsic
+  widths follow Chromium's `ColumnLayoutAlgorithm::ComputeMinMaxSizes`.
+- Breaks: line boxes, replaced elements, scroll containers, tables, flex and grid containers, form controls and
+  nested multi-column containers are monolithic (a break goes before them, or through one taller than a column, where
+  the column ends); block containers break between their children and anywhere through their own empty space; the
+  column after a break between blocks starts at the next one's border box (margins truncated). `orphans`, `widows` and
+  `break-inside: avoid` keep lines and boxes together where a column can hold them.
+- Heights: columns are balanced (the least height that fits the content in `column-count` columns, grown by the
+  smallest shortage until it does, keeping together what `orphans`/`widows`/`break-inside` keep where the height
+  allows) unless `column-fill: auto` and the height is definite; a definite height or `max-height` caps them, and
+  content that does not fit continues in columns past the container's inline end, as in Chromium. A container of an
+  auto height is as tall as its columns. Column offsets and breaks are snapped to device pixels.
+- Column spanners: an in-flow block child with `column-span: all` is laid out in the strip as wide as the
+  container's content box (`LayoutPassState::column_spanners`, read by `adjusted_child_inputs`) and is a row of its
+  own: the content before it is balanced into a row of columns above it, the content after it into a row below.
+- The container is its own block formatting context (its children's margins stay inside; its own do not collapse
+  with them), and a paint layer root (`paint_tree.rs` `is_paint_layer_root`): its positioned descendants paint in its
+  columns. A z-indexed descendant hoisted past it is placed through its columns (`hoisted_child_position`).
+- Mapped through the columns: the scrollable overflow and hit bound (`resolve.rs`: the content's extent, cut at the
+  breaks and moved to the columns, added to the padding box), hit testing (`Node::hit_inner`: the point the column
+  under it shows), `absolute_position` and `physical_unrounded_geometry` (a box is placed in the column whose range
+  holds its own origin). `BaseDocument::has_multicol` tells pyro-render's geometry queries that columns exist.
+- A container laid out to measure it (a `ComputeSize` run) writes its strip's layouts at that width, so it clears its
+  own layout cache: its final layout runs again and puts them back.
+- Not supported: spanners deeper in the content (laid out in a column), forced breaks
+  (`break-before: column`; Stylo has no `column` value), fragmenting monolithic boxes such as tables between rows,
+  and vertical writing modes (laid out as one column). A box split by a break keeps one box in queries, at its first
+  fragment.
+
+Tests: `layout::multicol` unit tests here (column count and width, balancing, breaks, the mapping);
+`crates/pyro-render/tests/multicol.rs` (pixels) and `crates/pyro-layout/tests/multicol.rs` (geometry and hit
+testing).
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were

@@ -5,6 +5,7 @@ mod box_shadow;
 mod clip_path;
 mod form_controls;
 mod mask;
+mod multicol;
 
 use blitz_dom::CopyStyleGetters;
 use std::cell::RefCell;
@@ -971,6 +972,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         cx.draw_table_borders(scene);
         if paints_own_box {
             cx.draw_border(scene);
+            // pyro: over the border, under the content (`render/multicol.rs`).
+            cx.draw_column_rules(scene);
         }
         cx.stroke_devtools(scene);
 
@@ -1006,9 +1009,13 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 cx.draw_sub_document(scene);
                 cx.draw_input(scene);
                 cx.draw_text_input_text(scene, content_position);
-                cx.draw_inline_layout(scene, content_position);
-                cx.draw_marker(scene, content_position);
-                cx.draw_children(scene, cx.transform, child_clip_rect);
+                // pyro: a multi-column container paints its content once per column
+                // (`render/multicol.rs`).
+                if !cx.draw_columns(scene, content_position, child_clip_rect) {
+                    cx.draw_inline_layout(scene, content_position);
+                    cx.draw_marker(scene, content_position);
+                    cx.draw_children(scene, cx.transform, child_clip_rect);
+                }
             },
         );
         cx.transform = unscrolled_transform;

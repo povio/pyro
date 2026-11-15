@@ -66,6 +66,75 @@ pub struct StickyBox {
     pub limit: Option<(f64, f64, f64, f64)>,
 }
 
+/// A box's place in its containing block (CSS px): its location, then its CSS transform.
+pub(crate) fn placement(doc: &BaseDocument, node: &blitz_dom::Node, scale: f64) -> Affine {
+    let location = doc.physical_unrounded_layout(node.id).location;
+    // Blitz keeps the CSS transform's translation in device px
+    // (`Node::set_transform`); this chain is in CSS px.
+    let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
+        let [a, b, c, d, e, f] = t.as_coeffs();
+        Affine::new([a, b, c, d, e / scale, f / scale])
+    });
+    Affine::translate((location.x as f64, location.y as f64)) * own
+}
+
+/// pyro: the move into its column of the box `chain[0]` in a multi-column container's strip:
+/// `chain` is its containing-block chain, leaf first, up to the container's child (blitz-dom
+/// `layout::multicol`).
+fn column_shift(
+    doc: &BaseDocument,
+    columns: &blitz_dom::ColumnFragments,
+    chain: &[&blitz_dom::Node],
+    scale: f64,
+) -> Affine {
+    let last = chain.len() - 1;
+    let mut below = placement(doc, chain[last], scale);
+    for j in (0..last).rev() {
+        let scroll = chain[j + 1].scroll_offset();
+        below = below * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
+    }
+    let origin = below * kurbo::Point::ZERO;
+    let (x, y) = columns.shift_at(origin.y as f32);
+    Affine::translate((x as f64, y as f64))
+}
+
+/// pyro: for inline root `root_id` in a multi-column container (or being one), the move
+/// (document CSS px) of its line at block position `y` (its own coordinates) into the column
+/// that shows it, past the one [`Geometry::transform`] gives the root (by the root's top). `None`
+/// when no multi-column container shows the root.
+pub(crate) fn line_column_shift(doc: &BaseDocument, root_id: NodeId) -> Option<impl Fn(f64) -> Affine + '_> {
+    if !doc.has_multicol() {
+        return None;
+    }
+    let scale = doc.viewport().scale_f64();
+    let root = doc.get_node(root_id)?;
+    // The root's box to the strip of the container that shows it.
+    let (columns, to_strip) = match root.column_fragments() {
+        Some(columns) => (columns, Affine::IDENTITY),
+        None => {
+            let mut chain = vec![root];
+            loop {
+                let cb = doc.get_node(chain.last()?.containing_block()?)?;
+                if let Some(columns) = cb.column_fragments() {
+                    let last = chain.len() - 1;
+                    let mut t = placement(doc, chain[last], scale);
+                    for j in (0..last).rev() {
+                        let scroll = chain[j + 1].scroll_offset();
+                        t = t * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
+                    }
+                    break (columns, t);
+                }
+                chain.push(cb);
+            }
+        }
+    };
+    let base = columns.shift_at((to_strip * kurbo::Point::ZERO).y as f32);
+    Some(move |y: f64| {
+        let (x, y) = columns.shift_at((to_strip * kurbo::Point::new(0.0, y)).y as f32);
+        Affine::translate(((x - base.0) as f64, (y - base.1) as f64))
+    })
+}
+
 fn box_position(node: &blitz_dom::Node) -> BoxPosition {
     use style::computed_values::position::T;
     match node.primary_styles().map(|s| s.clone_position()) {
@@ -138,31 +207,74 @@ impl Geometry {
             cur = node.containing_block();
         }
         let scale = doc.viewport().scale_f64();
+        let multicol = doc.has_multicol();
         let (mut t, mut fixed) = (Affine::IDENTITY, false);
         let mut parent: Option<&blitz_dom::Node> = None;
-        for node in chain.into_iter().rev() {
-            let base = match parent {
+        for (index, &node) in chain.iter().enumerate().rev() {
+            let mut base = match parent {
                 Some(p) => {
                     let scroll = p.scroll_offset();
                     t * Affine::translate((-scroll.x, -scroll.y))
                 }
                 None => Affine::IDENTITY,
             };
+            // pyro: a box in a multi-column container is shown in the column whose strip range
+            // holds the box `id` itself (blitz-dom `layout::multicol`).
+            if let Some(columns) = parent.filter(|_| multicol).and_then(|p| p.column_fragments()) {
+                base *= column_shift(doc, columns, &chain[..=index], scale);
+            }
             fixed = fixed
                 || node
                     .primary_styles()
                     .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
-            let location = doc.physical_unrounded_layout(node.id).location;
-            // Blitz keeps the CSS transform's translation in device px
-            // (`Node::set_transform`); this chain is in CSS px.
-            let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
-                let [a, b, c, d, e, f] = t.as_coeffs();
-                Affine::new([a, b, c, d, e / scale, f / scale])
-            });
-            t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
+            t = base * placement(doc, node, scale);
             parent = Some(node);
         }
         Some((t, fixed))
+    }
+
+    /// pyro: the border box of `id` in the columns of the nearest multi-column container on its
+    /// containing-block chain (blitz-dom `layout::multicol`): the box cut at the column breaks it
+    /// spans, each piece shown in its column, and the bounding box of the pieces (document CSS
+    /// px), as Chromium unites a box's fragments. `None` when no such container shows it.
+    pub(crate) fn columns_box(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
+        if !doc.has_multicol() {
+            return None;
+        }
+        let mut chain = vec![doc.get_node(id)?];
+        let container = loop {
+            let cb = doc.get_node(chain.last()?.containing_block()?)?;
+            if cb.column_fragments().is_some() {
+                break cb;
+            }
+            chain.push(cb);
+        };
+        let columns = container.column_fragments()?;
+        let scale = doc.viewport().scale_f64();
+        let last = chain.len() - 1;
+        let mut below = placement(doc, chain[last], scale);
+        for j in (0..last).rev() {
+            let scroll = chain[j + 1].scroll_offset();
+            below = below * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
+        }
+        let l = doc.physical_unrounded_layout(id);
+        let strip = below.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
+        let (t, _) = self.transform(doc, container.id)?;
+        let scroll = container.scroll_offset();
+        let base = t * Affine::translate((-scroll.x, -scroll.y));
+        let mut out: Option<Rect> = None;
+        for f in &columns.fragments {
+            let (y0, y1) = (strip.y0.max(f.start as f64), strip.y1.min(f.end as f64));
+            let shows = if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= f.start as f64 && strip.y0 < f.end as f64 };
+            if !shows {
+                continue;
+            }
+            let piece = base.transform_rect_bbox(
+                Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64),
+            );
+            out = Some(out.map_or(piece, |o| o.union(piece)));
+        }
+        out
     }
 
     /// The box Blitz lays out for `id`, before the adjustments. A node that
@@ -176,7 +288,10 @@ impl Geometry {
         }
         let (t, fixed) = self.transform(doc, id)?;
         let l = doc.physical_unrounded_layout(id);
-        let rect = t.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
+        // pyro: a box in columns is the union of its pieces in them.
+        let rect = self.columns_box(doc, id).unwrap_or_else(|| {
+            t.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64))
+        });
         let client_width = (l.size.width - l.border.left - l.border.right - l.scrollbar_size.width).max(0.0) as f64;
         let client_height = (l.size.height - l.border.top - l.border.bottom - l.scrollbar_size.height).max(0.0) as f64;
         // Scrollable overflow is kept in device px.
@@ -522,8 +637,11 @@ impl Geometry {
         let root = doc.get_node(root_id)?;
         let text = root.element_data()?.inline_layout_data.as_ref()?;
         let (t, _) = self.transform(doc, root_id)?;
-        let origin = t * line_box_origin(doc, root_id, text);
+        let line_origin = line_box_origin(doc, root_id, text);
+        let origin = t * line_origin;
         let scale = text.layout.scale() as f64;
+        // pyro: lines in a multi-column container's columns.
+        let columns = line_column_shift(doc, root_id);
         // Whether `start` is `id` or inside it (below the root).
         let within = |start: Option<NodeId>| {
             let mut cur = start;
@@ -539,7 +657,11 @@ impl Geometry {
             false
         };
         for (index, line) in text.layout.lines().enumerate() {
-            let origin = origin * line_slot(doc, root_id, &line.metrics(), scale);
+            let mut origin = origin * line_slot(doc, root_id, &line.metrics(), scale);
+            if let Some(shift) = &columns {
+                let top = line_origin * kurbo::Point::new(0.0, line.metrics().block_min_coord as f64 / scale);
+                origin = shift(top.y) * origin;
+            }
             for item in line.items() {
                 let (start, mut r) = inline_item_rect(&line, &item, scale);
                 if within(start) {

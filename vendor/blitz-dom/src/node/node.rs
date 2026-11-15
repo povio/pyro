@@ -2073,11 +2073,15 @@ impl Node {
             || y < overflow_rect.top() + client_y
             || y > overflow_rect.bottom() + client_y);
 
+        // pyro: a multi-column container's content lies in its strip (`layout::multicol`): its
+        // boxes and lines are hit at the point the column under it shows.
+        let (strip_x, strip_y) = self.columns_to_strip(x, y);
         let matches_hoisted_content = match &self.stacking_context {
             Some(sc) => {
                 // Both the point (after the scroll adjustment above) and the
                 // bbox are in this node's unscrolled content coordinates.
                 let bbox = sc.hoisted_content_bbox(self.tree(), self.id, scale);
+                let (x, y) = (strip_x, strip_y);
                 x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
             }
             None => false,
@@ -2106,6 +2110,7 @@ impl Node {
         {
             *scrollbar = Some(sb);
         }
+        let (x, y) = (strip_x, strip_y);
 
         // Text clusters and callers of the returned coordinates work in the
         // inline root's content box, but embedded boxes store border-box
@@ -2314,8 +2319,13 @@ impl Node {
         let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
 
         // Recurse up the positioning hierarchy
+        // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
         self.containing_block()
-            .map(|i| self.with(i).absolute_position(x, y))
+            .map(|i| {
+                let containing = self.with(i);
+                let p = containing.strip_to_columns(crate::util::Point { x, y });
+                containing.absolute_position(p.x, p.y)
+            })
             .unwrap_or(crate::util::Point { x, y })
     }
 

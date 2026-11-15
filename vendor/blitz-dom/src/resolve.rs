@@ -394,6 +394,10 @@ impl BaseDocument {
         // pyro: the scrollable overflow starts at the padding box
         // (CSS Overflow 3 2.2), not the border box.
         let mut overflow = padding_box(&layout, scale);
+        // pyro: a multi-column container's content lies in its strip: what it reaches is shown in
+        // the columns (`layout::multicol`), added to the padding box below.
+        let columns_base =
+            self.nodes[node_id].column_fragments().is_some().then(|| std::mem::replace(&mut overflow, Rect::ZERO));
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 
@@ -449,6 +453,9 @@ impl BaseDocument {
         // a scroll container adds its end padding after them.
         if let Some((lines, true)) = self.line_bounds(node_id, &layout, scale) {
             overflow = overflow.union(lines);
+        }
+        if let Some(base) = columns_base {
+            overflow = base.union(self.columns_rect(node_id, overflow, scale));
         }
 
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
@@ -572,6 +579,9 @@ impl BaseDocument {
         }
 
         let mut hit = padding_box(&layout, scale);
+        // pyro: as for the scrollable overflow (`resolve_transforms`).
+        let columns_base =
+            self.nodes[node_id].column_fragments().is_some().then(|| std::mem::replace(&mut hit, Rect::ZERO));
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
         if let Some(cells_hit) = self.table_cells_hit(node_id, scale) {
             if let Some(cells_hit) = cells_hit {
@@ -626,6 +636,9 @@ impl BaseDocument {
                 let reach = reach + scale / 64.0;
                 hit = hit.union(lines.inflate(reach, reach));
             }
+        }
+        if let Some(base) = columns_base {
+            hit = base.union(self.columns_rect(node_id, hit, scale));
         }
 
         let data = self.nodes[node_id].layout_data_mut();
