@@ -15,7 +15,7 @@ use crate::values::generics::box_::{
     GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
     MaxLines, OverflowClipMarginBox,
 };
-use crate::values::specified::length::{LengthPercentage, NonNegativeLength};
+use crate::values::specified::length::{Length, LengthPercentage, NonNegativeLength};
 use crate::values::specified::{AllowQuirks, NonNegativeNumberOrPercentage, PositiveInteger};
 use cssparser::Parser;
 use num_traits::FromPrimitive;
@@ -75,19 +75,19 @@ bitflags! {
 }
 
 /// The specified value of `overflow-clip-margin`.
-pub type OverflowClipMargin = GenericOverflowClipMargin<NonNegativeLength>;
+/// pyro: any length, as Blink takes it (a negative one moves the clip edge inwards; WPT
+/// `overflow-clip-margin-016`, `-017`), where the specification has `<length [0,∞]>`.
+pub type OverflowClipMargin = GenericOverflowClipMargin<Length>;
 
 impl Parse for OverflowClipMargin {
-    // <visual-box> || <length [0,∞]>
+    // <visual-box> || <length>
     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         use crate::Zero;
         let mut offset = None;
         let mut visual_box = None;
         loop {
             if offset.is_none() {
-                offset = input
-                    .try_parse(|i| NonNegativeLength::parse(context, i))
-                    .ok();
+                offset = input.try_parse(|i| Length::parse(context, i)).ok();
             }
             if visual_box.is_none() {
                 visual_box = input.try_parse(OverflowClipMarginBox::parse).ok();
@@ -101,7 +101,7 @@ impl Parse for OverflowClipMargin {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(Self {
-            offset: offset.unwrap_or_else(NonNegativeLength::zero),
+            offset: offset.unwrap_or_else(Length::zero),
             visual_box: visual_box.unwrap_or(OverflowClipMarginBox::PaddingBox),
         })
     }

@@ -683,7 +683,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip = if cx.text_input.is_some() {
             cx.frame.text_input_clip_path()
         } else {
-            cx.frame.padding_box_path()
+            box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
         };
         let pushed = self.layer_manager.maybe_push_layer(
             scene,
@@ -998,7 +998,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let clip_box = if is_text_input {
                 cx.frame.text_input_clip_path()
             } else {
-                cx.frame.padding_box_path()
+                box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
             };
             source_rect.intersect(screen_transform.transform_rect_bbox(clip_box.bounding_box()))
         } else {
@@ -1280,7 +1280,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip = if is_text_input {
             &cx.frame.text_input_clip_path()
         } else {
-            &cx.frame.padding_box_path()
+            &box_shadow::overflow_clip_path(&cx.frame, &cx.style, cx.scale)
         };
 
         // Clip layer if box requires clipping. Opacity set to 1.0
@@ -3391,6 +3391,72 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// Paints a box hoisted to this stacking context (a positioned descendant with a
+    /// `z-index`) where its layout put it. pyro: inside the overflow clips of the boxes between
+    /// it and this one that are its containing-block ancestors: such a box makes no stacking
+    /// context, so the child is not painted within its clip layer, and it showed whole outside
+    /// an `overflow: hidden` ancestor.
+    fn draw_hoisted_child(
+        &self,
+        scene: &mut impl PaintScene,
+        hoisted_child: &blitz_dom::HoistedPaintChild,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        let tree = self.node.tree();
+        let position = hoisted_child.position(tree, self.node.id);
+        // The clipping boxes, innermost first, each with its border box's origin in this
+        // context's space (the child's, less what lies between the two).
+        let mut clips: Vec<(Affine, kurbo::BezPath)> = Vec::new();
+        let mut between = (0.0f32, 0.0f32);
+        let mut current = tree.get(hoisted_child.node_id).and_then(|child| child.containing_block());
+        let mut reached = false;
+        while let Some(id) = current {
+            if id == self.node.id {
+                reached = true;
+                break;
+            }
+            let Some(node) = tree.get(id) else { break };
+            // (Out of a multi-column container's strip the walk is not a sum of offsets.)
+            if node.column_fragments().is_some() {
+                break;
+            }
+            let location = node.final_layout().location;
+            let scroll = *node.scroll_offset();
+            between.0 += location.x - scroll.x as f32;
+            between.1 += location.y - scroll.y as f32;
+            if let Some(styles) = node.primary_styles().filter(|_| node.element_data().is_some())
+                && self.context.should_clip_node(node, &styles)
+            {
+                let origin = Vec2::new(
+                    f64::from(position.x - between.0 + location.x) * self.scale,
+                    f64::from(position.y - between.1 + location.y) * self.scale,
+                );
+                let frame = create_css_rect(&styles, node.final_layout(), self.scale);
+                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
+                    frame.text_input_clip_path()
+                } else {
+                    box_shadow::overflow_clip_path(&frame, &styles, self.scale)
+                };
+                clips.push((parent_style_transform.pre_translate(origin), clip));
+            }
+            current = node.containing_block();
+        }
+        if !reached {
+            clips.clear();
+        }
+        let mut clip_rect = clip_rect;
+        for (transform, clip) in clips.iter().rev() {
+            self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, *transform, clip, None, None);
+            clip_rect = clip_rect.intersect(transform.transform_rect_bbox(clip.bounding_box()));
+        }
+        let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
+        self.render_node(scene, hoisted_child.node_id, parent_style_transform.pre_translate(pos), clip_rect);
+        for _ in &clips {
+            self.context.layer_manager.maybe_pop_layer(scene, true);
+        }
+    }
+
     fn draw_neg_z_children(
         &self,
         scene: &mut impl PaintScene,
@@ -3399,17 +3465,7 @@ impl ElementCx<'_, '_> {
     ) {
         if let Some(hoisted) = &self.node.stacking_context {
             for hoisted_child in hoisted.neg_z_hoisted_children() {
-                let position = hoisted_child.position(self.node.tree(), self.node.id);
-                let pos = kurbo::Vec2 {
-                    x: position.x as f64 * self.scale,
-                    y: position.y as f64 * self.scale,
-                };
-                self.render_node(
-                    scene,
-                    hoisted_child.node_id,
-                    parent_style_transform.pre_translate(pos),
-                    clip_rect,
-                );
+                self.draw_hoisted_child(scene, hoisted_child, parent_style_transform, clip_rect);
             }
         }
     }
@@ -3423,17 +3479,7 @@ impl ElementCx<'_, '_> {
         // Positive z_index hoisted nodes
         if let Some(hoisted) = &self.node.stacking_context {
             for hoisted_child in hoisted.pos_z_hoisted_children() {
-                let position = hoisted_child.position(self.node.tree(), self.node.id);
-                let pos = kurbo::Vec2 {
-                    x: position.x as f64 * self.scale,
-                    y: position.y as f64 * self.scale,
-                };
-                self.render_node(
-                    scene,
-                    hoisted_child.node_id,
-                    parent_style_transform.pre_translate(pos),
-                    clip_rect,
-                );
+                self.draw_hoisted_child(scene, hoisted_child, parent_style_transform, clip_rect);
             }
         }
     }

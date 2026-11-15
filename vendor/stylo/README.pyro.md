@@ -183,6 +183,11 @@ the box is vertical and has a line clamp; blitz-dom's `layout::line_clamp` clamp
 only. `-webkit-box` is never a computed value. Tests: `crates/pyro-render/tests/line_clamp.rs`, WPT
 `css/css-overflow/line-clamp/webkit-line-clamp-*`.
 
+`values/specified/box.rs`, `values/computed/box.rs` (`OverflowClipMargin`): the length of `overflow-clip-margin`
+may be negative, as Blink takes it (the clip edge moves inwards; WPT `css-overflow/overflow-clip-margin-016`,
+`-017`), where the specification and upstream have a non-negative length. Test:
+`crates/pyro-render/tests/overflow_clip.rs`.
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

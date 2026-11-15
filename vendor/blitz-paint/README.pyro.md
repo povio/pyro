@@ -73,6 +73,15 @@ from the root of an upstream checkout at that commit) is the whole diff.
     overflows or not (`line_truncation`, `truncate_line`'s `forced`: after the whole line when the ellipsis
     fits there), whatever `text-overflow` says, and the root's later lines, their annotations and their part
     of a text mask are not painted. Covered by `crates/pyro-render/tests/line_clamp.rs`.
+  - `src/render/box_shadow.rs` (`overflow_clip_path`), `src/render.rs` (`render_element`, `paint_content`,
+    `draw_text_mask`, `ElementCx::draw_hoisted_child`): the overflow clip. A scroll container clips at its padding
+    box, as before. `overflow: clip` on both axes (and `contain: paint`) clips at the box `overflow-clip-margin`
+    names, along that box's own curve, grown by the margin's length as a shadow's spread grows its shape (a
+    negative length shrinks it); `clip` on one axis with `visible` on the other clips that axis only, with square
+    corners. A box hoisted to a stacking context (positioned, with a `z-index`) is painted inside the clips of the
+    boxes between it and that context on its containing-block chain: such a box makes no stacking context, so the
+    child was painted outside its clip layer and showed whole outside an `overflow: hidden` ancestor. Covered by
+    `crates/pyro-render/tests/overflow_clip.rs`, WPT `css-overflow/overflow-clip-margin-*`, `clip-00*`.
   - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
     `SvgImageData::sized` tree for its content box, in user units of a CSS px times its `zoom` (its content
     was drawn at zoom 1 in a zoomed box: WPT `clip-path-path-with-zoom-002`). An SVG image (`<img>`, not an

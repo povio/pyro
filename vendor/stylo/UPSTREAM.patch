@@ -1028,6 +1028,18 @@ diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
 -/// An animated value for a single `filter`.
 -#[cfg(not(feature = "gecko"))]
 -pub type AnimatedFilter = GenericFilter<Angle, Number, Length, AnimatedSimpleShadow, Impossible>;
+diff -ruN a/values/computed/box.rs b/values/computed/box.rs
+--- a/values/computed/box.rs	2026-11-11 19:55:57
++++ b/values/computed/box.rs	2026-11-15 21:31:51
+@@ -31,7 +31,7 @@
+ pub type BaselineShift = GenericBaselineShift<LengthPercentage>;
+ 
+ /// A computed value for the `overflow-clip-margin` property.
+-pub type OverflowClipMargin = GenericOverflowClipMargin<NonNegativeLength>;
++pub type OverflowClipMargin = GenericOverflowClipMargin<crate::values::computed::Length>;
+ 
+ /// A computed value for the `-moz-scrollbar-inset-block` / `-inline` properties.
+ pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
 diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
 --- a/values/computed/effects.rs	2026-11-11 19:55:57
 +++ b/values/computed/effects.rs	2026-11-14 18:55:29
@@ -1266,7 +1278,50 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-15 20:15:35
++++ b/values/specified/box.rs	2026-11-15 21:32:07
+@@ -15,7 +15,7 @@
+     GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
+     MaxLines, OverflowClipMarginBox,
+ };
+-use crate::values::specified::length::{LengthPercentage, NonNegativeLength};
++use crate::values::specified::length::{Length, LengthPercentage, NonNegativeLength};
+ use crate::values::specified::{AllowQuirks, NonNegativeNumberOrPercentage, PositiveInteger};
+ use cssparser::Parser;
+ use num_traits::FromPrimitive;
+@@ -75,19 +75,19 @@
+ }
+ 
+ /// The specified value of `overflow-clip-margin`.
+-pub type OverflowClipMargin = GenericOverflowClipMargin<NonNegativeLength>;
++/// pyro: any length, as Blink takes it (a negative one moves the clip edge inwards; WPT
++/// `overflow-clip-margin-016`, `-017`), where the specification has `<length [0,∞]>`.
++pub type OverflowClipMargin = GenericOverflowClipMargin<Length>;
+ 
+ impl Parse for OverflowClipMargin {
+-    // <visual-box> || <length [0,∞]>
++    // <visual-box> || <length>
+     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+         use crate::Zero;
+         let mut offset = None;
+         let mut visual_box = None;
+         loop {
+             if offset.is_none() {
+-                offset = input
+-                    .try_parse(|i| NonNegativeLength::parse(context, i))
+-                    .ok();
++                offset = input.try_parse(|i| Length::parse(context, i)).ok();
+             }
+             if visual_box.is_none() {
+                 visual_box = input.try_parse(OverflowClipMarginBox::parse).ok();
+@@ -101,7 +101,7 @@
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
+         Ok(Self {
+-            offset: offset.unwrap_or_else(NonNegativeLength::zero),
++            offset: offset.unwrap_or_else(Length::zero),
+             visual_box: visual_box.unwrap_or(OverflowClipMarginBox::PaddingBox),
+         })
+     }
 @@ -171,7 +171,8 @@
      RubyText,
      #[cfg(feature = "gecko")]

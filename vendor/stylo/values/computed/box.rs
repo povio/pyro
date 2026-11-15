@@ -31,7 +31,7 @@ pub use crate::values::specified::box_::{
 pub type BaselineShift = GenericBaselineShift<LengthPercentage>;
 
 /// A computed value for the `overflow-clip-margin` property.
-pub type OverflowClipMargin = GenericOverflowClipMargin<NonNegativeLength>;
+pub type OverflowClipMargin = GenericOverflowClipMargin<crate::values::computed::Length>;
 
 /// A computed value for the `-moz-scrollbar-inset-block` / `-inline` properties.
 pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
