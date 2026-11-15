@@ -158,7 +158,8 @@ fn backface_visibility_hidden_hides_a_box_showing_its_back() {
 /// In a 3D rendering context (`transform-style: preserve-3d`) the parent's matrix decides with
 /// the child's which face shows: the card flip. A child turned 180deg in a parent turned 180deg
 /// faces the viewer; an untransformed child of that parent shows its back. A `preserve-3d`
-/// element is not hidden by its own `backface-visibility`: its children are planes of their own.
+/// element's own `backface-visibility` hides what it paints itself (and what paints in its
+/// plane), not its children with transforms of their own: they are planes of their own.
 #[test]
 fn a_3d_rendering_context_decides_which_face_its_children_show() {
     let card = "position:absolute;left:0;top:0;width:100px;height:100px;backface-visibility:hidden";
@@ -179,7 +180,7 @@ fn a_3d_rendering_context_decides_which_face_its_children_show() {
         let img = render(
             &format!(
                 "<div style='position:absolute;left:100px;top:100px;width:100px;transform:rotateY(180deg);backface-visibility:hidden;transform-style:preserve-3d'>\
-                 <div style='height:100px;background:green'></div></div>"
+                 <div style='height:100px;background:green;transform:translateZ(0)'></div></div>"
             ),
             scale,
         );

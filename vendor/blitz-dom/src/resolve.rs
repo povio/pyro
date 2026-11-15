@@ -394,6 +394,10 @@ impl BaseDocument {
         // pyro: the scrollable overflow starts at the padding box
         // (CSS Overflow 3 2.2), not the border box.
         let mut overflow = padding_box(&layout, scale);
+        // pyro: a multi-column container's content lies in its strip: what it reaches is shown in
+        // the columns (`layout::multicol`), added to the padding box below.
+        let columns_base =
+            self.nodes[node_id].column_fragments().is_some().then(|| std::mem::replace(&mut overflow, Rect::ZERO));
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
         // pyro: a scroll container's padding surrounds its in-flow content (CSS Overflow 3 §2.2;
@@ -427,7 +431,7 @@ impl BaseDocument {
                 if self.nodes[child_id].is_out_of_flow() {
                     continue;
                 }
-                let child = contents.for_child(&self.nodes[child_id]);
+                let child = contents.for_child(&self.nodes, &self.nodes[child_id]);
                 let child_rect_in_self =
                     crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all, child));
                 overflow = unite_overflow(overflow, child_rect_in_self);
@@ -442,7 +446,7 @@ impl BaseDocument {
             if !self.nodes.contains_key(child_id) {
                 continue;
             }
-            let child = contents.for_child(&self.nodes[child_id]);
+            let child = contents.for_child(&self.nodes, &self.nodes[child_id]);
             let child_rect_in_self =
                 crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all, child));
             // pyro: a box fixed to the viewport is not in the
@@ -458,7 +462,7 @@ impl BaseDocument {
             if self.nodes[pseudo].is_out_of_flow() {
                 continue;
             }
-            let child = contents.for_child(&self.nodes[pseudo]);
+            let child = contents.for_child(&self.nodes, &self.nodes[pseudo]);
             let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(pseudo, resolve_all, child));
             overflow = unite_overflow(overflow, child_rect_in_self);
             if let Some(padding) = scroll_padding {
@@ -471,6 +475,9 @@ impl BaseDocument {
         // a scroll container adds its end padding after them.
         if let Some((lines, true)) = self.line_bounds(node_id, &layout, scale) {
             overflow = overflow.union(lines);
+        }
+        if let Some(base) = columns_base {
+            overflow = base.union(self.columns_rect(node_id, overflow, scale));
         }
 
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
@@ -617,10 +624,13 @@ impl BaseDocument {
         if !self.nodes[node_id].layout_data().hit_stale {
             let node = &self.nodes[node_id];
             let hit = self.overflow_contribution(node_id, *node.hit_overflow(), layout.size, scale);
-            return placement((location.x, location.y), node.transform().as_deref())(hit);
+            return node.hit_bound_in_parent((location.x, location.y), scale, hit);
         }
 
         let mut hit = padding_box(&layout, scale);
+        // pyro: as for the scrollable overflow (`resolve_transforms`).
+        let columns_base =
+            self.nodes[node_id].column_fragments().is_some().then(|| std::mem::replace(&mut hit, Rect::ZERO));
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
         if let Some(cells_hit) = self.table_cells_hit(node_id, scale) {
             if let Some(cells_hit) = cells_hit {
@@ -676,13 +686,16 @@ impl BaseDocument {
                 hit = hit.union(lines.inflate(reach, reach));
             }
         }
+        if let Some(base) = columns_base {
+            hit = base.union(self.columns_rect(node_id, hit, scale));
+        }
 
         let data = self.nodes[node_id].layout_data_mut();
         data.hit_overflow = hit;
         data.hit_stale = false;
         let node = &self.nodes[node_id];
         let hit = self.overflow_contribution(node_id, hit, layout.size, scale);
-        placement((location.x, location.y), node.transform().as_deref())(hit)
+        node.hit_bound_in_parent((location.x, location.y), scale, hit)
     }
 
     /// pyro: what a box adds to its parent's scrollable overflow
@@ -1109,7 +1122,7 @@ impl BaseDocument {
         match again {
             Some(again) => {
                 for index in again {
-                    let cell = contents.for_child(&self.nodes[ctx.cells[index].node_id]);
+                    let cell = contents.for_child(&self.nodes, &self.nodes[ctx.cells[index].node_id]);
                     overflow[index] = crate::util::ensure_stack(|| {
                         self.resolve_transforms(ctx.cells[index].node_id, resolve_all, cell)
                     });
@@ -1118,7 +1131,7 @@ impl BaseDocument {
             None => {
                 overflow.clear();
                 for cell in &ctx.cells {
-                    let containing = contents.for_child(&self.nodes[cell.node_id]);
+                    let containing = contents.for_child(&self.nodes, &self.nodes[cell.node_id]);
                     overflow.push(crate::util::ensure_stack(|| {
                         self.resolve_transforms(cell.node_id, resolve_all, containing)
                     }));
@@ -1245,8 +1258,35 @@ impl ContainingTransform {
     /// What `child` gets. Only the element's children in the DOM take its perspective and 3D
     /// rendering context (WPT `perspective-children-only-*`): an out-of-flow box it contains
     /// further down does not.
-    fn for_child(&self, child: &crate::Node) -> ContainingTransform {
-        if self.parent.is_some() && child.parent == self.parent {
+    ///
+    /// pyro (lane H2): a parent without a box of its own passes it on. A `display: contents`
+    /// element's children are the children of its parent's box here (WPT
+    /// `transform3d-preserve3d-014`); a table's cells are laid out by the table, through rows and
+    /// row groups that have no box in Blitz, which pass the table's 3D rendering context on when
+    /// they have `transform-style: preserve-3d` themselves (WPT `transform-table-009`, `-010`) and
+    /// end it otherwise (`-007`, `-008`).
+    fn for_child(&self, nodes: &crate::NodeTree, child: &crate::Node) -> ContainingTransform {
+        use style::values::specified::box_::Display;
+        let mut parent = child.parent;
+        while let Some(id) = parent
+            && Some(id) != self.parent
+            && let Some(node) = nodes.get(id)
+            && let Some(style) = node.primary_styles()
+        {
+            let display = style.get_box().display;
+            let boxless_table_part = [
+                Display::TableRow,
+                Display::TableRowGroup,
+                Display::TableHeaderGroup,
+                Display::TableFooterGroup,
+            ]
+            .contains(&display);
+            if !(display.is_contents() || (boxless_table_part && node.is_preserve_3d())) {
+                break;
+            }
+            parent = node.parent;
+        }
+        if self.parent.is_some() && parent == self.parent {
             *self
         } else {
             ContainingTransform {

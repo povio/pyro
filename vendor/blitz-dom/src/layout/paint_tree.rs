@@ -62,6 +62,12 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
         let Some(node) = tree.get(id) else {
             break;
         };
+        // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
+        if let Some(columns) = node.column_fragments() {
+            let own = child.final_layout().location;
+            let shown = columns.strip_to_columns(Point { x: position.x + own.x, y: position.y + own.y });
+            position = Point { x: shown.x - own.x, y: shown.y - own.y };
+        }
         let location = node.final_layout().location;
         let scroll_offset = *node.scroll_offset();
         position.x += location.x - scroll_offset.x as f32;
@@ -953,6 +959,9 @@ impl Node {
                     || e.sub_doc_data().is_some()
                     || e.text_input_data().is_some()
             })
+            // pyro: a multi-column container paints its positioned descendants in its columns
+            // (`layout::multicol`).
+            || self.column_fragments().is_some()
     }
 
     /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a
@@ -981,9 +990,11 @@ impl Node {
         if !(flow_block || self.is_split_inline() || self.is_inline_with_only_block_children()) {
             return false;
         }
+        // (A plane of a 3D rendering context is recorded and drawn whole, sorted by depth.)
         if style.get_column().is_multicol()
             || !style.get_effects().backdrop_filter.0.is_empty()
             || self.is_stacking_context_root(false)
+            || self.plane_3d().is_some()
         {
             return false;
         }

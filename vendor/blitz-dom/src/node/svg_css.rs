@@ -1064,8 +1064,10 @@ impl Writer<'_> {
                 match flatten_transform(&in_box, (reference.width(), reference.height())) {
                     Flattened::Affine(affine) => affine * Affine::translate((-reference.x0, -reference.y0)),
                     // Behind the viewer: nothing is drawn (usvg leaves out an element of a
-                    // transform it cannot invert).
-                    Flattened::Hidden => Affine::new([0.0; 6]),
+                    // transform it cannot invert). Crossing the viewer's plane too (lane H2): usvg
+                    // cannot draw the part in front through the 4x4 matrix and no 2D affine stands
+                    // in for it, so it is left out, as print leaves out such a box.
+                    Flattened::Hidden | Flattened::Crossing => Affine::new([0.0; 6]),
                 }
             }
         };

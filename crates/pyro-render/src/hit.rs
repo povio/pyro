@@ -88,7 +88,7 @@ struct Descent<'a> {
     offset: &'a dyn Fn(u64) -> (f64, f64),
     shifting: bool,
     scale: f64,
-    transforms: FxHashMap<NodeId, (Affine, bool)>,
+    transforms: FxHashMap<NodeId, (Affine, bool, bool)>,
     /// Never culled: shift sources, their ancestors, and the paths opened
     /// to out-of-flow boxes under the point.
     no_cull: FxHashSet<NodeId>,
@@ -101,6 +101,12 @@ struct Descent<'a> {
     /// Table rows' and row groups' bounds (document CSS px), from the
     /// tables entered so far.
     rows: FxHashMap<NodeId, Rect>,
+    /// pyro: a multi-column container has been laid out in the document.
+    multicol: bool,
+    /// pyro: the boxes in a multi-column container's strip (blitz-dom `layout::multicol`): each
+    /// is shown in the column where it lies ([`Geometry::transform`]), and none is culled (a
+    /// box split by a column break has its parts in different columns).
+    columns: FxHashSet<NodeId>,
     path: Vec<Path>,
     out: Vec<HitVisit>,
     order: u32,
@@ -132,6 +138,8 @@ pub(crate) fn candidates(
         unions: FxHashMap::default(),
         inline_growth: FxHashMap::default(),
         rows: FxHashMap::default(),
+        multicol: doc.has_multicol(),
+        columns: FxHashSet::default(),
         path: Vec::new(),
         out: Vec::new(),
         order: 0,
@@ -153,31 +161,55 @@ pub(crate) fn candidates(
 
 impl Descent<'_> {
     fn transform(&mut self, id: NodeId) -> Option<(Affine, bool)> {
+        self.transform_and_planes(id).map(|(t, fixed, _)| (t, fixed))
+    }
+
+    /// [`Self::transform`], and whether a plane placed by its homography is on `id`'s
+    /// containing-block chain (pyro, lane H2: its box is then where `Geometry::projective` puts it).
+    fn transform_and_planes(&mut self, id: NodeId) -> Option<(Affine, bool, bool)> {
         if let Some(t) = self.transforms.get(&id) {
             return Some(*t);
         }
         let node = self.doc.get_node(id)?;
-        let (base, fixed) = match node.containing_block() {
-            Some(p) => {
-                let (t, fixed) = self.transform(p)?;
-                let scroll = self.doc.get_node(p)?.scroll_offset();
-                (t * Affine::translate((-scroll.x, -scroll.y)), fixed)
+        if let Some(p) = node.containing_block().filter(|_| self.multicol) {
+            let (_, _, above) = self.transform_and_planes(p)?;
+            if self.columns.contains(&p) || self.doc.get_node(p)?.column_fragments().is_some() {
+                self.columns.insert(id);
+                let (t, fixed) = self.g.transform(self.doc, id)?;
+                let projective = above || node.plane_3d().is_some_and(geometry::is_projective_plane);
+                self.transforms.insert(id, (t, fixed, projective));
+                return Some((t, fixed, projective));
             }
-            None => (Affine::IDENTITY, false),
+        }
+        let (base, fixed, projective) = match node.containing_block() {
+            Some(p) => {
+                let (t, fixed, projective) = self.transform_and_planes(p)?;
+                let scroll = self.doc.get_node(p)?.scroll_offset();
+                (t * Affine::translate((-scroll.x, -scroll.y)), fixed, projective)
+            }
+            None => (Affine::IDENTITY, false, false),
         };
         let node = self.doc.get_node(id)?;
         let fixed = fixed
             || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
-        let location = self.doc.physical_unrounded_layout(id).location;
-        let scale = self.scale;
-        let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
-            let [a, b, c, d, e, f] = t.as_coeffs();
-            Affine::new([a, b, c, d, e / scale, f / scale])
-        });
-        let t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
+        let projective = projective || node.plane_3d().is_some_and(geometry::is_projective_plane);
+        // Composed as `Geometry::transform` composes it (the placement first), to the bit.
+        let t = base * geometry::placement(self.doc, node, self.scale);
         debug_assert_eq!(Some((t, fixed)), self.g.transform(self.doc, id), "memoized transform of {id:?}");
-        self.transforms.insert(id, (t, fixed));
-        Some((t, fixed))
+        self.transforms.insert(id, (t, fixed, projective));
+        Some((t, fixed, projective))
+    }
+
+    /// pyro (lane H2): `local` (CSS px, `id`'s border box's coordinates) where paint draws it:
+    /// through `t`, or through the homography of a plane drawn through a perspective on `id`'s
+    /// containing-block chain.
+    fn placed(&mut self, id: NodeId, t: &Affine, local: Rect) -> Rect {
+        if self.transform_and_planes(id).is_some_and(|(_, _, projective)| projective) {
+            if let Some(h) = self.g.projective(self.doc, id) {
+                return h.bbox(local).unwrap_or(Rect::ZERO);
+            }
+        }
+        t.transform_rect_bbox(local)
     }
 
     /// The point in document coordinates for a box shifted by `shift`
@@ -227,7 +259,9 @@ impl Descent<'_> {
         let node = self.doc.get_node(id)?;
         let border = Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64);
         let local = border.union(node.hit_overflow().scale_from_origin(1.0 / self.scale));
-        let mut r = t.transform_rect_bbox(local);
+        // pyro (lane H2): both where a plane drawn through a perspective is and where its stand-in
+        // puts what is placed by it (inline fragments, table rows), as `Node::hit_bound_in_parent`.
+        let mut r = t.transform_rect_bbox(local).union(self.placed(id, &t, local));
         if geometry::is_cell(self.doc, id) {
             if let Some((gx, top, bottom)) = geometry::cell_gutters(self.doc, id) {
                 r = Rect::new(r.x0 - gx, r.y0 - top, r.x1 + gx, r.y1 + bottom);
@@ -256,10 +290,17 @@ impl Descent<'_> {
         // Whether the element's own box may hold the point, and the bound
         // of its subtree (`None`: not culled).
         let (candidate, cull): (bool, Option<Rect>) = if in_tree {
-            let Some((t, fixed)) = self.transform(id) else { return };
+            let Some((t, fixed, projective)) = self.transform_and_planes(id) else { return };
             let l = self.doc.physical_unrounded_layout(id);
             let (w, h) = (l.size.width as f64, l.size.height as f64);
-            let mut own = t.transform_rect_bbox(Rect::new(0.0, 0.0, w, h));
+            // pyro (lane H2): a box in a plane drawn through a perspective is where paint draws it
+            // (`Self::placed`); pyro: a box in columns, the union of its pieces in them
+            // (`Geometry::columns_box`). The order is `Geometry::laid_out`'s.
+            let mut own = match self.columns.contains(&id) && !projective {
+                true => self.g.columns_box(self.doc, id),
+                false => None,
+            }
+            .unwrap_or_else(|| self.placed(id, &t, Rect::new(0.0, 0.0, w, h)));
             if is_cell {
                 if let Some((gx, top, bottom)) = geometry::cell_gutters(self.doc, id) {
                     own = Rect::new(own.x0 - gx, own.y0 - top, own.x1 + gx, own.y1 + bottom);
@@ -269,7 +310,12 @@ impl Descent<'_> {
             let p = self.point(fixed, shift);
             // A zero box is never hit (pyro-dom skips it); its children may be.
             let candidate = (w > 0.0 || h > 0.0) && self.contains(&own, p);
-            (candidate, self.bound(id).map(|(r, _)| r))
+            // pyro: nor is a multi-column container's subtree: its hit bound (its strip's overflow
+            // cut at the breaks, `resolve.rs`) missed content the scan of every box reached
+            // (`hit_adversarial`'s interleaved-mutations page 26).
+            let in_columns = self.columns.contains(&id) || (self.multicol && node.column_fragments().is_some());
+            let cull = if in_columns { None } else { self.bound(id).map(|(r, _)| r) };
+            (candidate, cull)
         } else if is_table_part {
             match self.rows.get(&id).copied() {
                 // Both fixed states: the row's box takes its table's.
@@ -390,10 +436,17 @@ impl Descent<'_> {
         let Some(root) = self.doc.get_node(root_id) else { return };
         let Some(text) = root.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { return };
         let doc = self.doc;
-        let origin = t * geometry::line_box_origin(doc, root_id, text);
+        let line_origin = geometry::line_box_origin(doc, root_id, text);
+        let origin = t * line_origin;
         let scale = text.layout.scale() as f64;
+        // pyro: lines in a multi-column container's columns.
+        let columns = if self.multicol { geometry::line_column_shift(doc, root_id) } else { None };
         for line in text.layout.lines() {
-            let origin = origin * geometry::line_slot(doc, root_id, &line.metrics(), scale);
+            let mut origin = origin * geometry::line_slot(doc, root_id, &line.metrics(), scale);
+            if let Some(shift) = &columns {
+                let top = line_origin * kurbo::Point::new(0.0, line.metrics().block_min_coord as f64 / scale);
+                origin = shift(top.y) * origin;
+            }
             for item in line.items() {
                 let (start, r) = geometry::inline_item_rect(&line, &item, scale, text.layout.is_rtl());
                 // An element's fragment grows to its border box in the block axis.
@@ -432,6 +485,11 @@ impl Descent<'_> {
         let Some(SpecialElementData::TableRoot(ctx)) = node.element_data().map(|e| &e.special_data) else { return };
         let ctx = std::sync::Arc::clone(ctx);
         let Some((t, _)) = self.transform(id) else { return };
+        // pyro: a table in a multi-column container's strip may be cut across columns, its rows
+        // shown in other columns than its origin's: they keep no bound (nothing is culled).
+        if self.columns.contains(&id) {
+            return;
+        }
         let doc = self.doc;
         let scale = self.scale;
         let mut extents: Vec<Rect> =
@@ -444,11 +502,8 @@ impl Descent<'_> {
                 let Some(node) = doc.get_node(cell.node_id) else { continue };
                 let l = doc.physical_unrounded_layout(cell.node_id);
                 let contribution = doc.overflow_contribution(cell.node_id, *node.hit_overflow(), l.size, scale);
-                let mut full = Affine::translate((l.location.x as f64 * scale, l.location.y as f64 * scale));
-                if let Some(t) = node.transform().as_deref() {
-                    full *= *t;
-                }
-                let r = full.transform_rect_bbox(contribution);
+                let location = (l.location.x as f64 * scale, l.location.y as f64 * scale);
+                let r = node.hit_bound_in_parent(location, scale, contribution);
                 if r.width() > 0.0 || r.height() > 0.0 {
                     if let Some(e) = extents.get_mut(cell.row as usize) {
                         *e = if e.width() > 0.0 || e.height() > 0.0 { e.union(r) } else { r };
@@ -467,7 +522,9 @@ impl Descent<'_> {
                 base.map(|b| geometry::row_gutters(doc, Some(row.node_id), b)).unwrap_or((0.0, 0.0, 0.0));
             let local = extent.scale_from_origin(1.0 / scale);
             let local = Rect::new(local.x0 - gx, local.y0 - top, local.x1 + gx, local.y1 + bottom);
-            let r = self.grown(t.transform_rect_bbox(local), &t);
+            // pyro (lane H2): in a plane drawn through a perspective, where it is drawn too.
+            let placed = t.transform_rect_bbox(local).union(self.placed(id, &t, local));
+            let r = self.grown(placed, &t);
             self.rows.insert(row.node_id, r);
             if let Some(g) = row.group {
                 groups.entry(g).and_modify(|u| *u = u.union(r)).or_insert(r);

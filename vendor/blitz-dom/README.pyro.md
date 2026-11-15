@@ -363,9 +363,12 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
     screen), that is an exact affine: `rotateY(60deg)` paints at half width, and a depth under a perspective
     scales the box about the perspective origin.
   - Otherwise (a rotation out of the plane under perspective) the affine closest to the projection at the
-    box's corners (least squares) stands in until a projective warp of a layer draws the trapezoid. It is
-    close for a box parallel-ish to the screen, and off by tens of pixels inside a large, steeply turned box.
-  - A box at or behind the viewer, or whose 4x4 matrix has no inverse (`scale: 1 1 0`), is not drawn.
+    box's corners (least squares) stands in for culling and scrollable overflow; blitz-paint draws the
+    trapezoid through the 4x4 matrix and layout queries place it by its homography (`Plane3D`, below). A box
+    that crosses the viewer's plane (`Flattened::Crossing`, the part in front of it non-empty: `clipped_projection`,
+    cut at W = `MIN_W`) is drawn through its matrix too; its projection has no bounds, so layout keeps its
+    untransformed box (no transform), and print, which draws stand-ins, leaves it out.
+  - A box wholly at or behind the viewer, or whose 4x4 matrix has no inverse (`scale: 1 1 0`), is not drawn.
   - Coefficients within 1e-12 of 0 and ±1, and translations within 1e-9 px of a whole pixel, snap
     (`snap`): `rotate(360deg)` left `sin` noise that made text skip its pixel snapping.
 - `src/node/node.rs` (`set_transform`, `transform_context_for_children`, `TransformContext`,
@@ -389,7 +392,8 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
     of m33 against the determinant) sets `TRANSFORM_HIDES`, which blitz-paint reads, as do a box behind the
     viewer and a non-invertible matrix. In a 3D rendering context the accumulated matrix decides which face
     shows (a card flip: a child turned 180deg in a parent turned 180deg faces the viewer). A `preserve-3d`
-    element itself is not hidden: its children are planes of their own, which paint would hide with it.
+    element itself is not hidden: its children are planes of their own, which paint would hide with it. Its
+    own painting is (`Plane3D::own_hidden`, lane H2: WPT `backface-visibility-with-sibling-001`).
   - `transform-box` picks the reference box: a CSS box's content box for `content-box` and `fill-box`, its
     border box otherwise.
   - A flat element whose transform is a 3D matrix flattened (drawn, not hidden) sets `NodeFlags::FLATTENS_3D`:
@@ -430,6 +434,38 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
 
 Covered by `crates/pyro-render/tests/transform_3d.rs` (paint, a scrolled perspective, the card flip, a
 composed 3D rendering context, grouping properties, a filtered inline's positioned boxes, layout boxes), `crates/pyro-layout/tests/transform_3d.rs` (`getBoundingClientRect`, `elementFromPoint`) and the unit
+tests in `src/stylo_to_kurbo.rs`.
+
+### Planes drawn through their 4x4 matrix (lane H2)
+
+- `src/node/node.rs` (`Plane3D`, `Node::plane_3d`, `set_transform`, `Context3D::root`, `Context3D::root_offset`),
+  `src/node/element.rs` (`ElementData::plane_3d`): `set_transform` gives blitz-paint the elements it draws as
+  planes of their own, each with its 4x4 matrix from its border box to the untransformed border box of the root of
+  its 3D rendering context (CSS px, depth and perspective divisor kept):
+  - every element of a 3D rendering context that Chromium gives a transform node: a transform property (even an
+    identity one), one of `translate`, `rotate`, `scale`, `will-change: transform`, `transform-style: preserve-3d`,
+    `backface-visibility: hidden`. The other elements of a context paint in the plane of the element they are in,
+    in paint order, at their layout place there: they get no transform (WPT `preserve3d-and-flattening-*`);
+  - the root of a context (a `preserve-3d` element whose parent gives it no context): its matrix is its own;
+  - a flat element outside a context whose 3D transform maps it projectively (`is_projective`: W varies over
+    the box).
+  blitz-paint sorts a context's planes by depth and draws projective ones through a perspective warp; the 2D
+  transform (`Node::transform`) stays the stand-in that layout queries compose.
+- `src/node/node.rs` (`Plane3D::local`, `Plane3D::places_by_local`, `Context3D::frame`,
+  `Node::hit_bound_in_parent`), `src/resolve.rs` (`resolve_hit_overflow`): a plane drawn through a perspective, and
+  any plane of a context element placed so, also carries the homography that places it in its parent's
+  coordinates as layout queries place the parent (the parent's frame: its own homography, or its 2D stand-in when
+  it has none), which pyro-render's layout queries compose instead of the stand-in. The chain of a context's
+  planes so composes to each plane's own projection, the perspective applied once. A box's hit-test bound in its
+  parent holds both that projection and the stand-in's placement (what is placed by the stand-in, inline fragments
+  and table rows, stays inside it), so hit testing culls nothing paint draws. Scrollable overflow keeps the
+  stand-in. A plane crossing the viewer's plane is not placed so (`Plane3D::crosses_viewer`).
+- `src/resolve.rs` (`ContainingTransform::for_child`): a parent without a box passes its parent's perspective and
+  3D rendering context on: a `display: contents` element always (WPT `transform3d-preserve3d-014`), a table row or
+  row group (Blitz lays a table's cells out in the table's grid) when its own `transform-style` is `preserve-3d`
+  (WPT `transform-table-009`, `-010`); one that is not ends the context (`-007`, `-008`).
+
+Covered by `crates/pyro-render/tests/three_d_contexts.rs`, `crates/pyro-layout/tests/transform_3d.rs` and the unit
 tests in `src/stylo_to_kurbo.rs`.
 
 ## Style changes for transitions
@@ -1192,6 +1228,61 @@ Tests: `table_structure` in pyro-render (each fails without its change); `mirror
 - Not done: ruby layout proper. An annotation wider than its base does not space the base out, `ruby-align` is
   ignored, `<rt>`'s box (background, border) is not painted, and `display: ruby*` stays unparsed (Stylo has it
   for Gecko only), so ruby is found by element name. Covered by `crates/pyro-render/tests/text_emphasis_ruby.rs`.
+
+## Multi-column layout
+
+- `src/layout/multicol.rs` (new), `src/layout/mod.rs` (`ChildLayout::Multicol`, `column_spanners`): a block container (`block`,
+  `flow-root`, `inline-block`, `list-item`) whose `column-count` or `column-width` is not `auto`, in a horizontal
+  writing mode, is a multi-column container (CSS Multi-column Layout 1). Its content is laid out once, in a strip one
+  column wide (its block or inline formatting context at the column width, as tall as its content: legacy WebKit's
+  flow thread), and the strip is broken into columns. Every box keeps its one layout, in strip coordinates; each
+  column is a fragment (`ColumnFragment`: the strip range it shows and where), stored in `LayoutData::columns` by
+  the container's final layout and read through `Node::column_fragments` (which ignores them once the style makes the
+  box no multi-column container). Column count and width follow §3.4 (`column-gap: normal` is 1em); intrinsic
+  widths follow Chromium's `ColumnLayoutAlgorithm::ComputeMinMaxSizes`.
+- Breaks: line boxes, replaced elements, scroll containers, tables, flex and grid containers, form controls and
+  nested multi-column containers are monolithic (a break goes before them, or through one taller than a column, where
+  the column ends); block containers break between their children and anywhere through their own empty space; the
+  column after a break between blocks starts at the next one's border box (margins truncated). `orphans`, `widows` and
+  `break-inside: avoid` keep lines and boxes together where a column can hold them.
+- Heights: columns are balanced (the least height that fits the content in `column-count` columns, grown by the
+  smallest shortage until it does, keeping together what `orphans`/`widows`/`break-inside` keep where the height
+  allows) unless `column-fill: auto` and the height is definite; a definite height or `max-height` caps them, and
+  content that does not fit continues in columns past the container's inline end, as in Chromium. A container of an
+  auto height is as tall as its columns. Column offsets and breaks are snapped to device pixels.
+- Column spanners: an in-flow block child with `column-span: all` is laid out in the strip as wide as the
+  container's content box (`LayoutPassState::column_spanners`, read by `adjusted_child_inputs`) and is a row of its
+  own: the content before it is balanced into a row of columns above it, the content after it into a row below.
+- The container is its own block formatting context (its children's margins stay inside; its own do not collapse
+  with them), and its parent keeps it clear of floats as it does a `flow-root` (Taffy's
+  `block_child_establishes_formatting_context`, answered in `layout/mod.rs`). A `min-height` or `max-height` of the
+  container clamps the strip Taffy lays out, so under either the content's end is taken from the laid-out content
+  (its children's margin edges) instead. It is a paint layer root (`paint_tree.rs` `is_paint_layer_root`): its
+  positioned descendants paint in its columns. A z-indexed descendant hoisted past it is placed through its columns
+  (`hoisted_child_position`). Known deviation: its `z-index: auto` positioned descendants and its non-positioned
+  stacking contexts paint at the container's place in in-flow order, not at the enclosing stacking context's
+  positioned step, so a later in-flow sibling's background covers them where they reach past it, and an earlier
+  positioned sibling covers them; an out-of-flow box whose containing block is the container is moved through its
+  columns too (Chromium does not fragment those).
+- Mapped through the columns: the scrollable overflow and hit bound (`resolve.rs`: the content's extent, cut at the
+  breaks and moved to the columns, added to the padding box), hit testing (`Node::hit_inner`: the point the column
+  under it shows), `absolute_position` and `physical_unrounded_geometry` (a box is placed in the column whose range
+  holds its own origin; an origin in a margin truncated at a break, in the column after the break).
+  `BaseDocument::has_multicol` tells pyro-render's geometry queries that columns exist (it is never cleared).
+  pyro-render's `Geometry::columns_pieces` cuts a box at the breaks: `getBoundingClientRect` reports the union of the
+  pieces, `getClientRects` one rect per piece, and pyro-dom hit-tests each piece.
+- A container laid out to measure it (a `ComputeSize` run) writes its strip's layouts at that width, so it clears its
+  own layout cache: its final layout runs again and puts them back. This relies on the container's final layout
+  running after a measure in the same pass; an ancestor whose own final layout hits its cache after a measure missed
+  would leave the strip at the measured width (no page doing so is known).
+- Not supported: spanners deeper in the content (laid out in a column), forced breaks
+  (`break-before: column`; Stylo has no `column` value), fragmenting monolithic boxes such as tables between rows,
+  and vertical writing modes (laid out as one column). In blitz-dom's own geometry a box split by a break is placed
+  at the column of its origin.
+
+Tests: `layout::multicol` unit tests here (column count and width, balancing, breaks, the mapping);
+`crates/pyro-render/tests/multicol.rs` (pixels) and `crates/pyro-layout/tests/multicol.rs` (geometry and hit
+testing).
 
 ## Moving from 0.3.0-beta.4 to main
 

@@ -19,6 +19,9 @@ pub use graph::{
 };
 mod filters;
 mod primitives;
+/// pyro (lane H2): planes drawn through a perspective.
+mod projective;
+pub use projective::{Homography, projective_marker};
 
 pub use image_cache::ImageCacheConfig;
 pub use image_renderer::VelloCpuImageRenderer;
