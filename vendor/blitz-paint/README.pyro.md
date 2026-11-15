@@ -674,3 +674,24 @@ other `svg:svg` pages; covered by `crates/pyro-render/tests/svg_viewport_clip.rs
   (WPT `clear-inline-001`). `src/render/border.rs`: `outline_line` is visible to `render.rs`.
 
 Covered by `crates/pyro-render/tests/floats.rs`.
+
+## SVG viewports and references to other SVG documents (second pass, lane P6)
+
+- `src/render.rs` (`draw_svg`): the root `<svg>` of an SVG document always clips at its viewport, whatever its
+  `overflow` (Chromium's `LayoutSVGRoot::ShouldApplyViewportClip`; the UA sheet's `overflow: hidden` is for
+  `svg:not(:root)`, so the root computed `visible` and painted past its box). An SVG image (`<img>`, `<object>`) is
+  cut at its concrete object rect as well as at the content box: under `object-fit: contain`, `none` or `scale-down`
+  content outside the image's viewport no longer shows in the rest of the box. That second clip layer is pushed
+  only when the object rect leaves some of the box and the content's ink reaches past the rect; icons and images
+  that fill their box pay nothing.
+- `src/render/clip_path.rs` (`svg_reference::external_reference`, `svg_clip`), `src/render/mask.rs`
+  (`draw_svg_mask`), `src/filters.rs` (`reference_graph`, `filter_steps` takes the element's
+  `reference_images`): `clip-path: url(shapes.svg#clip)`, `mask-image: url(masks.svg#mask)` and
+  `filter: url(filters.svg#f)` name elements of other SVG documents (`data:` URLs too). The document blitz-dom
+  loaded for the element (`ElementData::reference_images`, or the mask layer's image) stands in `<defs>` of the
+  reference document in place of the page's `<svg>` (`SvgImageData::reference_document_from_source`). A mask
+  layer whose URL names a `<mask>` of its document is that mask, not the document's drawing. Another document's
+  filter is always a graph (no notes about its primitives). WPT `clip-path-url-reference-external`,
+  `mask-image-1c`, `mask-image-url-remote-mask`, `filter-external-002-test`.
+
+Covered by `crates/pyro-render/tests/svg_viewport_clip.rs` and `svg_external_references.rs`.

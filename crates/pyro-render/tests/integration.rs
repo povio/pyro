@@ -57,6 +57,7 @@ mod svg_css_effects;
 mod svg_filters;
 mod svg_image_natural_size;
 mod svg_reference_cycles;
+mod svg_external_references;
 mod svg_viewport_clip;
 mod table_cell_height;
 mod table_cell_width;

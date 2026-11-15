@@ -461,3 +461,117 @@ mod sized_tests {
         );
     }
 }
+
+/// pyro: one `url()` of an element that may name an element of another SVG document
+/// ([`reference_candidates`]).
+pub(crate) enum ReferenceCandidate<'a> {
+    /// A computed `clip-path` or `filter` URL.
+    Url(&'a style::servo_arc::Arc<url::Url>),
+    /// The URL written in an SVG element's `filter` or `mask` attribute (not a fragment alone).
+    Attr(&'a str),
+}
+
+/// pyro: the `url()`s of an element's computed `clip-path` and `filter`, then of an SVG element's
+/// `clip-path`, `filter` and `mask` attributes when they name another document: what [`super::ElementData::reference_images`] has an entry for, in order.
+pub(crate) fn reference_candidates<'a>(
+    element: &'a super::ElementData,
+    style: &'a style::properties::ComputedValues,
+) -> Vec<ReferenceCandidate<'a>> {
+    use style::url::ComputedUrl;
+    use style::values::computed::basic_shape::ClipPath;
+    use style::values::generics::effects::GenericFilter;
+    let mut out = Vec::new();
+    let svg = element.name.ns == markup5ever::ns!(svg);
+    // An SVG element's `clip-path` attribute is a presentation attribute, whose URL the style
+    // engine resolves without the document's base: it is taken as written, below.
+    let clip_path_attr = svg
+        && element.attr(markup5ever::local_name!("clip-path")).is_some_and(|value| value.trim_start().starts_with("url("));
+    if let (ClipPath::Url(ComputedUrl::Valid(url)), false) = (style.get_clip_path(), clip_path_attr) {
+        out.push(ReferenceCandidate::Url(url));
+    }
+    for filter in style.get_effects().filter.0.iter() {
+        if let GenericFilter::Url(ComputedUrl::Valid(url)) = filter {
+            out.push(ReferenceCandidate::Url(url));
+        }
+    }
+    if svg {
+        for attr in element.attrs().iter() {
+            let name: &str = attr.name.local.as_ref();
+            if attr.name.ns != markup5ever::ns!() || (name != "filter" && name != "mask" && name != "clip-path") {
+                continue;
+            }
+            if let Some(url) = attr_reference_url(&attr.value) {
+                out.push(ReferenceCandidate::Attr(url));
+            }
+        }
+    }
+    out
+}
+
+/// The URL of an attribute value that is one `url()` naming an element of another document.
+fn attr_reference_url(value: &str) -> Option<&str> {
+    let inner = value.trim().strip_prefix("url(")?.strip_suffix(')')?;
+    let inner = inner.trim().trim_matches(|c| c == '"' || c == '\'');
+    (!inner.starts_with('#') && inner.contains('#')).then_some(inner)
+}
+
+/// pyro: whether an element's stored reference documents are not those its style and
+/// attributes name now (they are fetched again then, `flush_svg_references_from_style`).
+pub(crate) fn references_out_of_sync(
+    element: &super::ElementData,
+    style: &style::properties::ComputedValues,
+) -> bool {
+    let candidates = reference_candidates(element, style);
+    if candidates.len() != element.reference_images.len() {
+        return true;
+    }
+    std::iter::zip(candidates, element.reference_images.iter()).any(|(candidate, stored)| {
+        match (candidate, stored) {
+            (ReferenceCandidate::Url(url), Some(data)) => **url != *data.url,
+            (ReferenceCandidate::Url(_), None) => true,
+            // Resolved against the document's base: the stored URL ends with what is written.
+            (ReferenceCandidate::Attr(raw), Some(data)) => {
+                let stored = data.url.as_str();
+                stored != raw && !stored.ends_with(raw.trim_start_matches("./"))
+            }
+            // An attribute URL that does not resolve stays without an entry.
+            (ReferenceCandidate::Attr(_), None) => false,
+        }
+    })
+}
+
+/// pyro: the element of id `id` in the SVG document `source`: its local name and its `attr`
+/// attribute. For a `<clipPath>`, `<mask>` or `<filter>` of another document that a `url()`
+/// names (`clip-path: url(shapes.svg#clip)`).
+pub fn svg_source_element(source: &[u8], id: &str, attr: &str) -> Option<(String, Option<String>)> {
+    let text = std::str::from_utf8(source).ok()?;
+    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+    let doc = roxmltree::Document::parse_with_options(text, options).ok()?;
+    let node = doc.descendants().find(|node| node.is_element() && node.attribute("id") == Some(id))?;
+    Some((node.tag_name().name().to_string(), node.attribute(attr).map(str::to_string)))
+}
+
+/// pyro: the SVG document `source` as markup that can be a child of another SVG document's
+/// `<defs>`: from its root's start tag on (without the XML declaration and document type).
+/// Its root fills its viewport: a document of resources often has a root of no size
+/// (`<svg width="0" height="0">`), which usvg does not parse, and whose content it would drop.
+pub(crate) fn embeddable_svg(source: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(source).ok()?;
+    let start = text.find("<svg")?;
+    with_root_attrs(text[start..].trim_end(), &[("width", "100%".to_string()), ("height", "100%".to_string())])
+}
+
+impl SvgImageData {
+    /// pyro: [`crate::BaseDocument::svg_reference_document`] for an element of another SVG
+    /// document, `source` (`clip-path: url(shapes.svg#clip)` on a box): that document in
+    /// `<defs>`, then `content`, which references the element by `url(#id)`.
+    pub fn reference_document_from_source(source: &[u8], content: &str, width: f32, height: f32) -> Option<SvgImageData> {
+        let source = embeddable_svg(source)?;
+        let source = source.as_str();
+        let document = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
+             width=\"{width}\" height=\"{height}\"><defs>{source}</defs><g id=\"__pyro_box_reference\">{content}</g></svg>"
+        );
+        crate::util::parse_svg_image(document.as_bytes()).ok()
+    }
+}

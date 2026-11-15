@@ -52,6 +52,7 @@ pub(crate) fn filter_steps(
     current_color: &AbsoluteColor,
     dom: &BaseDocument,
     size: (f32, f32),
+    references: &[Option<blitz_dom::node::ImageResourceData>],
 ) -> Option<Vec<FilterStep>> {
     if !filters.iter().any(|f| matches!(f, StyloFilter::Url(_))) {
         return None;
@@ -69,7 +70,7 @@ pub(crate) fn filter_steps(
                     chain.extend(effects);
                     continue;
                 }
-                let Some(graph) = reference_graph(dom, url, size, tainted) else { continue };
+                let Some(graph) = reference_graph(dom, url, size, tainted, references) else { continue };
                 if !chain.is_empty() {
                     steps.push(FilterStep::Chain(std::sync::Arc::new(Filter::linear_list(chain.drain(..)))));
                 }
@@ -168,12 +169,26 @@ fn reference_graph(
     url: &style::url::ComputedUrl,
     (width, height): (f32, f32),
     source_tainted: bool,
+    references: &[Option<blitz_dom::node::ImageResourceData>],
 ) -> Option<anyrender_svg::FilterGraph> {
-    let id = url.url()?.fragment()?;
-    let node_id = dom.get_element_by_id(id)?;
-    if local_name(&dom.tree()[node_id]) != Some("filter") {
-        return None;
-    }
+    // pyro: a `<filter>` of another document the element has loaded (`url(filters.svg#blur)`,
+    // its `reference_images`), else of this one.
+    let external = crate::render::external_reference(references, url)
+        .filter(|(source, id)| {
+            blitz_dom::node::svg_source_element(source, id, "id").is_some_and(|(name, _)| name == "filter")
+        });
+    let fragment;
+    let (id, node_id) = match &external {
+        Some((_, id)) => (id.as_str(), None),
+        None => {
+            fragment = url.url()?.fragment()?.to_string();
+            let node_id = dom.get_element_by_id(&fragment)?;
+            if local_name(&dom.tree()[node_id]) != Some("filter") {
+                return None;
+            }
+            (fragment.as_str(), Some(node_id))
+        }
+    };
     // The stand-in: a box with no paint (an empty group where the box has no area).
     let escaped: String = id
         .chars()
@@ -189,7 +204,16 @@ fn reference_graph(
     } else {
         format!("<g filter=\"url(#{escaped})\"/>")
     };
-    let svg = dom.svg_reference_document(node_id, &content, width.max(1e-3), height.max(1e-3))?;
+    let svg = match (node_id, &external) {
+        (Some(node_id), _) => dom.svg_reference_document(node_id, &content, width.max(1e-3), height.max(1e-3))?,
+        (None, Some((source, _))) => blitz_dom::node::SvgImageData::reference_document_from_source(
+            source,
+            &content,
+            width.max(1e-3),
+            height.max(1e-3),
+        )?,
+        (None, None) => return None,
+    };
     fn first_filter(group: &anyrender_svg::usvg::Group) -> Option<std::sync::Arc<anyrender_svg::usvg::filter::Filter>> {
         group.filters().first().cloned().or_else(|| {
             group.children().iter().find_map(|node| match node {
@@ -199,7 +223,8 @@ fn reference_graph(
         })
     }
     let filter = first_filter(svg.tree.root())?;
-    let notes = primitive_notes(dom, &dom.tree()[node_id]);
+    // (What the document knows of its primitives; another document's are taken as usvg has them.)
+    let notes = node_id.map(|node_id| primitive_notes(dom, &dom.tree()[node_id])).unwrap_or_default();
     anyrender_svg::FilterGraph::new(&filter, &|index| notes.get(index).copied().unwrap_or_default(), source_tainted)
 }
 

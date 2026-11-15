@@ -232,17 +232,44 @@ fn one_mask_reference_keeps_the_stroke_past_the_fill_box() {
 }
 
 #[test]
-fn a_mask_of_another_document_does_not_hide_the_element() {
-    // `sprite.svg#m` names a `<mask>` this does not resolve: the element stays unmasked rather
-    // than masked by what the sprite draws (nothing). An SVG image with a fragment that names
-    // no `<mask>` is the layer's image.
+fn a_mask_of_another_document_masks_the_element() {
+    // `sprite.svg#m` names a `<mask>` of another document: the element is masked by it (its
+    // white 10x10 square), not by what the sprite draws (nothing). An SVG image with a fragment
+    // that names no `<mask>` is the layer's image.
     let img = render(
         r##"<svg width="200" height="100"><rect width="60" height="60" fill="#0000ff" style="mask-image: url(sprite.svg#m)"/>
             <rect x="100" width="60" height="60" fill="#0000ff" style="mask-image: url(m.svg#nothing)"/></svg>"##,
     );
-    assert_eq!(px(&img, 5, 5), BLUE);
+    assert_eq!(px(&img, 5, 5), BLUE, "under the mask's square");
+    assert_eq!(px(&img, 30, 30), WHITE, "outside it");
     assert_eq!(px(&img, 105, 5), BLUE);
     assert_eq!(px(&img, 115, 15), WHITE, "m.svg's transparent quarter");
+}
+
+/// `mask-mode: alpha` or `luminance` on the masked element is used in place of the `<mask>`'s
+/// `mask-type`; `match-source` takes the `mask-type` (WPT `mask-mode-to-mask-type-svg`). The
+/// mask's content is opaque black: nothing by its luminance, everything by its alpha.
+#[test]
+fn mask_mode_is_used_in_place_of_the_masks_mask_type() {
+    let img = render(
+        r##"<style>rect.m { fill: #0000ff; width: 20px; height: 20px }
+              #lum { mask-type: luminance } #alpha { mask-type: alpha }</style>
+            <svg width="200" height="100">
+              <mask id="lum"><rect width="200" height="100" fill="black"/></mask>
+              <mask id="alpha"><rect width="200" height="100" fill="black"/></mask>
+              <rect class="m" x="0" style="mask-image: url(#lum); mask-mode: match-source"/>
+              <rect class="m" x="30" style="mask-image: url(#alpha); mask-mode: match-source"/>
+              <rect class="m" x="60" style="mask-image: url(#lum); mask-mode: alpha"/>
+              <rect class="m" x="90" style="mask-image: url(#alpha); mask-mode: luminance"/>
+              <rect class="m" x="120" style="mask-image: url(#lum); mask-mode: luminance"/>
+              <rect class="m" x="150" style="mask-image: url(#alpha); mask-mode: alpha"/></svg>"##,
+    );
+    assert_eq!(px(&img, 10, 10), WHITE, "match-source of a luminance mask");
+    assert_eq!(px(&img, 40, 10), BLUE, "match-source of an alpha mask");
+    assert_eq!(px(&img, 70, 10), BLUE, "alpha over a luminance mask");
+    assert_eq!(px(&img, 100, 10), WHITE, "luminance over an alpha mask");
+    assert_eq!(px(&img, 130, 10), WHITE, "luminance of a luminance mask");
+    assert_eq!(px(&img, 160, 10), BLUE, "alpha of an alpha mask");
 }
 
 #[test]

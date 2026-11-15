@@ -2496,6 +2496,14 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
                 &el.border_images,
             )
             || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
+            // pyro: the SVG documents its `clip-path`, `filter` and `mask` reference.
+            || {
+                #[cfg(feature = "svg")]
+                let out_of_sync = crate::node::references_out_of_sync(el, style);
+                #[cfg(not(feature = "svg"))]
+                let out_of_sync = false;
+                out_of_sync
+            }
     })
 }
 

@@ -167,6 +167,12 @@ struct Writer<'a> {
     root_perspective: Option<euclid::default::Transform3D<f64>>,
     /// Set while a text's shadow copy is written (see [`text_shadow`]).
     shadow_copy: Option<TextShadow>,
+    /// The SVG documents (URLs without their fragments) written into `defs` for elements that
+    /// reference elements of them (see [`Writer::external_reference_rewrites`]).
+    imported: Vec<String>,
+    /// The copies of `<mask>` elements written into `defs` with another `mask-type`: (the
+    /// mask's id, the type, the copy's id). See [`Writer::mask_of_type`].
+    typed_masks: Vec<(String, &'static str, String)>,
 }
 
 /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
@@ -186,6 +192,8 @@ pub(crate) fn svg_source(root: &Node) -> String {
         viewports: Vec::new(),
         root_perspective: None,
         shadow_copy: None,
+        imported: Vec::new(),
+        typed_masks: Vec::new(),
     };
     writer.write_node(root, 0);
     if !writer.needs_boxes {
@@ -198,6 +206,8 @@ pub(crate) fn svg_source(root: &Node) -> String {
     }
     writer.out.clear();
     writer.defs.clear();
+    writer.imported.clear();
+    writer.typed_masks.clear();
     writer.next_id = 0;
     writer.pass = Pass::Final;
     writer.write_node(root, 0);
@@ -731,6 +741,7 @@ impl Writer<'_> {
             }
         }
         if is_svg && !is_root {
+            self.external_reference_rewrites(data, &mut rewrites);
             self.invalid_reference_rewrites(data, &mut rewrites);
             // A transform attribute that is no transform list (`rotate(90,)`) is ignored, as
             // in Chromium; usvg reads some of them.
@@ -1202,12 +1213,141 @@ impl Writer<'_> {
         }
     }
 
+    /// An SVG document another one's elements are referenced from (`url(shapes.svg#clip)`),
+    /// written into `defs` once, so that `url(#clip)` finds the element. Returns whether it is
+    /// there.
+    fn import_document(&mut self, url: &str, source: &[u8]) -> bool {
+        let key = url.split('#').next().unwrap_or(url);
+        if self.imported.iter().any(|imported| imported == key) {
+            return true;
+        }
+        let Some(markup) = crate::node::embeddable_svg(source) else {
+            return false;
+        };
+        self.defs.push_str(&markup);
+        self.imported.push(key.to_string());
+        true
+    }
+
+    /// `clip-path`, `filter` and `mask` references to elements of other SVG documents
+    /// (`clip-path="url(shapes.svg#clip)"`, a `data:` URL too), which usvg does not load: the
+    /// documents the element has loaded (`ElementData::reference_images`) are written into
+    /// `defs`, and the references name their elements by fragment.
+    fn external_reference_rewrites(&mut self, data: &ElementData, rewrites: &mut Vec<Rewrite>) {
+        use crate::node::{ImageData, Status};
+        let mut any = false;
+        for reference in data.reference_images.iter().flatten() {
+            if reference.status != Status::Ok {
+                continue;
+            }
+            let ImageData::Svg(svg) = &reference.image else {
+                continue;
+            };
+            if let Some(source) = &svg.source {
+                any |= self.import_document(reference.url.as_str(), source);
+            }
+        }
+        if !any {
+            return;
+        }
+        for name in ["clip-path", "filter", "mask"] {
+            let existing = rewrites.iter().find(|r| r.name == name).map(|r| (r.value.clone(), r.in_style));
+            let (value, in_style) = match existing {
+                Some((value, in_style)) => (value, in_style),
+                None => (data.attr(markup5ever::LocalName::from(name)).map(str::to_string), false),
+            };
+            let Some(value) = value.filter(|value| value.trim_start().starts_with("url(")) else {
+                continue;
+            };
+            let local = local_urls(&value);
+            if local == value {
+                continue;
+            }
+            rewrites.retain(|r| r.name != name);
+            rewrites.push(Rewrite { name, value: Some(local), in_style });
+        }
+    }
+
+    /// The id of a copy of the `<mask>` of this `<svg>` whose id is `id`, with `mask-type:
+    /// mask_type` (written into `defs` once): what `mask-mode: alpha` or `luminance` on the
+    /// masked element makes of the mask. `None` when the id names no `<mask>`.
+    fn mask_of_type(&mut self, id: &str, mask_type: &'static str) -> Option<String> {
+        if let Some((_, _, copy)) = self.typed_masks.iter().find(|(of, ty, _)| of == id && *ty == mask_type) {
+            return Some(copy.clone());
+        }
+        // The first element of that id, in tree order, as usvg takes it.
+        let root = self.root;
+        let mut stack = vec![root];
+        let mut found = None;
+        while let Some(node) = stack.pop() {
+            if node.element_data().is_some_and(|data| data.attr(local_name!("id")) == Some(id)) {
+                found = Some(node);
+                break;
+            }
+            stack.extend(node.children.iter().rev().map(|&child| &node.tree()[child]));
+        }
+        let node = found?;
+        let data = node.element_data()?;
+        if data.name.ns != ns!(svg) || &*data.name.local != "mask" {
+            return None;
+        }
+        let saved = std::mem::take(&mut self.out);
+        self.write_node(node, 1);
+        let written = std::mem::replace(&mut self.out, saved);
+        // Its start tag ends at the first `>` outside an attribute value.
+        let mut quote = None;
+        let end = written.char_indices().find_map(|(i, c)| {
+            match (quote, c) {
+                (None, '"') => quote = Some(c),
+                (Some(_), '"') => quote = None,
+                (None, '>') => return Some(i),
+                _ => {}
+            }
+            None
+        })?;
+        let (tag, rest) = written.split_at(end);
+        let copy = self.new_id("mask");
+        let mut tag = tag.trim_end_matches('/').trim_end().to_string();
+        // The copy's own id, and the type last in its `style` (which ranks above the attribute).
+        if let Some(start) = tag.find(" id=\"") {
+            let value_end = tag[start + 5..].find('"').map(|e| start + 5 + e + 1)?;
+            tag.replace_range(start..value_end, "");
+        }
+        match tag.find(" style=\"") {
+            Some(start) => {
+                let value_end = tag[start + 8..].find('"').map(|e| start + 8 + e)?;
+                let separator = if tag[..value_end].trim_end().ends_with([';', '"']) { "" } else { ";" };
+                tag.insert_str(value_end, &format!("{separator}mask-type:{mask_type}"));
+            }
+            None => tag.push_str(&format!(" style=\"mask-type:{mask_type}\"")),
+        }
+        tag.push_str(&format!(" id=\"{copy}\""));
+        let rest = if rest.starts_with("/>") || rest == ">" { "></mask>".to_string() } else { rest.to_string() };
+        self.defs.push_str(&tag);
+        self.defs.push_str(&rest);
+        self.typed_masks.push((id.to_string(), mask_type, copy.clone()));
+        Some(copy)
+    }
+
     /// CSS `mask-image: url(#mask)` on an SVG element as its `mask` attribute.
     fn mask_rewrite(&mut self, style: &ComputedValues, rewrites: &mut Vec<Rewrite>) {
         let images = &style.get_svg().mask_image.0;
         match images.first() {
             Some(GenericImage::Url(_)) if images.len() == 1 => {
-                let value = computed_value(style, LonghandId::MaskImage);
+                let mut value = computed_value(style, LonghandId::MaskImage);
+                // `mask-mode: alpha` or `luminance` is used in place of the `<mask>`'s
+                // `mask-type` (CSS Masking 1 §6.2: `match-source` takes the `mask-type`).
+                use style::values::specified::svg::MaskMode;
+                let mask_type = match style.get_svg().mask_mode.0.first() {
+                    Some(MaskMode::Alpha) => Some("alpha"),
+                    Some(MaskMode::Luminance) => Some("luminance"),
+                    _ => None,
+                };
+                if let (Some(mask_type), Some(id)) = (mask_type, url_fragment(&value)) {
+                    if let Some(copy) = self.mask_of_type(&id, mask_type) {
+                        value = format!("url(#{copy})");
+                    }
+                }
                 rewrites.push(Rewrite { name: "mask", value: Some(value), in_style: true });
             }
             Some(GenericImage::None) if images.len() == 1 => {
@@ -1289,14 +1429,16 @@ impl Writer<'_> {
                     None => match data.mask_images.get(i).and_then(Option::as_ref) {
                         Some(resource) if resource.status == Status::Ok => match &resource.image {
                             ImageData::Svg(loaded) => match &loaded.source {
-                                // A `<mask>` of another document (`url(sprite.svg#m)`), which this
-                                // does not resolve: the element is left unmasked, as before. As
-                                // the layer's image, the document would mask by what it draws
-                                // (nothing, for a sprite).
+                                // A `<mask>` of another document (`url(sprite.svg#m)`): that
+                                // document goes into `defs`, and one such layer is usvg's
+                                // `mask` ([`Self::mask_rewrite`]). (As the layer's image, the
+                                // document would mask by what it draws: nothing, for a sprite.)
                                 Some(source)
                                     if url_fragment(&image.to_css_string())
                                         .is_some_and(|id| document_has_mask(source, &id)) =>
                                 {
+                                    let source = source.clone();
+                                    self.import_document(resource.url.as_str(), &source);
                                     return false;
                                 }
                                 Some(source) => LayerSource::Svg {

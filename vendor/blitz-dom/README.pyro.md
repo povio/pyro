@@ -1603,3 +1603,28 @@ Covered by `block_in_inline.rs`, `unicode_bidi.rs`, `inline_relative_position.rs
   move it (`inline_span_offset`; WPT `block-in-inline-float-between-001`).
 
 Covered by `crates/pyro-render/tests/floats.rs`.
+
+## References to elements of other SVG documents, `mask-mode` on SVG elements (second pass, lane P6)
+
+- `src/node/element.rs` (`ElementData::reference_images`), `src/node/svg.rs` (`reference_candidates`,
+  `references_out_of_sync`, `svg_source_element`, `embeddable_svg`, `SvgImageData::reference_document_from_source`),
+  `src/layout/damage.rs` (`flush_svg_references_from_style`), `src/stylo.rs` (`needs_style_image_flush`),
+  `src/util.rs` (`ImageType::Reference`), `src/document.rs` (`apply_loaded_image`), `src/net.rs`
+  (`ImageHandler::parse`): the SVG documents an element's `clip-path` and `filter` (and an SVG element's
+  `clip-path`, `filter` and `mask` attributes) reference elements of by `url(document.svg#id)` are fetched as images
+  are, one entry per reference, and kept with their source. A reference into the page gets an entry without an
+  image (no fetch). A document that is no image usvg accepts (a root of no size, `<svg width="0" height="0">`) is
+  parsed with its root filling a viewport and kept for its source. An SVG element's `clip-path` attribute is taken
+  as written: the style engine resolves a presentation attribute's URL without the document's base.
+- `src/node/svg_css.rs` (`Writer::import_document`, `external_reference_rewrites`, `css_mask_rewrite`): the
+  documents an element of an inline `<svg>` has loaded are written into the source's `<defs>` once, and its
+  `clip-path`, `filter` and `mask` references name their elements by fragment, which usvg resolves (it loads no
+  other document). `mask-image: url(sprite.svg#m)` naming another document's `<mask>` masks by it; before, the
+  element was left unmasked. WPT `clip-path-url-reference-external-svg-element`,
+  `clip-path-url-reference-data-uri-svg-element`, `svg-external-filter-resource`, `svg-data-uri-filter-resource`.
+- `src/node/svg_css.rs` (`Writer::mask_of_type`, `mask_rewrite`): `mask-mode: alpha` or `luminance` on an SVG
+  element that references one `<mask>` is used in place of the mask's `mask-type` (CSS Masking 1 §6.2): the mask is
+  written again into `<defs>` with that type and the element references the copy (WPT
+  `mask-mode-to-mask-type-svg`).
+
+Covered by `crates/pyro-render/tests/svg_external_references.rs` and `svg_css_effects.rs`.

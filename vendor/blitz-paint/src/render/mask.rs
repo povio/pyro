@@ -150,7 +150,7 @@ impl ElementCx<'_, '_> {
             // pyro: a reference to an SVG `<mask>` of the page.
             #[cfg(feature = "svg")]
             let drawn = match layer.stylo_image {
-                GenericImage::Url(url) => self.draw_svg_mask(scene, url, mode),
+                GenericImage::Url(url) => self.draw_svg_mask(scene, url, mode, idx),
                 _ => false,
             };
             #[cfg(not(feature = "svg"))]
@@ -186,21 +186,40 @@ impl ElementCx<'_, '_> {
         scene: &mut impl PaintScene,
         url: &style::values::computed::url::ComputedUrl,
         mode: StyloMaskMode,
+        layer: usize,
     ) -> bool {
         use super::clip_path::svg_reference::*;
         let dom = self.context.dom;
-        let Some(target) = local_reference(dom, url) else {
-            return false;
+        // pyro: a `<mask>` of this document, or of the document loaded as the layer's image
+        // (`mask-image: url(masks.svg#mask)`: the image is the mask, not the document's drawing).
+        let mut external: Option<std::sync::Arc<[u8]>> = None;
+        let (target, id) = match local_reference(dom, url) {
+            Some(target) => {
+                let Some(node) = dom.get_node(target).filter(|node| is_svg_element(node, "mask")) else {
+                    return false;
+                };
+                if reference_cycle(dom, target) {
+                    return true;
+                }
+                let Some(id) = node.attr(blitz_dom::local_name!("id")) else {
+                    return true;
+                };
+                (Some(target), id.to_string())
+            }
+            None => {
+                let images = &self.element.mask_images;
+                let Some((source, id)) = images.get(layer..layer + 1).and_then(|image| external_reference(image, url))
+                else {
+                    return false;
+                };
+                if !blitz_dom::node::svg_source_element(&source, &id, "id").is_some_and(|(name, _)| name == "mask") {
+                    return false;
+                }
+                external = Some(source);
+                (None, id)
+            }
         };
-        let Some(node) = dom.get_node(target).filter(|node| is_svg_element(node, "mask")) else {
-            return false;
-        };
-        if reference_cycle(dom, target) {
-            return true;
-        }
-        let Some(id) = node.attr(blitz_dom::local_name!("id")) else {
-            return true;
-        };
+        let id = id.as_str();
         let zoom = self.style.effective_zoom.value() as f64;
         let to_user = 1.0 / (self.scale * zoom);
         let shape = Rect::new(
@@ -220,12 +239,12 @@ impl ElementCx<'_, '_> {
         };
         let content = mask_type + &opaque_rect(shape, &format!("mask=\"url(#{})\"", escape_attribute(id)));
         let painter = self.context;
-        let Some(svg) = dom.svg_reference_document(
-            target,
-            &content,
-            (painter.width as f64 * to_user) as f32,
-            (painter.height as f64 * to_user) as f32,
-        ) else {
+        let (width, height) = ((painter.width as f64 * to_user) as f32, (painter.height as f64 * to_user) as f32);
+        let svg = match target {
+            Some(target) => dom.svg_reference_document(target, &content, width, height),
+            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref().unwrap_or_default(), &content, width, height),
+        };
+        let Some(svg) = svg else {
             return true;
         };
         anyrender_svg::render_svg_tree(

@@ -1889,7 +1889,7 @@ impl BaseDocument {
     /// pyro: damages the outermost `<svg>` around SVG element `node_id`, so that its box (and the
     /// SVG source it is drawn from) is built again.
     #[cfg(feature = "svg")]
-    fn damage_inline_svg_root(&mut self, node_id: NodeId) {
+    pub(crate) fn damage_inline_svg_root(&mut self, node_id: NodeId) {
         let mut root = None;
         let mut next = Some(node_id);
         while let Some(id) = next {
@@ -1949,6 +1949,18 @@ impl BaseDocument {
                     node.clear_layout_cache();
                     node.insert_damage(ALL_DAMAGE);
                 }
+                // pyro: a document an element's `clip-path`, `filter` or `mask` references an
+                // element of: the box is painted, and an inline `<svg>` written, with it.
+                ImageType::Reference(idx) => {
+                    if let Some(Some(reference)) =
+                        node.element_data_mut().and_then(|el| el.reference_images.get_mut(idx))
+                    {
+                        reference.status = Status::Ok;
+                        reference.image = image.clone();
+                    }
+                    #[cfg(feature = "svg")]
+                    self.damage_inline_svg_root(node_id);
+                }
                 ImageType::Background(idx)
                 | ImageType::Mask(idx)
                 | ImageType::BorderImage(idx)
@@ -1959,7 +1971,7 @@ impl BaseDocument {
                             ImageType::Mask(_) => &mut el.mask_images,
                             ImageType::BorderImage(_) => &mut el.border_images,
                             ImageType::ListStyle(_) => &mut el.list_style_images,
-                            ImageType::Image => unreachable!(),
+                            ImageType::Image | ImageType::Reference(_) => unreachable!(),
                         };
                         images.get_mut(idx)
                     });

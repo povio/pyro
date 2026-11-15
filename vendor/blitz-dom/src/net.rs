@@ -717,7 +717,19 @@ impl ImageHandler {
                     }
                     return Ok(Resource::Svg(self.kind, svg));
                 }
-                Err(e) => e.to_string(),
+                // pyro: a document loaded for an element of it that a `clip-path`, `filter` or
+                // `mask` references need not be an image usvg accepts (a root of no size,
+                // `<svg width="0" height="0">`, is common): it is kept for its source.
+                Err(e) => {
+                    if let (ImageType::Reference(_), true) = (self.kind, bytes.len() <= 256 << 10) {
+                        let sized = crate::node::embeddable_svg(&bytes);
+                        if let Some(mut svg) = sized.and_then(|sized| parse_svg_image(sized.as_bytes()).ok()) {
+                            svg.source = Some(std::sync::Arc::from(&bytes[..]));
+                            return Ok(Resource::Svg(self.kind, svg));
+                        }
+                    }
+                    e.to_string()
+                }
             }
         };
         #[cfg(not(feature = "svg"))]

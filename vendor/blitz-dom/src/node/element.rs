@@ -81,6 +81,12 @@ pub struct ElementData {
 
     /// pyro: the `border-image-source` image (at most one entry).
     pub border_images: ThinVec<Option<ImageResourceData>>,
+    /// pyro: the SVG documents this element references elements of by `url(document.svg#id)`:
+    /// its computed `clip-path` and `filter` functions, then (an SVG element's) `filter` and
+    /// `mask` attributes, one entry each in that order ([`super::svg::reference_candidates`]).
+    /// A reference into this document has an entry without an image. `mask-image` documents
+    /// are in `mask_images`.
+    pub reference_images: ThinVec<Option<ImageResourceData>>,
     /// pyro: the `list-style-image` image of a list item (a list of one), its marker once loaded.
     pub list_style_images: ThinVec<Option<ImageResourceData>>,
 
@@ -352,6 +358,7 @@ impl std::fmt::Debug for ElementData {
             .field("mask_images", &self.mask_images)
             .field("border_images", &self.border_images)
             .field("list_style_images", &self.list_style_images)
+            .field("reference_images", &self.reference_images)
             .field("inline_layout_data", &self.inline_layout_data)
             .field("list_item_data", &self.list_item_data)
             .field("template_contents", &self.template_contents)
@@ -380,6 +387,7 @@ impl Clone for ElementData {
             mask_images: self.mask_images.clone(),
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
+            reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
             template_contents: self.template_contents,
@@ -506,6 +514,7 @@ impl ElementData {
             mask_images: ThinVec::new(),
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
+            reference_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
             selector_flags: Cell::new(ElementSelectorFlags::empty()),

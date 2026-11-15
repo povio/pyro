@@ -8,6 +8,8 @@ mod mask;
 mod multicol;
 mod three_d;
 pub(crate) use three_d::is_projective_marker;
+#[cfg(feature = "svg")]
+pub(crate) use clip_path::svg_reference::external_reference;
 
 use blitz_dom::CopyStyleGetters;
 use std::cell::RefCell;
@@ -870,6 +872,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             &current_color,
             self.dom,
             (size.width, size.height),
+            node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
         );
         #[cfg(not(feature = "svg"))]
         let filter_steps: Option<Vec<()>> = None;
@@ -3357,12 +3360,35 @@ impl ElementCx<'_, '_> {
         // pyro: the viewport clip, as Chromium has it (`LayoutSVGRoot::ShouldApplyViewportClip`,
         // `ReplacedPainter`): an inline `<svg>` clips its content unless its `overflow` is
         // `visible` (the UA sheet's `svg:not(:root) { overflow: hidden }`; `overflow="visible"`
-        // is its presentation attribute), an SVG image always. The cut is the content box
-        // (`overflow-clip-margin: content-box`), along the content edge's curve. It is a layer
-        // only where it cuts something: the content (its strokes and filter regions too) reaches
-        // past the box, or the content edge is rounded. An inline `<svg>` that does not clip is
-        // not cut at all (no object-fit or rounded cut either: Chromium skips its clip).
-        let clip = if self.element.name.local == local_name!("svg") && {
+        // is its presentation attribute); the root `<svg>` of an SVG document and an SVG image
+        // always, whatever the `overflow`. The cut is the content box (`overflow-clip-margin:
+        // content-box`), along the content edge's curve. It is a layer only where it cuts
+        // something: the content (its strokes and filter regions too) reaches past the box, or
+        // the content edge is rounded. An inline `<svg>` that does not clip is not cut at all
+        // (no object-fit or rounded cut either: Chromium skips its clip).
+        let inline = self.element.name.local == local_name!("svg");
+        let document_root = inline && self.node.is_root_element();
+        // The content's ink (strokes and filter regions too) in the frame's coordinates.
+        let ink = || {
+            let bounds = svg.tree.root().abs_layer_bounding_box();
+            (Affine::translate((x, y)) * viewport).transform_rect_bbox(Rect::new(
+                bounds.left().into(),
+                bounds.top().into(),
+                bounds.right().into(),
+                bounds.bottom().into(),
+            ))
+        };
+        // A hundredth of a device pixel of float noise from the viewport transform.
+        let reaches_past = |ink: Rect, rect: Rect| {
+            let e = 0.01;
+            ink.x0 < rect.x0 - e || ink.y0 < rect.y0 - e || ink.x1 > rect.x1 + e || ink.y1 > rect.y1 + e
+        };
+        // pyro: an SVG image's viewport is its concrete object rect, not the box: under
+        // `object-fit: contain`, `none` or `scale-down` content outside the viewport does not
+        // show in the rest of the box (Chromium draws the image into that rect, clipped). A
+        // second cut, only where the content reaches past a rect that leaves some of the box.
+        let mut object_clip = None;
+        let clip = if inline && !document_root && {
             let b = self.style.get_box();
             matches!(b.overflow_x, Overflow::Visible) && matches!(b.overflow_y, Overflow::Visible)
         } {
@@ -3372,20 +3398,18 @@ impl ElementCx<'_, '_> {
             if content.is_zero_area() {
                 return;
             }
-            let bounds = svg.tree.root().abs_layer_bounding_box();
-            let ink = (Affine::translate((x, y)) * viewport).transform_rect_bbox(Rect::new(
-                bounds.left().into(),
-                bounds.top().into(),
-                bounds.right().into(),
-                bounds.bottom().into(),
-            ));
-            // A hundredth of a device pixel of float noise from the viewport transform.
-            let e = 0.01;
-            let past = ink.x0 < content.x0 - e
-                || ink.y0 < content.y0 - e
-                || ink.x1 > content.x1 + e
-                || ink.y1 > content.y1 + e;
-            if past || self.content_edge_is_rounded() {
+            let ink = ink();
+            if !inline {
+                let object = Rect::new(x, y, x + paint_size.width as f64, y + paint_size.height as f64);
+                let covers = object.x0 <= content.x0
+                    && object.y0 <= content.y0
+                    && object.x1 >= content.x1
+                    && object.y1 >= content.y1;
+                if !covers && reaches_past(ink, object) {
+                    object_clip = Some(object);
+                }
+            }
+            if reaches_past(ink, content) || self.content_edge_is_rounded() {
                 ReplacedClip::Always
             } else {
                 ReplacedClip::Fit
@@ -3401,8 +3425,10 @@ impl ElementCx<'_, '_> {
             |scene| {
                 // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what
                 // blends in it blends with nothing under the image.
-                let isolate = self.element.name.local != local_name!("svg")
-                    && anyrender_svg::has_blend_modes(&svg.tree);
+                let isolate = !inline && anyrender_svg::has_blend_modes(&svg.tree);
+                if let Some(object) = object_clip {
+                    scene.push_clip_layer(Fill::NonZero, self.transform, &object);
+                }
                 if isolate {
                     scene.push_layer(
                         Fill::NonZero,
@@ -3422,6 +3448,9 @@ impl ElementCx<'_, '_> {
                     None => anyrender_svg::render_svg_tree(scene, &svg.tree, transform),
                 }
                 if isolate {
+                    scene.pop_layer();
+                }
+                if object_clip.is_some() {
                     scene.pop_layer();
                 }
             },

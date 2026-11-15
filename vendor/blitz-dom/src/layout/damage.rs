@@ -911,6 +911,96 @@ impl BaseDocument {
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::ListStyle);
+            #[cfg(feature = "svg")]
+            self.flush_svg_references_from_style(node_id);
+        }
+    }
+
+    /// pyro: the SVG documents an element's `clip-path`, `filter` (and, on an SVG element, its
+    /// `filter` and `mask` attributes) reference elements of (`url(shapes.svg#clip)`,
+    /// `node::reference_candidates`), into `ElementData::reference_images`, fetched as images
+    /// are (an SVG image keeps its source): blitz-paint and the inline SVG serializer take the
+    /// referenced element from that source. A reference into this document gets an entry
+    /// without an image.
+    #[cfg(feature = "svg")]
+    fn flush_svg_references_from_style(&mut self, node_id: NodeId) {
+        use crate::node::{ImageData, ReferenceCandidate, reference_candidates};
+        use crate::util::ImageType;
+        use style::servo_arc::Arc as ServoArc;
+        let doc_id = self.id();
+        let Some(node) = self.nodes.get(node_id) else {
+            return;
+        };
+        let style = {
+            let stylo_element_data = node.try_stylo_element_data().and_then(|s| s.get());
+            let primary_styles = stylo_element_data.as_ref().and_then(|data| data.styles.get_primary());
+            let Some(style) = primary_styles else {
+                return;
+            };
+            style.clone()
+        };
+        let Some(elem) = node.data.downcast_element() else {
+            return;
+        };
+        let candidates = reference_candidates(elem, &style);
+        if candidates.is_empty() && elem.reference_images.is_empty() {
+            return;
+        }
+        let urls: Vec<Option<ServoArc<url::Url>>> = candidates
+            .into_iter()
+            .map(|candidate| match candidate {
+                ReferenceCandidate::Url(url) => Some(url.clone()),
+                ReferenceCandidate::Attr(raw) => self.resolve_url(raw).map(ServoArc::new),
+            })
+            .collect();
+        let old = elem.reference_images.clone();
+        let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
+        let own = [document(self.url().as_str()), document(self.base_url().as_str())];
+        let mut new: ThinVec<Option<ImageResourceData>> = ThinVec::with_capacity(urls.len());
+        for (idx, url) in urls.into_iter().enumerate() {
+            let Some(url) = url else {
+                new.push(None);
+                continue;
+            };
+            if let Some(kept) = old.get(idx).and_then(Option::as_ref).filter(|kept| *kept.url == *url) {
+                new.push(Some(kept.clone()));
+                continue;
+            }
+            // An element of this document: nothing to load.
+            if own.contains(&document(url.as_str())) {
+                new.push(Some(ImageResourceData { url, status: Status::Ok, image: ImageData::None }));
+                continue;
+            }
+            let url_str = url.as_str();
+            let kind = ImageType::Reference(idx);
+            if let Some(cached_image) = self.image_cache.get(url_str) {
+                new.push(Some(ImageResourceData { url: url.clone(), status: Status::Ok, image: cached_image.clone() }));
+            } else if let Some(waiting_list) = self.pending_images.get_mut(url_str) {
+                waiting_list.push((node_id, kind));
+                new.push(Some(ImageResourceData::new(url.clone())));
+            } else {
+                self.pending_images.insert(url_str.to_string(), vec![(node_id, kind)]);
+                self.net_provider.fetch(
+                    doc_id,
+                    crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref()),
+                    ResourceHandler::boxed(
+                        self.tx.clone(),
+                        doc_id,
+                        None,
+                        self.shell_provider.clone(),
+                        ImageHandler::new(kind),
+                    ),
+                );
+                new.push(Some(ImageResourceData::new(url.clone())));
+            }
+        }
+        let loaded = new.iter().flatten().any(|data| !matches!(data.image, ImageData::None));
+        if let Some(elem) = self.nodes.get_mut(node_id).and_then(|node| node.data.downcast_element_mut()) {
+            elem.reference_images = new;
+        }
+        // From the cache: an inline `<svg>` is written again with the document.
+        if loaded {
+            self.damage_inline_svg_root(node_id);
         }
     }
 
